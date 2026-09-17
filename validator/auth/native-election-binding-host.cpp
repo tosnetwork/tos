@@ -22,9 +22,6 @@ td::Ref<vm::Cell> NativeElectionBindingHost::bind(td::Ref<vm::Cell> elected, td:
                                                   const Charge& charge) {
   if (elected.is_null() || bindings.is_null())
     refuse_host("native binding operand");
-  // Kept for the join's mutation to hand back in place of the bound set.
-  auto elected_was = elected;
-
   auto before = work_remaining_;
   // The registry state cell, which is what a view decodes. The checkpoint
   // beside it is the account's own persistence shape and is refused here.

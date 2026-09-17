@@ -5,7 +5,9 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 DOC = ROOT/'doc/validator-auth-p0'
@@ -149,7 +151,99 @@ def generated_errors():
             print('MUTATION_KILLED generated-output-moved: '+str(target.relative_to(ROOT)))
         else:
             errors.append('generated mutation survived: '+str(target.relative_to(ROOT)))
+
+    # Those mutations prove the comparison honours an injected reader. They say
+    # nothing about the reader the real check uses, and the real check passes
+    # none: a default that stopped reading the disk would leave every one of
+    # them still killed. So read a file whose bytes are known to be wrong,
+    # through no injection at all.
+    with tempfile.TemporaryDirectory() as directory:
+        planted = Path(directory)/'generated-output'
+        planted.write_text('this is not what the generator renders\n')
+        if generate.check_generated(expected={planted: 'what the generator renders\n'}) == [planted]:
+            print('MUTATION_KILLED default-reader-reads-the-disk')
+        else:
+            errors.append('the default reader did not read the file it was given')
     return errors
+
+
+# Where the profile digest may be written down, in any of its spellings. The
+# gate above proves the files derived from the profile are current; this proves
+# nobody has quietly added an eleventh. Adding a consumer means adding it here,
+# which is the point: the digest was found in six places by following one
+# failure at a time, and each of the first two fixes uncovered another layer.
+DIGEST_READERS = {
+    'doc/validator-auth-p0-freeze.json',
+    'doc/validator-auth-p0-implementation.md',
+    'doc/validator-auth-p0-progress.md',
+    'validator/auth/types.h',
+    'tosctl/src/validator-auth/src/types.rs',
+    'crypto/block/validator-auth-profile.h',
+    'tosctl/src/block/src/validator_auth_profile.rs',
+}
+# A superseded digest is history and belongs only where the transition is
+# declared. Anywhere else it is a document still describing the profile that
+# was replaced.
+SUPERSEDED_READERS = {'doc/validator-auth-p0-freeze.json'}
+
+
+def profile_transitions(record):
+    """Each declared profile.json transition, whether stated alone or nested."""
+    for entry in record.get('evidence_updates', []):
+        for candidate in (entry, *entry.get('artifacts', [])):
+            if candidate.get('artifact') == 'doc/validator-auth-p0/profile.json':
+                yield candidate
+
+
+def tracked_sources():
+    """Every tracked file that can be read as text, by repository path.
+
+    Tracked only: an untracked file is not something the repository asserts,
+    and a working tree carrying stray copies would otherwise fail this.
+    """
+    listed = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, capture_output=True, text=True, check=True)
+    found = {}
+    for name in sorted(filter(None, listed.stdout.split('\0'))):
+        try:
+            found[name] = (ROOT/name).read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+    return found
+
+
+def digest_inventory_errors(record, files=None):
+    """Refuse a digest written somewhere nothing has accounted for.
+
+    Both spellings are searched: the hexadecimal one a record uses, and the
+    decimal byte array the generator emits, which a formatter may wrap across
+    lines. Whitespace is removed before the array is looked for, so wrapping
+    does not hide it.
+    """
+    current = hashlib.sha256((DOC/'profile.json').read_bytes()).hexdigest()
+    superseded = {t['previous_sha256'] for t in profile_transitions(record)}
+    files = tracked_sources() if files is None else files
+
+    def spellings(digest):
+        return (digest, ','.join(str(byte) for byte in bytes.fromhex(digest)))
+
+    def carries(text, digest):
+        return any(s in text or s in re.sub(r'\s+', '', text) for s in spellings(digest))
+
+    errors = []
+    for name, raw in sorted(files.items()):
+        if carries(raw, current) and name not in DIGEST_READERS:
+            errors.append('the profile digest is written in a file nothing accounts for: '+name)
+        for old in sorted(superseded):
+            if carries(raw, old) and name not in SUPERSEDED_READERS:
+                errors.append('a superseded profile digest is still written in: '+name)
+    return errors
+
+
+def require_inventory_mutation_refused(name, record, files):
+    if digest_inventory_errors(record, files):
+        print('MUTATION_KILLED '+name)
+        return []
+    return ['inventory mutation survived: '+name]
 
 
 def main(write=False):
@@ -195,12 +289,27 @@ def main(write=False):
         errors += require_ledger_mutation_refused('artifact-moved-without-either-ledger',
                                                   {**artifacts, victim: elsewhere}, recorded, declared)
         errors += generated_errors()
+        record = json.loads(FREEZE.read_text())
+        tracked = tracked_sources()
+        errors += digest_inventory_errors(record, tracked)
+        # An eleventh consumer, and a document still naming the profile that
+        # was replaced. Both are how this drifted before, so both are shown to
+        # be refused rather than assumed to be.
+        current_digest = hashlib.sha256((DOC/'profile.json').read_bytes()).hexdigest()
+        errors += require_inventory_mutation_refused(
+            'digest-written-somewhere-unaccounted', record,
+            {**tracked, 'validator/invented-consumer.h': 'constexpr auto d = "'+current_digest+'";\n'})
+        for transition in profile_transitions(record):
+            errors += require_inventory_mutation_refused(
+                'superseded-digest-left-behind', record,
+                {**tracked, 'doc/invented-note.md': 'still frozen at '+transition['previous_sha256']+'\n'})
+            break
         if errors:
             for error in errors:
                 print('FAIL: '+error, file=sys.stderr)
             raise ValueError('the profile, the frozen record and what is derived from them disagree')
-    print('PASS: canonical schema, generated view, profile fingerprint, both ledgers agreeing '
-          'and the generated production files current')
+    print('PASS: canonical schema, generated view, profile fingerprint, both ledgers agreeing, '
+          'the generated production files current and no unaccounted reader of the digest')
 
 
 if __name__ == '__main__':

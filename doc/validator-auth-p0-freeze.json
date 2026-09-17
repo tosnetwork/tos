@@ -37,7 +37,7 @@
     "test/validator-auth-p0/check_schema.py": "eb75c2ccc682df021d54a5dae79f9cd8a0ac3b246c5515c6c95db8617c606dde",
     "test/validator-auth-p0/codec.cpp": "d87bec46215699b09f861d5e0f86f8ac465c97314befdbf46ca3fbf592b556e2",
     "test/validator-auth-p0/codec.rs": "9ae980fa3dcf4636d94970a30984e9deeb5055563231aa03ded585de1a34aa17",
-    "test/validator-auth-p0/contract_artifacts.py": "90d5eb0433d61d204d1a3c025869f32f99fe6e200cd2ee8246b5f291b5950c3c",
+    "test/validator-auth-p0/contract_artifacts.py": "4130cd81cb3c37f8c2ef6c74e360f1a2d02aefee668caafb216e81aed253e13b",
     "test/validator-auth-p0/differential.py": "364f71d86fb002669802102e43d9099734abff6e152abb9ebb57cd068383e39d",
     "test/validator-auth-p0/ed25519_oracle.py": "50a601b2c32b1b0589dcb08361050538c4a2501a67e84797085271d8c3ca9624",
     "test/validator-auth-p0/freeze_record.py": "89dd10e3c519695fd26f2503131276b09a94bf573437f84f3cd8db80e8783078",
@@ -274,6 +274,15 @@
       "change": "Extended the artifact gate by one layer, so that one check covers the profile, this record, and the production files generated from the profile. It imports the binding generator and reuses its whole-file comparison rather than restating it as a digest check, and requires a moved byte in any generated output to be refused, which is what proves this gate reaches the generator instead of merely importing it.",
       "scope": "Verification only. No wire, API, operation, field, encoding, limit, role or transport value changes, the profile revision is unchanged, and no artifact hash moves as a result. The generated files stay outside the frozen artifact set: they are deterministic derivations of the profile, and generation freshness is a different constraint from historical byte preservation, so folding them in would turn an ordinary profile revision into a re-baseline.",
       "reason": "The profile digest is recorded in six places under three separate locks. The revision to 4 moved it in the record and in the reference vectors, both of which are checked early, and left it stale in four generated production files, which were checked only by the generator's own step in a later job -- a job that had never reached that step because two earlier ones were failing. Fixing those is what made it visible. Two gates that each see part of one derivation will keep letting a change pass while it is incomplete.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
+    },
+    {
+      "artifact": "test/validator-auth-p0/contract_artifacts.py",
+      "previous_sha256": "90d5eb0433d61d204d1a3c025869f32f99fe6e200cd2ee8246b5f291b5950c3c",
+      "sha256": "4130cd81cb3c37f8c2ef6c74e360f1a2d02aefee668caafb216e81aed253e13b",
+      "change": "Named where the profile digest may be written down, in either the hexadecimal spelling a record uses or the decimal byte array the generator emits, and refused it anywhere else. A superseded digest is allowed only where its transition is declared. Added a control that the default reader of the generated comparison reads the file it is given, because the mutations beside it only prove an injected reader is honoured.",
+      "scope": "Verification only, over tracked files. No wire, API, operation, field, encoding, limit, role or transport value changes and no artifact hash moves as a result. The list of places the digest may appear is data in this checker, not a new frozen set: adding a consumer means naming it there.",
+      "reason": "The previous entry closed the derivations that were known. It could not say the set was complete, and it was not: two planning documents still stated the superseded fingerprint in the present tense, which this refuses and which is corrected in the same change. The digest was found in six places by following one failure at a time, and each of the first two fixes uncovered another layer, so what was missing was a way for the next one to fail at the gate rather than in a later job.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this does not satisfy."
     }
   ],
