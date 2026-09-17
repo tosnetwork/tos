@@ -142,16 +142,17 @@ int main(int argc, char** argv) {
               "execution-clone-reuses-admitted-material-with-a-fresh-host");
       const auto charges_after_admission = expansion_charges;
 
+      vm::ValidatorAuthHost::Charge no_charge{[](long long) {}, [](std::uint16_t) {}};
+      primary.value()->host().checkpoint(no_charge);
+      require(primary.value()->host().checkpoints() == 1,
+              "execution-clone-reuses-admitted-material-with-a-fresh-host");
+
       auto retry = primary.value()->clone_for_execution();
       require(retry != nullptr && expansion_charges == charges_after_admission,
               "execution-clone-reuses-admitted-material-with-a-fresh-host");
-      require(&retry->host() != &primary.value()->host(),
+      require(&retry->host() != &primary.value()->host() && retry->host().checkpoints() == 0,
               "execution-clone-reuses-admitted-material-with-a-fresh-host");
 
-      vm::ValidatorAuthHost::Charge no_charge{[](long long) {}, [](std::uint16_t) {}};
-      primary.value()->host().checkpoint(no_charge);
-      require(primary.value()->host().checkpoints() == 1 && retry->host().checkpoints() == 0,
-              "execution-clone-reuses-admitted-material-with-a-fresh-host");
       retry->host().checkpoint(no_charge);
       require(primary.value()->host().checkpoints() == 1 && retry->host().checkpoints() == 1 &&
                   expansion_charges == charges_after_admission,
