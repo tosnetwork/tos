@@ -40,7 +40,7 @@ EXPECTED_VALIDATOR_EXPERIMENT_FAUCET_TOS = 136_120
 EXPECTED_VALIDATOR_COUNT = 4
 EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
 EXPECTED_SIMPLEX_PROTOCOL_VERSION = 2
-EXPECTED_MAINNET_GENESIS_UTIME = 1_789_434_000
+EXPECTED_MAINNET_GENESIS_UTIME = 1_790_902_800
 DNS_VECTORS = json.loads(
     (REPO / "domains/packages/protocol/test/vectors.json").read_text()
 )
@@ -568,7 +568,7 @@ def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):
         cwd=tmp_path, check=False, capture_output=True, text=True, env=env,
     )
     assert failed.returncode != 0
-    assert "SOURCE_DATE_EPOCH must be 1789434000" in (
+    assert "SOURCE_DATE_EPOCH must be 1790902800" in (
         failed.stderr + failed.stdout
     )
 
@@ -633,3 +633,56 @@ def test_validator_key_helper_defaults_to_four_keys(tmp_path):
     assert (tmp_path / "validator-keys.pub").stat().st_size == 128
     for index in range(1, EXPECTED_VALIDATOR_COUNT + 1):
         assert (tmp_path / f"val-key-{index}").stat().st_size == 32
+
+
+# Every place that states the canonical genesis time, and how each spells it.
+# The value is one fact written in four languages, so nothing but agreement
+# between them says it is still one fact.
+GENESIS_UTIME_HOLDERS = {
+    "crypto/smartcont/gen-zerostate.fif": r"(\d[\d_']*) constant mainnet_genesis_utime",
+    "tosctl/src/sandbox/src/genesis.rs": r'MAINNET_GENESIS_UNIX:\s*&str\s*=\s*"(\d[\d_\']*)"',
+    "crypto/test/test-smartcont.cpp": r"kDeterministicZerostateNow\s*=\s*(\d[\d_']*)",
+}
+
+
+def _stated_genesis_utimes(sources: dict[str, str]) -> dict[str, int]:
+    """What each holder says the genesis time is, whatever separators it uses.
+
+    Separators are tolerated deliberately. One holder writes the value with
+    underscores, and a search for the plain digits missed it, which is the
+    failure this guard exists to make impossible rather than repeat.
+    """
+    stated: dict[str, int] = {}
+    for name, pattern in GENESIS_UTIME_HOLDERS.items():
+        text = sources[name]
+        found = re.findall(pattern, text)
+        assert len(found) == 1, f"{name} states the genesis time {len(found)} times"
+        stated[name] = int(found[0].replace("_", "").replace("'", ""))
+    return stated
+
+
+def _genesis_sources() -> dict[str, str]:
+    return {name: (REPO / name).read_text() for name in GENESIS_UTIME_HOLDERS}
+
+
+def test_every_holder_of_the_genesis_time_agrees():
+    sources = _genesis_sources()
+    stated = _stated_genesis_utimes(sources)
+    assert set(stated.values()) == {EXPECTED_MAINNET_GENESIS_UTIME}, stated
+
+    # The zero state refuses any other epoch, so the abort message has to name
+    # the same one it enforces; a message naming a stale value would send a
+    # reader to the wrong number while the build still refused correctly.
+    genesis = sources["crypto/smartcont/gen-zerostate.fif"]
+    assert f"SOURCE_DATE_EPOCH must be {EXPECTED_MAINNET_GENESIS_UTIME}" in genesis
+
+    # And prove this notices. One holder moved on its own must be refused,
+    # including when it is written with the separators that hid it before.
+    for name in GENESIS_UTIME_HOLDERS:
+        moved = dict(sources)
+        moved[name] = sources[name].replace(
+            str(EXPECTED_MAINNET_GENESIS_UTIME), str(EXPECTED_MAINNET_GENESIS_UTIME + 1)
+        ).replace(
+            f"{EXPECTED_MAINNET_GENESIS_UTIME:_}", f"{EXPECTED_MAINNET_GENESIS_UTIME + 1:_}"
+        )
+        assert set(_stated_genesis_utimes(moved).values()) != {EXPECTED_MAINNET_GENESIS_UTIME}, name

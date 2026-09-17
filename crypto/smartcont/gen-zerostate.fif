@@ -27,13 +27,13 @@ wc_master setworkchain
 1 setglobalid   // TOS mainnet global_id
 0x544F5301 default-subwallet-id!  // TOS-specific default subwallet id
 
-// Canonical mainnet genesis: 2026-09-15 10:00:00 JST
-//                         == 2026-09-15 01:00:00 UTC.
+// Canonical mainnet genesis: 2026-10-02 10:00:00 JST
+//                         == 2026-10-02 01:00:00 UTC.
 // create-state and Fift both honor SOURCE_DATE_EPOCH. Refuse to emit a
 // production zero-state with a build-machine wall clock or a different epoch:
-//   SOURCE_DATE_EPOCH=1789434000 build/crypto/create-state ...
-1789434000 constant mainnet_genesis_utime
-now mainnet_genesis_utime = not abort"SOURCE_DATE_EPOCH must be 1789434000 for TOS mainnet genesis"
+//   SOURCE_DATE_EPOCH=1790902800 build/crypto/create-state ...
+1790902800 constant mainnet_genesis_utime
+now mainnet_genesis_utime = not abort"SOURCE_DATE_EPOCH must be 1790902800 for TOS mainnet genesis"
 
 // TIP-1 immutable .tos Root StateInit address. This must equal the reproducible
 // root_address in domains/packages/protocol/test/vectors.json. ConfigParam 4

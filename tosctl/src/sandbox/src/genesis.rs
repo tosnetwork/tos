@@ -19,7 +19,7 @@ use chain_block::{read_single_root_boc, CurrencyCollection, Deserializable, Shar
 use crate::error::{SandboxError, SandboxResult};
 
 /// 2026-09-15 10:00:00 JST (2026-09-15 01:00:00 UTC).
-const MAINNET_GENESIS_UNIX: &str = "1789434000";
+const MAINNET_GENESIS_UNIX: &str = "1790902800";
 
 /// Locate the TOS repository root by checking common paths.
 fn find_tos_root() -> Option<PathBuf> {
