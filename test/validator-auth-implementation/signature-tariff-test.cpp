@@ -124,14 +124,14 @@ int main() {
     report(tariff(11) == 4000, "verification-past-the-free-allowance-pays-the-machine-tariff");
 
     // Two ceilings. The masterchain committee is `max_main_validators`, which
-    // the zerostate installs as one hundred, so that is the crypto bill a
+    // the zerostate installs as twenty-one, so that is the crypto bill a
     // running chain presents. Four hundred is what the profile admits and what
     // the configuration parameter could be raised to without a new one, so it
     // is what the code has to survive.
-    const auto installed = tariff(100), ceiling = tariff(400);
-    std::cerr << "MEASURE checks=100 crypto_gas=" << installed << '\n';
+    const auto installed = tariff(21), ceiling = tariff(400);
+    std::cerr << "MEASURE checks=21 crypto_gas=" << installed << '\n';
     std::cerr << "MEASURE checks=400 crypto_gas=" << ceiling << '\n';
-    report(installed == (100 - 10) * 4000 && ceiling == (400 - 10) * 4000,
+    report(installed == (21 - 10) * 4000 && ceiling == (400 - 10) * 4000,
            "the-largest-admissible-certificate-pays-for-every-verification-past-it");
 
     // The registry admits no post-quantum key today, but the price of one is

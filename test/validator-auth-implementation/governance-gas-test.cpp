@@ -63,10 +63,11 @@ constexpr std::uint64_t network_credit = 10000;
 //
 // What the network as configured actually presents is smaller. Governance is
 // signed by the masterchain committee, and the masterchain subset is
-// `max_main_validators`, which the zerostate installs as one hundred. So the
-// operation a running chain has to carry today is a hundred records, and four
-// hundred is the ceiling it could be raised to without a new profile.
-constexpr unsigned profile_ceiling = 400, installed_main_validators = 100;
+// `max_main_validators`, which the zerostate installs as twenty-one -- a size
+// chosen so the same operation stays inside a block under a post-quantum suite
+// as well. Four hundred is the ceiling it could be raised to without a new
+// profile.
+constexpr unsigned profile_ceiling = 400, installed_main_validators = 21;
 
 struct Cost {
   std::uint64_t gas = 0;

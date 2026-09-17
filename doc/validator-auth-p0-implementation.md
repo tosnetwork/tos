@@ -347,21 +347,30 @@ the largest legal certificate is the worst case:
 | signer records | entries | bytes | charged gas |
 | --- | ---: | ---: | ---: |
 | 8 | 16 | 4,096 | 5,120 |
+| 21 | 42 | 10,752 | 13,440 |
 | 64 | 128 | 32,768 | 40,960 |
-| 100 | 200 | 51,200 | 64,000 |
 | 400 | 800 | 204,800 | 256,000 |
 
 Two of those rows are ceilings, and they answer different questions. Governance
 is signed by the masterchain committee, and the masterchain subset of an elected
-set is `max_main_validators`, which the zerostate installs as one hundred. That
+set is `max_main_validators`, which the zerostate installs as twenty-one. That
 is the operation a running chain has to carry. Four hundred is what the frozen
 profile admits and what the registry refuses beyond, and it stays reachable
 because the validator counts are a configuration parameter a governance
 operation may raise up to that same bound -- so it is what the code has to
 survive, not what it will usually be asked to do.
 
+Twenty-one is not a decentralization preference; it is what the post-quantum
+measurement below leaves room for, decided while the signatures are still
+classical because it cannot be decided afterwards. Raising or lowering
+`max_main_validators` is itself a governance operation, carried by a certificate
+of the size in force. A chain that activated a post-quantum suite at a hundred
+would need a hundred post-quantum signatures to execute the operation that
+lowers it -- twice a whole masterchain block -- and could no longer change its
+own configuration at all.
+
 The credit an external message has before it is accepted is ten thousand.
-Neither ceiling fits it: the installed committee costs six times that in reads
+Neither ceiling fits it: the installed committee costs more than that in reads
 alone, the profile's twenty-five times, and eight signer records already exceed
 it. The registry action is unsigned and reaches `accept_message` only after the
 update has applied, so the whole verification happens on that credit -- run
@@ -392,7 +401,7 @@ covering thirty checks stops at thirty:
 | ---: | ---: |
 | 10 | 0 |
 | 11 | 4,000 |
-| 100 | 360,000 |
+| 21 | 44,000 |
 | 400 | 1,560,000 |
 
 Ten are free because the transaction's existing allowance for signature checks
@@ -407,7 +416,7 @@ tick-tock after it.
 
 | masterchain signers | transaction, counted | account tick-tock, not counted |
 | ---: | ---: | ---: |
-| 100 | 538,043 | 6,119 |
+| 21 | 97,233 | 6,119 |
 | 400 | 2,240,393 | 6,119 |
 
 The masterchain block gas limits are underload five hundred thousand, soft one
@@ -424,10 +433,11 @@ one of the mint and recover special transactions, which a governance message is
 not. So the account's tick-tock is measured as execution and excluded from the
 comparison.
 
-The sum of the components is not the transaction. At a hundred signers the
-components come to four hundred and twenty-four thousand and the transaction
-costs five hundred and thirty-eight thousand; the difference is the contract, the
-instruction, and reading a certificate that is itself tens of kilobytes.
+The sum of the components is not the transaction. At four hundred signers the
+components come to one million eight hundred and sixteen thousand and the
+transaction costs two million two hundred and forty thousand; the difference is
+the contract, the instruction, and reading a certificate that is itself tens of
+kilobytes.
 
 What a post-quantum committee could be. The registry admits no such key, so
 nothing here has run one; what follows is arithmetic on measured gas, with the
@@ -441,18 +451,24 @@ from.
 
 | masterchain signers | verification | with everything else | of the hard limit |
 | ---: | ---: | ---: | ---: |
-| 20 | 1,000,000 | 1,732,236 | 69% |
 | 21 | 1,050,000 | 1,783,626 | 71% |
 | 34 | 1,700,000 | 2,453,771 | 98% |
 | 35 | 1,750,000 | 2,505,311 | 100.2% |
 | 36 | 1,800,000 | 2,556,651 | 102% |
-| 40 | 2,000,000 | 2,763,086 | 111% |
 
 Thirty-four is the largest that fits and thirty-five is over by five thousand
 gas, which is close enough that the boundary should be read as "the middle
-thirties" rather than as a number to design against. What it is not is a hundred:
-the committee this network installs is three times larger than a post-quantum
-suite could carry through this certificate architecture.
+thirties" rather than as a number to design against. Twenty-one is the installed
+size for exactly this reason: it sits at seventy-one per cent with the boundary
+a third of the way further out, rather than against it.
+
+What no change of algorithm rescues is the four hundred the profile admits. The
+block leaves 1,819,607 gas for verification there, which over the signatures
+that are not free is 4,665 each, and the frozen certificate bound leaves 1,266
+bytes each. Ed25519 fits both at 4,000 and 64 with almost nothing to spare. The
+budget is within seventeen per cent of the cheapest classical signature, so no
+post-quantum scheme reaches it -- a committee that size would have to stop being
+one signature per signer, not carry a different signature.
 
 The substitution is conservative twice over, so these are floors. Putting the
 boundary exactly requires measuring what a post-quantum certificate costs to

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -324,11 +325,19 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     ) == (65_536, 32_768, 8_192, 32_768)
 
     param16 = _config(state, 16, ConfigParam16)
+    # Read from the production genesis rather than restated here. These counts
+    # decide what a governance certificate costs -- the masterchain subset is
+    # what signs one, and the cost is linear in it -- so a second copy of them
+    # in this file could drift from the one the network is actually built with
+    # and this test would keep passing while they disagreed.
+    genesis_source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    counts = re.search(r"^(\d+) (\d+) (\d+) config\.validator_num!$", genesis_source, re.MULTILINE)
+    assert counts is not None, "genesis must state the validator counts"
     assert (
         param16.max_validators,
         param16.max_main_validators,
         param16.min_validators,
-    ) == (400, 100, 4)
+    ) == tuple(int(group) for group in counts.groups())
 
     param17 = _config(state, 17, ConfigParam17)
     assert (

@@ -16,7 +16,7 @@
 //
 // Two committee sizes, and they answer two different questions. The masterchain
 // subset of an elected set is `max_main_validators`, which the zerostate
-// installs as one hundred: that is what a running chain presents. Four hundred
+// installs as twenty-one: that is what a running chain presents. Four hundred
 // is what the frozen profile admits and what configuration parameter 16 may be
 // raised to without a new profile: that is what the code has to survive.
 //
@@ -80,12 +80,13 @@ constexpr long long block_gas_soft_limit = 1000000, block_gas_hard_limit = 25000
 constexpr long long external_gas_credit = 10000;
 
 // The committee this network installs, and the one the profile admits.
-constexpr unsigned installed_main_validators = 100, profile_ceiling = 400;
+constexpr unsigned installed_main_validators = 21, profile_ceiling = 400;
 
-// Two smaller committees, measured because a post-quantum suite makes each
-// signature cost more than a hundred of them do today, and the question of what
-// size it could be run at is decided by measurement rather than by argument.
-constexpr unsigned smaller_committees[] = {20, 21, 34, 35, 36, 40};
+// The sizes a post-quantum suite is decided at: the one installed, and the
+// range around where it stops fitting. A post-quantum verification costs the
+// machine more than twelve classical ones, so the size a committee could be run
+// at under it is a measurement rather than an argument.
+constexpr unsigned smaller_committees[] = {installed_main_validators, 34, 35, 36};
 
 // What one verification costs under each suite, from the machine's own
 // schedule: the classical one after its ten-check allowance, and the
@@ -225,8 +226,8 @@ int main(int argc, char** argv) {
         "the-account-tick-tock-is-work-the-block-gas-budget-does-not-see",
         "the-classical-suite-fits-both-budgets-the-profile-ceiling-leaves",
         "the-post-quantum-suite-fits-neither",
-        "a-post-quantum-committee-of-twenty-fits-the-masterchain-block",
-        "a-post-quantum-committee-of-forty-does-not-fit-with-its-certificate",
+        "a-post-quantum-committee-of-the-installed-size-fits-the-masterchain-block",
+        "a-post-quantum-committee-past-the-measured-boundary-does-not-fit",
         "no-committee-size-fits-the-unaccepted-external-credit",
     };
     for (const auto* name : manifest)
@@ -354,17 +355,18 @@ int main(int argc, char** argv) {
              "the-post-quantum-suite-fits-neither");
     }
 
-    // Twenty fits with room left over even after the largest non-verification
-    // cost this suite has ever measured is added on top of it.
+    // The installed committee fits with room left over even after the largest
+    // non-verification cost this suite has ever measured is added on top of it.
+    // That is the whole reason it is the size it is.
     report(post_quantum_floor[0] + largest_non_crypto < block_gas_hard_limit,
-           "a-post-quantum-committee-of-twenty-fits-the-masterchain-block");
+           "a-post-quantum-committee-of-the-installed-size-fits-the-masterchain-block");
 
-    // Forty does not. Its verification alone is four fifths of the block, and
-    // what is left is less than the non-verification cost of a certificate
-    // carrying fewer bytes than its own.
+    // And past the boundary it does not. Verification alone takes most of the
+    // block, and what is left is less than the non-verification cost of a
+    // certificate carrying fewer bytes than its own.
     report(post_quantum_floor[std::size(smaller_committees) - 1] < block_gas_hard_limit &&
                post_quantum_floor[std::size(smaller_committees) - 1] + largest_non_crypto > block_gas_hard_limit,
-           "a-post-quantum-committee-of-forty-does-not-fit-with-its-certificate");
+           "a-post-quantum-committee-past-the-measured-boundary-does-not-fit");
 
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
     return 0;

@@ -128,7 +128,20 @@ Masterchain swap
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators
-400 100 4 config.validator_num!
+//
+// The masterchain subset is what signs a governance certificate, and what that
+// certificate costs is linear in it. At a hundred it is affordable only while
+// the signatures are classical: a post-quantum verification costs the machine
+// fifty thousand gas against four thousand, so a hundred of them is twice a
+// whole masterchain block and the operation becomes unexecutable.
+//
+// Lowering it later is not a way out, because lowering it is itself a
+// governance operation and would need a certificate of the size being lowered.
+// A chain that activated a post-quantum suite at a hundred could no longer
+// change its own configuration. So the masterchain set is twenty-one here,
+// which measurement puts comfortably inside a block under either suite; the
+// elected set as a whole is unchanged.
+400 21 4 config.validator_num!
 // min-stake max-stake min-total-stake max-factor
 TM$10000 TM$10000000 TM$40000 sg~1 config.validator_stake_limits!
 // elected-for elect-start-before elect-end-before stakes-frozen-for

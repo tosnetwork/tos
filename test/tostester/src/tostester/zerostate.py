@@ -460,7 +460,10 @@ def create_zerostate(
             "main_wallet_genesis_balance": "TM$100000",
             "expected_genesis_supply": "TM$101000",
             "max_validators": 400,
-            "max_main_validators": 100,
+            # Mirrors the production genesis, which the bootstrap-spec test
+            # compares this against. The masterchain subset decides what a
+            # governance certificate costs, so the two must not drift.
+            "max_main_validators": 21,
             "min_validators": 4,
             "min_stake": "TM$10000",
             "max_stake": "TM$10000000",
