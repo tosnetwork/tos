@@ -55,6 +55,16 @@ class NativeConfigTransaction {
                                                                td::Ref<vm::Cell> admitted_proposal,
                                                                std::shared_ptr<const FinalizedAnchorSource>,
                                                                const EvidenceCharge&, StateReadBudget = {});
+
+  // Admission has already opened and bounded the evidence before it can
+  // authenticate owner history. Passing that exact value onward keeps one
+  // interpretation of the unauthenticated container: reopening its root here
+  // would repeat the expansion and create a second parser decision for the same
+  // transaction. Other callers that only hold a cell use open() above.
+  static Result<std::unique_ptr<NativeConfigTransaction>> open_admitted(
+      const NativeConfigTransactionInputs&, const NativeConfigSequence&, NativeEvidence transaction_evidence,
+      td::Ref<vm::Cell> admitted_proposal, std::shared_ptr<const FinalizedAnchorSource>, StateReadBudget = {});
+
   NativeConfigHost& host() {
     return host_;
   }
