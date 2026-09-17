@@ -18,9 +18,14 @@ on:
 
 permissions:
   contents: read
+# One group per commit. The frozen record names this workflow as the evidence
+# that must pass at the commit carrying its exact artifact set, so a run
+# cancelled because a later commit arrived leaves the earlier commit with
+# nothing that can be cited for it -- and a record whose evidence cannot be
+# produced is not a record. Two runs for the same commit still collapse.
 concurrency:
-  group: validator-p0-profile-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: validator-p0-profile-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   profile:

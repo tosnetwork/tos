@@ -14,7 +14,7 @@
     "performance and recovery rehearsal"
   ],
   "artifact_sha256": {
-    ".github/workflows/validator-auth-p0-profile.yml": "1d068fb0564fde36018ca337dee900cf659e036ddefda58b9c7a861069d7c019",
+    ".github/workflows/validator-auth-p0-profile.yml": "f03f7cb7cf9905666fe1e8205df739f26b0f5f528f46f378c6a2a0a118a05005",
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
     "doc/validator-auth-p0/API-CONTRACT.md": "daf59d84f7caac217c6614bafc0f56b0a1afbe49f35f30f63cb30e608c14e14e",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
@@ -323,6 +323,15 @@
       "scope": "Three added insertions and one amended insertion text, all declared at original-file coordinates. The contract keeps every historical byte and every other offset is unchanged. No wire, API, schema, operation, role, limit or profile value changes, and the profile revision is unchanged.",
       "reason": "Two separate holes, both of the same shape: one fact with more than one source. An authenticated chain installs its elected set through the binder, which writes the authenticated constructor, and the descriptor reader accepted only the two older ones -- so a validator voting on the set its own chain produced was refused for the descriptor's shape, closing the first of the two doors a configuration-parameter change now has to pass. And a validator set had three writers rather than one: the elector's message, where the set passes through the registry, and two generic parameter writers that carry no bindings and reach no registry at all. The second and third are the routes an attacker who had obtained governance would use, because they are the ones with no binding to forge.",
       "governance": "This narrows what a configuration proposal and the configuration master key may do on an active chain: neither can install a validator set. That authority is not removed but relocated to the registry, which is where this design places it; on a chain that has not activated, both writers are unchanged. A rotation the registry cannot produce is therefore no longer reachable by governance alone, which is the intended cost.",
+      "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
+    },
+    {
+      "artifact": ".github/workflows/validator-auth-p0-profile.yml",
+      "previous_sha256": "1d068fb0564fde36018ca337dee900cf659e036ddefda58b9c7a861069d7c019",
+      "sha256": "f03f7cb7cf9905666fe1e8205df739f26b0f5f528f46f378c6a2a0a118a05005",
+      "change": "Gave this workflow one concurrency group per commit and stopped it cancelling a run in progress.",
+      "scope": "Scheduling only. No step, guard, harness, input or artifact changes, and the workflow does exactly the same work on exactly the same files.",
+      "reason": "This record names this workflow as the evidence that must pass at the commit carrying its exact artifact set. Grouped by pull request it cancelled the earlier commit's run whenever a later commit arrived, so the commit the record pointed at could be left with no run at all. Refusing to cancel a running job is not sufficient on its own: a group holds one pending run at a time and a third arrival evicts the one that is waiting, which is where a superseded commit's run sits.",
       "activation": "Unchanged. No suite is allocated, no network is configured, and the version-16 activation gates and listed approvals remain independent thresholds that this change does not move."
     }
   ],
