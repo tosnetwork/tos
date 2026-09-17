@@ -12,20 +12,12 @@ CPP=[
  # stopped being unique and took the whole harness down with it.
  ('view-budget-charge','budget_.bytes -= raw.value().size();\n    return raw;','return raw;'),
  # The byte charge for the policy-activation read in `RegistryView::open` is
- # deliberately absent from this table, and that is a gap rather than a
- # decision. Adding it showed the charge is unguarded: removing
- # `result.budget_.bytes -= raw.value().size();` breaks no case, so the mutation
- # survives and would make this harness red for a real reason.
- #
- # What would kill it is a case that opens a registry which has an activation,
- # with a budget sized so the activation's bytes are exactly what remains, and
- # asserts `remaining().bytes == 0`. The existing budget cases either assert an
- # exact remainder after a key lookup (`view-budget-charge`) or assert refusal
- # when the open path is starved (`policy-byte-budget`); none asserts the
- # remainder after a successful open, which is where this charge shows.
- #
- # It stayed unnoticed because the anchor above was ambiguous, so the harness
- # died before reaching anything here.
+ # covered by `attestation-byte-charge` in the activation harness instead. That
+ # branch runs only for a policy that took effect after genesis, and this
+ # suite's fixture has none, so a case here could not reach it; the case that
+ # kills it asserts the remainder after a successful open, which is the only
+ # place the charge shows. It went uncovered for a while because the anchor
+ # above was ambiguous and the harness died before reaching anything here.
  ('view-byte-budget','std::min(budget_.bytes, maximum)','maximum'),
  ('identity-binding','value.value().identity_ != id ||',''),
  ('identity-stake','value.value().stake_id_ == Hash{}','false'),

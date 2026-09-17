@@ -26,6 +26,13 @@ MUTATIONS = [
     ("view-asks-the-same", "the-view-refuses-what-the-decoder-refuses", "validator/auth/registry-view.cpp",
      '    if (p.effective_from_ != 0) {',
      '    if (false) {'),
+    # The byte charge for the attestation this branch reads. It belongs here
+    # rather than with the other view budget mutations because this is the only
+    # suite that builds a state whose policy took effect after genesis, which
+    # is the only state in which the branch runs at all.
+    ("attestation-byte-charge", "the-view-charges-the-attestation-it-read", "validator/auth/registry-view.cpp",
+     '      result.budget_.bytes -= raw.value().size();\n',
+     ''),
 ]
 
 

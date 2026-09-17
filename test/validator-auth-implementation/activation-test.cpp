@@ -229,6 +229,32 @@ int main(int argc, char** argv) {
       ok("the-view-refuses-what-the-decoder-refuses");
     }
 
+    // The attestation is read through the budget, and what it cost has to be
+    // observable. Two budget cases exist either side of this and neither shows
+    // it: one asserts an exact remainder after a key lookup, the other asserts
+    // refusal when the open path is starved. Between them the charge for these
+    // bytes could be dropped entirely and nothing would notice -- an open that
+    // read a 4096-byte attestation would report having spent nothing on it, and
+    // a caller sizing later reads by the remainder would be told it had room it
+    // does not have.
+    {
+      auto policy_bytes = value(encode(next), "fixture-policy-bytes").size();
+      auto attestation_bytes = value(encode(attestation), "fixture-attestation-bytes").size();
+      auto attested = rebuild(original, next, next_id, &attestation).root;
+      // Exactly the two reads this open performs, and exactly their bytes.
+      const StateReadBudget exact{2, policy_bytes + attestation_bytes};
+      auto opened = RegistryView::open(attested, boundary + 10, exact);
+      expect(opened.ok(), "the-view-charges-the-attestation-it-read");
+      expect(opened.value().remaining().entries == 0 && opened.value().remaining().bytes == 0,
+             "the-view-charges-the-attestation-it-read");
+      // And the figure is the attestation's own size rather than slack: one
+      // byte short of it, the read cannot be served at all.
+      const StateReadBudget short_by_one{2, policy_bytes + attestation_bytes - 1};
+      auto starved = RegistryView::open(attested, boundary + 10, short_by_one);
+      expect(!starved.ok(), "the-view-charges-the-attestation-it-read");
+      ok("the-view-charges-the-attestation-it-read");
+    }
+
     if (!output.empty())
       std::ofstream(output / "complete") << exported << '\n';
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
