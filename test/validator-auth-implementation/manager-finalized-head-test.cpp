@@ -75,6 +75,21 @@ std::vector<Case> cases(const std::filesystem::path& owner,
             "verified_only_publishes_nothing_new");
   });
 
+  add("same_block_may_accumulate_more_final_signatures", [=] {
+    auto data = fixture::make_fixture(owner, committee);
+    auto feed = source(data);
+    auto first = verification(data.old);
+    auto second = first;
+    second.signed_weight = 3;
+    require(feed->note_verified(first).ok(),
+            "same_block_may_accumulate_more_final_signatures");
+    require(feed->note_verified(second).ok(),
+            "same_block_may_accumulate_more_final_signatures");
+    auto receipt = feed->verify_signatures(id_of(data.old));
+    require(receipt.ok() && receipt.value().signed_weight == 3,
+            "same_block_may_accumulate_more_final_signatures");
+  });
+
   add("applied_only_publishes_nothing_new", [=] {
     auto data = fixture::make_fixture(owner, committee);
     auto feed = source(data);

@@ -50,6 +50,7 @@
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
+#include "auth/manager-finalized-head.h"
 #include "auth/manager-group-admission.h"
 #include "auth/native-chain-context.h"
 #include "shard-client.hpp"
@@ -642,6 +643,15 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::optional<ValidatorAuthCollation> validator_auth_collation();
 
   td::optional<tos::auth::ChainContext> validator_auth_chain_;
+  std::unique_ptr<tos::auth::ManagerFinalizedHeadSource> validator_auth_finalized_source_;
+  std::unique_ptr<tos::auth::NativeFinalizedHeadEstablisher> validator_auth_finalized_establisher_;
+  std::optional<tos::auth::Anchor> validator_auth_finalized_anchor_;
+  td::Ref<vm::Cell> validator_auth_finalized_state_;
+  std::optional<tos::auth::NativeFinalityVerification> validator_auth_pending_finality_;
+  void refresh_validator_auth_finalized_head();
+  void accept_validator_auth_finality_receipt(tos::auth::NativeFinalityVerification receipt);
+  void note_validator_auth_applied_masterchain_head();
+  void validator_auth_applied_block_ready(BlockIdExt, td::Ref<vm::Cell>, td::Result<td::Ref<BlockData>>);
   // When a group may be created on a chain that activated the design, and what
   // to do about one refused because it could not be yet. The conditions arrive
   // from two unrelated asynchronous reads in either order, and if the context is

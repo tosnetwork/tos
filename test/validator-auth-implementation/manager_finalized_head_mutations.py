@@ -6,6 +6,9 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 SOURCE=ROOT/'validator/auth/manager-finalized-head.cpp'
 MUTATIONS=[
+ ('signed-weight-upgrade','same_block_may_accumulate_more_final_signatures',
+  '    if (value.signed_weight > it->second.signed_weight)\n      it->second = value;',
+  '    if (false && value.signed_weight > it->second.signed_weight)\n      it->second = value;'),
  ('verified-half','verified_only_publishes_nothing_new',
   '  if (!verified_.contains(id) || !applied_.contains(id))\n    return false;',
   '  if (!verified_.contains(id))\n    return false;'),

@@ -644,6 +644,7 @@ jobs:
             | tee artifacts/manager-finalized-head.txt
           build-p0/test/validator-auth-implementation/test-p0-manager-finality-receipt \
             | tee artifacts/manager-finality-receipt.txt
+          python3 test/validator-auth-implementation/check_manager_finality_wiring.py
           ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 UBSAN_OPTIONS=halt_on_error=1 \
             build-p0-sanitized/test/validator-auth-implementation/test-p0-manager-finality-receipt \
             | tee artifacts/manager-finality-receipt-sanitized.txt

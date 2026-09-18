@@ -215,3 +215,24 @@ genesis coordinates, and the supplied state hashes to that same genesis root.
 Every non-genesis advancement still requires a final signature set and quorum.
 This keeps P0 genesis startable without turning the unsigned-bootstrap rule into
 a fallback for ordinary blocks.
+
+
+## Manager finalized-head production feed
+
+The manager supplies the finalized-head seam from two independently learned
+facts. A masterchain finality broadcast contributes a receipt only after the
+existing native signature verifier accepts it; the receipt is rebuilt through
+the same next/current ValidatorSet selection and BlockSignatureSet verifier. A
+masterchain state contributes the other half only after it becomes the
+manager's contiguous applied tip, at which point the exact original block bytes
+are read back from the database and bound to that resulting state. The source
+advances only when both halves name one exact BlockIdExt. The configured zero
+state remains the only unsigned initial head.
+
+A verified receipt arriving before chain-context establishment is retained as
+the highest pending receipt and replayed after source creation; the current
+applied tip is offered at that point as well. This closes startup ordering
+without treating an applied tip as finalized. Durable reconstruction of a
+post-genesis finalized receipt on process restart remains a separate boundary;
+until it is supplied, a restarted node starts from the configured genesis head
+and advances again on a new native finality observation.

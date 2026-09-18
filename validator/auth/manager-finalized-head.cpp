@@ -2,12 +2,11 @@
 
 namespace tos::auth {
 namespace {
-bool same_verification(const NativeFinalityVerification& left,
-                       const NativeFinalityVerification& right) {
+bool same_verification_identity(const NativeFinalityVerification& left,
+                                const NativeFinalityVerification& right) {
   return left.block == right.block && left.kind == right.kind &&
          left.catchain == right.catchain &&
          left.validator_set_hash == right.validator_set_hash &&
-         left.signed_weight == right.signed_weight &&
          left.total_weight == right.total_weight;
 }
 }  // namespace
@@ -32,8 +31,12 @@ Result<bool> ManagerFinalizedHeadSource::note_verified(
     return Error{"manager-finality-verification-block"};
 
   auto [it, inserted] = verified_.emplace(value.block, value);
-  if (!inserted && !same_verification(it->second, value))
-    return Error{"manager-finality-verification-conflict"};
+  if (!inserted) {
+    if (!same_verification_identity(it->second, value))
+      return Error{"manager-finality-verification-conflict"};
+    if (value.signed_weight > it->second.signed_weight)
+      it->second = value;
+  }
   return promote(value.block);
 }
 

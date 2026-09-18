@@ -258,7 +258,7 @@ target_include_directories(full-node PUBLIC
 
 # The manager confirms its session identity against the authenticated producer,
 # so this target needs that library directly rather than by transitive luck.
-target_link_libraries(validator PRIVATE validator-common validator-db tos_validator tos_validator_auth_native)
+target_link_libraries(validator PRIVATE validator-common validator-db tos_validator tos_validator_auth_native tos_validator_auth_finality)
 
 target_link_libraries(validator-disk PRIVATE validator-common validator-db)
 

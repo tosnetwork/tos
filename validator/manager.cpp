@@ -76,6 +76,8 @@
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
 #include "validator-group.hpp"
+#include "validator/auth/manager-finality-receipt.h"
+#include "validator/auth/manager-finalized-head.h"
 #include "validator/auth/manager-session-binding.h"
 
 namespace tos {
@@ -672,6 +674,23 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
   if (status.is_error()) {
     VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast: " << status.move_as_error();
     co_return td::Unit{};
+  }
+
+  if (finality.block_id.is_masterchain() && finality.sig_set->is_final()) {
+    auto mc_state_q = Ref<MasterchainStateQ>(last_masterchain_state_);
+    auto next = mc_state_q->get_next_validator_set(finality.block_id.shard_full(),
+                                                   finality.sig_set->get_catchain_seqno());
+    auto current = mc_state_q->get_validator_set(finality.block_id.shard_full(),
+                                                 finality.sig_set->get_catchain_seqno());
+    auto receipt = co_await build_validator_auth_finality_receipt(
+                                finality.block_id, finality.sig_set, std::move(next), std::move(current))
+                                .wrap();
+    if (receipt.is_error()) {
+      LOG(ERROR) << "validator-auth failed to reproduce accepted finality for " << finality.block_id.to_str()
+                 << ": " << receipt.move_as_error();
+    } else {
+      accept_validator_auth_finality_receipt(receipt.move_as_ok());
+    }
   }
 
   if (!finality.block_id.is_masterchain() && finality.sig_set->is_final() && is_validator()) {
@@ -2344,6 +2363,93 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   update_shard_overlays();
 }
 
+static td::actor::Task<tos::auth::NativeFinalityVerification> build_validator_auth_finality_receipt(
+    BlockIdExt block_id, Ref<block::BlockSignatureSet> signatures,
+    Ref<block::ValidatorSet> next, Ref<block::ValidatorSet> current) {
+  co_await td::actor::detach_from_actor();
+  auto receipt = tos::auth::verify_manager_finality_receipt(block_id, signatures, next, current);
+  if (!receipt.ok()) {
+    co_return td::Status::Error(receipt.error().code);
+  }
+  co_return receipt.value();
+}
+
+void ValidatorManagerImpl::refresh_validator_auth_finalized_head() {
+  if (!validator_auth_finalized_establisher_) {
+    return;
+  }
+  auto head = validator_auth_finalized_establisher_->establish();
+  if (!head.ok()) {
+    LOG(ERROR) << "validator-auth finalized head refused: " << head.error().code;
+    return;
+  }
+  validator_auth_finalized_anchor_ = head.value().anchor();
+  validator_auth_finalized_state_ = head.value().state();
+}
+
+void ValidatorManagerImpl::accept_validator_auth_finality_receipt(
+    tos::auth::NativeFinalityVerification receipt) {
+  if (!validator_auth_finalized_source_) {
+    if (!validator_auth_pending_finality_ ||
+        receipt.block.seqno() > validator_auth_pending_finality_->block.seqno() ||
+        (receipt.block == validator_auth_pending_finality_->block &&
+         receipt.signed_weight > validator_auth_pending_finality_->signed_weight)) {
+      validator_auth_pending_finality_ = std::move(receipt);
+    }
+    return;
+  }
+  auto accepted = validator_auth_finalized_source_->note_verified(std::move(receipt));
+  if (!accepted.ok()) {
+    LOG(ERROR) << "validator-auth finality receipt refused: " << accepted.error().code;
+    return;
+  }
+  if (accepted.value()) {
+    refresh_validator_auth_finalized_head();
+  }
+}
+
+void ValidatorManagerImpl::validator_auth_applied_block_ready(
+    BlockIdExt id, td::Ref<vm::Cell> state, td::Result<td::Ref<BlockData>> result) {
+  if (result.is_error()) {
+    LOG(WARNING) << "validator-auth cannot read applied masterchain block " << id.to_str() << ": "
+                 << result.move_as_error();
+    return;
+  }
+  if (!validator_auth_finalized_source_) {
+    return;
+  }
+  auto block = result.move_as_ok();
+  if (block->block_id() != id) {
+    LOG(ERROR) << "validator-auth applied block id mismatch for " << id.to_str();
+    return;
+  }
+  auto bytes = block->data();
+  auto slice = bytes.as_slice();
+  tos::auth::Bytes raw(slice.ubegin(), slice.uend());
+  auto accepted = validator_auth_finalized_source_->note_applied(id, std::move(raw), std::move(state));
+  if (!accepted.ok()) {
+    LOG(ERROR) << "validator-auth applied head refused: " << accepted.error().code;
+    return;
+  }
+  if (accepted.value()) {
+    refresh_validator_auth_finalized_head();
+  }
+}
+
+void ValidatorManagerImpl::note_validator_auth_applied_masterchain_head() {
+  if (!validator_auth_finalized_source_ || last_masterchain_state_.is_null() ||
+      last_masterchain_block_id_.seqno() == 0) {
+    return;
+  }
+  auto id = last_masterchain_block_id_;
+  auto state = last_masterchain_state_->root_cell();
+  get_block_data_from_db_short(
+      id, [SelfId = actor_id(this), id, state = std::move(state)](td::Result<td::Ref<BlockData>> result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_auth_applied_block_ready, id,
+                                std::move(state), std::move(result));
+      });
+}
+
 void ValidatorManagerImpl::establish_validator_auth_chain() {
   if (validator_auth_chain_ || last_masterchain_state_.is_null()) {
     return;
@@ -2399,12 +2505,40 @@ void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::
     retry_validator_auth_chain(PSTRING() << "zero state undeserializable: " << root.move_as_error());
     return;
   }
-  auto chain = tos::auth::establish_chain_context(root.move_as_ok(), opts_->zero_block_id(),
+  auto zero_state = root.move_as_ok();
+  auto chain = tos::auth::establish_chain_context(zero_state, opts_->zero_block_id(),
                                                  last_masterchain_state_->get_global_id());
   if (!chain.ok()) {
     retry_validator_auth_chain(chain.error().code);
     return;
   }
+  auto finalized_source =
+      tos::auth::ManagerFinalizedHeadSource::create(chain.value(), opts_->zero_block_id(), zero_state);
+  if (!finalized_source.ok()) {
+    retry_validator_auth_chain(finalized_source.error().code);
+    return;
+  }
+  auto finalized_establisher =
+      tos::auth::NativeFinalizedHeadEstablisher::create(chain.value(), *finalized_source.value());
+  if (!finalized_establisher.ok()) {
+    retry_validator_auth_chain(finalized_establisher.error().code);
+    return;
+  }
+  auto initial_head = finalized_establisher.value()->establish();
+  if (!initial_head.ok()) {
+    retry_validator_auth_chain(initial_head.error().code);
+    return;
+  }
+  validator_auth_finalized_source_ = std::move(finalized_source.value());
+  validator_auth_finalized_establisher_ = std::move(finalized_establisher.value());
+  validator_auth_finalized_anchor_ = initial_head.value().anchor();
+  validator_auth_finalized_state_ = initial_head.value().state();
+  if (validator_auth_pending_finality_) {
+    auto pending = std::move(*validator_auth_pending_finality_);
+    validator_auth_pending_finality_.reset();
+    accept_validator_auth_finality_receipt(std::move(pending));
+  }
+  note_validator_auth_applied_masterchain_head();
   validator_auth_chain_ = chain.value();
   validator_auth_chain_retry_.succeeded();
   publish_validator_auth();
@@ -2904,6 +3038,7 @@ void ValidatorManagerImpl::completed_prestart_sync() {
 }
 
 void ValidatorManagerImpl::new_masterchain_block() {
+  note_validator_auth_applied_masterchain_head();
   if (last_masterchain_seqno_ > 0 && last_masterchain_block_handle_->is_key_block()) {
     last_key_block_handle_ = last_masterchain_block_handle_;
     if (last_key_block_handle_->id().seqno() > last_known_key_block_handle_->id().seqno()) {
