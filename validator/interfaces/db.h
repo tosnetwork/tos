@@ -35,6 +35,8 @@ class Db : public td::actor::Actor {
 
   virtual void store_block_data(BlockHandle handle, td::Ref<BlockData> data, td::Promise<td::Unit> promise) = 0;
   virtual void get_block_data(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) = 0;
+  virtual void get_block_data_bounded(ConstBlockHandle handle, td::uint64 maximum_bytes,
+                                      td::Promise<td::BufferSlice> promise) = 0;
 
   virtual void store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data,
                                       Ref<block::ValidatorSet> vset, td::Promise<td::Unit> promise) = 0;

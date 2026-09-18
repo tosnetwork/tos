@@ -45,6 +45,8 @@ class RootDb : public Db {
 
   void store_block_data(BlockHandle handle, td::Ref<BlockData> block, td::Promise<td::Unit> promise) override;
   void get_block_data(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) override;
+  void get_block_data_bounded(ConstBlockHandle handle, td::uint64 maximum_bytes,
+                              td::Promise<td::BufferSlice> promise) override;
 
   void store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data, Ref<block::ValidatorSet> vset,
                               td::Promise<td::Unit> promise) override;

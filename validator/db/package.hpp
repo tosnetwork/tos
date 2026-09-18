@@ -39,6 +39,8 @@ class Package {
   void sync();
   td::uint64 size() const;
   td::Result<std::pair<std::string, td::BufferSlice>> read(td::uint64 offset) const;
+  td::Result<std::pair<std::string, td::BufferSlice>> read_bounded(td::uint64 offset,
+                                                                   td::uint64 maximum_data_size) const;
 
   td::Result<td::uint64> advance(td::uint64 offset);
   td::Status iterate(std::function<bool(std::string, td::BufferSlice, td::uint64)> func);

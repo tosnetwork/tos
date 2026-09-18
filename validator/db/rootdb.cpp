@@ -52,6 +52,16 @@ void RootDb::store_block_data(BlockHandle handle, td::Ref<BlockData> block, td::
                           std::move(P));
 }
 
+void RootDb::get_block_data_bounded(ConstBlockHandle handle, td::uint64 maximum_bytes,
+                                    td::Promise<td::BufferSlice> promise) {
+  if (!handle->received()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "not in db"));
+    return;
+  }
+  td::actor::send_closure(archive_db_, &ArchiveManager::get_file_bounded, std::move(handle),
+                          fileref::Block{handle->id()}, maximum_bytes, std::move(promise));
+}
+
 void RootDb::get_block_data(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) {
   if (!handle->received()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "not in db"));

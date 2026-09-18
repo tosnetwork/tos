@@ -74,6 +74,11 @@ td::uint64 Package::size() const {
 }
 
 td::Result<std::pair<std::string, td::BufferSlice>> Package::read(td::uint64 offset) const {
+  return read_bounded(offset, max_data_size());
+}
+
+td::Result<std::pair<std::string, td::BufferSlice>> Package::read_bounded(
+    td::uint64 offset, td::uint64 maximum_data_size) const {
   offset += header_size();
 
   td::uint32 header[2];
@@ -88,6 +93,9 @@ td::Result<std::pair<std::string, td::BufferSlice>> Package::read(td::uint64 off
   offset += 8;
   auto fname_size = header[0] >> 16;
   auto data_size = header[1];
+  if (static_cast<td::uint64>(data_size) > maximum_data_size) {
+    return td::Status::Error(ErrorCode::notready, "archive entry exceeds bounded read allowance");
+  }
 
   std::string fname(fname_size, '\0');
   TRY_RESULT(s2, fd_.pread(fname, offset));

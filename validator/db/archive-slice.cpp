@@ -200,17 +200,18 @@ void PackageWriter::append_multi(std::vector<std::pair<std::string, td::BufferSl
 
 class PackageReader : public td::actor::Actor {
  public:
-  PackageReader(std::shared_ptr<Package> package, td::uint64 offset,
+  PackageReader(std::shared_ptr<Package> package, td::uint64 offset, td::uint64 maximum_data_size,
                 td::Promise<std::pair<std::string, td::BufferSlice>> promise,
                 std::shared_ptr<PackageStatistics> statistics)
       : package_(std::move(package))
       , offset_(offset)
+      , maximum_data_size_(maximum_data_size)
       , promise_(std::move(promise))
       , statistics_(std::move(statistics)) {
   }
   void start_up() override {
     auto start = td::Timestamp::now();
-    auto result = package_->read(offset_);
+    auto result = package_->read_bounded(offset_, maximum_data_size_);
     if (statistics_ && result.is_ok()) {
       statistics_->record_read((td::Timestamp::now().at() - start.at()) * 1e6, result.ok_ref().second.size());
     }
@@ -222,6 +223,7 @@ class PackageReader : public td::actor::Actor {
  private:
   std::shared_ptr<Package> package_;
   td::uint64 offset_;
+  td::uint64 maximum_data_size_;
   td::Promise<std::pair<std::string, td::BufferSlice>> promise_;
   std::shared_ptr<PackageStatistics> statistics_;
 };
@@ -501,7 +503,13 @@ void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHa
   promise.set_value(std::move(handle));
 }
 
-void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise) {
+void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id,
+                            td::Promise<td::BufferSlice> promise) {
+  get_file_bounded(std::move(handle), std::move(ref_id), Package::max_data_size(), std::move(promise));
+}
+
+void ArchiveSlice::get_file_bounded(ConstBlockHandle handle, FileReference ref_id, td::uint64 maximum_data_size,
+                                    td::Promise<td::BufferSlice> promise) {
   if (destroyed_) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
     return;
@@ -527,7 +535,7 @@ void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::P
         }
       });
   td::actor::create_actor<PackageReader>(PSTRING() << "reader." << td::PathView(p->path).file_name(), p->package,
-                                         offset, std::move(P), statistics_.pack_statistics)
+                                         offset, maximum_data_size, std::move(P), statistics_.pack_statistics)
       .release();
 }
 

@@ -803,6 +803,12 @@ target_include_directories(test-validator-auth-session-marker-mutant PRIVATE ${C
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-validator-auth-session-marker-mutant PRIVATE tddb tdutils)
 
+add_executable(test-package-bounded-read test/test-td-main.cpp test/test-package-bounded-read.cpp
+  validator/db/package.cpp)
+target_include_directories(test-package-bounded-read PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-package-bounded-read PRIVATE tdutils)
+
 add_executable(test-validator-cleanup-worker test/test-validator-cleanup-worker.cpp)
 target_include_directories(test-validator-cleanup-worker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
