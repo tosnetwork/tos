@@ -6,7 +6,7 @@ reports how far the whole of P0 has moved and what remains, so a reader does not
 have to reconstruct completion from the per-boundary table.
 
 Branch `feat/validator-auth-p0`, PR #111, draft. The design is v1 revision 5,
-fingerprint `8d4c5dd7a410472956d8ea4b5ae1f76905a3492a0ad18a48efe52675b400f982`.
+fingerprint `ea5ea9fa9621600c99b1ede8192009878a6a8747f5104754d1ad220199141589`.
 Nothing here authorizes activation, allocates a PQ suite, or changes any frozen
 wire or API artifact.
 

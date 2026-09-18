@@ -409,6 +409,9 @@ tosNode.blockSignature who:int256 signature:bytes = tosNode.BlockSignature;
 tosNode.signatureSet.ordinary cc_seqno:int validator_set_hash:int signatures:(vector tosNode.blockSignature) = tosNode.SignatureSet;
 tosNode.signatureSet.simplex final:Bool cc_seqno:int validator_set_hash:int signatures:(vector tosNode.blockSignature)
     session_id:int256 slot:int candidate:consensus.CandidateHashData = tosNode.SignatureSet;
+tosNode.signatureSet.validatorAuth final:Bool cc_seqno:int validator_set_hash:int
+    native_session_id:int256 slot:int candidate:consensus.CandidateHashData
+    certificate:bytes = tosNode.SignatureSet;
 
 tosNode.blockId workchain:int shard:long seqno:int = tosNode.BlockId;
 tosNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tosNode.BlockIdExt;

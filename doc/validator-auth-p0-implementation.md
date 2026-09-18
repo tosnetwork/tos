@@ -3,7 +3,7 @@
 Implementation branch: `feat/validator-auth-p0`, based on main
 `2004ce5e618c4a9d8ed5fe5ae51912d65bb524cd`.
 The normative design is v1 revision 5, fingerprint
-`8d4c5dd7a410472956d8ea4b5ae1f76905a3492a0ad18a48efe52675b400f982`.
+`ea5ea9fa9621600c99b1ede8192009878a6a8747f5104754d1ad220199141589`.
 This is an implementation in progress, not P0 acceptance. No network activation
 or PQ suite allocation is authorized by this work.
 

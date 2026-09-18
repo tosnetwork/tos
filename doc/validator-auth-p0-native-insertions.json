@@ -96,6 +96,10 @@
     "text": "validator_auth_binding$_ identity:bits256 stake_id:bits256 = ValidatorAuthBinding;\nvalidator_auth#b3 public_key:SigPubKey weight:uint64 adnl_addr:bits256\n  binding:^ValidatorAuthBinding = ValidatorDescr;\n"
    },
    {
+    "offset": 35664,
+    "text": "// Validator-authenticated finality (P0 era): the canonical VAC1 certificate is\n// the sole signing authority, carried as pack_bytes(VAC1) typed as AuthBytes\n// (defined below); historical #11/#12 are unchanged. Finality-only.\nblock_signatures_validator_auth#13 validator_list_hash_short:uint32 catchain_seqno:uint32\n  native_session_id:bits256 slot:uint32 candidate_data:^Cell certificate:^AuthBytes = BlockSignatures;\n"
+   },
+   {
     "offset": 43512,
     "text": "\n// Frozen validator authentication profile v1.\nauth_bytes_v1#76616231 version:uint16 byte_length:uint32 payload_hash:bits256\n  root:^AuthByteNode = AuthBytes;\nauth_byte_leaf$0 n:(## 7) { n >= 1 } { n <= 120 }\n  data:(bits (n * 8)) = AuthByteNode;\nauth_byte_branch$1 n:(## 3) { n >= 2 } { n <= 4 }\n  byte_length:uint32 children:(n * ^AuthByteNode) = AuthByteNode;\nauth_config_v1#76617131 version:uint16 chain_domain:bits256 interface_digest:bits256\n  registry_revision:uint64 current_policy:bits256\n  identities:^(HashmapE 256 ^AuthBytes) keys:^(HashmapE 256 ^AuthBytes)\n  policies:^(HashmapE 256 ^AuthBytes) control:^AuthControl = ValidatorAuthConfig;\nauth_control_v1#76616331 activations:^(HashmapE 32 ^AuthBytes)\n  observations:^(HashmapE 256 ^AuthBytes) = AuthControl;\n_ ValidatorAuthConfig = ConfigParam 46;\n"
    }
@@ -286,6 +290,12 @@
    {
     "offset": 15616,
     "text": "    bus->authenticated_session_required = authenticated_session_required;\n    bus->authenticated_session = std::move(authenticated_session);\n"
+   }
+  ],
+  "tl/generate/scheme/tos_api.tl": [
+   {
+    "offset": 18803,
+    "text": "tosNode.signatureSet.validatorAuth final:Bool cc_seqno:int validator_set_hash:int\n    native_session_id:int256 slot:int candidate:consensus.CandidateHashData\n    certificate:bytes = tosNode.SignatureSet;\n"
    }
   ]
  }

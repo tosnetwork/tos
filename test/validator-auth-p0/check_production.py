@@ -29,15 +29,26 @@ def grammar(text):
                      if line.strip() and not line.strip().startswith('//'))
 
 
+def productions(text):
+    """Each ';'-terminated grammar production of a design or insertion, comments stripped."""
+    return [p.strip() + ';' for p in grammar(text).split(';') if p.strip()]
+
+
 def bound(design, inserted):
-    """The frozen design artifact states exactly the grammar production carries.
+    """Every production of the design appears exactly once across the inserted texts.
 
     Both copies are pinned -- the design one by the freeze record, the production
     one by this inventory -- but neither lock can see the other, so each would keep
     passing while they described different wire formats. Requiring exactly one
-    match also refuses a second copy appearing under another insertion.
+    match per production also refuses a second copy appearing under another insertion.
+    Generalized from a single whole-file match so one design artifact can pin more
+    than one production (wire.tlb carries the profile grammar and the #13 finality
+    constructor), and so the node TL can be pinned the same way; a single-production
+    design behaves exactly as the old whole-file match.
     """
-    return [grammar(text) for text in inserted].count(grammar(design)) == 1
+    target = [p for text in inserted for p in productions(text)]
+    design_prods = productions(design)
+    return bool(design_prods) and all(target.count(p) == 1 for p in design_prods)
 
 
 def check(root, expected, insertions=None):
@@ -71,6 +82,17 @@ def main():
     profile = [entry['text'] for entry in insertions.get('crypto/block/block.tlb', [])]
     if not bound(wire, profile):
         raise ValueError('frozen profile grammar is not the production insertion')
+    # The node TL validatorAuth signature set is pinned two-sources: a design copy
+    # in test/validator-auth-p0/node-tl-grammar.tl against the tos_api.tl production
+    # insertion. The design copy lives here, not in wire.tl, because check_schema
+    # feeds wire.tl to the TL parser combined with tos_api.tl, where a second copy of
+    # the production constructor would be a duplicate combinator id.
+    node_wire = (ROOT/'test/validator-auth-p0/node-tl-grammar.tl').read_text()
+    node_design = [p for p in productions(node_wire) if p.startswith('tosNode.signatureSet.')]
+    node_inserted = [p for entry in insertions.get('tl/generate/scheme/tos_api.tl', [])
+                     for p in productions(entry['text'])]
+    if len(node_design) != 1 or node_inserted.count(node_design[0]) != 1:
+        raise ValueError('node TL validatorAuth grammar is not two-sources bound')
     # A silent inventory is not evidence: prove it detects a changed byte.
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory); (root/'probe').write_bytes(b'original')

@@ -264,11 +264,12 @@ def main(write=False):
                  if p.is_file() and p.name != 'profile.json'}
     profile_path = DOC/'profile.json'; profile = json.loads(profile_path.read_text())
     if write:
-        profile['revision'] = 5
+        profile['revision'] = 6
         profile['grammar'] = 'canonical-schema.json ordered field arrays; WIRE.md generated view'
         profile['operations']['cancel'] = 7
         profile['limits'].update(pending_per_identity=10, pending_per_role_profile=1, schedule_delay_mc_blocks=65536,
-                                 api_binary_bytes=2000000, api_transport_bytes=4194304)
+                                 api_binary_bytes=2000000, api_transport_bytes=4194304,
+                                 c0_block_finality_certificate_bytes=58291)
         profile['artifact_sha256'] = artifacts
         profile_path.write_text(json.dumps(profile, indent=2)+'\n')
     elif profile.get('artifact_sha256') != artifacts:

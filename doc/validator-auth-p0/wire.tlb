@@ -12,3 +12,6 @@ auth_config_v1#76617131 version:uint16 chain_domain:bits256 interface_digest:bit
 auth_control_v1#76616331 activations:^(HashmapE 32 ^AuthBytes)
   observations:^(HashmapE 256 ^AuthBytes) = AuthControl;
 _ ValidatorAuthConfig = ConfigParam 46;
+// P0-era on-chain finality proof (block.tlb); certificate is AuthBytes above.
+block_signatures_validator_auth#13 validator_list_hash_short:uint32 catchain_seqno:uint32
+  native_session_id:bits256 slot:uint32 candidate_data:^Cell certificate:^AuthBytes = BlockSignatures;

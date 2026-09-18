@@ -13,13 +13,28 @@ def hashes():
 def main(write):
     values=hashes()
     if write:
-        record=dict(status='design-frozen-not-activated',version=1,revision=5,
-          authorization='Owner explicitly requested design modification and freeze in the current task; max_validators fixed at 400.',
-          source_base='73fdaf5746e6b84cb0f71f11d67a0bf0e579e80a',
-          prior_review_head='23413e56814fbe709795e71e14897acb21d4c145',
-          evidence='Validator P0 profile workflow must pass at the commit containing this exact artifact set. CI commit.txt binds the final source commit; no self-referential commit hash is embedded here.',
-          approvals_pending=['independent protocol/security/client release approval','TIP revision publication','genesis/operator approval','production state, proof, service and multi-node integration','performance and recovery rehearsal'],
-          artifact_sha256=values)
+        # Amend the existing record: never reconstruct a shorter history. The
+        # evidence_updates ledger (and implementation_evidence_update) records how
+        # the frozen set reached its current state; it is preserved exactly, and a
+        # single amendment entry naming this revision's artifact transitions is
+        # appended only when the artifact set actually changed (so re-running is
+        # idempotent). Only revision and artifact_sha256 are recomputed here.
+        record=json.loads(RECORD.read_text())
+        old=record.get('artifact_sha256',{})
+        changed=[{'artifact':n,'previous_sha256':old[n],'sha256':values[n]}
+                 for n in sorted(values) if n in old and old[n]!=values[n]]
+        added=[{'artifact':n,'sha256':values[n]} for n in sorted(values) if n not in old]
+        if changed or added:
+            record.setdefault('evidence_updates',[]).append(dict(
+              authorization=('Phase 1B A1 core proof-era freeze amendment '
+                '(memo/Phase1B-CORE-FREEZE-AMENDMENT.md Rev 4 Final): '
+                'block_signatures_validator_auth#13, tosNode.signatureSet.validatorAuth, '
+                'pack_bytes(VAC1) typed ^AuthBytes, c0_block_finality_certificate_bytes=58291, '
+                'era-aware BlockSignatures parser (issue 3), full-node historical verify '
+                'semantics (issue 2); profile revision 5->6; historical #11/#12 unchanged.'),
+              revision=6, artifacts=changed+added))
+        record['revision']=6
+        record['artifact_sha256']=values
         RECORD.write_text(json.dumps(record,indent=2)+'\n')
     record=json.loads(RECORD.read_text())
     if record['artifact_sha256']!=values:raise ValueError('frozen artifact drift requires explicit review')

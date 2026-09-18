@@ -1,6 +1,6 @@
 {
   "profile": "TOS validator authentication P0 wire/API v1",
-  "revision": 5,
+  "revision": 6,
   "status": "design-frozen-not-activated",
   "source_base": "73fdaf5746e6b84cb0f71f11d67a0bf0e579e80a",
   "proposal_revision": "231570f4ae4511b5e42c6b8ce0fdb5576b2663d9",
@@ -38,7 +38,8 @@
     "api_transport_bytes": 4194304,
     "chunk_bytes": 1048576,
     "inline_bytes": 65536,
-    "transfer_bytes_per_principal": 67108864
+    "transfer_bytes_per_principal": 67108864,
+    "c0_block_finality_certificate_bytes": 58291
   },
   "roles": {
     "proposal": 1,
@@ -83,6 +84,6 @@
     "signer-store.sql": "f89318b1d3334ae9c844cbe933425f765688613bf4181e7b312bfd0c7caa7e85",
     "transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
-    "wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d"
+    "wire.tlb": "61768b48d897c511471eedc8848bdc760e34b0ef7676d11f70648ce8bd786b30"
   }
 }

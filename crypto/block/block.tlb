@@ -888,6 +888,11 @@ block_signatures_simplex#12 validator_list_hash_short:uint32 catchain_seqno:uint
   sig_count:uint32 sig_weight:uint64
   signatures:(HashmapE 16 CryptoSignaturePair)
   session_id:bits256 slot:uint32 candidate_data:^Cell = BlockSignatures;
+// Validator-authenticated finality (P0 era): the canonical VAC1 certificate is
+// the sole signing authority, carried as pack_bytes(VAC1) typed as AuthBytes
+// (defined below); historical #11/#12 are unchanged. Finality-only.
+block_signatures_validator_auth#13 validator_list_hash_short:uint32 catchain_seqno:uint32
+  native_session_id:bits256 slot:uint32 candidate_data:^Cell certificate:^AuthBytes = BlockSignatures;
 block_proof#c3 proof_for:BlockIdExt root:^Cell signatures:(Maybe ^BlockSignatures) = BlockProof;
 
 chain_empty$_ = ProofChain 0;
