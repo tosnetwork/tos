@@ -500,14 +500,17 @@ CommittedNativeSession::commit_new(
   auto commitment = make_native_session_commitment(*context, chain);
   if (!commitment.ok())
     return commitment.error();
-  auto recorded = store.record_new(commitment.value());
-  if (!recorded.ok())
-    return recorded.error();
-
+  // Every fallible pure computation is completed before the durable append, so a
+  // later failure can never leave a commitment recorded for a session this call
+  // then refuses to construct. record_new is the irreversible step and stays last.
   const auto& selected = context->birth().selected();
   auto p0_session_id = derive_p0_session_id(*context, chain, selected.epoch);
   if (!p0_session_id.ok())
     return p0_session_id.error();
+
+  auto recorded = store.record_new(commitment.value());
+  if (!recorded.ok())
+    return recorded.error();
   return std::shared_ptr<CommittedNativeSession>(
       new CommittedNativeSession(
           std::move(context), chain, selected.epoch.native_session_id,

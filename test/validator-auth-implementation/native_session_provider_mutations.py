@@ -43,10 +43,13 @@ MUTATIONS = [
         '      birth.seqno, role_keys.value());',
     ),
     (
-        # The permit/session slot must carry the canonical P0 session id, never
-        # the native ValidatorSessionId. Feeding the native id into the P0 slot
-        # is the "native group ID in PermitBody.session" error the split forbids.
-        "permit-session-not-native",
+        # The authority's P0 permit-context accessor must expose the canonical P0
+        # session id, never the native ValidatorSessionId. Feeding the native id
+        # into the P0 slot is the confusion the split forbids. This proves the
+        # accessor only; once blocker B wires the signer permit, add a companion
+        # mutation setting PermitBody.session = authority.native_session_id() and
+        # require the production signing test to fail.
+        "authority-p0-session-not-native",
         "exact_birth_inventory_installed",
         '      session->native_session_id_, session->p0_session_id_,\n'
         '      birth.seqno, role_keys.value());',
