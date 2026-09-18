@@ -49,6 +49,19 @@ touching real execution keeps making previously invisible integration work
 visible: the boundary table has grown from 14 rows to 28 while the library
 column was being filled in.
 
+Since that count (this note added 2026-09-18): the manager now derives the
+authenticated committee for a validator group rather than only confirming its
+identity, the committed session owner reaches the consensus bus, and the bus
+seats its members from that committee rather than from the manager's validator
+set -- the first of the remaining production-integration workstreams, "session
+consumes the authenticated committee", from memo/Phase1A.md. This is committee
+authority at session birth only. C0 certificate verification inside the
+consensus message flow, elector/registry operation closure, node-actor commit
+wiring, and a P0-enabled multi-node rehearsal remain, so the node-integration
+column is no longer "believed unchanged" but is still partial, and operational
+acceptance is still none. The 55-60% figure predates all of this and is not
+recounted here; read it as of 2026-09-14.
+
 ## Library stage
 
 27 of 28 boundaries are implemented and verified in both C++ and Rust where the

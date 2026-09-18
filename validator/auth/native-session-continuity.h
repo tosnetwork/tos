@@ -177,6 +177,16 @@ class CommittedNativeSession
   std::uint64_t release_count() const {
     return release_count_;
   }
+  // The authenticated committee context this session was committed under,
+  // with the ownership it already has, so that consensus can seat exactly these
+  // members rather than a roster it compares against them. Refused once the
+  // session has been released: what this hands out is the live commitment, and
+  // the store this session came from cannot reconstruct a committee for it.
+  Result<std::shared_ptr<const NativeSessionCommitteeContext>> context() const {
+    if (!context_)
+      return Error{"session-released"};
+    return context_;
+  }
 
  private:
   CommittedNativeSession(

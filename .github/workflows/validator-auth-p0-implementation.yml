@@ -552,6 +552,30 @@ jobs:
           cp artifacts/native-session-continuity-mutations/mutations.json \
             artifacts/native-session-continuity-mutations.json
           git diff --exit-code
+      - name: Seat consensus from the authenticated committee
+        if: matrix.guards == 'native'
+        run: |
+          set -euo pipefail
+          cmake --build build-p0 --target test-p0-consensus-roster -j2
+          cmake --build build-p0-sanitized --target test-p0-consensus-roster -j2
+          CONSENSUS_ROSTER_TMP="$(mktemp -d)"
+          test -x build-p0/validator/auth/test-p0-consensus-roster
+          test -x build-p0-sanitized/validator/auth/test-p0-consensus-roster
+          build-p0/validator/auth/test-p0-consensus-roster \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures \
+            "$CONSENSUS_ROSTER_TMP/normal" | tee artifacts/consensus-roster.txt
+          ASAN_OPTIONS=detect_leaks=1:detect_stack_use_after_return=1 \
+            UBSAN_OPTIONS=halt_on_error=1 \
+            build-p0-sanitized/validator/auth/test-p0-consensus-roster \
+            artifacts/owner-transactions-mc artifacts/committee-fixtures-sanitized \
+            "$CONSENSUS_ROSTER_TMP/sanitized" | tee artifacts/consensus-roster-sanitized.txt
+          python3 test/validator-auth-implementation/consensus_roster_mutations.py \
+            --build build-p0 --owner artifacts/owner-transactions-mc \
+            --committee artifacts/committee-fixtures \
+            --work "$CONSENSUS_ROSTER_TMP/mutations" \
+            --out artifacts/consensus-roster-mutations.json
+          python3 test/validator-auth-implementation/check_consensus_roster_wiring.py
+          git diff --exit-code
       - name: Resolve node context and retained native history
         if: matrix.guards == 'native' || matrix.guards == 'none'
         run: |

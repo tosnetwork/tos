@@ -10,7 +10,7 @@ add_library(tos_validator_auth_native STATIC manager-group-admission.cpp native-
 target_link_libraries(tos_validator_auth_native PUBLIC tos_validator_auth tos_block tl-utils keys)
 set_target_properties(tos_validator_auth_native PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_library(tos_validator_auth_session STATIC native-session-continuity.cpp)
+add_library(tos_validator_auth_session STATIC native-session-continuity.cpp consensus-roster.cpp)
 target_link_libraries(tos_validator_auth_session PUBLIC tos_validator_auth_native tdutils)
 set_target_properties(tos_validator_auth_session PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
@@ -105,6 +105,21 @@ if(TOS_BUILD_P0_IMPLEMENTATION_TESTS)
     "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/session-continuity-test.cpp")
   target_link_libraries(test-p0-native-session-continuity PRIVATE tos_validator_auth_session)
   set_target_properties(test-p0-native-session-continuity PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  add_executable(test-p0-consensus-roster EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/consensus-roster-test.cpp")
+  target_link_libraries(test-p0-consensus-roster PRIVATE tos_validator_auth_session)
+  set_target_properties(test-p0-consensus-roster PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/consensus-roster.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-consensus-roster.cpp" COPYONLY)
+  add_executable(test-p0-consensus-roster-mutant EXCLUDE_FROM_ALL
+    "${PROJECT_SOURCE_DIR}/test/validator-auth-implementation/consensus-roster-test.cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-consensus-roster.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/native-session-continuity.cpp")
+  target_include_directories(test-p0-consensus-roster-mutant PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_link_libraries(test-p0-consensus-roster-mutant PRIVATE tos_validator_auth_native tdutils)
+  set_target_properties(test-p0-consensus-roster-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/native-session-continuity.cpp"
                  "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-session-continuity.cpp" COPYONLY)

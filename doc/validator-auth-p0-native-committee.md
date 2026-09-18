@@ -115,6 +115,41 @@ admission is driven before a P0 validator group can materialize, the resulting
 native session id must equal the manager's canonical ValidatorSessionId, and the
 same durably committed owner is handed to the consensus Bus.
 
+## Seating the consensus roster
+
+The Bus does not only hold that owner; it seats from it. On a P0-active chain
+the members consensus runs -- their order, keys, weights, ADNL addresses -- are
+the committee the authenticated session was committed under, not the validator
+set the manager assembled beside it. The manager already confirmed the two agree
+before the group was created; seating from the committee is what makes the
+committee the authority rather than the agreement. If the two ever diverged,
+consensus would follow the committee.
+
+The decision has one type, `ConsensusRoster`, with two constructors and no
+third: one takes the historical validator set, for a chain where the design is
+inactive; one takes a committed authenticated session. There is no constructor
+that seats the historical set for an active chain, so "active, but running the
+manager's set" is not a value the type can hold, and a fall back to it would
+have to be written first. An active session that produced no committee is a
+refusal to start the bus, never a seat of the historical set -- that would turn a
+security refusal into a bypass. A released session owns no committee and seats
+nothing.
+
+In the bridge this is an additive insertion: before the historical member loop,
+a P0-active bus reseats its member source from the committee through
+`seat_consensus_roster`, and the existing loop then builds its peer table from
+those members. For a valid chain the reseated set is byte-identical to the
+manager's -- the committee's own validator descriptors, its catchain, the shard --
+so the set hash, catchain sequence and every downstream read are unchanged; the
+change is which construction is authoritative. The typed boundary carries five
+compiled mutations and a static wiring check with its own negative controls,
+because the bridge actor cannot be instantiated in the focused test tree. That
+static check is weaker than the four-validator rehearsal and does not replace it.
+
+What this round does not do: C0 certificate verification inside the consensus
+message flow, and native signer permissioning, remain the next round. This one
+is committee authority at session birth.
+
 ## Existing configuration JSON tools
 
 Native config JSON carries the optional `auth_binding` object with exactly

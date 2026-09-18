@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "af46085c761fe32c2452f1362787daa6210b19e3ce2b9ee7809dfe06fbd31adc",
+    "doc/validator-auth-p0-native-insertions.json": "705a2028957fffd37f87ca95e9e3fc95a4204684ad516c4ed3d1d8ca7cdb11bd",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -527,6 +527,16 @@
       "scope": "Inventory only. No production byte, profile artifact, wire/API encoding or activation rule changes; the bridge edit itself is unchanged and is now declared rather than undeclared.",
       "reason": "check_production.py refused the inventory: one declared insertion did not match the bytes at its own offset, and one frozen file had changed with nothing declared for it. Both files reconstruct their historical bytes exactly under the corrected inventory, which the check now confirms across 29 whole files and 9 insertion files.",
       "activation": "Unchanged."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "af46085c761fe32c2452f1362787daa6210b19e3ce2b9ee7809dfe06fbd31adc",
+      "sha256": "705a2028957fffd37f87ca95e9e3fc95a4204684ad516c4ed3d1d8ca7cdb11bd",
+      "authorization": "Phase 1A: make the authenticated committee the roster a P0-active validator session actually seats, per memo/Phase1A.md.",
+      "change": "Re-derived the consensus bridge insertions. On a P0-active chain start_bus now reseats its member source from the committee the authenticated session was committed under, through the typed seat_consensus_roster boundary, before the historical loop reads it. seat refuses a P0-active session with no committee, so the loop cannot fall back to the historical set. For a valid chain the reseated set is byte-identical to the manager's, so downstream reads are unchanged; the change is that the committee, not the manager-side set, is now the authority. Purely additive: two further insertions, the historical loop and every existing line preserved.",
+      "scope": "Additive consensus insertion plus the new validator/auth ConsensusRoster boundary, its library, tests and mutations. No production byte removed, no frozen wire/API/profile change.",
+      "activation": "Unchanged. Inactive chains seat the historical set exactly as before."
     }
   ],
   "implementation_evidence_update": {

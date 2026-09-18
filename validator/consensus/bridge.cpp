@@ -13,6 +13,7 @@
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
 #include "validator/consensus/db-path.h"
+#include "validator/auth/consensus-roster.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
 #include "validator/full-node.h"
@@ -389,6 +390,29 @@ class BridgeImpl final : public IValidatorGroup {
     bus->keyring = params_.keyring;
     bus->validator_opts = params_.validator_opts;
     bus->all_validators = params_.all_validators;
+
+    // On a P0-active chain the members consensus seats are the committee the
+    // authenticated session was committed under, not the validator set the
+    // manager assembled beside it. The manager already confirmed the two agree;
+    // this is what makes the committee the authority rather than the agreement.
+    // seat_consensus_roster refuses a P0-active session that has no committee,
+    // so the loop below can never fall back to the historical set: there is no
+    // set to fall back to. For a valid chain the reseated set is byte-identical
+    // to the original -- same descrs, catchain and shard, hence the same hash --
+    // so every downstream read of params_.validator_set stays consistent.
+    if (authenticated_session_required) {
+      auto authoritative =
+          tos::auth::seat_consensus_roster(true, authenticated_session, *params_.validator_set);
+      if (!authoritative.ok()) {
+        LOG(ERROR) << "refusing to seat P0 validator consensus from the authenticated committee: "
+                   << authoritative.error().code;
+        stop();
+        return;
+      }
+      params_.validator_set = td::make_ref<block::ValidatorSet>(
+          authoritative.value().catchain(), params_.shard,
+          std::vector<tos::ValidatorDescr>(authoritative.value().members()));
+    }
 
     bool found = false;
     size_t idx = 0;

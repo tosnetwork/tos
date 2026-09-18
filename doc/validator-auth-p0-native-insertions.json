@@ -268,8 +268,16 @@
   ],
   "validator/consensus/bridge.cpp": [
    {
+    "offset": 344,
+    "text": "#include \"validator/auth/consensus-roster.h\"\n"
+   },
+   {
     "offset": 13807,
     "text": "    if (!params_.local_id) {\n      start_bus(false, nullptr);\n      return;\n    }\n    td::actor::send_closure(\n        params_.manager, &ValidatorManager::get_validator_auth_session_owner, params_.session_id,\n        [SelfId = actor_id(this)](td::Result<ValidatorAuthSessionOwnership> ownership) mutable {\n          td::actor::send_closure(SelfId, &BridgeImpl::got_authenticated_session_owner, std::move(ownership));\n        });\n  }\n\n  void got_authenticated_session_owner(\n      td::Result<ValidatorAuthSessionOwnership> ownership) {\n    if (ownership.is_error()) {\n      LOG(ERROR) << \"refusing to start validator consensus because validator-auth ownership could not be classified: \"\n                 << ownership.move_as_error();\n      stop();\n      return;\n    }\n    auto resolved = ownership.move_as_ok();\n    if (resolved.required && !resolved.owner) {\n      LOG(ERROR) << \"refusing to start P0 validator consensus without a committed authenticated session\";\n      stop();\n      return;\n    }\n    start_bus(resolved.required, std::move(resolved.owner));\n  }\n\n  void start_bus(bool authenticated_session_required,\n                 std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session) {\n    if (authenticated_session_required && !authenticated_session) {\n      LOG(ERROR) << \"refusing to construct P0 validator bus without authenticated session owner\";\n      stop();\n      return;\n    }\n"
+   },
+   {
+    "offset": 14067,
+    "text": "\n    // On a P0-active chain the members consensus seats are the committee the\n    // authenticated session was committed under, not the validator set the\n    // manager assembled beside it. The manager already confirmed the two agree;\n    // this is what makes the committee the authority rather than the agreement.\n    // seat_consensus_roster refuses a P0-active session that has no committee,\n    // so the loop below can never fall back to the historical set: there is no\n    // set to fall back to. For a valid chain the reseated set is byte-identical\n    // to the original -- same descrs, catchain and shard, hence the same hash --\n    // so every downstream read of params_.validator_set stays consistent.\n    if (authenticated_session_required) {\n      auto authoritative =\n          tos::auth::seat_consensus_roster(true, authenticated_session, *params_.validator_set);\n      if (!authoritative.ok()) {\n        LOG(ERROR) << \"refusing to seat P0 validator consensus from the authenticated committee: \"\n                   << authoritative.error().code;\n        stop();\n        return;\n      }\n      params_.validator_set = td::make_ref<block::ValidatorSet>(\n          authoritative.value().catchain(), params_.shard,\n          std::vector<tos::ValidatorDescr>(authoritative.value().members()));\n    }\n"
    },
    {
     "offset": 15616,
