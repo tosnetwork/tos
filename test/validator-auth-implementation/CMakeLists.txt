@@ -307,6 +307,22 @@ if(UNIX)
     tos_validator_auth_finality tos_validator_auth_rpc)
   set_target_properties(test-p0-native-finality PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+  add_executable(test-p0-manager-finalized-head manager-finalized-head-test.cpp)
+  target_link_libraries(test-p0-manager-finalized-head PRIVATE
+    tos_validator_auth_finality tos_validator_auth_rpc)
+  set_target_properties(test-p0-manager-finalized-head PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/manager-finalized-head.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-finalized-head.cpp" COPYONLY)
+  add_executable(test-p0-manager-finalized-head-mutant EXCLUDE_FROM_ALL
+    manager-finalized-head-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-finalized-head.cpp")
+  target_include_directories(test-p0-manager-finalized-head-mutant PRIVATE
+    "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-manager-finalized-head-mutant PRIVATE
+    tos_validator_auth_finality tos_validator_auth_rpc)
+  set_target_properties(test-p0-manager-finalized-head-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
   configure_file("${PROJECT_SOURCE_DIR}/validator/auth/native-finality.cpp"
                  "${CMAKE_CURRENT_BINARY_DIR}/mutated-native-finality.cpp" COPYONLY)
   add_executable(test-p0-native-finality-mutant EXCLUDE_FROM_ALL
