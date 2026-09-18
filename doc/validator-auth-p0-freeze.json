@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "db0f560f0b40408ca625885d4d02038bc51a21efc2735ccb951fc5e04448b910",
+    "doc/validator-auth-p0-native-insertions.json": "3abfbc723661c315f2528313c895a78156adbb8ede4517bce62c15cdaaf6af11",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -439,6 +439,17 @@
       "scope": "Evidence correction only. No production byte, insertion text, profile artifact, wire/API encoding or activation rule changes.",
       "reason": "The superseded evidence entry used the SHA-256 of a locally reconstructed JSON serialization instead of the exact committed inventory bytes. Exact-head profile CI compared the committed file to the frozen ledger and refused it, which is the evidence this correction records.",
       "activation": "Unchanged."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "db0f560f0b40408ca625885d4d02038bc51a21efc2735ccb951fc5e04448b910",
+      "sha256": "3abfbc723661c315f2528313c895a78156adbb8ede4517bce62c15cdaaf6af11",
+      "authorization": "The owner authorized continuing Phase-one integration so that the manager supplies the independently finalized native head needed by authenticated session birth, without rewriting the frozen manager baseline.",
+      "change": "Re-derived the manager insertion inventory. The manager now bootstraps the sole unsigned finalized head from its configured zero state, feeds a receipt only after the existing native finality verifier accepts a masterchain signature set, feeds the applied half only from the contiguous installed masterchain tip after reading its exact original block bytes from the database, and advances the established native head only when both halves name the same block. A verified receipt that wins the startup race is retained until the source exists. The same-block receipt accepts a stronger signer subset instead of treating increased signed weight as a conflict.",
+      "scope": "Additive manager insertions plus local node-finality source wiring. Historical manager bytes are unchanged. No wire/API/schema/profile/activation allocation changes.",
+      "reason": "Session-birth admission must consume an independently finalized head rather than the manager's applied tip. Final signatures and applied resulting state arrive on different asynchronous paths, so either one alone is insufficient authority and startup ordering must not drop the first verified receipt.",
+      "activation": "Unchanged. The configured zero state is the sole unsigned bootstrap; every post-genesis finalized head still requires native final signatures and quorum."
     }
   ],
   "implementation_evidence_update": {
