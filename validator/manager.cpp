@@ -3925,9 +3925,44 @@ void ValidatorManagerImpl::update_shards() {
   auto get_or_make_next_group = [&](ShardIdFull shard, ValidatorSessionId id, td::Ref<block::ValidatorSet> val_set) {
     CHECK(!validator_groups_.contains(id) && !new_validator_groups.contains(id));
     CHECK(!destroyed_validator_sessions_.contains(id));
-    if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell()) &&
-        !validator_auth_sessions_.contains(id)) {
-      return next_validator_groups_.end();
+    if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {
+      // The single boundary before any P0 validator group is created. Whatever
+      // caller reached here -- a current shard or a tentative future one -- the
+      // set the group is created from must be the committee its authenticated
+      // session was committed under, not the state-derived candidate the caller
+      // passed. The historical set was an admission input, not a runtime
+      // authority. Enforcing it here, once, covers every caller rather than
+      // trusting each to have converted the set already.
+      auto committed = validator_auth_sessions_.find(id);
+      if (committed == validator_auth_sessions_.end() || !committed->second.owner) {
+        return next_validator_groups_.end();
+      }
+      auto authenticated = tos::auth::authenticated_validator_set(*committed->second.owner, shard);
+      if (!authenticated.ok()) {
+        LOG(ERROR) << "refusing P0 validator group " << id
+                   << ": the authenticated committee could not be adapted into a validator set: "
+                   << authenticated.error().code;
+        return next_validator_groups_.end();
+      }
+      auto authoritative = std::move(authenticated.value());
+      // The canonical id recomputed from the authenticated set must equal the id
+      // this group is created under. A different id means the committee and the
+      // candidate disagree; refuse rather than create under a silently different
+      // session id.
+      if (get_validator_set_id(shard, authoritative, opts_hash, key_seqno, opts) != id) {
+        LOG(ERROR) << "refusing P0 validator group " << id
+                   << ": the authenticated committee yields a different session id than the candidate";
+        return next_validator_groups_.end();
+      }
+      // The local validator must be a member of the committee. Otherwise
+      // create_validator_group's own membership CHECK would abort the process;
+      // refuse cleanly here and stay a full node for this shard instead.
+      if (get_validator(shard, authoritative).is_zero()) {
+        LOG(ERROR) << "refusing P0 validator group " << id
+                   << ": the local validator is not a member of the authenticated committee";
+        return next_validator_groups_.end();
+      }
+      val_set = std::move(authoritative);
     }
     if (auto it = next_validator_groups_.find(id); it != next_validator_groups_.end()) {
       return it;
@@ -4045,53 +4080,6 @@ void ValidatorManagerImpl::update_shards() {
               continue;
             }
           }
-          // The historical validator set was an admission input only. Now that
-          // this group's authenticated session is committed, the set every
-          // runtime consumer receives -- the manager facade and the consensus
-          // bus alike -- must originate from that committed committee, not from
-          // the state's historical set that merely compared equal during
-          // admission. Replace it here, once, before the group is created, so
-          // both consumers inherit the authenticated source from one point
-          // rather than the bus reseating a set the facade already captured.
-          auto committed_session = validator_auth_sessions_.find(val_group_id);
-          if (committed_session == validator_auth_sessions_.end() || !committed_session->second.owner) {
-            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": validator authentication is active but no committed authenticated session owns "
-                          "this group to seat its committee from";
-            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-            continue;
-          }
-          auto authenticated_set =
-              tos::auth::authenticated_validator_set(*committed_session->second.owner, shard);
-          if (!authenticated_set.ok()) {
-            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": the authenticated committee could not be adapted into a validator set: "
-                       << authenticated_set.error().code;
-            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-            continue;
-          }
-          auto authoritative = std::move(authenticated_set.value());
-          // The canonical group id computed from the authenticated set must
-          // equal the one the session was committed under. A different id means
-          // the committee and the historical set disagree about who runs; refuse
-          // rather than run under a silently different session id.
-          if (get_validator_set_id(shard, authoritative, opts_hash, key_seqno, opts) != val_group_id) {
-            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": the authenticated committee yields a different session id than admission committed";
-            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-            continue;
-          }
-          // Local membership is re-evaluated against the authoritative set. If
-          // this node is in the historical set but not the committee, it is not
-          // a member of the session that will run; refuse rather than seat it.
-          if (get_validator(shard, authoritative).is_zero()) {
-            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": the local validator is not a member of the authenticated committee";
-            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-            continue;
-          }
-          val_set = std::move(authoritative);
-          validator_id = get_validator(shard, val_set);
         }
         if (destroyed_validator_sessions_.contains(val_group_id)) {
           continue;
