@@ -64,6 +64,15 @@ std::vector<Test> tests() {
     auto rows = history();
     expect_birth(resolve_session_birth(block(8), epoch(), rows), 5, "first_current_state", 5);
   });
+  add("transition_tip_precedes_first_session_block", [] {
+    // The previous session can finalize the transition block. Its resulting
+    // state is therefore the first authenticated observation of the new
+    // session; no block produced by that new session is needed to establish
+    // the birth.
+    const auto rows = history(9, 9);
+    expect_birth(resolve_session_birth(block(9), epoch(), rows), 9,
+                 "transition_tip_precedes_first_session_block", 2);
+  });
   add("delayed_start_same_birth", [] {
     const auto early = history(5), late = history(12);
     expect_birth(resolve_session_birth(block(5), epoch(), early), 5, "delayed_start_same_birth", 2);

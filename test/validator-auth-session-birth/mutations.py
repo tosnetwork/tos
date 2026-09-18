@@ -82,6 +82,14 @@ def mutations() -> list[tuple[str, str, str, str, str]]:
          "    if (!observation.current.ok()) {\n"
          "      if (candidate)\n        return SessionBirthResult{*candidate, expected_epoch, used};\n"
          "      return observation.current.error();\n    }"),
+        ("transition-boundary-needs-no-future-block",
+         "transition_tip_precedes_first_session_block", "semantic-fault",
+         "      if (!candidate)\n"
+         "        return Error{\"session-birth-not-current\"};\n"
+         "      return SessionBirthResult{*candidate, expected_epoch, used};",
+         "      if (!candidate)\n"
+         "        return Error{\"session-birth-not-current\"};\n"
+         "      return Error{\"session-birth-history-incomplete\"};"),
         ("local-tip-as-birth", "first_current_state", "semantic-fault",
          "      return SessionBirthResult{*candidate, expected_epoch, used};\n    }\n    candidate = observation.block;",
          "      return SessionBirthResult{trusted_tip, expected_epoch, used};\n    }\n    candidate = observation.block;"),
