@@ -61,6 +61,10 @@ SUBSET = "admit_masterchain_state("
 # that never starts.
 DEFER = "validator_auth_admission_.defer_groups();"
 ASK_AGAIN = "establish_validator_auth_chain();"
+BACKOFF_GATE = "!validator_auth_chain_retry_.read_may_start()"
+RETRY_FAILED = "validator_auth_chain_retry_.failed()"
+RETRY_DUE = "validator_auth_chain_retry_.due(generation)"
+RETRY_SUCCESS = "validator_auth_chain_retry_.succeeded()"
 # And the two arrivals that can release it, each creating what was refused.
 RELEASE = "validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))"
 BARRIER = "validator_auth_admission_.cleanup_records_loaded();"
@@ -105,6 +109,14 @@ def verify(files: dict[str, str]) -> None:
         raise ValueError("a session refused for a missing context is not remembered")
     if ASK_AGAIN not in region:
         raise ValueError("a session refused for a missing context does not ask for one again")
+    for token, reason in (
+        (BACKOFF_GATE, "the manager can bypass a scheduled chain-context retry"),
+        (RETRY_FAILED, "a failed read does not create the one retry ticket"),
+        (RETRY_DUE, "a delayed retry is not generation-bound"),
+        (RETRY_SUCCESS, "a successful read does not reset retry state"),
+    ):
+        if token not in text:
+            raise ValueError(reason)
     # And both arrivals have to create what was refused, each from the one place
     # that decides it rather than from a rule written twice.
     if text.count(RELEASE) != 2:
@@ -164,6 +176,10 @@ def main() -> int:
         {MANAGER: files[MANAGER].replace(RELEASE, "false", 1)},
         {MANAGER: files[MANAGER].replace(RELEASE, "false")},
         {MANAGER: files[MANAGER].replace(BARRIER, "", 1)},
+        {MANAGER: files[MANAGER].replace(BACKOFF_GATE, "false", 1)},
+        {MANAGER: files[MANAGER].replace(RETRY_FAILED, "std::optional<tos::auth::ChainContextRetryTicket>{}", 1)},
+        {MANAGER: files[MANAGER].replace(RETRY_DUE, "true", 1)},
+        {MANAGER: files[MANAGER].replace(RETRY_SUCCESS, "/* retry state left stale */", 1)},
     )
     for probe in probes:
         if probe[MANAGER] == files[MANAGER]:

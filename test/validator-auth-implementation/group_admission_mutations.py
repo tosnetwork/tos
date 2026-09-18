@@ -56,6 +56,19 @@ MUTATIONS = [
     # for dressed as patience.
     ("a-failed-read-is-asked-again", SOURCE, "std::min(previous * 2.0, chain_context_retry_ceiling)",
      "previous * 2.0"),
+    ("a-pending-retry-blocks-an-admission-read", SOURCE,
+     "bool ChainContextRetryGate::read_may_start() const {\n  return !scheduled_;\n}",
+     "bool ChainContextRetryGate::read_may_start() const {\n  return true;\n}"),
+    ("one-failure-stream-has-one-pending-retry", SOURCE,
+     "  if (scheduled_) {\n    return std::nullopt;\n  }\n", ""),
+    ("a-stale-retry-cannot-consume-the-current-one", SOURCE,
+     "  if (!scheduled_ || generation != generation_) {\n", "  if (!scheduled_) {\n"),
+    ("a-stale-retry-cannot-consume-the-current-one", SOURCE,
+     "  scheduled_ = false;\n  return true;\n", "  return true;\n"),
+    ("success-invalidates-an-already-scheduled-retry", SOURCE,
+     "  delay_ = 0.0;\n", ""),
+    ("success-invalidates-an-already-scheduled-retry", SOURCE,
+     "  scheduled_ = false;\n}\n", "}\n"),
 ]
 
 TARGET = "test-p0-group-admission-mutant"

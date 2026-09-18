@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace tos::auth {
@@ -74,4 +75,28 @@ double next_chain_context_retry(double previous);
 
 constexpr double chain_context_retry_floor = 1.0;
 constexpr double chain_context_retry_ceiling = 16.0;
+
+// One failed read owns one delayed retry. Admission may keep asking for a
+// context while that delay is running, but those asks do not start a read and
+// do not create another timer. The generation prevents an older delayed
+// callback from consuming a newer retry after the first one has fired.
+struct ChainContextRetryTicket {
+  std::uint64_t generation = 0;
+  double delay = 0.0;
+};
+
+class ChainContextRetryGate {
+  double delay_ = 0.0;
+  bool scheduled_ = false;
+  std::uint64_t generation_ = 0;
+
+ public:
+  bool read_may_start() const;
+  std::optional<ChainContextRetryTicket> failed();
+  bool due(std::uint64_t generation);
+  void succeeded();
+  bool retry_scheduled() const { return scheduled_; }
+  double retry_delay() const { return delay_; }
+  std::uint64_t generation() const { return generation_; }
+};
 }  // namespace tos::auth

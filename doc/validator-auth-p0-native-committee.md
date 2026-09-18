@@ -105,7 +105,10 @@ A zero-state read that fails is asked again, with an interval that doubles and
 then stops growing. It is bounded in rate rather than in attempts: a bounded
 number of attempts is the same permanent stall arriving later, and one transient
 archive error would otherwise leave a node unable to validate until somebody
-restarted it.
+restarted it. The delay is an admission gate rather than only a timer: while one
+retry is scheduled, group admission cannot start an immediate read or schedule a
+second stream. Each timer carries the generation it owns, so delivery of an older
+timer cannot consume a newer retry, and success resets the delay.
 
 What this does not yet do is run the session under the derived committee. The
 committee is derived, its roster is required to be the one seated, and then it

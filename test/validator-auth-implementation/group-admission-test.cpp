@@ -125,6 +125,45 @@ int main() {
     ok("a-failed-read-is-asked-again");
   }
 
+  {
+    ChainContextRetryGate retry;
+    auto ticket = retry.failed();
+    expect(ticket.has_value(), "a-pending-retry-blocks-an-admission-read");
+    expect(!retry.read_may_start(), "a-pending-retry-blocks-an-admission-read");
+    ok("a-pending-retry-blocks-an-admission-read");
+  }
+
+  {
+    ChainContextRetryGate retry;
+    expect(retry.failed().has_value(), "one-failure-stream-has-one-pending-retry");
+    expect(!retry.failed().has_value(), "one-failure-stream-has-one-pending-retry");
+    expect(retry.retry_scheduled(), "one-failure-stream-has-one-pending-retry");
+    ok("one-failure-stream-has-one-pending-retry");
+  }
+
+  {
+    ChainContextRetryGate retry;
+    auto old = retry.failed();
+    expect(old.has_value() && retry.due(old->generation), "a-stale-retry-cannot-consume-the-current-one");
+    auto current = retry.failed();
+    expect(current.has_value(), "a-stale-retry-cannot-consume-the-current-one");
+    expect(!retry.due(old->generation), "a-stale-retry-cannot-consume-the-current-one");
+    expect(retry.retry_scheduled(), "a-stale-retry-cannot-consume-the-current-one");
+    expect(retry.due(current->generation), "a-stale-retry-cannot-consume-the-current-one");
+    ok("a-stale-retry-cannot-consume-the-current-one");
+  }
+
+  {
+    ChainContextRetryGate retry;
+    auto ticket = retry.failed();
+    expect(ticket.has_value(), "success-invalidates-an-already-scheduled-retry");
+    retry.succeeded();
+    expect(retry.read_may_start(), "success-invalidates-an-already-scheduled-retry");
+    expect(!retry.due(ticket->generation), "success-invalidates-an-already-scheduled-retry");
+    expect(std::abs(retry.retry_delay()) < 1e-9, "success-invalidates-an-already-scheduled-retry");
+    ok("success-invalidates-an-already-scheduled-retry");
+  }
+
   // The whole sequence the review names: the first read fails, the second
   // succeeds, and the group exists at the end of it.
   {

@@ -649,10 +649,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   // see the type for why that is a liveness question and not a detail. The
   // context itself stays in the optional above; this holds no copy of it.
   tos::auth::GroupAdmissionGate validator_auth_admission_;
-  // Whether a zero-state read is in flight, and how long the next retry waits.
+  // Whether a zero-state read is in flight, and the one delayed retry that may
+  // follow it. A scheduled retry gates direct admission calls too.
   bool validator_auth_chain_reading_ = false;
-  double validator_auth_chain_retry_ = 0.0;
+  tos::auth::ChainContextRetryGate validator_auth_chain_retry_;
   void retry_validator_auth_chain(std::string reason);
+  void validator_auth_chain_retry_due(std::uint64_t generation);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
   void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);

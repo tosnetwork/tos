@@ -2351,7 +2351,7 @@ void ValidatorManagerImpl::establish_validator_auth_chain() {
   // One read at a time. This is called from startup, from every session the
   // gate refuses for a missing context, and from the retry a failed read
   // schedules, so without this the requests would multiply.
-  if (validator_auth_chain_reading_) {
+  if (validator_auth_chain_reading_ || !validator_auth_chain_retry_.read_may_start()) {
     return;
   }
   validator_auth_chain_reading_ = true;
@@ -2362,22 +2362,26 @@ void ValidatorManagerImpl::establish_validator_auth_chain() {
 }
 
 void ValidatorManagerImpl::retry_validator_auth_chain(std::string reason) {
-  // A read that failed once must not leave this node unable to validate until
-  // somebody restarts it. The zero state is fetched through the archive, which
-  // can answer with a transient error, and the only consumer of the answer is a
-  // gate that refuses every session without it.
-  //
-  // The interval doubles and then stops growing: bounded in rate rather than in
-  // attempts, because a bounded number of attempts is the same permanent stall
-  // arriving later, and the condition being waited on is one that outside
-  // repair is expected to clear.
-  validator_auth_chain_retry_ = tos::auth::next_chain_context_retry(validator_auth_chain_retry_);
-  LOG(WARNING) << "no registry authority: " << reason << "; retrying in " << validator_auth_chain_retry_ << "s";
+  // There is exactly one delayed retry stream. Calls from admission still ask
+  // for a context while the chain is waiting, but they may not turn the backoff
+  // into an immediate read or add another timer beside it.
+  auto retry = validator_auth_chain_retry_.failed();
+  if (!retry) {
+    return;
+  }
+  LOG(WARNING) << "no registry authority: " << reason << "; retrying in " << retry->delay << "s";
   delay_action(
-      [SelfId = actor_id(this)]() {
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::establish_validator_auth_chain);
+      [SelfId = actor_id(this), generation = retry->generation]() {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_auth_chain_retry_due, generation);
       },
-      td::Timestamp::in(validator_auth_chain_retry_));
+      td::Timestamp::in(retry->delay));
+}
+
+void ValidatorManagerImpl::validator_auth_chain_retry_due(std::uint64_t generation) {
+  if (!validator_auth_chain_retry_.due(generation)) {
+    return;
+  }
+  establish_validator_auth_chain();
 }
 
 void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::BufferSlice> R) {
@@ -2402,7 +2406,7 @@ void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::
     return;
   }
   validator_auth_chain_ = chain.value();
-  validator_auth_chain_retry_ = 0.0;
+  validator_auth_chain_retry_.succeeded();
   publish_validator_auth();
   // A session refused only because this had not arrived yet is retried by
   // nothing else. Group creation is driven by a new masterchain block, and on a
