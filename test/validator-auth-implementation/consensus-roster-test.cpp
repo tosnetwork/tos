@@ -152,6 +152,46 @@ int main(int argc, char** argv) {
       ok("a_released_session_seats_nothing");
     }
 
+    // The block::ValidatorSet the manager hands to group creation, adapted from
+    // the committed session. Every authority-bearing field is preserved from the
+    // committee, and the set differs from a foreign one handed in beside it so
+    // the test cannot pass by returning the wrong input.
+    {
+      auto fixture = make_history(owner, committee);
+      auto context = context_for(fixture, "authenticated_validator_set_preserves_the_committee");
+      std::unique_ptr<NativeSessionCommitmentStore> keep;
+      NativeSessionCommitmentStore* store = nullptr;
+      auto session = commit(fixture, context, work / "adapter.commitments", store, keep,
+                            "authenticated_validator_set_preserves_the_committee");
+      const auto shard = tos::ShardIdFull(tos::masterchainId, tos::shardIdAll);
+
+      auto adapted = authenticated_validator_set(*session, shard);
+      expect(adapted.ok(), "authenticated_validator_set_preserves_the_committee");
+      auto members = adapted.value()->export_vector();
+      const auto& expected = context->committee().transport_order();
+      // exact member set and order
+      expect(members == expected, "authenticated_validator_set_preserves_the_committee");
+      // catchain from the committee, not the historical set
+      expect(adapted.value()->get_catchain_seqno() == context->birth().selected().epoch.catchain,
+             "authenticated_validator_set_preserves_the_committee");
+      // and not the foreign set beside it
+      expect(members != foreign_set()->export_vector(),
+             "authenticated_validator_set_preserves_the_committee");
+      // consensus key, ADNL, weight preserved member by member
+      expect(!members.empty(), "authenticated_validator_set_preserves_the_committee");
+      for (std::size_t i = 0; i < members.size(); ++i) {
+        expect(members[i].key == expected[i].key && members[i].addr == expected[i].addr &&
+                   members[i].weight == expected[i].weight,
+               "authenticated_validator_set_preserves_the_committee");
+      }
+      // a released session yields no set
+      auto observation = session->release_if_terminated(fixture.head_state, fixture.head, identity_input(731));
+      expect(observation.ok() && observation.value().released, "authenticated_validator_set_preserves_the_committee");
+      expect(!authenticated_validator_set(*session, shard).ok(),
+             "authenticated_validator_set_preserves_the_committee");
+      ok("authenticated_validator_set_preserves_the_committee");
+    }
+
     std::cout << "SUMMARY cases=" << passed << " passed=" << passed << '\n';
     return 0;
   } catch (const std::exception& error) {

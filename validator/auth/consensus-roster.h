@@ -70,4 +70,12 @@ class ConsensusRoster {
 // historical set. That would turn a security refusal into a bypass.
 Result<ConsensusRoster> seat_consensus_roster(bool required, const std::shared_ptr<CommittedNativeSession>& owner,
                                               const block::ValidatorSet& historical);
+
+// The authenticated committee as the block::ValidatorSet the manager hands to
+// group creation, so that every runtime consumer of that set -- the manager
+// facade and the consensus bus alike -- originates from one authenticated
+// source rather than from the state's historical set. The members are the
+// committee's transport order, moved whole; the catchain and shard are the
+// committee's own. Refused for a released session, exactly as the roster is.
+Result<td::Ref<block::ValidatorSet>> authenticated_validator_set(const CommittedNativeSession&, tos::ShardIdFull);
 }  // namespace tos::auth

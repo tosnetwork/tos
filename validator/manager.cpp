@@ -80,6 +80,7 @@
 #include "validator/auth/manager-finality-receipt.h"
 #include "validator/auth/manager-finalized-head.h"
 #include "validator/auth/manager-session-binding.h"
+#include "validator/auth/consensus-roster.h"
 #include "validator/auth/native-session-continuity.h"
 
 namespace tos {
@@ -645,6 +646,10 @@ static td::actor::Task<> check_finality_signatures(BlockIdExt block_id, Ref<bloc
   CO_TRY(try_val_set(val_set));
   co_return td::Unit{};
 }
+
+static td::actor::Task<tos::auth::NativeFinalityVerification> build_validator_auth_finality_receipt(
+    BlockIdExt block_id, Ref<block::BlockSignatureSet> signatures,
+    Ref<block::ValidatorSet> next, Ref<block::ValidatorSet> current);
 
 td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinalityBroadcast finality,
                                                                      BroadcastSource source) {
@@ -2418,7 +2423,7 @@ void ValidatorManagerImpl::validator_auth_finality_journal_written(
     td::Ref<vm::Cell> state, td::Result<td::Unit> result) {
   if (validator_auth_finality_journal_write_ &&
       *validator_auth_finality_journal_write_ == receipt.block) {
-    validator_auth_finality_journal_write_.reset();
+    validator_auth_finality_journal_write_ = {};
   }
   if (result.is_error()) {
     LOG(ERROR) << "validator-auth finalized-head journal write failed for " << receipt.block.to_str()
@@ -2477,7 +2482,7 @@ void ValidatorManagerImpl::refresh_validator_auth_finalized_head() {
     return;
   }
   if (validator_auth_finality_journal_write_ &&
-      validator_auth_finality_journal_write_->seqno() >= receipt.value().block.seqno()) {
+      validator_auth_finality_journal_write_.value().seqno() >= receipt.value().block.seqno()) {
     return;
   }
   auto encoded = tos::auth::encode_manager_finality_journal(
@@ -2567,8 +2572,8 @@ void ValidatorManagerImpl::fail_validator_auth_finality_recovery(std::string rea
   validator_auth_finalized_establisher_.reset();
   validator_auth_finalized_anchor_.reset();
   validator_auth_finalized_state_.clear();
-  validator_auth_finality_journal_write_.reset();
-  validator_auth_chain_.reset();
+  validator_auth_finality_journal_write_ = {};
+  validator_auth_chain_ = {};
   retry_validator_auth_chain(std::move(reason));
 }
 
@@ -4040,6 +4045,53 @@ void ValidatorManagerImpl::update_shards() {
               continue;
             }
           }
+          // The historical validator set was an admission input only. Now that
+          // this group's authenticated session is committed, the set every
+          // runtime consumer receives -- the manager facade and the consensus
+          // bus alike -- must originate from that committed committee, not from
+          // the state's historical set that merely compared equal during
+          // admission. Replace it here, once, before the group is created, so
+          // both consumers inherit the authenticated source from one point
+          // rather than the bus reseating a set the facade already captured.
+          auto committed_session = validator_auth_sessions_.find(val_group_id);
+          if (committed_session == validator_auth_sessions_.end() || !committed_session->second.owner) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": validator authentication is active but no committed authenticated session owns "
+                          "this group to seat its committee from";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+          auto authenticated_set =
+              tos::auth::authenticated_validator_set(*committed_session->second.owner, shard);
+          if (!authenticated_set.ok()) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": the authenticated committee could not be adapted into a validator set: "
+                       << authenticated_set.error().code;
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+          auto authoritative = std::move(authenticated_set.value());
+          // The canonical group id computed from the authenticated set must
+          // equal the one the session was committed under. A different id means
+          // the committee and the historical set disagree about who runs; refuse
+          // rather than run under a silently different session id.
+          if (get_validator_set_id(shard, authoritative, opts_hash, key_seqno, opts) != val_group_id) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": the authenticated committee yields a different session id than admission committed";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+          // Local membership is re-evaluated against the authoritative set. If
+          // this node is in the historical set but not the committee, it is not
+          // a member of the session that will run; refuse rather than seat it.
+          if (get_validator(shard, authoritative).is_zero()) {
+            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                       << ": the local validator is not a member of the authenticated committee";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+          val_set = std::move(authoritative);
+          validator_id = get_validator(shard, val_set);
         }
         if (destroyed_validator_sessions_.contains(val_group_id)) {
           continue;

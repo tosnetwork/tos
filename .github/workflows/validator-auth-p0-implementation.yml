@@ -575,6 +575,7 @@ jobs:
             --work "$CONSENSUS_ROSTER_TMP/mutations" \
             --out artifacts/consensus-roster-mutations.json
           python3 test/validator-auth-implementation/check_consensus_roster_wiring.py
+          python3 test/validator-auth-implementation/check_manager_authenticated_set_wiring.py
           git diff --exit-code
       - name: Resolve node context and retained native history
         if: matrix.guards == 'native' || matrix.guards == 'none'

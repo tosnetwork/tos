@@ -49,6 +49,13 @@ MUTATIONS = [
     ("released-session-code", "a_released_session_seats_nothing",
      "  if (!context.ok())\n    return context.error();",
      '  if (!context.ok())\n    return Error{"consensus-roster-released"};'),
+    # The adapter must carry the committee's catchain, not a zero/default. The
+    # preserve case pins the catchain against the committee. (The adapter's
+    # released refusal is the roster's released guard one layer down, already
+    # covered by released-session-code above.)
+    ("adapter-catchain", "authenticated_validator_set_preserves_the_committee",
+     "return td::make_ref<block::ValidatorSet>(roster.value().catchain(), shard,",
+     "return td::make_ref<block::ValidatorSet>(roster.value().catchain() + 1, shard,"),
 ]
 
 

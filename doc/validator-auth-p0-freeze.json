@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "705a2028957fffd37f87ca95e9e3fc95a4204684ad516c4ed3d1d8ca7cdb11bd",
+    "doc/validator-auth-p0-native-insertions.json": "79baa855ebb87fb180daeb9b509e8fd89e9ae03eafb407adbf04336a2d6c24ef",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -537,6 +537,16 @@
       "change": "Re-derived the consensus bridge insertions. On a P0-active chain start_bus now reseats its member source from the committee the authenticated session was committed under, through the typed seat_consensus_roster boundary, before the historical loop reads it. seat refuses a P0-active session with no committee, so the loop cannot fall back to the historical set. For a valid chain the reseated set is byte-identical to the manager's, so downstream reads are unchanged; the change is that the committee, not the manager-side set, is now the authority. Purely additive: two further insertions, the historical loop and every existing line preserved.",
       "scope": "Additive consensus insertion plus the new validator/auth ConsensusRoster boundary, its library, tests and mutations. No production byte removed, no frozen wire/API/profile change.",
       "activation": "Unchanged. Inactive chains seat the historical set exactly as before."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "705a2028957fffd37f87ca95e9e3fc95a4204684ad516c4ed3d1d8ca7cdb11bd",
+      "sha256": "79baa855ebb87fb180daeb9b509e8fd89e9ae03eafb407adbf04336a2d6c24ef",
+      "authorization": "Phase 1A correction (memo/Phase1A-RESULT-ANSWER.md): move the authenticated-set adaptation to the manager->create_validator_group boundary so both ManagerFacade and the consensus bus consume one authenticated-derived set; also fix pre-existing compile errors in the frozen manager insertions.",
+      "change": "Re-derived the manager insertions. On a P0-active creation path update_shards() now replaces val_set with a block::ValidatorSet adapted from the committed authenticated committee before the group is created, so the ManagerFacade (constructed inside the bridge from that set) and the consensus bus both originate from the committee rather than the historical set that only compared equal during admission. The canonical group id recomputed from the authenticated set must equal the committed one and the local validator must be a committee member, else refuse. Separately, four compile errors in prior manager insertions were corrected -- a static finality-receipt helper used before its declaration, and td::optional treated with std::optional's reset()/operator-> at three sites -- all in inserted text, so historical bytes are unchanged. manager.cpp now compiles under the rocksdb configuration; the previous head did not.",
+      "scope": "Additive manager insertion and inserted-text compile fixes, plus the authenticated_validator_set adapter, tests, mutations and a manager wiring check. No production byte removed, no frozen wire/API/profile change.",
+      "activation": "Unchanged. Inactive chains use the historical set."
     }
   ],
   "implementation_evidence_update": {

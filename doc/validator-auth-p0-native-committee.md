@@ -135,16 +135,35 @@ refusal to start the bus, never a seat of the historical set -- that would turn 
 security refusal into a bypass. A released session owns no committee and seats
 nothing.
 
-In the bridge this is an additive insertion: before the historical member loop,
-a P0-active bus reseats its member source from the committee through
-`seat_consensus_roster`, and the existing loop then builds its peer table from
-those members. For a valid chain the reseated set is byte-identical to the
-manager's -- the committee's own validator descriptors, its catchain, the shard --
-so the set hash, catchain sequence and every downstream read are unchanged; the
-change is which construction is authoritative. The typed boundary carries five
-compiled mutations and a static wiring check with its own negative controls,
-because the bridge actor cannot be instantiated in the focused test tree. That
-static check is weaker than the four-validator rehearsal and does not replace it.
+The replacement happens once, in the manager, not only in the bridge. The bus
+reseats its members from the committee -- but that reseat is inside the bridge,
+after the bridge has already constructed its `ManagerFacade` from the validator
+set the manager passed in. Making only the bus authentic would leave the facade,
+which collation, validation, accept and broadcast all run through, on the
+historical set that merely compared equal during admission. So on a P0-active
+creation path the manager replaces its own `val_set` with the committee-adapted
+set in `update_shards()`, before `create_validator_group()`, and both consumers
+inherit that one authenticated source.
+
+The manager verifies two things after the replacement, because several values
+were computed from the historical set before the session was committed: the
+canonical group id recomputed from the authenticated set must equal the one the
+session was committed under, and the local validator must be a member of the
+committee. A disagreement on either is a refusal, not a silent switch to a
+different session id or a seat of a non-member.
+
+For a valid chain the adapted set is byte-identical to the manager's -- the
+committee's own validator descriptors, its catchain, the shard -- so the set
+hash, catchain sequence and every downstream read are unchanged; what changes is
+which construction is authoritative. If the two ever diverged, both facade and
+bus would follow the committee. The bridge's own reseat remains as a
+defence-in-depth adapter at the frozen loop, not an independent derivation.
+
+The adapter and the roster carry five compiled mutations and two static wiring
+checks with their own negative controls -- one for the bridge reseat, one for the
+manager replacement -- because neither the bridge nor the manager actor can be
+instantiated in the focused test tree. Those static checks are weaker than the
+four-validator rehearsal and do not replace it.
 
 What this round does not do: C0 certificate verification inside the consensus
 message flow, and native signer permissioning, remain the next round. This one
