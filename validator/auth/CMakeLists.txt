@@ -14,7 +14,7 @@ add_library(tos_validator_auth_session STATIC native-session-continuity.cpp)
 target_link_libraries(tos_validator_auth_session PUBLIC tos_validator_auth_native tdutils)
 set_target_properties(tos_validator_auth_session PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
-add_library(tos_validator_auth_finality STATIC native-finality.cpp manager-finalized-head.cpp)
+add_library(tos_validator_auth_finality STATIC native-finality.cpp manager-finalized-head.cpp manager-finality-receipt.cpp)
 target_link_libraries(tos_validator_auth_finality PUBLIC tos_validator_auth_native)
 set_target_properties(tos_validator_auth_finality PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 

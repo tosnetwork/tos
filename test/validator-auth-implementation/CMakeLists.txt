@@ -302,6 +302,19 @@ if(UNIX)
     tos_validator_auth_signer)
   set_target_properties(test-p0-node-provisioning-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+  add_executable(test-p0-manager-finality-receipt manager-finality-receipt-test.cpp)
+  target_link_libraries(test-p0-manager-finality-receipt PRIVATE tos_validator_auth_finality)
+  set_target_properties(test-p0-manager-finality-receipt PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
+  configure_file("${PROJECT_SOURCE_DIR}/validator/auth/manager-finality-receipt.cpp"
+                 "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-finality-receipt.cpp" COPYONLY)
+  add_executable(test-p0-manager-finality-receipt-mutant EXCLUDE_FROM_ALL
+    manager-finality-receipt-test.cpp
+    "${CMAKE_CURRENT_BINARY_DIR}/mutated-manager-finality-receipt.cpp")
+  target_include_directories(test-p0-manager-finality-receipt-mutant PRIVATE "${PROJECT_SOURCE_DIR}/validator/auth")
+  target_link_libraries(test-p0-manager-finality-receipt-mutant PRIVATE tos_validator_auth_finality)
+  set_target_properties(test-p0-manager-finality-receipt-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
   add_executable(test-p0-native-finality native-finality-test.cpp)
   target_link_libraries(test-p0-native-finality PRIVATE
     tos_validator_auth_finality tos_validator_auth_rpc)
