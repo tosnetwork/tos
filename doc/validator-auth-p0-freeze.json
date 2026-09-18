@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "cf5f0c323aa5e012ea3ef9cedc69fe47dd806cb29f923fc911453a3a504341fe",
+    "doc/validator-auth-p0-native-insertions.json": "e7d5e4a20d9a6eabf4e65d1b3e3c9e4b19a3512d1fed4865c678520bc0b5efef",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -505,6 +505,17 @@
       "scope": "Frozen insertion bookkeeping plus implementation/build/test-harness corrections. No manager production byte is rewritten, no profile semantic or wire/API/schema allocation changes, and activation policy is unchanged.",
       "reason": "The production manager remained a pure additive reconstruction, but three declared offsets no longer reconstructed its frozen baseline. Separately, two mutation harnesses had started matching two independent guards with one token anchor, and the finality source checker still asserted the pre-session-store gate name. Keeping those failures loud requires fixing the bookkeeping and splitting the evidence rather than widening ambiguous anchors.",
       "activation": "Unchanged."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "cf5f0c323aa5e012ea3ef9cedc69fe47dd806cb29f923fc911453a3a504341fe",
+      "sha256": "e7d5e4a20d9a6eabf4e65d1b3e3c9e4b19a3512d1fed4865c678520bc0b5efef",
+      "authorization": "The owner identified two additional liveness failures and authorized direct mechanism fixes on the draft branch.",
+      "change": "Re-derived the additive manager inventory after scoping validator-auth bootstrap and session admission to the authority that actually exists. A P0-inactive legacy chain now skips zero-state registry bootstrap entirely; establish/retry paths independently re-check native-session activation and reset the retry gate instead of scheduling an endless 16-second poll. For an active chain, authenticated session admission is now explicitly a creation/recreation boundary: if the exact canonical session id already has a live group, that group follows the ordinary reuse path without re-entering transient manager readiness/admission gates, because it already owns the durably committed immutable session context. New/recreated groups still require the full gate. Compiled and source negative controls cover both rules.",
+      "scope": "Additive manager insertion text plus the focused manager-group admission helper/tests and documentation. Original manager bytes, frozen profile semantics, wire/API/schema allocations and activation rules remain unchanged.",
+      "reason": "Feature-inactive is a terminal answer, not a failed authority read, so retrying it forever is a liveness and operational-noise bug. Likewise, temporary control-plane inability to admit a new group is not chain evidence that an already-running same-id session retired; feeding that actor into the permanent retirement/destroyed-session path converts a transient refusal into an irreversible local fence.",
+      "activation": "Unchanged. P0 v1 remains genesis-activated where enabled; legacy chains remain on the historical path."
     }
   ],
   "implementation_evidence_update": {
