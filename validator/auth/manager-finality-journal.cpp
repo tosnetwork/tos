@@ -8,13 +8,13 @@ void u32(Bytes& out,std::uint32_t v){for(int s=24;s>=0;s-=8)out.push_back(static
 void u64(Bytes& out,std::uint64_t v){for(int s=56;s>=0;s-=8)out.push_back(static_cast<std::uint8_t>(v>>s));}
 void hash(Bytes& out,const Hash& h){out.insert(out.end(),h.begin(),h.end());}
 void bits(Bytes& out,const td::Bits256& h){auto s=h.as_slice();out.insert(out.end(),s.ubegin(),s.uend());}
-struct Reader{
+struct JournalReader{
  std::span<const std::uint8_t> v;std::size_t at=0;
  bool take(std::uint8_t& x){if(at>=v.size())return false;x=v[at++];return true;}
  bool u32(std::uint32_t& x){if(v.size()-at<4)return false;x=0;for(int i=0;i<4;++i)x=(x<<8)|v[at++];return true;}
  bool u64(std::uint64_t& x){if(v.size()-at<8)return false;x=0;for(int i=0;i<8;++i)x=(x<<8)|v[at++];return true;}
  bool hash(Hash& x){if(v.size()-at<32)return false;std::copy(v.begin()+at,v.begin()+at+32,x.begin());at+=32;return true;}
- bool bits(td::Bits256& x){if(v.size()-at<32)return false;std::copy(v.begin()+at,v.begin()+at+32,x.as_mutable_slice().ubegin());at+=32;return true;}
+ bool bits(td::Bits256& x){if(v.size()-at<32)return false;std::copy(v.begin()+at,v.begin()+at+32,reinterpret_cast<std::uint8_t*>(x.data()));at+=32;return true;}
  bool done()const{return at==v.size();}
 };
 bool receipt_ok(const NativeFinalityVerification& r){
@@ -36,7 +36,7 @@ Result<Bytes> encode_manager_finality_journal(
 }
 Result<NativeFinalityVerification> decode_manager_finality_journal(
     std::span<const std::uint8_t> raw,const ChainContext& chain){
- Reader r{raw};for(auto expected:magic){std::uint8_t got=0;if(!r.take(got)||got!=expected)return Error{"manager-finality-journal-magic"};}
+ JournalReader r{raw};for(auto expected:magic){std::uint8_t got=0;if(!r.take(got)||got!=expected)return Error{"manager-finality-journal-magic"};}
  std::uint32_t network=0;if(!r.u32(network)||static_cast<std::int32_t>(network)!=chain.network)return Error{"manager-finality-journal-chain"};
  Hash genesis_root{},genesis_file{},domain{};
  if(!r.hash(genesis_root)||!r.hash(genesis_file)||!r.hash(domain)||
