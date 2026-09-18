@@ -247,7 +247,20 @@ std::vector<Test> tests(
     auto candidate_hash = h(4242);
     payload.insert(payload.end(), candidate_hash.begin(), candidate_hash.end());
     require(payload.size() == 40, "member_authority_only_for_member");
-    require(member.value().make_duty(1, position, payload).ok(),
+    auto duty = member.value().make_duty(1, position, payload);
+    require(duty.ok(), "member_authority_only_for_member");
+    // The duty a member signs carries the canonical P0 session id H(session, ...),
+    // never the native ValidatorSessionId. This is the domain frozen WIRE binds
+    // into VAS1; make_member_duty must use p0_session_id_, not native_session_id_.
+    const auto& duty_epoch = candidate->birth().selected().epoch;
+    auto expected_session =
+        session_id(fixture.chain, candidate->committee().snapshot(),
+                   SessionOrigin{duty_epoch.native_options_hash,
+                                 duty_epoch.vertical_seqno,
+                                 duty_epoch.key_block_seqno});
+    require(expected_session.ok(), "member_authority_only_for_member");
+    require(duty.value().session_ == expected_session.value() &&
+                duty.value().session_ != duty_epoch.native_session_id,
             "member_authority_only_for_member");
 
     Hash absent = h(999999);

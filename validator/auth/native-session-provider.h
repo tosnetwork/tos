@@ -42,25 +42,34 @@ class NativeSessionC0Authority {
   std::uint32_t coordinate() const {
     return coordinate_;
   }
-  const Hash& session_id() const {
-    return session_id_;
+  // The native session identity. Used only to prove a route still belongs to
+  // the same live native session; never exposed to the signer permit context.
+  const Hash& native_session_id() const {
+    return native_session_id_;
+  }
+  // The frozen canonical P0 session id, the value that belongs in the signer
+  // permit context (PermitBody.session). Never used for native lifetime binding.
+  const Hash& p0_session_id() const {
+    return p0_session_id_;
   }
 
  private:
   NativeSessionC0Authority(
       std::weak_ptr<CommittedNativeSession> owner,
       ProviderSessionAdmission admission, Hash identity,
-      Hash session_id, std::uint32_t coordinate,
+      Hash native_session_id, Hash p0_session_id, std::uint32_t coordinate,
       std::array<Keyref, 5> role_keys)
       : owner_(std::move(owner)), admission_(std::move(admission)),
-        identity_(identity), session_id_(session_id), coordinate_(coordinate),
+        identity_(identity), native_session_id_(native_session_id),
+        p0_session_id_(p0_session_id), coordinate_(coordinate),
         role_keys_(std::move(role_keys)) {
   }
 
   std::weak_ptr<CommittedNativeSession> owner_;
   ProviderSessionAdmission admission_;
   Hash identity_{};
-  Hash session_id_{};
+  Hash native_session_id_{};
+  Hash p0_session_id_{};
   std::uint32_t coordinate_{};
   std::array<Keyref, 5> role_keys_{};
 };

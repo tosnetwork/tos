@@ -35,21 +35,36 @@ MUTATIONS = [
     (
         "installed-identity-copied",
         "exact_birth_inventory_installed",
-        '      session, std::move(admission.value()), identity, session->session_id_,\n'
+        '      session, std::move(admission.value()), identity,\n'
+        '      session->native_session_id_, session->p0_session_id_,\n'
         '      birth.seqno, role_keys.value());',
-        '      session, std::move(admission.value()), Hash{}, session->session_id_,\n'
+        '      session, std::move(admission.value()), Hash{},\n'
+        '      session->native_session_id_, session->p0_session_id_,\n'
+        '      birth.seqno, role_keys.value());',
+    ),
+    (
+        # The permit/session slot must carry the canonical P0 session id, never
+        # the native ValidatorSessionId. Feeding the native id into the P0 slot
+        # is the "native group ID in PermitBody.session" error the split forbids.
+        "permit-session-not-native",
+        "exact_birth_inventory_installed",
+        '      session->native_session_id_, session->p0_session_id_,\n'
+        '      birth.seqno, role_keys.value());',
+        '      session->native_session_id_, session->native_session_id_,\n'
         '      birth.seqno, role_keys.value());',
     ),
     (
         "committee-role-key-copied",
         "exact_birth_inventory_installed",
         '  return NativeSessionC0Authority(\n'
-        '      session, std::move(admission.value()), identity, session->session_id_,\n'
+        '      session, std::move(admission.value()), identity,\n'
+        '      session->native_session_id_, session->p0_session_id_,\n'
         '      birth.seqno, role_keys.value());',
         '  auto installed_keys = role_keys.value();\n'
         '  std::swap(installed_keys[0], installed_keys[1]);\n'
         '  return NativeSessionC0Authority(\n'
-        '      session, std::move(admission.value()), identity, session->session_id_,\n'
+        '      session, std::move(admission.value()), identity,\n'
+        '      session->native_session_id_, session->p0_session_id_,\n'
         '      birth.seqno, installed_keys);',
     ),
     (
@@ -65,7 +80,7 @@ MUTATIONS = [
         "release_revokes_c0_route",
         '  if (!session || !session->context_)\n'
         '    return Error{"session-context-released"};\n'
-        '  if (session->session_id_ != session_id_ ||',
+        '  if (session->native_session_id_ != native_session_id_ ||',
         '  if (!session)\n'
         '    return Error{"session-context-released"};\n'
         '  if (!session->context_) {\n'
@@ -74,7 +89,7 @@ MUTATIONS = [
         '      return cached.error();\n'
         '    return NativeSessionC0Route{role_keys_[role - 1], cached.value()};\n'
         '  }\n'
-        '  if (session->session_id_ != session_id_ ||',
+        '  if (session->native_session_id_ != native_session_id_ ||',
     ),
 ]
 

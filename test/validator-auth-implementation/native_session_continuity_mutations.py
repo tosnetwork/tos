@@ -85,9 +85,19 @@ def mutations() -> list[tuple[str, str, str, str, str]]:
             "same_session_not_terminated",
             "guard-disable",
             "  if (current.value() &&\n"
-            "      current.value()->native_session_id == session_id_) {",
+            "      current.value()->native_session_id == native_session_id_) {",
             "  if (false && current.value() &&\n"
-            "      current.value()->native_session_id == session_id_) {",
+            "      current.value()->native_session_id == native_session_id_) {",
+        ),
+        (
+            # The duty a member signs must carry the canonical P0 session id, not
+            # the native ValidatorSessionId. Substituting the native id here is
+            # exactly the frozen-WIRE deviation the split corrects.
+            "member-duty-p0-session",
+            "member_authority_only_for_member",
+            "semantic-fault",
+            "      chain_, snapshot, p0_session_id_, role, position, payload);",
+            "      chain_, snapshot, native_session_id_, role, position, payload);",
         ),
         (
             "termination-release",

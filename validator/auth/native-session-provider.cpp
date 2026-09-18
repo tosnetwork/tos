@@ -149,7 +149,8 @@ Result<NativeSessionC0Authority> NativeSessionC0Authority::install(
   }
 
   return NativeSessionC0Authority(
-      session, std::move(admission.value()), identity, session->session_id_,
+      session, std::move(admission.value()), identity,
+      session->native_session_id_, session->p0_session_id_,
       birth.seqno, role_keys.value());
 }
 
@@ -161,7 +162,7 @@ Result<NativeSessionC0Route> NativeSessionC0Authority::route(
   auto session = owner_.lock();
   if (!session || !session->context_)
     return Error{"session-context-released"};
-  if (session->session_id_ != session_id_ ||
+  if (session->native_session_id_ != native_session_id_ ||
       session->birth_.seqno != coordinate_)
     return Error{"session-c0-context"};
 

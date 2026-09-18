@@ -120,9 +120,22 @@ std::vector<Test> tests(const std::filesystem::path& owner,
         "exact_birth_inventory_installed");
     auto authority = NativeSessionC0Authority::install(
         session, fixture.birth_state, local.provider, local.identity);
+    // The authority exposes both identities distinctly: the native session id
+    // for live-session lifetime binding, and the canonical P0 session id for the
+    // signer permit context. They are different values, and the P0 one is the
+    // H(session, ...) the snapshot and birth origin produce, never the native id.
+    const auto& birth_epoch = context->birth().selected().epoch;
+    auto expected_p0 = require_value(
+        session_id(fixture.chain, context->committee().snapshot(),
+                   SessionOrigin{birth_epoch.native_options_hash,
+                                 birth_epoch.vertical_seqno,
+                                 birth_epoch.key_block_seqno}),
+        "exact_birth_inventory_installed");
     require(authority.ok() && authority.value().identity() == local.identity &&
                 authority.value().coordinate() == fixture.birth.seqno_ &&
-                authority.value().session_id() == context->birth().selected().epoch.native_session_id,
+                authority.value().native_session_id() == birth_epoch.native_session_id &&
+                authority.value().p0_session_id() == expected_p0 &&
+                expected_p0 != birth_epoch.native_session_id,
             "exact_birth_inventory_installed");
     for (std::uint8_t role = 1; role <= 5; ++role) {
       auto route = authority.value().route(role);

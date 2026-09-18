@@ -9,8 +9,21 @@
 
 #include "td/utils/port/Stat.h"
 
+#include "context.h"
+
 namespace tos::auth {
 namespace {
+// The frozen canonical consensus session id, H(session, ...), derived from the
+// authenticated committee snapshot and the birth origin. This is the value that
+// belongs in Duty.session; it is deliberately not the native ValidatorSessionId,
+// which addresses the native consensus group rather than the P0 signing domain.
+Result<Hash> derive_p0_session_id(
+    const NativeSessionCommitteeContext& context, const ChainContext& chain,
+    const SessionBirthEpoch& epoch) {
+  return session_id(chain, context.committee().snapshot(),
+                    SessionOrigin{epoch.native_options_hash,
+                                  epoch.vertical_seqno, epoch.key_block_seqno});
+}
 constexpr std::array<std::uint8_t, 8> log_header{
     'V', 'S', 'C', 'L', 0, 1, 0, 0};
 constexpr std::array<std::uint8_t, 8> frontier_header{
@@ -492,10 +505,13 @@ CommittedNativeSession::commit_new(
     return recorded.error();
 
   const auto& selected = context->birth().selected();
+  auto p0_session_id = derive_p0_session_id(*context, chain, selected.epoch);
+  if (!p0_session_id.ok())
+    return p0_session_id.error();
   return std::shared_ptr<CommittedNativeSession>(
       new CommittedNativeSession(
           std::move(context), chain, selected.epoch.native_session_id,
-          selected.epoch, selected.block));
+          p0_session_id.value(), selected.epoch, selected.block));
 }
 
 Result<std::shared_ptr<CommittedNativeSession>>
@@ -513,10 +529,13 @@ CommittedNativeSession::restart(
     return verified.error();
 
   const auto& selected = context->birth().selected();
+  auto p0_session_id = derive_p0_session_id(*context, chain, selected.epoch);
+  if (!p0_session_id.ok())
+    return p0_session_id.error();
   return std::shared_ptr<CommittedNativeSession>(
       new CommittedNativeSession(
           std::move(context), chain, selected.epoch.native_session_id,
-          selected.epoch, selected.block));
+          p0_session_id.value(), selected.epoch, selected.block));
 }
 
 Result<VerifiedCertificate> CommittedNativeSession::verify(
@@ -577,7 +596,7 @@ Result<Duty> CommittedNativeSession::make_member_duty(
       members[member_index].identity_ != identity)
     return Error{"session-member-nonmember"};
   return make_duty(
-      chain_, snapshot, session_id_, role, position, payload);
+      chain_, snapshot, p0_session_id_, role, position, payload);
 }
 
 Result<Duty> NativeSessionMemberAuthority::make_duty(
@@ -613,7 +632,7 @@ CommittedNativeSession::release_if_terminated(
     return current.error();
 
   if (current.value() &&
-      current.value()->native_session_id == session_id_) {
+      current.value()->native_session_id == native_session_id_) {
     if (*current.value() != epoch_)
       return Error{"session-termination-epoch-conflict"};
     return NativeSessionReleaseObservation{

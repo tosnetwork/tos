@@ -191,11 +191,12 @@ class CommittedNativeSession
  private:
   CommittedNativeSession(
       std::shared_ptr<const NativeSessionCommitteeContext> context,
-      ChainContext chain, Hash session_id, SessionBirthEpoch epoch,
-      SessionBirthBlock birth)
+      ChainContext chain, Hash native_session_id, Hash p0_session_id,
+      SessionBirthEpoch epoch, SessionBirthBlock birth)
       : context_(std::move(context)),
         chain_(std::move(chain)),
-        session_id_(session_id),
+        native_session_id_(native_session_id),
+        p0_session_id_(p0_session_id),
         epoch_(std::move(epoch)),
         birth_(std::move(birth)) {
   }
@@ -208,7 +209,15 @@ class CommittedNativeSession
 
   std::shared_ptr<const NativeSessionCommitteeContext> context_;
   ChainContext chain_;
-  Hash session_id_{};
+  // The native validator_group/groupEx/groupNew ValidatorSessionId. It is the
+  // identity used for release/termination comparisons and the continuity
+  // commitment, and is never the value signed into a Duty.
+  Hash native_session_id_{};
+  // The frozen canonical consensus session id, H(session, ...). It is the value
+  // bound into Duty.session and thereby into every VAS1 a member signs. It is
+  // recomputed from the authenticated committee snapshot and the birth origin,
+  // and must never be the native group id.
+  Hash p0_session_id_{};
   SessionBirthEpoch epoch_;
   SessionBirthBlock birth_;
   std::uint64_t release_count_ = 0;
