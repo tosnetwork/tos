@@ -52,8 +52,16 @@ fn run() -> Result<(), String> {
         // this one, so a state the full decoder refuses and this one accepts
         // would govern the chain under a policy the decoder calls illegitimate.
         let view =
-            RegistryView::open(root, coordinate, StateReadBudget { entries: 64, bytes: 1 << 20 });
+            RegistryView::open(root.clone(), coordinate, StateReadBudget { entries: 64, bytes: 1 << 20 });
         check(view.is_ok() == accepted, &format!("view {}: {:?}", fields[2], view.as_ref().err()))?;
+        if fields[2] == "an-attested-policy-governs-from-its-boundary" {
+            let one_entry =
+                RegistryView::open(root, coordinate, StateReadBudget { entries: 1, bytes: 1 << 20 });
+            check(
+                one_entry.err().map(|e| e.0) == Some("state-resource"),
+                "attestation-entry-charge",
+            )?;
+        }
         if !accepted {
             refusals += 1;
         }

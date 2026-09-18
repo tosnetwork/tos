@@ -64,7 +64,14 @@ def mutations(source,build,execute,cases,out):
  baseline=run(original);assert baseline.returncode==0,baseline.stderr
  try:
   for label,before,after in cases:
-   result=run(replace_once(original,before,after))
+   if source.name == 'registry_view.rs' and label == 'view-budget-charge' and before.startswith('budget.entries ='):
+    start=original.index('fn read<T: Wire>(')
+    stop=original.index('impl RegistryView',start)
+    region=original[start:stop]
+    changed=original[:start]+replace_once(region,before,after)+original[stop:]
+   else:
+    changed=replace_once(original,before,after)
+   result=run(changed)
    assert result.returncode==1 and result.stderr.startswith('ASSERTION: '+label) and 'panicked at' not in result.stderr,(label,result.stderr)
    report.append(dict(guard=label,compiled=True,assertion_failed=True));print('KILLED:',label,flush=True)
  finally:

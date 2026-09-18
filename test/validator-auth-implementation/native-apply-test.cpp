@@ -10,6 +10,7 @@
 #include "validator/auth/native-apply.h"
 
 #include "owner-fixture.h"
+#include "governance-fixture.h"
 using namespace owner_fixture;
 namespace {
 struct History : FinalizedAnchorSource {
@@ -277,6 +278,35 @@ int main(int argc, char** argv) {
       }
       return c.parent;
     };
+    // The global-policy path owns a second verification propagation guard,
+    // independent of owner proof verification. Corrupting its real governance
+    // certificate must stop here; removing only governance()'s propagation
+    // would otherwise continue with the governing anchor.
+    auto governance = governance_fixture::fixture();
+    governance.inclusion = 1;
+    auto successor = governance.policy;
+    successor.revision_ += 1;
+    successor.previous_ = governance.current.current_policy();
+    successor.effective_from_ = 2;
+    governance.update.operation_ = 4;
+    governance.update.identity_ = {};
+    governance.update.nonce_ = 0;
+    governance.update.previous_ = governance.current.current_policy();
+    governance.update.effective_from_ = successor.effective_from_;
+    governance.update.operation_data_.clear();
+    governance.update.new_policy_ = value(encode(successor), "native-governance-policy");
+    governance_fixture::sign(governance);
+    auto governance_cert =
+        value(decode<Certificate>(governance.evidence.governance_[0].certificate_.inline_),
+              "native-governance-cert");
+    governance_cert.records_.back().components_[0].signature_[0] ^= 1;
+    governance.evidence.governance_[0].certificate_ =
+        value(object_value(4, value(encode(governance_cert), "native-governance-bad-cert")),
+              "native-governance-carrier");
+    Case governance_case{governance.current, governance.chain, governance.committee,
+                         governance.policy, {}, {{governance.update, governance.evidence}}, 1};
+    run(governance_case, "native-governance-verifier", "signature");
+
     auto first = run(base, "native-admin-rotation");
     check(first.identities().begin()->second.active_.back().key_.epoch_ == 2, "native-admin-rotation-effect");
     auto two = base;

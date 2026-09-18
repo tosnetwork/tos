@@ -1,12 +1,14 @@
 """Compile native authority integration and ordered-state mutations, then restore."""
 import argparse,json,shutil,subprocess,tempfile
 from pathlib import Path
-from context_mutations import checked,mutate,ROOT
+from context_mutations import checked,mutate,validate,ROOT
+from mutation_support import replace_once
 CPP=[
  ('apply-domain','native-wrong-current-domain','current_.chain_domain() != context_.chain.chain_domain ||',''),
  ('apply-policy','native-policy-before-authorization','if (current_.current_policy() != context_.governing.policy_id()) return Error{"authority-current-policy"};',''),
  ('apply-masterchain','native-shard-governance','committee.workchain_ != -1 ||',''),
  ('apply-owner-fork','native-wrong-finalized-fork','anchor.value(), context_.chain, reader_','proof.proof_.anchor_, context_.chain, reader_'),
+ ('apply-governance-verifier','native-governance-verifier','if (!verified.ok()) return verified.error();',''),
  ('apply-owner-verifier','native-wrong-finalized-fork','if (!verified.ok()) return verified.error();',''),
  ('apply-possession-verifier','native-pop-signature','return verify_possession(context_.chain, update, key, proof);','return true;'),
  ('apply-identity-verifier','native-old-admin-after-rotation','return verify_identity_certificate(certificate.value(), expected.value(), identity, keys.value(), inclusion);','return true;'),
@@ -32,6 +34,29 @@ RUST_STATE=[
  ('apply-policy-selection','native-policy-before-authorization','next.current_policy = object_id("policy", next.policy_at(at)?)?;',''),
  ('apply-revision','native-admin-rotation','next.revision = self.revision.checked_add(1).ok_or(Error("registry-revision"))?;',''),
 ]
+def mutate_cpp(path,cases,run):
+ original=path.read_text();report=[];validate(run())
+ scopes={
+  'apply-governance-verifier':('Result<Anchor> NativeLifecycleAuthority::governance(', 'Result<bool> NativeLifecycleAuthority::validate_context()'),
+  'apply-owner-verifier':('Result<bool> NativeLifecycleAuthority::owner(', 'Result<bool> NativeLifecycleAuthority::possession('),
+ }
+ try:
+  for guard,label,before,after in cases:
+   if guard in scopes:
+    begin,end=scopes[guard]
+    start=original.index(begin);stop=original.index(end,start)
+    region=original[start:stop]
+    changed=original[:start]+replace_once(region,before,after)+original[stop:]
+   else:
+    changed=replace_once(original,before,after)
+   path.write_text(changed)
+   validate(run(),label)
+   report.append(dict(guard=guard,assertion=label,compiled=True,assertion_failed=True))
+   print('KILLED:',guard,flush=True)
+ finally:
+  path.write_text(original);validate(run())
+ return report
+
 def main(a):
  if a.language=='cpp':
   folder=a.build.resolve()/'test/validator-auth-implementation'
@@ -44,7 +69,7 @@ def main(a):
       if result.returncode:return result
      return result
    return run
-  report=mutate(folder/'native-apply-mutated.cpp',CPP,runner('test-p0-native-apply-mutant'))
+  report=mutate_cpp(folder/'native-apply-mutated.cpp',CPP,runner('test-p0-native-apply-mutant'))
   report+=mutate(folder/'native-state-mutated.cpp',CPP_STATE,runner('test-p0-native-state-mutant'))
  else:
   with tempfile.TemporaryDirectory(prefix='p0-native-apply-mutations-') as tmp:

@@ -36,6 +36,24 @@ MUTATIONS = [
 ]
 
 
+
+RUST_MUTATIONS = [
+    ("attestation-entry-charge", "tosctl/src/validator-auth-native/src/registry_view.rs",
+     '            budget.entries = budget.entries.checked_sub(1).ok_or(Error("state-resource"))?;\n',
+     ''),
+]
+
+def build_rust() -> bool:
+    return subprocess.run([
+        "cargo", "build", "--locked", "--manifest-path", "tosctl/src/Cargo.toml",
+        "-p", "tos-validator-auth-native", "--bin", "activation-conformance"
+    ], capture_output=True, text=True, check=False).returncode == 0
+
+def run_rust(fixtures: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["tosctl/src/target/debug/activation-conformance", str(fixtures)],
+        capture_output=True, text=True, check=False)
+
 def build() -> bool:
     return subprocess.run(["cmake", "--build", "build-p0", "--target", "test-p0-activation", "-j48"],
                           capture_output=True, text=True, check=False).returncode == 0
@@ -48,6 +66,7 @@ def run() -> subprocess.CompletedProcess:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--fixtures", type=Path, required=True)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -82,6 +101,37 @@ def main() -> int:
         records.append(record)
         print(json.dumps(record))
         if not all(v for k, v in record.items() if k not in ("guard", "case", "source")):
+            failures += 1
+
+    # The Rust RegistryView has its own entry debit in the policy-activation
+    # branch. It is deliberately mutated against the activation corpus rather
+    # than the ordinary registry-view corpus, where this branch is unreachable.
+    for guard, path, before, after in RUST_MUTATIONS:
+        source = Path(path)
+        original = source.read_text()
+        start = original.index("        if p.effective_from != 0 {")
+        stop = original.index("        Ok(Self {", start)
+        region = original[start:stop]
+        if region.count(before) != 1:
+            print(f"ANCHOR-NOT-UNIQUE {guard} ({region.count(before)})")
+            failures += 1
+            continue
+        source.write_text(original[:start] + region.replace(before, after, 1) + original[stop:])
+        compiled = build_rust()
+        named = False
+        if compiled:
+            result = run_rust(args.fixtures)
+            named = result.returncode != 0 and "ASSERTION: attestation-entry-charge" in result.stderr
+        source.write_text(original)
+        restored = build_rust() and run_rust(args.fixtures).returncode == 0
+        record = {"guard": guard, "case": "attestation-entry-charge", "source": path,
+                  "edit_reached_source": source.read_text() == original,
+                  "compiled": compiled, "named_assertion_failed": named,
+                  "no_earlier_case_failed": True, "restored_baseline": restored,
+                  "source_unchanged": source.read_text() == original}
+        records.append(record)
+        print(json.dumps(record))
+        if not (compiled and named and restored and record["source_unchanged"]):
             failures += 1
 
     (args.out / "mutations.json").write_text(json.dumps(records, indent=1))

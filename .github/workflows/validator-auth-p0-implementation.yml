@@ -877,7 +877,7 @@ jobs:
             artifacts/activation-sanitized | tee artifacts/activation-sanitized.txt
           diff -r artifacts/activation artifacts/activation-sanitized
           tosctl/src/target/debug/activation-conformance artifacts/activation | tee artifacts/activation-rust.txt
-          python3 test/validator-auth-implementation/activation_mutations.py --out artifacts/activation-mutations
+          python3 test/validator-auth-implementation/activation_mutations.py             --fixtures artifacts/activation --out artifacts/activation-mutations
           git diff --exit-code
 
       - name: Measure what post-quantum key material would cost
