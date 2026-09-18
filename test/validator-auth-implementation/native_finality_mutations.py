@@ -16,6 +16,27 @@ SOURCE = ROOT / "validator/auth/native-finality.cpp"
 
 MUTATIONS = [
     (
+        "genesis-zero-coordinate",
+        "configured_genesis_must_name_exact_zero_block",
+        "guard-disable",
+        "        genesis.block.id.seqno != 0 ||\n",
+        "",
+    ),
+    (
+        "genesis-chain-coordinate",
+        "configured_genesis_must_match_chain_coordinates",
+        "guard-disable",
+        "        genesis.block.file_hash != file)\n",
+        "        false)\n",
+    ),
+    (
+        "genesis-state-binding",
+        "configured_genesis_must_match_state_root",
+        "guard-disable",
+        "        state_hash != chain_.genesis_root)\n",
+        "        false)\n",
+    ),
+    (
         "final-signature-kind",
         "final_signature_set_required",
         "guard-disable",

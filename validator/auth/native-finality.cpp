@@ -53,56 +53,81 @@ NativeFinalizedHeadEstablisher::establish() {
   if (observed.value().peer_claim)
     return Error{"finalized-head-peer-claim"};
 
-  const NativeHeadCandidate* candidate = nullptr;
-  if (observed.value().finality_candidate)
-    candidate = &*observed.value().finality_candidate;
-  else
+  Anchor anchor_value{};
+  td::Ref<vm::Cell> resulting_state;
+
+  if (observed.value().finality_candidate) {
+    const auto& candidate = *observed.value().finality_candidate;
+    auto anchor =
+        native_masterchain_block_anchor(
+            candidate.block, chain_.network);
+    if (!anchor.ok())
+      return anchor.error();
+
+    const auto resulting_hash =
+        cell_hash(candidate.resulting_state);
+    if (candidate.resulting_state.is_null() ||
+        candidate.resulting_state->get_level() != 0 ||
+        resulting_hash != anchor.value().state_)
+      return Error{"finalized-head-state-binding"};
+
+    const auto id = block_id(anchor.value());
+    auto verified = source_.verify_signatures(id);
+    if (!verified.ok())
+      return verified.error();
+
+    if (verified.value().block != id)
+      return Error{"finalized-head-signature-binding"};
+
+    if (verified.value().kind !=
+        NativeSignatureSetKind::final)
+      return Error{"finalized-head-approval-only"};
+
+    if (verified.value().total_weight == 0 ||
+        verified.value().signed_weight >
+            verified.value().total_weight ||
+        !tos::has_quorum(
+            verified.value().signed_weight,
+            verified.value().total_weight))
+      return Error{"finalized-head-quorum"};
+
+    anchor_value = anchor.value();
+    resulting_state = candidate.resulting_state;
+  } else if (observed.value().configured_genesis) {
+    const auto& genesis = *observed.value().configured_genesis;
+    const auto root = td::Bits256(td::ConstBitPtr(chain_.genesis_root.data()));
+    const auto file = td::Bits256(td::ConstBitPtr(chain_.genesis_file.data()));
+    if (!genesis.block.is_masterchain_ext() ||
+        genesis.block.id.seqno != 0 ||
+        genesis.block.root_hash != root ||
+        genesis.block.file_hash != file)
+      return Error{"finalized-head-genesis-binding"};
+
+    const auto state_hash = cell_hash(genesis.resulting_state);
+    if (genesis.resulting_state.is_null() ||
+        genesis.resulting_state->get_level() != 0 ||
+        state_hash != chain_.genesis_root)
+      return Error{"finalized-head-genesis-state"};
+
+    anchor_value =
+        Anchor{0, chain_.genesis_root, chain_.genesis_file,
+               chain_.genesis_root};
+    resulting_state = genesis.resulting_state;
+  } else {
     return Error{"finalized-head-unavailable"};
-
-  auto anchor =
-      native_masterchain_block_anchor(
-          candidate->block, chain_.network);
-  if (!anchor.ok())
-    return anchor.error();
-
-  const auto resulting_hash =
-      cell_hash(candidate->resulting_state);
-  if (candidate->resulting_state.is_null() ||
-      candidate->resulting_state->get_level() != 0 ||
-      resulting_hash != anchor.value().state_)
-    return Error{"finalized-head-state-binding"};
-
-  const auto id = block_id(anchor.value());
-  auto verified = source_.verify_signatures(id);
-  if (!verified.ok())
-    return verified.error();
-
-  if (verified.value().block != id)
-    return Error{"finalized-head-signature-binding"};
-
-  if (verified.value().kind !=
-      NativeSignatureSetKind::final)
-    return Error{"finalized-head-approval-only"};
-
-  if (verified.value().total_weight == 0 ||
-      verified.value().signed_weight >
-          verified.value().total_weight ||
-      !tos::has_quorum(
-          verified.value().signed_weight,
-          verified.value().total_weight))
-    return Error{"finalized-head-quorum"};
+  }
 
   if (current_) {
-    if (anchor.value().seqno_ < current_->seqno_)
+    if (anchor_value.seqno_ < current_->seqno_)
       return Error{"finalized-head-regression"};
-    if (anchor.value().seqno_ == current_->seqno_ &&
-        anchor.value() != *current_)
+    if (anchor_value.seqno_ == current_->seqno_ &&
+        anchor_value != *current_)
       return Error{"finalized-head-conflict"};
   }
 
-  current_ = anchor.value();
+  current_ = anchor_value;
   return EstablishedNativeHead(
-      anchor.value(), candidate->resulting_state, chain_);
+      anchor_value, std::move(resulting_state), chain_);
 }
 
 }  // namespace tos::auth

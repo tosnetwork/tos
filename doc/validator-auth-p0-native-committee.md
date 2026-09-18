@@ -202,3 +202,16 @@ activate a network. Elector/config execution, node session and consensus wiring,
 provider designation reconciliation and multi-node acceptance are subsequent
 integration boundaries. Native support advertisement remains disabled until those
 boundaries are complete.
+
+
+## Finalized-head bootstrap at genesis
+
+Session-birth admission cannot use an applied masterchain tip as a substitute for
+an independently finalized head. Before the first signed masterchain block there
+is exactly one exception: the zero state named by the operator-configured chain
+context. The finalized-head establisher accepts it without signatures only when
+the block is masterchain seqno zero, its root and file hashes equal the context's
+genesis coordinates, and the supplied state hashes to that same genesis root.
+Every non-genesis advancement still requires a final signature set and quorum.
+This keeps P0 genesis startable without turning the unsigned-bootstrap rule into
+a fallback for ordinary blocks.

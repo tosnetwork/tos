@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -38,6 +39,20 @@ T canonical(const T& value, const std::string& assertion) {
   auto roundtrip = require_value(auth::encode(decoded), assertion);
   require(roundtrip == raw, assertion);
   return decoded;
+}
+
+auth::Hash hash_of(const td::Ref<vm::Cell>& cell) {
+  auth::Hash out{};
+  auto hash = cell->get_hash();
+  auto bytes = hash.as_slice();
+  std::copy(bytes.ubegin(), bytes.uend(), out.begin());
+  return out;
+}
+
+tos::BlockIdExt genesis_id(const auth::ChainContext& chain) {
+  return {{tos::masterchainId, tos::shardIdAll, 0},
+          td::Bits256(td::ConstBitPtr(chain.genesis_root.data())),
+          td::Bits256(td::ConstBitPtr(chain.genesis_file.data()))};
 }
 
 auth::NativeHeadCandidate candidate(
@@ -88,6 +103,90 @@ std::vector<Test> tests(
   auto add = [&](std::string name, std::function<void()> fn) {
     result.emplace_back(std::move(name), std::move(fn));
   };
+
+  add("configured_genesis_is_the_unsigned_initial_head", [=] {
+    auto data = history_fixture::make_fixture(owner, committee);
+    auto state = vm::CellBuilder().store_long(0x51, 8).finalize();
+    auto chain = data.chain;
+    chain.genesis_root = hash_of(state);
+    chain.genesis_file = history_fixture::h(201);
+    Source source;
+    source.observation.configured_genesis =
+        auth::NativeGenesisHeadCandidate{genesis_id(chain), state};
+    auto value = establisher(
+        chain, source, "configured_genesis_is_the_unsigned_initial_head");
+    auto established = value->establish();
+    require(
+        established.ok() &&
+            established.value().anchor() ==
+                auth::Anchor{0, chain.genesis_root, chain.genesis_file,
+                             chain.genesis_root} &&
+            established.value().state()->get_hash() == state->get_hash() &&
+            source.verify_calls == 0,
+        "configured_genesis_is_the_unsigned_initial_head");
+  });
+
+  add("configured_genesis_must_name_exact_zero_block", [=] {
+    auto data = history_fixture::make_fixture(owner, committee);
+    auto state = vm::CellBuilder().store_long(0x52, 8).finalize();
+    auto chain = data.chain;
+    chain.genesis_root = hash_of(state);
+    chain.genesis_file = history_fixture::h(202);
+    auto id = genesis_id(chain);
+    id.id.seqno = 1;
+    Source source;
+    source.observation.configured_genesis =
+        auth::NativeGenesisHeadCandidate{id, state};
+    auto value = establisher(
+        chain, source, "configured_genesis_must_name_exact_zero_block");
+    auto established = value->establish();
+    require(
+        !established.ok() &&
+            established.error().code == "finalized-head-genesis-binding" &&
+            source.verify_calls == 0,
+        "configured_genesis_must_name_exact_zero_block");
+  });
+
+  add("configured_genesis_must_match_chain_coordinates", [=] {
+    auto data = history_fixture::make_fixture(owner, committee);
+    auto state = vm::CellBuilder().store_long(0x53, 8).finalize();
+    auto chain = data.chain;
+    chain.genesis_root = hash_of(state);
+    chain.genesis_file = history_fixture::h(203);
+    auto id = genesis_id(chain);
+    id.file_hash.as_mutable_slice()[0] ^= 1;
+    Source source;
+    source.observation.configured_genesis =
+        auth::NativeGenesisHeadCandidate{id, state};
+    auto value = establisher(
+        chain, source, "configured_genesis_must_match_chain_coordinates");
+    auto established = value->establish();
+    require(
+        !established.ok() &&
+            established.error().code == "finalized-head-genesis-binding" &&
+            source.verify_calls == 0,
+        "configured_genesis_must_match_chain_coordinates");
+  });
+
+  add("configured_genesis_must_match_state_root", [=] {
+    auto data = history_fixture::make_fixture(owner, committee);
+    auto state = vm::CellBuilder().store_long(0x54, 8).finalize();
+    auto other = vm::CellBuilder().store_long(0x55, 8).finalize();
+    auto chain = data.chain;
+    chain.genesis_root = hash_of(state);
+    chain.genesis_file = history_fixture::h(204);
+    Source source;
+    source.observation.configured_genesis =
+        auth::NativeGenesisHeadCandidate{genesis_id(chain), other};
+    auto value = establisher(
+        chain, source, "configured_genesis_must_match_state_root");
+    auto established = value->establish();
+    require(
+        !established.ok() &&
+            established.error().code == "finalized-head-genesis-state" &&
+            source.verify_calls == 0,
+        "configured_genesis_must_match_state_root");
+  });
 
   add("final_signature_set_required", [=] {
     auto data = history_fixture::make_fixture(owner, committee);

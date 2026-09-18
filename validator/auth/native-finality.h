@@ -14,7 +14,19 @@ struct NativeHeadCandidate {
   td::Ref<vm::Cell> resulting_state;
 };
 
+// The configured zero state is the one finalized head that needs no signature
+// set: its root/file coordinates are operator configuration already bound into
+// ChainContext. It is a separate type so a caller cannot accidentally label an
+// ordinary applied block as this exception.
+struct NativeGenesisHeadCandidate {
+  tos::BlockIdExt block;
+  td::Ref<vm::Cell> resulting_state;
+};
+
 struct NativeHeadObservation {
+  // The configured zero state, and only the configured zero state. Used before
+  // a first signed masterchain block exists.
+  std::optional<NativeGenesisHeadCandidate> configured_genesis;
   // Candidate backed by this node's finality-verification pipeline.
   std::optional<NativeHeadCandidate> finality_candidate;
   // Diagnostic/local tip only. The establisher must never substitute it when
