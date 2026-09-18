@@ -40,8 +40,8 @@
     "test/validator-auth-p0/contract_artifacts.py": "656f0b233e4ea06c92931df62a20496ca06d9e470efe63e5cd298c178631760b",
     "test/validator-auth-p0/differential.py": "364f71d86fb002669802102e43d9099734abff6e152abb9ebb57cd068383e39d",
     "test/validator-auth-p0/ed25519_oracle.py": "50a601b2c32b1b0589dcb08361050538c4a2501a67e84797085271d8c3ca9624",
-    "test/validator-auth-p0/freeze_record.py": "8e1f42e7c9f71c04dcf9d0c620d39cce401c1fba98ebea4cb3b6e9d9a9557c94",
-    "test/validator-auth-p0/golden.json.gz": "b01f5388705e120061b83c912759163d7d2fb677eeef10ca4d0b2d842bc47b61",
+    "test/validator-auth-p0/freeze_record.py": "697ac7ef6947196c4a76058b1557968eaba078040365c0cc90b39593381bc9fb",
+    "test/validator-auth-p0/golden.json.gz": "3c384901f49407d38175a8dd678211deaf0f051e551d76e8c0fd42ddf9a17e6e",
     "test/validator-auth-p0/lifecycle-api-golden.json": "83823c819d61b1c116d6712fcd487daf9ce500f0482db46ee2e45e8464a3ba79",
     "test/validator-auth-p0/lifecycle.py": "167c7e9ebb16e272b1e30acc0b36a03f7179d408622589ef7080ba9bfdb97ecd",
     "test/validator-auth-p0/mutations.py": "269d075b4ebd2d3916ca4eb32221e24bab12c4aea948a2a9682d4f7ace9593f4",
@@ -670,6 +670,22 @@
           "artifact": "test/validator-auth-p0/freeze_record.py",
           "previous_sha256": "be07fafcadf5fde3c7edc003e1bd2032fe1f7b6f5243548e83a6f8167e706c48",
           "sha256": "8e1f42e7c9f71c04dcf9d0c620d39cce401c1fba98ebea4cb3b6e9d9a9557c94"
+        }
+      ]
+    },
+    {
+      "authorization": "Phase 1B A1 revision-6 golden-vector regeneration (memo/Phase1B-A1-APPLY-RESULT-ANSWER.md): rebuild the profile-bound golden vectors (test/validator-auth-p0/golden.json.gz via vectors.py) against the revision-6 interface digest, completing the revision-6 reconciliation so unittest discover / test_profile passes; historical #11/#12 unchanged; no protocol change.",
+      "revision": 6,
+      "artifacts": [
+        {
+          "artifact": "test/validator-auth-p0/freeze_record.py",
+          "previous_sha256": "8e1f42e7c9f71c04dcf9d0c620d39cce401c1fba98ebea4cb3b6e9d9a9557c94",
+          "sha256": "697ac7ef6947196c4a76058b1557968eaba078040365c0cc90b39593381bc9fb"
+        },
+        {
+          "artifact": "test/validator-auth-p0/golden.json.gz",
+          "previous_sha256": "b01f5388705e120061b83c912759163d7d2fb677eeef10ca4d0b2d842bc47b61",
+          "sha256": "3c384901f49407d38175a8dd678211deaf0f051e551d76e8c0fd42ddf9a17e6e"
         }
       ]
     }
