@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "ed48c5bb1f3a6a88ef99197ada46065d302221d0831c9b0a2abf3daedba96267",
+    "doc/validator-auth-p0-native-insertions.json": "cf5f0c323aa5e012ea3ef9cedc69fe47dd806cb29f923fc911453a3a504341fe",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -494,6 +494,17 @@
       "scope": "Additive manager insertion text plus validator-manager/consensus ownership plumbing and evidence. Historical manager bytes, frozen profile semantics, activation policy and wire/schema allocations are unchanged.",
       "reason": "A bare nullable owner made every legacy validator group look like an unauthenticated P0 group and would have stopped validator consensus on chains where validator authentication is not active. The interface must carry activation requirement separately from capability presence.",
       "activation": "Unchanged. P0 v1 remains genesis-activated on networks that enable it; networks without the capability continue to use the historical validator consensus path."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "ed48c5bb1f3a6a88ef99197ada46065d302221d0831c9b0a2abf3daedba96267",
+      "sha256": "cf5f0c323aa5e012ea3ef9cedc69fe47dd806cb29f923fc911453a3a504341fe",
+      "authorization": "The owner supplied exact local reproductions for four red checks on head 17bff536a and authorized direct GitHub fixes without waiting for unavailable CI runners.",
+      "change": "Corrected three manager insertion offsets in the additive manifest to the byte positions reconstructed against the frozen original: 30578 to 30546, 129063 to 129298, and 136623 to 136858. The insertion texts and production manager bytes are unchanged. In the same repair round, the manager finality journal reader was made unambiguous and writes Bits256 through its writable data pointer; duplicated native-apply and Rust registry-view mutation anchors were split by their actual call sites and independently reachable cases; and the finality wiring checker was updated to the current validator_auth_groups_ready durable-finality gate with negative controls applied inside the exact regions they verify.",
+      "scope": "Frozen insertion bookkeeping plus implementation/build/test-harness corrections. No manager production byte is rewritten, no profile semantic or wire/API/schema allocation changes, and activation policy is unchanged.",
+      "reason": "The production manager remained a pure additive reconstruction, but three declared offsets no longer reconstructed its frozen baseline. Separately, two mutation harnesses had started matching two independent guards with one token anchor, and the finality source checker still asserted the pre-session-store gate name. Keeping those failures loud requires fixing the bookkeeping and splitting the evidence rather than widening ambiguous anchors.",
+      "activation": "Unchanged."
     }
   ],
   "implementation_evidence_update": {
