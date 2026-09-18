@@ -10,8 +10,8 @@ def verify(text):
  allocation=body.index('td::BufferSlice data{data_size}')
  if guard>=allocation:
   raise ValueError('bounded guard is after payload allocation')
- if 'archive entry exceeds bounded read allowance' not in body:
-  raise ValueError('bounded refusal missing')
+ if 'ErrorCode::protoviolation, "archive entry exceeds bounded read allowance"' not in body:
+  raise ValueError('bounded refusal must be terminal, not a notready fallback')
 def main():
  text=SOURCE.read_text();verify(text)
  changed=text.replace('if (static_cast<td::uint64>(data_size) > maximum_data_size) {',

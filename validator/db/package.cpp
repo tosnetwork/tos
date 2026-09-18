@@ -94,7 +94,7 @@ td::Result<std::pair<std::string, td::BufferSlice>> Package::read_bounded(
   auto fname_size = header[0] >> 16;
   auto data_size = header[1];
   if (static_cast<td::uint64>(data_size) > maximum_data_size) {
-    return td::Status::Error(ErrorCode::notready, "archive entry exceeds bounded read allowance");
+    return td::Status::Error(ErrorCode::protoviolation, "archive entry exceeds bounded read allowance");
   }
 
   std::string fname(fname_size, '\0');

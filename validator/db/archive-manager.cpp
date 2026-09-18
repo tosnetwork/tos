@@ -325,9 +325,11 @@ void ArchiveManager::get_temp_file_short_bounded_cont(FileReference ref_id, Pack
        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_ok()) {
           promise.set_value(R.move_as_ok());
-        } else {
+        } else if (R.error().code() == ErrorCode::notready) {
           td::actor::send_closure(SelfId, &ArchiveManager::get_temp_file_short_bounded_cont, std::move(ref_id), idx,
                                   maximum_data_size, std::move(promise));
+        } else {
+          promise.set_error(R.move_as_error());
         }
       });
   td::actor::send_closure(f->file_actor_id(), &ArchiveSlice::get_file_bounded, nullptr, ref_id, maximum_data_size,
@@ -375,6 +377,10 @@ void ArchiveManager::get_file_bounded(ConstBlockHandle handle, FileReference ref
                  file_actor = f.ok()->file_actor_id()](td::Result<td::BufferSlice> R) mutable {
         if (R.is_ok()) {
           promise.set_value(R.move_as_ok());
+          return;
+        }
+        if (R.error().code() != ErrorCode::notready) {
+          promise.set_error(R.move_as_error());
           return;
         }
         td::actor::send_closure(file_actor, &ArchiveSlice::get_file_bounded, std::move(handle), std::move(ref_id),
