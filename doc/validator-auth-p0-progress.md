@@ -53,14 +53,30 @@ Since that count (this note added 2026-09-18): the manager now derives the
 authenticated committee for a validator group rather than only confirming its
 identity, the committed session owner reaches the consensus bus, and the bus
 seats its members from that committee rather than from the manager's validator
-set -- the first of the remaining production-integration workstreams, "session
-consumes the authenticated committee", from memo/Phase1A.md. This is committee
-authority at session birth only. C0 certificate verification inside the
-consensus message flow, elector/registry operation closure, node-actor commit
-wiring, and a P0-enabled multi-node rehearsal remain, so the node-integration
-column is no longer "believed unchanged" but is still partial, and operational
-acceptance is still none. The 55-60% figure predates all of this and is not
-recounted here; read it as of 2026-09-14.
+set. That workstream -- "session consumes the authenticated committee",
+memo/Phase1A.md -- is now closed at `f83a8bc47` (adjudicated in
+memo/Phase1A-CLOSURE.md): the authenticated committee is the sole roster
+authority for validator-group creation, enforced once at `get_or_make_next_group`,
+the single `create_validator_group` boundary both the current-shard and
+future-shard callers route through; the group id and local membership are
+rebound to the authenticated set; inactive chains are unchanged. The actor edges
+are proven by static wiring checks with negative controls, not by a running
+actor -- the running proof is the later four-validator rehearsal.
+
+One follow-up, deliberately deferred to the node-actor / signer-permissioning
+work rather than reopening Phase 1A: on the future-shards path
+`mc_validator_adnl_id`, and through it `ShardBlockVerifier`, is still derived
+from the state's validator set even when the tentative group was refused for
+lack of an authenticated session. This is a validator-actor identity edge around
+the manager, not the group roster the Phase 1A invariant governs. Audit whether a
+P0-active `mc_validator_adnl_id`/`ShardBlockVerifier` activation must also derive
+from the committed session.
+
+Still ahead: C0 certificate verification inside the consensus message flow and
+signer permissioning (Phase 1B), elector/registry operation closure, node-actor
+commit wiring, and a P0-enabled multi-node rehearsal. Operational acceptance is
+still none. The 55-60% figure predates all of this and is not recounted here;
+read it as of 2026-09-14.
 
 ## Library stage
 
