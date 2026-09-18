@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "3abfbc723661c315f2528313c895a78156adbb8ede4517bce62c15cdaaf6af11",
+    "doc/validator-auth-p0-native-insertions.json": "c68f6be54e40df87217bf5fa8cb2ce7d6272de1da7146ac6394da35cd848d35e",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -450,6 +450,17 @@
       "scope": "Additive manager insertions plus local node-finality source wiring. Historical manager bytes are unchanged. No wire/API/schema/profile/activation allocation changes.",
       "reason": "Session-birth admission must consume an independently finalized head rather than the manager's applied tip. Final signatures and applied resulting state arrive on different asynchronous paths, so either one alone is insufficient authority and startup ordering must not drop the first verified receipt.",
       "activation": "Unchanged. The configured zero state is the sole unsigned bootstrap; every post-genesis finalized head still requires native final signatures and quorum."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "3abfbc723661c315f2528313c895a78156adbb8ede4517bce62c15cdaaf6af11",
+      "sha256": "c68f6be54e40df87217bf5fa8cb2ce7d6272de1da7146ac6394da35cd848d35e",
+      "authorization": "The owner authorized continuing Phase-one integration through durable finalized-head restart recovery before authenticated session ownership is attached to live validator groups.",
+      "change": "Re-derived the additive manager inventory. A post-genesis finalized head is no longer exposed to validator-auth consumers until its chain-bound journal write acknowledges. Restart decodes that journal, re-reads the exact recorded masterchain state and original block bytes, rebuilds the same finalized-head source, and waits for the manager's own contiguous masterchain sequence to catch up before exposing validator-auth authority. Finality receipts arriving during recovery stay deferred.",
+      "scope": "Additive manager insertions and local restart/recovery gating only. Historical manager bytes, wire/API/schema/profile allocations and consensus encodings are unchanged.",
+      "reason": "Authenticated session birth must survive all validators restarting together without either falling back to an unsigned applied tip or publishing a finalized head before the continuity record that makes it recoverable is durable.",
+      "activation": "Unchanged. The configured zero state remains the sole unsigned bootstrap; every post-genesis head still needs native final signatures and exact applied state/bytes."
     }
   ],
   "implementation_evidence_update": {
