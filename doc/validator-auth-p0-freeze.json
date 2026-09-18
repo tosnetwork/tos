@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "8205073faafe036b3df762f1f9b9fa615e8c70471aada60fa756680d23d3c36b",
+    "doc/validator-auth-p0-native-insertions.json": "6cb8b4848d5bdcf6ebde7a45a25d4d3f78475ac780aedacbca010432de47c07a",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -472,6 +472,17 @@
       "scope": "Additive manager insertions plus local archive-bound, StateDb provisioning and consensus-owner plumbing. Historical manager bytes and P0 profile/wire/schema allocations remain unchanged.",
       "reason": "Phase one requires a single authenticated session lifecycle from finalized history through consensus. A sidecar identity check or a group actor that can start before durable session admission would leave two independently plausible committee/session authorities and would not survive restart safely.",
       "activation": "Unchanged. P0 v1 remains genesis-activated only; the legacy unsafe local catchain session-id rewrite is refused while validator authentication is active rather than creating a second session identity."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "8205073faafe036b3df762f1f9b9fa615e8c70471aada60fa756680d23d3c36b",
+      "sha256": "6cb8b4848d5bdcf6ebde7a45a25d4d3f78475ac780aedacbca010432de47c07a",
+      "authorization": "The owner authorized continuing Phase-one coding and prioritizing the session-rotation first-block liveness boundary before exact-head CI cleanup.",
+      "change": "Re-derived the additive manager insertion inventory after making a strictly newer durable finalized-head publication an explicit release event for deferred validator-group admission. A transition block may be applied before its finality journal commits, so the manager can observe catchain N+1 while authenticated session birth still has only finalized catchain N and correctly refuses. When that transition block itself becomes the durable finalized head, one remembered group pass is retried after authenticated session termination processing. Exact duplicate finalized heads are no-ops, and same-head permanent session refusals remain suppressed by the recorded finalized sequence number. The stale source checker that described the removed sidecar session confirmation path was replaced with negative controls for the committed-session owner path and this finalized-head re-drive.",
+      "scope": "Additive manager insertion text, focused group-admission evidence, and implementation documentation. Historical manager bytes, frozen profile semantics, wire/API/schema allocations and activation policy are unchanged.",
+      "reason": "Without a retry on the transition block's own finality, every validator can apply the state that names the new session, refuse admission because independent finality still names the old session, and then wait for a new-session block that cannot be produced because no new-session group exists.",
+      "activation": "Unchanged. P0 v1 remains genesis-activated; this fixes normal catchain rotation after genesis rather than introducing migration activation."
     }
   ],
   "implementation_evidence_update": {
