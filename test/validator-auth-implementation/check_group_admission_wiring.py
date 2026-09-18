@@ -1,205 +1,148 @@
-"""Require the manager's session gate to derive a committee from its own anchor.
+"""Pin validator-group liveness to the current authenticated-session owner path.
 
-The manager decides whether a validator group may be created at all. Before it
-seats one, the committee that group would run under has to derive -- from the
-state the group's validator set was computed from, under an anchor this node
-established itself, against the chain context it read from its own zero state.
-
-Each of those is load-bearing, and each has a way of quietly going missing:
-
-* Without the call there is no gate at all, and a group is seated on whatever
-  the validator set says. What the call then applies is not visible from here --
-  it is in the confirmation, and its own suite and mutations pin that it derives
-  rather than describes. This file pins that the manager asks, asks once, asks
-  inside the activation gate, and hands over its own anchor and context; what
-  it must not do is answer the question itself, which is why reaching the
-  state-only admission from here fails even with the call still in place. That
-  subset was the actual state of this path for a while, and it admitted rosters
-  derivation refuses: the chain would not have run unauthenticated, it would
-  have stalled, with two admissions giving opposite answers about one set.
-* Without an independently established anchor the registry read is filed under
-  a coordinate somebody else chose. The anchor here is the node's own applied
-  masterchain block, which is why the fields are copied out of it rather than
-  assembled from anything a peer sent.
-* Without the node's own chain context the domain check confirms its own name,
-  because a context taken from the registry under inspection says whatever that
-  registry says.
-* And a gate that logs instead of refusing is not a gate. Both refusal paths
-  have to leave the shard unvalidated rather than continue into group creation.
-
-This file cannot be instantiated by any test here -- it is a member function of
-an actor that needs a database, a network and a chain -- so this reads it. That
-is weaker than executing it and is not a substitute for an end-to-end run; it is
-what can be checked before one exists.
+The production rule is now stronger than the old sidecar identity confirmation:
+an active P0 validator group may materialize only after session birth/committee
+admission and the durable CommittedNativeSession fence.  This checker pins the
+manager events that can release a remembered refusal, including the catchain
+transition case where an applied state is ahead of the independently finalized
+head.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MANAGER = "validator/manager.cpp"
-
-CONFIRM = "native_session_identity_confirms("
-# The established context, passed rather than constructed here.
-CONTEXT = "validator_auth_chain_.value()"
-CONTEXT_GUARD = "if (!validator_auth_chain_) {"
-# The anchor's fields, each read out of the node's own applied block, plus the
-# state root's own hash. A peer-supplied anchor would not name these.
-ANCHOR_SOURCES = (
-    "auth_anchor.seqno_ = last_masterchain_block_id_.id.seqno;",
-    "last_masterchain_block_id_.root_hash.as_slice()",
-    "last_masterchain_block_id_.file_hash.as_slice()",
-    "state_root->get_hash().as_slice()",
-)
-# The subset this gate used to apply. Reaching it here again is the regression,
-# and it is a regression whether or not the derivation stays beside it.
-SUBSET = "admit_masterchain_state("
-# The refusal has to be remembered and the read asked for again. Group creation
-# is otherwise driven by a new masterchain block, and a chain whose validators
-# are all refusing produces none -- so a refusal that records nothing is a chain
-# that never starts.
-DEFER = "validator_auth_admission_.defer_groups();"
-ASK_AGAIN = "establish_validator_auth_chain();"
-BACKOFF_GATE = "!validator_auth_chain_retry_.read_may_start()"
-RETRY_FAILED = "validator_auth_chain_retry_.failed()"
-RETRY_DUE = "validator_auth_chain_retry_.due(generation)"
-RETRY_SUCCESS = "validator_auth_chain_retry_.succeeded()"
-# And the two arrivals that can release it, each creating what was refused.
-RELEASE = "validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))"
-BARRIER = "validator_auth_admission_.cleanup_records_loaded();"
-DRIVE = "update_shards();"
-REFUSAL = "continue;"
-STAND_DOWN = "--(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);"
+MANAGER = ROOT / "validator/manager.cpp"
 
 
-def gate(text: str) -> str:
-    """The region from the activation gate to the group lookup that follows it."""
-    start = text.find("if (tos::auth::native_session_binding_active(")
-    if start < 0:
-        return ""
-    end = text.find("if (destroyed_validator_sessions_.contains(", start)
-    return text[start:end] if end > start else ""
+def section(text: str, begin: str, end: str) -> str:
+    i = text.index(begin)
+    j = text.index(end, i)
+    return text[i:j]
 
 
-def verify(files: dict[str, str]) -> None:
-    text = files[MANAGER]
-    if text.count(CONFIRM) != 1:
-        raise ValueError("the manager does not confirm a session exactly once")
-    region = gate(text)
-    if not region:
-        raise ValueError("the manager's session gate cannot be located")
-    if CONFIRM not in region:
-        raise ValueError("the session confirmation is outside the activation gate")
-    if SUBSET in text:
-        raise ValueError("the manager admits a state beside the committee it derives")
-    if CONTEXT not in region:
-        raise ValueError("the confirmation is not given this node's own chain context")
-    if CONTEXT_GUARD not in region:
-        raise ValueError("a missing chain context does not stop the session")
-    for source in ANCHOR_SOURCES:
-        if source not in region:
-            raise ValueError(f"the anchor is not built from {source}")
-    # Two refusals: no context, and a committee that does not derive or confirm.
-    # Each has to stand the shard down and leave, not log and carry on.
-    if region.count(REFUSAL) < 2 or region.count(STAND_DOWN) < 2:
-        raise ValueError("a refused session does not leave the shard unvalidated")
-    # A refusal for a missing context has to be remembered and has to ask again.
-    if DEFER not in region:
-        raise ValueError("a session refused for a missing context is not remembered")
-    if ASK_AGAIN not in region:
-        raise ValueError("a session refused for a missing context does not ask for one again")
-    for token, reason in (
-        (BACKOFF_GATE, "the manager can bypass a scheduled chain-context retry"),
-        (RETRY_FAILED, "a failed read does not create the one retry ticket"),
-        (RETRY_DUE, "a delayed retry is not generation-bound"),
-        (RETRY_SUCCESS, "a successful read does not reset retry state"),
+def verify(text: str) -> None:
+    gate = section(
+        text,
+        "// P0 is genesis-activated.",
+        "if (destroyed_validator_sessions_.contains(val_group_id))",
+    )
+    for token in (
+        "validator_auth_groups_ready()",
+        "validator_auth_admission_.defer_groups();",
+        "ensure_validator_auth_session_store();",
+        "ensure_validator_auth_session(",
+        "active_validator_groups_master_ : active_validator_groups_shard_",
     ):
-        if token not in text:
-            raise ValueError(reason)
-    # And both arrivals have to create what was refused, each from the one place
-    # that decides it rather than from a rule written twice.
-    if text.count(RELEASE) != 2:
-        raise ValueError("the deferred groups are not created on both arrivals")
-    if BARRIER not in text:
-        raise ValueError("the startup barrier is not recorded")
-    for arrival in (BARRIER, "validator_auth_chain_ = chain.value();"):
-        after = text.find(arrival)
-        if after < 0 or text.find(RELEASE, after) < 0 or text.find(DRIVE, text.find(RELEASE, after)) < 0:
-            raise ValueError(f"nothing creates the deferred groups after {arrival}")
+        if token not in gate:
+            raise ValueError("active-group-gate-" + token)
+
+    admission = section(
+        text,
+        "void ValidatorManagerImpl::fail_validator_auth_session_admission",
+        "void ValidatorManagerImpl::establish_validator_auth_chain",
+    )
+    for token in (
+        "validator_auth_session_refused_at_[session_id]",
+        "validator_auth_admission_.defer_groups();",
+        "refused->second >= validator_auth_finalized_anchor_->seqno_",
+        "NativeSessionCommitteeAdmission",
+        "CommittedNativeSession::restart",
+        "CommittedNativeSession::commit_new",
+    ):
+        if token not in admission:
+            raise ValueError("session-admission-" + token)
+
+    publish = section(
+        text,
+        "void ValidatorManagerImpl::publish_validator_auth_finalized_head",
+        "void ValidatorManagerImpl::validator_auth_finality_journal_written",
+    )
+    same = "if (anchor.seqno_ == validator_auth_finalized_anchor_->seqno_)"
+    if same not in publish:
+        raise ValueError("same-finalized-head-is-not-deduplicated")
+    same_body = publish[publish.index(same):]
+    if "return;" not in same_body[:700]:
+        raise ValueError("duplicate-finalized-head-can-redrive")
+    for token in (
+        "release_terminated_validator_auth_sessions();",
+        "validator_auth_admission_.create_deferred_groups(",
+        "validator_auth_groups_ready()",
+        "update_shards();",
+    ):
+        if token not in publish:
+            raise ValueError("finalized-head-redrive-" + token)
+    if publish.index("release_terminated_validator_auth_sessions();") > publish.index("update_shards();"):
+        raise ValueError("terminated-owner-released-after-redrive")
+
+    cleanup = section(
+        text,
+        "void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup",
+        "void ValidatorManagerImpl::sweep_destroyed_consensus_dbs",
+    )
+    if "validator_auth_admission_.cleanup_records_loaded();" not in cleanup:
+        raise ValueError("cleanup-startup-barrier-missing")
+
+    # Store provisioning is the other asynchronous startup condition. Both the
+    # reopen and marker-commit paths must be able to release a remembered pass.
+    store = section(
+        text,
+        "void ValidatorManagerImpl::validator_auth_session_store_marker_written",
+        "tos::BlockIdExt ValidatorManagerImpl::validator_auth_session_block_id",
+    )
+    if store.count("validator_auth_admission_.create_deferred_groups(") < 2:
+        raise ValueError("session-store-arrivals-do-not-redrive")
 
 
-def main() -> int:
-    files = {MANAGER: (ROOT / MANAGER).read_text()}
+def main() -> None:
+    text = MANAGER.read_text()
+    verify(text)
 
-    # A silent checker is not evidence: prove each rule fails when its subject
-    # is removed, using the same text the rule is about.
-    #
-    # Every probe edits inside the gate and splices it back. Editing the whole
-    # file instead removes the first match wherever it happens to be -- there
-    # are twenty-four `continue;` statements in this file and two of them are
-    # this gate's -- so a probe that looks like a removal changes nothing here
-    # and survives, which reads exactly like a rule that cannot be broken.
-    region = gate(files[MANAGER])
-    if not region:
-        raise RuntimeError("the gate this checker is about cannot be located")
-
-    def without(old: str, new: str = "", count: int = 1) -> dict[str, str]:
-        edited = region.replace(old, new, count)
-        if edited == region:
-            raise RuntimeError(f"a session admission negative control changed nothing: {old!r}")
-        return {MANAGER: files[MANAGER].replace(region, edited, 1)}
-
+    # A silent source checker is not evidence. Each removal below must make the
+    # same verifier reject the edited text.
     probes = (
-        # The confirmation disappearing, which is the gate disappearing: what
-        # remains is a group seated on whatever the validator set says.
-        without(CONFIRM, "skipped("),
-        # The context built here instead of established from the zero state, so
-        # the domain check confirms whatever the registry under inspection says.
-        without(CONTEXT, "tos::auth::ChainContext{}"),
-        # The window right after startup becoming a hole instead of a refusal.
-        without(CONTEXT_GUARD, "if (false) {"),
-        # The subset returning, beside the derivation rather than instead of it.
-        without(CONTEXT_GUARD, f"if (tos::auth::{SUBSET}last_masterchain_state_->root_cell()).ok()) {{"),
-        # Each anchor field taken from somewhere other than this node's block.
-        *(without(source, "/* removed */") for source in ANCHOR_SOURCES),
-        # And the refusals turning into log lines.
-        without(STAND_DOWN, "", 2),
-        without(REFUSAL, "", 2),
-        # The refusal that records nothing, and the one that never asks again:
-        # either way the groups are refused once and no second attempt is made.
-        without(DEFER),
-        without(ASK_AGAIN),
+        "validator_auth_session_refused_at_[session_id]",
+        "refused->second >= validator_auth_finalized_anchor_->seqno_",
+        "release_terminated_validator_auth_sessions();",
+        "validator_auth finalized head advanced; retrying deferred validator groups",
+        "validator_auth_admission_.cleanup_records_loaded();",
     )
-    # The arrivals are outside the gate region, so those probes edit the file.
-    probes += (
-        {MANAGER: files[MANAGER].replace(RELEASE, "false", 1)},
-        {MANAGER: files[MANAGER].replace(RELEASE, "false")},
-        {MANAGER: files[MANAGER].replace(BARRIER, "", 1)},
-        {MANAGER: files[MANAGER].replace(BACKOFF_GATE, "false", 1)},
-        {MANAGER: files[MANAGER].replace(RETRY_FAILED, "std::optional<tos::auth::ChainContextRetryTicket>{}", 1)},
-        {MANAGER: files[MANAGER].replace(RETRY_DUE, "true", 1)},
-        {MANAGER: files[MANAGER].replace(RETRY_SUCCESS, "/* retry state left stale */", 1)},
-    )
-    for probe in probes:
-        if probe[MANAGER] == files[MANAGER]:
-            raise RuntimeError("a session admission negative control changed nothing")
+    for token in probes:
+        changed = text.replace(token, "/* removed */", 1)
+        if changed == text:
+            raise RuntimeError("negative control changed nothing: " + token)
         try:
-            verify(probe)
+            verify(changed)
         except ValueError:
             pass
         else:
-            raise RuntimeError("session admission negative control survived")
+            raise RuntimeError("negative control survived: " + token)
 
+    # Removing only the finalized-head retry, while leaving startup/store
+    # retries intact, is the exact first-block regression.
+    publish = section(
+        text,
+        "void ValidatorManagerImpl::publish_validator_auth_finalized_head",
+        "void ValidatorManagerImpl::validator_auth_finality_journal_written",
+    )
+    redrive = """  if (validator_auth_admission_.create_deferred_groups(
+          validator_auth_groups_ready())) {
+    LOG(INFO) << "validator-auth finalized head advanced; retrying deferred validator groups";
+    update_shards();
+  }
+"""
+    if redrive not in publish:
+        raise RuntimeError("finalized-head redrive anchor missing")
+    changed = text.replace(redrive, "", 1)
     try:
-        verify(files)
-    except ValueError as reason:
-        print(f"SESSION-ADMISSION-NOT-WIRED {reason}", file=sys.stderr)
-        return 1
-    print("PASS: the manager derives the committee a session would run under, from its own applied block and "
-          "its own chain context, and refuses the shard when it cannot")
-    return 0
+        verify(changed)
+    except ValueError:
+        pass
+    else:
+        raise RuntimeError("first-block liveness negative control survived")
+
+    print("PASS: deferred validator sessions are retried when their transition block becomes durably finalized")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

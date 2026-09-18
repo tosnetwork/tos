@@ -110,11 +110,10 @@ retry is scheduled, group admission cannot start an immediate read or schedule a
 second stream. Each timer carries the generation it owns, so delivery of an older
 timer cannot consume a newer retry, and success resets the delay.
 
-What this does not yet do is run the session under the derived committee. The
-committee is derived, its roster is required to be the one seated, and then it
-is discarded; the asynchronous admission that resolves a session's birth block
-and holds the committee for the session's lifetime exists and is not yet driven
-by the manager.
+The manager no longer discards this decision. The asynchronous birth/committee
+admission is driven before a P0 validator group can materialize, the resulting
+native session id must equal the manager's canonical ValidatorSessionId, and the
+same durably committed owner is handed to the consensus Bus.
 
 ## Existing configuration JSON tools
 
@@ -254,10 +253,9 @@ creation until the manager's own contiguous last_masterchain_seqno_ has caught
 up to the recovered finalized anchor. Finality observations arriving during
 recovery are retained and replayed afterwards.
 
-The next boundary is session ownership: this recovered finalized head must drive
-NativeSessionCommitteeAdmission, and a validator group must not start until the
-resulting context has passed CommittedNativeSession's durable commit/restart
-fence.
+The recovered finalized head now drives NativeSessionCommitteeAdmission, and a
+validator group cannot start until the resulting context has passed
+CommittedNativeSession's durable commit/restart fence.
 
 
 ## Session-continuity store provisioning barrier
@@ -305,3 +303,27 @@ cannot retain it past chain-proven session termination.
 The historical unsafe catchain-rotation id rewrite is refused while P0 is
 active: P0 v1 is genesis-activated and defines one native session identity, not
 a local second identity for recovery.
+
+
+## Catchain transition first-block liveness
+
+A new session does not need to finalize its own first block before it can be
+authenticated. The previous session finalizes the transition masterchain block;
+the resulting state of that block already contains the new current catchain and
+validator set, so once that block itself is independently finalized it is a
+sufficient trusted tip for the new session's birth search.
+
+There was nevertheless a manager deadlock between application and finality.
+update_shards() can observe the transition state as soon as the block is applied,
+while the validator-auth finalized head still names its predecessor. Admission
+correctly returns session-birth-not-current at that moment and remembers the
+refusal. If all validators do that, the new session cannot produce another block
+to trigger the usual update_shards() retry.
+
+A strictly newer durable finalized-head publication now releases one remembered
+group pass after authenticated-session termination is processed. Exact duplicate
+heads are no-ops. A permanent refusal records the finalized sequence number, so
+the same authority coordinate cannot spin; it is eligible for another attempt
+only after the finalized head advances again. This makes the transition block's
+own finality, rather than a hypothetical first block from the new session, the
+event that starts the new validator group.

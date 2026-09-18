@@ -2382,9 +2382,12 @@ void ValidatorManagerImpl::publish_validator_auth_finalized_head(
     if (anchor.seqno_ < validator_auth_finalized_anchor_->seqno_) {
       return;
     }
-    if (anchor.seqno_ == validator_auth_finalized_anchor_->seqno_ &&
-        anchor != *validator_auth_finalized_anchor_) {
-      LOG(ERROR) << "validator-auth refusing conflicting finalized head at seqno " << anchor.seqno_;
+    if (anchor.seqno_ == validator_auth_finalized_anchor_->seqno_) {
+      if (anchor != *validator_auth_finalized_anchor_) {
+        LOG(ERROR) << "validator-auth refusing conflicting finalized head at seqno " << anchor.seqno_;
+      }
+      // An exact duplicate is not a new reason to retry a permanently refused
+      // session at the same authority coordinate.
       return;
     }
   }
@@ -2392,6 +2395,22 @@ void ValidatorManagerImpl::publish_validator_auth_finalized_head(
   validator_auth_finalized_state_ = std::move(state);
   release_terminated_validator_auth_sessions();
   maybe_finish_validator_auth_finality_recovery();
+
+  // Session rotation is visible in the resulting state of the transition
+  // masterchain block. update_shards() may see that applied state before the
+  // same block's finality receipt has been durably journaled; admission then
+  // correctly refuses because the independently-finalized head still names the
+  // old session. If every validator stops there, the new session cannot produce
+  // the block that would otherwise drive another update_shards() pass.
+  //
+  // The durable finalized-head advance is the missing event: retry exactly one
+  // deferred pass here. A refusal at this same head records refused_at and
+  // defers again, but the duplicate-head return above prevents a busy loop.
+  if (validator_auth_admission_.create_deferred_groups(
+          validator_auth_groups_ready())) {
+    LOG(INFO) << "validator-auth finalized head advanced; retrying deferred validator groups";
+    update_shards();
+  }
 }
 
 void ValidatorManagerImpl::validator_auth_finality_journal_written(

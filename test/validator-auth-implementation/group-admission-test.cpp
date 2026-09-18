@@ -101,6 +101,24 @@ int main() {
     ok("an-early-context-creates-nothing-before-the-records");
   }
 
+  // A catchain transition has a third arrival besides startup context/store
+  // readiness: the transition block can be applied before its finality is
+  // durably published. The first update pass then refuses the new session and
+  // remembers it. Once that same transition block becomes the independently
+  // finalized head, the remembered pass must run even if no new block can be
+  // produced yet by the new session.
+  {
+    GroupAdmissionGate gate;
+    gate.cleanup_records_loaded();
+    gate.defer_groups();
+    expect(gate.groups_deferred(), "a-new-finalized-head-redrives-the-transition-session");
+    expect(gate.create_deferred_groups(true), "a-new-finalized-head-redrives-the-transition-session");
+    expect(!gate.groups_deferred(), "a-new-finalized-head-redrives-the-transition-session");
+    // Re-publishing the same authority coordinate must not create a second pass.
+    expect(!gate.create_deferred_groups(true), "a-new-finalized-head-redrives-the-transition-session");
+    ok("a-new-finalized-head-redrives-the-transition-session");
+  }
+
   // The read that failed once has to be asked again, and the waiting has to
   // grow and then stop growing. A fixed retry hammers the archive that is
   // already failing; an unbounded one becomes a stall nobody is waiting for.
