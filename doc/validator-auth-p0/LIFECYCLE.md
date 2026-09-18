@@ -164,6 +164,21 @@ Policy changes require the trusted governance committee's current-policy quorum.
 Configuration-parameter changes require that quorum plus the normal
 configuration-voting rules, in that order and in two stages.
 
+A chain on which validator authentication is active but the configuration
+account lacks its committed registry checkpoint is a **fault state, not an
+authority state**. The account MAY remain readable and diagnosable, but the
+missing checkpoint MUST NOT authorize any state change. Every state-changing
+configuration path MUST refuse, including validator-set installation, registry
+updates, tick-tock persistence, configuration proposals, configuration-key
+actions and configuration-contract code replacement. In particular, neither a
+Config8 change that disables validator authentication nor a code replacement is
+an in-chain recovery path. Recovery from this state is out of band. Generic
+configuration writers MUST also refuse a change that would activate validator
+authentication on a chain where it is inactive; P0 activation in this profile is
+genesis-only. Any future migration or in-chain recovery procedure requires an
+explicitly reviewed profile revision rather than treating absence of the
+checkpoint as a credential.
+
 Normal voting runs unchanged until it reaches its threshold. At that point the
 proposal is not installed. Its persisted `wins` becomes 0xff, which marks it as
 awaiting governance; the marker is a value ordinary voting cannot reach, because

@@ -5,8 +5,8 @@ which states what each boundary implements and what it still owes. This file
 reports how far the whole of P0 has moved and what remains, so a reader does not
 have to reconstruct completion from the per-boundary table.
 
-Branch `feat/validator-auth-p0`, PR #111, draft. The design is v1 revision 4,
-fingerprint `8032aa88fe7ec289f81b7419b1f5e1a7f3f7aeb4b117c94c0a62d710ddb84ef1`.
+Branch `feat/validator-auth-p0`, PR #111, draft. The design is v1 revision 5,
+fingerprint `8d4c5dd7a410472956d8ea4b5ae1f76905a3492a0ad18a48efe52675b400f982`.
 Nothing here authorizes activation, allocates a PQ suite, or changes any frozen
 wire or API artifact.
 

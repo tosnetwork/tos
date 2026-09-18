@@ -2,7 +2,7 @@
 #pragma once
 #include "codec.h"
 namespace tos::auth {
-inline constexpr Hash interface_fingerprint{128,50,170,136,254,126,194,137,248,27,116,25,177,245,225,167,243,247,174,180,177,23,201,76,10,98,215,16,221,184,78,241};
+inline constexpr Hash interface_fingerprint{141,76,93,215,164,16,71,41,86,216,234,75,90,225,247,105,5,163,73,42,10,209,138,72,239,229,38,117,180,0,249,130};
 struct Suite {
   std::uint16_t suite_{};
   std::uint16_t parameters_{};

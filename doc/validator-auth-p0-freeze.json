@@ -1,7 +1,7 @@
 {
   "status": "design-frozen-not-activated",
   "version": 1,
-  "revision": 4,
+  "revision": 5,
   "authorization": "Owner explicitly requested design modification and freeze in the current task; max_validators fixed at 400.",
   "source_base": "73fdaf5746e6b84cb0f71f11d67a0bf0e579e80a",
   "prior_review_head": "23413e56814fbe709795e71e14897acb21d4c145",
@@ -16,15 +16,15 @@
   "artifact_sha256": {
     ".github/workflows/validator-auth-p0-profile.yml": "f03f7cb7cf9905666fe1e8205df739f26b0f5f528f46f378c6a2a0a118a05005",
     "doc/validator-auth-p0/ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
-    "doc/validator-auth-p0/API-CONTRACT.md": "daf59d84f7caac217c6614bafc0f56b0a1afbe49f35f30f63cb30e608c14e14e",
+    "doc/validator-auth-p0/API-CONTRACT.md": "589be5ce2e0e0422ebef063833552808af2cebb902f21be7fad30155f9334108",
     "doc/validator-auth-p0/CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
-    "doc/validator-auth-p0/LIFECYCLE.md": "94e4ae0afd9b71b861706f17fdb7d2d2ce4d12eb79626bbe4e95f097c949eaa5",
-    "doc/validator-auth-p0/OPEN-DECISIONS.md": "09f1454ab9773dd030658910a0895c5d579319156810b44c163e315281a2c0c8",
-    "doc/validator-auth-p0/README.md": "1abae4cdec2b54c4651d1e54d3c78a203efc7c78bfd068966ad43c9e182f591d",
+    "doc/validator-auth-p0/LIFECYCLE.md": "01b301b9ea62fc4c9161fd60dee32d129abf2e0a10ef44c4867eb66241ecf119",
+    "doc/validator-auth-p0/OPEN-DECISIONS.md": "bb32ce26041e562824cfd2f948b16b693b8466d6595f9d6810e89234bab93e90",
+    "doc/validator-auth-p0/README.md": "2fd2c7fd1950245ae77c1cc2ce616cabce5c6bb9a846cf46a32a5dfaf6a6b87c",
     "doc/validator-auth-p0/SIGNER.md": "3d904e29ab690364dde1759f80b4f0dff4cca115a0f2e3ec7397db5cffe6ea5f",
     "doc/validator-auth-p0/WIRE.md": "57b82384298fc73019765ab07823f8f736c17f230f724e6bdd1170348b94ed48",
     "doc/validator-auth-p0/canonical-schema.json": "40b801c7e79dbd02355ccf8e8b76689338ad396d49e2d2ce7d5241a2e92717b5",
-    "doc/validator-auth-p0/profile.json": "8032aa88fe7ec289f81b7419b1f5e1a7f3f7aeb4b117c94c0a62d710ddb84ef1",
+    "doc/validator-auth-p0/profile.json": "8d4c5dd7a410472956d8ea4b5ae1f76905a3492a0ad18a48efe52675b400f982",
     "doc/validator-auth-p0/signer-store.sql": "f89318b1d3334ae9c844cbe933425f765688613bf4181e7b312bfd0c7caa7e85",
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
@@ -37,11 +37,11 @@
     "test/validator-auth-p0/check_schema.py": "eb75c2ccc682df021d54a5dae79f9cd8a0ac3b246c5515c6c95db8617c606dde",
     "test/validator-auth-p0/codec.cpp": "d87bec46215699b09f861d5e0f86f8ac465c97314befdbf46ca3fbf592b556e2",
     "test/validator-auth-p0/codec.rs": "9ae980fa3dcf4636d94970a30984e9deeb5055563231aa03ded585de1a34aa17",
-    "test/validator-auth-p0/contract_artifacts.py": "4130cd81cb3c37f8c2ef6c74e360f1a2d02aefee668caafb216e81aed253e13b",
+    "test/validator-auth-p0/contract_artifacts.py": "9467431b54e932386cb7f763aff9c64b700ac7e5cb4599074414f2ca610cf8e5",
     "test/validator-auth-p0/differential.py": "364f71d86fb002669802102e43d9099734abff6e152abb9ebb57cd068383e39d",
     "test/validator-auth-p0/ed25519_oracle.py": "50a601b2c32b1b0589dcb08361050538c4a2501a67e84797085271d8c3ca9624",
-    "test/validator-auth-p0/freeze_record.py": "89dd10e3c519695fd26f2503131276b09a94bf573437f84f3cd8db80e8783078",
-    "test/validator-auth-p0/golden.json.gz": "fe8a2e698a2e5306eb51febd72fcd9a4012be71f103129972534bce8bbd4f5bb",
+    "test/validator-auth-p0/freeze_record.py": "e802eea56474a8323107f9615dbd2dde38ced01856ecdf0371b3bd994f0f01d4",
+    "test/validator-auth-p0/golden.json.gz": "b01f5388705e120061b83c912759163d7d2fb677eeef10ca4d0b2d842bc47b61",
     "test/validator-auth-p0/lifecycle-api-golden.json": "83823c819d61b1c116d6712fcd487daf9ce500f0482db46ee2e45e8464a3ba79",
     "test/validator-auth-p0/lifecycle.py": "167c7e9ebb16e272b1e30acc0b36a03f7179d408622589ef7080ba9bfdb97ecd",
     "test/validator-auth-p0/mutations.py": "269d075b4ebd2d3916ca4eb32221e24bab12c4aea948a2a9682d4f7ace9593f4",
@@ -408,10 +408,31 @@
       "reason": "The previous retry delay was only a timer, not a gate. After a failure it cleared the in-flight flag, so the next group-admission pass immediately started another zero-state read and left the delayed timer behind.",
       "activation": "Unchanged. This is node startup liveness and load control; it allocates no suite and changes no activation threshold."
     }
+    ,
+    {
+      "profile_revision": 5,
+      "previous_profile_revision": 4,
+      "corrects": [32],
+      "change": "Made the checkpointless fail-closed rule normative and moved the profile identity from v1 revision 4 to v1 revision 5. The implementation and freeze evidence already refused every state-changing path when the committed registry checkpoint is missing; revision 5 puts that consensus-visible authority rule into LIFECYCLE.md, where independent implementations are required to read it.",
+      "artifacts": [
+        {"artifact": "doc/validator-auth-p0/LIFECYCLE.md", "previous_sha256": "94e4ae0afd9b71b861706f17fdb7d2d2ce4d12eb79626bbe4e95f097c949eaa5", "sha256": "01b301b9ea62fc4c9161fd60dee32d129abf2e0a10ef44c4867eb66241ecf119", "change": "Checkpointless active state is normatively fail-closed; recovery is out of band and generic activation is forbidden."},
+        {"artifact": "doc/validator-auth-p0/README.md", "previous_sha256": "1abae4cdec2b54c4651d1e54d3c78a203efc7c78bfd068966ad43c9e182f591d", "sha256": "2fd2c7fd1950245ae77c1cc2ce616cabce5c6bb9a846cf46a32a5dfaf6a6b87c", "change": "Profile identity line now reads v1 revision 5."},
+        {"artifact": "doc/validator-auth-p0/API-CONTRACT.md", "previous_sha256": "daf59d84f7caac217c6614bafc0f56b0a1afbe49f35f30f63cb30e608c14e14e", "sha256": "589be5ce2e0e0422ebef063833552808af2cebb902f21be7fad30155f9334108", "change": "Profile identity line now reads v1 revision 5."},
+        {"artifact": "doc/validator-auth-p0/OPEN-DECISIONS.md", "previous_sha256": "09f1454ab9773dd030658910a0895c5d579319156810b44c163e315281a2c0c8", "sha256": "bb32ce26041e562824cfd2f948b16b693b8466d6595f9d6810e89234bab93e90", "change": "Profile identity line now reads revision 5."},
+        {"artifact": "doc/validator-auth-p0/profile.json", "previous_sha256": "8032aa88fe7ec289f81b7419b1f5e1a7f3f7aeb4b117c94c0a62d710ddb84ef1", "sha256": "8d4c5dd7a410472956d8ea4b5ae1f76905a3492a0ad18a48efe52675b400f982", "change": "Revision 5 and the current normative artifact ledger."},
+        {"artifact": "test/validator-auth-p0/golden.json.gz", "previous_sha256": "fe8a2e698a2e5306eb51febd72fcd9a4012be71f103129972534bce8bbd4f5bb", "sha256": "b01f5388705e120061b83c912759163d7d2fb677eeef10ca4d0b2d842bc47b61", "change": "Public C0 vectors regenerated from the revision-5 interface digest."},
+        {"artifact": "test/validator-auth-p0/contract_artifacts.py", "previous_sha256": "4130cd81cb3c37f8c2ef6c74e360f1a2d02aefee668caafb216e81aed253e13b", "sha256": "9467431b54e932386cb7f763aff9c64b700ac7e5cb4599074414f2ca610cf8e5", "change": "The regeneration path now writes revision 5."},
+        {"artifact": "test/validator-auth-p0/freeze_record.py", "previous_sha256": "89dd10e3c519695fd26f2503131276b09a94bf573437f84f3cd8db80e8783078", "sha256": "e802eea56474a8323107f9615dbd2dde38ced01856ecdf0371b3bd994f0f01d4", "change": "The frozen-record writer now writes revision 5."}
+      ],
+      "scope": "Profile identity and checkpoint-fault lifecycle semantics. No wire constructor, binary field, schema type, API encoding, operation number, role, limit or transport value changes; version stays 1.",
+      "reason": "The missing-checkpoint rule decides whether consensus-visible state may change. Leaving it outside the normative profile would let implementations share one interface digest while disagreeing on recovery authority.",
+      "regeneration": "Public C0 vectors and generated C++/Rust digest readers are deterministic derivations of the reviewed profile bytes; no production authority signs them.",
+      "activation": "Unchanged. No pending approval was granted against revision 4; the same gates now stand against revision 5 and its interface digest."
+    }
   ],
   "implementation_evidence_update": {
     "authorization": "Owner requested complete P0 implementation, testing and local rehearsal, with implementation decisions delegated in the current task.",
-    "scope": "Evidence-only evolution for exact native Keyring guards, capability registration, additive elected identity/stake binding and registration of the already frozen Config46 schema; normative wire/API artifacts and fingerprint are unchanged. The focused native target compiles the production schema alone, because the profile grammar now lives there; the design artifact is bound to the exact inventoried insertion instead of being appended as a second definition. The manager now confirms the session identity it built against the authenticated producer before creating a validator group, as a declared insertion into validator/manager.cpp; the refusal is gated on the same activation the native committee path uses, so an unactivated chain is unaffected.",
+    "scope": "Evidence-only evolution for exact native Keyring guards, capability registration, additive elected identity/stake binding and registration of the already frozen Config46 schema; normative wire/API encodings are unchanged; the profile fingerprint moved to revision 5 because the checkpoint-fault lifecycle rule is now normative. The focused native target compiles the production schema alone, because the profile grammar now lives there; the design artifact is bound to the exact inventoried insertion instead of being appended as a second definition. The manager now confirms the session identity it built against the authenticated producer before creating a validator group, as a declared insertion into validator/manager.cpp; the refusal is gated on the same activation the native committee path uses, so an unactivated chain is unaffected.",
     "inventory": "doc/validator-auth-p0-native-insertions.json",
     "historical_baseline": "Original production-baseline.json hashes are retained; reconstruct original bytes by removing only the inventoried insertions.",
     "checks": "Original and inserted bytes have negative controls. Allocation checks reject capability or native descriptor collisions. Native CI compiles and exercises Keyring isolation, VM and transaction execution, independent native committee derivation, bounded authenticated registry views and minimal committee Merkle proofs. Native identity replay independently composes authenticated owner execution, PoP and current administration in C++ and Rust, including per-operation archive and due/policy boundary checks; native contract/node installation remains separate. Native finalized history adds independent C++/Rust original-block anchor resolution, 37 shared cases and 34 compiled guards; native archive access and finality establishment remain separate. Persistent native dictionaries preserve exact Config46 bytes with independently verified checkpoint indexes, bounded per-block work, 34 replay cases, eight checkpoint attacks, 74 authority cases and 36 compiled guards. Contract-owned persistence and global/native node application remain separate. Native configuration gates cover actual config admission and transition, frozen Config46 dispatch, version/capability requirements, the 400-validator ceiling and revision continuity. Complete registry and operation authorization remain independent. Immutable per-transaction registry prefixes match whole-block results across 80 real-owner cases, with cumulative budgets, checked one-per-block revisions and nine compiled controls. Native contract data/action commit wiring remains separate. Native VM host isolation adds 25 cross-language outcome/gas cases and 12 compiled controls; the host is not yet attached to actual configuration transactions. Fixed-surface native header witnesses add 25 cross-language cases, independent generators and 27 compiled controls, resolving authenticated state roots without archive/cache IO. Full native Ubuntu sanitizer outputs match. These are implementation boundaries, not native network acceptance. Native configuration account context adds 22 shared cases and 24 compiled controls over actual account ownership, complete checkpoints, validated caches and invocation binding. Transaction-contained native evidence adds 37 shared cases and 28 compiled controls, exact cross-language work-charge traces, canonical typed attachments and full owner-anchor authentication with no IO. Both have equal full-dependency Ubuntu sanitizer exports. Concrete host pricing and actual transaction commit remain separate. The frozen profile grammar is required to equal the declared block.tlb insertion, with controls for drift from either side, a removed insertion and a duplicated one. Both boundary controls were demonstrated on the new insertion: a changed original byte and a changed inserted byte are each refused."

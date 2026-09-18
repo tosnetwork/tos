@@ -264,7 +264,7 @@ def main(write=False):
                  if p.is_file() and p.name != 'profile.json'}
     profile_path = DOC/'profile.json'; profile = json.loads(profile_path.read_text())
     if write:
-        profile['revision'] = 4
+        profile['revision'] = 5
         profile['grammar'] = 'canonical-schema.json ordered field arrays; WIRE.md generated view'
         profile['operations']['cancel'] = 7
         profile['limits'].update(pending_per_identity=10, pending_per_role_profile=1, schedule_delay_mc_blocks=65536,

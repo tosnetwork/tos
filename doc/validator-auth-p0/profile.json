@@ -1,6 +1,6 @@
 {
   "profile": "TOS validator authentication P0 wire/API v1",
-  "revision": 4,
+  "revision": 5,
   "status": "design-frozen-not-activated",
   "source_base": "73fdaf5746e6b84cb0f71f11d67a0bf0e579e80a",
   "proposal_revision": "231570f4ae4511b5e42c6b8ce0fdb5576b2663d9",
@@ -72,11 +72,11 @@
   },
   "artifact_sha256": {
     "ACTIVATION.md": "a74450d93f3883a48783410614baa57a0a1e9de4f48bc680df5779a3af00179c",
-    "API-CONTRACT.md": "daf59d84f7caac217c6614bafc0f56b0a1afbe49f35f30f63cb30e608c14e14e",
+    "API-CONTRACT.md": "589be5ce2e0e0422ebef063833552808af2cebb902f21be7fad30155f9334108",
     "CLIENTS.md": "4d9f3486f215b1a2217096f0be118f9f00d1ff5c89c4aae221b04c85f09357cb",
-    "LIFECYCLE.md": "94e4ae0afd9b71b861706f17fdb7d2d2ce4d12eb79626bbe4e95f097c949eaa5",
-    "OPEN-DECISIONS.md": "09f1454ab9773dd030658910a0895c5d579319156810b44c163e315281a2c0c8",
-    "README.md": "1abae4cdec2b54c4651d1e54d3c78a203efc7c78bfd068966ad43c9e182f591d",
+    "LIFECYCLE.md": "01b301b9ea62fc4c9161fd60dee32d129abf2e0a10ef44c4867eb66241ecf119",
+    "OPEN-DECISIONS.md": "bb32ce26041e562824cfd2f948b16b693b8466d6595f9d6810e89234bab93e90",
+    "README.md": "2fd2c7fd1950245ae77c1cc2ce616cabce5c6bb9a846cf46a32a5dfaf6a6b87c",
     "SIGNER.md": "3d904e29ab690364dde1759f80b4f0dff4cca115a0f2e3ec7397db5cffe6ea5f",
     "WIRE.md": "57b82384298fc73019765ab07823f8f736c17f230f724e6bdd1170348b94ed48",
     "canonical-schema.json": "40b801c7e79dbd02355ccf8e8b76689338ad396d49e2d2ce7d5241a2e92717b5",
