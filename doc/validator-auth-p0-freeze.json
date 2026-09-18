@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "e7d5e4a20d9a6eabf4e65d1b3e3c9e4b19a3512d1fed4865c678520bc0b5efef",
+    "doc/validator-auth-p0-native-insertions.json": "af46085c761fe32c2452f1362787daa6210b19e3ce2b9ee7809dfe06fbd31adc",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -516,6 +516,17 @@
       "scope": "Additive manager insertion text plus the focused manager-group admission helper/tests and documentation. Original manager bytes, frozen profile semantics, wire/API/schema allocations and activation rules remain unchanged.",
       "reason": "Feature-inactive is a terminal answer, not a failed authority read, so retrying it forever is a liveness and operational-noise bug. Likewise, temporary control-plane inability to admit a new group is not chain evidence that an already-running same-id session retired; feeding that actor into the permanent retirement/destroyed-session path converts a transient refusal into an irreversible local fence.",
       "activation": "Unchanged. P0 v1 remains genesis-activated where enabled; legacy chains remain on the historical path."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "e7d5e4a20d9a6eabf4e65d1b3e3c9e4b19a3512d1fed4865c678520bc0b5efef",
+      "sha256": "af46085c761fe32c2452f1362787daa6210b19e3ce2b9ee7809dfe06fbd31adc",
+      "authorization": "Owner instruction to repair the red production-boundary check directly.",
+      "change": "Re-derived two declarations the boundary check was refusing. The manager insertion whose offset had been corrected without moving its text is now the slice that offset names: the two are halves of one window, and correcting one alone left the inventory describing bytes that are not there. The consensus bridge gained the declarations its added lines require; it carried none, so the boundary was refusing an undeclared edit to a whole-file-frozen source rather than a wrong one.",
+      "scope": "Inventory only. No production byte, profile artifact, wire/API encoding or activation rule changes; the bridge edit itself is unchanged and is now declared rather than undeclared.",
+      "reason": "check_production.py refused the inventory: one declared insertion did not match the bytes at its own offset, and one frozen file had changed with nothing declared for it. Both files reconstruct their historical bytes exactly under the corrected inventory, which the check now confirms across 29 whole files and 9 insertion files.",
+      "activation": "Unchanged."
     }
   ],
   "implementation_evidence_update": {

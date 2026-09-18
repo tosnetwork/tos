@@ -55,12 +55,41 @@ fn run() -> Result<(), String> {
             RegistryView::open(root.clone(), coordinate, StateReadBudget { entries: 64, bytes: 1 << 20 });
         check(view.is_ok() == accepted, &format!("view {}: {:?}", fields[2], view.as_ref().err()))?;
         if fields[2] == "an-attested-policy-governs-from-its-boundary" {
-            let one_entry =
-                RegistryView::open(root, coordinate, StateReadBudget { entries: 1, bytes: 1 << 20 });
+            let one_entry = RegistryView::open(
+                root.clone(),
+                coordinate,
+                StateReadBudget { entries: 1, bytes: 1 << 20 },
+            );
             check(
                 one_entry.err().map(|e| e.0) == Some("state-resource"),
                 "attestation-entry-charge",
             )?;
+            // The byte debit beside the entry debit. It shows only in what is
+            // left after a successful open, so this measures the spend and then
+            // requires that exact amount to be enough -- self-calibrating,
+            // because a build that stopped charging for the attestation reports
+            // a smaller spend and then cannot serve the read with it.
+            let generous = 1usize << 20;
+            let measured = RegistryView::open(
+                root.clone(),
+                coordinate,
+                StateReadBudget { entries: 64, bytes: generous },
+            )
+            .map_err(|e| e.0.to_owned())?;
+            let left = measured.remaining().map_err(|e| e.0.to_owned())?;
+            let spent = generous - left.bytes;
+            check(spent > 0, "attestation-byte-charge")?;
+            match RegistryView::open(
+                root,
+                coordinate,
+                StateReadBudget { entries: 64, bytes: spent },
+            ) {
+                Ok(view) => {
+                    let exact_left = view.remaining().map_err(|e| e.0.to_owned())?;
+                    check(exact_left.bytes == 0, "attestation-byte-charge")?;
+                }
+                Err(_) => check(false, "attestation-byte-charge")?,
+            }
         }
         if !accepted {
             refusals += 1;

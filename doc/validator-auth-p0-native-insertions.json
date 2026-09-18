@@ -107,7 +107,7 @@
    },
    {
     "offset": 30546,
-    "text": "  if (finality.block_id.is_masterchain() && finality.sig_set->is_final()) {\n    auto mc_state_q = Ref<MasterchainStateQ>(last_masterchain_state_);\n    auto next = mc_state_q->get_next_validator_set(finality.block_id.shard_full(),\n                                                   finality.sig_set->get_catchain_seqno());\n    auto current = mc_state_q->get_validator_set(finality.block_id.shard_full(),\n                                                 finality.sig_set->get_catchain_seqno());\n    auto receipt = co_await build_validator_auth_finality_receipt(\n                                finality.block_id, finality.sig_set, std::move(next), std::move(current))\n                                .wrap();\n    if (receipt.is_error()) {\n      LOG(ERROR) << \"validator-auth failed to reproduce accepted finality for \" << finality.block_id.to_str()\n                 << \": \" << receipt.move_as_error();\n    } else {\n      accept_validator_auth_finality_receipt(receipt.move_as_ok());\n    }\n  }\n\n"
+    "text": "  }\n\n  if (finality.block_id.is_masterchain() && finality.sig_set->is_final()) {\n    auto mc_state_q = Ref<MasterchainStateQ>(last_masterchain_state_);\n    auto next = mc_state_q->get_next_validator_set(finality.block_id.shard_full(),\n                                                   finality.sig_set->get_catchain_seqno());\n    auto current = mc_state_q->get_validator_set(finality.block_id.shard_full(),\n                                                 finality.sig_set->get_catchain_seqno());\n    auto receipt = co_await build_validator_auth_finality_receipt(\n                                finality.block_id, finality.sig_set, std::move(next), std::move(current))\n                                .wrap();\n    if (receipt.is_error()) {\n      LOG(ERROR) << \"validator-auth failed to reproduce accepted finality for \" << finality.block_id.to_str()\n                 << \": \" << receipt.move_as_error();\n    } else {\n      accept_validator_auth_finality_receipt(receipt.move_as_ok());\n    }\n"
    },
    {
     "offset": 106658,
@@ -264,6 +264,16 @@
    {
     "offset": 40076,
     "text": "      ;; a record that names an identity carries it in a reference; this walk\n      ;; only has to reach the end of the record, not to use what it finds\n      if (cs.slice_refs()) {\n        cs~load_ref();\n      }\n"
+   }
+  ],
+  "validator/consensus/bridge.cpp": [
+   {
+    "offset": 13807,
+    "text": "    if (!params_.local_id) {\n      start_bus(false, nullptr);\n      return;\n    }\n    td::actor::send_closure(\n        params_.manager, &ValidatorManager::get_validator_auth_session_owner, params_.session_id,\n        [SelfId = actor_id(this)](td::Result<ValidatorAuthSessionOwnership> ownership) mutable {\n          td::actor::send_closure(SelfId, &BridgeImpl::got_authenticated_session_owner, std::move(ownership));\n        });\n  }\n\n  void got_authenticated_session_owner(\n      td::Result<ValidatorAuthSessionOwnership> ownership) {\n    if (ownership.is_error()) {\n      LOG(ERROR) << \"refusing to start validator consensus because validator-auth ownership could not be classified: \"\n                 << ownership.move_as_error();\n      stop();\n      return;\n    }\n    auto resolved = ownership.move_as_ok();\n    if (resolved.required && !resolved.owner) {\n      LOG(ERROR) << \"refusing to start P0 validator consensus without a committed authenticated session\";\n      stop();\n      return;\n    }\n    start_bus(resolved.required, std::move(resolved.owner));\n  }\n\n  void start_bus(bool authenticated_session_required,\n                 std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session) {\n    if (authenticated_session_required && !authenticated_session) {\n      LOG(ERROR) << \"refusing to construct P0 validator bus without authenticated session owner\";\n      stop();\n      return;\n    }\n"
+   },
+   {
+    "offset": 15616,
+    "text": "    bus->authenticated_session_required = authenticated_session_required;\n    bus->authenticated_session = std::move(authenticated_session);\n"
    }
   ]
  }

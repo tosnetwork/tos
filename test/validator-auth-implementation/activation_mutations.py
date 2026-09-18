@@ -38,8 +38,17 @@ MUTATIONS = [
 
 
 RUST_MUTATIONS = [
-    ("attestation-entry-charge", "tosctl/src/validator-auth-native/src/registry_view.rs",
+    ("rust-attestation-entry-charge", "attestation-entry-charge",
+     "tosctl/src/validator-auth-native/src/registry_view.rs",
      '            budget.entries = budget.entries.checked_sub(1).ok_or(Error("state-resource"))?;\n',
+     ''),
+    # The byte debit beside it. Both charges in this branch belong here rather
+    # than with the ordinary registry-view mutations: each appears twice in the
+    # file, and the copy this one is about is the one the ordinary corpus cannot
+    # reach. The C++ view has the same pair, mutated the same way.
+    ("rust-attestation-byte-charge", "attestation-byte-charge",
+     "tosctl/src/validator-auth-native/src/registry_view.rs",
+     '            budget.bytes = budget.bytes.checked_sub(raw.len()).ok_or(Error("state-resource"))?;\n',
      ''),
 ]
 
@@ -106,7 +115,7 @@ def main() -> int:
     # The Rust RegistryView has its own entry debit in the policy-activation
     # branch. It is deliberately mutated against the activation corpus rather
     # than the ordinary registry-view corpus, where this branch is unreachable.
-    for guard, path, before, after in RUST_MUTATIONS:
+    for guard, case, path, before, after in RUST_MUTATIONS:
         source = Path(path)
         original = source.read_text()
         start = original.index("        if p.effective_from != 0 {")
@@ -121,10 +130,10 @@ def main() -> int:
         named = False
         if compiled:
             result = run_rust(args.fixtures)
-            named = result.returncode != 0 and "ASSERTION: attestation-entry-charge" in result.stderr
+            named = result.returncode != 0 and f"ASSERTION: {case}" in result.stderr
         source.write_text(original)
         restored = build_rust() and run_rust(args.fixtures).returncode == 0
-        record = {"guard": guard, "case": "attestation-entry-charge", "source": path,
+        record = {"guard": guard, "case": case, "source": path,
                   "edit_reached_source": source.read_text() == original,
                   "compiled": compiled, "named_assertion_failed": named,
                   "no_earlier_case_failed": True, "restored_baseline": restored,

@@ -1,7 +1,16 @@
 """Compile removals in each independent registry entry reader; require assertions."""
 import argparse,json,shutil,subprocess,tempfile
 from pathlib import Path
-from mutation_support import replace_once
+import re
+from mutation_support import replace_once, TOKEN
+
+# Guards the policy-activation branch repeats, so the bare anchor matches twice.
+TWINNED_RUST_GUARDS = {'view-budget-charge', 'entry-tail', 'dictionary-shape'}
+
+
+def matches(text, before):
+ """How many times the harness's own matcher would find this anchor."""
+ return len(list(re.finditer(r'\s*'.join(re.escape(t) for t in TOKEN.findall(before)), text)))
 ROOT=Path(__file__).resolve().parents[2]
 CPP=[
  ('view-entry-budget','if (budget_.entries == 0) return Error{"state-resource"};',''),
@@ -64,10 +73,24 @@ def mutations(source,build,execute,cases,out):
  baseline=run(original);assert baseline.returncode==0,baseline.stderr
  try:
   for label,before,after in cases:
-   if source.name == 'registry_view.rs' and label == 'view-budget-charge' and before.startswith('budget.entries ='):
+   if source.name=='registry_view.rs' and label in TWINNED_RUST_GUARDS:
+    # Four guards in this file exist twice: once in the ordinary entry read and
+    # once in the policy-activation branch, which reads an entry of its own the
+    # same way. The bare anchor therefore matches twice and the matcher refuses
+    # to guess, so these are mutated inside the ordinary read. The activation
+    # copies of the two budget debits are mutated against the activation corpus
+    # instead -- see activation_mutations.py -- because this corpus cannot reach
+    # that branch at all. The activation copies of the two shape checks are not
+    # yet mutated anywhere; that gap is recorded rather than hidden.
+    #
+    # The counts are asserted rather than assumed: if one of these stops being
+    # a twin, or the region moves, this fails loudly instead of silently
+    # mutating whichever copy the slice happened to contain.
     start=original.index('fn read<T: Wire>(')
     stop=original.index('impl RegistryView',start)
     region=original[start:stop]
+    if matches(original,before)!=2 or matches(region,before)!=1:
+     raise ValueError(('twinned-guard-moved',label,matches(original,before),matches(region,before)))
     changed=original[:start]+replace_once(region,before,after)+original[stop:]
    else:
     changed=replace_once(original,before,after)
