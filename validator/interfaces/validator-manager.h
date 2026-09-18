@@ -51,6 +51,14 @@ class CommittedNativeSession;
 
 namespace validator {
 
+struct ValidatorAuthSessionOwnership {
+  // False is the legacy/P0-inactive path: consensus may run with no native
+  // session capability. True means this validator session is P0-authenticated
+  // and owner must be non-null before validator consensus starts.
+  bool required = false;
+  std::shared_ptr<tos::auth::CommittedNativeSession> owner;
+};
+
 // Forward declaration: the full definition lives in validator/db/celldb.hpp.
 // The manager interface only exposes a
 // `create_celldb_streaming_writer_unsafe_for_tests_only` message
@@ -524,12 +532,13 @@ class ValidatorManager : public ValidatorManagerInterface {
     promise.set_value(nullptr);
   }
 
-  // Validator consensus receives the exact manager-owned authenticated session
-  // capability. A null result means this group has no admitted/committed P0
-  // session and therefore may not start as a validator.
+  // Validator consensus receives both the activation decision and, when P0 is
+  // active, the exact manager-owned authenticated session capability. Keeping
+  // the boolean explicit prevents a null owner from conflating "legacy chain,
+  // no capability required" with "P0 active, required capability missing".
   virtual void get_validator_auth_session_owner(
-      ValidatorSessionId, td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) {
-    promise.set_value(nullptr);
+      ValidatorSessionId, td::Promise<ValidatorAuthSessionOwnership> promise) {
+    promise.set_value(ValidatorAuthSessionOwnership{});
   }
 
   virtual void update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise) = 0;

@@ -104,7 +104,7 @@ def main() -> None:
         "validator_auth_session_refused_at_[session_id]",
         "refused->second >= validator_auth_finalized_anchor_->seqno_",
         "release_terminated_validator_auth_sessions();",
-        "validator_auth finalized head advanced; retrying deferred validator groups",
+        "validator-auth finalized head advanced; retrying deferred validator groups",
         "validator_auth_admission_.cleanup_records_loaded();",
     )
     for token in probes:

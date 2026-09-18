@@ -200,7 +200,9 @@ class Bus : public td::actor::Bus {
 
   ValidatorSessionId session_id;
   // The same committed authenticated-session owner held by ValidatorManager.
-  // Consensus never derives a committee beside it.
+  // Consensus never derives a committee beside it. The explicit required bit
+  // preserves legacy chains where P0 is inactive and no such owner exists.
+  bool authenticated_session_required = false;
   std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session;
 
   ShardIdFull shard;

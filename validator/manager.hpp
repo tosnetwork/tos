@@ -643,7 +643,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   }
   void get_validator_auth_session_owner(
       ValidatorSessionId session_id,
-      td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) override;
+      td::Promise<ValidatorAuthSessionOwnership> promise) override;
   td::optional<ValidatorAuthCollation> validator_auth_collation();
 
   td::optional<tos::auth::ChainContext> validator_auth_chain_;

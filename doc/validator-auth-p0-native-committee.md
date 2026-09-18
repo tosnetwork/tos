@@ -327,3 +327,18 @@ the same authority coordinate cannot spin; it is eligible for another attempt
 only after the finalized head advances again. This makes the transition block's
 own finality, rather than a hypothetical first block from the new session, the
 event that starts the new validator group.
+
+
+## Inactive-chain compatibility
+
+Consensus ownership is explicitly tri-stated at the manager boundary. The
+manager returns both whether authenticated-session ownership is required and the
+owner itself. On a P0-inactive chain required is false and a validator Bridge
+starts the historical consensus path without a native session capability. On an
+active P0 chain required is true and a missing or released owner refuses the
+validator Bus. A null pointer therefore never has to mean both "legacy feature
+not enabled" and "required authority missing".
+
+The consensus Bus retains the explicit required bit beside the optional owner so
+later signer/provider integration can preserve the same distinction instead of
+re-inferring activation from pointer presence.

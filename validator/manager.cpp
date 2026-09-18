@@ -3128,14 +3128,28 @@ void ValidatorManagerImpl::release_terminated_validator_auth_sessions() {
 
 void ValidatorManagerImpl::get_validator_auth_session_owner(
     ValidatorSessionId session_id,
-    td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) {
+    td::Promise<ValidatorAuthSessionOwnership> promise) {
+  if (last_masterchain_state_.is_null()) {
+    // A validator group cannot be safely classified before there is a state.
+    // Treat uncertainty as required-without-authority rather than accidentally
+    // opening the legacy path.
+    promise.set_value(ValidatorAuthSessionOwnership{true, nullptr});
+    return;
+  }
+  const bool required =
+      tos::auth::native_session_binding_active(last_masterchain_state_->root_cell());
+  if (!required) {
+    promise.set_value(ValidatorAuthSessionOwnership{false, nullptr});
+    return;
+  }
+
   auto it = validator_auth_sessions_.find(session_id);
   if (it == validator_auth_sessions_.end() || !it->second.owner ||
       !it->second.owner->retained()) {
-    promise.set_value(nullptr);
+    promise.set_value(ValidatorAuthSessionOwnership{true, nullptr});
     return;
   }
-  promise.set_value(it->second.owner);
+  promise.set_value(ValidatorAuthSessionOwnership{true, it->second.owner});
 }
 
 void ValidatorManagerImpl::establish_validator_auth_chain() {

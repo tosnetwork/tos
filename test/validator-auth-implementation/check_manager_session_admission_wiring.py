@@ -29,8 +29,10 @@ def verify(m=M,b=B,bus=BUS):
         raise ValueError('tentative-group-not-gated')
     owner=m[m.index('void ValidatorManagerImpl::get_validator_auth_session_owner'):
             m.index('void ValidatorManagerImpl::establish_validator_auth_chain')]
-    if 'promise.set_value(it->second.owner)' not in owner:
+    if 'ValidatorAuthSessionOwnership{true, it->second.owner}' not in owner:
         raise ValueError('manager-owner-not-returned')
+    if 'ValidatorAuthSessionOwnership{false, nullptr}' not in owner:
+        raise ValueError('inactive-chain-owner-not-optional')
     if 'get_validator_auth_session_owner' not in b or 'authenticated_session' not in bus:
         raise ValueError('consensus-owner-not-consumed')
 
@@ -44,7 +46,8 @@ def main():
         'selected.epoch.native_session_id != it->second.expected_manager_id',
         'release_if_terminated',
         '!validator_auth_sessions_.contains(id)',
-        'promise.set_value(it->second.owner)',
+        'ValidatorAuthSessionOwnership{true, it->second.owner}',
+        'ValidatorAuthSessionOwnership{false, nullptr}',
     ):
         changed=M.replace(token,'/* removed */',1)
         try: verify(m=changed)

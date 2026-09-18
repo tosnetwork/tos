@@ -348,36 +348,37 @@ class BridgeImpl final : public IValidatorGroup {
                                                                  params_.validator_opts);
 
     if (!params_.local_id) {
-      start_bus(nullptr);
+      start_bus(false, nullptr);
       return;
     }
     td::actor::send_closure(
         params_.manager, &ValidatorManager::get_validator_auth_session_owner, params_.session_id,
-        [SelfId = actor_id(this)](td::Result<std::shared_ptr<tos::auth::CommittedNativeSession>> owner) mutable {
-          td::actor::send_closure(SelfId, &BridgeImpl::got_authenticated_session_owner, std::move(owner));
+        [SelfId = actor_id(this)](td::Result<ValidatorAuthSessionOwnership> ownership) mutable {
+          td::actor::send_closure(SelfId, &BridgeImpl::got_authenticated_session_owner, std::move(ownership));
         });
   }
 
   void got_authenticated_session_owner(
-      td::Result<std::shared_ptr<tos::auth::CommittedNativeSession>> owner) {
-    if (owner.is_error()) {
-      LOG(ERROR) << "refusing to start validator consensus without a committed authenticated session: "
-                 << owner.move_as_error();
+      td::Result<ValidatorAuthSessionOwnership> ownership) {
+    if (ownership.is_error()) {
+      LOG(ERROR) << "refusing to start validator consensus because validator-auth ownership could not be classified: "
+                 << ownership.move_as_error();
       stop();
       return;
     }
-    auto authenticated_session = owner.move_as_ok();
-    if (!authenticated_session) {
-      LOG(ERROR) << "refusing to start validator consensus without a committed authenticated session";
+    auto resolved = ownership.move_as_ok();
+    if (resolved.required && !resolved.owner) {
+      LOG(ERROR) << "refusing to start P0 validator consensus without a committed authenticated session";
       stop();
       return;
     }
-    start_bus(std::move(authenticated_session));
+    start_bus(resolved.required, std::move(resolved.owner));
   }
 
-  void start_bus(std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session) {
-    if (params_.local_id && !authenticated_session) {
-      LOG(ERROR) << "refusing to construct validator bus without authenticated session owner";
+  void start_bus(bool authenticated_session_required,
+                 std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session) {
+    if (authenticated_session_required && !authenticated_session) {
+      LOG(ERROR) << "refusing to construct P0 validator bus without authenticated session owner";
       stop();
       return;
     }
@@ -427,6 +428,7 @@ class BridgeImpl final : public IValidatorGroup {
     current_noncritical_params_ = bus->config.noncritical_params;
 
     bus->session_id = params_.session_id;
+    bus->authenticated_session_required = authenticated_session_required;
     bus->authenticated_session = std::move(authenticated_session);
     bus->overlays = params_.overlays;
     bus->adnl_sender = params_.adnl_sender;
