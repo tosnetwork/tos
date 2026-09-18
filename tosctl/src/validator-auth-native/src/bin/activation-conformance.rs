@@ -26,7 +26,7 @@ fn run() -> Result<(), String> {
         .trim()
         .parse()
         .map_err(|_| "count")?;
-    check(count >= 5, "complete-corpus")?;
+    check(count >= 7, "complete-corpus")?;
     let mut refusals = 0;
     for i in 0..count {
         let meta = fs::read_to_string(path.join(format!("{i}.case"))).map_err(|e| e.to_string())?;
@@ -53,6 +53,23 @@ fn run() -> Result<(), String> {
         // would govern the chain under a policy the decoder calls illegitimate.
         let view =
             RegistryView::open(root.clone(), coordinate, StateReadBudget { entries: 64, bytes: 1 << 20 });
+        // Refused is not enough for the two malformed shapes. Each of them is
+        // refused by the statement after its own check as well -- a reference
+        // that cannot be drained, a leaf whose reference is not there -- for a
+        // reason that says nothing about the shape. The code is what tells the
+        // guard apart from its absence, so these name it.
+        let expected = match fields[2] {
+            "an-attestation-entry-with-a-tail-is-refused" => Some("policy-activation"),
+            "an-activation-dictionary-that-lies-about-itself-is-refused" => Some("dictionary-shape"),
+            _ => None,
+        };
+        if let Some(code) = expected {
+            check(view.as_ref().err().map(|e| e.0) == Some(code), fields[2])?;
+        }
+        // Asked before the refusal below, because one of the two opens
+        // successfully once its own check is gone: otherwise the generic
+        // refusal reports first under a different label, and which of the
+        // two fires would depend on which guard had been removed.
         check(view.is_ok() == accepted, &format!("view {}: {:?}", fields[2], view.as_ref().err()))?;
         if fields[2] == "an-attested-policy-governs-from-its-boundary" {
             let one_entry = RegistryView::open(
@@ -96,7 +113,7 @@ fn run() -> Result<(), String> {
         }
     }
     // A corpus this agreed with by accepting everything would agree with nothing.
-    check(refusals >= 3, "corpus-refusals")?;
+    check(refusals >= 5, "corpus-refusals")?;
     println!("PASS: independent policy attestation {count} cases, both readers");
     Ok(())
 }

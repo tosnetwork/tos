@@ -33,6 +33,21 @@ MUTATIONS = [
     ("attestation-byte-charge", "the-view-charges-the-attestation-it-read", "validator/auth/registry-view.cpp",
      '      result.budget_.bytes -= raw.value().size();\n',
      ''),
+    # The two shape checks this branch applies to the entry it reads. Each is
+    # written twice in the file -- once in the ordinary entry read, once here --
+    # so these anchors carry enough of their own branch to be unique, and the
+    # ordinary copies are mutated by the registry-view harness instead.
+    ("attestation-entry-tail", "an-attestation-entry-with-a-tail-is-refused",
+     "validator/auth/registry-view.cpp",
+     'leaf.is_null() || leaf->size() != 0 || leaf->size_refs() != 1',
+     'leaf.is_null()'),
+    ("attestation-dictionary-shape", "an-activation-dictionary-that-lies-about-itself-is-refused",
+     "validator/auth/registry-view.cpp",
+     'vm::CellSlice wrapper{vm::NoVm{}, control.fetch_ref()};\n'
+     '      if (!wrapper.is_valid() || wrapper.is_special() || wrapper.size() != 1 ||\n'
+     '          wrapper.size_refs() != wrapper.prefetch_ulong(1))\n'
+     '        return Error{"dictionary-shape"};',
+     'vm::CellSlice wrapper{vm::NoVm{}, control.fetch_ref()};'),
 ]
 
 
@@ -49,6 +64,22 @@ RUST_MUTATIONS = [
     ("rust-attestation-byte-charge", "attestation-byte-charge",
      "tosctl/src/validator-auth-native/src/registry_view.rs",
      '            budget.bytes = budget.bytes.checked_sub(raw.len()).ok_or(Error("state-resource"))?;\n',
+     ''),
+    # And the same two shape checks in the other reader, which asserts the exact
+    # refusal code for these corpus labels: both shapes are refused by the next
+    # statement too, so "refused" alone does not distinguish the guard from its
+    # absence.
+    ("rust-attestation-entry-tail", "an-attestation-entry-with-a-tail-is-refused",
+     "tosctl/src/validator-auth-native/src/registry_view.rs",
+     '            if leaf.remaining_bits() != 0 || leaf.remaining_references() != 1 {\n'
+     '                return Err(Error("policy-activation"));\n'
+     '            }\n',
+     ''),
+    ("rust-attestation-dictionary-shape", "an-activation-dictionary-that-lies-about-itself-is-refused",
+     "tosctl/src/validator-auth-native/src/registry_view.rs",
+     '            if wrapper.remaining_references() != usize::from(present) {\n'
+     '                return Err(Error("dictionary-shape"));\n'
+     '            }\n',
      ''),
 ]
 

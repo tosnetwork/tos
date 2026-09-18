@@ -45,8 +45,14 @@ struct Rebuilt {
   td::Ref<vm::Cell> root;
 };
 
+// How the control dictionary carrying the attestation is malformed, for the two
+// shape checks the activation branch applies to an entry of its own. Both are
+// unreachable from a well-formed corpus, and both are the kind of check that
+// reads as redundant next to the decoder above it.
+enum class Corrupt { none, leaf_tail, wrapper_shape };
+
 Rebuilt rebuild(const td::Ref<vm::Cell>& original, const Policy& added, const Hash& added_id,
-                const Activation* attestation) {
+                const Activation* attestation, Corrupt corrupt = Corrupt::none) {
   vm::CellSlice s{vm::NoVm{}, original};
   s.skip_first(48);
   Hash domain{}, fingerprint{}, current{};
@@ -76,10 +82,27 @@ Rebuilt rebuild(const td::Ref<vm::Cell>& original, const Policy& added, const Ha
     for (unsigned i = 0; i < 4; ++i)
       key[i] = static_cast<std::uint8_t>(attestation->effective_from_ >> (24 - i * 8));
     auto raw = value(pack_bytes(value(encode(*attestation), "fixture-activation")), "fixture-activation");
-    check(activations.set_ref(td::ConstBitPtr(key.data()), 32, raw, vm::Dictionary::SetMode::Add),
-          "fixture-activation");
+    if (corrupt == Corrupt::leaf_tail) {
+      // The entry still carries its reference, and one bit besides. Nothing
+      // downstream reads that bit; what the check refuses is an entry whose
+      // shape is not exactly the one this dictionary is defined to hold.
+      vm::CellBuilder leaf;
+      leaf.store_long(0, 1).store_ref(raw);
+      check(activations.set_builder(td::ConstBitPtr(key.data()), 32, leaf, vm::Dictionary::SetMode::Add),
+            "fixture-activation");
+    } else {
+      check(activations.set_ref(td::ConstBitPtr(key.data()), 32, raw, vm::Dictionary::SetMode::Add),
+            "fixture-activation");
+    }
     vm::CellBuilder wrapper;
-    check(wrapper.store_maybe_ref(activations.get_root_cell()), "fixture-activation");
+    if (corrupt == Corrupt::wrapper_shape) {
+      // Says a dictionary follows and carries none. The bit and the reference
+      // count are two statements about one fact, which is why the check
+      // compares them rather than trusting either.
+      wrapper.store_long(1, 1);
+    } else {
+      check(wrapper.store_maybe_ref(activations.get_root_cell()), "fixture-activation");
+    }
     vm::CellBuilder control_builder;
     control_builder.store_long(0x76616331, 32).store_ref(wrapper.finalize()).store_ref(observations);
     rebuilt_control = control_builder.finalize();
@@ -227,6 +250,37 @@ int main(int argc, char** argv) {
       expect(!mismatched.ok() && mismatched.error().code == "policy-activation",
              "the-view-refuses-what-the-decoder-refuses");
       ok("the-view-refuses-what-the-decoder-refuses");
+    }
+
+    // The two shape checks this branch applies to the entry it reads. They
+    // were the last guards here that no mutation could reach: in both readers
+    // the same shape is checked once in the ordinary entry read and once here,
+    // so the anchors matched twice and the harness refused to guess rather
+    // than mutate whichever copy it happened to find.
+    //
+    // Both readers answer about the same bytes, which is the point of
+    // recording them: a shape one accepts and the other refuses is a state the
+    // chain would disagree with itself about.
+    {
+      auto tailed = rebuild(original, next, next_id, &attestation, Corrupt::leaf_tail).root;
+      auto decoded = RegistryState::decode_cell(tailed, boundary + 10, budget);
+      expect(!decoded.ok(), "an-attestation-entry-with-a-tail-is-refused");
+      auto view = RegistryView::open(tailed, boundary + 10, budget);
+      expect(!view.ok() && view.error().code == "policy-activation",
+             "an-attestation-entry-with-a-tail-is-refused");
+      record(tailed, boundary + 10, false, "an-attestation-entry-with-a-tail-is-refused");
+      ok("an-attestation-entry-with-a-tail-is-refused");
+    }
+
+    {
+      auto shapeless = rebuild(original, next, next_id, &attestation, Corrupt::wrapper_shape).root;
+      auto decoded = RegistryState::decode_cell(shapeless, boundary + 10, budget);
+      expect(!decoded.ok(), "an-activation-dictionary-that-lies-about-itself-is-refused");
+      auto view = RegistryView::open(shapeless, boundary + 10, budget);
+      expect(!view.ok() && view.error().code == "dictionary-shape",
+             "an-activation-dictionary-that-lies-about-itself-is-refused");
+      record(shapeless, boundary + 10, false, "an-activation-dictionary-that-lies-about-itself-is-refused");
+      ok("an-activation-dictionary-that-lies-about-itself-is-refused");
     }
 
     // The attestation is read through the budget, and what it cost has to be
