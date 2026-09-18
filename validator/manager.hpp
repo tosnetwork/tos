@@ -687,6 +687,35 @@ class ValidatorManagerImpl : public ValidatorManager {
   void retry_validator_auth_session_store();
   void got_validator_auth_session_store_provisioned(td::Result<bool>);
   void validator_auth_session_store_marker_written(td::Result<td::Unit>);
+
+  struct ValidatorAuthSessionAdmission {
+    std::unique_ptr<tos::auth::NativeSessionCommitteeAdmission> admission;
+    tos::auth::Hash expected_manager_id{};
+    ShardIdFull shard;
+    bool request_in_flight = false;
+    bool retry_scheduled = false;
+  };
+  struct ValidatorAuthRetainedSession {
+    std::shared_ptr<tos::auth::CommittedNativeSession> owner;
+    ShardIdFull shard;
+  };
+  std::map<ValidatorSessionId, ValidatorAuthSessionAdmission> validator_auth_session_admissions_;
+  std::map<ValidatorSessionId, ValidatorAuthRetainedSession> validator_auth_sessions_;
+  std::map<ValidatorSessionId, std::uint32_t> validator_auth_session_refused_at_;
+
+  BlockIdExt validator_auth_session_block_id(const tos::auth::Anchor&) const;
+  tos::auth::Result<tos::auth::NativeSessionIdInput> validator_auth_session_identity_input(
+      const tos::auth::Anchor&, td::Ref<vm::Cell>, ShardIdFull) const;
+  void read_validator_auth_session_block(BlockIdExt, std::size_t, td::Promise<td::BufferSlice>);
+  bool ensure_validator_auth_session(ValidatorSessionId, ShardIdFull,
+                                     const tos::auth::NativeSessionIdInput&);
+  bool drive_validator_auth_session_admission(ValidatorSessionId);
+  void retry_validator_auth_session_admission(ValidatorSessionId);
+  void validator_auth_session_block_ready(ValidatorSessionId, BlockIdExt, td::Result<td::BufferSlice>);
+  void validator_auth_session_state_ready(ValidatorSessionId, tos::auth::Anchor,
+                                          td::Result<td::Ref<ShardState>>);
+  void fail_validator_auth_session_admission(ValidatorSessionId, std::string);
+  void release_terminated_validator_auth_sessions();
   // When a group may be created on a chain that activated the design, and what
   // to do about one refused because it could not be yet. The conditions arrive
   // from two unrelated asynchronous reads in either order, and if the context is

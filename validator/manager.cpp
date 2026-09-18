@@ -2390,6 +2390,7 @@ void ValidatorManagerImpl::publish_validator_auth_finalized_head(
   }
   validator_auth_finalized_anchor_ = std::move(anchor);
   validator_auth_finalized_state_ = std::move(state);
+  release_terminated_validator_auth_sessions();
   maybe_finish_validator_auth_finality_recovery();
 }
 
@@ -2783,12 +2784,339 @@ void ValidatorManagerImpl::ensure_validator_auth_session_store() {
       });
 }
 
+tos::BlockIdExt ValidatorManagerImpl::validator_auth_session_block_id(
+    const tos::auth::Anchor& anchor) const {
+  return {{masterchainId, shardIdAll, anchor.seqno_},
+          td::Bits256(td::ConstBitPtr(anchor.root_.data())),
+          td::Bits256(td::ConstBitPtr(anchor.file_.data()))};
+}
+
+tos::auth::Result<tos::auth::NativeSessionIdInput>
+ValidatorManagerImpl::validator_auth_session_identity_input(
+    const tos::auth::Anchor& anchor, td::Ref<vm::Cell> state,
+    ShardIdFull target) const {
+  auto loaded = MasterchainStateQ::fetch(
+      validator_auth_session_block_id(anchor), td::BufferSlice{}, std::move(state));
+  if (loaded.is_error()) {
+    return tos::auth::Error{"manager-session-history-state"};
+  }
+  auto historical = loaded.move_as_ok();
+  consensus::ValidatorSessionOptions session_opts{historical->get_consensus_config()};
+  tos::auth::NativeSessionIdInput input;
+  auto hash = session_opts.get_hash().as_slice();
+  std::copy(hash.ubegin(), hash.uend(), input.native_options_hash.begin());
+  input.workchain = target.workchain;
+  input.shard = target.shard;
+  input.maximal_vertical_seqno = opts_->get_vertical_seqno(anchor.seqno_);
+  input.last_key_block_seqno = historical->last_key_block_id().seqno();
+  input.form = session_opts.new_catchain_ids
+                   ? tos::auth::NativeSessionIdForm::group_new
+                   : (input.maximal_vertical_seqno == 0
+                          ? tos::auth::NativeSessionIdForm::group
+                          : tos::auth::NativeSessionIdForm::group_ex);
+  return input;
+}
+
+void ValidatorManagerImpl::read_validator_auth_session_block(
+    BlockIdExt id, std::size_t maximum_bytes,
+    td::Promise<td::BufferSlice> promise) {
+  get_block_handle(
+      id, false,
+      [db = db_.get(), maximum_bytes, promise = std::move(promise)](
+          td::Result<BlockHandle> result) mutable {
+        if (result.is_error()) {
+          promise.set_error(result.move_as_error());
+          return;
+        }
+        td::actor::send_closure(
+            db, &Db::get_block_data_bounded, result.move_as_ok(),
+            static_cast<td::uint64>(maximum_bytes), std::move(promise));
+      });
+}
+
+void ValidatorManagerImpl::fail_validator_auth_session_admission(
+    ValidatorSessionId session_id, std::string reason) {
+  LOG(ERROR) << "validator-auth session admission refused for " << session_id
+             << ": " << reason;
+  if (validator_auth_finalized_anchor_) {
+    validator_auth_session_refused_at_[session_id] =
+        validator_auth_finalized_anchor_->seqno_;
+  }
+  validator_auth_session_admissions_.erase(session_id);
+  validator_auth_admission_.defer_groups();
+}
+
+void ValidatorManagerImpl::retry_validator_auth_session_admission(
+    ValidatorSessionId session_id) {
+  auto it = validator_auth_session_admissions_.find(session_id);
+  if (it == validator_auth_session_admissions_.end()) {
+    return;
+  }
+  it->second.retry_scheduled = false;
+  if (drive_validator_auth_session_admission(session_id) &&
+      validator_auth_admission_.create_deferred_groups(validator_auth_groups_ready())) {
+    update_shards();
+  }
+}
+
+void ValidatorManagerImpl::validator_auth_session_block_ready(
+    ValidatorSessionId session_id, BlockIdExt requested,
+    td::Result<td::BufferSlice> result) {
+  auto it = validator_auth_session_admissions_.find(session_id);
+  if (it == validator_auth_session_admissions_.end()) {
+    return;
+  }
+  it->second.request_in_flight = false;
+  if (result.is_error()) {
+    LOG(WARNING) << "validator-auth session block read failed for " << requested.to_str()
+                 << ": " << result.move_as_error();
+    if (!it->second.retry_scheduled) {
+      it->second.retry_scheduled = true;
+      delay_action(
+          [SelfId = actor_id(this), session_id]() {
+            td::actor::send_closure(SelfId, &ValidatorManagerImpl::retry_validator_auth_session_admission,
+                                    session_id);
+          },
+          td::Timestamp::in(1.0));
+    }
+    return;
+  }
+  auto raw = result.move_as_ok();
+  auto slice = raw.as_slice();
+  tos::auth::Bytes bytes(slice.ubegin(), slice.uend());
+  auto provided = it->second.admission->provide_block(requested, std::move(bytes));
+  if (!provided.ok()) {
+    fail_validator_auth_session_admission(session_id, provided.error().code);
+    return;
+  }
+  if (drive_validator_auth_session_admission(session_id) &&
+      validator_auth_admission_.create_deferred_groups(validator_auth_groups_ready())) {
+    update_shards();
+  }
+}
+
+void ValidatorManagerImpl::validator_auth_session_state_ready(
+    ValidatorSessionId session_id, tos::auth::Anchor requested,
+    td::Result<td::Ref<ShardState>> result) {
+  auto it = validator_auth_session_admissions_.find(session_id);
+  if (it == validator_auth_session_admissions_.end()) {
+    return;
+  }
+  it->second.request_in_flight = false;
+  if (result.is_error()) {
+    LOG(WARNING) << "validator-auth session state read failed at " << requested.seqno_
+                 << ": " << result.move_as_error();
+    if (!it->second.retry_scheduled) {
+      it->second.retry_scheduled = true;
+      delay_action(
+          [SelfId = actor_id(this), session_id]() {
+            td::actor::send_closure(SelfId, &ValidatorManagerImpl::retry_validator_auth_session_admission,
+                                    session_id);
+          },
+          td::Timestamp::in(1.0));
+    }
+    return;
+  }
+  auto state = result.move_as_ok();
+  auto provided = it->second.admission->provide_state(requested, state->root_cell());
+  if (!provided.ok()) {
+    fail_validator_auth_session_admission(session_id, provided.error().code);
+    return;
+  }
+  if (drive_validator_auth_session_admission(session_id) &&
+      validator_auth_admission_.create_deferred_groups(validator_auth_groups_ready())) {
+    update_shards();
+  }
+}
+
+bool ValidatorManagerImpl::drive_validator_auth_session_admission(
+    ValidatorSessionId session_id) {
+  auto it = validator_auth_session_admissions_.find(session_id);
+  if (it == validator_auth_session_admissions_.end() ||
+      it->second.request_in_flight) {
+    return false;
+  }
+
+  while (true) {
+    auto next = it->second.admission->advance();
+    if (!next.ok()) {
+      fail_validator_auth_session_admission(session_id, next.error().code);
+      return false;
+    }
+    if (it->second.admission->ready()) {
+      auto context = it->second.admission->context();
+      if (!context.ok()) {
+        fail_validator_auth_session_admission(session_id, context.error().code);
+        return false;
+      }
+      const auto& selected = context.value()->birth().selected();
+      if (selected.epoch.native_session_id != it->second.expected_manager_id) {
+        fail_validator_auth_session_admission(session_id, "manager-session-identity");
+        return false;
+      }
+      if (!validator_auth_session_store_ || !validator_auth_chain_) {
+        fail_validator_auth_session_admission(session_id, "session-continuity-store-unavailable");
+        return false;
+      }
+
+      auto committed = tos::auth::CommittedNativeSession::restart(
+          *validator_auth_session_store_, context.value(), validator_auth_chain_.value());
+      if (!committed.ok() && committed.error().code == "session-commitment-missing") {
+        committed = tos::auth::CommittedNativeSession::commit_new(
+            *validator_auth_session_store_, context.value(), validator_auth_chain_.value());
+      }
+      if (!committed.ok()) {
+        fail_validator_auth_session_admission(session_id, committed.error().code);
+        return false;
+      }
+
+      ValidatorAuthRetainedSession retained{
+          .owner = committed.value(),
+          .shard = it->second.shard,
+      };
+      validator_auth_sessions_[session_id] = std::move(retained);
+      validator_auth_session_refused_at_.erase(session_id);
+      validator_auth_session_admissions_.erase(session_id);
+      return true;
+    }
+
+    if (!next.value()) {
+      fail_validator_auth_session_admission(session_id, "session-handoff-not-ready");
+      return false;
+    }
+
+    auto request = std::move(*next.value());
+    if (std::holds_alternative<tos::auth::NativeSessionIdentityRequest>(request)) {
+      auto identity_request =
+          std::get<tos::auth::NativeSessionIdentityRequest>(std::move(request));
+      auto identity = validator_auth_session_identity_input(
+          identity_request.anchor, identity_request.state,
+          identity_request.target);
+      if (!identity.ok()) {
+        fail_validator_auth_session_admission(session_id, identity.error().code);
+        return false;
+      }
+      auto provided = it->second.admission->provide_identity(
+          identity_request.anchor, identity_request.target,
+          identity.value());
+      if (!provided.ok()) {
+        fail_validator_auth_session_admission(session_id, provided.error().code);
+        return false;
+      }
+      continue;
+    }
+
+    it->second.request_in_flight = true;
+    if (std::holds_alternative<tos::auth::NativeSessionBlockRequest>(request)) {
+      auto block_request =
+          std::get<tos::auth::NativeSessionBlockRequest>(std::move(request));
+      read_validator_auth_session_block(
+          block_request.id, block_request.maximum_bytes,
+          [SelfId = actor_id(this), session_id, requested = block_request.id](
+              td::Result<td::BufferSlice> result) mutable {
+            td::actor::send_closure(
+                SelfId, &ValidatorManagerImpl::validator_auth_session_block_ready,
+                session_id, requested, std::move(result));
+          });
+      return false;
+    }
+
+    auto state_request =
+        std::get<tos::auth::NativeSessionStateRequest>(std::move(request));
+    get_shard_state_from_db_short(
+        validator_auth_session_block_id(state_request.anchor),
+        [SelfId = actor_id(this), session_id,
+         requested = state_request.anchor](
+            td::Result<td::Ref<ShardState>> result) mutable {
+          td::actor::send_closure(
+              SelfId, &ValidatorManagerImpl::validator_auth_session_state_ready,
+              session_id, requested, std::move(result));
+        });
+    return false;
+  }
+}
+
+bool ValidatorManagerImpl::ensure_validator_auth_session(
+    ValidatorSessionId session_id, ShardIdFull shard,
+    const tos::auth::NativeSessionIdInput& identity) {
+  auto retained = validator_auth_sessions_.find(session_id);
+  if (retained != validator_auth_sessions_.end()) {
+    return retained->second.owner && retained->second.owner->retained();
+  }
+  if (!validator_auth_groups_ready() || !validator_auth_finalized_anchor_ ||
+      validator_auth_finalized_state_.is_null() || !validator_auth_chain_) {
+    validator_auth_admission_.defer_groups();
+    return false;
+  }
+  auto refused = validator_auth_session_refused_at_.find(session_id);
+  if (refused != validator_auth_session_refused_at_.end() &&
+      refused->second >= validator_auth_finalized_anchor_->seqno_) {
+    validator_auth_admission_.defer_groups();
+    return false;
+  }
+
+  auto existing = validator_auth_session_admissions_.find(session_id);
+  if (existing == validator_auth_session_admissions_.end()) {
+    tos::auth::Hash expected{};
+    auto raw = session_id.as_slice();
+    std::copy(raw.ubegin(), raw.uend(), expected.begin());
+    ValidatorAuthSessionAdmission state;
+    state.expected_manager_id = expected;
+    state.shard = shard;
+    state.admission =
+        std::make_unique<tos::auth::NativeSessionCommitteeAdmission>(
+            validator_auth_finalized_state_,
+            validator_auth_finalized_anchor_.value(),
+            validator_auth_chain_.value(), identity);
+    validator_auth_session_admissions_.emplace(session_id, std::move(state));
+  }
+  validator_auth_admission_.defer_groups();
+  return drive_validator_auth_session_admission(session_id);
+}
+
+void ValidatorManagerImpl::release_terminated_validator_auth_sessions() {
+  if (!validator_auth_finalized_anchor_ ||
+      validator_auth_finalized_state_.is_null() || !validator_auth_chain_) {
+    return;
+  }
+  for (auto it = validator_auth_sessions_.begin();
+       it != validator_auth_sessions_.end();) {
+    auto identity = validator_auth_session_identity_input(
+        validator_auth_finalized_anchor_.value(),
+        validator_auth_finalized_state_, it->second.shard);
+    if (!identity.ok()) {
+      LOG(ERROR) << "validator-auth cannot derive termination identity for "
+                 << it->first << ": " << identity.error().code;
+      ++it;
+      continue;
+    }
+    auto released = it->second.owner->release_if_terminated(
+        validator_auth_finalized_state_,
+        validator_auth_finalized_anchor_.value(), identity.value());
+    if (!released.ok()) {
+      LOG(ERROR) << "validator-auth cannot test session termination for "
+                 << it->first << ": " << released.error().code;
+      ++it;
+      continue;
+    }
+    if (released.value().released) {
+      it = validator_auth_sessions_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 void ValidatorManagerImpl::get_validator_auth_session_owner(
     ValidatorSessionId session_id,
     td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) {
-  // Filled only by authenticated session admission. Until then BridgeImpl gets
-  // no capability and refuses to start a validator bus.
-  promise.set_value(nullptr);
+  auto it = validator_auth_sessions_.find(session_id);
+  if (it == validator_auth_sessions_.end() || !it->second.owner ||
+      !it->second.owner->retained()) {
+    promise.set_value(nullptr);
+    return;
+  }
+  promise.set_value(it->second.owner);
 }
 
 void ValidatorManagerImpl::establish_validator_auth_chain() {
@@ -3542,6 +3870,10 @@ void ValidatorManagerImpl::update_shards() {
   auto get_or_make_next_group = [&](ShardIdFull shard, ValidatorSessionId id, td::Ref<block::ValidatorSet> val_set) {
     CHECK(!validator_groups_.contains(id) && !new_validator_groups.contains(id));
     CHECK(!destroyed_validator_sessions_.contains(id));
+    if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell()) &&
+        !validator_auth_sessions_.contains(id)) {
+      return next_validator_groups_.end();
+    }
     if (auto it = next_validator_groups_.find(id); it != next_validator_groups_.end()) {
       return it;
     }
@@ -3604,66 +3936,46 @@ void ValidatorManagerImpl::update_shards() {
       if (!validator_id.is_zero()) {
         ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
         auto val_group_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
-        // The identity this manager just built is one derivation of a fact the
-        // chain state derives too. Running a session under a name the producer
-        // does not confirm is how one session acquires two identities, each
-        // passing its own tests. Refuse the shard instead, exactly as an
-        // unreadable consensus config does: stay a full node.
-        //
-        // Nothing here runs until the chain activates validator authentication.
+        // P0 is genesis-activated. A validator group exists only after the
+        // independently-finalized session birth and committee have been
+        // authenticated and durably committed or matched on restart.
         if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {
-          tos::auth::ManagerSessionInputs auth_inputs;
-          auto options_bytes = opts_hash.as_slice();
-          std::copy(options_bytes.ubegin(), options_bytes.uend(), auth_inputs.options_hash.begin());
-          auth_inputs.vertical_seqno = opts_->get_maximal_vertical_seqno();
-          auth_inputs.key_block_seqno = key_seqno;
-          auth_inputs.new_catchain_ids = opts.new_catchain_ids;
-          tos::auth::Hash manager_identity{};
-          auto identity_bytes = val_group_id.as_slice();
-          std::copy(identity_bytes.ubegin(), identity_bytes.uend(), manager_identity.begin());
-          // The confirmation derives the committee, so it needs the chain
-          // context this node established from its own zero state. Until that
-          // is available there is nothing to check the registry's domain
-          // against, and the answer is to stay a full node rather than to
-          // check less: this is the window right after startup, and it closes
-          // when the zero state is read.
           if (!validator_auth_groups_ready()) {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": validator authentication is active but this node has not completed "
-                          "finalized-head recovery and durable session-store provisioning yet; validation for this "
-                          "shard is disabled until both are ready";
-            // Remembered, and asked for again. Nothing else drives this pass a
-            // second time: it runs on a new masterchain block, and a chain
-            // whose validators are all refusing produces none.
+                       << ": validator authentication is active but finalized-head recovery and "
+                          "session-continuity provisioning are not complete";
             validator_auth_admission_.defer_groups();
             establish_validator_auth_chain();
             ensure_validator_auth_session_store();
             --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
             continue;
           }
-          // The anchor this node established itself: its own applied
-          // masterchain block, naming the very state the set above was
-          // computed from. It is not a value any peer offered, and the state
-          // it names is the one this session would actually run under --
-          // derivation refuses the pair if the two ever disagree.
-          tos::auth::Anchor auth_anchor{};
-          auth_anchor.seqno_ = last_masterchain_block_id_.id.seqno;
-          auto anchor_root = last_masterchain_block_id_.root_hash.as_slice();
-          std::copy(anchor_root.ubegin(), anchor_root.uend(), auth_anchor.root_.begin());
-          auto anchor_file = last_masterchain_block_id_.file_hash.as_slice();
-          std::copy(anchor_file.ubegin(), anchor_file.uend(), auth_anchor.file_.begin());
-          auto state_root = last_masterchain_state_->root_cell();
-          auto anchor_state = state_root->get_hash().as_slice();
-          std::copy(anchor_state.ubegin(), anchor_state.uend(), auth_anchor.state_.begin());
-          auto confirmed = tos::auth::native_session_identity_confirms(
-              std::move(state_root), auth_anchor, validator_auth_chain_.value(), val_set, shard, auth_inputs,
-              manager_identity);
-          if (!confirmed.ok() || !confirmed.value()) {
-            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": the authenticated committee this validator set would run under does not derive, or "
-                          "does not confirm the session identity"
-                       << (confirmed.ok() ? "" : ": ") << (confirmed.ok() ? "" : confirmed.error().code)
-                       << "; validation for this shard is disabled until they agree";
+
+          if (force_recover &&
+              opts_->check_unsafe_catchain_rotate(
+                  last_masterchain_seqno_,
+                  val_set->get_catchain_seqno()) != 0) {
+            LOG(ERROR) << "refusing unsafe local catchain session-id rewrite while validator authentication is active";
+            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+            continue;
+          }
+
+          tos::auth::NativeSessionIdInput identity;
+          auto options_bytes = opts_hash.as_slice();
+          std::copy(options_bytes.ubegin(), options_bytes.uend(),
+                    identity.native_options_hash.begin());
+          identity.workchain = shard.workchain;
+          identity.shard = shard.shard;
+          identity.maximal_vertical_seqno = opts_->get_maximal_vertical_seqno();
+          identity.last_key_block_seqno = key_seqno;
+          identity.form = opts.new_catchain_ids
+                              ? tos::auth::NativeSessionIdForm::group_new
+                              : (identity.maximal_vertical_seqno == 0
+                                     ? tos::auth::NativeSessionIdForm::group
+                                     : tos::auth::NativeSessionIdForm::group_ex);
+
+          if (!ensure_validator_auth_session(
+                  val_group_id, shard, identity)) {
             --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
             continue;
           }

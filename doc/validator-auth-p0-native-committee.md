@@ -274,3 +274,34 @@ available to group creation until the marker write acknowledges.
 This separates first provisioning from catastrophic continuity loss and gives
 the next session-admission wiring a durable commit/restart fence it can require
 before a validator group starts.
+
+
+## Manager-owned authenticated session lifecycle
+
+The live validator path now drives NativeSessionCommitteeAdmission from the
+manager's independently finalized head. Historical block requests use the
+archive bounded reader, so the declared package payload size is checked before
+payload allocation. Historical identity requests use the exact requested state
+and ValidatorManagerOptions::get_vertical_seqno(anchor.seqno_); the live manager
+identity continues to use get_maximal_vertical_seqno(), exactly as
+get_validator_set_id() does.
+
+Admission alone cannot create a group. The resulting native session id must
+equal the manager's already-constructed ValidatorSessionId byte for byte. The
+manager then tries CommittedNativeSession::restart against the provisioned
+continuity store and calls commit_new only for the exact
+session-commitment-missing case. Conflicts and storage errors refuse the
+session.
+
+The manager retains the committed owner independently of validator-group actor
+retirement. Tentative P0 groups are not materialized without that owner. A
+validator Bridge asks the manager for the same owner before constructing its
+consensus Bus, and the Bus holds that shared owner; observers receive no such
+capability. New independently finalized heads call release_if_terminated using
+identity inputs derived for that exact head, so local actor retirement cannot
+release authenticated committee authority and a durable store record alone
+cannot retain it past chain-proven session termination.
+
+The historical unsafe catchain-rotation id rewrite is refused while P0 is
+active: P0 v1 is genesis-activated and defines one native session identity, not
+a local second identity for recovery.
