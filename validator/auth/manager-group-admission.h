@@ -60,6 +60,12 @@ class GroupAdmissionGate {
   }
 };
 
+// Session admission is a creation/recreation boundary. A live group for the
+// exact same session already owns the durably committed authenticated context
+// that admitted it, so transient manager readiness loss must not send that
+// group back through admission or retirement.
+bool authenticated_session_admission_required(bool auth_active, bool live_same_session);
+
 // How long to wait before reading the zero state again.
 //
 // A read that failed once must not leave a node unable to validate until

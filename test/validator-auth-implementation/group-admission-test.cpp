@@ -101,6 +101,26 @@ int main() {
     ok("an-early-context-creates-nothing-before-the-records");
   }
 
+  {
+    expect(!authenticated_session_admission_required(false, false),
+           "inactive-chain-never-enters-session-admission");
+    expect(!authenticated_session_admission_required(false, true),
+           "inactive-chain-never-enters-session-admission");
+    ok("inactive-chain-never-enters-session-admission");
+  }
+
+  {
+    expect(authenticated_session_admission_required(true, false),
+           "new-active-session-requires-admission");
+    ok("new-active-session-requires-admission");
+  }
+
+  {
+    expect(!authenticated_session_admission_required(true, true),
+           "live-same-session-does-not-reenter-admission");
+    ok("live-same-session-does-not-reenter-admission");
+  }
+
   // A catchain transition has a third arrival besides startup context/store
   // readiness: the transition block can be applied before its finality is
   // durably published. The first update pass then refuses the new session and

@@ -3,6 +3,10 @@
 #include "manager-group-admission.h"
 
 namespace tos::auth {
+bool authenticated_session_admission_required(bool auth_active, bool live_same_session) {
+  return auth_active && !live_same_session;
+}
+
 double next_chain_context_retry(double previous) {
   if (!(previous >= chain_context_retry_floor)) {
     return chain_context_retry_floor;

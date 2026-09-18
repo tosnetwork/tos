@@ -3152,8 +3152,17 @@ void ValidatorManagerImpl::get_validator_auth_session_owner(
   promise.set_value(ValidatorAuthSessionOwnership{true, it->second.owner});
 }
 
+bool ValidatorManagerImpl::validator_auth_required() const {
+  return last_masterchain_state_.not_null() &&
+         tos::auth::native_session_binding_active(last_masterchain_state_->root_cell());
+}
+
 void ValidatorManagerImpl::establish_validator_auth_chain() {
   if (validator_auth_chain_ || last_masterchain_state_.is_null()) {
+    return;
+  }
+  if (!validator_auth_required()) {
+    validator_auth_chain_retry_.succeeded();
     return;
   }
   // One read at a time. This is called from startup, from every session the
@@ -3170,6 +3179,12 @@ void ValidatorManagerImpl::establish_validator_auth_chain() {
 }
 
 void ValidatorManagerImpl::retry_validator_auth_chain(std::string reason) {
+  if (!validator_auth_required()) {
+    // Feature-inactive is a terminal answer, not a failed authority read.
+    // Resetting the gate also makes a previously queued timer harmless.
+    validator_auth_chain_retry_.succeeded();
+    return;
+  }
   // There is exactly one delayed retry stream. Calls from admission still ask
   // for a context while the chain is waiting, but they may not turn the backoff
   // into an immediate read or add another timer beside it.
@@ -3283,7 +3298,9 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
   shard_client_ = std::move(R.clients);
 
-  establish_validator_auth_chain();
+  if (validator_auth_required()) {
+    establish_validator_auth_chain();
+  }
 
   auto Q = td::PromiseCreator::lambda(
       [SelfId = actor_id(this)](td::Result<std::vector<td::Ref<PersistentStateDescription>>> R) {
@@ -3969,21 +3986,17 @@ void ValidatorManagerImpl::update_shards() {
       if (!validator_id.is_zero()) {
         ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
         auto val_group_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
-        // P0 is genesis-activated. A validator group exists only after the
-        // independently-finalized session birth and committee have been
-        // authenticated and durably committed or matched on restart.
-        if (tos::auth::native_session_binding_active(last_masterchain_state_->root_cell())) {
-          if (!validator_auth_groups_ready()) {
-            LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": validator authentication is active but finalized-head recovery and "
-                          "session-continuity provisioning are not complete";
-            validator_auth_admission_.defer_groups();
-            establish_validator_auth_chain();
-            ensure_validator_auth_session_store();
-            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-            continue;
-          }
-
+        // P0 is genesis-activated. Creation/recreation requires authenticated
+        // session admission. An already-live group for this exact canonical
+        // session does not: it already owns the immutable, durably committed
+        // CommittedNativeSession that admitted it. A transient manager-side
+        // readiness loss is not a chain event that revokes that authority, so
+        // the live actor must reach the ordinary reuse path below rather than
+        // falling through to permanent retirement/fencing at the end of this
+        // update pass.
+        const bool validator_auth_active =
+            tos::auth::native_session_binding_active(last_masterchain_state_->root_cell());
+        if (validator_auth_active) {
           if (force_recover &&
               opts_->check_unsafe_catchain_rotate(
                   last_masterchain_seqno_,
@@ -3993,24 +4006,39 @@ void ValidatorManagerImpl::update_shards() {
             continue;
           }
 
-          tos::auth::NativeSessionIdInput identity;
-          auto options_bytes = opts_hash.as_slice();
-          std::copy(options_bytes.ubegin(), options_bytes.uend(),
-                    identity.native_options_hash.begin());
-          identity.workchain = shard.workchain;
-          identity.shard = shard.shard;
-          identity.maximal_vertical_seqno = opts_->get_maximal_vertical_seqno();
-          identity.last_key_block_seqno = key_seqno;
-          identity.form = opts.new_catchain_ids
-                              ? tos::auth::NativeSessionIdForm::group_new
-                              : (identity.maximal_vertical_seqno == 0
-                                     ? tos::auth::NativeSessionIdForm::group
-                                     : tos::auth::NativeSessionIdForm::group_ex);
+          const bool live_same_session = validator_groups_.contains(val_group_id);
+          if (tos::auth::authenticated_session_admission_required(
+                  validator_auth_active, live_same_session)) {
+            if (!validator_auth_groups_ready()) {
+              LOG(ERROR) << "deferring validator group creation for " << shard.to_str()
+                         << ": validator authentication is active but finalized-head recovery and "
+                            "session-continuity provisioning are not complete";
+              validator_auth_admission_.defer_groups();
+              establish_validator_auth_chain();
+              ensure_validator_auth_session_store();
+              --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+              continue;
+            }
 
-          if (!ensure_validator_auth_session(
-                  val_group_id, shard, identity)) {
-            --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-            continue;
+            tos::auth::NativeSessionIdInput identity;
+            auto options_bytes = opts_hash.as_slice();
+            std::copy(options_bytes.ubegin(), options_bytes.uend(),
+                      identity.native_options_hash.begin());
+            identity.workchain = shard.workchain;
+            identity.shard = shard.shard;
+            identity.maximal_vertical_seqno = opts_->get_maximal_vertical_seqno();
+            identity.last_key_block_seqno = key_seqno;
+            identity.form = opts.new_catchain_ids
+                                ? tos::auth::NativeSessionIdForm::group_new
+                                : (identity.maximal_vertical_seqno == 0
+                                       ? tos::auth::NativeSessionIdForm::group
+                                       : tos::auth::NativeSessionIdForm::group_ex);
+
+            if (!ensure_validator_auth_session(
+                    val_group_id, shard, identity)) {
+              --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+              continue;
+            }
           }
         }
         if (destroyed_validator_sessions_.contains(val_group_id)) {

@@ -36,6 +36,8 @@ HEADER = ROOT / "validator/auth/manager-group-admission.h"
 SOURCE = ROOT / "validator/auth/manager-group-admission.cpp"
 
 MUTATIONS = [
+    ("live-same-session-does-not-reenter-admission", SOURCE,
+     "  return auth_active && !live_same_session;\n", "  return auth_active;\n"),
     # A pass driven with nothing deferred. The case that says what happens with
     # nothing deferred runs first for this reason: left later, the deferral and
     # its clearing below both fail the same case and read as one rule.

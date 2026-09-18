@@ -628,6 +628,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   // None of this is installed until the zero state has been read and has
   // established a context. Until then collation is handed nothing, which is
   // exactly the behaviour of a node that does not have the feature.
+  bool validator_auth_required() const;
   void establish_validator_auth_chain();
   void established_validator_auth_zero_state(td::Result<td::BufferSlice> zero_state);
   void publish_validator_auth();

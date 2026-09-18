@@ -342,3 +342,23 @@ not enabled" and "required authority missing".
 The consensus Bus retains the explicit required bit beside the optional owner so
 later signer/provider integration can preserve the same distinction instead of
 re-inferring activation from pointer presence.
+
+
+## Retry scope and live-session transient refusal
+
+Validator-auth bootstrap now runs only when the current masterchain state
+actually enables native session binding. On a legacy/P0-inactive chain startup
+does not read the zero state for registry authority, and the retry path resets
+rather than scheduling another attempt. A stale delayed callback therefore
+cannot turn feature-inactive into a permanent 16-second poller.
+
+Admission is also explicitly a creation/recreation boundary. A live validator
+group for the exact canonical session id already owns the immutable, durably
+committed CommittedNativeSession that admitted it. Temporary loss of manager
+finality/session-store readiness does not revoke that owner, so the live group
+bypasses re-admission and follows the ordinary same-id reuse path. It is not
+left behind for the tail retirement loop and therefore cannot acquire a
+destroyed-session fence merely because the control plane was temporarily unable
+to admit a new group. New or recreated groups still require full authenticated
+admission; finalized chain state proving a session change remains the authority
+that releases the old owner and makes actual retirement permanent.
