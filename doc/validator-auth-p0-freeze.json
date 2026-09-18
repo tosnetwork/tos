@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "2cd32c1bf336ab7ff9c1c1f69f7e75d34e684f7503c22c0824c2e22d7164e0d3",
+    "doc/validator-auth-p0-native-insertions.json": "db0f560f0b40408ca625885d4d02038bc51a21efc2735ccb951fc5e04448b910",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -428,6 +428,17 @@
       "reason": "The missing-checkpoint rule decides whether consensus-visible state may change. Leaving it outside the normative profile would let implementations share one interface digest while disagreeing on recovery authority.",
       "regeneration": "Public C0 vectors and generated C++/Rust digest readers are deterministic derivations of the reviewed profile bytes; no production authority signs them.",
       "activation": "Unchanged. No pending approval was granted against revision 4; the same gates now stand against revision 5 and its interface digest."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "corrects": [35],
+      "previous_sha256": "228d92343c851bb77d4eb383da608231ccc02e0deb240b84032e35f3963145fa",
+      "sha256": "db0f560f0b40408ca625885d4d02038bc51a21efc2735ccb951fc5e04448b910",
+      "change": "Corrected the byte hash recorded for the single-stream chain-context retry insertion. The retry implementation, tests, manager insertion text and commit are unchanged; only the evidence hash was wrong.",
+      "scope": "Evidence correction only. No production byte, insertion text, profile artifact, wire/API encoding or activation rule changes.",
+      "reason": "The superseded evidence entry used the SHA-256 of a locally reconstructed JSON serialization instead of the exact committed inventory bytes. Exact-head profile CI compared the committed file to the frozen ledger and refused it, which is the evidence this correction records.",
+      "activation": "Unchanged."
     }
   ],
   "implementation_evidence_update": {
