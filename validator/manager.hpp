@@ -636,7 +636,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   // written once when the zero state establishes it.
   void get_validator_auth_chain_context(
       td::Promise<std::shared_ptr<const tos::auth::ChainContext>> promise) override {
-    promise.set_value(validator_auth_chain_
+    promise.set_value(validator_auth_ready()
                           ? std::make_shared<const tos::auth::ChainContext>(validator_auth_chain_.value())
                           : nullptr);
   }
@@ -648,10 +648,28 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::optional<tos::auth::Anchor> validator_auth_finalized_anchor_;
   td::Ref<vm::Cell> validator_auth_finalized_state_;
   std::optional<tos::auth::NativeFinalityVerification> validator_auth_pending_finality_;
+  bool validator_auth_finality_recovery_loaded_ = false;
+  bool validator_auth_finality_ready_ = false;
+  td::optional<BlockIdExt> validator_auth_finality_journal_write_;
+  bool validator_auth_finality_journal_retry_scheduled_ = false;
+  bool validator_auth_ready() const {
+    return validator_auth_chain_ && validator_auth_finality_ready_;
+  }
+  void publish_validator_auth_finalized_head(tos::auth::Anchor, td::Ref<vm::Cell>);
   void refresh_validator_auth_finalized_head();
+  void validator_auth_finality_journal_written(tos::auth::NativeFinalityVerification, tos::auth::Anchor,
+                                               td::Ref<vm::Cell>, td::Result<td::Unit>);
+  void retry_validator_auth_finality_journal();
   void accept_validator_auth_finality_receipt(tos::auth::NativeFinalityVerification receipt);
   void note_validator_auth_applied_masterchain_head();
   void validator_auth_applied_block_ready(BlockIdExt, td::Ref<vm::Cell>, td::Result<td::Ref<BlockData>>);
+  void fail_validator_auth_finality_recovery(std::string reason);
+  void got_validator_auth_finality_journal(td::Result<td::BufferSlice>);
+  void got_validator_auth_finality_recovery_state(tos::auth::NativeFinalityVerification,
+                                                  td::Result<td::Ref<ShardState>>);
+  void got_validator_auth_finality_recovery_block(tos::auth::NativeFinalityVerification, td::Ref<vm::Cell>,
+                                                  td::Result<td::Ref<BlockData>>);
+  void maybe_finish_validator_auth_finality_recovery();
   // When a group may be created on a chain that activated the design, and what
   // to do about one refused because it could not be yet. The conditions arrive
   // from two unrelated asynchronous reads in either order, and if the context is

@@ -236,3 +236,25 @@ without treating an applied tip as finalized. Durable reconstruction of a
 post-genesis finalized receipt on process restart remains a separate boundary;
 until it is supplied, a restarted node starts from the configured genesis head
 and advances again on a new native finality observation.
+
+
+## Durable finalized-head restart recovery
+
+A post-genesis finalized head is now published to manager consumers only after
+its chain-bound local journal write has acknowledged. On restart the journal is
+decoded against the configured chain context, then the exact masterchain state
+and original block bytes for that receipt are read from the node database and
+offered back to the same ManagerFinalizedHeadSource. The journal therefore
+cannot create authority by itself.
+
+The startup state may be an older key state even when later applied blocks are
+already present in the database. Recovering the journal does not bypass that
+ordering: validator-auth remains unavailable to collation, validation and group
+creation until the manager's own contiguous last_masterchain_seqno_ has caught
+up to the recovered finalized anchor. Finality observations arriving during
+recovery are retained and replayed afterwards.
+
+The next boundary is session ownership: this recovered finalized head must drive
+NativeSessionCommitteeAdmission, and a validator group must not start until the
+resulting context has passed CommittedNativeSession's durable commit/restart
+fence.

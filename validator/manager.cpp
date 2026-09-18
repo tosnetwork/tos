@@ -76,6 +76,7 @@
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
 #include "validator-group.hpp"
+#include "validator/auth/manager-finality-journal.h"
 #include "validator/auth/manager-finality-receipt.h"
 #include "validator/auth/manager-finalized-head.h"
 #include "validator/auth/manager-session-binding.h"
@@ -2374,8 +2375,56 @@ static td::actor::Task<tos::auth::NativeFinalityVerification> build_validator_au
   co_return receipt.value();
 }
 
+void ValidatorManagerImpl::publish_validator_auth_finalized_head(
+    tos::auth::Anchor anchor, td::Ref<vm::Cell> state) {
+  if (validator_auth_finalized_anchor_) {
+    if (anchor.seqno_ < validator_auth_finalized_anchor_->seqno_) {
+      return;
+    }
+    if (anchor.seqno_ == validator_auth_finalized_anchor_->seqno_ &&
+        anchor != *validator_auth_finalized_anchor_) {
+      LOG(ERROR) << "validator-auth refusing conflicting finalized head at seqno " << anchor.seqno_;
+      return;
+    }
+  }
+  validator_auth_finalized_anchor_ = std::move(anchor);
+  validator_auth_finalized_state_ = std::move(state);
+  maybe_finish_validator_auth_finality_recovery();
+}
+
+void ValidatorManagerImpl::validator_auth_finality_journal_written(
+    tos::auth::NativeFinalityVerification receipt, tos::auth::Anchor anchor,
+    td::Ref<vm::Cell> state, td::Result<td::Unit> result) {
+  if (validator_auth_finality_journal_write_ &&
+      *validator_auth_finality_journal_write_ == receipt.block) {
+    validator_auth_finality_journal_write_.reset();
+  }
+  if (result.is_error()) {
+    LOG(ERROR) << "validator-auth finalized-head journal write failed for " << receipt.block.to_str()
+               << ": " << result.move_as_error();
+    if (!validator_auth_finality_journal_retry_scheduled_) {
+      validator_auth_finality_journal_retry_scheduled_ = true;
+      delay_action(
+          [SelfId = actor_id(this)]() {
+            td::actor::send_closure(SelfId, &ValidatorManagerImpl::retry_validator_auth_finality_journal);
+          },
+          td::Timestamp::in(1.0));
+    }
+    return;
+  }
+  validator_auth_finality_journal_retry_scheduled_ = false;
+  publish_validator_auth_finalized_head(std::move(anchor), std::move(state));
+}
+
+void ValidatorManagerImpl::retry_validator_auth_finality_journal() {
+  validator_auth_finality_journal_retry_scheduled_ = false;
+  refresh_validator_auth_finalized_head();
+}
+
 void ValidatorManagerImpl::refresh_validator_auth_finalized_head() {
-  if (!validator_auth_finalized_establisher_) {
+  if (!validator_auth_finalized_establisher_ ||
+      !validator_auth_finality_recovery_loaded_ ||
+      !validator_auth_chain_) {
     return;
   }
   auto head = validator_auth_finalized_establisher_->establish();
@@ -2383,13 +2432,53 @@ void ValidatorManagerImpl::refresh_validator_auth_finalized_head() {
     LOG(ERROR) << "validator-auth finalized head refused: " << head.error().code;
     return;
   }
-  validator_auth_finalized_anchor_ = head.value().anchor();
-  validator_auth_finalized_state_ = head.value().state();
+  if (head.value().anchor().seqno_ == 0) {
+    publish_validator_auth_finalized_head(head.value().anchor(), head.value().state());
+    return;
+  }
+  if (validator_auth_finalized_anchor_ &&
+      head.value().anchor().seqno_ <= validator_auth_finalized_anchor_->seqno_) {
+    return;
+  }
+  auto complete = validator_auth_finalized_source_->latest_complete();
+  if (!complete) {
+    LOG(ERROR) << "validator-auth finalized source published no complete block";
+    return;
+  }
+  auto receipt = validator_auth_finalized_source_->verify_signatures(*complete);
+  if (!receipt.ok()) {
+    LOG(ERROR) << "validator-auth finalized receipt unavailable: " << receipt.error().code;
+    return;
+  }
+  auto expected = tos::auth::anchor_of(receipt.value().block, head.value().state());
+  if (expected != head.value().anchor()) {
+    LOG(ERROR) << "validator-auth finalized receipt/head disagreement for " << receipt.value().block.to_str();
+    return;
+  }
+  if (validator_auth_finality_journal_write_ &&
+      validator_auth_finality_journal_write_->seqno() >= receipt.value().block.seqno()) {
+    return;
+  }
+  auto encoded = tos::auth::encode_manager_finality_journal(
+      validator_auth_chain_.value(), receipt.value());
+  if (!encoded.ok()) {
+    LOG(ERROR) << "validator-auth finalized journal encoding failed: " << encoded.error().code;
+    return;
+  }
+  std::string bytes(reinterpret_cast<const char*>(encoded.value().data()), encoded.value().size());
+  validator_auth_finality_journal_write_ = receipt.value().block;
+  td::actor::send_closure(
+      db_, &Db::update_validator_auth_finality_journal, td::BufferSlice{bytes},
+      [SelfId = actor_id(this), receipt = receipt.value(), anchor = head.value().anchor(),
+       state = head.value().state()](td::Result<td::Unit> result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_auth_finality_journal_written,
+                                std::move(receipt), std::move(anchor), std::move(state), std::move(result));
+      });
 }
 
 void ValidatorManagerImpl::accept_validator_auth_finality_receipt(
     tos::auth::NativeFinalityVerification receipt) {
-  if (!validator_auth_finalized_source_) {
+  if (!validator_auth_finalized_source_ || !validator_auth_finality_recovery_loaded_) {
     if (!validator_auth_pending_finality_ ||
         receipt.block.seqno() > validator_auth_pending_finality_->block.seqno() ||
         (receipt.block == validator_auth_pending_finality_->block &&
@@ -2415,7 +2504,7 @@ void ValidatorManagerImpl::validator_auth_applied_block_ready(
                  << result.move_as_error();
     return;
   }
-  if (!validator_auth_finalized_source_) {
+  if (!validator_auth_finalized_source_ || !validator_auth_finality_recovery_loaded_) {
     return;
   }
   auto block = result.move_as_ok();
@@ -2437,8 +2526,8 @@ void ValidatorManagerImpl::validator_auth_applied_block_ready(
 }
 
 void ValidatorManagerImpl::note_validator_auth_applied_masterchain_head() {
-  if (!validator_auth_finalized_source_ || last_masterchain_state_.is_null() ||
-      last_masterchain_block_id_.seqno() == 0) {
+  if (!validator_auth_finalized_source_ || !validator_auth_finality_recovery_loaded_ ||
+      last_masterchain_state_.is_null() || last_masterchain_block_id_.seqno() == 0) {
     return;
   }
   auto id = last_masterchain_block_id_;
@@ -2448,6 +2537,146 @@ void ValidatorManagerImpl::note_validator_auth_applied_masterchain_head() {
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_auth_applied_block_ready, id,
                                 std::move(state), std::move(result));
       });
+}
+
+void ValidatorManagerImpl::fail_validator_auth_finality_recovery(std::string reason) {
+  validator_auth_finality_recovery_loaded_ = false;
+  validator_auth_finality_ready_ = false;
+  validator_auth_finalized_source_.reset();
+  validator_auth_finalized_establisher_.reset();
+  validator_auth_finalized_anchor_.reset();
+  validator_auth_finalized_state_.clear();
+  validator_auth_finality_journal_write_.reset();
+  validator_auth_chain_.reset();
+  retry_validator_auth_chain(std::move(reason));
+}
+
+void ValidatorManagerImpl::got_validator_auth_finality_recovery_block(
+    tos::auth::NativeFinalityVerification receipt, td::Ref<vm::Cell> state,
+    td::Result<td::Ref<BlockData>> result) {
+  if (result.is_error()) {
+    fail_validator_auth_finality_recovery(
+        PSTRING() << "finality journal block unreadable: " << result.move_as_error());
+    return;
+  }
+  auto block = result.move_as_ok();
+  if (block->block_id() != receipt.block) {
+    fail_validator_auth_finality_recovery("finality journal block id mismatch");
+    return;
+  }
+  auto bytes = block->data();
+  auto slice = bytes.as_slice();
+  tos::auth::Bytes raw(slice.ubegin(), slice.uend());
+  auto applied = validator_auth_finalized_source_->note_applied(
+      receipt.block, std::move(raw), state);
+  if (!applied.ok() || !applied.value()) {
+    fail_validator_auth_finality_recovery(
+        applied.ok() ? "finality journal did not complete the recovered head" : applied.error().code);
+    return;
+  }
+  auto head = validator_auth_finalized_establisher_->establish();
+  if (!head.ok()) {
+    fail_validator_auth_finality_recovery(head.error().code);
+    return;
+  }
+  auto expected = tos::auth::anchor_of(receipt.block, state);
+  if (head.value().anchor() != expected) {
+    fail_validator_auth_finality_recovery("finality journal recovered a different head");
+    return;
+  }
+  publish_validator_auth_finalized_head(head.value().anchor(), head.value().state());
+  validator_auth_finality_recovery_loaded_ = true;
+  if (validator_auth_pending_finality_) {
+    auto pending = std::move(*validator_auth_pending_finality_);
+    validator_auth_pending_finality_.reset();
+    accept_validator_auth_finality_receipt(std::move(pending));
+  }
+  note_validator_auth_applied_masterchain_head();
+  maybe_finish_validator_auth_finality_recovery();
+}
+
+void ValidatorManagerImpl::got_validator_auth_finality_recovery_state(
+    tos::auth::NativeFinalityVerification receipt, td::Result<td::Ref<ShardState>> result) {
+  if (result.is_error()) {
+    fail_validator_auth_finality_recovery(
+        PSTRING() << "finality journal state unreadable: " << result.move_as_error());
+    return;
+  }
+  auto state = result.move_as_ok();
+  if (state->get_block_id() != receipt.block || state->root_cell().is_null()) {
+    fail_validator_auth_finality_recovery("finality journal state id mismatch");
+    return;
+  }
+  auto root = state->root_cell();
+  get_block_data_from_db_short(
+      receipt.block,
+      [SelfId = actor_id(this), receipt = std::move(receipt), root = std::move(root)](
+          td::Result<td::Ref<BlockData>> block) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_validator_auth_finality_recovery_block,
+                                std::move(receipt), std::move(root), std::move(block));
+      });
+}
+
+void ValidatorManagerImpl::got_validator_auth_finality_journal(td::Result<td::BufferSlice> result) {
+  if (result.is_error()) {
+    fail_validator_auth_finality_recovery(
+        PSTRING() << "finality journal unreadable: " << result.move_as_error());
+    return;
+  }
+  auto raw = result.move_as_ok();
+  if (raw.empty()) {
+    validator_auth_finality_recovery_loaded_ = true;
+    if (validator_auth_pending_finality_) {
+      auto pending = std::move(*validator_auth_pending_finality_);
+      validator_auth_pending_finality_.reset();
+      accept_validator_auth_finality_receipt(std::move(pending));
+    }
+    note_validator_auth_applied_masterchain_head();
+    maybe_finish_validator_auth_finality_recovery();
+    return;
+  }
+  if (!validator_auth_chain_ || !validator_auth_finalized_source_) {
+    fail_validator_auth_finality_recovery("finality journal loaded without chain context");
+    return;
+  }
+  auto bytes = raw.as_slice();
+  std::span<const std::uint8_t> journal(
+      reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+  auto receipt = tos::auth::decode_manager_finality_journal(
+      journal, validator_auth_chain_.value());
+  if (!receipt.ok()) {
+    fail_validator_auth_finality_recovery(receipt.error().code);
+    return;
+  }
+  auto verified = validator_auth_finalized_source_->note_verified(receipt.value());
+  if (!verified.ok() || verified.value()) {
+    fail_validator_auth_finality_recovery(
+        verified.ok() ? "finality journal receipt completed without applied state" : verified.error().code);
+    return;
+  }
+  get_shard_state_from_db_short(
+      receipt.value().block,
+      [SelfId = actor_id(this), receipt = receipt.value()](td::Result<td::Ref<ShardState>> state) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_validator_auth_finality_recovery_state,
+                                std::move(receipt), std::move(state));
+      });
+}
+
+void ValidatorManagerImpl::maybe_finish_validator_auth_finality_recovery() {
+  if (validator_auth_finality_ready_ || !validator_auth_finality_recovery_loaded_ ||
+      !validator_auth_chain_ || !validator_auth_finalized_anchor_) {
+    return;
+  }
+  if (last_masterchain_seqno_ < validator_auth_finalized_anchor_->seqno_) {
+    return;
+  }
+  validator_auth_finality_ready_ = true;
+  validator_auth_chain_retry_.succeeded();
+  publish_validator_auth();
+  if (validator_auth_admission_.create_deferred_groups(validator_auth_ready())) {
+    LOG(INFO) << "validator-auth finality recovered; creating deferred validator groups";
+    update_shards();
+  }
 }
 
 void ValidatorManagerImpl::establish_validator_auth_chain() {
@@ -2533,32 +2762,19 @@ void ValidatorManagerImpl::established_validator_auth_zero_state(td::Result<td::
   validator_auth_finalized_establisher_ = std::move(finalized_establisher.value());
   validator_auth_finalized_anchor_ = initial_head.value().anchor();
   validator_auth_finalized_state_ = initial_head.value().state();
-  if (validator_auth_pending_finality_) {
-    auto pending = std::move(*validator_auth_pending_finality_);
-    validator_auth_pending_finality_.reset();
-    accept_validator_auth_finality_receipt(std::move(pending));
-  }
-  note_validator_auth_applied_masterchain_head();
   validator_auth_chain_ = chain.value();
-  validator_auth_chain_retry_.succeeded();
-  publish_validator_auth();
-  // A session refused only because this had not arrived yet is retried by
-  // nothing else. Group creation is driven by a new masterchain block, and on a
-  // chain whose validators are all in this state the block that would drive it
-  // is the one none of them is producing -- every node refuses every group,
-  // no block is produced, and no second attempt is ever made.
-  //
-  // So drive it once from here, and only after the barrier that must precede
-  // any group: a group created before the cleanup records are loaded could have
-  // its consensus directory deleted under it.
-  if (validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))) {
-    LOG(INFO) << "registry authority established; creating the validator groups that were refused without it";
-    update_shards();
-  }
+  validator_auth_finality_recovery_loaded_ = false;
+  validator_auth_finality_ready_ = false;
+  td::actor::send_closure(
+      db_, &Db::get_validator_auth_finality_journal,
+      [SelfId = actor_id(this)](td::Result<td::BufferSlice> journal) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_validator_auth_finality_journal,
+                                std::move(journal));
+      });
 }
 
 void ValidatorManagerImpl::publish_validator_auth() {
-  if (!validator_auth_chain_) {
+  if (!validator_auth_ready()) {
     return;
   }
   auto value = validator_auth_collation();
@@ -2568,7 +2784,7 @@ void ValidatorManagerImpl::publish_validator_auth() {
 }
 
 td::optional<ValidatorAuthCollation> ValidatorManagerImpl::validator_auth_collation() {
-  if (!validator_auth_chain_) {
+  if (!validator_auth_ready()) {
     return {};
   }
   return ValidatorAuthCollation{validator_auth_chain_.value()};
@@ -2671,7 +2887,7 @@ void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
   // than waiting for a masterchain block that a refusing chain never produces.
   // The startup pass below would create them too; this is what makes the
   // ordering decided in one place instead of by which path happened to run.
-  if (validator_auth_admission_.create_deferred_groups(bool(validator_auth_chain_))) {
+  if (validator_auth_admission_.create_deferred_groups(validator_auth_ready())) {
     LOG(INFO) << "cleanup records loaded; creating the validator groups that were refused before them";
     update_shards();
   }
@@ -3039,6 +3255,7 @@ void ValidatorManagerImpl::completed_prestart_sync() {
 
 void ValidatorManagerImpl::new_masterchain_block() {
   note_validator_auth_applied_masterchain_head();
+  maybe_finish_validator_auth_finality_recovery();
   if (last_masterchain_seqno_ > 0 && last_masterchain_block_handle_->is_key_block()) {
     last_key_block_handle_ = last_masterchain_block_handle_;
     if (last_key_block_handle_->id().seqno() > last_known_key_block_handle_->id().seqno()) {
@@ -3298,10 +3515,10 @@ void ValidatorManagerImpl::update_shards() {
           // against, and the answer is to stay a full node rather than to
           // check less: this is the window right after startup, and it closes
           // when the zero state is read.
-          if (!validator_auth_chain_) {
+          if (!validator_auth_ready()) {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": the chain has activated validator authentication and this node has not established "
-                          "its own chain context yet; validation for this shard is disabled until it has";
+                       << ": validator authentication is active but this node has not durably recovered "
+                          "its finalized-head authority yet; validation for this shard is disabled until it has";
             // Remembered, and asked for again. Nothing else drives this pass a
             // second time: it runs on a new masterchain block, and a chain
             // whose validators are all refusing produces none.
