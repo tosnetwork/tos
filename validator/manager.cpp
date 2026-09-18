@@ -2783,6 +2783,14 @@ void ValidatorManagerImpl::ensure_validator_auth_session_store() {
       });
 }
 
+void ValidatorManagerImpl::get_validator_auth_session_owner(
+    ValidatorSessionId session_id,
+    td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) {
+  // Filled only by authenticated session admission. Until then BridgeImpl gets
+  // no capability and refuses to start a validator bus.
+  promise.set_value(nullptr);
+}
+
 void ValidatorManagerImpl::establish_validator_auth_chain() {
   if (validator_auth_chain_ || last_masterchain_state_.is_null()) {
     return;

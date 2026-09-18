@@ -347,6 +347,29 @@ class BridgeImpl final : public IValidatorGroup {
                                                                  params_.collation_manager, params_.validator_set,
                                                                  params_.validator_opts);
 
+    if (!params_.local_id) {
+      start_bus(nullptr);
+      return;
+    }
+    td::actor::send_closure(
+        params_.manager, &ValidatorManager::get_validator_auth_session_owner, params_.session_id,
+        [SelfId = actor_id(this)](td::Result<std::shared_ptr<tos::auth::CommittedNativeSession>> owner) mutable {
+          if (owner.is_error() || !owner.ok()) {
+            LOG(ERROR) << "refusing to start validator consensus without a committed authenticated session"
+                       << (owner.is_error() ? PSTRING() << ": " << owner.error() : "");
+            td::actor::send_closure(SelfId, &BridgeImpl::stop);
+            return;
+          }
+          td::actor::send_closure(SelfId, &BridgeImpl::start_bus, owner.move_as_ok());
+        });
+  }
+
+  void start_bus(std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session) {
+    if (params_.local_id && !authenticated_session) {
+      LOG(ERROR) << "refusing to construct validator bus without authenticated session owner";
+      stop();
+      return;
+    }
     auto bus = std::make_shared<simplex::Bus>();
 
     bus->shard = params_.shard;
@@ -393,6 +416,7 @@ class BridgeImpl final : public IValidatorGroup {
     current_noncritical_params_ = bus->config.noncritical_params;
 
     bus->session_id = params_.session_id;
+    bus->authenticated_session = std::move(authenticated_session);
     bus->overlays = params_.overlays;
     bus->adnl_sender = params_.adnl_sender;
 

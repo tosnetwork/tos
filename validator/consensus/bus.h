@@ -21,6 +21,9 @@
 #include "manager-facade.h"
 #include "types.h"
 
+namespace tos::auth {
+class CommittedNativeSession;
+}
 namespace tos::validator::consensus {
 
 struct Start {
@@ -196,6 +199,9 @@ class Bus : public td::actor::Bus {
   }
 
   ValidatorSessionId session_id;
+  // The same committed authenticated-session owner held by ValidatorManager.
+  // Consensus never derives a committee beside it.
+  std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session;
 
   ShardIdFull shard;
   td::actor::ActorId<ManagerFacade> manager;

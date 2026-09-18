@@ -45,6 +45,9 @@ struct ChainContext;
 #include "shard.h"
 
 namespace tos {
+namespace auth {
+class CommittedNativeSession;
+}
 
 namespace validator {
 
@@ -518,6 +521,14 @@ class ValidatorManager : public ValidatorManagerInterface {
   // and a validator that cannot establish one cannot validate -- it does not
   // get to call the candidate invalid.
   virtual void get_validator_auth_chain_context(td::Promise<std::shared_ptr<const tos::auth::ChainContext>> promise) {
+    promise.set_value(nullptr);
+  }
+
+  // Validator consensus receives the exact manager-owned authenticated session
+  // capability. A null result means this group has no admitted/committed P0
+  // session and therefore may not start as a validator.
+  virtual void get_validator_auth_session_owner(
+      ValidatorSessionId, td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) {
     promise.set_value(nullptr);
   }
 

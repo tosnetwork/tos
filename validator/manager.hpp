@@ -53,6 +53,7 @@
 #include "auth/manager-finalized-head.h"
 #include "auth/manager-group-admission.h"
 #include "auth/native-chain-context.h"
+#include "auth/native-session-continuity.h"
 #include "shard-client.hpp"
 #include "state-serializer.hpp"
 #include "storage-stat-cache.hpp"
@@ -640,6 +641,9 @@ class ValidatorManagerImpl : public ValidatorManager {
                           ? std::make_shared<const tos::auth::ChainContext>(validator_auth_chain_.value())
                           : nullptr);
   }
+  void get_validator_auth_session_owner(
+      ValidatorSessionId session_id,
+      td::Promise<std::shared_ptr<tos::auth::CommittedNativeSession>> promise) override;
   td::optional<ValidatorAuthCollation> validator_auth_collation();
 
   td::optional<tos::auth::ChainContext> validator_auth_chain_;
