@@ -354,14 +354,25 @@ class BridgeImpl final : public IValidatorGroup {
     td::actor::send_closure(
         params_.manager, &ValidatorManager::get_validator_auth_session_owner, params_.session_id,
         [SelfId = actor_id(this)](td::Result<std::shared_ptr<tos::auth::CommittedNativeSession>> owner) mutable {
-          if (owner.is_error() || !owner.ok()) {
-            LOG(ERROR) << "refusing to start validator consensus without a committed authenticated session"
-                       << (owner.is_error() ? PSTRING() << ": " << owner.error() : "");
-            td::actor::send_closure(SelfId, &BridgeImpl::stop);
-            return;
-          }
-          td::actor::send_closure(SelfId, &BridgeImpl::start_bus, owner.move_as_ok());
+          td::actor::send_closure(SelfId, &BridgeImpl::got_authenticated_session_owner, std::move(owner));
         });
+  }
+
+  void got_authenticated_session_owner(
+      td::Result<std::shared_ptr<tos::auth::CommittedNativeSession>> owner) {
+    if (owner.is_error()) {
+      LOG(ERROR) << "refusing to start validator consensus without a committed authenticated session: "
+                 << owner.move_as_error();
+      stop();
+      return;
+    }
+    auto authenticated_session = owner.move_as_ok();
+    if (!authenticated_session) {
+      LOG(ERROR) << "refusing to start validator consensus without a committed authenticated session";
+      stop();
+      return;
+    }
+    start_bus(std::move(authenticated_session));
   }
 
   void start_bus(std::shared_ptr<tos::auth::CommittedNativeSession> authenticated_session) {
