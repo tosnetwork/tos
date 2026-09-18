@@ -1,6 +1,6 @@
 # Validator authentication P0: wire/API profile v1
 
-**Status: design frozen, v1 revision 5; not deployed or activated.**
+**Status: design frozen, v1 revision 6; not deployed or activated.**
 This directory proposes the P0 contract missing from the signature inventory.
 Merging a specification does not enable a verifier, change genesis, or satisfy
 production P0 acceptance. The frozen decisions are authorized by the owner request to update and freeze
@@ -88,3 +88,16 @@ fail-closed profile admission required below. Only the dedicated profile workflo
 - [Ed25519, RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html), including its verified errata.
 - [Stateful signatures, RFC 8391](https://www.rfc-editor.org/rfc/rfc8391.html).
 - [NIST SP 800-208](https://csrc.nist.gov/pubs/sp/800/208/final). Research implementations are not automatically approved profiles or compliant hardware.
+
+## P0-era on-chain finality proof (revision 6)
+
+Revision 6 adds the distinct on-chain finality-proof era: TL-B
+`block_signatures_validator_auth#13` (certificate as `pack_bytes(VAC1)` typed
+`^AuthBytes`) and node TL `tosNode.signatureSet.validatorAuth`, alongside the
+byte-identical historical `#11/#12`. The certificate is the sole authority; the
+consensus ingress bound is `c0_block_finality_certificate_bytes` (58291). The era is
+selected from trusted chain state. This revision freezes the schema, the era-aware
+parser boundary and the full-node historical verification semantics; the C++/Rust
+verifier implementation and the light-client proof era are separate later gates.
+Grammar for `#13` is bound two-sources against `wire.tlb`; the node-TL grammar
+against `test/validator-auth-p0/node-tl-grammar.tl`. See WIRE.md section 7.

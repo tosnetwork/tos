@@ -101,3 +101,17 @@ partial upload/download is never a proof or receipt. The C++/Rust structural
 codec differential harness covers every tagged and untagged type and malformed
 framing. Native TL-B/BOC maximum-size tests cover storage, not chain inclusion
 or authenticated range-proof production integration.
+
+## P0-era finality proof consumers (revision 6)
+
+`block_signatures_validator_auth#13` (WIRE.md section 7) is verified per the
+separate historical/P0 eras rule: parse is not authentication. A P0-era finality
+proof is verified by reconstructing the authenticated committee, session and Duty
+from trusted chain history and checking the canonical VAC1 against them, with quorum
+from the verified certificate weight — never from a claimed `sig_weight`. The
+full-node `validator/impl/check-proof.cpp` verifier semantics are part of this
+revision; the light-client `crypto/block/check-proof.cpp` proof era, its 2-root
+source-context proof and `liteServer.signatureSet.validatorAuth` are a separate
+later amendment. `tosctl/src/block/src/signature.rs` and other consumers either fully
+verify the P0 era or return an explicit unsupported-era result; silent truncation of
+VAC1 to the 64-byte leaf is forbidden.

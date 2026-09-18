@@ -1,6 +1,6 @@
 # Canonical signer and client contract
 
-Status: frozen design v1, revision 5; no service or network is activated.
+Status: frozen design v1, revision 6; no service or network is activated.
 [canonical-schema.json](canonical-schema.json) is the sole binary encoding authority.
 [transport.schema.json](transport.schema.json) defines the thin JSON shape only.
 The reference decoder reads the ordered field arrays directly. Integers, tag/version/

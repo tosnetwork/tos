@@ -235,3 +235,28 @@ parser must accept the combined schema before implementation. The generic bytes
 field is not itself a validator: typed decoding and trusted policy verification
 remain mandatory. The focused native harness and independent C++/Rust structural codecs test this
 contract. Production node, state/proof and service integration remain separate gates.
+
+## 7. P0-era on-chain finality proof (revision 6)
+
+Validator-authenticated finality persists on chain as a distinct BlockSignatures
+era, alongside the byte-identical historical `block_signatures_ordinary#11` and
+`block_signatures_simplex#12`:
+
+    block_signatures_validator_auth#13 validator_list_hash_short:uint32 catchain_seqno:uint32
+      native_session_id:bits256 slot:uint32 candidate_data:^Cell certificate:^AuthBytes = BlockSignatures;
+
+The certificate is the sole signing authority, carried as `pack_bytes(VAC1)` typed
+as the AuthBytes cell tree of section 1; there is no 64-byte signature hashmap.
+`native_session_id` is the native ValidatorSessionId (lookup and native binding
+only, never `Duty.session`); `candidate_data` binds the exact block as in `#12`;
+`slot` is the Simplex slot (`Duty.position`). The node transport form is
+`tosNode.signatureSet.validatorAuth` (`final:Bool` selects role-2 approval versus
+role-3 finality). The certificate ingress bound for this consensus path is
+`c0_block_finality_certificate_bytes` (58291), distinct from the generic
+`c0_certificate_bytes`. Persistent `#13` is finality-only. The era is selected from
+trusted chain state, never from the parsed constructor: a P0-active chain rejects a
+legacy-only finality proof and a P0-inactive chain rejects `#13`. Historical
+`#11/#12` semantics and the 64-byte Ed25519 proof path are unchanged. Verification
+of a persisted `#13` reconstructs the authenticated committee, session and Duty from
+trusted chain history and verifies the canonical VAC1 against them; it never requires
+a live commitment store.

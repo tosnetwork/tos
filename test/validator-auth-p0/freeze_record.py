@@ -26,12 +26,14 @@ def main(write):
         added=[{'artifact':n,'sha256':values[n]} for n in sorted(values) if n not in old]
         if changed or added:
             record.setdefault('evidence_updates',[]).append(dict(
-              authorization=('Phase 1B A1 core proof-era freeze amendment '
-                '(memo/Phase1B-CORE-FREEZE-AMENDMENT.md Rev 4 Final): '
-                'block_signatures_validator_auth#13, tosNode.signatureSet.validatorAuth, '
-                'pack_bytes(VAC1) typed ^AuthBytes, c0_block_finality_certificate_bytes=58291, '
-                'era-aware BlockSignatures parser (issue 3), full-node historical verify '
-                'semantics (issue 2); profile revision 5->6; historical #11/#12 unchanged.'),
+              authorization=('Phase 1B A1 revision-6 reconciliation '
+                '(memo/Phase1B-A1-APPLY-RESULT-ANSWER.md): unify the profile revision '
+                'identity to 6 across README/API-CONTRACT/OPEN-DECISIONS/implementation/'
+                'progress, and add the P0-era on-chain finality-proof normative '
+                'description (block_signatures_validator_auth#13, '
+                'tosNode.signatureSet.validatorAuth) to README/WIRE/CLIENTS; regenerated '
+                'the profile fingerprint and its digest readers; historical #11/#12 '
+                'unchanged; no protocol change.'),
               revision=6, artifacts=changed+added))
         record['revision']=6
         record['artifact_sha256']=values
