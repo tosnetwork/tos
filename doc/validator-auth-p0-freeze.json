@@ -29,7 +29,7 @@
     "doc/validator-auth-p0/transport.schema.json": "ddd45d7d3eb672559efde020af95a0e215146775ec82f8c6847b0f3ab8127584",
     "doc/validator-auth-p0/wire.tl": "a5e10c8e25887cb30440a26a0d8cbcef1473878aeb87438cca1a0f0bc6875c15",
     "doc/validator-auth-p0/wire.tlb": "923650bd74bbbf677a070d1d13d7c12d46944e8bffbfc3a72641093d20d3ce9d",
-    "doc/validator-auth-p0-native-insertions.json": "c68f6be54e40df87217bf5fa8cb2ce7d6272de1da7146ac6394da35cd848d35e",
+    "doc/validator-auth-p0-native-insertions.json": "8205073faafe036b3df762f1f9b9fa615e8c70471aada60fa756680d23d3c36b",
     "test/validator-auth-p0/README.md": "a0b0950c4ac702f8be0f34919a50f8e7b13d5d14dda3bd2cc05b4c8ffee31321",
     "test/validator-auth-p0/api.py": "9ec50bf9e19345ef54a8894a3525eba1eed8fb10412b8a3fdc1ed1c5728fb815",
     "test/validator-auth-p0/archive_evidence.py": "22bb392a561068e0fb3905ce7e8df95bab463468cdfe3be884eff19b12481409",
@@ -461,6 +461,17 @@
       "scope": "Additive manager insertions and local restart/recovery gating only. Historical manager bytes, wire/API/schema/profile allocations and consensus encodings are unchanged.",
       "reason": "Authenticated session birth must survive all validators restarting together without either falling back to an unsigned applied tip or publishing a finalized head before the continuity record that makes it recoverable is durable.",
       "activation": "Unchanged. The configured zero state remains the sole unsigned bootstrap; every post-genesis head still needs native final signatures and exact applied state/bytes."
+    }
+    ,
+    {
+      "artifact": "doc/validator-auth-p0-native-insertions.json",
+      "previous_sha256": "c68f6be54e40df87217bf5fa8cb2ce7d6272de1da7146ac6394da35cd848d35e",
+      "sha256": "8205073faafe036b3df762f1f9b9fa615e8c70471aada60fa756680d23d3c36b",
+      "authorization": "The owner authorized continuing Phase-one coding through authenticated session admission and direct consensus ownership on the existing draft branch.",
+      "change": "Re-derived the additive manager inventory after completing the session-lifecycle handoff. Historical session block reads now propagate the admission byte allowance into the archive package header check before payload allocation. A separately durable StateDb provisioning marker distinguishes first creation of the session commitment store from later loss. The manager drives NativeSessionCommitteeAdmission from its independently finalized head, derives historical identity inputs from the exact requested state and vertical coordinate, requires the admitted native session id to equal the already-constructed manager ValidatorSessionId, restarts an existing commitment or commits only the exact missing-session case, retains the resulting CommittedNativeSession independently of group retirement, blocks tentative/current P0 group materialization until that owner exists, and exposes the same shared owner to the validator consensus Bus. New finalized heads release the owner only when release_if_terminated proves the native session changed.",
+      "scope": "Additive manager insertions plus local archive-bound, StateDb provisioning and consensus-owner plumbing. Historical manager bytes and P0 profile/wire/schema allocations remain unchanged.",
+      "reason": "Phase one requires a single authenticated session lifecycle from finalized history through consensus. A sidecar identity check or a group actor that can start before durable session admission would leave two independently plausible committee/session authorities and would not survive restart safely.",
+      "activation": "Unchanged. P0 v1 remains genesis-activated only; the legacy unsafe local catchain session-id rewrite is refused while validator authentication is active rather than creating a second session identity."
     }
   ],
   "implementation_evidence_update": {
