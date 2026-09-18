@@ -143,6 +143,9 @@ class Db : public td::actor::Actor {
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) = 0;
 
+  virtual void update_validator_auth_finality_journal(td::BufferSlice value, td::Promise<td::Unit> promise) = 0;
+  virtual void get_validator_auth_finality_journal(td::Promise<td::BufferSlice> promise) = 0;
+
   // Validator-group consensus-DB cleanup (Finding 1): one durable, checkpoint-
   // bound record per retired validator session. Unlike the observer queue above,
   // a validator directory may be deleted only once its retirement checkpoint is

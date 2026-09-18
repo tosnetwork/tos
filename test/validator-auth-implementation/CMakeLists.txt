@@ -315,6 +315,10 @@ if(UNIX)
   target_link_libraries(test-p0-manager-finality-receipt-mutant PRIVATE tos_validator_auth_finality)
   set_target_properties(test-p0-manager-finality-receipt-mutant PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 
+  add_executable(test-p0-manager-finality-journal manager-finality-journal-test.cpp)
+  target_link_libraries(test-p0-manager-finality-journal PRIVATE tos_validator_auth_finality)
+  set_target_properties(test-p0-manager-finality-journal PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+
   add_executable(test-p0-native-finality native-finality-test.cpp)
   target_link_libraries(test-p0-native-finality PRIVATE
     tos_validator_auth_finality tos_validator_auth_rpc)

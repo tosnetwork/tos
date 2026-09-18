@@ -774,6 +774,20 @@ target_include_directories(test-validator-cleanup-statedb PRIVATE ${CMAKE_CURREN
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-validator-cleanup-statedb PRIVATE tos_crypto_core tddb tdutils)
 
+add_executable(test-validator-auth-finality-statedb test/test-td-main.cpp test/test-validator-auth-finality-statedb.cpp
+  validator/db/validator-auth-finality-store.cpp)
+target_include_directories(test-validator-auth-finality-statedb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-auth-finality-statedb PRIVATE tddb tdutils)
+
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/validator/db/validator-auth-finality-store.cpp"
+               "${CMAKE_CURRENT_BINARY_DIR}/mutated-validator-auth-finality-store.cpp" COPYONLY)
+add_executable(test-validator-auth-finality-statedb-mutant EXCLUDE_FROM_ALL test/test-td-main.cpp
+  test/test-validator-auth-finality-statedb.cpp "${CMAKE_CURRENT_BINARY_DIR}/mutated-validator-auth-finality-store.cpp")
+target_include_directories(test-validator-auth-finality-statedb-mutant PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-auth-finality-statedb-mutant PRIVATE tddb tdutils)
+
 add_executable(test-validator-cleanup-worker test/test-validator-cleanup-worker.cpp)
 target_include_directories(test-validator-cleanup-worker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)

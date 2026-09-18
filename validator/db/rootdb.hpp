@@ -127,6 +127,9 @@ class RootDb : public Db {
   void update_pending_consensus_db_cleanup(std::vector<std::string> dirs, td::Promise<td::Unit> promise) override;
   void get_pending_consensus_db_cleanup(td::Promise<std::vector<std::string>> promise) override;
 
+  void update_validator_auth_finality_journal(td::BufferSlice value, td::Promise<td::Unit> promise) override;
+  void get_validator_auth_finality_journal(td::Promise<td::BufferSlice> promise) override;
+
   void persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
                                     std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
                                     td::Promise<td::Unit> promise) override;

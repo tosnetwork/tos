@@ -19,6 +19,8 @@ set(VALIDATOR_DB_SOURCE
   db/rootdb.hpp
   db/statedb.hpp
   db/statedb.cpp
+  db/validator-auth-finality-store.cpp
+  db/validator-auth-finality-store.h
   db/staticfilesdb.cpp
   db/staticfilesdb.hpp
   db/db-utils.cpp

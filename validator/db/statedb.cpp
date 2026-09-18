@@ -23,6 +23,7 @@
 #include "tos/tos-tl.hpp"
 
 #include "statedb.hpp"
+#include "validator-auth-finality-store.h"
 
 #include "validator/consensus/validator-cleanup-store.h"
 
@@ -215,6 +216,19 @@ void StateDb::get_pending_consensus_db_cleanup(td::Promise<std::vector<std::stri
     return;
   }
   promise.set_value(decode_pending_cleanup(td::Slice{value}));
+}
+
+void StateDb::update_validator_auth_finality_journal(td::BufferSlice value, td::Promise<td::Unit> promise) {
+  auto status = store_validator_auth_finality_journal(*kv_, value.as_slice());
+  if (status.is_error()) {
+    promise.set_error(std::move(status));
+    return;
+  }
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_validator_auth_finality_journal(td::Promise<td::BufferSlice> promise) {
+  promise.set_result(load_validator_auth_finality_journal(*kv_));
 }
 
 void StateDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
