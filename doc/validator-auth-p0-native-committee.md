@@ -258,3 +258,19 @@ The next boundary is session ownership: this recovered finalized head must drive
 NativeSessionCommitteeAdmission, and a validator group must not start until the
 resulting context has passed CommittedNativeSession's durable commit/restart
 fence.
+
+
+## Session-continuity store provisioning barrier
+
+Validator groups on an activated chain now wait for a durable local session
+commitment store in addition to finalized-head recovery. StateDb carries a
+separate provisioned marker. If that marker exists, the manager may only reopen
+the existing commitment log/frontier; missing files are loss and are never
+silently recreated. If the marker is absent, the manager first tries to reopen
+existing files (covering a crash after file creation but before marker commit)
+and initializes only when the store is genuinely absent. The store is not made
+available to group creation until the marker write acknowledges.
+
+This separates first provisioning from catastrophic continuity loss and gives
+the next session-admission wiring a durable commit/restart fence it can require
+before a validator group starts.

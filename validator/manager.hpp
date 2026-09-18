@@ -655,6 +655,9 @@ class ValidatorManagerImpl : public ValidatorManager {
   bool validator_auth_ready() const {
     return validator_auth_chain_ && validator_auth_finality_ready_;
   }
+  bool validator_auth_groups_ready() const {
+    return validator_auth_ready() && static_cast<bool>(validator_auth_session_store_);
+  }
   void publish_validator_auth_finalized_head(tos::auth::Anchor, td::Ref<vm::Cell>);
   void refresh_validator_auth_finalized_head();
   void validator_auth_finality_journal_written(tos::auth::NativeFinalityVerification, tos::auth::Anchor,
@@ -670,6 +673,16 @@ class ValidatorManagerImpl : public ValidatorManager {
   void got_validator_auth_finality_recovery_block(tos::auth::NativeFinalityVerification, td::Ref<vm::Cell>,
                                                   td::Result<td::Ref<BlockData>>);
   void maybe_finish_validator_auth_finality_recovery();
+  std::unique_ptr<tos::auth::NativeSessionCommitmentStore> validator_auth_session_store_;
+  std::unique_ptr<tos::auth::NativeSessionCommitmentStore> validator_auth_session_store_pending_;
+  bool validator_auth_session_store_reading_ = false;
+  bool validator_auth_session_store_marker_write_in_flight_ = false;
+  bool validator_auth_session_store_retry_scheduled_ = false;
+  std::string validator_auth_session_store_path() const;
+  void ensure_validator_auth_session_store();
+  void retry_validator_auth_session_store();
+  void got_validator_auth_session_store_provisioned(td::Result<bool>);
+  void validator_auth_session_store_marker_written(td::Result<td::Unit>);
   // When a group may be created on a chain that activated the design, and what
   // to do about one refused because it could not be yet. The conditions arrive
   // from two unrelated asynchronous reads in either order, and if the context is

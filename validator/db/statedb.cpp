@@ -24,6 +24,7 @@
 
 #include "statedb.hpp"
 #include "validator-auth-finality-store.h"
+#include "validator-auth-session-store-marker.h"
 
 #include "validator/consensus/validator-cleanup-store.h"
 
@@ -229,6 +230,19 @@ void StateDb::update_validator_auth_finality_journal(td::BufferSlice value, td::
 
 void StateDb::get_validator_auth_finality_journal(td::Promise<td::BufferSlice> promise) {
   promise.set_result(load_validator_auth_finality_journal(*kv_));
+}
+
+void StateDb::mark_validator_auth_session_store_provisioned(td::Promise<td::Unit> promise) {
+  auto status = tos::validator::mark_validator_auth_session_store_provisioned(*kv_);
+  if (status.is_error()) {
+    promise.set_error(std::move(status));
+    return;
+  }
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_validator_auth_session_store_provisioned(td::Promise<bool> promise) {
+  promise.set_result(validator_auth_session_store_is_provisioned(*kv_));
 }
 
 void StateDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,

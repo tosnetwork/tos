@@ -80,6 +80,7 @@
 #include "validator/auth/manager-finality-receipt.h"
 #include "validator/auth/manager-finalized-head.h"
 #include "validator/auth/manager-session-binding.h"
+#include "validator/auth/native-session-continuity.h"
 
 namespace tos {
 
@@ -2673,10 +2674,113 @@ void ValidatorManagerImpl::maybe_finish_validator_auth_finality_recovery() {
   validator_auth_finality_ready_ = true;
   validator_auth_chain_retry_.succeeded();
   publish_validator_auth();
-  if (validator_auth_admission_.create_deferred_groups(validator_auth_ready())) {
-    LOG(INFO) << "validator-auth finality recovered; creating deferred validator groups";
+  ensure_validator_auth_session_store();
+}
+
+std::string ValidatorManagerImpl::validator_auth_session_store_path() const {
+  return db_root_ + "/validator-auth-session.commitments";
+}
+
+void ValidatorManagerImpl::retry_validator_auth_session_store() {
+  validator_auth_session_store_retry_scheduled_ = false;
+  ensure_validator_auth_session_store();
+}
+
+void ValidatorManagerImpl::validator_auth_session_store_marker_written(td::Result<td::Unit> result) {
+  validator_auth_session_store_marker_write_in_flight_ = false;
+  if (result.is_error()) {
+    LOG(ERROR) << "validator-auth session-store marker write failed: " << result.move_as_error();
+    if (!validator_auth_session_store_retry_scheduled_) {
+      validator_auth_session_store_retry_scheduled_ = true;
+      delay_action(
+          [SelfId = actor_id(this)]() {
+            td::actor::send_closure(SelfId, &ValidatorManagerImpl::retry_validator_auth_session_store);
+          },
+          td::Timestamp::in(1.0));
+    }
+    return;
+  }
+  validator_auth_session_store_ = std::move(validator_auth_session_store_pending_);
+  if (!validator_auth_session_store_) {
+    LOG(ERROR) << "validator-auth session-store marker committed without an opened store";
+    return;
+  }
+  if (validator_auth_admission_.create_deferred_groups(validator_auth_groups_ready())) {
+    LOG(INFO) << "validator-auth session store ready; creating deferred validator groups";
     update_shards();
   }
+}
+
+void ValidatorManagerImpl::got_validator_auth_session_store_provisioned(td::Result<bool> result) {
+  validator_auth_session_store_reading_ = false;
+  if (result.is_error()) {
+    LOG(ERROR) << "validator-auth session-store marker read failed: " << result.move_as_error();
+    if (!validator_auth_session_store_retry_scheduled_) {
+      validator_auth_session_store_retry_scheduled_ = true;
+      delay_action(
+          [SelfId = actor_id(this)]() {
+            td::actor::send_closure(SelfId, &ValidatorManagerImpl::retry_validator_auth_session_store);
+          },
+          td::Timestamp::in(1.0));
+    }
+    return;
+  }
+
+  const auto path = validator_auth_session_store_path();
+  if (result.ok()) {
+    auto opened = tos::auth::NativeSessionCommitmentStore::open(path);
+    if (!opened.ok()) {
+      LOG(ERROR) << "validator-auth session store was provisioned but cannot be opened: " << opened.error().code;
+      return;
+    }
+    validator_auth_session_store_ = std::move(opened.value());
+    if (validator_auth_admission_.create_deferred_groups(validator_auth_groups_ready())) {
+      LOG(INFO) << "validator-auth session store reopened; creating deferred validator groups";
+      update_shards();
+    }
+    return;
+  }
+
+  // Marker absent means this StateDb has never provisioned the store. If files
+  // already exist, open them first: that is the crash window after file creation
+  // but before the marker commit. Only a genuinely missing store may be created.
+  auto opened = tos::auth::NativeSessionCommitmentStore::open(path);
+  if (opened.ok()) {
+    validator_auth_session_store_pending_ = std::move(opened.value());
+  } else if (opened.error().code == "session-commitment-store-missing") {
+    auto initialized = tos::auth::NativeSessionCommitmentStore::initialize(path);
+    if (!initialized.ok()) {
+      LOG(ERROR) << "validator-auth session store initialization refused: " << initialized.error().code;
+      return;
+    }
+    validator_auth_session_store_pending_ = std::move(initialized.value());
+  } else {
+    LOG(ERROR) << "validator-auth unmarked session store cannot be opened safely: " << opened.error().code;
+    return;
+  }
+
+  validator_auth_session_store_marker_write_in_flight_ = true;
+  td::actor::send_closure(
+      db_, &Db::mark_validator_auth_session_store_provisioned,
+      [SelfId = actor_id(this)](td::Result<td::Unit> marked) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::validator_auth_session_store_marker_written,
+                                std::move(marked));
+      });
+}
+
+void ValidatorManagerImpl::ensure_validator_auth_session_store() {
+  if (!validator_auth_ready() || validator_auth_session_store_ ||
+      validator_auth_session_store_reading_ ||
+      validator_auth_session_store_marker_write_in_flight_) {
+    return;
+  }
+  validator_auth_session_store_reading_ = true;
+  td::actor::send_closure(
+      db_, &Db::get_validator_auth_session_store_provisioned,
+      [SelfId = actor_id(this)](td::Result<bool> provisioned) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_validator_auth_session_store_provisioned,
+                                std::move(provisioned));
+      });
 }
 
 void ValidatorManagerImpl::establish_validator_auth_chain() {
@@ -2887,7 +2991,7 @@ void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
   // than waiting for a masterchain block that a refusing chain never produces.
   // The startup pass below would create them too; this is what makes the
   // ordering decided in one place instead of by which path happened to run.
-  if (validator_auth_admission_.create_deferred_groups(validator_auth_ready())) {
+  if (validator_auth_admission_.create_deferred_groups(validator_auth_groups_ready())) {
     LOG(INFO) << "cleanup records loaded; creating the validator groups that were refused before them";
     update_shards();
   }
@@ -3515,15 +3619,17 @@ void ValidatorManagerImpl::update_shards() {
           // against, and the answer is to stay a full node rather than to
           // check less: this is the window right after startup, and it closes
           // when the zero state is read.
-          if (!validator_auth_ready()) {
+          if (!validator_auth_groups_ready()) {
             LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
-                       << ": validator authentication is active but this node has not durably recovered "
-                          "its finalized-head authority yet; validation for this shard is disabled until it has";
+                       << ": validator authentication is active but this node has not completed "
+                          "finalized-head recovery and durable session-store provisioning yet; validation for this "
+                          "shard is disabled until both are ready";
             // Remembered, and asked for again. Nothing else drives this pass a
             // second time: it runs on a new masterchain block, and a chain
             // whose validators are all refusing produces none.
             validator_auth_admission_.defer_groups();
             establish_validator_auth_chain();
+            ensure_validator_auth_session_store();
             --(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
             continue;
           }

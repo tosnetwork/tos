@@ -21,6 +21,8 @@ set(VALIDATOR_DB_SOURCE
   db/statedb.cpp
   db/validator-auth-finality-store.cpp
   db/validator-auth-finality-store.h
+  db/validator-auth-session-store-marker.cpp
+  db/validator-auth-session-store-marker.h
   db/staticfilesdb.cpp
   db/staticfilesdb.hpp
   db/db-utils.cpp
@@ -260,7 +262,7 @@ target_include_directories(full-node PUBLIC
 
 # The manager confirms its session identity against the authenticated producer,
 # so this target needs that library directly rather than by transitive luck.
-target_link_libraries(validator PRIVATE validator-common validator-db tos_validator tos_validator_auth_native tos_validator_auth_finality)
+target_link_libraries(validator PRIVATE validator-common validator-db tos_validator tos_validator_auth_native tos_validator_auth_finality tos_validator_auth_session)
 
 target_link_libraries(validator-disk PRIVATE validator-common validator-db)
 

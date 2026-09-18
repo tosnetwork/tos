@@ -529,6 +529,14 @@ void RootDb::get_validator_auth_finality_journal(td::Promise<td::BufferSlice> pr
   td::actor::send_closure(state_db_, &StateDb::get_validator_auth_finality_journal, std::move(promise));
 }
 
+void RootDb::mark_validator_auth_session_store_provisioned(td::Promise<td::Unit> promise) {
+  td::actor::send_closure(state_db_, &StateDb::mark_validator_auth_session_store_provisioned, std::move(promise));
+}
+
+void RootDb::get_validator_auth_session_store_provisioned(td::Promise<bool> promise) {
+  td::actor::send_closure(state_db_, &StateDb::get_validator_auth_session_store_provisioned, std::move(promise));
+}
+
 void RootDb::persist_validator_retirement(std::vector<ValidatorSessionId> destroyed_sessions,
                                           std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
                                           td::Promise<td::Unit> promise) {
