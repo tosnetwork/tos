@@ -5487,8 +5487,8 @@ bool Collator::update_block_creator_stats() {
     }
   }
   auto has_creator = !params_.creator.is_zero();
-  if (has_creator && !update_block_creator_count(params_.creator.as_bits256().bits(), 0, 1)) {
-    return fatal_error("cannot update CreatorStats for "s + params_.creator.as_bits256().to_hex());
+  if (has_creator && !update_block_creator_count(params_.creator.value.bits(), 0, 1)) {
+    return fatal_error("cannot update CreatorStats for "s + params_.creator.value.to_hex());
   }
   if ((has_creator || block_create_total_) &&
       !update_block_creator_count(td::Bits256::zero().bits(), block_create_total_, has_creator)) {
@@ -6230,10 +6230,10 @@ bool Collator::create_block_extra(Ref<vm::Cell>& block_extra) {
   return cb.store_long_bool(0x4a33f6fdU, 32)                                             // block_extra
          && in_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())   // in_msg_descr:^InMsgDescr
          && out_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())  // out_msg_descr:^OutMsgDescr
-         && cb.store_ref_bool(shard_account_blocks_)          // account_blocks:^ShardAccountBlocks
-         && cb.store_bits_bool(rand_seed_)                    // rand_seed:bits256
-         && cb.store_bits_bool(params_.creator.as_bits256())  // created_by:bits256
-         && cb.store_bool_bool(mc)                            // custom:(Maybe
+         && cb.store_ref_bool(shard_account_blocks_)   // account_blocks:^ShardAccountBlocks
+         && cb.store_bits_bool(rand_seed_)             // rand_seed:bits256
+         && cb.store_bits_bool(params_.creator.value)  // created_by:bits256
+         && cb.store_bool_bool(mc)                     // custom:(Maybe
          && (!mc || (create_mc_block_extra(mc_block_extra) && cb.store_ref_bool(mc_block_extra)))  // .. ^McBlockExtra)
          && cb.finalize_to(block_extra);                                                           // = BlockExtra;
 }
@@ -6784,8 +6784,9 @@ void Collator::finalize_stats() {
   stats_.collated_at = td::Clocks::system();
   stats_.attempt = params_.attempt_idx;
   stats_.is_validator = params_.collator_node_id.is_zero();
-  stats_.self = stats_.is_validator ? PublicKey(pubkeys::Ed25519(params_.creator)).compute_short_id()
-                                    : params_.collator_node_id.pubkey_hash();
+  // As a validator this is the producer's own identity; as a collator node it is that
+  // node's key hash, which is a transport identity and a different thing.
+  stats_.self = stats_.is_validator ? PublicKeyHash{params_.creator.value} : params_.collator_node_id.pubkey_hash();
   if (block_limit_status_) {
     stats_.estimated_bytes = (td::uint32)block_limit_status_->estimate_block_size();
     stats_.gas = (td::uint32)block_limit_status_->gas_used;

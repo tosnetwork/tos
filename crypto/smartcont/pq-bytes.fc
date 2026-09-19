@@ -1,0 +1,132 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Post-quantum key material, as any contract that holds or reads such a key needs it:
+;; the admitted suite, the canonical stored shape, and the identity derived from it.
+;;
+;; Kept apart from the validator descriptor so that a contract which only holds a key --
+;; a validator controller, say -- depends on the codec and not on the set of rules that
+;; govern a validator's entry in a set.
+;;
+;; Requires TVM version 16 for SHA256C. Nothing here verifies a signature; that is
+;; PQCHECKSIG_MLDSA44, declared in pq.fc.
+;; Admitted suites. One, deliberately: a second algorithm is a protocol change, not a
+;; configuration value.
+const int pq::algorithm::mldsa44 = 1;
+const int pq::mldsa44_public_key_bytes = 1312;
+const int pq::bytes_chunk = 127;
+
+const int pq::error::algorithm = 61;
+const int pq::error::key_length = 62;
+const int pq::error::malformed_key = 63;
+
+int pq::admitted_algorithm?(int algorithm_id) inline {
+  return algorithm_id == pq::algorithm::mldsa44;
+}
+
+;; The exact key length a suite has. Zero for anything unadmitted, so a caller that skips
+;; the admission check still cannot match a length.
+int pq::public_key_bytes(int algorithm_id) inline {
+  return algorithm_id == pq::algorithm::mldsa44 ? pq::mldsa44_public_key_bytes : 0;
+}
+
+;; Parsing that refuses a cell which is not ordinary.
+;;
+;; `begin_parse` resolves a library cell against the library context and carries on with
+;; whatever it finds there, so a key presented as a library reference walks, measures and
+;; hashes as the key it points at, and arrives at the very same identity. The node decodes
+;; the same cell with no library context and sees a special cell it refuses. A stored key
+;; must therefore be the bytes themselves and never a reference to them, or the contract
+;; would accept a descriptor the node cannot read.
+(slice, int) pq::parse_maybe_special(cell c) asm "XCTOS";
+
+slice pq::parse_ordinary(cell c) inline {
+  (slice cs, int special) = pq::parse_maybe_special(c);
+  throw_if(pq::error::malformed_key, special);
+  return cs;
+}
+
+;; Walks a stored chain and requires it to carry exactly `expected` bytes in the canonical
+;; shape: byte-aligned cells, at most one continuation each, every chunk but the last
+;; exactly full, and a last chunk that is neither empty nor oversized.
+;;
+;; The canonical shape matters beyond tidiness. The hash does not depend on where the
+;; boundaries fall, so a non-canonical chain would derive the same identity while
+;; serialising to different bytes -- and the node refuses those bytes.
+;;
+;; The walk is bounded by the length that was declared rather than by the chain that was
+;; sent: a chunk that would carry the total past `expected` ends it. A sender that declares
+;; the length of a key and attaches a chain of any size therefore pays for about as many
+;; cells as the key itself has, not for the chain it chose to build.
+;; `impure`, because it is called for what it refuses and not for what it returns: FunC
+;; drops a call whose result is unused unless the function is marked so, and a dropped
+;; call here is every rule above silently gone.
+() pq::check_chain_bytes(cell chain, int expected) impure {
+  int remaining = expected;
+  int walking = -1;
+  while (walking) {
+    slice cs = chain.pq::parse_ordinary();
+    int bits = cs.slice_bits();
+    int refs = cs.slice_refs();
+    throw_if(pq::error::malformed_key, bits & 7);
+    throw_if(pq::error::malformed_key, refs > 1);
+    int bytes = bits >> 3;
+    throw_if(pq::error::malformed_key, bytes > remaining);
+    if (refs == 1) {
+      throw_unless(pq::error::malformed_key, bytes == pq::bytes_chunk);
+      chain = cs~load_ref();
+    } else {
+      throw_unless(pq::error::malformed_key, (bytes > 0) & (bytes <= pq::bytes_chunk));
+      walking = 0;
+    }
+    remaining -= bytes;
+  }
+  throw_unless(pq::error::malformed_key, remaining == 0);
+}
+
+;; The stored form of a key: a length in its own cell, and a reference to the chain that
+;; carries the bytes. The length is checked against the suite before anything is hashed.
+(int, cell) pq::stored_key(int algorithm_id, cell stored) {
+  throw_unless(pq::error::algorithm, pq::admitted_algorithm?(algorithm_id));
+  slice cs = stored.pq::parse_ordinary();
+  int declared = cs~load_uint(32);
+  cell chain = cs~load_ref();
+  cs.end_parse();
+  throw_unless(pq::error::key_length, declared == pq::public_key_bytes(algorithm_id));
+  pq::check_chain_bytes(chain, declared);
+  return (declared, chain);
+}
+
+const int pq::mldsa44_signature_bytes = 2420;
+
+;; A signature travels in the same shape a key is stored in: a length and a chain. The
+;; length is checked here, before the verification that costs fifty thousand gas, so a
+;; malformed signature is refused cheaply rather than paid for.
+cell pq::stored_signature(int algorithm_id, cell stored) {
+  throw_unless(pq::error::algorithm, pq::admitted_algorithm?(algorithm_id));
+  slice cs = stored.pq::parse_ordinary();
+  int declared = cs~load_uint(32);
+  cell chain = cs~load_ref();
+  cs.end_parse();
+  throw_unless(pq::error::key_length, declared == pq::mldsa44_signature_bytes);
+  pq::check_chain_bytes(chain, declared);
+  return chain;
+}
+
+;; SHA-256("TOS-PQ-CONSENSUS-KEY-v1" || u16_le(algorithm_id) || key bytes).
+;;
+;; The algorithm number contributes two LITTLE-endian bytes -- suite 1 is `01 00` -- while
+;; every other field on this wire is big-endian. Writing it the other way produces an
+;; identity the node will not agree with, and nothing else would notice.
+int pq::key_id(int algorithm_id, cell stored) {
+  (_, cell chain) = pq::stored_key(algorithm_id, stored);
+  int little_endian = ((algorithm_id & 0xff) << 8) | ((algorithm_id >> 8) & 0xff);
+  return begin_cell()
+    .store_slice("TOS-PQ-CONSENSUS-KEY-v1")
+    .store_uint(little_endian, 16)
+    .store_ref(chain)
+  .end_cell().snake_string_hash();
+}
+
+;; The network this chain is, so a request signed for one network cannot be replayed on
+;; another that shares a validator's key.
+int pq::global_id() asm "GLOBALID";

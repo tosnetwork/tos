@@ -115,3 +115,7 @@ pub(super) fn execute_pq_mldsa44(engine: &mut Engine) -> Status {
     engine.cc.stack.push(StackItem::boolean(valid));
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "../tests/test_pq_constants.rs"]
+mod tests;

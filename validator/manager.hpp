@@ -26,6 +26,10 @@
 
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
+#include "consensus/session-compat.h"
+#include "consensus/validator-cleanup-manager.h"
+#include "consensus/validator-cleanup-worker.h"
+#include "consensus/validator-cleanup.h"
 #include "db/db-event-publisher.hpp"
 #include "impl/ext-message-pool.hpp"
 #include "interfaces/db.h"
@@ -43,10 +47,7 @@
 #include "liteserver-admission.h"
 #include "manager-init.h"
 #include "manager-resource-policy.h"
-#include "consensus/session-compat.h"
-#include "consensus/validator-cleanup.h"
-#include "consensus/validator-cleanup-manager.h"
-#include "consensus/validator-cleanup-worker.h"
+#include "node-consensus-status.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
@@ -372,6 +373,23 @@ class ValidatorManagerImpl : public ValidatorManager {
     temp_keys_.erase(key);
     promise.set_value(td::Unit());
   }
+  // Declaring that this node holds the consensus key for a validator identity. This is
+  // what makes it that validator; the Ed25519 setters above cannot. The key identity is
+  // recorded so membership lapses on its own once the set records a different one,
+  // rather than a node continuing to act for a validator that has rotated away from it.
+  void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
+                            td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store));
+    if (status.is_error()) {
+      promise.set_error(std::move(status));
+      return;
+    }
+    promise.set_value(td::Unit());
+  }
+  void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) override {
+    pq_custody_.remove(validator_id);
+    promise.set_value(td::Unit());
+  }
 
   void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                     td::Promise<td::Unit> promise) override;
@@ -517,7 +535,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_block_data_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<BlockData>> promise) override;
   void get_shard_state_from_db(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) override;
   void get_shard_state_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<ShardState>> promise) override;
-  void get_block_candidate_from_db(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  void get_block_candidate_from_db(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                                    td::Promise<BlockCandidate> promise) override;
   void get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) override;
   void get_block_proof_from_db(ConstBlockHandle handle, td::Promise<td::Ref<Proof>> promise) override;
@@ -634,7 +652,13 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();
 
-  bool is_validator();
+  // Whether this node holds any validator keys at all, which decides operational
+  // behaviour such as mempool admission, monitoring and non-final queries.
+  //
+  // This is NOT consensus membership and must never be used as it. Holding an Ed25519
+  // network or operator key says nothing about whether this node is a validator in a
+  // given set; get_validator() and local_consensus_member() answer that, from custody.
+  bool has_local_validator_keys();
   bool validating_masterchain();
   PublicKeyHash get_validator(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set);
   bool is_shard_collator(ShardIdFull shard);
@@ -716,7 +740,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void process_lookup_block_for_litequery_error(AccountIdPrefixFull account, int type, td::uint64 value,
                                                 td::Result<ConstBlockHandle> r_handle,
                                                 td::Promise<ConstBlockHandle> promise);
-  void get_block_candidate_for_litequery(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash,
+  void get_block_candidate_for_litequery(ValidatorId source, BlockIdExt block_id, FileHash collated_data_hash,
                                          td::Promise<BlockCandidate> promise) override;
   void get_validator_groups_info_for_litequery(
       td::optional<ShardIdFull> shard,
@@ -751,6 +775,10 @@ class ValidatorManagerImpl : public ValidatorManager {
  private:
   std::set<PublicKeyHash> permanent_keys_;
   std::set<PublicKeyHash> temp_keys_;
+  // Which post-quantum consensus keys this node actually holds, by the validator
+  // identity each belongs to. Consensus membership is decided from this; the Ed25519
+  // sets above are for network and operator duties and cannot confer it.
+  PqConsensusCustody pq_custody_;
 
  private:
   td::Ref<ValidatorManagerOptions> opts_;

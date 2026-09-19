@@ -21,7 +21,7 @@ pub use blockchain::Blockchain;
 pub use compile::{compile_func, compile_func_with_stdlib};
 pub use contract::{ContractProvider, SandboxContract};
 pub use error::{SandboxError, SandboxResult};
-pub use genesis::generate_zerostate_total_balance;
+pub use genesis::{generate_zerostate_state, generate_zerostate_total_balance};
 pub use message_builder::MessageBuilder;
 pub use result::{GetMethodResult, SendResult};
 pub use snapshot::BlockchainSnapshot;

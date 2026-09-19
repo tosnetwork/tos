@@ -690,7 +690,14 @@ pub trait TransactionExecutor {
                 balance_to_string(Some(&init_balance))
             );
             // This is required here because changes to libraries are applied even if action phase fails
-            if err_code != 0 && !is_special && !check_account_size_limits(limits, &mut acc_copy)? {
+            if err_code != 0
+                && !is_special
+                && !check_account_size_limits(
+                    limits,
+                    self.config().global_version(),
+                    &mut acc_copy,
+                )?
+            {
                 fail!("Account size limits exceeded");
             }
             if err_code == -1 {
@@ -746,7 +753,9 @@ pub trait TransactionExecutor {
         if let Some(new_data) = new_data {
             acc_copy.set_data(new_data);
         }
-        if !is_special && !check_account_size_limits(limits, &mut acc_copy)? {
+        if !is_special
+            && !check_account_size_limits(limits, self.config().global_version(), &mut acc_copy)?
+        {
             log::debug!(target: "executor", "Account size limits exceeded. Taking fine and rolling back state");
             phase.result_code = RESULT_CODE_EXCEEDED_LIMITS;
             return finish_action_phase_with_fine(tr, phase, None, acc_balance, true);
@@ -971,7 +980,11 @@ fn compute_new_state(
                         Ok(Some(ComputeSkipReason::BadState))
                     }
                     Ok(_) => {
-                        if check_account_size_limits(config.size_limits_config(), acc)? {
+                        if check_account_size_limits(
+                            config.size_limits_config(),
+                            config.global_version(),
+                            acc,
+                        )? {
                             Ok(None)
                         } else {
                             *acc = original_state;
@@ -1006,7 +1019,11 @@ fn compute_new_state(
                     Ok(Some(ComputeSkipReason::BadState))
                 } else {
                     log::debug!(target: "executor", "message for frozen: activated");
-                    if check_account_size_limits(config.size_limits_config(), acc)? {
+                    if check_account_size_limits(
+                        config.size_limits_config(),
+                        config.global_version(),
+                        acc,
+                    )? {
                         Ok(None)
                     } else {
                         *acc = original_state;
@@ -1874,12 +1891,23 @@ fn check_vm_init_params(ctrls: &SaveList, stack: &Stack) {
     debug_assert_eq!(balance_in_smc, balance_in_stack);
 }
 
-pub(super) fn check_account_size_limits(cfg: &SizeLimitsConfig, acc: &mut Account) -> Result<bool> {
+/// The masterchain-specific ceiling only exists from global version 12, which is the
+/// condition the other implementation applies. Without it the two disagree about how much
+/// state a masterchain account may hold on an older version, and that disagreement is a
+/// fork rather than a difference of opinion.
+const MC_ACC_STATE_CELLS_SINCE_VERSION: u32 = 12;
+
+pub(super) fn check_account_size_limits(
+    cfg: &SizeLimitsConfig,
+    global_version: u32,
+    acc: &mut Account,
+) -> Result<bool> {
     acc.update_storage_stat(cfg.acc_state_cells_for_storage_dict)?;
     let Some(stat) = acc.storage_stat() else {
         return Ok(true);
     };
-    let max_acc_state_cells = if acc.get_addr().is_some_and(|addr| addr.is_masterchain()) {
+    let masterchain = acc.get_addr().is_some_and(|addr| addr.is_masterchain());
+    let max_acc_state_cells = if masterchain && global_version >= MC_ACC_STATE_CELLS_SINCE_VERSION {
         cfg.max_mc_acc_state_cells as u64
     } else {
         cfg.max_acc_state_cells as u64

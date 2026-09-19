@@ -1031,11 +1031,14 @@ impl ElectionRunner {
             let pool_addr = node.pool.as_ref().map(|p| p.address().to_string());
             let pubkey = validator_entry
                 .as_ref()
-                .map(|(_, entry)| {
-                    base64::Engine::encode(
+                .map(|(_, entry)| match entry.public_key() {
+                    Ok(pk) => base64::Engine::encode(
                         &base64::engine::general_purpose::STANDARD,
-                        entry.public_key.as_bytes(),
-                    )
+                        pk.as_bytes(),
+                    ),
+                    // A post-quantum descriptor has no Ed25519 key to report; say so
+                    // rather than presenting some other value as if it were one.
+                    Err(_) => "post-quantum".to_string(),
                 })
                 .or_else(|| {
                     participant.map(|p| {
@@ -1338,8 +1341,10 @@ async fn find_validator_entries(
 
         if current_entry.is_none() {
             if let Some(vset) = current_vset {
-                if let Some(idx) =
-                    vset.list().iter().position(|item| item.public_key.as_slice() == &key)
+                if let Some(idx) = vset
+                    .list()
+                    .iter()
+                    .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
                 {
                     current_entry = Some((u16::try_from(idx)?, vset.list()[idx].clone()));
                 }
@@ -1348,7 +1353,11 @@ async fn find_validator_entries(
 
         if !is_in_next {
             if let Some(vset) = next_vset {
-                if vset.list().iter().any(|item| item.public_key.as_slice() == &key) {
+                if vset
+                    .list()
+                    .iter()
+                    .any(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
+                {
                     is_in_next = true;
                 }
             }

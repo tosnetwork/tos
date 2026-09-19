@@ -285,7 +285,7 @@ void ValidateQuery::finish_query() {
 void ValidateQuery::start_up() {
   LOG(WARNING) << "validate query for " << block_candidate.id.to_str() << " started";
   alarm_timestamp() = timeout;
-  created_by_ = block_candidate.pubkey;
+  created_by_ = block_candidate.producer.value;
 
   REJECT_UNLESS_VOID(id_ == block_candidate.id);
   if (ShardIdFull(id_) != shard_) {

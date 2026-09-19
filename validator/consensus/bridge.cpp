@@ -6,10 +6,10 @@
 
 #include <cerrno>
 
+#include "block/validator-session-members.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
-#include "candidate-relay-policy.h"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
 #include "validator/consensus/db-path.h"
@@ -18,6 +18,8 @@
 #include "validator/full-node.h"
 #include "validator/interfaces/validator-full-id.h"
 #include "validator/validator-group.hpp"
+
+#include "candidate-relay-policy.h"
 
 namespace tos::validator {
 
@@ -359,14 +361,17 @@ class BridgeImpl final : public IValidatorGroup {
     size_t idx = 0;
     ValidatorWeight total_weight = 0;
     for (const auto& el : params_.validator_set->export_vector()) {
-      PublicKey key{pubkeys::Ed25519{el.key}};
+      // Peer verification still uses the classical key; the post-quantum path
+      // arrives when Simplex itself is converted.
+      PublicKey key{pubkeys::Ed25519{el.classical_key()}};
       PublicKeyHash short_id = key.compute_short_id();
 
       bus->validator_set.push_back(PeerValidator{
+          .validator_id = el.validator_id,
           .idx = PeerValidatorId{idx},
           .key = key,
           .short_id = short_id,
-          .adnl_id = adnl::AdnlNodeIdShort{el.addr.is_zero() ? short_id.bits256_value() : el.addr},
+          .adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(el)},
           .weight = el.weight,
       });
 
@@ -475,7 +480,10 @@ class BridgeImpl final : public IValidatorGroup {
         candidate_id->collated_data_hash_ =
             std::get<CandidateHashData::FullCandidate>(hash_data.candidate).collated_file_hash;
         if (c.leader.value() < bus.validator_set.size()) {
-          candidate_id->creator_ = bus.validator_set[c.leader.value()].key.ed25519_value().raw();
+          // Report the identity the set holds for this leader, not a value derived
+          // from its key: those are different bytes and only one of them is what the
+          // block is attributed to.
+          candidate_id->creator_ = bus.validator_set[c.leader.value()].validator_id.value;
         }
       } else {
         // Candidate data not yet available locally: fill in seqno from chain
@@ -643,10 +651,13 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
       << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
   auto name_with_seqno =
       std::string(name.begin(), name.end()) + "." + std::to_string(validator_set->get_catchain_seqno());
-  auto descr = validator_set->get_validator(local_id.bits256_value());
+  auto descr = validator_set->get_validator(tos::ValidatorId{local_id.bits256_value()});
   CHECK(descr);
-  auto local_adnl_id = adnl::AdnlNodeIdShort{
-      descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
+  // Only a classical descriptor may fall back to deriving an ADNL identity from its
+  // key. A post-quantum one always carries an explicit address, precisely so that a
+  // consensus key never doubles as a transport identity.
+  CHECK(!descr->is_pq() || !descr->addr.is_zero());
+  auto local_adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(*descr)};
   consensus::BridgeCreationParams params{
       .name = name_with_seqno,
       .is_create_session_called = create_session,

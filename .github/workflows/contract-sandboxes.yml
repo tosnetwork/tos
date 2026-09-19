@@ -57,10 +57,19 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       # The sandbox compiles FunC in-process through tos_sandbox, which shells
-      # out to these two binaries via FUNC_PATH / FIFT_PATH. Nothing else from
-      # the node is needed, so this stays far cheaper than a full build.
-      - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+      # out to these binaries via FUNC_PATH / FIFT_PATH. The elector suite also
+      # generates a real zerostate, which needs create-state and the compiled
+      # system contracts it deploys. Still far cheaper than a full build.
+      - name: Build FunC, Fift and the zerostate tooling
+        run: cmake --build build --target func fift create-state gen_fif -j2
+
+      # The post-quantum elector suite signs real ML-DSA-44 requests. Signing is
+      # deliberately absent from the node's libraries, so it shells out to the operator
+      # key tool, which is its own project.
+      - name: Build the post-quantum key tool
+        run: |
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
 
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
@@ -89,6 +98,18 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      # A guard nothing reaches is decoration. This removes each rule the validator
+      # controller work added and requires a test to go red for it; a mutation that
+      # survives fails the job.
+      - name: Every controller rule is held by a test
+        run: python3 test/pq-native/n3-3a-mutations.py --out mutations.json
+
+      # The cutover deleted several validator-authority paths rather than refusing them
+      # by name, so nothing in the contracts announces their return. This fails if one
+      # comes back.
+      - name: No removed validator-authority path has returned
+        run: ./scripts/check-removed-validator-authority.sh .
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code

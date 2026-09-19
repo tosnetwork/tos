@@ -27,13 +27,18 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <cstring>
+#include <keys/keys.hpp>
 #include <mutex>
+#include <set>
 #include <stack>
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "common/bitstring.h"
+#include "crypto/pq/pq-bytes.h"
+#include "crypto/pq/pq-consensus.h"
 #include "openssl/digest.hpp"
 #include "td/utils/bits.h"
 #include "td/utils/uint128.h"
@@ -681,6 +686,10 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
   auto ptr = std::make_shared<TotalValidatorSet>(rec.utime_since, rec.utime_until, rec.total, rec.main);
 
   std::vector<bool> seen_keys(rec.total);
+  // Uniqueness is decided here, where a bad set can simply be refused. Doing it only
+  // when a ValidatorSet object is built would make a malformed set abort the process
+  // instead of being rejected as the untrusted input it is.
+  std::set<td::Bits256> seen_validator_ids, seen_key_ids;
   td::Status error;
 
   auto validator_set_check_fn = [&](Ref<vm::CellSlice> descr_cs, td::ConstBitPtr key, int n) -> bool {
@@ -688,34 +697,132 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
     CHECK(i < rec.total && !seen_keys[i]);
     seen_keys[i] = true;
 
-    gen::ValidatorDescr::Record_validator_addr descr;
-    if (!tlb::csr_unpack(descr_cs, descr)) {
-      descr.adnl_addr.set_zero();
-      if (!(gen::t_ValidatorDescr.unpack_validator(descr_cs.write(), descr.public_key, descr.weight) &&
-            descr_cs->empty_ext())) {
-        error = td::Status::Error(PSLICE() << "validator #" << i
-                                           << " has an invalid ValidatorDescr record in the validator set dictionary");
+    // A post-quantum descriptor carries entirely different material and must not be
+    // read through the classical path, so dispatch on the constructor first.
+    const bool is_pq = descr_cs->prefetch_ulong(8) == 0xb3;
+
+    tos::Ed25519_PublicKey pubkey{td::Bits256::zero()};
+    td::Bits256 adnl_addr;
+    adnl_addr.set_zero();
+    td::uint64 weight = 0;
+    tos::ValidatorId validator_id;
+    tos::ConsensusKeyId key_id;
+    td::uint16 algorithm_id = 0;
+    std::string pq_public_key;
+
+    if (is_pq) {
+      gen::ValidatorDescr::Record_validator_pq pq;
+      if (!tlb::csr_unpack(descr_cs, pq)) {
+        error =
+            td::Status::Error(PSLICE() << "validator #" << i << " has an invalid post-quantum ValidatorDescr record");
         return false;
       }
+      auto key_bytes = tos::pq::unpack_pq_bytes(pq.public_key, tos::pq::pq_bytes_hard_max);
+      if (key_bytes.is_error()) {
+        error =
+            td::Status::Error(PSLICE() << "validator #" << i << " has a malformed post-quantum public key encoding");
+        return false;
+      }
+      pq_public_key = key_bytes.move_as_ok().as_slice().str();
+      algorithm_id = static_cast<td::uint16>(pq.algorithm_id);
+      // Derivation fails closed on an unadmitted algorithm or a wrong-length key, so
+      // this one call rejects both of those as well.
+      auto derived = tos::pq::derive_key_id(static_cast<tos::pq::PQAlgorithmId>(algorithm_id), pq_public_key);
+      if (!derived) {
+        error = td::Status::Error(PSLICE() << "validator #" << i
+                                           << " has an unknown consensus algorithm or a key of the wrong length");
+        return false;
+      }
+      td::Bits256 expected_key_id;
+      std::memcpy(expected_key_id.data(), derived->data(), derived->size());
+      // The stored key identity must be the one this key actually derives, otherwise a
+      // descriptor could claim an identity its key does not back.
+      if (expected_key_id != pq.key_id) {
+        error = td::Status::Error(PSLICE() << "validator #" << i
+                                           << " declares a key identity that its public key does not derive");
+        return false;
+      }
+      if (pq.validator_id.is_zero()) {
+        error = td::Status::Error(PSLICE() << "validator #" << i << " has a zero validator identity");
+        return false;
+      }
+      // An ADNL identity is never derived from a consensus key, so it has to be present.
+      if (pq.adnl_addr.is_zero()) {
+        error =
+            td::Status::Error(PSLICE() << "validator #" << i
+                                       << " has no explicit ADNL identity, which a post-quantum descriptor requires");
+        return false;
+      }
+      validator_id = tos::ValidatorId{pq.validator_id};
+      key_id = tos::ConsensusKeyId{pq.key_id};
+      adnl_addr = pq.adnl_addr;
+      weight = pq.weight;
+    } else {
+      gen::ValidatorDescr::Record_validator_addr descr;
+      if (!tlb::csr_unpack(descr_cs, descr)) {
+        descr.adnl_addr.set_zero();
+        if (!(gen::t_ValidatorDescr.unpack_validator(descr_cs.write(), descr.public_key, descr.weight) &&
+              descr_cs->empty_ext())) {
+          error =
+              td::Status::Error(PSLICE() << "validator #" << i
+                                         << " has an invalid ValidatorDescr record in the validator set dictionary");
+          return false;
+        }
+      }
+      gen::SigPubKey::Record sig_pubkey;
+      if (!tlb::csr_unpack(std::move(descr.public_key), sig_pubkey)) {
+        error = td::Status::Error(PSLICE() << "validator #" << i
+                                           << " has no public key or its public key is in unsupported format");
+        return false;
+      }
+      pubkey = tos::Ed25519_PublicKey{sig_pubkey.pubkey};
+      // A classical validator's membership identity and key identity are both the one
+      // derived from its Ed25519 key. Settling that here means every consumer of a
+      // decoded set sees populated identities, including the ones that hash them.
+      auto classical_id = tos::PublicKey{tos::pubkeys::Ed25519{pubkey}}.compute_short_id().bits256_value();
+      validator_id = tos::ValidatorId{classical_id};
+      key_id = tos::ConsensusKeyId{classical_id};
+      adnl_addr = descr.adnl_addr;
+      weight = descr.weight;
     }
-    gen::SigPubKey::Record sig_pubkey;
-    if (!tlb::csr_unpack(std::move(descr.public_key), sig_pubkey)) {
-      error = td::Status::Error(PSLICE() << "validator #" << i
-                                         << " has no public key or its public key is in unsupported format");
+
+    // One validator may appear once. A second entry for the same identity would let a
+    // single member be counted twice toward a quorum.
+    if (!seen_validator_ids.insert(validator_id.value).second) {
+      error = td::Status::Error(PSLICE() << "validator #" << i << " repeats a validator identity");
       return false;
     }
-    if (!descr.weight) {
+    // A consensus key belongs to one validator. Two members sharing a key is a
+    // different fault from one member appearing twice, and collapsing the two checks
+    // into one would let whichever came second through. Since a key identity is bound
+    // to its key, this also refuses two members carrying the same public key.
+    if (!seen_key_ids.insert(key_id.value).second) {
+      error = td::Status::Error(PSLICE() << "validator #" << i << " repeats a consensus key identity");
+      return false;
+    }
+    // The accumulation below also refuses a zero weight, so this does not change what
+    // is accepted. It changes what the operator is told: without it a zero weight is
+    // reported as exceeding the protocol cap, which sends them looking in the wrong
+    // place entirely.
+    if (!weight) {
       error = td::Status::Error(PSLICE() << "validator #" << i << " has zero weight");
       return false;
     }
     auto weight_offset = ptr->total_weight;
-    if (!tos::checked_add_validator_weight(ptr->total_weight, descr.weight)) {
+    if (!tos::checked_add_validator_weight(ptr->total_weight, weight)) {
       error = td::Status::Error(
           "total weight of all validators in validator set exceeds protocol cap (UINT64_MAX/3); "
           "this cap keeps tos::has_quorum() and tos::quorum_threshold() safe");
       return false;
     }
-    ptr->list.emplace_back(sig_pubkey.pubkey, descr.weight, weight_offset, descr.adnl_addr);
+    if (is_pq) {
+      ptr->list.emplace_back(validator_id, algorithm_id, key_id, std::move(pq_public_key), weight, weight_offset,
+                             adnl_addr);
+    } else {
+      ptr->list.emplace_back(pubkey, weight, weight_offset, adnl_addr);
+      ptr->list.back().validator_id = validator_id;
+      ptr->list.back().key_id = key_id;
+    }
     return true;
   };
 
@@ -2011,11 +2118,27 @@ const ValidatorDescr& TotalValidatorSet::at_weight(td::uint64 weight_pos) const 
   return *--it;
 }
 
+namespace {
+// Carry a descriptor across without deciding for the reader which kind it is: a
+// post-quantum entry keeps both identities and its key material, a classical one
+// keeps its Ed25519 key. Weight is passed separately because shard subsets override it.
+tos::ValidatorDescr to_validator_descr(const ValidatorDescr& node, tos::ValidatorWeight weight) {
+  if (node.is_pq()) {
+    return tos::ValidatorDescr{node.validator_id, node.algorithm_id, node.key_id, node.pq_public_key, weight,
+                               node.adnl_addr};
+  }
+  tos::ValidatorDescr out{node.pubkey, weight, node.adnl_addr};
+  out.validator_id = node.validator_id;
+  out.key_id = node.key_id;
+  return out;
+}
+}  // namespace
+
 std::vector<tos::ValidatorDescr> TotalValidatorSet::export_validator_set() const {
   std::vector<tos::ValidatorDescr> l;
   l.reserve(list.size());
   for (const auto& node : list) {
-    l.emplace_back(node.pubkey, node.weight, node.adnl_addr);
+    l.push_back(to_validator_descr(node, node.weight));
   }
   return l;
 }
@@ -2071,13 +2194,13 @@ std::vector<tos::ValidatorDescr> Config::do_compute_validator_set(const Catchain
       }
       for (unsigned i = 0; i < count; i++) {
         const auto& v = vset.list[idx[i]];
-        nodes.emplace_back(v.pubkey, v.weight, v.adnl_addr);
+        nodes.push_back(to_validator_descr(v, v.weight));
       }
     } else {
       // simply take needed number of validators from the head of the list
       for (unsigned i = 0; i < count; i++) {
         const auto& v = vset.list[i];
-        nodes.emplace_back(v.pubkey, v.weight, v.adnl_addr);
+        nodes.push_back(to_validator_descr(v, v.weight));
       }
     }
     return nodes;
@@ -2098,7 +2221,8 @@ std::vector<tos::ValidatorDescr> Config::do_compute_validator_set(const Catchain
     }
     auto& entry = vset.at_weight(p);
     // LOG(DEBUG) << "vset entry #" << i << ": rem_wt=" << total_wt << ", total_wt=" << vset.total_weight << ", op=" << op << ", p=" << p << "; entry.cum_wt=" << entry.cum_weight << ", entry.wt=" << entry.weight << " " << entry.cum_weight / entry.weight;
-    nodes.emplace_back(entry.pubkey, 1, entry.adnl_addr);  // NB: shardchain validator lists have all weights = 1
+    // NB: shardchain validator lists have all weights = 1
+    nodes.push_back(to_validator_descr(entry, 1));
     CHECK(total_wt >= entry.weight);
     total_wt -= entry.weight;
     std::pair<td::uint64, td::uint64> new_hole{entry.cum_weight, entry.weight};

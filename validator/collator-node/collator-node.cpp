@@ -14,6 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include "block/validator-session-members.h"
 #include "impl/collator-impl.h"
 #include "impl/shard.hpp"
 #include "td/utils/lz4.h"
@@ -22,8 +23,8 @@
 #include "block-auto.h"
 #include "block-db.h"
 #include "checksum.h"
-#include "collator-node.hpp"
 #include "collator-node-limits.h"
+#include "collator-node.hpp"
 #include "fabric.h"
 #include "utils.hpp"
 
@@ -126,12 +127,7 @@ void CollatorNode::new_masterchain_block_notification(td::Ref<MasterchainState> 
       td::Ref<block::ValidatorSet> vals = state->get_total_validator_set(next);
       if (vals.not_null()) {
         for (const ValidatorDescr& descr : vals->export_vector()) {
-          if (descr.addr.is_zero()) {
-            validator_adnl_ids_.insert(
-                adnl::AdnlNodeIdShort(PublicKey(pubkeys::Ed25519{descr.key.as_bits256()}).compute_short_id()));
-          } else {
-            validator_adnl_ids_.insert(adnl::AdnlNodeIdShort(descr.addr));
-          }
+          validator_adnl_ids_.insert(adnl::AdnlNodeIdShort{block::validator_adnl_identity(descr)});
         }
       }
     }
@@ -275,10 +271,10 @@ static td::BufferSlice serialize_error(td::Status error) {
   return create_serialize_tl_object<tos_api::collatorNode_error>(error.code(), error.message().c_str());
 }
 
-static BlockCandidate change_creator(BlockCandidate block, Ed25519_PublicKey creator, CatchainSeqno& cc_seqno,
+static BlockCandidate change_creator(BlockCandidate block, ValidatorId creator, CatchainSeqno& cc_seqno,
                                      td::uint32& val_set_hash) {
   CHECK(!block.id.is_masterchain());
-  if (block.pubkey == creator) {
+  if (block.producer == creator) {
     return block;
   }
   auto root = vm::std_boc_deserialize(block.data).move_as_ok();
@@ -288,14 +284,14 @@ static BlockCandidate change_creator(BlockCandidate block, Ed25519_PublicKey cre
   CHECK(tlb::unpack_cell(root, blk));
   CHECK(tlb::unpack_cell(blk.extra, extra));
   CHECK(tlb::unpack_cell(blk.info, info));
-  extra.created_by = creator.as_bits256();
+  extra.created_by = creator.value;
   CHECK(tlb::pack_cell(blk.extra, extra));
   CHECK(tlb::pack_cell(root, blk));
   block.data = vm::std_boc_serialize(root, 31).move_as_ok();
 
   block.id.root_hash = root->get_hash().bits();
   block.id.file_hash = block::compute_file_hash(block.data.as_slice());
-  block.pubkey = creator;
+  block.producer = creator;
 
   cc_seqno = info.gen_catchain_seqno;
   val_set_hash = info.gen_validator_list_hash_short;
@@ -360,7 +356,7 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
   CatchainSeqno cc_seqno;
   std::vector<BlockIdExt> prev_blocks;
   BlockCandidatePriority priority;
-  Ed25519_PublicKey creator;
+  ValidatorId creator;
   if (auto R = fetch_tl_object<tos_api::collatorNode_generateBlock>(data, true); R.is_ok()) {
     auto f = R.move_as_ok();
     shard = create_shard_id(f->shard_);
@@ -371,7 +367,7 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
     priority = BlockCandidatePriority{.round = static_cast<td::uint32>(f->round_),
                                       .first_block_round = static_cast<td::uint32>(f->first_block_round_),
                                       .priority = f->priority_};
-    creator = Ed25519_PublicKey(f->creator_);
+    creator = ValidatorId{f->creator_};
   } else {
     promise.set_error(td::Status::Error("cannot parse request"));
     return;
@@ -392,7 +388,7 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
 
     CollatorNodeResponseStats stats;
     stats.self = local_id.pubkey_hash();
-    stats.validator_id = PublicKey(pubkeys::Ed25519(creator)).compute_short_id();
+    stats.validator_id = creator;
     stats.original_block_id = block.id;
     stats.collated_data_hash = block.collated_file_hash;
 
@@ -424,7 +420,7 @@ void CollatorNode::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice data
 
 void CollatorNode::process_generate_block_query(adnl::AdnlNodeIdShort src, ShardIdFull shard, CatchainSeqno cc_seqno,
                                                 std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                                                Ed25519_PublicKey creator, td::Timestamp timeout,
+                                                ValidatorId creator, td::Timestamp timeout,
                                                 td::Promise<BlockCandidate> promise) {
   if (last_masterchain_state_.is_null()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "not ready"));

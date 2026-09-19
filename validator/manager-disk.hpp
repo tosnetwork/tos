@@ -24,6 +24,7 @@
 
 #include "interfaces/db.h"
 #include "interfaces/validator-manager.h"
+#include "validator/node-consensus-status.h"
 
 #include "manager-disk.h"
 #include "manager-init.h"
@@ -42,6 +43,9 @@ class WaitBlockDataDisk;
 
 class ValidatorManagerImpl : public ValidatorManager {
  private:
+  // Offline and hardfork managers take no part in consensus, but they implement the
+  // same interface, so the custody they are handed is recorded and simply unused.
+  PqConsensusCustody pq_custody_;
   std::vector<td::Ref<ExtMessage>> ext_messages_;
   std::vector<td::Ref<IhrMessage>> ihr_messages_;
   struct Compare {
@@ -92,6 +96,19 @@ class ValidatorManagerImpl : public ValidatorManager {
   }
   void del_temp_key(PublicKeyHash key, td::Promise<td::Unit> promise) override {
     UNREACHABLE();
+  }
+  void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
+                            td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store));
+    if (status.is_error()) {
+      promise.set_error(std::move(status));
+      return;
+    }
+    promise.set_value(td::Unit());
+  }
+  void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) override {
+    pq_custody_.remove(validator_id);
+    promise.set_value(td::Unit());
   }
 
   void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
@@ -240,7 +257,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_block_data_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<BlockData>> promise) override;
   void get_shard_state_from_db(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) override;
   void get_shard_state_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<ShardState>> promise) override;
-  void get_block_candidate_from_db(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  void get_block_candidate_from_db(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                                    td::Promise<BlockCandidate> promise) override;
   void get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) override;
   void get_block_proof_from_db(ConstBlockHandle handle, td::Promise<td::Ref<Proof>> promise) override;
@@ -430,7 +447,7 @@ class ValidatorManagerImpl : public ValidatorManager {
                                         td::Promise<ConstBlockHandle> promise) override {
     get_block_by_seqno_from_db(account, seqno, std::move(promise));
   }
-  void get_block_candidate_for_litequery(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash,
+  void get_block_candidate_for_litequery(ValidatorId source, BlockIdExt block_id, FileHash collated_data_hash,
                                          td::Promise<BlockCandidate> promise) override {
     promise.set_result(td::Status::Error("not implemented"));
   }

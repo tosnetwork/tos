@@ -80,7 +80,7 @@ TEST(JsonRpcParse, result_stack_round_trip) {
   auto parsed = tos::parse_get_method_result_stack(serialize_stack(stack).as_slice());
   ASSERT_TRUE(parsed.is_ok());
   auto stk = parsed.move_as_ok();
-  ASSERT_EQ(2u, stk->depth());
+  ASSERT_EQ(2, stk->depth());
   ASSERT_TRUE(stk->at(1).is_int());
   ASSERT_EQ(42, stk->at(1).as_int()->to_long());
   ASSERT_TRUE(stk->at(0).is_cell());

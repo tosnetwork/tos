@@ -26,8 +26,14 @@ struct TotalValidatorSet;
 
 class ValidatorSet : public td::CntObject {
  public:
-  const tos::ValidatorDescr* get_validator(const tos::NodeIdShort& id) const;
-  bool is_validator(tos::NodeIdShort id) const;
+  // Membership is asked by stable validator identity, never by an ADNL identity and
+  // never by a key identity. Rotating a validator's consensus key must not move it in
+  // or out of the set, which is only true if this is keyed on validator_id.
+  const tos::ValidatorDescr* get_validator(const tos::ValidatorId& id) const;
+  bool is_validator(const tos::ValidatorId& id) const;
+  // Separate from membership on purpose: this answers "is this key currently in the
+  // set", which is a different question from "is this validator a member".
+  const tos::ValidatorDescr* get_validator_by_key_id(const tos::ConsensusKeyId& key_id) const;
   tos::CatchainSeqno get_catchain_seqno() const {
     return cc_seqno_;
   }
@@ -50,7 +56,8 @@ class ValidatorSet : public td::CntObject {
   td::uint32 hash_;
   tos::ValidatorWeight total_weight_;
   std::vector<tos::ValidatorDescr> ids_;
-  std::vector<std::pair<tos::NodeIdShort, size_t>> ids_map_;
+  std::vector<std::pair<tos::ValidatorId, size_t>> ids_map_;
+  std::vector<std::pair<tos::ConsensusKeyId, size_t>> key_id_map_;
 };
 
 class ValidatorSetCompute {

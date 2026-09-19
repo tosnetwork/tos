@@ -626,6 +626,13 @@ masterchain_block_extra#cca5
 
 validator#53 public_key:SigPubKey weight:uint64 = ValidatorDescr;
 validator_addr#73 public_key:SigPubKey weight:uint64 adnl_addr:bits256 = ValidatorDescr;
+// Post-quantum consensus validator. validator_id is the stable membership identity and
+// does not change when the consensus key rotates; key_id identifies the current key and
+// must equal the frozen derivation over algorithm_id and public_key. public_key holds the
+// suite key (1312 bytes for ML-DSA-44) in the canonical bounded-bytes cell encoding, since
+// it cannot fit inline. adnl_addr is explicit and is never derived from the consensus key.
+validator_pq#b3 validator_id:bits256 algorithm_id:uint16 key_id:bits256
+  public_key:^Cell weight:uint64 adnl_addr:bits256 = ValidatorDescr;
 validators#11 utime_since:uint32 utime_until:uint32
   total:(## 16) main:(## 16) { main <= total } { main >= 1 }
   list:(Hashmap 16 ValidatorDescr) = ValidatorSet;
@@ -854,6 +861,13 @@ _ SuspendedAddressList = ConfigParam 44;
 precompiled_smc#b0 gas_usage:uint64 = PrecompiledSmc;
 precompiled_contracts_config#c0 list:(HashmapE 256 PrecompiledSmc) = PrecompiledContractsConfig;
 _ PrecompiledContractsConfig = ConfigParam 45;
+
+// The controller codes a validator's account may have been born with. A validator's
+// authority is rooted in its controller account, and what makes that account
+// post-quantum is the code it was deployed with, so this is the list of codes that
+// count. The configuration contract refuses more than eight.
+validator_controller_policy_v1#_ controller_codes:(HashmapE 256 True) = ValidatorControllerPolicy;
+_ ValidatorControllerPolicy = ConfigParam 47;
 
 oracle_bridge_params#_ bridge_address:bits256 oracle_mutlisig_address:bits256 oracles:(HashmapE 256 uint256) external_chain_address:bits256 = OracleBridgeParams;
 _ OracleBridgeParams = ConfigParam 71; // Oracle bridge

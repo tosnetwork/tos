@@ -7,7 +7,7 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use adnl::client::AdnlClientConfig;
-use chain_block::{SigPubKey, UInt256, ValidatorDescr, ValidatorSet};
+use chain_block::{SigPubKey, UInt256, ValidatorDescr, ValidatorKey, ValidatorSet};
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{ControlClient, SignRq},
@@ -158,14 +158,14 @@ impl VotingProvider for VotingProviderImpl {
                 .ok_or(anyhow::anyhow!("weight"))?;
             let adnl_addr =
                 map.get("adnl_addr").and_then(|v| v.as_str()).map(UInt256::from_str).transpose()?;
-            let descr = ValidatorDescr {
-                public_key: SigPubKey::from_bytes(&pubkey)
+            // A classical descriptor derives its membership identity from its key, so the
+            // constructor is the only way in: the identity field is not ours to set.
+            let descr = ValidatorDescr::with_params(
+                SigPubKey::from_bytes(&pubkey)
                     .map_err(|_| anyhow::anyhow!("public key is invalid"))?,
                 weight,
                 adnl_addr,
-                mc_seq_no_since: 0,
-                prev_weight_sum: 0,
-            };
+            );
             list.push(descr);
         }
         ValidatorSet::new(utime_since, utime_until, main, list)

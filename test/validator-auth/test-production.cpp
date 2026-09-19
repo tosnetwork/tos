@@ -74,8 +74,11 @@ struct Fixture {
       auto pk = secret.back().get_public_key().move_as_ok();
       tos::PublicKey key{tos::pubkeys::Ed25519{std::move(pk)}};
       nodes.emplace_back(tos::Ed25519_PublicKey{key.ed25519_value().raw()}, weights[i]);
-      bus.validator_set.push_back({c::PeerValidatorId{i}, key, key.compute_short_id(),
-                                   tos::adnl::AdnlNodeIdShort{key.compute_short_id()}, weights[i]});
+      // A classical validator's membership identity is the one derived from its key,
+      // which is what the validator set settles on too.
+      bus.validator_set.push_back({tos::ValidatorId{key.compute_short_id().bits256_value()}, c::PeerValidatorId{i}, key,
+                                   key.compute_short_id(), tos::adnl::AdnlNodeIdShort{key.compute_short_id()},
+                                   weights[i]});
       expect(tos::checked_add_validator_weight(bus.total_weight, weights[i]), "fixture-weight-" + std::to_string(i));
     }
     vset = td::make_ref<block::ValidatorSet>(bus.cc_seqno, bus.shard, std::move(nodes));
@@ -151,6 +154,47 @@ void votes_and_candidates(Fixture& f) {
   reject(c::Candidate::deserialize(proposal->serialize(), f.bus, std::nullopt, 8), "proposal-wrong-slot", "slot");
   proposal.write().signature.as_slice()[0] ^= 1;
   reject(c::Candidate::deserialize(proposal->serialize(), f.bus), "proposal-bad-signature", "signature");
+}
+
+// A candidate's producer must be the identity the validator set holds for its leader,
+// not anything reconstructed from the leader's key. The fixture gives the leader an
+// identity that is neither its key nor the identity derived from it, so putting either
+// of those back would be caught here rather than by blocks being refused on a network.
+void candidate_producer_identity(Fixture& f) {
+  const auto set_identity = tos::ValidatorId{bits(0x77)};
+  f.bus.validator_set[0].validator_id = set_identity;
+
+  // Real cells: the candidate payload is parsed as a bag of cells downstream.
+  auto cell_of = [](unsigned char byte) {
+    vm::CellBuilder cb;
+    cb.store_long(byte, 8);
+    return vm::std_boc_serialize(cb.finalize(), 31).move_as_ok();
+  };
+  auto data = cell_of(0xb1);
+  td::BufferSlice collated;  // empty: the payload pipeline re-serialises collated cells
+  tos::BlockIdExt full_id{tos::BlockId{f.bus.shard.workchain, f.bus.shard.shard, 7}, bits(0x55),
+                          td::sha256_bits256(data.as_slice())};
+  // What the wire claims about the producer is deliberately wrong: it must be ignored.
+  tos::BlockCandidate block{tos::ValidatorId{bits(0x99)}, full_id, td::sha256_bits256(collated.as_slice()),
+                            data.clone(), collated.clone()};
+  auto hash_data = c::CandidateHashData::create_full(block, std::nullopt);
+  auto id = hash_data.build_id_with(7);
+  auto signature = f.sign(0, f.wrapped(tos::serialize_tl_object(id.to_tl(), true)));
+  auto candidate =
+      td::make_ref<c::Candidate>(id, std::nullopt, c::PeerValidatorId{0}, std::move(block), std::move(signature));
+
+  auto restored = c::Candidate::deserialize(candidate->serialize(), f.bus, c::PeerValidatorId{0}, 7);
+  expect(restored.is_ok(), "full-candidate-accepted");
+  // The candidate has to outlive the reference taken into it: lifetime extension does not
+  // reach through a reference-counted pointer, so binding to a temporary's pointee leaves
+  // `produced` dangling for every check below.
+  auto accepted = restored.move_as_ok();
+  const auto& produced = std::get<tos::BlockCandidate>(accepted->block);
+  expect(produced.producer == set_identity, "full-candidate-producer-from-set");
+  expect(produced.producer.value != f.bus.validator_set[0].key.ed25519_value().raw(),
+         "full-candidate-producer-not-raw-key");
+  expect(produced.producer.value != f.bus.validator_set[0].short_id.bits256_value(),
+         "full-candidate-producer-not-key-short-id");
 }
 
 void certificates(Fixture& f) {
@@ -320,6 +364,7 @@ int main(int argc, char** argv) {
     Fixture f;
     if (measure) { benchmark(f); return 0; }
     votes_and_candidates(f);
+    candidate_producer_identity(f);
     certificates(f);
     proofs(f);
     std::cout << "SUMMARY\t" << checks << "\tproduction-verification-checks\n";

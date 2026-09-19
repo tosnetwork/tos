@@ -8,6 +8,13 @@ on:
       - 'common/global-version.h'
       - 'CMakeLists.txt'
       - 'test/pq-mldsa44/**'
+      - 'test/pq-native/**'
+      - 'crypto/smartcont/pq-validator.fc'
+      - 'validator/node-consensus-status.h'
+      - 'test/test-node-consensus-membership.cpp'
+      - 'tosctl/src/block/**'
+      - 'tosctl/src/tl/**'
+      - 'tl/generate/scheme/**'
       - 'doc/tvm-mldsa44*'
       - '.github/workflows/pq-mldsa44.yml'
 defaults:
@@ -43,7 +50,27 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake -LA -N build | grep -E '(CMAKE_.*COMPILER|CMAKE_BUILD_TYPE|TOS_ARCH)'
-          cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper func fift tol -j2
+          cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper \
+            test-pq-consensus test-pq-signer test-pq-bytes test-validator-descr-tags \
+            test-validator-identity test-node-consensus-membership test-config43 test-n3-preimage \
+            test-n3-controller-auth \
+            func fift tol -j2
+      - name: Verify PQ consensus identity, signer and PQBytes codec
+        id: n1
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          build/crypto/pq/test-pq-consensus
+          build/crypto/pq/test-pq-signer
+          build/crypto/pq/test-pq-bytes
+      - name: Verify the descriptor tag set and the validator identity rules
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          build/crypto/pq/test-validator-descr-tags
+          build/crypto/pq/test-validator-identity
+          build/crypto/pq/test-config43
+          build/crypto/pq/test-n3-preimage
+          build/crypto/pq/test-n3-controller-auth
+          build/test-node-consensus-membership
       - name: Prepare pinned public vectors
         id: vectors
         run: python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
@@ -96,11 +123,15 @@ jobs:
             '-DCMAKE_C_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
             '-DCMAKE_CXX_FLAGS=-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer' \
             '-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address,undefined'
-          cmake --build build-pq --target test-pq-mldsa44-wrapper -j2
+          cmake --build build-pq --target test-pq-mldsa44-wrapper test-pq-consensus test-pq-signer -j2
       - name: Execute public vectors under sanitizers
         run: |
           python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
           build-pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
+      - name: Execute PQ consensus identity and signer under sanitizers
+        run: |
+          build-pq/test-pq-consensus
+          build-pq/test-pq-signer
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -122,13 +153,14 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DTOS_USE_ASAN=ON -DTOS_USE_UBSAN=ON \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-          cmake --build build --target test-pq-mldsa44 -j2
+          cmake --build build --target test-pq-mldsa44 test-pq-bytes -j2
       - name: Run native vectors and parser boundaries under sanitizers
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
           python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
           build/crypto/pq/test-pq-mldsa44 pq-results/vectors.tsv pq-results/native.tsv
+          build/crypto/pq/test-pq-bytes
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -138,8 +170,23 @@ jobs:
             pq-results/native.tsv
           if-no-files-found: warn
           retention-days: 14
+  rust-pqbytes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install the pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - name: Verify the Rust codecs against the shared C++ vectors and tag set
+        run: |
+          cargo test --manifest-path tosctl/src/block/Cargo.toml --lib pq_bytes -- --nocapture
+          cargo test --manifest-path tosctl/src/block/Cargo.toml --lib validators -- --nocapture
+          cargo test --manifest-path tosctl/src/tl/api/Cargo.toml --test session_vectors -- --nocapture
+          cargo test --manifest-path tosctl/src/vm/Cargo.toml --lib executor::pq -- --nocapture
   determinism:
-    needs: [native, sanitizers, vm-sanitizers]
+    needs: [native, sanitizers, vm-sanitizers, rust-pqbytes]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -151,7 +198,7 @@ jobs:
           python3 - <<'PY_GATE'
           import json, os
           needs = json.loads(os.environ['NEEDS_JSON'])
-          expected = {'native', 'sanitizers', 'vm-sanitizers'}
+          expected = {'native', 'sanitizers', 'vm-sanitizers', 'rust-pqbytes'}
           if set(needs) != expected:
               raise SystemExit('Incomplete prerequisite job evidence')
           bad = {name: info['result'] for name, info in needs.items() if info['result'] != 'success'}

@@ -68,6 +68,11 @@ class PeerValidatorId {
 td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidatorId& id);
 
 struct PeerValidator {
+  // Who this validator is, taken from the descriptor rather than derived again from a
+  // key. A block it produces is attributed to this, so the attribution survives a
+  // consensus key rotation.
+  ValidatorId validator_id;
+
   [[nodiscard]] bool check_signature(ValidatorSessionId session, td::Slice data, td::Slice signature) const;
 
   bool operator==(const PeerValidator& other) const = default;

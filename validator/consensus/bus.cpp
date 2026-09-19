@@ -16,8 +16,8 @@ namespace {
 std::string block_candidate_to_string(const BlockCandidate& candidate) {
   return PSTRING() << "BlockCandidate{id=" << candidate.id.to_str() << ", block_size=" << candidate.data.size()
                    << ", collated_size=" << candidate.collated_data.size()
-                   << ", collated_file_hash=" << candidate.collated_file_hash
-                   << ", pubkey=" << candidate.pubkey.as_bits256() << "}";
+                   << ", collated_file_hash=" << candidate.collated_file_hash << ", pubkey=" << candidate.producer.value
+                   << "}";
 }
 
 std::string candidate_to_string(const CandidateRef& candidate) {

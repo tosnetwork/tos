@@ -3722,8 +3722,8 @@ void LiteQuery::finish_getDispatchQueueMessages(StdSmcAddress addr, LogicalTime 
 void LiteQuery::perform_nonfinal_getCandidate(td::Bits256 source, BlockIdExt blkid, td::Bits256 collated_data_hash) {
   LOG(DEBUG) << "started a nonfinal.getCandidate liteserver query";
   td::actor::send_closure_later(
-      manager_, &ValidatorManager::get_block_candidate_for_litequery, PublicKey{pubkeys::Ed25519{source}}, blkid,
-      collated_data_hash, [Self = actor_id(this)](td::Result<BlockCandidate> R) {
+      manager_, &ValidatorManager::get_block_candidate_for_litequery, ValidatorId{source}, blkid, collated_data_hash,
+      [Self = actor_id(this)](td::Result<BlockCandidate> R) {
         if (R.is_error()) {
           td::actor::send_closure(Self, &LiteQuery::abort_query, R.move_as_error());
         } else {
@@ -3732,7 +3732,7 @@ void LiteQuery::perform_nonfinal_getCandidate(td::Bits256 source, BlockIdExt blk
               Self, &LiteQuery::finish_query,
               create_serialize_tl_object<lite_api::liteServer_nonfinal_candidate>(
                   create_tl_object<lite_api::liteServer_nonfinal_candidateId>(
-                      create_tl_lite_block_id(cand.id), cand.pubkey.as_bits256(), cand.collated_file_hash),
+                      create_tl_lite_block_id(cand.id), cand.producer.value, cand.collated_file_hash),
                   std::move(cand.data), std::move(cand.collated_data)),
               false);
         }

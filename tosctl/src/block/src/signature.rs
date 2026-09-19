@@ -291,7 +291,9 @@ impl BlockSignaturesPure {
         // Calc validators short ids
         let mut validators_map = HashMap::new();
         for vd in validators_list {
-            validators_map.insert(vd.compute_node_id_short(), vd);
+            // Fails loudly on a post-quantum descriptor: a PQ validator set must not be
+            // verified through the Ed25519 signature path.
+            validators_map.insert(vd.compute_node_id_short()?, vd);
         }
 
         // Check signatures

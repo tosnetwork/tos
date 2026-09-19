@@ -193,6 +193,8 @@ set(TLB_BLOCK_AUTO
 )
 
 set(BLOCK_SOURCE
+  block/validator-session-members.cpp
+  pq/pq-bytes.cpp
   block/Binlog.h
   block/Binlog.cpp
   block/block.cpp
@@ -390,7 +392,10 @@ target_link_libraries(src_parser PUBLIC tos_crypto_core)
 add_library(tos_block STATIC ${BLOCK_SOURCE})
 target_include_directories(tos_block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/block> $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api)
+# Decoding a validator set settles a classical validator's identity from its key, so
+# the block library genuinely depends on the key library rather than hoping every
+# consumer happens to link it in the right order.
+target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api tos_pq_consensus keys)
 if (MINGW)
   # Resolve circular static linking between tos_block and tos_crypto on MinGW.
   target_link_libraries(tos_block PUBLIC tos_crypto)
@@ -526,7 +531,8 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     add_dependencies(gen_fif gen_fif_${ID})
   endfunction()
 
-  GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config)
+  GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
@@ -534,7 +540,10 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2)
-  GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code)
+  # The libraries it includes are part of what it compiles to. Without them here, editing
+  # one leaves this artifact stale and every test reads the previous version of the rule.
+  GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
   GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)

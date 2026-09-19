@@ -692,7 +692,8 @@ class TestConsensus : public td::actor::Actor {
       Node &node = nodes_[idx];
       validator_descrs.push_back(ValidatorDescr(Ed25519_PublicKey{node.public_key.ed25519_value().raw()}, node.weight,
                                                 node.adnl_id.bits256_value()));
-      validators_.push_back(PeerValidator{.idx = PeerValidatorId((int)idx),
+      validators_.push_back(PeerValidator{.validator_id = tos::ValidatorId{node.node_id.bits256_value()},
+                                          .idx = PeerValidatorId((int)idx),
                                           .key = node.public_key,
                                           .short_id = node.node_id,
                                           .adnl_id = node.adnl_id,

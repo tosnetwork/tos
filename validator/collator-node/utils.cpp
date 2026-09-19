@@ -28,9 +28,8 @@ constexpr const char* k_called_from_collator_node = "collator_node";
 tl_object_ptr<tos_api::collatorNode_Candidate> serialize_candidate(const BlockCandidate& block, bool compress) {
   if (!compress) {
     auto t_compression_start = td::Time::now();
-    auto res = create_tl_object<tos_api::collatorNode_candidate>(
-        PublicKey{pubkeys::Ed25519{block.pubkey.as_bits256()}}.tl(), create_tl_block_id(block.id), block.data.clone(),
-        block.collated_data.clone());
+    auto res = create_tl_object<tos_api::collatorNode_candidate>(block.producer.value, create_tl_block_id(block.id),
+                                                                 block.data.clone(), block.collated_data.clone());
     VLOG(COLLATOR_NODE_BENCHMARK) << "Broadcast_benchmark serialize_candidate block_id=" << block.id.root_hash.to_hex()
                                   << " called_from=" << k_called_from_collator_node
                                   << " time_sec=" << (td::Time::now() - t_compression_start)
@@ -45,8 +44,7 @@ tl_object_ptr<tos_api::collatorNode_Candidate> serialize_candidate(const BlockCa
                                          k_called_from_collator_node, block.id.root_hash)
           .move_as_ok();
   return create_tl_object<tos_api::collatorNode_compressedCandidate>(
-      0, PublicKey{pubkeys::Ed25519{block.pubkey.as_bits256()}}.tl(), create_tl_block_id(block.id),
-      (int)decompressed_size, std::move(compressed));
+      0, block.producer.value, create_tl_block_id(block.id), (int)decompressed_size, std::move(compressed));
 }
 
 td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collatorNode_Candidate> f,
@@ -58,13 +56,9 @@ td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collator
                 res = [&]() -> td::Result<BlockCandidate> {
                   auto t_decompression_start = td::Time::now();
                   auto hash = td::sha256_bits256(c.collated_data_);
-                  auto key = PublicKey{c.source_};
-                  if (!key.is_ed25519()) {
-                    return td::Status::Error("invalid pubkey");
-                  }
-                  auto e_key = Ed25519_PublicKey{key.ed25519_value().raw()};
+                  auto producer = ValidatorId{c.source_};
                   auto block_id = create_block_id(c.id_);
-                  BlockCandidate res{e_key, block_id, hash, std::move(c.data_), std::move(c.collated_data_)};
+                  BlockCandidate res{producer, block_id, hash, std::move(c.data_), std::move(c.collated_data_)};
                   VLOG(COLLATOR_NODE_BENCHMARK)
                       << "Broadcast_benchmark deserialize_candidate block_id=" << block_id.root_hash.to_hex()
                       << " called_from=" << k_called_from_collator_node
@@ -85,12 +79,8 @@ td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collator
                                     c.data_, false, c.decompressed_size_, max_decompressed_data_size,
                                     k_called_from_collator_node, create_block_id(c.id_).root_hash));
                   auto collated_data_hash = td::sha256_bits256(p.second);
-                  auto key = PublicKey{c.source_};
-                  if (!key.is_ed25519()) {
-                    return td::Status::Error("invalid pubkey");
-                  }
-                  auto e_key = Ed25519_PublicKey{key.ed25519_value().raw()};
-                  return BlockCandidate{e_key, create_block_id(c.id_), collated_data_hash, std::move(p.first),
+                  auto producer = ValidatorId{c.source_};
+                  return BlockCandidate{producer, create_block_id(c.id_), collated_data_hash, std::move(p.first),
                                         std::move(p.second)};
                 }();
               },
@@ -100,12 +90,8 @@ td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collator
                                     c.data_, true, 0, max_decompressed_data_size, k_called_from_collator_node,
                                     create_block_id(c.id_).root_hash));
                   auto collated_data_hash = td::sha256_bits256(p.second);
-                  auto key = PublicKey{c.source_};
-                  if (!key.is_ed25519()) {
-                    return td::Status::Error("invalid pubkey");
-                  }
-                  auto e_key = Ed25519_PublicKey{key.ed25519_value().raw()};
-                  return BlockCandidate{e_key, create_block_id(c.id_), collated_data_hash, std::move(p.first),
+                  auto producer = ValidatorId{c.source_};
+                  return BlockCandidate{producer, create_block_id(c.id_), collated_data_hash, std::move(p.first),
                                         std::move(p.second)};
                 }();
               }));

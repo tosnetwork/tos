@@ -15,11 +15,12 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "auto/tl/tos_api_json.h"
-#include "common/delay.h"
-#include "interfaces/validator-full-id.h"
 #include <fstream>
 
+#include "auto/tl/tos_api_json.h"
+#include "block/validator-session-members.h"
+#include "common/delay.h"
+#include "interfaces/validator-full-id.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
@@ -632,9 +633,9 @@ void FullNodeFastSyncOverlays::update_overlays(
         continue;
       }
       for (const ValidatorDescr &val : val_set->export_vector()) {
-        PublicKeyHash public_key_hash = ValidatorFullId{val.key}.compute_short_id();
+        PublicKeyHash public_key_hash = ValidatorFullId{val.classical_key()}.compute_short_id();
         root_public_keys_.push_back(public_key_hash);
-        current_validators_adnl_.emplace_back(val.addr.is_zero() ? public_key_hash.bits256_value() : val.addr);
+        current_validators_adnl_.emplace_back(block::validator_adnl_identity(val));
       }
     }
     std::sort(root_public_keys_.begin(), root_public_keys_.end());

@@ -41,6 +41,16 @@ struct ValidatorDescr {
   td::Bits256 adnl_addr;
   td::uint64 weight;
   td::uint64 cum_weight;
+  // Stable membership identity and current-key identity. For a classical descriptor
+  // both are derived from its Ed25519 key, so nothing about existing sets changes.
+  tos::ValidatorId validator_id;
+  tos::ConsensusKeyId key_id;
+  // Post-quantum key material; algorithm_id stays zero on a classical descriptor.
+  td::uint16 algorithm_id{0};
+  std::string pq_public_key;
+  bool is_pq() const {
+    return algorithm_id != 0;
+  }
   ValidatorDescr(const td::Bits256& _pubkey, td::uint64 _weight, td::uint64 _cum_weight)
       : pubkey(_pubkey), weight(_weight), cum_weight(_cum_weight) {
     adnl_addr.set_zero();
@@ -51,6 +61,18 @@ struct ValidatorDescr {
   ValidatorDescr(const tos::Ed25519_PublicKey& _pubkey, td::uint64 _weight, td::uint64 _cum_weight)
       : pubkey(_pubkey), weight(_weight), cum_weight(_cum_weight) {
     adnl_addr.set_zero();
+  }
+  // A post-quantum entry carries no Ed25519 key; is_pq() is how a reader asks.
+  ValidatorDescr(const tos::ValidatorId& _validator_id, td::uint16 _algorithm_id, const tos::ConsensusKeyId& _key_id,
+                 std::string _pq_public_key, td::uint64 _weight, td::uint64 _cum_weight, const td::Bits256& _adnl_addr)
+      : pubkey(td::Bits256::zero())
+      , adnl_addr(_adnl_addr)
+      , weight(_weight)
+      , cum_weight(_cum_weight)
+      , validator_id(_validator_id)
+      , key_id(_key_id)
+      , algorithm_id(_algorithm_id)
+      , pq_public_key(std::move(_pq_public_key)) {
   }
   bool operator<(td::uint64 wt_pos) const& {
     return cum_weight < wt_pos;

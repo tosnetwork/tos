@@ -1,0 +1,23 @@
+# Every place that asks a validator descriptor for a classical consensus key.
+#
+# A post-quantum descriptor has no such key and refuses rather than inventing one, so a
+# site that is not guarded stops the node the moment PQ descriptors become authoritative.
+# That is why Genesis activation waits for these to be converted, and why the inventory
+# has to be a thing that fails rather than a paragraph someone remembers to update:
+# adding a site, removing one, or converting one without saying so here fails the check.
+#
+# status:
+#   definition   the accessor itself
+#   guarded      a post-quantum descriptor cannot reach it
+#   aborts-on-pq reachable with a post-quantum descriptor; must be converted before Genesis
+#
+# file	sites	status	why
+tos/tos-types.h	2	definition	the accessor, and the comment stating that a post-quantum descriptor refuses
+crypto/block/signature-set.cpp	1	guarded	classical signature verification; a post-quantum validator is rejected before the key is read (N5 adds the PQ path)
+crypto/block/validator-set.cpp	1	guarded	identity backfill for sets built directly by tests and tooling, classical descriptors only
+crypto/block/validator-session-members.cpp	2	guarded	the classical session member form, and the implicit ADNL address a post-quantum descriptor can never have
+utils/show-validator-set.cpp	1	guarded	display fallback for a tooling-built classical descriptor that carries no identity
+validator/full-node.cpp	1	aborts-on-pq	shard overlay certificate authority and local validator detection; must be sourced from the transport identity, together with the signer side (N5)
+validator/full-node-fast-sync-overlays.cpp	1	aborts-on-pq	fast-sync overlay certificate roots; same transport-identity change, same pairing with the signer side (N5)
+validator/consensus/bridge.cpp	1	aborts-on-pq	Simplex peer verification key; becomes the post-quantum consensus key (N4)
+validator-engine/validator-engine.cpp	1	aborts-on-pq	finds the local validator's index for config and punish votes; becomes post-quantum governance (N3)

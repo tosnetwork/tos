@@ -949,6 +949,15 @@ impl StateParser {
                 max_acc_fixed_prefix_length: p43.get_num8("max_acc_fixed_prefix_length")?,
                 acc_state_cells_for_storage_dict: p43
                     .get_num32("acc_state_cells_for_storage_dict")?,
+                // Version 3 fields. A document written before they existed keeps the
+                // defaults, and one that names them is read rather than ignored.
+                max_transaction_library_loads: p43.get_num32("max_transaction_library_loads").ok(),
+                max_total_msg_bits: p43
+                    .get_num32("max_total_msg_bits")
+                    .unwrap_or(SizeLimitsConfig::default().max_total_msg_bits),
+                max_total_msg_cells: p43
+                    .get_num32("max_total_msg_cells")
+                    .unwrap_or(SizeLimitsConfig::default().max_total_msg_cells),
             }))
         })?;
 

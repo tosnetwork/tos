@@ -2318,36 +2318,46 @@ bool get_transaction_owner(Ref<vm::Cell> trans_ref, tos::StdSmcAddress& addr) {
   return get_transaction_id(std::move(trans_ref), addr, lt);
 }
 
-td::uint32 compute_validator_set_hash(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from,
-                                      const std::vector<tos::ValidatorDescr>& nodes) {
-  /*
-  std::vector<tl_object_ptr<tos_api::test0_validatorSetItem>> s_vec;
-
-  for (auto& n : nodes) {
-    auto id = ValidatorFullId{n.key}.short_id();
-    s_vec.emplace_back(create_tl_object<tos_api::test0_validatorSetItem>(id, n.weight));
-  }
-
-  auto obj = create_tl_object<tos_api::test0_validatorSet>(cc_seqno, std::move(s_vec));
-  auto B = serialize_tl_object(obj, true);
-  return td::crc32c(B.as_slice());
-  */
+// Version 2 of the validator-set commitment. The inherited version hashed a
+// validator's raw 32-byte classical key, which cannot represent a post-quantum
+// validator at all and which tied the commitment to the key rather than to the
+// validator. This one commits to both identities instead: the stable membership
+// identity, and the identity of the key currently held. Rotating a key therefore
+// changes the commitment while the validator keeps its place in the set.
+//
+// The public key is deliberately not repeated here. key_id is already a hash over
+// the algorithm and the key, so including the key as well would add length without
+// adding any binding.
+//
+// The magic is a new value rather than the inherited one, so a preimage produced by
+// either version can never be mistaken for the other:
+//   SHA-256("TOS-VALIDATOR-SET-v2")[0..4) = 0x79ae62d2
+std::string validator_set_hash_preimage(tos::CatchainSeqno cc_seqno, const std::vector<tos::ValidatorDescr>& nodes) {
   CHECK(nodes.size() <= 0xffffffff);
-  auto tot_size = 1 + 1 + 1 + nodes.size() * (8 + 2 + 8);
+  // uint32 words: magic + cc_seqno + count, then per validator
+  // validator_id(8) + key_id(8) + weight(2) + adnl_addr(8)
+  auto tot_size = 1 + 1 + 1 + nodes.size() * (8 + 8 + 2 + 8);
   auto buff = std::make_unique<td::uint32[]>(tot_size);
   td::TlStorerUnsafe storer(reinterpret_cast<unsigned char*>(buff.get()));
   auto* begin = storer.get_buf();
-  storer.store_int(-1877581587);  // magic inherited from test0.validatorSet
+  storer.store_int(static_cast<td::int32>(validator_set_hash_magic_v2));
   storer.store_int(cc_seqno);
   storer.store_binary((td::uint32)nodes.size());
   for (auto& n : nodes) {
-    storer.store_binary(n.key.as_bits256());
+    storer.store_binary(n.validator_id.value);
+    storer.store_binary(n.key_id.value);
     storer.store_long(n.weight);
     storer.store_binary(n.addr);
   }
   auto* end = storer.get_buf();
   CHECK(static_cast<size_t>(end - begin) == 4 * tot_size);
-  return td::crc32c(td::Slice(begin, end));
+  return std::string(reinterpret_cast<const char*>(begin), static_cast<std::size_t>(end - begin));
+}
+
+td::uint32 compute_validator_set_hash(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from,
+                                      const std::vector<tos::ValidatorDescr>& nodes) {
+  auto preimage = validator_set_hash_preimage(cc_seqno, nodes);
+  return td::crc32c(td::Slice(preimage));
 }
 
 td::Result<Ref<vm::Cell>> get_config_data_from_smc(Ref<vm::Cell> acc_root) {

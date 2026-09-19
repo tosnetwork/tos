@@ -1,6 +1,8 @@
 #!/usr/bin/create-state -s
 "TosUtil.fif" include
-"Asm.fif" include
+// PQ.fif includes Asm.fif and adds the post-quantum instruction, which the elector
+// this state deploys assembles with.
+"PQ.fif" include
 "Lists.fif" include
 
 // =====================================================================
@@ -285,9 +287,6 @@ now dup orig_vset_valid_for + 0 config.validators!
  */
 "auto/config-code.fif" include   // code in separate source file
 <b configdict ref,  // initial configuration
-   0 32 u,          // seqno
-   "config-master" +suffix +".pk" load-generate-keypair drop
-   B,
    dictnew dict,   // vote dict
 b> // data
 empty_cell  // libraries

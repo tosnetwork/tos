@@ -1,6 +1,11 @@
-;; Simple configuration smart contract
-;; Currently deployed config-contract in mainnet can be found
-;; on https://verifier.tos.org/Ef9VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVbxn
+;; Configuration smart contract.
+;;
+;; Validator authority here is post-quantum and comes from the current validator set.
+;; There is no administrator: nothing in this contract can be changed by one key, and no
+;; message from outside the chain can change anything at all.
+#include "pq.fc";
+#include "pq-bytes.fc";
+#include "pq-validator.fc";
 
 () set_conf_param(int index, cell value) impure {
   var cs = get_data().begin_parse();
@@ -9,18 +14,20 @@
   set_data(begin_cell().store_ref(cfg_dict).store_slice(cs).end_cell());
 }
 
-(cell, int, int, cell) load_data() inline {
+;; cfg_dict:^Cell vote_dict:(HashmapE 256 ConfigProposalStatus)
+;;
+;; There is no stored key and no sequence number: both existed to authorise messages
+;; arriving from outside the chain, and no such message is accepted any more.
+(cell, cell) load_data() inline {
   var cs = get_data().begin_parse();
-  var res = (cs~load_ref(), cs~load_uint(32), cs~load_uint(256), cs~load_dict());
+  var res = (cs~load_ref(), cs~load_dict());
   cs.end_parse();
   return res;
 }
 
-() store_data(cfg_dict, stored_seqno, public_key, vote_dict) impure inline {
+() store_data(cfg_dict, vote_dict) impure inline {
   set_data(begin_cell()
     .store_ref(cfg_dict)
-    .store_uint(stored_seqno, 32)
-    .store_uint(public_key, 256)
     .store_dict(vote_dict)
   .end_cell());
 }
@@ -48,6 +55,15 @@ _ get_vote_config(int critical?) inline {
   return get_vote_config_internal(critical?, config_param(11));
 }
 
+;; Every rule the node applies to a validator set, applied here before the set can
+;; become ConfigParam 36.
+;;
+;; The contract installs what the election produced, and the node refuses to start from
+;; a set it cannot read. If the two disagree the chain installs a set that halts it, so
+;; this is not a convenience check: it is the same deterministic rule, run first.
+;;
+;; It throws rather than returning a verdict, and the caller runs it under `try`, so a
+;; malformed set produces an explicit refusal to the elector instead of a silent abort.
 (int, int) check_validator_set(cell vset) {
   var cs = vset.begin_parse();
   throw_unless(9, cs~load_uint(8) == 0x12);  ;; validators_ext#12 only
@@ -57,6 +73,46 @@ _ get_vote_config(int critical?) inline {
   int main = cs~load_uint(16);
   throw_unless(9, main > 0);
   throw_unless(9, total >= main);
+  int total_weight = cs~load_uint(64);
+  cell list = cs~load_dict();
+  cs.end_parse();
+  throw_if(9, total_weight == 0);
+
+  ;; The count the header states must be the count the list holds, and both must be
+  ;; within what the configuration allows a set to be.
+  var limits = config_param(16).begin_parse();
+  int max_validators = limits~load_uint(16);
+  limits~skip_bits(16);
+  int min_validators = limits~load_uint(16);
+  limits.end_parse();
+  throw_if(9, total > max_validators);
+  throw_if(9, total < max(min_validators, 1));
+
+  ;; Walk every descriptor. Two identities must each be unique across the set: the
+  ;; validator, because two entries for one account would be counted twice, and the
+  ;; consensus key, because the node cannot tell two holders of one key apart.
+  cell seen_validators = new_dict();
+  cell seen_keys = new_dict();
+  int weight_sum = 0;
+  int index = -1;
+  int counted = 0;
+  do {
+    (index, slice descr, int found) = list.udict_get_next?(16, index);
+    if (found) {
+      throw_if(9, index >= total);
+      (int validator_id, _, int key_id, _, int weight, _) = pq::parse_descriptor(descr);
+      (_, int duplicate_validator) = seen_validators.udict_get?(256, validator_id);
+      throw_if(9, duplicate_validator);
+      (_, int duplicate_key) = seen_keys.udict_get?(256, key_id);
+      throw_if(9, duplicate_key);
+      seen_validators~udict_set_builder(256, validator_id, begin_cell());
+      seen_keys~udict_set_builder(256, key_id, begin_cell());
+      weight_sum += weight;
+      counted += 1;
+    }
+  } until (~ found);
+  throw_unless(9, counted == total);
+  throw_unless(9, weight_sum == total_weight);
   return (utime_since, utime_until);
 }
 
@@ -97,36 +153,77 @@ _ get_vote_config(int critical?) inline {
 () after_code_upgrade(slice param, cont old_code) impure method_id(1666) {
 }
 
-_ perform_action(cfg_dict, public_key, action, cs) inline_ref {
-  if (action == 0x43665021) {
-    ;; change one configuration parameter
-    var param_index = cs~load_int(32);
-    var param_value = cs~load_ref();
-    cs.end_parse();
-    cfg_dict~idict_set_ref(32, param_index, param_value);
-    return (cfg_dict, public_key);
-  } elseif (action == 0x4e436f64) {
-    ;; change configuration smart contract code
-    var new_code = cs~load_ref();
-    set_code(new_code);
-    var old_code = get_c3();
-    set_c3(new_code.begin_parse().bless());
-    after_code_upgrade(cs, old_code);
-    throw(0);
-    return (cfg_dict, public_key);
-  } elseif (action == 0x50624b21) {
-    ;; change configuration master public key
-    public_key = cs~load_uint(256);
-    cs.end_parse();
-    return (cfg_dict, public_key);
-  } elseif (action == 0x4e43ef05) {
-    ;; change election smart contract code
-    change_elector_code(cs);
-    return (cfg_dict, public_key);
-  } else {
-    throw_if(32, action);
-    return (cfg_dict, public_key);
+;; ---------------------------------------------------------------------------
+;; ConfigParam 47 -- the validator controller codes an account may have been born
+;; with. A validator's authority is rooted in its controller account, and what makes
+;; that account post-quantum is the code it was deployed with, so this parameter is
+;; the list of codes that count.
+;;
+;; The bound is part of the parameter rather than a note about it: a hashmap carries no
+;; cardinality of its own, and an authority registry nobody can see growing is one that
+;; grows. Eight is the frozen ceiling.
+;; ---------------------------------------------------------------------------
+
+const int config::validator_controller_policy = 47;
+const int config::max_controller_codes = 8;
+
+;; The proposal that used to appoint or depose a single administrator. It is named here
+;; so it can be refused by name rather than merely happening not to be handled.
+const int config::appoint_administrator_param = -999;
+
+;; Installing a parameter goes through here, from the administrator action and from an
+;; accepted proposal alike, so the rules about what may be installed live once. A rule
+;; each path carries its own copy of is a rule one of them will eventually be missing.
+(cell, int) install_param(cell cfg_dict, int param_id, cell param_val) inline_ref;
+
+int valid_controller_policy?(cell value) inline_ref {
+  if (cell_null?(value)) {
+    ;; Removing the parameter is allowed by this check; admission then fails closed,
+    ;; because no code is admitted rather than every code being admitted.
+    return true;
   }
+  slice cs = value.begin_parse();
+  cell codes = cs~load_dict();
+  ifnot (cs.slice_empty?()) {
+    return false;  ;; trailing data: not this parameter's shape
+  }
+  int count = 0;
+  int key = -1;
+  int scanning = true;
+  while (scanning) {
+    (int next, slice entry, int found) = codes.udict_get_next?(256, key);
+    if (found) {
+      ifnot (entry.slice_empty?()) {
+        return false;  ;; the value is True, which carries nothing
+      }
+      count += 1;
+      if (count > config::max_controller_codes) {
+        return false;
+      }
+      key = next;
+    } else {
+      scanning = false;
+    }
+  }
+  return true;
+}
+
+(cell, int) install_param(cell cfg_dict, int param_id, cell param_val) inline_ref {
+  ;; Governance may change what this chain does. It may not vote itself something that
+  ;; can then change the chain without it. The proposal is rejected the way any value the
+  ;; rules refuse is -- returned unchanged, with nothing installed -- rather than by
+  ;; throwing: a throw here would roll back the vote that carried it, leaving the
+  ;; proposal pending and every later vote on it aborting.
+  if (param_id == config::appoint_administrator_param) {
+    return (cfg_dict, false);
+  }
+  if (param_id == config::validator_controller_policy) {
+    ifnot (valid_controller_policy?(param_val)) {
+      return (cfg_dict, false);
+    }
+  }
+  cfg_dict~idict_set_ref(32, param_id, param_val);
+  return (cfg_dict, true);
 }
 
 (cell, int, cell) get_current_vset() inline_ref {
@@ -142,19 +239,19 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
   return (vset, total_weight, dict);
 }
 
-(slice, int) get_validator_descr(int idx) inline_ref {
-  var (vset, total_weight, dict) = get_current_vset();
-  var (value, _) = dict.udict_get?(16, idx);
-  return (value, total_weight);
-}
-
-(int, int) unpack_validator_descr(slice cs) inline {
-  ;; ed25519_pubkey#8e81278a pubkey:bits256 = SigPubKey;
-  ;; validator#53 public_key:SigPubKey weight:uint64 = ValidatorDescr;
-  ;; validator_addr#73 public_key:SigPubKey weight:uint64 adnl_addr:bits256 = ValidatorDescr;
-  throw_unless(41, (cs~load_uint(8) & ~ 0x20) == 0x53);
-  throw_unless(41, cs~load_uint(32) == 0x8e81278a);
-  return (cs~load_uint(256), cs~load_uint(64));
+;; The validator at an index: who it is, what key speaks for it, and what it weighs.
+;;
+;; All three come from the set, never from the message being checked, which is what stops
+;; a vote naming one validator and being counted for another.
+;;
+;; The key comes back as the byte chain the verification instruction takes, not as the
+;; length-prefixed cell the descriptor stores it in. Handing the instruction the wrapper
+;; would make it read a length where it expects a key.
+(int, int, cell, int) unpack_validator_descr(slice cs) inline {
+  (int validator_id, int algorithm_id, _, cell stored, int weight, _) =
+    pq::parse_descriptor(cs);
+  (_, cell key_chain) = pq::stored_key(algorithm_id, stored);
+  return (validator_id, algorithm_id, key_chain, weight);
 }
 
 ;; cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell) if_hash_equal:(Maybe uint256)
@@ -193,17 +290,22 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     return (cfg_dict, 0, null());
   }
   ;; CHANGE ONE CONFIGURATION PARAMETER (!)
-  cfg_dict~idict_set_ref(32, param_id, param_val);
+  (cfg_dict, int installed) = install_param(cfg_dict, param_id, param_val);
+  ifnot (installed) {
+    ;; A value the rules refuse is returned unchanged, the way every other rejected
+    ;; proposal is.
+    return (cfg_dict, 0, null());
+  }
   return (cfg_dict, param_id, param_val);
 }
 
-(cell, int) perform_proposed_action(cell cfg_dict, int public_key, int param_id, cell param_val) inline_ref {
-  if (param_id == -999) {
-    ;; appoint or depose dictator
-    return (cfg_dict, param_val.null?() ? 0 : param_val.begin_parse().preload_uint(256));
-  }
+;; What an accepted proposal is allowed to do beyond installing a parameter.
+;;
+;; A proposal to appoint an administrator never reaches here: `install_param` refuses it,
+;; so the proposal is rejected and this is not called for it at all.
+cell perform_proposed_action(cell cfg_dict, int param_id, cell param_val) inline_ref {
   if (param_val.null?()) {
-    return (cfg_dict, public_key);
+    return cfg_dict;
   }
   if (param_id == -1000) {
     ;; upgrade code
@@ -214,14 +316,14 @@ _ perform_action(cfg_dict, public_key, action, cs) inline_ref {
     set_c3(new_code.begin_parse().bless());
     after_code_upgrade(cs, old_code);
     throw(0);
-    return (cfg_dict, public_key);
+    return cfg_dict;
   }
   if (param_id == -1001) {
     ;; update elector code
     var cs = param_val.begin_parse();
     change_elector_code(cs);
   }
-  return (cfg_dict, public_key);
+  return cfg_dict;
 }
 
 ;; cfg_proposal_status#ce expires:uint32 proposal:^ConfigProposal is_critical:Bool
@@ -323,17 +425,17 @@ builder begin_pack_proposal_status(int expires, cell proposal, int critical?, ce
 }
 
 int proceed_register_vote(phash, idx, weight) impure inline_ref {
-  var (cfg_dict, stored_seqno, public_key, vote_dict) = load_data();
+  var (cfg_dict, vote_dict) = load_data();
   (vote_dict, var accepted_proposal, var status) = register_vote(vote_dict, phash, idx, weight);
-  store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+  store_data(cfg_dict, vote_dict);
   ifnot (accepted_proposal.null?()) {
     var critical? = 6 - status;
     (cfg_dict, var param_id, var param_val) = accept_proposal(cfg_dict, accepted_proposal, critical?);
-    store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+    store_data(cfg_dict, vote_dict);
     if (param_id) {
       commit();
-      (cfg_dict, public_key) = perform_proposed_action(cfg_dict, public_key, param_id, param_val);
-      store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+      cfg_dict = perform_proposed_action(cfg_dict, param_id, param_val);
+      store_data(cfg_dict, vote_dict);
     }
   }
   return status;
@@ -428,7 +530,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
   var pps = bit_price * (bits + 1024) + cell_price * (refs + 2);
   var price = pps * expire_at;
   expire_at += now();
-  var (cfg_dict, stored_seqno, public_key, vote_dict) = load_data();
+  var (cfg_dict, vote_dict) = load_data();
   int phash = proposal.cell_hash();
   var (pstatus, found?) = vote_dict.udict_get?(256, phash);
   if (found?) {
@@ -447,7 +549,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     }
     ;; update expiration time
     vote_dict~udict_set_builder(256, phash, begin_pack_proposal_status(expire_at, r_proposal, r_critical?, voters, weight_remaining, vset_id).store_slice(rest));
-    store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+    store_data(cfg_dict, vote_dict);
     return price;
   }
   if (msg_value - price < (1 << 30)) {
@@ -460,7 +562,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
   vote_dict~udict_set_builder(256, phash,
     begin_pack_proposal_status(expire_at, proposal, critical?, null(), weight_remaining, vset.cell_hash())
     .store_uint(max_tot_rounds, 8).store_uint(0, 16));
-  store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+  store_data(cfg_dict, vote_dict);
   return price;
 }
 
@@ -485,9 +587,18 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     if (src_addr == elector_addr) {
       ;; message from elector smart contract
       ;; set next validator set
-      (var t_since, var t_until) = check_validator_set(vset);
-      var t = now();
-      ok = (t_since > t) & (t_until > t_since);
+      ;;
+      ;; The set is checked in full first. A set that fails is refused with the answer
+      ;; the elector understands rather than by aborting this transaction, so the
+      ;; election learns it was refused instead of waiting for a confirmation that a
+      ;; bounced message will never bring.
+      try {
+        (var t_since, var t_until) = check_validator_set(vset);
+        var t = now();
+        ok = (t_since > t) & (t_until > t_since);
+      } catch (_, _) {
+        ok = false;
+      }
     }
     if (ok) {
       set_conf_param(36, vset);
@@ -510,16 +621,35 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     }
     return send_answer(s_addr, query_id, ans_tag, mode);
   }
-  if (tag == 0x566f7465) {
-    ;; vote for a configuration proposal
-    var signature = in_msg~load_bits(512);
-    var msg_body = in_msg;
-    var (sign_tag, idx, phash) = (in_msg~load_uint(32), in_msg~load_uint(16), in_msg~load_uint(256));
+  if (tag == pq::tag::config_vote_op) {
+    ;; A validator of the current set votes for a configuration proposal.
+    ;;
+    ;; Who is voting is read from the set at `idx`, never from the message: the message
+    ;; states only which index it claims to be and what it is voting on.
+    int idx = in_msg~load_uint(16);
+    int phash = in_msg~load_uint(256);
+    cell signature = in_msg~load_ref();
     in_msg.end_parse();
-    throw_unless(37, sign_tag == 0x566f7445);
-    var (vdescr, total_weight) = get_validator_descr(idx);
-    var (val_pubkey, weight) = unpack_validator_descr(vdescr);
-    throw_unless(34, check_data_signature(msg_body, signature, val_pubkey));
+
+    ;; The one expensive step is paid for before it is taken. Anyone may send this
+    ;; message, so a verification reached before this gate is one an unauthorised sender
+    ;; could make the chain perform for free, as often as it liked.
+    throw_unless(47, msg_value >= pq::verification_value(-1));
+
+    (cell vset, int total_weight, cell list) = get_current_vset();
+    (slice descr, int present) = list.udict_get?(16, idx);
+    throw_unless(41, present);
+    (int validator_id, int algorithm_id, cell public_key, int weight) =
+      unpack_validator_descr(descr);
+
+    ;; The set the vote is counted against is signed over, so a signature made under an
+    ;; earlier set cannot be replayed under this one.
+    throw_unless(34, pq_check_mldsa44(
+      pq::config_vote_preimage(vset.cell_hash(), validator_id, idx, phash),
+      pq::config_vote_context(),
+      pq::stored_signature(algorithm_id, signature),
+      public_key));
+
     int res = proceed_register_vote(phash, idx, weight);
     return send_confirmation(s_addr, query_id, res + 0xd6745240);
   }
@@ -529,41 +659,21 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
   ;; do nothing for other internal messages
 }
 
+;; No message from outside the chain carries authority here.
+;;
+;; This path used to hold two of them: a vote signed by a validator, and an action signed
+;; by an administrator. Both are gone. A validator votes by internal message, which pays
+;; for the verification it asks for, and there is no administrator to sign anything.
+;;
+;; The entry point stays, and refuses. Removing it would leave the contract with no
+;; external handler, which is a different behaviour from refusing one, and a node that
+;; delivered such a message would find out by other means.
 () recv_external(slice in_msg) impure {
-  var signature = in_msg~load_bits(512);
-  var cs = in_msg;
-  int action = cs~load_uint(32);
-  int msg_seqno = cs~load_uint(32);
-  var valid_until = cs~load_uint(32);
-  throw_if(35, valid_until < now());
-  throw_if(39, slice_depth(cs) > 128);
-  var (cfg_dict, stored_seqno, public_key, vote_dict) = load_data();
-  throw_unless(33, msg_seqno == stored_seqno);
-  if (action == 0x566f7465) {
-    ;; vote for a configuration proposal
-    var (idx, phash) = (cs~load_uint(16), cs~load_uint(256));
-    cs.end_parse();
-    var (vdescr, total_weight) = get_validator_descr(idx);
-    var (val_pubkey, weight) = unpack_validator_descr(vdescr);
-    throw_unless(34, check_data_signature(in_msg, signature, val_pubkey));
-    accept_message();
-    stored_seqno = (stored_seqno + 1) % (1 << 32);
-    store_data(cfg_dict, stored_seqno, public_key, vote_dict);
-    commit();
-    proceed_register_vote(phash, idx, weight);
-    return ();
-  }
-  throw_unless(34, check_signature(slice_hash(in_msg), signature, public_key));
-  accept_message();
-  stored_seqno = (stored_seqno + 1) % (1 << 32);
-  store_data(cfg_dict, stored_seqno, public_key, vote_dict);
-  commit();
-  (cfg_dict, public_key) = perform_action(cfg_dict, public_key, action, cs);
-  store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+  throw(32);
 }
 
 () run_ticktock(int is_tock) impure {
-  var (cfg_dict, stored_seqno, public_key, vote_dict) = load_data();
+  var (cfg_dict, vote_dict) = load_data();
   int kl = 32;
   var next_vset = cfg_dict.idict_get_ref(kl, 36);
   var updated? = false;
@@ -587,7 +697,7 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
     vote_dict = scan_random_proposal(vote_dict);
   }
   ;; save data and return
-  return store_data(cfg_dict, stored_seqno, public_key, vote_dict);
+  return store_data(cfg_dict, vote_dict);
 }
 
 int seqno() method_id {
@@ -613,7 +723,7 @@ _ unpack_proposal(slice pstatus) inline_ref {
 }
 
 _ get_proposal(int phash) method_id {
-  (_, _, _, var vote_dict) = load_data();
+  (_, var vote_dict) = load_data();
   var (pstatus, found?) = vote_dict.udict_get?(256, phash);
   ifnot (found?) {
     return null();
@@ -622,7 +732,7 @@ _ get_proposal(int phash) method_id {
 }
 
 _ list_proposals() method_id {
-  (_, _, _, var vote_dict) = load_data();
+  (_, var vote_dict) = load_data();
   var phash = (1 << 255) + ((1 << 255) - 1);
   var list = null();
   do {

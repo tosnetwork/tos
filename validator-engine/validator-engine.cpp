@@ -1598,10 +1598,10 @@ void ValidatorEngine::alarm() {
       for (auto &val : config_.validators) {
         bool is_validator = false;
         if (validator_set_next_.not_null() &&
-            validator_set_next_->is_validator(tos::NodeIdShort{val.first.bits256_value()})) {
+            validator_set_next_->is_validator(tos::ValidatorId{val.first.bits256_value()})) {
           is_validator = true;
         }
-        if (validator_set_.not_null() && validator_set_->is_validator(tos::NodeIdShort{val.first.bits256_value()})) {
+        if (validator_set_.not_null() && validator_set_->is_validator(tos::ValidatorId{val.first.bits256_value()})) {
           is_validator = true;
         }
         if (!is_validator && val.second.election_date < cur_t.first && cur_t.first + 600 < state_->get_unix_time()) {
@@ -1630,13 +1630,13 @@ void ValidatorEngine::alarm() {
             continue;
           }
           auto issued_by = x.second.issued_by().compute_short_id().bits256_value();
-          if (validator_set_.not_null() && validator_set_->is_validator(issued_by)) {
+          if (validator_set_.not_null() && validator_set_->is_validator(tos::ValidatorId{issued_by})) {
             continue;
           }
-          if (validator_set_prev_.not_null() && validator_set_prev_->is_validator(issued_by)) {
+          if (validator_set_prev_.not_null() && validator_set_prev_->is_validator(tos::ValidatorId{issued_by})) {
             continue;
           }
-          if (validator_set_next_.not_null() && validator_set_next_->is_validator(issued_by)) {
+          if (validator_set_next_.not_null() && validator_set_next_->is_validator(tos::ValidatorId{issued_by})) {
             continue;
           }
           fs_to_del.insert(x.first);
@@ -3384,13 +3384,13 @@ void ValidatorEngine::try_import_fast_sync_member_certificate(tos::adnl::AdnlNod
 
   auto cert_score = [this](tos::overlay::OverlayMemberCertificate &cert) -> td::int64 {
     auto issued_by = cert.issued_by().compute_short_id().bits256_value();
-    if (validator_set_next_.not_null() && validator_set_next_->is_validator(issued_by)) {
+    if (validator_set_next_.not_null() && validator_set_next_->is_validator(tos::ValidatorId{issued_by})) {
       return cert.expire_at() + (1ll << 32);
     }
-    if (validator_set_.not_null() && validator_set_->is_validator(issued_by)) {
+    if (validator_set_.not_null() && validator_set_->is_validator(tos::ValidatorId{issued_by})) {
       return cert.expire_at() + (1ll << 32);
     }
-    if (validator_set_prev_.not_null() && validator_set_prev_->is_validator(issued_by)) {
+    if (validator_set_prev_.not_null() && validator_set_prev_->is_validator(tos::ValidatorId{issued_by})) {
       return cert.expire_at() + (0ll << 32);
     }
     return -1;
@@ -3470,7 +3470,7 @@ void ValidatorEngine::try_import_shard_overlay_certificate(tos::adnl::AdnlNodeId
   auto issuer = certificate->issuer_hash();
   bool issuer_is_validator = false;
   for (const auto &val_set : {validator_set_, validator_set_prev_, validator_set_next_}) {
-    if (val_set.not_null() && val_set->is_validator(tos::NodeIdShort{issuer.bits256_value()})) {
+    if (val_set.not_null() && val_set->is_validator(tos::ValidatorId{issuer.bits256_value()})) {
       issuer_is_validator = true;
       break;
     }
@@ -3632,7 +3632,7 @@ tos::PublicKeyHash ValidatorEngine::find_local_validator_for_cert_issuing() {
       continue;
     }
     for (auto &[val_id, _] : config_.validators) {
-      if (val_set->is_validator(tos::NodeIdShort{val_id.bits256_value()})) {
+      if (val_set->is_validator(tos::ValidatorId{val_id.bits256_value()})) {
         return val_id;
       }
     }
@@ -5951,7 +5951,7 @@ void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::
   auto vec = validator_set_->export_vector();
   for (size_t idx = 0; idx < vec.size(); idx++) {
     auto &el = vec[idx];
-    tos::PublicKey pub{tos::pubkeys::Ed25519{el.key.as_bits256()}};
+    tos::PublicKey pub{tos::pubkeys::Ed25519{el.classical_key().as_bits256()}};
     auto pubkey_hash = pub.compute_short_id();
 
     auto it = config_.validators.find(pubkey_hash);

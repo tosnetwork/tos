@@ -182,7 +182,11 @@ td::Result<CandidateRef> Candidate::deserialize(td::Slice data, const Bus& bus, 
 
     auto collated_file_hash = td::sha256_bits256(candidate->collated_data_.as_slice());
 
-    Ed25519_PublicKey creator{leader.key.ed25519_value().raw()};
+    // The producer is the leader's own identity, taken from the validator set rather
+    // than derived again here. Deriving it from the key would produce a different 32
+    // bytes than the identity the producer wrote into the block header, and every
+    // candidate would then be rejected for a creator mismatch.
+    const ValidatorId& creator = leader.validator_id;
 
     BlockCandidate block{
         creator, block_id, collated_file_hash, std::move(candidate->data_), std::move(candidate->collated_data_),

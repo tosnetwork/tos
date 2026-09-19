@@ -103,9 +103,18 @@ class BlockSignatureSetBase : public BlockSignatureSet {
         return td::Status::Error(tos::ErrorCode::protoviolation, "duplicate node");
       }
       nodes.insert(sig.node);
-      auto validator = vset->get_validator(sig.node);
+      // This is the classical signature path, where a signer is identified by the
+      // identity derived from its Ed25519 key, which for a classical descriptor is
+      // also its membership identity.
+      auto validator = vset->get_validator(tos::ValidatorId{sig.node});
       if (!validator) {
         return td::Status::Error(tos::ErrorCode::protoviolation, "unknown node");
+      }
+      // A post-quantum validator has no Ed25519 key. Accepting a classical signature
+      // for one would mean verifying against a key that does not exist.
+      if (validator->is_pq()) {
+        return td::Status::Error(tos::ErrorCode::protoviolation,
+                                 "classical signature offered for a post-quantum validator");
       }
       weight += validator->weight;
     }
@@ -143,12 +152,21 @@ class BlockSignatureSetBase : public BlockSignatureSet {
       }
       nodes.insert(sig.node);
 
-      auto validator = vset->get_validator(sig.node);
+      // This is the classical signature path, where a signer is identified by the
+      // identity derived from its Ed25519 key, which for a classical descriptor is
+      // also its membership identity.
+      auto validator = vset->get_validator(tos::ValidatorId{sig.node});
       if (!validator) {
         return td::Status::Error(tos::ErrorCode::protoviolation, "unknown node");
       }
+      // A post-quantum validator has no Ed25519 key. Accepting a classical signature
+      // for one would mean verifying against a key that does not exist.
+      if (validator->is_pq()) {
+        return td::Status::Error(tos::ErrorCode::protoviolation,
+                                 "classical signature offered for a post-quantum validator");
+      }
 
-      auto E = tos::PublicKey{tos::pubkeys::Ed25519{validator->key}}.create_encryptor().move_as_ok();
+      auto E = tos::PublicKey{tos::pubkeys::Ed25519{validator->classical_key()}}.create_encryptor().move_as_ok();
       TRY_STATUS(E->check_signature(data, sig.signature.as_slice()));
       weight += validator->weight;
     }

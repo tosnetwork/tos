@@ -1,0 +1,14 @@
+# Accepted ValidatorDescr constructor tags. Both the C++ schema and the Rust
+# reader must agree with this file exactly: one implementation accepting a tag
+# the other rejects is a consensus split waiting to happen.
+#
+# Every reject case below is fed a body that is well formed for the 0x73 shape,
+# so the tag is the only possible reason for refusal.
+#
+# tag	verdict	note
+53	accept	validator#53 public_key:SigPubKey weight:uint64
+73	accept	validator_addr#73 adds adnl_addr:bits256
+93	reject	Rust-only path that never existed in block.tlb; removed in N2.0
+b3	accept	validator_pq#b3 validator_id, algorithm_id, key_id, ^PQBytes key, weight, adnl_addr
+00	reject	unallocated
+ff	reject	unallocated

@@ -30,7 +30,6 @@ impl Validator {
             max_factor: 0,
             addr: SimpleAddress::default(),
             adnl_addr: UInt256::ZERO,
-            mc_seq_no_since: 0,
         }
     }
     fn with_params(stake: u64, time: u32, pub_key: [u8; 32]) -> Validator {
@@ -45,7 +44,6 @@ impl Validator {
             max_factor: 0,
             addr: SimpleAddress::default(),
             adnl_addr: UInt256::ZERO,
-            mc_seq_no_since: 0,
         }
     }
 }

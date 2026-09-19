@@ -1,0 +1,172 @@
+[
+  {
+    "guard": "controller-network",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-epoch",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-nonce",
+    "killed": true,
+    "test": "validator_controller_sandbox::an_authorised_send_happens_once"
+  },
+  {
+    "guard": "controller-expiry-past",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-expiry-window",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-kind",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-stray-cosignature",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-destroy-mode",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-root-signature",
+    "killed": true,
+    "test": "validator_controller_sandbox::every_field_of_an_authorisation"
+  },
+  {
+    "guard": "controller-successor-proof",
+    "killed": true,
+    "test": "validator_controller_sandbox::a_root_rotation_needs_both"
+  },
+  {
+    "guard": "proof-shape-bits",
+    "killed": true,
+    "test": "controller_admission_sandbox::each_refusal_is_reachable"
+  },
+  {
+    "guard": "proof-shape-refs",
+    "killed": true,
+    "test": "controller_admission_sandbox::each_refusal_is_reachable"
+  },
+  {
+    "guard": "proof-shape-tag",
+    "killed": true,
+    "test": "controller_admission_sandbox::each_refusal_is_reachable"
+  },
+  {
+    "guard": "proof-pruned-code",
+    "killed": true,
+    "test": "controller_admission_sandbox::each_refusal_is_reachable"
+  },
+  {
+    "guard": "proof-address-binding",
+    "killed": true,
+    "test": "elector_sandbox::a_stake_carrying_another_accounts_proof"
+  },
+  {
+    "guard": "policy-absent-fails-closed",
+    "killed": true,
+    "test": "elector_sandbox::a_stake_from_an_unadmitted_controller"
+  },
+  {
+    "guard": "policy-lookup",
+    "killed": true,
+    "test": "elector_sandbox::a_stake_from_an_unadmitted_controller"
+  },
+  {
+    "guard": "elector-proof-required",
+    "killed": true,
+    "test": "elector_sandbox::a_stake_carrying_another_accounts_proof"
+  },
+  {
+    "guard": "elector-retirement",
+    "killed": true,
+    "test": "elector_sandbox::retiring_a_controller_code"
+  },
+  {
+    "guard": "elector-effective-floor",
+    "killed": true,
+    "test": "elector_sandbox::a_retired_profile_stops_raising"
+  },
+  {
+    "guard": "config-ceiling",
+    "killed": true,
+    "test": "elector_sandbox::the_controller_policy_cannot_grow"
+  },
+  {
+    "guard": "vote-signature",
+    "killed": true,
+    "test": "elector_sandbox::a_vote_signed_by_a_key_that_is_not_at_that_index_is_refused"
+  },
+  {
+    "guard": "vote-identity-from-the-set",
+    "killed": true,
+    "test": "elector_sandbox::a_validator_votes_for_a_proposal_with_the_key_in_the_current_set"
+  },
+  {
+    "guard": "vote-bound-to-its-set",
+    "killed": true,
+    "test": "elector_sandbox::a_validator_votes_for_a_proposal_with_the_key_in_the_current_set"
+  },
+  {
+    "guard": "vote-funding",
+    "killed": true,
+    "test": "elector_sandbox::a_vote_costs_what_the_verification_it_asks_for_costs"
+  },
+  {
+    "guard": "complaint-vote-signature",
+    "killed": true,
+    "test": "elector_sandbox::a_complaint_vote_signed_by_another_validator_is_refused"
+  },
+  {
+    "guard": "complaint-vote-identity",
+    "killed": true,
+    "test": "elector_sandbox::a_validator_votes_to_punish_a_validator_of_a_past_election"
+  },
+  {
+    "guard": "set-duplicate-validator",
+    "killed": true,
+    "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed"
+  },
+  {
+    "guard": "set-duplicate-key",
+    "killed": true,
+    "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed"
+  },
+  {
+    "guard": "set-weight-sum",
+    "killed": true,
+    "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed"
+  },
+  {
+    "guard": "set-count-agreement",
+    "killed": true,
+    "test": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed"
+  },
+  {
+    "guard": "no-administrator-appointment",
+    "killed": true,
+    "test": "elector_sandbox::governance_cannot_vote_itself_an_administrator"
+  },
+  {
+    "guard": "no-external-authority",
+    "killed": true,
+    "test": "elector_sandbox::an_external_validator_vote_has_no_authorization_path"
+  },
+  {
+    "guard": "readiness-on-effective-stake",
+    "killed": true,
+    "test": "elector_sandbox::a_retired_profile_cannot_make_an_election_look_ready"
+  }
+]

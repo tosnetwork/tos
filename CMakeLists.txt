@@ -786,7 +786,8 @@ target_link_libraries(inject-validator-cleanup-record PRIVATE tos_crypto_core td
 add_executable(test-node-consensus-membership test/test-node-consensus-membership.cpp)
 target_include_directories(test-node-consensus-membership PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor)
+target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor
+                      tos_pq_consensus_signer tos_pq_consensus)
 
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
