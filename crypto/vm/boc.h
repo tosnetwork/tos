@@ -464,6 +464,15 @@ inline constexpr td::uint64 kDefaultStreamingBocMaxCells = 50'000'000;
 inline constexpr td::uint64 kDefaultStreamingBocMaxScaffoldingBytes = 512ULL << 20;
 inline constexpr td::uint64 kDefaultStreamingBocMaxTotalCellBytes = 16ULL << 30;
 
+// Deterministic work counters for one streaming import. Callers that need
+// observability may supply this through StreamingBocImportOptions; the
+// importer resets it at entry. Unlike wall time these counters remain useful
+// in parallel test runs and on differently loaded hosts.
+struct StreamingBocImportStats {
+  td::uint64 file_read_calls{0};
+  td::uint64 file_read_bytes{0};
+};
+
 struct StreamingBocImportOptions {
   // Maximum declared cell count. Zero is treated as
   // `kDefaultStreamingBocMaxCells` — the comment "0 = use default" is a
@@ -494,6 +503,7 @@ struct StreamingBocImportOptions {
   // "import cancelled" error; the sink is not begun if cancellation is
   // observed before `begin()`.
   std::function<bool()> is_cancelled;
+  StreamingBocImportStats* stats{nullptr};
 };
 
 // Per-cell sink invoked from inside the streaming BoC importer. Each

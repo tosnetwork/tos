@@ -49,6 +49,12 @@ td::Result<std::string> load_Fift_fif(std::string dir = "") {
 td::Result<std::string> load_Asm_fif(std::string dir = "") {
   return load_source("Asm.fif", dir);
 }
+// The post-quantum verification instruction the governed contracts assemble. It is
+// loaded beside Asm.fif because a script that assembles the configuration or elector
+// contract cannot assemble them without it.
+td::Result<std::string> load_PQ_fif(std::string dir = "") {
+  return load_source("PQ.fif", dir);
+}
 td::Result<std::string> load_TosUtil_fif(std::string dir = "") {
   return load_source("TosUtil.fif", dir);
 }
@@ -169,6 +175,8 @@ td::Result<fift::SourceLookup> create_source_lookup(std::string&& main, bool nee
   if (need_asm) {
     TRY_RESULT(f, load_Asm_fif(dir));
     loader->add_file("/Asm.fif", std::move(f));
+    TRY_RESULT(pq, load_PQ_fif(dir));
+    loader->add_file("/PQ.fif", std::move(pq));
   }
   if (need_tos_util) {
     {

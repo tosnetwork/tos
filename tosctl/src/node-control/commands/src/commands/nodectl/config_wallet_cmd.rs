@@ -696,12 +696,20 @@ fn resolve_pool_address(
     validator_addr: &MsgAddressInt,
 ) -> anyhow::Result<MsgAddressInt> {
     match pool_cfg {
-        PoolConfig::SNP { address, owner } => match (address, owner) {
+        PoolConfig::SNP { address, owner, controller } => match (address, owner) {
             (Some(addr), _) => addr.parse::<MsgAddressInt>().context("invalid pool address"),
             (None, Some(owner)) => {
                 let owner_addr =
                     owner.parse::<MsgAddressInt>().context("invalid pool owner address")?;
-                NominatorWrapperImpl::calculate_address(-1, &owner_addr, validator_addr)
+                let controller_addr = controller
+                    .parse::<MsgAddressInt>()
+                    .context("invalid validator controller address")?;
+                NominatorWrapperImpl::calculate_address(
+                    -1,
+                    &owner_addr,
+                    validator_addr,
+                    &controller_addr,
+                )
             }
             (None, None) => anyhow::bail!("Pool has neither address nor owner configured"),
         },

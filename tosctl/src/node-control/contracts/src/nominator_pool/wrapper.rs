@@ -40,6 +40,8 @@ pub struct NominatorPoolData {
     pub validator_amount: u64,
     /// Validator address (256-bit)
     pub validator_address: [u8; 32],
+    /// Validator controller the pool relays its stake through (256-bit)
+    pub controller_address: [u8; 32],
     /// Validator reward share in basis points (0-10000)
     pub validator_reward_share: u16,
     /// Maximum number of nominators allowed

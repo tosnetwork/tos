@@ -90,9 +90,9 @@ struct RocksDbOptions {
   // independent: write_buffer_size bounds one mutable memtable, while
   // max_write_buffer_size_to_maintain bounds flushed memtables retained for
   // OptimisticTransactionDB conflict checks.
-  td::optional<size_t> write_buffer_size;
-  td::optional<td::int64> max_write_buffer_size_to_maintain;
-  std::shared_ptr<rocksdb::WriteBufferManager> write_buffer_manager;
+  td::optional<size_t> write_buffer_size = {};
+  td::optional<td::int64> max_write_buffer_size_to_maintain = {};
+  std::shared_ptr<rocksdb::WriteBufferManager> write_buffer_manager = nullptr;
 };
 
 class RocksDb : public KeyValue {

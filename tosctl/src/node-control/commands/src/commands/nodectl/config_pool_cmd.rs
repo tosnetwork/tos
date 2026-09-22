@@ -57,6 +57,11 @@ pub struct PoolAddCmd {
         help = "Owner address, raw or base64url (for deployment/verification)"
     )]
     owner: Option<String>,
+    #[arg(
+        long = "controller",
+        help = "Validator controller address the pool relays its stake through"
+    )]
+    controller: String,
 }
 
 #[derive(clap::Args, Clone)]
@@ -103,9 +108,11 @@ impl PoolAddCmd {
             );
         }
 
+        let normalized_controller = normalize_address(&self.controller, "controller")?;
         let pool_config = PoolConfig::SNP {
             address: normalized_address.clone(),
             owner: normalized_owner.clone(),
+            controller: normalized_controller,
         };
         config.pools.insert(self.name.clone(), pool_config);
         save_config(&config, path)?;
@@ -177,7 +184,7 @@ async fn collect_pool_views(
 
     for (name, pool) in &config.pools {
         match pool {
-            PoolConfig::SNP { address, owner } => {
+            PoolConfig::SNP { address, owner, controller } => {
                 let needs_vault = address.is_none() && owner.is_some();
                 if needs_vault && vault.is_none() {
                     vault = Some(match SecretVaultBuilder::from_env().await {
@@ -197,6 +204,7 @@ async fn collect_pool_views(
                 let vault_ref = vault.as_ref().and_then(|v| v.clone());
 
                 let addr_result = get_pool_display_result(
+                    controller,
                     name,
                     address.as_ref(),
                     owner.as_ref(),
@@ -326,6 +334,7 @@ fn print_pools_table(views: &[PoolView]) {
 }
 
 async fn get_pool_display_result(
+    controller: &str,
     pool_name: &str,
     address: Option<&String>,
     owner: Option<&String>,
@@ -337,7 +346,9 @@ async fn get_pool_display_result(
             .map_err(|_| "invalid address")?
             .to_string_custom(ADDR_FORMAT_BOUNCE | ADDR_FORMAT_URL_SAFE)
             .map_err(|_| "conversion failed")?),
-        (None, Some(owner_str)) => resolve_pool_address(pool_name, owner_str, config, vault).await,
+        (None, Some(owner_str)) => {
+            resolve_pool_address(controller, pool_name, owner_str, config, vault).await
+        }
         (None, None) => Err("pool owner not configured".to_string()),
     }
 }
@@ -360,6 +371,7 @@ async fn resolve_pool_balance(
 }
 
 async fn resolve_pool_address(
+    controller: &str,
     pool_name: &str,
     owner: &str,
     config: &AppConfig,
@@ -394,10 +406,13 @@ async fn resolve_pool_address(
 
     // 5. Parse owner and compute pool address
     let owner_addr = MsgAddressInt::from_str(owner).map_err(|_| "invalid owner address")?;
+    let controller_addr =
+        MsgAddressInt::from_str(controller).map_err(|_| "invalid controller address")?;
     let pool_addr = NominatorWrapperImpl::calculate_address(
         NOMINATOR_POOL_WORKCHAIN,
         &owner_addr,
         &wallet_addr,
+        &controller_addr,
     )
     .map_err(|_| "address calculation error")?;
 
@@ -463,6 +478,10 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    /// A validator controller to derive with. These tests judge which branch is taken and
+    /// what it reports, not which account a pool ends up at.
+    const CONTROLLER: &str = "-1:1a6b2f0e4d8c7b5a39e2c1f04b8d6a7e5c3910284f6b7d1e8a2c4f60b3d597e1";
+
     fn minimal_config() -> AppConfig {
         AppConfig {
             nodes: HashMap::new(),
@@ -499,14 +518,15 @@ mod tests {
             .unwrap()
             .to_string_custom(ADDR_FORMAT_BOUNCE | ADDR_FORMAT_URL_SAFE)
             .unwrap();
-        let result = get_pool_display_result("pool1", Some(&addr), None, &config, None).await;
+        let result =
+            get_pool_display_result(CONTROLLER, "pool1", Some(&addr), None, &config, None).await;
         assert_eq!(result, Ok(expected));
     }
 
     #[tokio::test]
     async fn test_display_result_no_address_no_owner() {
         let config = minimal_config();
-        let result = get_pool_display_result("pool1", None, None, &config, None).await;
+        let result = get_pool_display_result(CONTROLLER, "pool1", None, None, &config, None).await;
         assert_eq!(result, Err("pool owner not configured".to_string()));
     }
 
@@ -514,7 +534,8 @@ mod tests {
     async fn test_display_result_owner_no_binding() {
         let config = minimal_config();
         let owner = OWNER.to_string();
-        let result = get_pool_display_result("pool1", None, Some(&owner), &config, None).await;
+        let result =
+            get_pool_display_result(CONTROLLER, "pool1", None, Some(&owner), &config, None).await;
         assert_eq!(result, Err("no binding found".to_string()));
     }
 
@@ -531,7 +552,8 @@ mod tests {
             },
         );
         let owner = OWNER.to_string();
-        let result = get_pool_display_result("pool1", None, Some(&owner), &config, None).await;
+        let result =
+            get_pool_display_result(CONTROLLER, "pool1", None, Some(&owner), &config, None).await;
         assert_eq!(result, Err("wallet not configured".to_string()));
     }
 
@@ -645,7 +667,8 @@ mod tests {
             },
         );
         let owner = OWNER.to_string();
-        let result = get_pool_display_result("pool1", None, Some(&owner), &config, None).await;
+        let result =
+            get_pool_display_result(CONTROLLER, "pool1", None, Some(&owner), &config, None).await;
         assert_eq!(result, Err("vault unavailable".to_string()));
     }
 }

@@ -1,0 +1,364 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Validator Controller v1: the root of a validator's authority, post-quantum by
+;; construction.
+;;
+;; This account owns the stake, is the stable validator identity, and is what replaces an
+;; operational consensus key. Every action it takes is authorized by an ML-DSA-44
+;; signature from the root key it holds, and there is deliberately no second way in: no
+;; classical authorization, no modes, no replaceable authorization module, no extension
+;; authority, no code replacement, no classical recovery.
+;;
+;; The security property is carried by this code rather than by any field in its data,
+;; because an account's address commits to the code it was deployed with and a
+;; configuration parameter admits code hashes. What is admitted therefore cannot become
+;; classical later.
+
+#include "pq.fc";
+#include "pq-bytes.fc";
+
+;; ---------------------------------------------------------------------------
+;; The frozen authorization wire. `test/pq-native/controller-auth-vectors.tsv`
+;; holds these bytes, and the node and the tooling are held to the same file.
+;; ---------------------------------------------------------------------------
+
+const int ctl::op = 0x50516361;        ;; "PQca", the inbound operation
+const int ctl::sign_tag = 0x50514341;  ;; "PQCA", the signed domain
+
+const int ctl::kind::send = 1;
+const int ctl::kind::rotate_root = 2;
+;; Bind, or replace, the consensus key this controller acts through. The root authorises
+;; it and the new key proves its own private half exists, exactly as a root rotation does.
+;; Only the key's identity is kept here; the secret never leaves the validator host.
+const int ctl::kind::bind_consensus = 3;
+
+;; `PQrl`: relay a stake for whoever sent the money. Not a root authorisation -- the
+;; consensus key authorises it, by having signed the stake the elector will verify.
+const int ctl::relay_op = 0x5051726c;
+
+const int ctl::error::no_consensus_key = 100;
+const int ctl::error::wrong_consensus_key = 101;
+const int ctl::error::relay_underfunded = 102;
+;; A stake owner is a masterchain account: the wire carries its 256 bits and nothing
+;; else, and the elector answers `-1:owner`.
+const int ctl::error::owner_not_masterchain = 103;
+
+;; What it costs the elector to look at a stake, plus what it costs to send it there. A
+;; relay that arrives with less would have its stake refused for being underfunded, after
+;; this account had already paid to forward it.
+const int ctl::relay_minimum = 2000000000;  ;; 2 TOS
+
+;; How far ahead an authorization may be valid. A request that never expires is a request
+;; that can be held and replayed the moment its nonce comes round again.
+const int ctl::max_ttl = 3600;
+
+const int ctl::error::bad_operation = 90;
+const int ctl::error::wrong_network = 91;
+const int ctl::error::stale_epoch = 92;
+const int ctl::error::bad_nonce = 93;
+const int ctl::error::expired = 94;
+const int ctl::error::bad_kind = 95;
+const int ctl::error::bad_cosignature = 96;
+const int ctl::error::bad_action = 97;
+const int ctl::error::bad_signature = 98;
+const int ctl::error::not_internal = 99;
+
+cell ctl::context() inline {
+  return begin_cell().store_slice("TOS-VALIDATOR-CONTROLLER-v1").end_cell();
+}
+
+;; Exactly 93 bytes. The controller identity is this account's own address and never a
+;; field of the request; the payload is committed by its level-zero hash, so an
+;; authorization binds an action without carrying it twice.
+cell ctl::auth_preimage(int controller_id, int epoch, int nonce, int valid_until, int kind,
+                        int payload_hash) inline {
+  return begin_cell()
+    .store_uint(ctl::sign_tag, 32)
+    .store_int(pq::global_id(), 32)
+    .store_uint(controller_id, 256)
+    .store_uint(epoch, 64)
+    .store_uint(nonce, 64)
+    .store_uint(valid_until, 32)
+    .store_uint(kind, 8)
+    .store_uint(payload_hash, 256)
+  .end_cell();
+}
+
+int ctl::hash_level0(cell c) asm "0 CHASHI";
+
+;; ---------------------------------------------------------------------------
+;; Storage: epoch uint64, nonce uint64, consensus algorithm uint16, consensus key identity
+;; uint256, root public key as canonical PQBytes.
+;;
+;; The consensus key is here by identity only -- the algorithm it belongs to and the
+;; identity derived from it. The secret stays on the validator host and the key itself
+;; travels in the stake this controller relays, where the elector checks it. What this
+;; account keeps is only enough to refuse a stake signed by some other key.
+;; ---------------------------------------------------------------------------
+
+(int, int, int, int, cell) ctl::load_data() inline {
+  slice ds = get_data().begin_parse();
+  var res = (ds~load_uint(64), ds~load_uint(64), ds~load_uint(16), ds~load_uint(256), ds~load_ref());
+  ds.end_parse();
+  return res;
+}
+
+() ctl::save_data(int epoch, int nonce, int consensus_algorithm, int consensus_key_id,
+                  cell root) impure inline {
+  set_data(begin_cell()
+    .store_uint(epoch, 64)
+    .store_uint(nonce, 64)
+    .store_uint(consensus_algorithm, 16)
+    .store_uint(consensus_key_id, 256)
+    .store_ref(root)
+  .end_cell());
+}
+
+;; A send this account is allowed to make. No mode that could delete the account, and no
+;; combination that empties it: redeploying the original state init would otherwise
+;; restore a root that was rotated away.
+() ctl::check_send_mode(int mode) impure inline {
+  throw_if(ctl::error::bad_action, mode & 44);          ;; bits 2, 3 and 5 (+32 destroys)
+  throw_if(ctl::error::bad_action, (mode & 192) == 192); ;; not both whole balance and value
+}
+
+;; The elector, as the configuration names it. A relay goes there and nowhere else.
+slice ctl::elector_address() inline {
+  int elector = config_param(1).begin_parse().preload_uint(256);
+  return begin_cell().store_uint(4, 3).store_int(-1, 8).store_uint(elector, 256)
+    .end_cell().begin_parse();
+}
+
+;; Relay a stake for whoever sent the money.
+;;
+;; This is the one thing the consensus key may make this account do, and it is narrow on
+;; purpose: the funds forwarded are the funds that arrived, the destination is the elector
+;; and nothing else, and the account's own balance is not touched. A leaked consensus key
+;; can therefore commit an inbound stake to an election it was authorised for; it cannot
+;; take anything, change anything, or make this account do anything else.
+;;
+;; The signature is not verified here. The elector verifies it, once, and doing it twice
+;; would double the cost of every stake to learn nothing. What is checked here is that the
+;; key presented is the key this controller was bound to -- a cheap comparison of derived
+;; identities -- so a stake signed by some other key is refused before it is paid for.
+() ctl::relay_stake(slice sender, int msg_value, slice cs) impure inline_ref {
+  int query_id = cs~load_uint(64);
+  int stake_at = cs~load_uint(32);
+  int max_factor = cs~load_uint(32);
+  int adnl_addr = cs~load_uint(256);
+  int algorithm_id = cs~load_uint(16);
+  cell public_key = cs~load_ref();
+  cell signature = cs~load_ref();
+  cell witness = cs~load_maybe_ref();
+  cs.end_parse();
+
+  throw_unless(ctl::error::relay_underfunded, msg_value >= ctl::relay_minimum);
+
+  var (_, _, bound_algorithm, bound_key_id, _) = ctl::load_data();
+  throw_unless(ctl::error::no_consensus_key, bound_key_id);
+  ;; The suite first, and not because the identity would otherwise be wrong -- an identity
+  ;; commits to the suite that derived it, so a key of another suite already fails the
+  ;; comparison below. It is checked here so that a request naming a suite this chain does
+  ;; not know is refused for being the wrong key, rather than inside the parser that would
+  ;; not know how long such a key should be.
+  throw_unless(ctl::error::wrong_consensus_key, algorithm_id == bound_algorithm);
+  throw_unless(ctl::error::wrong_consensus_key,
+               pq::key_id(algorithm_id, public_key) == bound_key_id);
+
+  ;; The shape the elector will read, settled here rather than discovered there.
+  ;;
+  ;; The elector answers a stake it dislikes by sending the money back, but a signature it
+  ;; cannot parse it aborts on, and an abort bounces to the account that sent the message
+  ;; -- which the relay makes this one. The bounce would stop here: the account whose money
+  ;; it is never hears that its stake died, and goes on waiting for an answer that cannot
+  ;; come while its principal rests in this balance. Refusing the same shape here costs a
+  ;; walk of the chain and bounces back to that account, which knows what a refusal means.
+  ;;
+  ;; What goes out is then rebuilt from the walked chain, so the elector is handed the
+  ;; canonical wrapper rather than whatever the caller wrapped the same bytes in.
+  cell signature_chain = pq::stored_signature(algorithm_id, signature);
+  cell relayed_signature = begin_cell()
+    .store_uint(pq::mldsa44_signature_bytes, 32)
+    .store_ref(signature_chain)
+  .end_cell();
+
+  ;; Whose money this is: the account that sent it here, read rather than stated. The
+  ;; elector believes it because this code is what ConfigParam 47 admitted, and this is
+  ;; the line that makes that belief true.
+  ;;
+  ;; And a masterchain account, or nothing. The stake wire carries the owner's 256 bits
+  ;; alone, and the elector answers -- and at unfreeze pays -- `-1:owner`. Money from an
+  ;; account `0:X` would be owed to `-1:X`, an account that may not exist and is not the
+  ;; sender's either way. Every pool that stakes is a masterchain contract, so nothing
+  ;; legitimate is turned away here; what is turned away is money that could not have
+  ;; come back.
+  (int owner_wc, int owner) = parse_std_addr(sender);
+  throw_unless(ctl::error::owner_not_masterchain, owner_wc == -1);
+
+  builder body = begin_cell()
+    .store_uint(pq::tag::stake_op, 32)
+    .store_uint(query_id, 64)
+    .store_uint(algorithm_id, 16)
+    .store_ref(public_key)
+    .store_uint(stake_at, 32)
+    .store_uint(max_factor, 32)
+    .store_uint(adnl_addr, 256)
+    .store_ref(relayed_signature);
+  ifnot (cell_null?(witness)) {
+    body = body.store_uint(1, 1).store_ref(witness);
+  } else {
+    body = body.store_uint(0, 1);
+  }
+  body = body.store_uint(1, 1).store_uint(owner, 256);
+
+  ;; Mode 64 carries what came in and nothing else, so this account never funds a stake
+  ;; out of its own balance. Bounceable, so a refusal returns the money to this account
+  ;; and from there it is the owner's to recover.
+  ;; The body travels behind a reference, which the bit before it has to say: a stake
+  ;; carries a key and a signature and does not fit beside the header.
+  send_raw_message(begin_cell()
+    .store_uint(0x18, 6)
+    .store_slice(ctl::elector_address())
+    .store_coins(0)
+    .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+    .store_uint(1, 1)
+    .store_ref(body.end_cell())
+  .end_cell(), 64);
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice header = in_msg_full.begin_parse();
+  int flags = header~load_uint(4);
+
+  ;; Something this account sent came back. A relay is the only message it sends that can:
+  ;; it goes to the elector bounceable, so that a stake which cannot be carried out returns
+  ;; the money rather than leaving it there.
+  ;;
+  ;; The money is already in this balance by the time this runs, and the bounce cannot say
+  ;; whose it was -- a bounce carries the first 256 bits of the body it bounced, and a
+  ;; stake's owner is written past them. So it is held, and the root moves it back. Throwing
+  ;; instead would change nothing about where the money is and only burn what came with it.
+  if (flags & 1) {
+    return ();
+  }
+
+  if (in_msg_body.slice_empty?()) {
+    return ();  ;; plain value transfer, used to fund the account
+  }
+  int op = in_msg_body~load_uint(32);
+  if (op == ctl::relay_op) {
+    return ctl::relay_stake(header~load_msg_addr(), msg_value, in_msg_body);
+  }
+  throw_unless(ctl::error::bad_operation, op == ctl::op);
+  in_msg_body~load_uint(64);  ;; query_id, echoed by nothing: this account answers no one
+
+  ;; Everything decidable without the key is decided before the verification, which costs
+  ;; about fifty thousand gas. An unauthorized request pays for the parse and nothing more.
+  int global_id = in_msg_body~load_int(32);
+  int epoch = in_msg_body~load_uint(64);
+  int nonce = in_msg_body~load_uint(64);
+  int valid_until = in_msg_body~load_uint(32);
+  int kind = in_msg_body~load_uint(8);
+  cell payload = in_msg_body~load_ref();
+  cell signature = in_msg_body~load_ref();
+  cell cosignature = in_msg_body~load_maybe_ref();
+  in_msg_body.end_parse();
+
+  throw_unless(ctl::error::wrong_network, global_id == pq::global_id());
+  var (stored_epoch, stored_nonce, consensus_algorithm, consensus_key_id, root) = ctl::load_data();
+  throw_unless(ctl::error::stale_epoch, epoch == stored_epoch);
+  throw_unless(ctl::error::bad_nonce, nonce == stored_nonce);
+  throw_unless(ctl::error::expired, valid_until > now());
+  throw_unless(ctl::error::expired, valid_until <= now() + ctl::max_ttl);
+  throw_unless(ctl::error::bad_kind, (kind == ctl::kind::send) | (kind == ctl::kind::rotate_root)
+                                     | (kind == ctl::kind::bind_consensus));
+
+  ;; A cosignature belongs to the two kinds that install a key: it is the new key's proof
+  ;; that its private half exists. Without it a mistyped key would lock this account out
+  ;; of its own root, or bind it to a consensus key nobody holds. A request that carries
+  ;; one for any other kind is not the request it claims to be.
+  int installs_a_key = (kind == ctl::kind::rotate_root) | (kind == ctl::kind::bind_consensus);
+  if (installs_a_key) {
+    throw_if(ctl::error::bad_cosignature, cell_null?(cosignature));
+  } else {
+    throw_unless(ctl::error::bad_cosignature, cell_null?(cosignature));
+  }
+
+  (int controller_wc, int controller_id) = parse_std_addr(my_address());
+  cell message = ctl::auth_preimage(controller_id, epoch, nonce, valid_until, kind,
+                                    ctl::hash_level0(payload));
+  cell context = ctl::context();
+
+  (_, cell root_chain) = pq::stored_key(pq::algorithm::mldsa44, root);
+  ifnot (pq_check_mldsa44(message, context, pq::stored_signature(pq::algorithm::mldsa44, signature),
+                          root_chain)) {
+    throw(ctl::error::bad_signature);
+  }
+
+  if (kind == ctl::kind::send) {
+    slice ps = payload.begin_parse();
+    int mode = ps~load_uint(8);
+    cell out = ps~load_ref();
+    ps.end_parse();
+    ctl::check_send_mode(mode);
+    ;; The nonce is spent before the action, so a request cannot be replayed after one
+    ;; that refused.
+    ctl::save_data(stored_epoch, stored_nonce + 1, consensus_algorithm, consensus_key_id, root);
+    send_raw_message(out, mode);
+    return ();
+  }
+
+  if (kind == ctl::kind::bind_consensus) {
+    slice ps = payload.begin_parse();
+    int next_algorithm = ps~load_uint(16);
+    cell next_key = ps~load_ref();
+    ps.end_parse();
+    throw_unless(ctl::error::wrong_consensus_key, pq::admitted_algorithm?(next_algorithm));
+    (_, cell next_chain) = pq::stored_key(next_algorithm, next_key);
+    ;; The key proves it exists. A consensus key that cannot sign is a validator that
+    ;; cannot validate, and this account would have bound itself to it.
+    ifnot (pq_check_mldsa44(message, context,
+                            pq::stored_signature(next_algorithm, cosignature), next_chain)) {
+      throw(ctl::error::bad_cosignature);
+    }
+    ;; The nonce is spent the way any other authorised action spends it. The epoch belongs
+    ;; to the root and does not move: binding a consensus key replaces no root authority.
+    ctl::save_data(stored_epoch, stored_nonce + 1, next_algorithm,
+                   pq::key_id(next_algorithm, next_key), root);
+    return ();
+  }
+
+  ;; A root rotation: the current root has authorized it above, and the successor proves
+  ;; its private half exists over the very same commitment. Without that proof a mistyped
+  ;; key would lock this account out of its own validator for good.
+  slice ps = payload.begin_parse();
+  cell next_root = ps~load_ref();
+  ps.end_parse();
+  (_, cell next_chain) = pq::stored_key(pq::algorithm::mldsa44, next_root);
+  ifnot (pq_check_mldsa44(message, context,
+                          pq::stored_signature(pq::algorithm::mldsa44, cosignature),
+                          next_chain)) {
+    throw(ctl::error::bad_cosignature);
+  }
+  ;; The epoch moves so authorizations made under the previous root cannot be replayed,
+  ;; and the nonce restarts within it. The consensus binding is the root's to change and
+  ;; survives its rotation: a new root inherits the validator, rather than silently
+  ;; stopping it until it rebinds.
+  ctl::save_data(stored_epoch + 1, 0, consensus_algorithm, consensus_key_id, next_root);
+  return ();
+}
+
+() recv_external(slice in_msg) impure {
+  ;; There is no external authorization path. An external message is admitted on credit
+  ;; that cannot pay for a post-quantum verification, so accepting one would mean either
+  ;; verifying nothing or spending this account's own balance to reject a stranger.
+  throw(ctl::error::not_internal);
+}
+
+;; ---------------------------------------------------------------------------
+;; Getters
+;; ---------------------------------------------------------------------------
+
+(int, int, int, int, cell) controller_state() method_id {
+  return ctl::load_data();
+}

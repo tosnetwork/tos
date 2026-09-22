@@ -41,6 +41,16 @@ struct ValidatorDescr {
   td::Bits256 adnl_addr;
   td::uint64 weight;
   td::uint64 cum_weight;
+  // Stable membership identity and current-key identity. For a classical descriptor
+  // both are derived from its Ed25519 key, so nothing about existing sets changes.
+  tos::ValidatorId validator_id;
+  tos::ConsensusKeyId key_id;
+  // Post-quantum key material; algorithm_id stays zero on a classical descriptor.
+  td::uint16 algorithm_id{0};
+  std::string pq_public_key;
+  bool is_pq() const {
+    return algorithm_id != 0;
+  }
   ValidatorDescr(const td::Bits256& _pubkey, td::uint64 _weight, td::uint64 _cum_weight)
       : pubkey(_pubkey), weight(_weight), cum_weight(_cum_weight) {
     adnl_addr.set_zero();
@@ -51,6 +61,18 @@ struct ValidatorDescr {
   ValidatorDescr(const tos::Ed25519_PublicKey& _pubkey, td::uint64 _weight, td::uint64 _cum_weight)
       : pubkey(_pubkey), weight(_weight), cum_weight(_cum_weight) {
     adnl_addr.set_zero();
+  }
+  // A post-quantum entry carries no Ed25519 key; is_pq() is how a reader asks.
+  ValidatorDescr(const tos::ValidatorId& _validator_id, td::uint16 _algorithm_id, const tos::ConsensusKeyId& _key_id,
+                 std::string _pq_public_key, td::uint64 _weight, td::uint64 _cum_weight, const td::Bits256& _adnl_addr)
+      : pubkey(td::Bits256::zero())
+      , adnl_addr(_adnl_addr)
+      , weight(_weight)
+      , cum_weight(_cum_weight)
+      , validator_id(_validator_id)
+      , key_id(_key_id)
+      , algorithm_id(_algorithm_id)
+      , pq_public_key(std::move(_pq_public_key)) {
   }
   bool operator<(td::uint64 wt_pos) const& {
     return cum_weight < wt_pos;
@@ -412,8 +434,8 @@ struct SizeLimitsConfig {
   td::uint32 max_acc_fixed_prefix_length = 8;
   td::uint32 acc_state_cells_for_storage_dict = 26;
   td::optional<td::uint32> max_transaction_library_loads;  // default - unlimited
-  td::uint32 max_total_msg_bits = (1 << 21) * 5 / 2;   // enabled in global version 15
-  td::uint32 max_total_msg_cells = (1 << 13) * 5 / 2;  // enabled in global version 15
+  td::uint32 max_total_msg_bits = (1 << 21) * 5 / 2;       // enabled in global version 15
+  td::uint32 max_total_msg_cells = (1 << 13) * 5 / 2;      // enabled in global version 15
 };
 
 struct CatchainValidatorsConfig {
@@ -593,6 +615,7 @@ class Config {
   long long capabilities_{-1};
 
  protected:
+  int global_id_{0};
   std::unique_ptr<vm::Dictionary> special_smc_dict;
 
  public:
@@ -676,6 +699,10 @@ class Config {
   }
   std::pair<tos::UnixTime, tos::UnixTime> get_validator_set_start_stop(int next = 0) const;
   tos::ValidatorSessionConfig get_consensus_config() const;
+  int get_global_blockchain_id() const {
+    return global_id_;
+  }
+  td::optional<tos::SelectedNewConsensusConfig> get_selected_new_consensus_config(tos::WorkchainId wc) const;
   td::optional<tos::NewConsensusConfig> get_new_consensus_config(tos::WorkchainId wc) const;
   bool foreach_config_param(std::function<bool(int, Ref<vm::Cell>)> scan_func) const;
   Ref<WorkchainInfo> get_workchain_info(tos::WorkchainId workchain_id) const;
@@ -726,7 +753,6 @@ class ConfigInfo : public Config, public ShardConfig {
   static constexpr int needAccountsRoot = 64;
   static constexpr int needPrevBlocks = 128;
   tos::BlockSeqno vert_seqno{~0U};
-  int global_id_{0};
   tos::UnixTime utime{0};
   tos::LogicalTime lt{0};
   tos::BlockSeqno min_ref_mc_seqno_{std::numeric_limits<tos::BlockSeqno>::max()};
@@ -753,9 +779,6 @@ class ConfigInfo : public Config, public ShardConfig {
   bool set_block_id_ext(const tos::BlockIdExt& block_id_ext);
   bool rotated_all_shards() const {
     return nx_cc_updated;
-  }
-  int get_global_blockchain_id() const {
-    return global_id_;
   }
   tos::ZeroStateIdExt get_zerostate_id() const {
     return zerostate_id_;

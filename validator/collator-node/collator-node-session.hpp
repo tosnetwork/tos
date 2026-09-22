@@ -44,7 +44,7 @@ class CollatorNodeSession : public td::actor::Actor {
   void new_shard_block_accepted(BlockIdExt block_id, bool can_generate);
 
   void process_request(adnl::AdnlNodeIdShort src, std::vector<BlockIdExt> prev_blocks, BlockCandidatePriority priority,
-                       Ed25519_PublicKey creator, td::Timestamp timeout, td::Promise<BlockCandidate> promise);
+                       ValidatorId creator, td::Timestamp timeout, td::Promise<BlockCandidate> promise);
   void update_masterchain_config(td::Ref<MasterchainState> state);
 
  private:

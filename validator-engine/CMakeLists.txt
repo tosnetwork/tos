@@ -6,7 +6,7 @@ add_library(json-rpc-parse STATIC
   json-rpc-server-parse.cpp
 )
 target_include_directories(json-rpc-parse PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils)
+target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils tl_lite_api)
 
 set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server.h
@@ -42,7 +42,7 @@ target_compile_options(validator-engine PRIVATE
 )
 target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_api dht
   rldp2 quic full-node validator tos_validator validator
-  fift-lib memprof git ${JEMALLOC_LIBRARIES})
+  fift-lib memprof git tos_pq_consensus_signer ${JEMALLOC_LIBRARIES})
 
 add_library(json-rpc-account-model STATIC
   json-rpc-account-model.h

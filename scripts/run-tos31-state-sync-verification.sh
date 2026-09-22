@@ -8,6 +8,11 @@
 
 set -euo pipefail
 
+if ! command -v rg >/dev/null 2>&1; then
+  echo "tos31 state-sync verification failed: ripgrep is required but not installed" >&2
+  exit 1
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
 ARTIFACT_DIR="${TOS_VERIFY_ARTIFACT_DIR:-$ROOT/build/tos31-state-sync-$(date -u +%Y%m%dT%H%M%SZ)}"

@@ -451,8 +451,68 @@ struct OutMsgQueueProofBroadcast : public td::CntObject {
   }
 };
 
+// Three different 256-bit identities meet on a validator, and code that mixes them
+// up fails in ways nothing catches. They are distinct types so the compiler will not
+// let one stand in for another:
+//   ValidatorId    - stable membership identity; unchanged when the key rotates
+//   ConsensusKeyId - identity of the consensus key currently held; changes on rotation
+//   Bits256 addr   - the ADNL transport identity, which implies no consensus authority
+struct ValidatorId {
+  Bits256 value;
+  ValidatorId() {
+    value.set_zero();
+  }
+  explicit ValidatorId(const Bits256& v) : value(v) {
+  }
+  // A key is not an identity. Ed25519_PublicKey converts implicitly to Bits256, which
+  // would otherwise make ValidatorId{some_key} compile and manufacture an identity out
+  // of a key -- the exact confusion these types exist to prevent.
+  ValidatorId(const Ed25519_PublicKey&) = delete;
+  bool is_zero() const {
+    return value.is_zero();
+  }
+  bool operator==(const ValidatorId& other) const {
+    return value == other.value;
+  }
+  bool operator!=(const ValidatorId& other) const {
+    return !(operator==(other));
+  }
+  bool operator<(const ValidatorId& other) const {
+    return value < other.value;
+  }
+};
+
+struct ConsensusKeyId {
+  Bits256 value;
+  ConsensusKeyId() {
+    value.set_zero();
+  }
+  explicit ConsensusKeyId(const Bits256& v) : value(v) {
+  }
+  // A key is not an identity. Ed25519_PublicKey converts implicitly to Bits256, which
+  // would otherwise make ConsensusKeyId{some_key} compile and manufacture an identity out
+  // of a key -- the exact confusion these types exist to prevent.
+  ConsensusKeyId(const Ed25519_PublicKey&) = delete;
+  bool is_zero() const {
+    return value.is_zero();
+  }
+  bool operator==(const ConsensusKeyId& other) const {
+    return value == other.value;
+  }
+  bool operator!=(const ConsensusKeyId& other) const {
+    return !(operator==(other));
+  }
+  bool operator<(const ConsensusKeyId& other) const {
+    return value < other.value;
+  }
+};
+
 struct BlockCandidate {
-  Ed25519_PublicKey pubkey;
+  // Who produced this candidate, named by stable validator identity. It is not a
+  // public key: a producer keeps this identity across a consensus key rotation, and
+  // nothing may turn it back into a key to satisfy an older interface. The transport
+  // identity of whoever sent the candidate is a separate thing and stays separate.
+  ValidatorId producer;
   BlockIdExt id;
   FileHash collated_file_hash;
   td::BufferSlice data;
@@ -463,7 +523,7 @@ struct BlockCandidate {
 
   BlockCandidate clone() const {
     return BlockCandidate{
-        pubkey, id, collated_file_hash, data.clone(), collated_data.clone(), out_msg_queue_proof_broadcasts};
+        producer, id, collated_file_hash, data.clone(), collated_data.clone(), out_msg_queue_proof_broadcasts};
   }
 };
 
@@ -485,17 +545,59 @@ struct BlockCandidatePriority {
 };
 
 struct ValidatorDescr {
+ private:
+  // A post-quantum descriptor has no classical key at all. Keeping this private means
+  // no code can read a zero key out of one by accident and then verify nothing
+  // against it; classical_key() refuses instead.
   /* tos::validator::ValidatorFullId */ Ed25519_PublicKey key;
+
+ public:
   ValidatorWeight weight;
   /* adnl::AdnlNodeIdShort */ Bits256 addr;
+  // Stable membership identity. For a classical descriptor this is the identity
+  // derived from its Ed25519 key, so membership behaviour is unchanged; for a
+  // post-quantum descriptor it is carried explicitly and survives key rotation.
+  ValidatorId validator_id;
+  // Identity of the consensus key currently held. Rotating the key changes this
+  // while leaving validator_id alone.
+  ConsensusKeyId key_id;
+  // Post-quantum key material. algorithm_id is zero and pq_public_key is empty on a
+  // classical descriptor, so is_pq() is the only correct way to ask.
+  td::uint16 algorithm_id{0};
+  std::string pq_public_key;
+
   ValidatorDescr(const Ed25519_PublicKey& key_, ValidatorWeight weight_) : key(key_), weight(weight_) {
     addr.set_zero();
   }
   ValidatorDescr(const Ed25519_PublicKey& key_, ValidatorWeight weight_, const Bits256& addr_)
       : key(key_), weight(weight_), addr(addr_) {
   }
+  // A post-quantum descriptor has no Ed25519 key at all; the classical field stays
+  // zero and is_pq() tells every reader not to look at it.
+  ValidatorDescr(const ValidatorId& validator_id_, td::uint16 algorithm_id_, const ConsensusKeyId& key_id_,
+                 std::string pq_public_key_, ValidatorWeight weight_, const Bits256& addr_)
+      : key(Bits256::zero())
+      , weight(weight_)
+      , addr(addr_)
+      , validator_id(validator_id_)
+      , key_id(key_id_)
+      , algorithm_id(algorithm_id_)
+      , pq_public_key(std::move(pq_public_key_)) {
+  }
+
+  bool is_pq() const {
+    return algorithm_id != 0;
+  }
+  // The classical consensus key. Asking a post-quantum descriptor for one is a
+  // programming error, not untrusted input: malformed descriptors are already refused
+  // when a set is decoded. So this fails loudly rather than returning a zero key.
+  const Ed25519_PublicKey& classical_key() const {
+    CHECK(!is_pq());
+    return key;
+  }
   bool operator==(const ValidatorDescr& other) const {
-    return key == other.key && weight == other.weight && addr == other.addr;
+    return key == other.key && weight == other.weight && addr == other.addr && validator_id == other.validator_id &&
+           key_id == other.key_id && algorithm_id == other.algorithm_id && pq_public_key == other.pq_public_key;
   }
   bool operator!=(const ValidatorDescr& other) const {
     return !(operator==(other));
@@ -599,6 +701,15 @@ struct NewConsensusConfig {
   };
 
   NoncriticalParams noncritical_params = {};
+};
+
+// The consensus configuration selected from ConfigParam 30 together with the
+// representation hash of the exact referenced cell that was parsed.  Keeping
+// these two facts in one value prevents session identity from committing to a
+// different encoding than the one whose settings the group actually uses.
+struct SelectedNewConsensusConfig {
+  NewConsensusConfig config;
+  td::Bits256 cell_hash;
 };
 
 // Fail-closed admission for a validator or observer group. Run only when the

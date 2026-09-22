@@ -65,6 +65,8 @@ pub struct NominatorRoles {
     pub owner_address: MsgAddressInt,
     /// Validator address (can stake or recover funds to/from elector)
     pub validator_address: MsgAddressInt,
+    /// Validator controller address (the account a stake is relayed through)
+    pub controller_address: MsgAddressInt,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]

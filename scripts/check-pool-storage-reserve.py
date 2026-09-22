@@ -76,7 +76,9 @@ def dictionary_cost(entries: int, value_bits: int, key_bits: int = 256) -> tuple
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
         "--code",
         type=Path,
@@ -84,8 +86,12 @@ def main() -> int:
         help="pool code BOC (build it with scripts/build-nominator-pool-v1.sh)",
     )
     parser.add_argument("--nominators", type=int, default=40, help="nominators held by the pool")
-    parser.add_argument("--mc-cell-price", type=int, default=500_000, help="ConfigParam 18 mc_cell_price_ps")
-    parser.add_argument("--mc-bit-price", type=int, default=1_000, help="ConfigParam 18 mc_bit_price_ps")
+    parser.add_argument(
+        "--mc-cell-price", type=int, default=500_000, help="ConfigParam 18 mc_cell_price_ps"
+    )
+    parser.add_argument(
+        "--mc-bit-price", type=int, default=1_000, help="ConfigParam 18 mc_bit_price_ps"
+    )
     args = parser.parse_args()
 
     if not args.code.exists():
@@ -95,8 +101,13 @@ def main() -> int:
 
     code_cells, code_bits = measure_cells(args.code)
 
-    # save_data's scalars, plus the config sub-cell it always carries.
-    data_cells, data_bits = 2, 8 + 16 + 128 + 128 + 32 + 256 + 8 + 32 + 32 + 3 + (256 + 16 + 16 + 128 + 128)
+    # save_data's scalars, plus the config sub-cell it always carries. The config holds two
+    # accounts: the validator the pool serves, and the controller its stake is relayed
+    # through.
+    data_cells, data_bits = (
+        2,
+        (8 + 16 + 128 + 128 + 32 + 256 + 8 + 32 + 32 + 3 + (256 + 256 + 16 + 16 + 128 + 128)),
+    )
     # Each nominator entry stores two Coins amounts.
     nominator_cells, nominator_bits = dictionary_cost(args.nominators, 128 + 128)
     data_cells += nominator_cells
@@ -125,21 +136,11 @@ def main() -> int:
 
     if reserve_days < 365:
         print()
-        print(
-            "NOTE: the reserve alone does not cover a year. Rent is charged against"
-        )
-        print(
-            "      the pool's balance, which is nominator principal, and the contract"
-        )
-        print(
-            "      never books that drain against anyone. A pool operating for longer"
-        )
-        print(
-            "      than this needs the validator to top it up, or it eventually owes"
-        )
-        print(
-            "      its nominators more than it holds and withdrawals start being"
-        )
+        print("NOTE: the reserve alone does not cover a year. Rent is charged against")
+        print("      the pool's balance, which is nominator principal, and the contract")
+        print("      never books that drain against anyone. A pool operating for longer")
+        print("      than this needs the validator to top it up, or it eventually owes")
+        print("      its nominators more than it holds and withdrawals start being")
         print("      skipped silently rather than failing.")
         return 1
 

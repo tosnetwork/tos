@@ -26,11 +26,12 @@ REPO = Path(__file__).resolve().parents[4]
 # Same parameters as pool_address_derivation_is_pinned in
 # tosctl/src/node-control/contracts/src/nominator_pool/pool_impl.rs
 VALIDATOR_ACCOUNT = bytes([0xAB] * 32)
+CONTROLLER_ACCOUNT = bytes([0xCD] * 32)
 REWARD_SHARE_BPS = 4000
 MAX_NOMINATORS = 40
 MIN_VALIDATOR_STAKE = 5_000_000_000_000
 MIN_NOMINATOR_STAKE = 100_000_000_000
-EXPECTED_ADDRESS = "-1:f551c09c2533d56aad15ef67cd72d4d2b79ef93f447d49e76eda9b09a8bd4382"
+EXPECTED_ADDRESS = "-1:39ebb7d066bc471da3bbdcde82f5259651929d357a9eab25bebdf7b83292eeb2"
 
 POOL_CODE = REPO / "crypto/smartcont/artifacts/nominator-pool-v1.boc"
 
@@ -60,6 +61,7 @@ def test_pool_address_matches_the_operator_tool():
     state_init = lifecycle.build_pool_state_init(
         code,
         validator_account=VALIDATOR_ACCOUNT,
+        controller_account=CONTROLLER_ACCOUNT,
         reward_share_bps=REWARD_SHARE_BPS,
         max_nominators=MAX_NOMINATORS,
         min_validator_stake=MIN_VALIDATOR_STAKE,

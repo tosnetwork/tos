@@ -315,7 +315,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
  public:
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
 
-  static bool should_be_spawned(const Bus& bus) {
+  static bool should_be_spawned(const Bus &bus) {
     return bus.is_validator() || !bus.config.enable_block_sync();
   }
 
@@ -351,13 +351,21 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
     suppress_certificate_broadcast_ = false;
 
-    for (const auto &vote : bus.bootstrap_votes) {
-      auto slot = state_->slot_at(vote.referenced_slot());
-      if (!slot.has_value()) {
-        continue;
-      }
+    vote_journal_failure_ = bus.vote_journal_failure;
+    if (!vote_journal_failure_.empty()) {
+      // A journalled signature this node cannot reproduce or verify means it cannot know
+      // what it already told the network. Start quiescent rather than vote again: a second
+      // signature would be a second object for a vote a peer may already hold.
+      LOG(ERROR) << "Vote journal unusable, this group will not vote: " << vote_journal_failure_;
+    } else {
+      for (const auto &stored : bus.bootstrap_votes) {
+        auto slot = state_->slot_at(stored.vote.referenced_slot());
+        if (!slot.has_value()) {
+          continue;
+        }
 
-      handle_our_vote(vote, /*tolerate_conflicts=*/true, /*suppress_vote_broadcast=*/true).start().detach();
+        replay_our_vote(BootstrapVote{stored.vote, stored.seqno, stored.signature.clone()}).start().detach();
+      }
     }
 
     std::tie(standstill_resolution_awaiter_, standstill_resolution_notification_) =
@@ -370,6 +378,12 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       r.promise.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
     }
     standstill_resolution_notification_.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const FinalizationBacklog> event) {
+    // Finality can catch up, and when it does this group produces again.
+    finality_behind_ = event->over_limit;
   }
 
   template <>
@@ -391,9 +405,9 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       idx = bus.local_id->idx.value();
       weight = bus.local_id->weight;
     }
-    owning_bus().publish<TraceEvent>(consensus::stats::Id::create(
-        bus.shard, bus.cc_seqno, idx, bus.validator_set.size(), weight, bus.total_weight,
-        bus.config.slots_per_leader_window));
+    owning_bus().publish<TraceEvent>(consensus::stats::Id::create(bus.shard, bus.cc_seqno, idx,
+                                                                  bus.validator_set.size(), weight, bus.total_weight,
+                                                                  bus.config.slots_per_leader_window));
 
     reschedule_standstill_resolution();
     is_started_ = true;
@@ -439,14 +453,20 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
         return;
       }
 
+      // Attribution is decided here and nowhere else: the signature has to verify under the
+      // key the set records for the validator this message came from. A validator relaying
+      // another's signed vote over its own authenticated transport arrives with valid
+      // transport and someone else's signature, and is refused exactly here.
       auto maybe_vote = Signed<Vote>::from_tl(std::move(*tl_vote), source_validator, bus);
       if (maybe_vote.is_error()) {
+        ++votes_refused_bad_signature_;
         LOG(WARNING) << "Dropping bad vote from " << source_validator << " : " << maybe_vote.move_as_error();
         ban(message->source);
         return;
       }
 
       auto vote = maybe_vote.move_as_ok();
+      ++votes_accepted_;
       handle_vote(source_validator.get_using(bus), std::move(vote));
     }
 
@@ -467,8 +487,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       // catches up (mirror the too-new-vote behavior at line 406).
       if (raw_vote.referenced_slot() >= first_too_new_slot) {
         LOG(WARNING) << "Dropping too new certificate from " << message->source
-                     << " : slot=" << raw_vote.referenced_slot()
-                     << ", current_slot=" << now_;
+                     << " : slot=" << raw_vote.referenced_slot() << ", current_slot=" << now_;
         return;
       }
 
@@ -492,9 +511,12 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     }
   }
 
+  // An awaited request, not a notification: Pool owns the ordering of the journal writes
+  // against the local apply and the network send, and that ordering cannot be left to the
+  // order in which independent listeners happen to run.
   template <>
-  void handle(BusHandle, std::shared_ptr<const BroadcastVote> event) {
-    handle_our_vote(event->vote).start().detach();
+  td::actor::Task<> process(BusHandle, std::shared_ptr<BroadcastVote> event) {
+    co_return co_await cast_our_vote(event->vote);
   }
 
   template <>
@@ -526,13 +548,18 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   }
 
   template <>
+  td::actor::Task<QueryVoteIngress::Result> process(BusHandle, std::shared_ptr<QueryVoteIngress>) {
+    co_return QueryVoteIngress::Result{.accepted = votes_accepted_,
+                                       .refused_bad_signature = votes_refused_bad_signature_};
+  }
+
+  template <>
   td::actor::Task<std::optional<ParentId>> process(BusHandle, std::shared_ptr<QuerySlotSkipped> query) {
     auto slot = state_->slot_at(query->id.slot);
     if (!slot.has_value()) {
       co_return std::nullopt;
     }
-    auto action =
-        select_skipped_slot_resolution(query->id, slot->state->is_skipped(), slot->state->notarized_block());
+    auto action = select_skipped_slot_resolution(query->id, slot->state->is_skipped(), slot->state->notarized_block());
     if (action.is_error()) {
       co_return action.move_as_error();
     }
@@ -548,8 +575,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   }
 
   template <>
-  td::actor::Task<QueryValidatorGroupInfo::Result> process(BusHandle,
-                                                           std::shared_ptr<QueryValidatorGroupInfo>) {
+  td::actor::Task<QueryValidatorGroupInfo::Result> process(BusHandle, std::shared_ptr<QueryValidatorGroupInfo>) {
     QueryValidatorGroupInfo::Result result;
     result.current_slot = now_;
     result.last_finalized_block = last_finalized_block_;
@@ -804,27 +830,112 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     }
   }
 
-  td::actor::Task<> handle_our_vote(Vote vote, bool tolerate_conflicts = false, bool suppress_vote_broadcast = false) {
+  // Sign a vote with the node's custodied post-quantum consensus key, under the frozen
+  // simplex_sign_context, and never with the network keyring. Fail closed: with no signer,
+  // or a signing failure, produce no vote rather than a wrong or classical one.
+  std::optional<td::BufferSlice> sign_vote(const Vote &vote) {
     auto &bus = *owning_bus();
-    CHECK(bus.is_validator());
-
-    owning_bus().publish<TraceEvent>(stats::Voted::create(vote));
-
+    if (bus.pq_signer == nullptr) {
+      LOG(ERROR) << "consensus: no post-quantum consensus signer; refusing to vote";
+      return std::nullopt;
+    }
     auto vote_to_sign = serialize_tl_object(vote.to_tl(), true);
     auto data_to_sign = create_serialize_tl_object<consensus::tl::dataToSign>(bus.session_id, std::move(vote_to_sign));
-    auto signature = co_await td::actor::ask(bus.keyring, &keyring::Keyring::sign_message, bus.local_id->short_id,
-                                             std::move(data_to_sign));
+    const auto to_sign = data_to_sign.as_slice();
+    auto pq_signature = bus.pq_signer->sign_consensus(std::string_view(to_sign.data(), to_sign.size()));
+    if (!pq_signature.has_value()) {
+      LOG(ERROR) << "consensus: the post-quantum signer failed to sign a vote; not casting it";
+      return std::nullopt;
+    }
+    return td::BufferSlice(pq_signature->signature);
+  }
 
+  // The point where a signature stops being private to this node. Everything before it is
+  // reversible by a crash; everything from here on is observable, directly through the
+  // broadcast or indirectly through a certificate built on the applied vote.
+  void apply_own_vote(const Vote &vote, td::BufferSlice signature, bool tolerate_conflicts, bool broadcast) {
+    auto &bus = *owning_bus();
     Signed<Vote> signed_vote{bus.local_id->idx, vote, std::move(signature)};
     td::BufferSlice serialized = signed_vote.serialize();
 
-    if (handle_vote(*bus.local_id, std::move(signed_vote), tolerate_conflicts)) {
-      if (!suppress_vote_broadcast) {
-        owning_bus().publish(std::make_shared<OutgoingProtocolMessage>(OutgoingProtocolMessage::BroadcastToAll{},
-                                                                       std::move(serialized)));
-      }
+    if (handle_vote(*bus.local_id, std::move(signed_vote), tolerate_conflicts) && broadcast) {
+      owning_bus().publish(
+          std::make_shared<OutgoingProtocolMessage>(OutgoingProtocolMessage::BroadcastToAll{}, std::move(serialized)));
+    }
+  }
+
+  // Cast one of this node's own votes. The order below is the correctness property, not an
+  // implementation detail: the decision is durable before anything is signed, and the exact
+  // signature bytes are durable before they can affect local state or leave the process.
+  // Both writes are awaited and a failure of either stops the vote, because a vote this node
+  // cannot prove it committed must not be one a peer can hold.
+  td::actor::Task<> cast_our_vote(Vote vote) {
+    auto &bus = *owning_bus();
+    CHECK(bus.is_validator());
+
+    if (finality_behind_) {
+      // Finality fell behind while this vote was being prepared. Consensus stops producing
+      // new ones, but one already in flight arrives here regardless.
+      co_return td::Unit{};
+    }
+    if (!vote_journal_failure_.empty()) {
+      LOG(ERROR) << "consensus: refusing to vote, the vote journal is unusable: " << vote_journal_failure_;
+      co_return td::Unit{};
     }
 
+    owning_bus().publish<TraceEvent>(stats::Voted::create(vote));
+
+    auto seqno = co_await owning_bus().publish<PersistOwnVoteIntent>(vote).wrap();
+    if (seqno.is_error()) {
+      LOG(ERROR) << "consensus: the vote intent for " << vote << " was not committed (" << seqno.error()
+                 << "); not signing it";
+      co_return td::Unit{};
+    }
+
+    auto signature = sign_vote(vote);
+    if (!signature.has_value()) {
+      co_return td::Unit{};
+    }
+
+    auto committed =
+        co_await owning_bus().publish<PersistOwnSignedVote>(vote, seqno.ok(), signature.value().clone()).wrap();
+    if (committed.is_error()) {
+      LOG(ERROR) << "consensus: the signed vote for " << vote << " was not committed (" << committed.error()
+                 << "); not applying or broadcasting it";
+      co_return td::Unit{};
+    }
+
+    apply_own_vote(vote, std::move(signature.value()), /*tolerate_conflicts=*/false, /*broadcast=*/true);
+    co_return td::Unit{};
+  }
+
+  // Restore one of this node's own votes from the journal at startup. Nothing is
+  // rebroadcast: peers either already have the vote or will ask for it.
+  td::actor::Task<> replay_our_vote(BootstrapVote stored) {
+    if (!stored.signature.empty()) {
+      // These are the bytes this node already emitted. The signer is deliberately not
+      // called: ML-DSA-44 signing is randomized, so a second signature over the same vote
+      // would be equally valid and a different object, while a peer may already hold the
+      // first one inside a certificate.
+      apply_own_vote(stored.vote, std::move(stored.signature), /*tolerate_conflicts=*/true, /*broadcast=*/false);
+      co_return td::Unit{};
+    }
+
+    // Intent only: the decision was durable but the signature never was, so no signature
+    // for this vote can exist anywhere. Sign once, commit those bytes, and only then apply.
+    auto signature = sign_vote(stored.vote);
+    if (!signature.has_value()) {
+      co_return td::Unit{};
+    }
+    auto committed = co_await owning_bus()
+                         .publish<PersistOwnSignedVote>(stored.vote, stored.seqno, signature.value().clone())
+                         .wrap();
+    if (committed.is_error()) {
+      LOG(ERROR) << "consensus: the replayed signed vote for " << stored.vote << " was not committed ("
+                 << committed.error() << "); not applying it";
+      co_return td::Unit{};
+    }
+    apply_own_vote(stored.vote, std::move(signature.value()), /*tolerate_conflicts=*/true, /*broadcast=*/false);
     co_return td::Unit{};
   }
 
@@ -1078,6 +1189,9 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     return true;
   }
 
+  size_t votes_accepted_ = 0;
+  size_t votes_refused_bad_signature_ = 0;
+
   td::uint32 slots_per_leader_window_;
   NewConsensusConfig::NoncriticalParams params_;
 
@@ -1086,6 +1200,13 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   bool suppress_certificate_broadcast_ = true;
   bool is_started_ = false;
+  // Non-empty when the journal held a signed vote this node cannot verify as its own. It
+  // is a terminal condition for the group: casting a fresh vote would create a second
+  // signature for a vote that may already be in a peer's certificate.
+  std::string vote_journal_failure_;
+  // Set while more agreed certificates are waiting to be finalized than the resolver will
+  // hold. Producing more would add to a pile nothing is draining.
+  bool finality_behind_ = false;
   td::uint32 now_ = 0;
 
   std::set<td::uint32> skip_intervals_;

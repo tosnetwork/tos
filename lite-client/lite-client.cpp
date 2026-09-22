@@ -3985,7 +3985,7 @@ void TestNode::continue_check_validator_load4(std::unique_ptr<TestNode::Validato
 
     double expected_created_bc, prob_bc;
     if (use_exact_shard_share) {
-      expected_created_bc = (double)exact_shard_shares[validators[i].key.as_bits256()] / shard_vals;
+      expected_created_bc = (double)exact_shard_shares[validators[i].validator_id.value] / shard_vals;
       prob_bc = create_prob(created_bc, .9 * expected_created_bc);
     } else {
       expected_created_bc = mtc_shard_share[i] * (double)created_bc_sum / shard_vals;
@@ -4093,7 +4093,7 @@ void TestNode::load_validator_shard_shares_cont(std::shared_ptr<LoadValidatorSha
         auto val_set =
             block::ConfigInfo::do_compute_validator_set(*state->catchain_config, shard, state->validator_set, cc_seqno);
         for (const auto& val : val_set) {
-          result[val.key.as_bits256()] += blocks_count;
+          result[val.validator_id.value] += blocks_count;
         }
       };
 

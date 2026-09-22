@@ -22,9 +22,6 @@ test-reset
 0x89ABCDEF constant elect-id
 <b 0xCAFE 16 u, b> constant param-value
 <b 0xbc 8 u, 0x1234 16 u, b> constant complaint
-B{566f7465} 25 32 u>B B+ expire-at 32 u>B B+ 9 16 u>B B+ proposal-hash 256 u>B B+ constant legacy-config-vote-ext-request
-B{566f7445} 9 16 u>B B+ proposal-hash 256 u>B B+ constant legacy-config-vote-int-request
-B{56744350} 9 16 u>B B+ elect-id 32 u>B B+ complaint-hash 256 u>B B+ constant legacy-complaint-vote-request
 
 elect-time max-factor addr256 adnl-addr validator-elect-req>B
   B{654c5074} elect-time 32 u>B B+ max-factor 32 u>B B+ addr256 256 u>B B+ adnl-addr 256 u>B B+
@@ -39,41 +36,6 @@ query-id amount val-pubkey elect-time max-factor adnl-addr val-signature validat
   <b x{4e73744b} s, query-id 64 u, amount Tomi, val-pubkey B, elect-time 32 u, max-factor 32 u, adnl-addr 256 u,
     <b val-signature B, b> ref, b>
   "validator elect body with stake matches pre-extraction inline cell" test-cell-eq
-
-25 expire-at 9 proposal-hash config-vote-req-ext>B
-  legacy-config-vote-ext-request
-  "config vote ext request matches pre-extraction inline bytes" test-bytes-eq
-
-9 proposal-hash config-vote-req-int>B
-  legacy-config-vote-int-request
-  "config vote int request matches pre-extraction inline bytes" test-bytes-eq
-
-44 proposal-hash config-vote-query-id
-  44 32 << proposal-hash 32 1<< mod +
-  "config vote query id matches pre-extraction inline formula" test-eq
-
-query-id val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-int-body
-  <b x{566f7465} s, query-id 64 u, val-signature B,
-    legacy-config-vote-ext-request B, b>
-  "config vote int body matches pre-extraction inline cell" test-cell-eq
-
-Masterchain addr256 val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-ext-msg
-  <b val-signature B, 25 expire-at 9 proposal-hash config-vote-req-ext>B B, b>
-  <b b{1000100} s, Masterchain addr256 addr, 0 Tomi, 0 1 i, swap append-msg-body b>
-  "config vote ext msg matches pre-extraction inline cell" test-cell-eq
-
-9 elect-id complaint-hash complaint-vote-req>B
-  legacy-complaint-vote-request
-  "complaint vote request matches pre-extraction inline bytes" test-bytes-eq
-
-77 complaint-hash complaint-vote-query-id
-  77 32 << complaint-hash 32 1<< mod +
-  "complaint vote query id matches pre-extraction inline formula" test-eq
-
-query-id val-signature 9 elect-id complaint-hash complaint-vote-req>B complaint-vote-body
-  <b x{56744370} s, query-id 64 u, val-signature B,
-    legacy-complaint-vote-request B, b>
-  "complaint vote body matches pre-extraction inline cell" test-cell-eq
 
 55 param-idx proposal-query-id
   55 32 << param-idx +

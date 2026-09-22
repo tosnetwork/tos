@@ -28,7 +28,7 @@ class FullNodeCustomOverlay : public td::actor::Actor {
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed &query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query, std::size_t received_bytes);
   void process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query);
 
   void obtain_state_for_decompression(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query);

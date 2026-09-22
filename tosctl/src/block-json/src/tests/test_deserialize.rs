@@ -695,7 +695,7 @@ fn test_parse_block_proof_legacy_format_without_signature_type() {
             );
             assert_eq!(
                 sig.pure_signatures.weight(),
-                ethalon_proof.signatures.as_ref().unwrap().pure_signatures().weight()
+                ethalon_proof.signatures.as_ref().unwrap().pure_signatures().unwrap().weight()
             );
         }
         BlockSignaturesVariant::Simplex(_) => {

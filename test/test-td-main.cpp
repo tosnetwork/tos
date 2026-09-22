@@ -27,6 +27,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <cstring>
+#include <string>
 
 #include "td/utils/Time.h"
 #include "td/utils/misc.h"
@@ -40,6 +41,8 @@ int main(int argc, char **argv) {
   // TODO port OptionParser to Windows
   auto &runner = td::TestsRunner::get_default();
   runner.set_pretty_output(true);
+  std::string regression_path;
+  std::string regression_cache_dir;
   for (int i = 1; i < argc; i++) {
     if (!std::strcmp(argv[i], "--filter")) {
       CHECK(i + 1 < argc);
@@ -48,11 +51,18 @@ int main(int argc, char **argv) {
       runner.set_stress_flag(true);
     } else if (!std::strcmp(argv[i], "--regression")) {
       CHECK(i + 1 < argc);
-      runner.set_regression_tester(td::RegressionTester::create(argv[++i]));
+      regression_path = argv[++i];
+    } else if (!std::strcmp(argv[i], "--regression-cache")) {
+      CHECK(i + 1 < argc);
+      regression_cache_dir = argv[++i];
     } else if (!std::strcmp(argv[i], "--verbosity")) {
       CHECK(i + 1 < argc);
       SET_VERBOSITY_LEVEL(td::to_integer<td::int32>(td::Slice(argv[++i])));
     }
+  }
+  if (!regression_path.empty()) {
+    runner.set_regression_tester(
+        td::RegressionTester::create(std::move(regression_path), std::move(regression_cache_dir)));
   }
   runner.run_all();
   return runner.any_test_failed() ? 1 : 0;

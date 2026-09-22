@@ -26,14 +26,20 @@
 namespace block {
 using td::Ref;
 
-const tos::ValidatorDescr *ValidatorSet::get_validator(const tos::NodeIdShort &id) const {
+const tos::ValidatorDescr *ValidatorSet::get_validator(const tos::ValidatorId &id) const {
   auto it =
       std::lower_bound(ids_map_.begin(), ids_map_.end(), id, [](const auto &p, const auto &x) { return p.first < x; });
   return it < ids_map_.end() && it->first == id ? &ids_[it->second] : nullptr;
 }
 
-bool ValidatorSet::is_validator(tos::NodeIdShort id) const {
+bool ValidatorSet::is_validator(const tos::ValidatorId &id) const {
   return get_validator(id);
+}
+
+const tos::ValidatorDescr *ValidatorSet::get_validator_by_key_id(const tos::ConsensusKeyId &key_id) const {
+  auto it = std::lower_bound(key_id_map_.begin(), key_id_map_.end(), key_id,
+                             [](const auto &p, const auto &x) { return p.first < x; });
+  return it < key_id_map_.end() && it->first == key_id ? &ids_[it->second] : nullptr;
 }
 
 ValidatorSet::ValidatorSet(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from, std::vector<tos::ValidatorDescr> nodes)
@@ -41,6 +47,7 @@ ValidatorSet::ValidatorSet(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from, s
   total_weight_ = 0;
 
   ids_map_.reserve(ids_.size());
+  key_id_map_.reserve(ids_.size());
 
   for (std::size_t i = 0; i < ids_.size(); i++) {
     // Audit #8 (2026-04-26): defence-in-depth checked accumulation. The
@@ -49,12 +56,32 @@ ValidatorSet::ValidatorSet(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from, s
     // tooling) would otherwise inherit the original unchecked sum and
     // could re-introduce the UINT64_MAX/3 quorum-overflow risk.
     CHECK(tos::checked_add_validator_weight(total_weight_, ids_[i].weight));
-    ids_map_.emplace_back(tos::PublicKey{tos::pubkeys::Ed25519{ids_[i].key}}.compute_short_id().bits256_value(), i);
+    // A classical descriptor's identities are the one derived from its Ed25519 key, so
+    // existing sets keep exactly the membership they had. A post-quantum descriptor
+    // carries both identities explicitly, and they are different values.
+    // Decoding already settles both identities. This only covers descriptors built
+    // directly by tests and tooling, which would otherwise carry zero identities into
+    // the set commitment.
+    if (!ids_[i].is_pq() && ids_[i].validator_id.is_zero()) {
+      auto derived = tos::ValidatorId{
+          tos::PublicKey{tos::pubkeys::Ed25519{ids_[i].classical_key()}}.compute_short_id().bits256_value()};
+      ids_[i].validator_id = derived;
+      ids_[i].key_id = tos::ConsensusKeyId{derived.value};
+    }
+    ids_map_.emplace_back(ids_[i].validator_id, i);
+    key_id_map_.emplace_back(ids_[i].key_id, i);
   }
 
+  // Uniqueness is decided when a set is decoded, where a malformed one is refused
+  // rather than aborting. These remain as a last line for sets built directly by tests
+  // and tooling, which never pass through that path.
   std::sort(ids_map_.begin(), ids_map_.end());
   for (std::size_t i = 1; i < ids_map_.size(); i++) {
     CHECK(ids_map_[i - 1].first != ids_map_[i].first);
+  }
+  std::sort(key_id_map_.begin(), key_id_map_.end());
+  for (std::size_t i = 1; i < key_id_map_.size(); i++) {
+    CHECK(key_id_map_[i - 1].first != key_id_map_[i].first);
   }
 
   hash_ = compute_validator_set_hash(cc_seqno, from, ids_);

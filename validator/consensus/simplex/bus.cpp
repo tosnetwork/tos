@@ -28,6 +28,14 @@ std::string BroadcastVote::contents_to_string() const {
   return PSTRING() << "{vote=" << vote << "}";
 }
 
+std::string PersistOwnVoteIntent::contents_to_string() const {
+  return PSTRING() << "{vote=" << vote << "}";
+}
+
+std::string PersistOwnSignedVote::contents_to_string() const {
+  return PSTRING() << "{vote=" << vote << ", seqno=" << seqno << ", signature_size=" << signature.size() << "}";
+}
+
 std::string NotarizationObserved::contents_to_string() const {
   return PSTRING() << "{id=" << id << "}";
 }
@@ -52,12 +60,20 @@ std::string QuerySlotSkipped::contents_to_string() const {
   return PSTRING() << "{id=" << id << "}";
 }
 
+std::string QueryFinalizationState::contents_to_string() const {
+  return PSTRING() << "{slot=" << slot << "}";
+}
+
 std::string QueryResolverTrackedStateCount::contents_to_string() const {
   return PSTRING() << "{min_slot=" << min_slot << "}";
 }
 
-td::Result<SkippedSlotResolution> select_skipped_slot_resolution(
-    const CandidateId& requested, bool is_skipped, std::optional<CandidateId> notarized) {
+std::string QueryVoteIngress::contents_to_string() const {
+  return "{}";
+}
+
+td::Result<SkippedSlotResolution> select_skipped_slot_resolution(const CandidateId &requested, bool is_skipped,
+                                                                 std::optional<CandidateId> notarized) {
   if (!is_skipped) {
     return SkippedSlotResolution::ResolveCandidate;
   }
@@ -65,10 +81,9 @@ td::Result<SkippedSlotResolution> select_skipped_slot_resolution(
     return SkippedSlotResolution::UseAvailableBase;
   }
   if (*notarized != requested) {
-    return td::Status::Error(
-        ErrorCode::protoviolation,
-        PSTRING() << "Simplex state-resolver: requested candidate " << requested
-                  << " conflicts with notarized candidate " << *notarized << " in the same skipped slot");
+    return td::Status::Error(ErrorCode::protoviolation, PSTRING() << "Simplex state-resolver: requested candidate "
+                                                                  << requested << " conflicts with notarized candidate "
+                                                                  << *notarized << " in the same skipped slot");
   }
   return SkippedSlotResolution::ResolveCandidate;
 }

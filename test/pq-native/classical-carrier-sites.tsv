@@ -1,0 +1,74 @@
+# Every place that defines, constructs, serializes, parses or accepts a classical
+# finality carrier.
+#
+# The #11/#12 layouts remain deliberately byte-identical for historical fixtures,
+# offline tools and explicitly classical validator sets. As live production moves
+# away from them, the inventory has to be a thing that fails rather than a paragraph
+# someone remembers to update: adding a site, removing one, or converting one without
+# updating its disposition fails the check in both directions.
+#
+# Only Git-tracked inputs belong here. tl/generate/auto/** is generated into a
+# developer's source tree during a build and is absent from a clean checkout. Its
+# authoritative inputs, tl/generate/scheme/tos_api.tl and lite_api.tl, are listed
+# below; listing their derived C++ mirrors would add no independent coverage and
+# would make the gate depend on whether the checkout happened to be built already.
+#
+# status:
+#   definition   the class, factory, schema or codec itself
+#   historical   reachable only for historical fixtures, offline tools or explicitly
+#                classical validator sets, never from a post-quantum production path
+#   placeholder  an empty classical set used as a null object rather than evidence
+#   reachable    a live production path can still produce or accept it; the reason names
+#                the unit that owns its conversion
+#
+# file	marker	sites	status	why
+crypto/block/check-proof.cpp	*	1	historical	lite proof-chain verification; classical carriers are admitted only with an explicitly classical trusted set
+crypto/block/signature-set.cpp	*	34	definition	the C++ factories, #11/#12 codecs, checked node/lite adapters and guarded classical verifier
+crypto/block/signature-set.h	*	2	definition	the public classical verification boundary declarations
+lite-client/lite-client-common.cpp	*	1	reachable	the checked lite parser accepts classical history and PQ carriers; trusted carrier verification remains downstream
+sdk/js/packages/client/src/types.ts	*	2	reachable	the public client response model has only ordinary/simplex classical signature shapes; the API carrier unit owns it
+test/pq-native/pq-block-signature-conformance-test.cpp	*	1	historical	crypto conformance exercises the explicitly test-only carried-session verifier
+test/pq-native/pq-block-signature-no-legacy-test.cpp	*	11	historical	negative fixtures prove classical carriers are refused under a post-quantum set
+test/pq-native/pq-block-signature-test-common.h	*	1	historical	shared persisted-carrier fixture parser
+test/pq-native/pq-block-signature-vectors-test.cpp	*	2	historical	shared #13 structural vectors retain classical parser coverage for reject cases
+test/pq-native/pq-lite-forward-proof-test.cpp	carrier_io	1	historical	lite proof conformance serializes #13 through the production TL adapter
+test/pq-native/pq-lite-forward-proof-test.cpp	cpp_factory	1	historical	explicit empty #11 fixture proves the lite consumer rejects classical finality under a PQ validator set
+test/pq-native/pq-lite-forward-proof-test.cpp	raw_tag_write	1	historical	test-only synthetic block root uses the ordinary Block constructor tag, not a finality carrier tag
+test/pq-native/pq-network-parser-resource-test.cpp	cpp_fetch	1	historical	resource-gate fixture proves malformed PQ network carriers stop before crypto and decompression
+test/pq-native/pq-network-parser-resource-test.cpp	cpp_node_tl	1	historical	one explicitly classical pair pins the corrected 100-byte signature-volume accounting
+test/pq-native/pq-signature-persistence-test.cpp	carrier_io	2	historical	persistence and proof-consumer gate serializes #13 and uses classical carriers only as explicit rejection inputs
+test/pq-native/pq-signature-persistence-test.cpp	cpp_factory	1	historical	explicit empty #11 fixture proves proof consumers reject classical finality under a PQ validator set
+test/pq-native/pq-signature-persistence-test.cpp	cpp_fetch	3	historical	checked structural parsing for persisted #13 and explicit carrier-incompatibility coverage
+test/validator/consensus/test-consensus.cpp	*	8	historical	legacy full-finalization regression and explicit classical TL mutation coverage
+test/tostester/src/pytosiq_core/tl/schemas/lite_api.tl	*	2	definition	tostester mirror retains the classical variants alongside the generated PQ carrier
+test/tostester/src/pytosiq_core/tl/schemas/tos_api.tl	*	2	definition	tostester mirror retains the classical variants alongside the generated PQ carrier
+tl/generate/scheme/lite_api.tl	*	2	definition	canonical liteServer ordinary/simplex TL schema retained alongside simplexPq
+tl/generate/scheme/tos_api.tl	*	2	definition	canonical tosNode ordinary/simplex TL schema retained alongside simplexPq
+tosctl/src/block-json/src/deserialize.rs	*	4	historical	offline JSON decoder constructs explicit classical block-proof variants
+tosctl/src/block-json/src/serialize.rs	*	2	historical	offline JSON encoder reports explicit classical block-proof variants
+tosctl/src/block-json/src/tests/test_deserialize.rs	*	10	historical	JSON classical carrier fixtures
+tosctl/src/block-json/src/tests/test_serialize.rs	*	6	historical	JSON classical carrier fixtures
+tosctl/src/block/src/blocks.rs	*	13	historical	TopBlockDescr preserves #13 through its primary and PQ accessors; classical-only accessors now fail loudly on PQ
+tosctl/src/block/src/signature.rs	*	30	definition	the Rust #11/#12 codecs, variants and guarded classical verifier
+tosctl/src/block/src/tests/test_signature.rs	*	54	historical	Rust byte-layout and round-trip fixtures; classical sites remain historical while the PQ TopBlockDescr path is exercised explicitly
+tosctl/src/block/src/tests/test_validators.rs	*	1	historical	classical validator-signature verification fixture
+tosctl/src/tl/api/src/tos/dynamic.rs	*	4	definition	generated dynamic dispatch for node/lite classical TL variants
+tosctl/src/tl/api/src/tos/lite_server/mod.rs	*	14	definition	generated Rust enum and codec retains classical lite variants alongside simplexPq
+tosctl/src/tl/api/src/tos/lite_server/signature_set/signatureset.rs	*	4	definition	generated Rust classical lite signature-set records
+tosctl/src/tl/api/src/tos/tos_node/mod.rs	*	15	definition	generated Rust enum and codec retains classical node variants alongside simplexPq
+tosctl/src/tl/api/src/tos/tos_node/signature_set/signatureset.rs	*	4	definition	generated Rust classical node signature-set records
+tosctl/src/tl/api/tl/lite_api.tl	*	2	definition	Rust generator copy of the classical lite signature-set schema
+tosctl/src/tl/api/tl/tos_api.tl	*	2	definition	Rust generator copy of the classical node signature-set schema
+toslib/toslib/ToslibClient.cpp	*	3	reachable	the generated PQ node variant exists, but client conversion remains owned by the parser/API wiring unit
+validator-engine/json-rpc-server-parse.cpp	cpp_lite_tl	4	reachable	the public API still emits classical history, while a PQ lite carrier is explicitly refused rather than rendered as an empty classical set
+validator/db/rootdb.cpp	*	1	historical	persisted cell parser supports #13; #11/#12 remain for historical and explicitly classical databases
+validator/downloaders/wait-block-data.cpp	*	1	historical	generic persisted serializer carries #13 too; classical output is limited to explicitly classical sets
+validator/full-node-serializer.cpp	carrier_io	3	reachable	carrier_io sites at lines 51 and 191 serialize the selected classical or PQ variant; the new line 197 site is PQ-reachable and hashes that same canonical variant for the evidence-aware transport id
+validator/impl/accept-block.cpp	carrier_io	1	historical	generic persistence serialization can emit #13; classical output remains for explicitly classical sets
+validator/impl/accept-block.cpp	verify	2	historical	PQ acceptance uses the trusted-session boundary; these low-level calls remain only for explicitly classical sets
+validator/impl/check-proof.cpp	*	6	historical	proof parsing and verification bind #13 to trusted context; #11/#12 remain for classical history
+validator/impl/check-proof.hpp	*	1	historical	actor entry point for the proof verification path
+validator/impl/liteserver.cpp	*	3	historical	forward-proof generation emits #13 through tl_lite for PQ sets; classical output remains only for explicitly classical history
+validator/impl/top-shard-descr.cpp	*	3	historical	TopBlockDescr cell parsing supports #13 and verifies it through the trusted-session boundary
+validator/manager.cpp	verify	2	historical	verify sites at lines 629 and 631 run only after the explicit !is_pq branch and admit classical carriers only for an explicitly classical validator set
+validator/validate-broadcast.cpp	*	2	historical	broadcast verification has a separate trusted-context PQ branch; these calls are the classical branch

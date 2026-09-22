@@ -43,9 +43,12 @@ struct BlockBroadcast {
 struct BlockFinalityBroadcast {
   BlockIdExt block_id;
   td::Ref<block::BlockSignatureSet> sig_set;
+  // Exact size of the received boxed tosNode.blockFinalityBroadcast. Zero for
+  // locally originated evidence that did not traverse an overlay.
+  std::size_t received_bytes{0};
 
   BlockFinalityBroadcast clone() const {
-    return {block_id, sig_set};
+    return {block_id, sig_set, received_bytes};
   }
 };
 

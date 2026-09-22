@@ -27,6 +27,7 @@
 #include "td/utils/Time.h"
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
+#include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
@@ -51,7 +52,10 @@ class RegressionTesterImpl : public RegressionTester {
   }
 
   RegressionTesterImpl(string db_path, string db_cache_dir) : db_path_(db_path), db_cache_dir_(db_cache_dir) {
-    load_db(db_path).ignore();
+    load_db(db_path, tests_, true).ensure();
+    // The answer file is the shared resource, so every writer to the same path
+    // must derive the same lock regardless of where that caller keeps its cache.
+    db_lock_path_ = db_path_ + ".lock";
     if (db_cache_dir_.empty()) {
       db_cache_dir_ = PathView(db_path).without_extension().str() + ".cache/";
     }
@@ -92,11 +96,36 @@ class RegressionTesterImpl : public RegressionTester {
     SCOPE_EXIT {
       is_dirty_ = false;
     };
+    // The answer file is shared by several test binaries. Lock a stable sidecar
+    // (locking db_path_ itself would lock the old inode across rename), reload
+    // the newest record under that lock, and merge our additions before the
+    // atomic replace. A unique temporary file prevents stale or concurrent
+    // writers from sharing the old fixed `.new` pathname.
+    auto lock_file = FileFd::open(db_lock_path_, FileFd::Read | FileFd::Write | FileFd::Create).move_as_ok();
+    lock_file.lock(FileFd::LockFlags::Write, db_lock_path_, 6000).ensure();
+    SCOPE_EXIT {
+      lock_file.lock(FileFd::LockFlags::Unlock, db_lock_path_, 1).ensure();
+    };
+
+    std::map<string, TestInfo> latest;
+    load_db(db_path_, latest, true).ensure();
+    for (const auto &[name, info] : tests_) {
+      auto [it, inserted] = latest.emplace(name, info);
+      if (!inserted && it->second.result_hash != info.result_hash) {
+        Status::Error(PSLICE() << "Concurrent regression result disagrees for " << name).ensure();
+      }
+    }
+
     string buf(2000000, ' ');
     StringBuilder sb(buf);
-    save_db(sb);
-    string new_db_path = db_path_ + ".new";
-    write_file(new_db_path, sb.as_cslice()).ensure();
+    save_db(sb, latest);
+    auto db_parent_dir = PathView(db_path_).parent_dir_noslash().str();
+    auto [new_db, new_db_path] = mkstemp(db_parent_dir).move_as_ok();
+    SCOPE_EXIT {
+      unlink(new_db_path).ignore();
+    };
+    new_db.write_all(sb.as_cslice()).ensure();
+    new_db.close();
     rename(new_db_path, db_path_).ensure();
   }
 
@@ -104,19 +133,27 @@ class RegressionTesterImpl : public RegressionTester {
     return Slice("abce");
   }
 
-  void save_db(StringBuilder &sb) {
+  void save_db(StringBuilder &sb, const std::map<string, TestInfo> &tests) {
     sb << magic() << "\n";
-    for (auto it : tests_) {
+    for (const auto &it : tests) {
       sb << it.second;
     }
   }
 
-  Status load_db(CSlice path) {
-    TRY_RESULT(data, read_file(path));
+  Status load_db(CSlice path, std::map<string, TestInfo> &tests, bool missing_is_empty) {
+    auto data_result = read_file(path);
+    if (data_result.is_error()) {
+      auto error = data_result.move_as_error();
+      if (missing_is_empty && error.code() == ENOENT) {
+        return Status::OK();
+      }
+      return error.move_as_error_prefix(PSLICE() << "Can't read regression database " << path << ": ");
+    }
+    auto data = data_result.move_as_ok();
     ConstParser parser(data.as_slice());
     auto db_magic = parser.read_word();
     if (db_magic != magic()) {
-      return Status::Error(PSLICE() << "Wrong magic " << db_magic);
+      return Status::Error(PSLICE() << "Regression database " << path << " is corrupt: wrong magic " << db_magic);
     }
     while (true) {
       TestInfo info;
@@ -125,7 +162,7 @@ class RegressionTesterImpl : public RegressionTester {
         break;
       }
       info.result_hash = parser.read_word().str();
-      tests_[info.name] = info;
+      tests[info.name] = info;
     }
     return Status::OK();
   }
@@ -133,6 +170,7 @@ class RegressionTesterImpl : public RegressionTester {
  private:
   string db_path_;
   string db_cache_dir_;
+  string db_lock_path_;
   bool is_dirty_{false};
 
   std::map<string, TestInfo> tests_;

@@ -57,7 +57,7 @@ class RootDb : public Db {
   void get_block_proof_link(ConstBlockHandle handle, td::Promise<td::Ref<ProofLink>> promise) override;
 
   void store_block_candidate(BlockCandidate candidate, td::Promise<td::Unit> promise) override;
-  void get_block_candidate(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  void get_block_candidate(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                            td::Promise<BlockCandidate> promise) override;
   void get_block_candidate_by_block_id(BlockIdExt id, td::Promise<BlockCandidate> promise) override;
 

@@ -193,6 +193,10 @@ set(TLB_BLOCK_AUTO
 )
 
 set(BLOCK_SOURCE
+  block/validator-session-id.cpp
+  block/validator-session-members.cpp
+  block/pq-vote.cpp
+  pq/pq-bytes.cpp
   block/Binlog.h
   block/Binlog.cpp
   block/block.cpp
@@ -390,7 +394,10 @@ target_link_libraries(src_parser PUBLIC tos_crypto_core)
 add_library(tos_block STATIC ${BLOCK_SOURCE})
 target_include_directories(tos_block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/block> $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api)
+# Decoding a validator set settles a classical validator's identity from its key, so
+# the block library genuinely depends on the key library rather than hoping every
+# consumer happens to link it in the right order.
+target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api tos_pq_consensus keys)
 if (MINGW)
   # Resolve circular static linking between tos_block and tos_crypto on MinGW.
   target_link_libraries(tos_block PUBLIC tos_crypto)
@@ -526,7 +533,8 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     add_dependencies(gen_fif gen_fif_${ID})
   endfunction()
 
-  GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config)
+  GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
@@ -534,7 +542,10 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet)
   GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2)
-  GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code)
+  # The libraries it includes are part of what it compiles to. Without them here, editing
+  # one leaves this artifact stale and every test reads the previous version of the rule.
+  GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc)
   GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig)
   GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
   GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
@@ -545,7 +556,10 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      FUNC_BIN=$<TARGET_FILE:func>
+      FIFT_BIN=$<TARGET_FILE:fift>
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -562,7 +576,10 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      FUNC_BIN=$<TARGET_FILE:func>
+      FIFT_BIN=$<TARGET_FILE:fift>
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_CPP} tos-service-stablecoin-escrow-v1
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v1.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -580,7 +597,10 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      FUNC_BIN=$<TARGET_FILE:func>
+      FIFT_BIN=$<TARGET_FILE:fift>
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
     DEPENDS func fift smartcont/stdlib.fc
@@ -639,6 +659,22 @@ endif()
 if (WINGETOPT_FOUND)
   target_link_libraries_system(create-state wingetopt)
 endif()
+
+# The node's own vote producer, reachable from a command line so the bytes it makes can
+# be handed to the real contract and required to be counted. It signs a vote and nothing
+# else, and it holds no controller root.
+add_executable(tos-pq-vote pq/vote-tool.cpp)
+target_include_directories(tos-pq-vote PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(tos-pq-vote PUBLIC tos_crypto tos_pq_consensus_signer)
+
+# The operator's root-authorisation tool. It links the offline root library and no node
+# code, which is the boundary itself rather than a note about one: the only program in
+# this build that can sign a controller authorisation is the one an operator runs.
+add_executable(tos-pq-controller pq/controller-tool.cpp)
+target_include_directories(tos-pq-controller PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(tos-pq-controller PUBLIC tos_crypto tos_pq_controller_root)
 
 add_executable(dump-block block/dump-block.cpp)
 target_include_directories(dump-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

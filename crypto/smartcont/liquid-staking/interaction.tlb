@@ -37,6 +37,9 @@ update_validator_hash#f0fd2250 query_id:uint64 = InternalMsgBody;
 withdraw_validator#8efed779 query_id:uint64 amount:Coins = InternalMsgBody;
 validator_withdrawal#30026327 query_id:uint64 amount:Coins = InternalMsgBody;
 new_stake#e0505d0e query_id:uint64 value:Coins validator_pubkey:uint256 stake_at:uint32 max_factor:uint32 adnl_addr:uint256 signature:^(bits 512) = InternalMsgBody;
+// The account a stake travels through on its way to the elector. Sent by the validator
+// while the controller is at rest; until it arrives the controller has no stake it can make.
+set_validator_controller#5051736c query_id:uint64 validator_controller:MsgAddress = InternalMsgBody;
 return_available_funds#55c26cd5 query_id:uint64 = InternalMsgBody;
 
 send_request_loan#6335b11a query_id:uint64  min_loan:Coins max_loan:Coins max_interest:uint24 = InternalMsgBody;

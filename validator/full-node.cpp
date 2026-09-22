@@ -17,9 +17,9 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "block/validator-session-members.h"
 #include "common/delay.h"
 #include "impl/out-msg-queue-proof.hpp"
-#include "interfaces/validator-full-id.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/Random.h"
@@ -37,65 +37,31 @@ namespace fullnode {
 
 static const double INACTIVE_SHARD_TTL = (double)overlay::Overlays::overlay_peer_ttl() + 60.0;
 
-void FullNodeImpl::add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) {
-  if (local_keys_.count(key)) {
-    promise.set_value(td::Unit());
-    return;
-  }
-
-  local_keys_.insert(key);
-  for (auto &p : custom_overlays_) {
-    update_custom_overlay(p.second);
-  }
-
-  if (!sign_cert_by_.is_zero()) {
-    promise.set_value(td::Unit());
-    return;
-  }
-
-  for (auto &x : all_validators_) {
-    if (x == key) {
-      sign_cert_by_ = key;
-    }
-  }
-
+void FullNodeImpl::update_validator_transport_authority() {
+  sign_cert_by_ = select_validator_transport_signer(validator_transport_roots_, local_validator_adnl_ids_);
   for (auto &shard : shards_) {
     if (!shard.second.actor.empty()) {
-      td::actor::send_closure(shard.second.actor, &FullNodeShard::update_validators, all_validators_, sign_cert_by_);
+      td::actor::send_closure(shard.second.actor, &FullNodeShard::update_validators, validator_transport_roots_,
+                              sign_cert_by_);
     }
   }
-  promise.set_value(td::Unit());
 }
 
-void FullNodeImpl::del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) {
-  if (!local_keys_.count(key)) {
-    promise.set_value(td::Unit());
+void FullNodeImpl::add_validator_adnl_id(adnl::AdnlNodeIdShort id) {
+  if (!add_validator_adnl_reference(local_validator_adnl_ids_, id)) {
     return;
   }
-  local_keys_.erase(key);
+  update_validator_transport_authority();
+  update_private_overlays();
+}
+
+void FullNodeImpl::del_validator_adnl_id(adnl::AdnlNodeIdShort id) {
+  if (!del_validator_adnl_reference(local_validator_adnl_ids_, id)) {
+    return;
+  }
+  update_validator_transport_authority();
+  update_private_overlays();
   update_validator_telemetry_collector();
-  for (auto &p : custom_overlays_) {
-    update_custom_overlay(p.second);
-  }
-
-  if (sign_cert_by_ != key) {
-    promise.set_value(td::Unit());
-    return;
-  }
-  sign_cert_by_ = PublicKeyHash::zero();
-
-  for (auto &x : all_validators_) {
-    if (local_keys_.count(x)) {
-      sign_cert_by_ = x;
-    }
-  }
-
-  for (auto &shard : shards_) {
-    if (!shard.second.actor.empty()) {
-      td::actor::send_closure(shard.second.actor, &FullNodeShard::update_validators, all_validators_, sign_cert_by_);
-    }
-  }
-  promise.set_value(td::Unit());
 }
 
 void FullNodeImpl::add_collator_adnl_id(adnl::AdnlNodeIdShort id) {
@@ -274,11 +240,8 @@ void FullNodeImpl::on_new_masterchain_block(td::Ref<MasterchainState> state, std
   for (const auto &[adnl_id, _] : local_collator_nodes_) {
     my_adnl_ids.insert(adnl_id);
   }
-  for (auto key : local_keys_) {
-    auto it = current_validators_.find(key);
-    if (it != current_validators_.end()) {
-      my_adnl_ids.insert(it->second);
-    }
+  for (const auto &[id, _] : local_validator_adnl_ids_) {
+    my_adnl_ids.insert(id);
   }
   std::set<ShardIdFull> monitoring_shards;
   for (ShardIdFull shard : shards_to_monitor) {
@@ -303,8 +266,8 @@ void FullNodeImpl::update_shard_actor(ShardIdFull shard, bool active, bool enabl
         FullNodeShard::create(shard, info.local_id, adnl_id_, zero_state_file_hash_, opts_, limiter_, keyring_, adnl_,
                               rldp2_, quic_, overlays_, validator_manager_, client_, actor_id(this), active,
                               enable_plumtree_broadcast);
-    if (!all_validators_.empty()) {
-      td::actor::send_closure(info.actor, &FullNodeShard::update_validators, all_validators_, sign_cert_by_);
+    if (!validator_transport_roots_.empty()) {
+      td::actor::send_closure(info.actor, &FullNodeShard::update_validators, validator_transport_roots_, sign_cert_by_);
     }
   } else if (info.active != active || info.enable_plumtree_broadcast != enable_plumtree_broadcast) {
     td::actor::send_closure(info.actor, &FullNodeShard::set_params, active, enable_plumtree_broadcast);
@@ -580,45 +543,22 @@ td::actor::ActorId<FullNodeShard> FullNodeImpl::get_shard(AccountIdPrefixFull ds
 }
 
 void FullNodeImpl::got_key_block_config(td::Ref<ConfigHolder> config) {
-  PublicKeyHash l = PublicKeyHash::zero();
   std::vector<PublicKeyHash> keys;
-  std::map<PublicKeyHash, adnl::AdnlNodeIdShort> current_validators;
   for (td::int32 i = -1; i <= 1; i++) {
     auto r = config->get_total_validator_set(i < 0 ? i : 1 - i);
     if (r.not_null()) {
       auto vec = r->export_vector();
       for (auto &el : vec) {
-        auto key = ValidatorFullId{el.key}.compute_short_id();
+        auto key = validator_transport_root(el);
         keys.push_back(key);
-        if (local_keys_.count(key)) {
-          l = key;
-        }
-        if (i == 1) {
-          current_validators[key] = adnl::AdnlNodeIdShort{el.addr.is_zero() ? key.bits256_value() : el.addr};
-        }
       }
     }
   }
 
-  if (current_validators != current_validators_) {
-    current_validators_ = std::move(current_validators);
-    update_private_overlays();
-  }
-
-  // Let's turn off this optimization, since keyblocks are rare enough to update on each keyblock
-  // if (keys == all_validators_) {
-  //   return;
-  // }
-
-  all_validators_ = keys;
-  sign_cert_by_ = l;
-  CHECK(all_validators_.size() > 0);
-
-  for (auto &shard : shards_) {
-    if (!shard.second.actor.empty()) {
-      td::actor::send_closure(shard.second.actor, &FullNodeShard::update_validators, all_validators_, sign_cert_by_);
-    }
-  }
+  validator_transport_roots_ = canonical_validator_transport_roots(std::move(keys));
+  CHECK(!validator_transport_roots_.empty());
+  update_validator_transport_authority();
+  update_private_overlays();
 }
 
 void FullNodeImpl::new_key_block(BlockHandle handle) {
@@ -666,8 +606,8 @@ void FullNodeImpl::process_block_broadcast(BlockBroadcast broadcast, bool signat
                           });
 }
 
-void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
-                                                    bool send_to_custom) {
+void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast finality, PublicKeyHash source_peer,
+                                                    BroadcastSource source, bool send_to_custom) {
   if (finality.sig_set.is_null()) {
     VLOG(FULL_NODE_WARNING) << "dropping block finality broadcast without signatures";
     return;
@@ -679,7 +619,7 @@ void FullNodeImpl::process_block_finality_broadcast(BlockFinalityBroadcast final
   // being silently discarded by Task::detach().  Broadcast ingress is
   // best-effort, but an unavailable manager must remain observable.
   std::move(td::actor::ask(validator_manager_, &ValidatorManagerInterface::new_block_finality_broadcast,
-                           std::move(finality), source))
+                           std::move(finality), source, td::optional<PublicKeyHash>(source_peer)))
       .detach("full-node finality broadcast");
 }
 
@@ -832,7 +772,7 @@ void FullNodeImpl::update_private_overlays() {
   }
 
   update_validator_telemetry_collector();
-  if (local_keys_.empty()) {
+  if (local_validator_adnl_ids_.empty()) {
     return;
   }
 }
@@ -856,11 +796,8 @@ void FullNodeImpl::update_custom_overlay(CustomOverlayInfo &overlay) {
     }
   };
   try_local_id(adnl_id_);
-  for (const PublicKeyHash &local_key : local_keys_) {
-    auto it = current_validators_.find(local_key);
-    if (it != current_validators_.end()) {
-      try_local_id(it->second);
-    }
+  for (const auto &[local_id, _] : local_validator_adnl_ids_) {
+    try_local_id(local_id);
   }
 }
 

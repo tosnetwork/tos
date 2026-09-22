@@ -4,11 +4,12 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <limits>
+
 #include "auto/tl/tos_api.hpp"
+#include "crypto/pq/mldsa44.h"
 #include "keys/encryptor.h"
 #include "td/utils/overloaded.h"
-
-#include <limits>
 
 #include "bus.h"
 #include "checksum.h"
@@ -27,17 +28,18 @@ td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidatorId& 
 bool PeerValidator::check_signature(ValidatorSessionId session, td::Slice data, td::Slice signature) const {
   auto signed_data = create_serialize_tl_object<tl::dataToSign>(session, td::BufferSlice(data));
   TD_PERF_COUNTER(check_signature_consensus);
-  // A malformed validator public key must fail the signature check, not abort
-  // the process: treat encryptor-construction failure as an invalid signature.
-  auto enc = key.create_encryptor();
-  if (enc.is_error()) {
-    return false;
-  }
-  return enc.move_as_ok()->check_signature(signed_data, signature).is_ok();
+  // The post-quantum consensus key the set records for this validator verifies its Simplex
+  // messages, under the frozen simplex_sign_context and no other. verify_mldsa44 applies the
+  // context itself, and fails closed on a malformed key, wrong length or bad signature, so a
+  // key of the wrong shape is an invalid signature, not a crash.
+  const auto msg = signed_data.as_slice();
+  return tos::pq::verify_mldsa44(std::string_view(msg.data(), msg.size()), tos::pq::simplex_sign_context,
+                                 std::string_view(signature.data(), signature.size()),
+                                 consensus_key.public_key) == tos::pq::VerifyResult::valid;
 }
 
 td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidator& peer_validator) {
-  return stream << peer_validator.idx << " at " << peer_validator.short_id;
+  return stream << peer_validator.idx << " at " << peer_validator.transport_key_id;
 }
 
 CandidateId CandidateId::from_tl(const tl::CandidateIdRef& tl_parent) {
@@ -156,13 +158,12 @@ td::Result<CandidateRef> Candidate::deserialize(td::Slice data, const Bus& bus, 
     auto slot = static_cast<td::uint32>(block_broadcast.slot_);
     TRY_STATUS(set_check_leader(slot));
 
-    const td::uint64 max_candidate_payload = static_cast<td::uint64>(bus.config.max_block_size) +
-                                             bus.config.max_collated_data_size + 1024;
+    const td::uint64 max_candidate_payload =
+        static_cast<td::uint64>(bus.config.max_block_size) + bus.config.max_collated_data_size + 1024;
     if (max_candidate_payload > static_cast<td::uint64>(std::numeric_limits<int>::max())) {
       return td::Status::Error("configured candidate payload limit exceeds the codec range");
     }
-    TRY_RESULT(candidate,
-               deserialize_payload(block_broadcast.candidate_, static_cast<int>(max_candidate_payload)));
+    TRY_RESULT(candidate, deserialize_payload(block_broadcast.candidate_, static_cast<int>(max_candidate_payload)));
 
     if (!candidate->src_.is_zero()) {
       return td::Status::Error("src field of the candidate broadcast must be null");
@@ -182,7 +183,11 @@ td::Result<CandidateRef> Candidate::deserialize(td::Slice data, const Bus& bus, 
 
     auto collated_file_hash = td::sha256_bits256(candidate->collated_data_.as_slice());
 
-    Ed25519_PublicKey creator{leader.key.ed25519_value().raw()};
+    // The producer is the leader's own identity, taken from the validator set rather
+    // than derived again here. Deriving it from the key would produce a different 32
+    // bytes than the identity the producer wrote into the block header, and every
+    // candidate would then be rejected for a creator mismatch.
+    const ValidatorId& creator = leader.validator_id;
 
     BlockCandidate block{
         creator, block_id, collated_file_hash, std::move(candidate->data_), std::move(candidate->collated_data_),
@@ -239,8 +244,7 @@ td::BufferSlice Candidate::serialize() const {
         candidate.collated_data.clone());
 
     return create_serialize_tl_object<tl::block>(id.slot, CandidateId::parent_id_to_tl(parent_id),
-                                                 serialize_payload(candidate_tl).move_as_ok(),
-                                                 signature.clone());
+                                                 serialize_payload(candidate_tl).move_as_ok(), signature.clone());
   };
   return std::visit(td::overloaded(empty_fn, block_fn), block);
 }

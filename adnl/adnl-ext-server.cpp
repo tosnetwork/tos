@@ -186,18 +186,53 @@ void AdnlExtServerImpl::add_tcp_port(td::uint16 port) {
   class Callback : public td::TcpListener::Callback {
    private:
     td::actor::ActorId<AdnlExtServerImpl> id_;
+    td::uint16 port_;
 
    public:
-    Callback(td::actor::ActorId<AdnlExtServerImpl> id) : id_(id) {
+    Callback(td::actor::ActorId<AdnlExtServerImpl> id, td::uint16 port) : id_(id), port_(port) {
     }
     void accept(td::SocketFd fd) override {
       td::actor::send_closure(id_, &AdnlExtServerImpl::accepted, std::move(fd));
     }
+    void on_listening(td::Status status) override {
+      td::actor::send_closure(id_, &AdnlExtServerImpl::tcp_port_listening, port_, std::move(status));
+    }
   };
 
-  auto act = td::actor::create_actor<td::TcpInfiniteListener>(
-      td::actor::ActorOptions().with_name("listener").with_poll(), port, std::make_unique<Callback>(actor_id(this)));
+  auto act =
+      td::actor::create_actor<td::TcpInfiniteListener>(td::actor::ActorOptions().with_name("listener").with_poll(),
+                                                       port, std::make_unique<Callback>(actor_id(this), port));
   listeners_.emplace(port, std::move(act));
+}
+
+void AdnlExtServerImpl::wait_listening(td::Promise<td::Unit> promise) {
+  if (listening_status_.is_error()) {
+    promise.set_error(listening_status_.clone());
+  } else if (initial_ports_pending_.empty()) {
+    promise.set_value(td::Unit());
+  } else {
+    listening_waiters_.push_back(std::move(promise));
+  }
+}
+
+void AdnlExtServerImpl::tcp_port_listening(td::uint16 port, td::Status status) {
+  if (initial_ports_pending_.erase(port) == 0) {
+    return;
+  }
+  if (status.is_error() && listening_status_.is_ok()) {
+    listening_status_ = std::move(status);
+  }
+  if (!initial_ports_pending_.empty()) {
+    return;
+  }
+  for (auto &waiter : listening_waiters_) {
+    if (listening_status_.is_error()) {
+      waiter.set_error(listening_status_.clone());
+    } else {
+      waiter.set_value(td::Unit());
+    }
+  }
+  listening_waiters_.clear();
 }
 
 void AdnlExtServerImpl::add_local_id(AdnlNodeIdShort id) {

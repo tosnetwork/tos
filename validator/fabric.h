@@ -34,7 +34,7 @@ struct CollateParams {
   BlockIdExt min_masterchain_block_id;
   std::vector<BlockIdExt> prev;
   bool is_hardfork = false;
-  Ed25519_PublicKey creator{td::Bits256::zero()};
+  ValidatorId creator{td::Bits256::zero()};
   td::Ref<block::ValidatorSet> validator_set = {};
   td::Ref<CollatorOptions> collator_opts = {};
   adnl::AdnlNodeIdShort collator_node_id = adnl::AdnlNodeIdShort::zero();
@@ -89,8 +89,9 @@ td::Result<std::vector<td::Ref<ShardTopBlockDescription>>> create_new_shard_bloc
 
 void run_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                             td::Ref<block::ValidatorSet> validator_set, td::Ref<block::BlockSignatureSet> signatures,
-                            int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
-                            bool apply, td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
+                            ValidatorSessionId expected_session_id, int block_broadcast_mode,
+                            int finality_broadcast_mode, bool send_shard_block_desc, bool apply,
+                            td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
 void run_fake_accept_block_query(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                                  td::Ref<block::ValidatorSet> validator_set,
                                  td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);

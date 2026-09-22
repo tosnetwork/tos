@@ -58,6 +58,14 @@ jobs:
     - name: Check out repository
       uses: actions/checkout@v7
 
+    # test-quorum-static-grep is part of the full CTest registry and fails
+    # closed when its search tool is absent. Keep that dependency explicit
+    # rather than relying on the contents of the pre-built builder image.
+    - name: Install source-guard search tool
+      run: |
+        apt-get update
+        apt-get install -y ripgrep
+
     - name: Date Stamp
       id: date-stamp
       run: |
@@ -110,10 +118,17 @@ jobs:
         # multi-node artifacts; they must not be invoked implicitly.
         integration_tests=(
           test/integration/test_basic.py
+          test/integration/test_manager_session_identity.py
         )
         for script in "${integration_tests[@]}"; do
           echo "$script"
-          uv run python "$script"
+          if [ "$script" = "test/integration/test_manager_session_identity.py" ]; then
+            uv run python "$script" \
+              --build-dir build \
+              --artifact-dir "build/manager-session-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          else
+            uv run python "$script"
+          fi
         done
         uv run python test/integration/test_simplex2_release.py --help
 

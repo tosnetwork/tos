@@ -56,3 +56,9 @@ const int error::credit_interest_too_high = 0xfa05;
 
 const int error::no_credit = 0xfb00;
 const int error::too_early_loan_return = 0xfb01;
+
+;; No Validator Controller has been named, so there is nowhere for a stake to go.
+const int error::no_validator_controller = 0xfc00;
+;; A Validator Controller may only be named while no stake is out, or an answer would
+;; arrive from an account this contract no longer recognises.
+const int error::validator_controller_in_use = 0xfc01;

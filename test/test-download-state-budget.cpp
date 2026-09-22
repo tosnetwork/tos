@@ -3130,6 +3130,7 @@ struct StreamingImporterRun {
   td::uint64 boc_size_bytes{0};
   td::uint64 cells_imported{0};
   td::uint64 peak_buffer_mem_delta_bytes{0};
+  vm::StreamingBocImportStats work;
   double import_seconds{0.0};
 };
 
@@ -3167,6 +3168,8 @@ StreamingImporterRun run_streaming_importer_at_size(const std::string &dir_root,
   auto fd = td::FileFd::open(synth.path, td::FileFd::Flags::Read).move_as_ok();
   vm::StreamingBocImportOptions opts;
   opts.max_resident_bytes = 256ULL << 20;
+  vm::StreamingBocImportStats work;
+  opts.stats = &work;
 
   td::Timer import_t;
   auto r_root = vm::std_boc_deserialize_from_file_bounded(fd, synth.size,
@@ -3190,6 +3193,7 @@ StreamingImporterRun run_streaming_importer_at_size(const std::string &dir_root,
       peak_during_import > buffer_mem_baseline
           ? peak_during_import - buffer_mem_baseline
           : 0;
+  out.work = work;
   out.import_seconds = elapsed;
   return out;
 }
@@ -3236,17 +3240,25 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
   bool full_gib = (full_gib_flag != nullptr && full_gib_flag[0] != '\0' &&
                    full_gib_flag[0] != '0');
 
-  // Two-point wall-time measurement (32 MiB and 64 MiB). Both runs use
-  // the same leaf payload and the same StreamingBocImportOptions so the
-  // only differences are the input size and the cell count. After the
-  // direction-aware-reader fix the cell-build loop's pread cost scales
-  // as O(file_size / chunk_bytes) rather than O(cell_count), so the 64
-  // MiB run should NOT be more than ~3x slower than the 32 MiB run.
-  // Under the legacy forward-only cache the ratio was ~2.1x (58 s for
-  // 32 MiB / 121 s for 64 MiB on the L2 reference host) which was
-  // already at the limit; the fix drops both numbers by an order of
-  // magnitude AND tightens the ratio.
+  // Two-point measurement (32 MiB and 64 MiB). Both runs use the same
+  // leaf payload and StreamingBocImportOptions, so the only differences
+  // are input size and cell count. The gate below counts production file
+  // reads rather than comparing two sub-second wall times: unrelated host
+  // load changes elapsed ratios, but cannot change how many cache refills
+  // the importer performs.
   td::rmrf(tmp_dir).ignore();
+  auto max_linear_reads = [](td::uint64 bytes) { return 4 * ((bytes + (4 * kMiB - 1)) / (4 * kMiB)) + 16; };
+  // Small focused control reaches the same importer guard before the
+  // larger residency measurements. It keeps the guard-removal mutation
+  // cheap while the 32/64 MiB runs below retain their production-scale
+  // memory evidence.
+  auto run_8 = run_streaming_importer_at_size(tmp_dir, 8ULL * kMiB, kLeafPayloadBytes, "synth-density-8m.boc");
+  if (run_8.work.file_read_calls > max_linear_reads(run_8.boc_size_bytes)) {
+    std::fprintf(stderr, "STREAMING_IMPORT_WORK_FAILURE: 8 MiB import used %llu file reads, bound=%llu\n",
+                 static_cast<unsigned long long>(run_8.work.file_read_calls),
+                 static_cast<unsigned long long>(max_linear_reads(run_8.boc_size_bytes)));
+    std::exit(1);
+  }
   auto run_32 = run_streaming_importer_at_size(
       tmp_dir, 32ULL * kMiB, kLeafPayloadBytes, "synth-density-32m.boc");
   std::printf("  [32 MiB] cells=%llu peak_delta=%llu MiB import=%.3fs\n",
@@ -3254,6 +3266,12 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
               static_cast<unsigned long long>(run_32.peak_buffer_mem_delta_bytes / kMiB),
               run_32.import_seconds);
   std::fflush(stdout);
+  if (run_32.work.file_read_calls > max_linear_reads(run_32.boc_size_bytes)) {
+    std::fprintf(stderr, "STREAMING_IMPORT_WORK_FAILURE: 32 MiB import used %llu file reads, bound=%llu\n",
+                 static_cast<unsigned long long>(run_32.work.file_read_calls),
+                 static_cast<unsigned long long>(max_linear_reads(run_32.boc_size_bytes)));
+    std::exit(1);
+  }
 
   auto run_64 = run_streaming_importer_at_size(
       tmp_dir, 64ULL * kMiB, kLeafPayloadBytes, "synth-density-64m.boc");
@@ -3262,6 +3280,12 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
               static_cast<unsigned long long>(run_64.peak_buffer_mem_delta_bytes / kMiB),
               run_64.import_seconds);
   std::fflush(stdout);
+  if (run_64.work.file_read_calls > max_linear_reads(run_64.boc_size_bytes)) {
+    std::fprintf(stderr, "STREAMING_IMPORT_WORK_FAILURE: 64 MiB import used %llu file reads, bound=%llu\n",
+                 static_cast<unsigned long long>(run_64.work.file_read_calls),
+                 static_cast<unsigned long long>(max_linear_reads(run_64.boc_size_bytes)));
+    std::exit(1);
+  }
 
   // Optional BEFORE/AFTER comparison. Reference numbers are the L2
   // agent's measurements on the legacy forward-only chunk cache (commit
@@ -3289,24 +3313,17 @@ void test_l2_streaming_importer_1gib_resident_peak_at_realistic_density() {
     std::fflush(stdout);
   }
 
-  // Wall-time-growth invariant. Cell density is identical between the
-  // two runs, so the cell-build loop visits ~2x as many cells when the
-  // input doubles. Under a thrashing cache the cost per cell is also
-  // higher at 64 MiB (more cells means a longer parent-walk decay
-  // window between consecutive backward reads) so the wall-time ratio
-  // can balloon to ~2.1x even with linear input growth. Under the
-  // direction-aware cache, cost per cell is O(1) regardless of size,
-  // so the ratio should land near 2x. The 3x cap leaves headroom for
-  // ordinary noise (build-tree cost, kernel page-cache state, fs jitter)
-  // while still failing closed if the fix regresses.
-  EXPECT_TRUE(run_32.import_seconds > 0.0);
-  EXPECT_TRUE(run_64.import_seconds > 0.0);
-  if (run_32.import_seconds > 0.0) {
-    double ratio = run_64.import_seconds / run_32.import_seconds;
-    std::printf("  wall-time ratio 64MiB/32MiB = %.2fx (cap = 3.0x)\n", ratio);
-    std::fflush(stdout);
-    EXPECT_TRUE(ratio <= 3.0);
-  }
+  // Deterministic work invariant. Each importer pass may refill the 4 MiB
+  // reader once per chunk, plus a small fixed number of boundary reads. A
+  // forward-anchored reader used by the backward cell-build pass instead
+  // performs approximately one pread per cell and exceeds this bound by
+  // orders of magnitude. This pins the direction-aware production guard
+  // without depending on machine speed or neighbouring jobs.
+  std::printf("  deterministic file reads: 32MiB=%llu 64MiB=%llu (bounds %llu/%llu)\n",
+              static_cast<unsigned long long>(run_32.work.file_read_calls),
+              static_cast<unsigned long long>(run_64.work.file_read_calls),
+              static_cast<unsigned long long>(max_linear_reads(run_32.boc_size_bytes)),
+              static_cast<unsigned long long>(max_linear_reads(run_64.boc_size_bytes)));
 
   // Pick the larger of the two measurements as the K1-verdict input.
   // The 64 MiB run dominates the residency window so it's the tighter

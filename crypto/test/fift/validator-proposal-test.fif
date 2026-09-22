@@ -43,41 +43,6 @@ query-id amount val-pubkey elect-time max-factor adnl-addr val-signature validat
     <b val-signature B, b> ref, b>
   "validator elect body with stake" test-cell-eq
 
-25 expire-at 9 proposal-hash config-vote-req-ext>B
-  B{566F7465000000191234567800090000000000000000000000000000000000000000000000000000000010203040}
-  "config vote ext request bytes" test-bytes-eq
-
-9 proposal-hash config-vote-req-int>B
-  B{566F744500090000000000000000000000000000000000000000000000000000000010203040}
-  "config vote int request bytes" test-bytes-eq
-
-44 proposal-hash config-vote-query-id
-  44 32 << proposal-hash 32 1<< mod +
-  "config vote query id" test-eq
-
-query-id val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-int-body
-  <b x{566f7465} s, query-id 64 u, val-signature B,
-    25 expire-at 9 proposal-hash config-vote-req-ext>B B, b>
-  "config vote int body" test-cell-eq
-
-Masterchain src-addr val-signature 25 expire-at 9 proposal-hash config-vote-req-ext>B config-vote-ext-msg
-  <b val-signature B, 25 expire-at 9 proposal-hash config-vote-req-ext>B B, b>
-  <b b{1000100} s, Masterchain src-addr addr, 0 Tomi, 0 1 i, swap append-msg-body b>
-  "config vote ext msg" test-cell-eq
-
-9 0x89ABCDEF complaint-hash complaint-vote-req>B
-  B{56744350000989ABCDEF0000000000000000000000000000000000000000000000000000000020304050}
-  "complaint vote request bytes" test-bytes-eq
-
-77 complaint-hash complaint-vote-query-id
-  77 32 << complaint-hash 32 1<< mod +
-  "complaint vote query id" test-eq
-
-query-id val-signature 9 0x89ABCDEF complaint-hash complaint-vote-req>B complaint-vote-body
-  <b x{56744370} s, query-id 64 u, val-signature B,
-    9 0x89ABCDEF complaint-hash complaint-vote-req>B B, b>
-  "complaint vote body" test-cell-eq
-
 55 param-idx proposal-query-id
   55 32 << param-idx +
   "proposal query id" test-eq
@@ -121,8 +86,5 @@ loaded-hash complaint hash "load validator complaint hash" test-eq
 "wallet-v3-code.fif" load-upgrade-code-param-value
 <b "wallet-v3-code.fif" include dup <s 12 u@ 0xFF0 <> abort"not valid smart contract code" ref, b>
   "load upgrade code param value" test-cell-eq
-
-10 1000 normalize-vote-expire-at 1000 > "normalize relative expire-at" test-assert
-0x90000000 1000 normalize-vote-expire-at 0x90000000 "preserve absolute expire-at" test-eq
 
 test-summary

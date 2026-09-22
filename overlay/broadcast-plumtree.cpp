@@ -51,6 +51,16 @@ namespace tos {
 
 namespace overlay {
 
+td::Status check_plumtree_payload_size(std::size_t size, std::size_t maximum) {
+  if (size == 0) {
+    return td::Status::Error(ErrorCode::protoviolation, "empty Plumtree payload");
+  }
+  if (size > maximum) {
+    return td::Status::Error(ErrorCode::protoviolation, "Plumtree payload exceeds admission limit");
+  }
+  return td::Status::OK();
+}
+
 constexpr int VERBOSITY_NAME(PLUMTREE_WARNING) = verbosity_WARNING;
 constexpr int VERBOSITY_NAME(PLUMTREE_INFO) = verbosity_DEBUG;
 
@@ -1226,7 +1236,7 @@ void BroadcastsPlumtree::Impl::forward_payload(OverlayImpl *overlay, const td::B
 
 void BroadcastsPlumtree::Impl::send_fec(OverlayImpl *overlay, PublicKeyHash send_as, td::uint32 flags,
                                         td::BufferSlice data) {
-  if (data.empty() || data.size() > Overlays::max_fec_broadcast_size()) {
+  if (check_plumtree_payload_size(data.size()).is_error()) {
     VLOG(PLUMTREE_WARNING) << overlay << ": invalid Plumtree FEC payload size " << data.size();
     return;
   }
@@ -1271,7 +1281,7 @@ void BroadcastsPlumtree::Impl::send(OverlayImpl *overlay, PublicKeyHash send_as,
     VLOG(PLUMTREE_WARNING) << overlay << ": empty Plumtree simple broadcast id";
     return;
   }
-  if (data.empty() || data.size() > Overlays::max_fec_broadcast_size()) {
+  if (check_plumtree_payload_size(data.size()).is_error()) {
     VLOG(PLUMTREE_WARNING) << overlay << ": invalid Plumtree simple payload size " << data.size();
     return;
   }
@@ -1468,8 +1478,8 @@ void BroadcastsPlumtree::Impl::signed_simple(OverlayImpl *overlay, PlumtreeOutbo
     VLOG(PLUMTREE_WARNING) << overlay << ": empty Plumtree simple broadcast id";
     return;
   }
-  if (payload.data.empty() || payload.data.size() > Overlays::max_fec_broadcast_size() ||
-      payload.data_size != payload.data.size() || td::sha256_bits256(payload.data.as_slice()) != payload.data_hash) {
+  if (check_plumtree_payload_size(payload.data.size()).is_error() || payload.data_size != payload.data.size() ||
+      td::sha256_bits256(payload.data.as_slice()) != payload.data_hash) {
     VLOG(PLUMTREE_WARNING) << overlay << ": Plumtree signed simple payload has invalid data size";
     return;
   }
@@ -1679,9 +1689,7 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_simple_payload(
     co_return td::Status::Error(ErrorCode::protoviolation, "empty Plumtree simple broadcast id");
   }
   CO_TRY(validate_control_fields(broadcast_id, part_index, tree_index));
-  if (msg->data_.empty() || msg->data_.size() > Overlays::max_fec_broadcast_size()) {
-    co_return td::Status::Error(ErrorCode::protoviolation, "invalid Plumtree simple payload size");
-  }
+  CO_TRY(check_plumtree_payload_size(msg->data_.size()));
   auto data_size = static_cast<td::uint32>(msg->data_.size());
   if (is_original_sender_) {
     if (auto *s = slot(tree_index)) {

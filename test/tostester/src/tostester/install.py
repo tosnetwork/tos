@@ -43,6 +43,10 @@ class Install:
         return self.build_dir / "validator-engine/validator-engine"
 
     @property
+    def pq_consensus_key_exe(self):
+        return self.build_dir / "crypto/pq/tos-pq-consensus-key"
+
+    @property
     def dht_server_exe(self):
         return self.build_dir / "dht-server/dht-server"
 

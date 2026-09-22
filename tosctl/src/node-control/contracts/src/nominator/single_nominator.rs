@@ -16,8 +16,12 @@ use chain_block::{
 use std::sync::Arc;
 
 /// Code for single-nominator contract v1.1
-/// Compiled from TOS-adapted FunC source using TOS FunC compiler (2026-04-13)
-const CODE_V1_1: &'static str = "b5ee9c7241020d010001f0000114ff00f4a413f4bcf2c80b01020162020302bcd0ed44d0fa40fa40d122c700925f06e003d0d3030171b0925f06e0fa403002d31f7022c000228b1778c705b022d74ac000b08e136c21830bc85376a182103b9aca00a1fa02c9d09430d33f12e25343c7059133e30d5235c705925f06e30d04050201200b0c01c421830bba8ea0fa005387a182103b9aca00a112b60881200421c200f2f452406d80188040db3cde21811001ba9efa405044c858cf1601cf16c9ed549133e220817702ba9802d307d402fb0002de2082009903ba9d02d4812002226ef2f201fb0402de0904f22382104e73744bba8fe102fa4430f828fa443081200302c0ff12f2f4830c01c0fff2f481200122f2f481200524821047868c00bef2f4fa0020db3c300581200405a182103b9aca00a15210bb14f2f4db3c82104e73744bc8cb1f5220cb3f5005cf16c9443080188040db3c9410356c41e201821047657424ba06080907001cd3ff31d31fd31f31d3ff31d431d102368f16821047657424c8cb1fcb3fc9db3c705880188040db3c9130e20809011671f833d0d70bff7f01db3c0a0048226eb32091719170e203c8cb055006cf165004fa02cb6a039358cc019130e201c901fb00001674c8cb0212ca07cbffc9d00027bdf8cb938b82a38002a380036b6aa39152988b6c0015bfe5076a2687d207d2068ceee1c973";
+///
+/// Compiled from crypto/smartcont/single-nominator-pool/single-nominator-code.fc against
+/// crypto/smartcont/stdlib.fc, which is what the sandbox suite runs. A change to that
+/// source that is not carried here deploys a different contract than the one the tests
+/// exercise, and the address below would be derived from code nobody ran.
+const CODE_V1_1: &'static str = "b5ee9c7241020d010001fb000114ff00f4a413f4bcf2c80b01020162020302c0d0ed44d0fa40fa40fa40d123c700925f07e004d0d3030171b0925f07e0fa403003d31f7022c000228b1778c705b022d74ac000b08e136c21830bc85387a182103b9aca00a1fa02c9d09430d33f12e25354c7059134e30d5243c705925f07e30d04050201200b0c01d021830bba8ea0fa005398a182103b9aca00a112b60881200421c200f2f452506d80188040db3cde21811001ba8e13fa40541557c85003cf1601cf1601cf16c9ed549134e220817702ba9803d307d402fb0003de2082009903ba9d03d4812002226ef2f201fb0403de0903f62182104e73744bba8f6003fa4430f828fa443081200302c0ff12f2f4830c01c0fff2f481200123f2f481200525821047868c00bef2f401fa0020db3c300681200406a182103b9aca00a15210bb15f2f482105051726cc8cb1f5220cb3f5005cf16c91380188040db3c019450565f05e2821047657424ba9130e30d0609070026d31fd31f31d3ff31d30f31d431d431f40431d1022c821047657424c8cb1fcb3fc9db3c705880188040db3c0809011671f833d0d70bff7f01db3c0a0048226eb32091719170e203c8cb055006cf165004fa02cb6a039358cc019130e201c901fb00001674c8cb0212ca07cbffc9d00027bdf8cb938b82a38002a380036b6aa39152988b6c0019bfe5076a2687d207d207d2068cec5ebf4e";
 pub const NOMINATOR_POOL_WORKCHAIN: i32 = -1;
 /// Implementation of the single-nominator contract wrapper
 ///
@@ -37,10 +41,17 @@ impl NominatorWrapperImpl {
         provider: Arc<dyn ContractProvider>,
         owner_address: &MsgAddressInt,
         validator_address: &MsgAddressInt,
+        controller_address: &MsgAddressInt,
         workchain: i32,
     ) -> anyhow::Result<Self> {
-        let state_init = Some(Self::build_state_init(owner_address, validator_address)?);
-        let nominator_addr = Self::calculate_address(workchain, owner_address, validator_address)?;
+        let state_init =
+            Some(Self::build_state_init(owner_address, validator_address, controller_address)?);
+        let nominator_addr = Self::calculate_address(
+            workchain,
+            owner_address,
+            validator_address,
+            controller_address,
+        )?;
         Ok(Self { provider, nominator_addr, state_init })
     }
 
@@ -48,20 +59,28 @@ impl NominatorWrapperImpl {
         wc: i32,
         owner_address: &MsgAddressInt,
         validator_address: &MsgAddressInt,
+        controller_address: &MsgAddressInt,
     ) -> anyhow::Result<MsgAddressInt> {
-        let state_init = Self::build_state_init(owner_address, validator_address)?
-            .write_to_new_cell()?
-            .into_cell()?;
+        let state_init =
+            Self::build_state_init(owner_address, validator_address, controller_address)?
+                .write_to_new_cell()?
+                .into_cell()?;
         MsgAddressInt::with_params(wc, state_init.hash(0))
     }
 
+    /// The contract's storage: three roles, in the order `get_roles` reports them. The
+    /// third is the validator controller a stake is relayed through, which the contract
+    /// reads on every message; a state init written without it underflows on the first
+    /// one.
     pub fn build_state_init(
         owner_address: &MsgAddressInt,
         validator_address: &MsgAddressInt,
+        controller_address: &MsgAddressInt,
     ) -> anyhow::Result<StateInit> {
         let mut data = BuilderData::new();
         owner_address.write_to(&mut data)?;
         validator_address.write_to(&mut data)?;
+        controller_address.write_to(&mut data)?;
         let code =
             read_single_root_boc(hex::decode(CODE_V1_1).expect("CODE_V1_1 code hex is invalid"))?;
         let state_init = StateInit::with_code_and_data(code, data.into_cell()?);
@@ -96,8 +115,11 @@ impl NominatorWrapper for NominatorWrapperImpl {
         let validator_address =
             MsgAddressInt::construct_from(&mut SliceData::load_cell(stack.cell(1)?)?)
                 .map_err(|e| anyhow::anyhow!("parse validator address error: {}", e))?;
+        let controller_address =
+            MsgAddressInt::construct_from(&mut SliceData::load_cell(stack.cell(2)?)?)
+                .map_err(|e| anyhow::anyhow!("parse controller address error: {}", e))?;
 
-        Ok(NominatorRoles { owner_address, validator_address })
+        Ok(NominatorRoles { owner_address, validator_address, controller_address })
     }
 
     async fn get_pool_data(&self) -> anyhow::Result<PoolData> {

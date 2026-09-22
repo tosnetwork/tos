@@ -949,7 +949,24 @@ fn serialize_validators_set(
     let mut vector = Vec::<Value>::new();
     for v in set.list() {
         let mut map = Map::new();
-        serialize_field(&mut map, "public_key", hex::encode(v.public_key.as_slice()));
+        match &v.key {
+            ValidatorKey::Ed25519(public_key) => {
+                serialize_field(&mut map, "public_key", hex::encode(public_key.as_slice()));
+            }
+            ValidatorKey::Pq(key) => {
+                // A post-quantum descriptor is reported with both identities, because the
+                // stable membership identity and the current key identity are different
+                // facts and a reader must not have to guess which one it is looking at.
+                serialize_field(
+                    &mut map,
+                    "validator_id",
+                    v.validator_id().unwrap_or_default().to_hex_string(),
+                );
+                serialize_field(&mut map, "algorithm_id", key.algorithm_id);
+                serialize_field(&mut map, "key_id", key.key_id.to_hex_string());
+                serialize_field(&mut map, "public_key", hex::encode(&key.public_key));
+            }
+        }
         serialize_u64(&mut map, "weight", &v.weight, mode);
         serialize_id(&mut map, "adnl_addr", v.adnl_addr.as_ref());
         vector.push(map.into());
@@ -1018,6 +1035,13 @@ fn serialize_limits(limits: &SizeLimitsConfig) -> Result<Value> {
         "acc_state_cells_for_storage_dict",
         limits.acc_state_cells_for_storage_dict,
     );
+    // Version 3 fields. An absent library-load limit means unlimited, so it is left out
+    // rather than written as a number that would read as a bound.
+    if let Some(loads) = limits.max_transaction_library_loads {
+        serialize_field(&mut map, "max_transaction_library_loads", loads);
+    }
+    serialize_field(&mut map, "max_total_msg_bits", limits.max_total_msg_bits);
+    serialize_field(&mut map, "max_total_msg_cells", limits.max_total_msg_cells);
     Ok(map.into())
 }
 
@@ -2474,23 +2498,22 @@ pub fn db_serialize_block_proof_ex(
     serialize_cell(&mut map, "proof", Some(&proof.root), false)?;
 
     if let Some(signatures) = proof.signatures.as_ref() {
+        let pure_signatures = signatures.pure_signatures()?;
         // Serialize common fields
         map.insert(
             "validator_list_hash_short".to_string(),
             signatures.validator_info().validator_list_hash_short.into(),
         );
         map.insert("catchain_seqno".to_string(), signatures.validator_info().catchain_seqno.into());
-        serialize_u64(&mut map, "sig_weight", &signatures.pure_signatures().weight(), mode);
+        serialize_u64(&mut map, "sig_weight", &pure_signatures.weight(), mode);
 
         let mut signs = Vec::new();
-        signatures.pure_signatures().signatures().iterate_slices(
-            |_key, mut value| -> Result<bool> {
-                signs.push(serialize_crypto_signature(&CryptoSignaturePair::construct_from(
-                    &mut value,
-                )?)?);
-                Ok(true)
-            },
-        )?;
+        pure_signatures.signatures().iterate_slices(|_key, mut value| -> Result<bool> {
+            signs.push(serialize_crypto_signature(&CryptoSignaturePair::construct_from(
+                &mut value,
+            )?)?);
+            Ok(true)
+        })?;
         serialize_field(&mut map, "signatures", signs);
 
         // Serialize variant-specific fields
@@ -2503,6 +2526,9 @@ pub fn db_serialize_block_proof_ex(
                 serialize_uint256(&mut map, "session_id", &simplex.session_id);
                 serialize_field(&mut map, "slot", simplex.slot);
                 serialize_cell(&mut map, "candidate_data", Some(&simplex.candidate_data), true)?;
+            }
+            BlockSignaturesVariant::SimplexPq(_) => {
+                fail!("post-quantum block-proof JSON serialization is not available")
             }
         }
     }

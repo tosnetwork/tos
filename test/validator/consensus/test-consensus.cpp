@@ -8,6 +8,7 @@
 
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
+#include "block/block-parse.h"
 #include "block/block.h"
 #include "block/mc-config.h"
 #include "block/validator-set.h"
@@ -25,8 +26,10 @@
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/port/signals.h"
+#include "tos/quorum.h"
 #include "validator/consensus/candidate-codec.h"
 #include "validator/finality-cache-policy.h"
+#include "validator/impl/accept-block.hpp"
 #include "validator/manager-resource-policy.h"
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
@@ -124,10 +127,51 @@ size_t ADAPTIVE_BYZANTINE_N = 0;
 double ADAPTIVE_BYZANTINE_PERIOD = 0.5;
 bool MALICIOUS_OBSERVER_ATTACK = false;
 bool RELAY_LOOP_TEST = false;
+// The validator index that relays other validators' signed votes over its own transport,
+// or -1 for none. The bytes are passed on unmodified: a vote carries no signer field, so all
+// a receiver has to attribute it by is the transport it arrived over -- and that must not be
+// what decides whose vote it is.
+int BYZANTINE_RELAY_NODE = -1;
 bool QUERY_ABUSE_TEST = false;
+// Publish two finalizations of candidates the resolver has never seen, so that a
+// concurrency limit set to one refuses the second at the door. Requires
+// TOS_SIMPLEX_FINALIZED_INFLIGHT_MAX=1 to be set for the run; without it nothing is refused
+// and the probe fails, which is the intended behaviour of a probe whose pressure is missing.
+bool FINALIZATION_RETRY_PROBE = false;
+// This scenario deliberately stops production while more agreed certificates are
+// pending than the resolver may hold. Its progress requirement is therefore one
+// accepted block after the backlog clears, rather than the general three-block
+// continuity requirement. The backlog transition and absence of production while
+// throttled are asserted separately, so the lower progress count cannot make the
+// scenario pass without exercising backpressure and recovery.
+bool FINALIZATION_BACKPRESSURE_TEST = false;
 bool EMPTY_CHAIN_RESTART_TEST = false;
+bool VOTE_JOURNAL_TEST = false;
+bool PQ_FINALITY_E2E_TEST = false;
+// Requires the resolver to keep, report and stop retrying a finalization that failed in a
+// way retrying cannot mend, and to stop the group rather than run ahead of it. Needs
+// TOS_SIMPLEX_INJECT_PERMANENT_FINALIZATION_FAILURE set: production does not
+// deterministically produce that class of failure.
+bool PERMANENT_FINALIZATION_TEST = false;
 std::atomic<bool> EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE = false;
+
+// Adversity that was configured but never fired turns a scenario into a quiet no-op: the
+// post-quantum gate finishes in well under a second, sooner than a gremlin period. These
+// count what actually happened so the gate can wait for it and refuse to pass without it.
+std::atomic<size_t> INJECTED_PACKET_LOSSES = 0;
+std::atomic<size_t> INJECTED_NODE_KILLS = 0;
+std::atomic<size_t> INJECTED_NETWORK_CUTS = 0;
 std::atomic<size_t> EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES = 0;
+// Candidates produced anywhere in the network. Read twice, a settle window apart, it says
+// whether collation has actually stopped.
+std::atomic<size_t> CANDIDATES_GENERATED = 0;
+std::atomic<size_t> BYZANTINE_RELAYS_SENT = 0;
+// Times a node reported that more agreed certificates were waiting to be finalized than its
+// resolver will hold, and candidates produced by a node while it was in that state. The
+// second is the backpressure itself: a node that is behind on finality must not add to it.
+std::atomic<size_t> BACKLOG_OVER_LIMIT_REPORTS = 0;
+std::atomic<size_t> BACKLOG_CLEARED_REPORTS = 0;
+std::atomic<size_t> CANDIDATES_WHILE_BACKLOGGED = 0;
 double CATCH_UP_DOWNTIME = -1.0;
 
 std::pair<double, double> DB_DELAY = {0.0, 0.0};
@@ -145,13 +189,13 @@ class TestOverlayNode;
 class TestOverlay : public td::actor::Actor {
  public:
   void register_node(size_t idx, size_t instance_idx, td::actor::ActorId<TestOverlayNode> node) {
-    Instance &inst = get_inst(idx, instance_idx);
+    Instance& inst = get_inst(idx, instance_idx);
     CHECK(inst.actor.empty());
     inst.actor = std::move(node);
   }
 
   void unregister_node(size_t idx, size_t instance_idx) {
-    Instance &inst = get_inst(idx, instance_idx);
+    Instance& inst = get_inst(idx, instance_idx);
     CHECK(!inst.actor.empty());
     inst.actor = {};
   }
@@ -183,7 +227,7 @@ class TestOverlay : public td::actor::Actor {
   std::set<size_t> adaptive_byzantine_nodes_;
   td::uint64 adaptive_byzantine_epoch_ = 0;
 
-  Instance &get_inst(size_t idx, size_t instance_idx) {
+  Instance& get_inst(size_t idx, size_t instance_idx) {
     if (nodes_.size() <= idx) {
       nodes_.resize(idx + 1);
     }
@@ -198,6 +242,7 @@ class TestOverlay : public td::actor::Actor {
       co_return td::Status::Error("src is disabled");
     }
     if (!no_loss && td::Random::fast(0.0, 1.0) < NET_LOSS) {
+      ++INJECTED_PACKET_LOSSES;
       co_return td::Status::Error("packet lost");
     }
     co_await td::actor::coro_sleep(td::Timestamp::in(td::Random::fast(NET_PING.first, NET_PING.second)));
@@ -222,7 +267,7 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
 
   void start_up() override {
-    instance_idx_ = dynamic_cast<const TestSimplexBus &>(*owning_bus()).instance_idx;
+    instance_idx_ = dynamic_cast<const TestSimplexBus&>(*owning_bus()).instance_idx;
     td::actor::send_closure(test_overlay, &TestOverlay::register_node, owning_bus()->local_id->idx.value(),
                             instance_idx_, actor_id(this));
   }
@@ -230,7 +275,7 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   void tear_down() override {
     td::actor::send_closure(test_overlay, &TestOverlay::unregister_node, owning_bus()->local_id->idx.value(),
                             instance_idx_);
-    for (auto &[_, query] : active_queries_) {
+    for (auto& [_, query] : active_queries_) {
       td::actor::send_closure(query, &Query::set_result, td::Status::Error(ErrorCode::cancelled, "cancelled"));
     }
   }
@@ -283,8 +328,8 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
     auto query = td::actor::create_actor<Query>("q", std::move(promise), message->timeout).release();
     size_t idx = next_query_idx_++;
     active_queries_[idx] = query;
-    td::actor::send_closure(test_overlay, &TestOverlay::send_query, *bus->local_id, instance_idx_,
-                            destination, message->request.data.clone(),
+    td::actor::send_closure(test_overlay, &TestOverlay::send_query, *bus->local_id, instance_idx_, destination,
+                            message->request.data.clone(),
                             td::PromiseCreator::lambda([query](td::Result<td::BufferSlice> R) {
                               if (R.is_ok()) {
                                 td::actor::send_closure(query, &Query::set_result, ProtocolMessage{R.move_as_ok()});
@@ -296,6 +341,21 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   }
 
   void receive_message(PeerValidator src, td::BufferSlice data) {
+    auto& bus = *owning_bus();
+    // Pass another validator's signed message on as this node's own, byte for byte. The
+    // transport is genuinely this node's and authenticates correctly; the signature inside
+    // is somebody else's. Nothing about the message is forged, which is the point: the only
+    // thing that could make it count as this node's vote is the transport it came over.
+    if (BYZANTINE_RELAY_NODE >= 0 && bus.local_id->idx.value() == static_cast<size_t>(BYZANTINE_RELAY_NODE) &&
+        src.idx.value() != bus.local_id->idx.value()) {
+      ++BYZANTINE_RELAYS_SENT;
+      for (size_t i = 0; i < bus.validator_set.size(); ++i) {
+        if (i != bus.local_id->idx.value() && i != src.idx.value()) {
+          td::actor::ask(test_overlay, &TestOverlay::send_message, *bus.local_id, instance_idx_, i, data.clone())
+              .detach_silent();
+        }
+      }
+    }
     owning_bus().publish<IncomingProtocolMessage>(src.idx, src.adnl_id, std::move(data));
   }
 
@@ -353,7 +413,7 @@ td::actor::Task<> TestOverlay::send_message(PeerValidator src, size_t src_instan
     co_return td::Status::Error("adaptive Byzantine protocol-message omission");
   }
   co_await before_receive(src.idx.value(), src_instance_idx, dst_idx, false);
-  for (const auto &instance : nodes_[dst_idx]) {
+  for (const auto& instance : nodes_[dst_idx]) {
     if (instance.actor.empty() || instance.disabled) {
       continue;
     }
@@ -368,7 +428,7 @@ td::actor::Task<> TestOverlay::send_candidate(PeerValidator src, size_t src_inst
     co_return td::Status::Error("adaptive Byzantine candidate omission");
   }
   co_await before_receive(src.idx.value(), src_instance_idx, dst_idx, true);
-  for (const auto &instance : nodes_[dst_idx]) {
+  for (const auto& instance : nodes_[dst_idx]) {
     if (instance.actor.empty() || instance.disabled) {
       continue;
     }
@@ -386,7 +446,7 @@ td::actor::Task<td::BufferSlice> TestOverlay::send_query(PeerValidator src, size
     co_return td::Status::Error("no instances");
   }
   auto dst_instance_idx = (size_t)td::Random::fast(0, (int)nodes_[dst_idx].size() - 1);
-  const auto &instance = nodes_[dst_idx][dst_instance_idx];
+  const auto& instance = nodes_[dst_idx][dst_instance_idx];
   co_await before_receive(src.idx.value(), src_instance_idx, dst_idx, true);
   if (instance.actor.empty() || instance.disabled) {
     co_return td::Status::Error("instance is stopped/disabled");
@@ -504,8 +564,9 @@ class TestManagerFacade : public ManagerFacade {
   }
 
   td::actor::Task<> accept_block(BlockIdExt id, td::Ref<BlockData> data, size_t creator_idx,
-                                 td::Ref<block::BlockSignatureSet> signatures, int block_broadcast_mode,
-                                 int finality_broadcast_mode, bool send_shard_block_desc, bool apply) override;
+                                 td::Ref<block::BlockSignatureSet> signatures, ValidatorSessionId expected_session_id,
+                                 int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
+                                 bool apply) override;
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override;
   td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) override;
@@ -518,18 +579,102 @@ class TestManagerFacade : public ManagerFacade {
   td::actor::ActorId<TestConsensus> test_consensus_;
 };
 
+// ===== What the end-to-end gate observes =====
+//
+// A node publishes FinalizationObserved the moment a finality certificate is agreed and
+// every signature in it has been verified against the key the validator set records. That
+// is exactly where this build ends. Everything past it -- a block signature set, an accepted
+// block, a finalized-block marker -- belongs to the carrier work and must not happen in this build, so
+// the gate keeps the certificate itself rather than a count, and checks it independently.
+struct ObservedFinalization {
+  size_t node_idx = 0;
+  size_t instance_idx = 0;
+  CandidateId id;
+  simplex::FinalCertRef cert;
+};
+
+std::mutex finality_log_mutex;
+std::vector<ObservedFinalization> finality_log;
+
+// Only the end-to-end gate reads this, and only that run is short enough for it to be
+// bounded. A stress scenario finalizes for as long as it runs, so it does not record.
+void record_finalization(ObservedFinalization observation) {
+  if (!PQ_FINALITY_E2E_TEST) {
+    return;
+  }
+  std::scoped_lock lock(finality_log_mutex);
+  finality_log.push_back(std::move(observation));
+}
+
+std::vector<ObservedFinalization> read_finality_log() {
+  std::scoped_lock lock(finality_log_mutex);
+  return finality_log;
+}
+
+class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public td::actor::ConnectsTo<simplex::Bus> {
+ public:
+  TOS_RUNTIME_DEFINE_EVENT_HANDLER();
+
+  void start_up() override {
+    instance_idx_ = dynamic_cast<const TestSimplexBus&>(*owning_bus()).instance_idx;
+  }
+
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const StopRequested>) {
+    stop();
+  }
+
+  template <>
+  void handle(simplex::BusHandle bus, std::shared_ptr<const simplex::FinalizationObserved> event) {
+    if (!bus->local_id.has_value()) {
+      return;
+    }
+    record_finalization(ObservedFinalization{bus->local_id->idx.value(), instance_idx_, event->id, event->certificate});
+  }
+
+  // Candidates this network has put into the round, counted across every node. It is how the
+  // gate can say that collation stopped, rather than that no further block was accepted --
+  // which would be true of a build that never had a carrier whether it stopped or not.
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const CandidateGenerated>) {
+    ++CANDIDATES_GENERATED;
+    if (backlogged_) {
+      ++CANDIDATES_WHILE_BACKLOGGED;
+    }
+  }
+
+  // Whether this node is currently holding more agreed certificates than it will, which is
+  // the state in which it is supposed to stop producing.
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const FinalizationBacklog> event) {
+    if (event->over_limit) {
+      ++BACKLOG_OVER_LIMIT_REPORTS;
+    } else if (backlogged_) {
+      ++BACKLOG_CLEARED_REPORTS;
+    }
+    backlogged_ = event->over_limit;
+  }
+
+ private:
+  size_t instance_idx_ = 0;
+  bool backlogged_ = false;
+};
+
 class TestDbImpl : public consensus::Db {
  public:
   struct DbInner {
     std::map<td::BufferSlice, td::BufferSlice> map;
     std::mutex mutex;
-    size_t latest_get_count = 0;
-    size_t latest_found_count = 0;
+    size_t finalized_latest_get_count = 0;
+    size_t finalized_latest_found_count = 0;
+    // TL constructor id -> how many further writes of that record to reject.
+    std::map<td::uint32, size_t> fail_writes_of;
+    size_t failed_write_count = 0;
   };
 
   explicit TestDbImpl(std::shared_ptr<DbInner> db) : db_(std::move(db)) {
     std::scoped_lock lock(db_->mutex);
-    for (auto &[key, value] : db_->map) {
+    for (auto& [key, value] : db_->map) {
       snapshot_.emplace(key.clone(), value.clone());
     }
   }
@@ -544,9 +689,9 @@ class TestDbImpl : public consensus::Db {
   }
   std::vector<std::pair<td::BufferSlice, td::BufferSlice>> get_by_prefix(td::uint32 prefix) const override {
     std::vector<std::pair<td::BufferSlice, td::BufferSlice>> result;
-    td::BufferSlice begin{(const char *)&prefix, 4};
+    td::BufferSlice begin{(const char*)&prefix, 4};
     td::uint32 prefix2 = prefix + 1;
-    td::BufferSlice end{(const char *)&prefix2, 4};
+    td::BufferSlice end{(const char*)&prefix2, 4};
     for (auto it = snapshot_.lower_bound(begin); it != snapshot_.end() && it->first < end; ++it) {
       result.emplace_back(it->first.clone(), it->second.clone());
     }
@@ -554,17 +699,39 @@ class TestDbImpl : public consensus::Db {
   }
   td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice key) const override {
     std::scoped_lock lock(db_->mutex);
-    ++db_->latest_get_count;
+    td::int32 tag = 0;
+    if (key.size() >= sizeof(tag)) {
+      std::memcpy(&tag, key.data(), sizeof(tag));
+    }
+    const bool is_finalized_block = tag == tos_api::consensus_simplex_db_key_finalizedBlock::ID;
+    if (is_finalized_block) {
+      ++db_->finalized_latest_get_count;
+    }
     auto it = db_->map.find(key);
     if (it == db_->map.end()) {
       co_return std::nullopt;
     }
-    ++db_->latest_found_count;
+    if (is_finalized_block) {
+      ++db_->finalized_latest_found_count;
+    }
     co_return it->second.clone();
   }
   td::actor::Task<> set(td::BufferSlice key, td::BufferSlice value) override {
     co_await td::actor::coro_sleep(td::Timestamp::in(td::Random::fast(DB_DELAY.first, DB_DELAY.second)));
     std::scoped_lock lock(db_->mutex);
+    // A full disk, a closing database: the write returns an error and nothing is stored.
+    // The two vote-journal writes are the only ones whose failure is consensus-significant,
+    // so failure injection is addressed at a TL constructor rather than at a key.
+    td::uint32 tag = 0;
+    if (value.size() >= sizeof(tag)) {
+      std::memcpy(&tag, value.data(), sizeof(tag));
+    }
+    auto it = db_->fail_writes_of.find(tag);
+    if (it != db_->fail_writes_of.end() && it->second > 0) {
+      --it->second;
+      ++db_->failed_write_count;
+      co_return td::Status::Error("injected database write failure");
+    }
     db_->map[std::move(key)] = std::move(value);
     co_return td::Unit{};
   }
@@ -594,11 +761,26 @@ class TestConsensus : public td::actor::Actor {
   td::actor::Task<> on_block_accepted(size_t node_idx, size_t instance_idx, td::Ref<BlockData> block,
                                       size_t creator_idx, td::Ref<block::BlockSignatureSet> signatures) {
     BlockIdExt block_id = block->block_id();
+    if (PQ_FINALITY_E2E_TEST && signatures->is_final()) {
+      accepted_carriers_.push_back({block_id, signatures});
+    }
     if (signatures->is_final()) {
-      signatures->check_signatures(validator_set_, block_id).ensure();
+      if (signatures->is_pq()) {
+        signatures
+            ->check_pq_signatures_under_carried_session_for_test(validator_set_, block_id, block::FinalityRole::Final)
+            .ensure();
+      } else {
+        signatures->check_signatures(validator_set_, block_id).ensure();
+      }
     } else {
       CHECK(!SHARD.is_masterchain());
-      signatures->check_approve_signatures(validator_set_, block_id).ensure();
+      if (signatures->is_pq()) {
+        signatures
+            ->check_pq_signatures_under_carried_session_for_test(validator_set_, block_id, block::FinalityRole::Approve)
+            .ensure();
+      } else {
+        signatures->check_approve_signatures(validator_set_, block_id).ensure();
+      }
     }
     BlockSeqno seqno = block_id.seqno();
     if (accepted_blocks_.contains(seqno)) {
@@ -606,14 +788,14 @@ class TestConsensus : public td::actor::Actor {
     } else {
       accepted_blocks_[seqno] = block;
     }
-    Instance &inst = nodes_[node_idx].instances[instance_idx];
+    Instance& inst = nodes_[node_idx].instances[instance_idx];
     inst.last_accepted_block = std::max(inst.last_accepted_block, seqno);
     if (last_accepted_block_.seqno() < seqno && signatures->is_final()) {
       last_accepted_block_ = block_id;
       last_accepted_block_leader_idx_ = creator_idx;
       if (!EMPTY_CHAIN_RESTART_TEST) {
-        for (Node &node : nodes_) {
-          for (Instance &inst : node.instances) {
+        for (Node& node : nodes_) {
+          for (Instance& inst : node.instances) {
             if (inst.status == Instance::Running) {
               inst.bus.publish<BlockFinalizedInMasterchain>(block_id);
             }
@@ -626,13 +808,13 @@ class TestConsensus : public td::actor::Actor {
 
   void on_candidate_relay(size_t node_idx, size_t instance_idx, BlockIdExt block_id) {
     auto key = std::make_tuple(node_idx, instance_idx, block_id);
-    auto &count = candidate_relay_counts_[key];
+    auto& count = candidate_relay_counts_[key];
     ++count;
     ++candidate_relay_total_;
     if (count > 1) {
       relay_loop_detected_ = true;
-      LOG(ERROR) << "Candidate relay emitted duplicate block " << block_id.to_str() << " from node #" << node_idx
-                 << "." << instance_idx;
+      LOG(ERROR) << "Candidate relay emitted duplicate block " << block_id.to_str() << " from node #" << node_idx << "."
+                 << instance_idx;
     }
   }
 
@@ -665,6 +847,19 @@ class TestConsensus : public td::actor::Actor {
     co_return it->second;
   }
 
+  size_t longest_consecutive_accepted_block_run() const {
+    size_t longest = 0;
+    size_t current = 0;
+    std::optional<BlockSeqno> previous;
+    for (const auto& [seqno, block] : accepted_blocks_) {
+      (void)block;
+      current = previous.has_value() && seqno == *previous + 1 ? current + 1 : 1;
+      longest = std::max(longest, current);
+      previous = seqno;
+    }
+    return longest;
+  }
+
  private:
   td::actor::Task<> run_inner() {
     keyring_ = keyring::Keyring::create("");
@@ -684,17 +879,29 @@ class TestConsensus : public td::actor::Actor {
 
       node.weight = 11;
 
+      // A distinct post-quantum consensus key per node, seeded deterministically off its
+      // Ed25519 node id so the run is reproducible.
+      std::string seed(32, '\0');
+      std::memcpy(seed.data(), node.node_id.bits256_value().data(), 32);
+      node.pq_store =
+          std::make_shared<const tos::pq::ValidatorPQKeyStore>(tos::pq::ValidatorPQKeyStore::from_seed(seed).value());
+
       nodes_.push_back(std::move(node));
     }
 
     std::vector<ValidatorDescr> validator_descrs;
     for (size_t idx = 0; idx < nodes_.size(); ++idx) {
-      Node &node = nodes_[idx];
-      validator_descrs.push_back(ValidatorDescr(Ed25519_PublicKey{node.public_key.ed25519_value().raw()}, node.weight,
-                                                node.adnl_id.bits256_value()));
-      validators_.push_back(PeerValidator{.idx = PeerValidatorId((int)idx),
-                                          .key = node.public_key,
-                                          .short_id = node.node_id,
+      Node& node = nodes_[idx];
+      const auto validator_id = tos::ValidatorId{node.node_id.bits256_value()};
+      const auto& consensus_key = node.pq_store->consensus_key();
+      tos::ConsensusKeyId key_id;
+      std::memcpy(key_id.value.data(), consensus_key.key_id.data(), 32);
+      validator_descrs.push_back(ValidatorDescr(validator_id, /*algorithm_id=*/1, key_id, consensus_key.public_key,
+                                                node.weight, node.adnl_id.bits256_value()));
+      validators_.push_back(PeerValidator{.validator_id = validator_id,
+                                          .idx = PeerValidatorId((int)idx),
+                                          .consensus_key = consensus_key,
+                                          .transport_key_id = node.adnl_id.pubkey_hash(),
                                           .adnl_id = node.adnl_id,
                                           .weight = node.weight});
       total_weight_ += node.weight;
@@ -704,7 +911,7 @@ class TestConsensus : public td::actor::Actor {
     test_overlay = td::actor::create_actor<TestOverlay>("test-overlay");
 
     for (size_t idx = 0; idx < N_NODES; ++idx) {
-      Node &node = nodes_[idx];
+      Node& node = nodes_[idx];
       size_t n_instances = idx < N_DOUBLE_NODES ? 2 : 1;
       for (size_t i = 0; i < n_instances; ++i) {
         Instance inst;
@@ -740,18 +947,61 @@ class TestConsensus : public td::actor::Actor {
     if (EMPTY_CHAIN_RESTART_TEST) {
       run_empty_chain_restart_test().start().detach();
     }
+    if (VOTE_JOURNAL_TEST) {
+      run_vote_journal_test().start().detach();
+    }
+    if (PQ_FINALITY_E2E_TEST) {
+      run_pq_finality_e2e_test().start().detach();
+    }
+    if (PERMANENT_FINALIZATION_TEST) {
+      run_permanent_finalization_test().start().detach();
+    }
 
-    if (!EMPTY_CHAIN_RESTART_TEST) {
+    if (!EMPTY_CHAIN_RESTART_TEST && !VOTE_JOURNAL_TEST && !PQ_FINALITY_E2E_TEST) {
       run_write_status().start().detach();
     }
 
     if (EMPTY_CHAIN_RESTART_TEST) {
       auto deadline = td::Timestamp::in(DURATION);
-      while (!empty_chain_restart_completed_ && empty_chain_restart_error_.empty() && !deadline.is_in_past()) {
+      while (((!empty_chain_restart_completed_ && empty_chain_restart_error_.empty()) ||
+              (PQ_FINALITY_E2E_TEST && !pq_finality_completed_ && pq_finality_error_.empty())) &&
+             !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
       if (!empty_chain_restart_completed_ && empty_chain_restart_error_.empty()) {
         empty_chain_restart_error_ = "timed out waiting for the empty-chain restart test";
+      }
+      if (PQ_FINALITY_E2E_TEST && !pq_finality_completed_ && pq_finality_error_.empty()) {
+        pq_finality_error_ = "timed out waiting for the post-quantum finality end-to-end test";
+      }
+    } else if (VOTE_JOURNAL_TEST) {
+      auto deadline = td::Timestamp::in(DURATION);
+      while (!vote_journal_completed_ && vote_journal_error_.empty() && !deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+      if (!vote_journal_completed_ && vote_journal_error_.empty()) {
+        vote_journal_error_ = "timed out waiting for the vote journal test";
+      }
+    } else if (CATCH_UP_DOWNTIME >= 0.0 && PQ_FINALITY_E2E_TEST) {
+      auto deadline = td::Timestamp::in(DURATION);
+      while (((!catch_up_completed_ && catch_up_error_.empty()) ||
+              (!pq_finality_completed_ && pq_finality_error_.empty())) &&
+             !deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+      if (!catch_up_completed_ && catch_up_error_.empty()) {
+        catch_up_error_ = "timed out waiting for the state-resolver catch-up test";
+      }
+      if (!pq_finality_completed_ && pq_finality_error_.empty()) {
+        pq_finality_error_ = "timed out waiting for the post-quantum finality end-to-end test";
+      }
+    } else if (PQ_FINALITY_E2E_TEST) {
+      auto deadline = td::Timestamp::in(DURATION);
+      while (!pq_finality_completed_ && pq_finality_error_.empty() && !deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+      if (!pq_finality_completed_ && pq_finality_error_.empty()) {
+        pq_finality_error_ = "timed out waiting for the post-quantum finality end-to-end test";
       }
     } else {
       co_await td::actor::coro_sleep(td::Timestamp::in(DURATION));
@@ -763,8 +1013,8 @@ class TestConsensus : public td::actor::Actor {
   td::actor::Task<> run_write_status() {
     while (!finishing_) {
       std::string s;
-      for (auto &n : nodes_) {
-        for (auto &inst : n.instances) {
+      for (auto& n : nodes_) {
+        for (auto& inst : n.instances) {
           s += "-X"[inst.status == Instance::Running];
         }
       }
@@ -775,15 +1025,16 @@ class TestConsensus : public td::actor::Actor {
   }
 
   void start_instance(size_t node_idx, size_t instance_idx) {
-    Node &node = nodes_[node_idx];
-    Instance &inst = node.instances[instance_idx];
+    Node& node = nodes_[node_idx];
+    Instance& inst = node.instances[instance_idx];
     CHECK(inst.status == Instance::Stopped);
-    auto &runtime = inst.runtime;
+    auto& runtime = inst.runtime;
     BlockAccepter::register_in(runtime);
     BlockProducer::register_in(runtime);
     BlockValidator::register_in(runtime);
     CandidateBroadcastRelay::register_in(runtime);
     runtime.register_actor<TestOverlayNode>("PrivateOverlay");
+    runtime.register_actor<TestFinalityObserver>("FinalityObserver");
     simplex::CandidateResolver::register_in(runtime);
     simplex::Consensus::register_in(runtime);
     simplex::Pool::register_in(runtime);
@@ -802,9 +1053,10 @@ class TestConsensus : public td::actor::Actor {
     bus->shard = SHARD;
     bus->manager = inst.manager_facade.get();
     bus->keyring = keyring_.get();
+    bus->pq_signer = nodes_[node_idx].pq_store;
     bus->validator_opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
     bus->validator_set = validators_;
-    for (const auto &validator : validators_) {
+    for (const auto& validator : validators_) {
       bus->all_validators.push_back(validator.adnl_id);
     }
     bus->total_weight = total_weight_;
@@ -831,8 +1083,8 @@ class TestConsensus : public td::actor::Actor {
   }
 
   td::actor::Task<> stop_instance(size_t node_idx, size_t instance_idx) {
-    Node &node = nodes_[node_idx];
-    Instance &inst = node.instances[instance_idx];
+    Node& node = nodes_[node_idx];
+    Instance& inst = node.instances[instance_idx];
     if (inst.status == Instance::Stopped) {
       co_return td::Unit{};
     }
@@ -851,7 +1103,7 @@ class TestConsensus : public td::actor::Actor {
     inst.status = Instance::Stopped;
     inst.runtime = {};
     LOG(ERROR) << "Stopped node #" << node_idx << "." << instance_idx;
-    for (auto &promise : inst.extra_stop_waiters) {
+    for (auto& promise : inst.extra_stop_waiters) {
       promise.set_value(td::Unit{});
     }
     inst.extra_stop_waiters.clear();
@@ -894,6 +1146,8 @@ class TestConsensus : public td::actor::Actor {
       co_return td::Unit{};
     }
     co_await stop_instance(kill_node_idx, kill_inst_idx);
+    // Counted once the node is actually down, so "it happened" is not "it was started".
+    ++INJECTED_NODE_KILLS;
     co_await td::actor::coro_sleep(
         td::Timestamp::in(td::Random::fast(GREMLIN_DOWNTIME.first, GREMLIN_DOWNTIME.second)));
     if (finishing_) {
@@ -942,6 +1196,8 @@ class TestConsensus : public td::actor::Actor {
     nodes_[selected_node_idx].instances[selected_inst_idx].net_gremlin_active = true;
     co_await td::actor::ask(test_overlay, &TestOverlay::set_instance_disabled, selected_node_idx, selected_inst_idx,
                             true);
+    // Counted once the network is actually cut, for the same reason.
+    ++INJECTED_NETWORK_CUTS;
     co_await td::actor::coro_sleep(
         td::Timestamp::in(td::Random::fast(NET_GREMLIN_DOWNTIME.first, NET_GREMLIN_DOWNTIME.second)));
     co_await td::actor::ask(test_overlay, &TestOverlay::set_instance_disabled, selected_node_idx, selected_inst_idx,
@@ -981,11 +1237,10 @@ class TestConsensus : public td::actor::Actor {
     auto observer = adnl::AdnlNodeIdShort{observer_bits};
     td::BufferSlice fake_signature(64);
     std::memset(fake_signature.data(), 0x5a, fake_signature.size());
-    auto vote = create_serialize_tl_object<simplex::tl::vote>(
-        simplex::SkipVote{0}.to_tl(), std::move(fake_signature));
+    auto vote = create_serialize_tl_object<simplex::tl::vote>(simplex::SkipVote{0}.to_tl(), std::move(fake_signature));
     for (int repeat = 0; repeat < 2; ++repeat) {
-      for (auto &node : nodes_) {
-        for (auto &inst : node.instances) {
+      for (auto& node : nodes_) {
+        for (auto& inst : node.instances) {
           if (inst.status == Instance::Running) {
             inst.bus.publish<IncomingProtocolMessage>(std::nullopt, observer, vote.clone());
             ++malicious_observer_messages_;
@@ -1005,14 +1260,12 @@ class TestConsensus : public td::actor::Actor {
     td::Bits256 observer_bits;
     td::Random::secure_bytes(observer_bits.as_slice());
     auto observer = adnl::AdnlNodeIdShort{observer_bits};
-    auto &bus = nodes_[0].instances[0].bus;
+    auto& bus = nodes_[0].instances[0].bus;
     const auto limit = bus->config.noncritical_params.candidate_resolve_rate_limit;
     for (td::uint32 index = 0; index < limit + 3; ++index) {
       CandidateId id{.slot = 1000000 + index, .hash = td::Bits256{}};
-      auto data = create_serialize_tl_object<tos_api::consensus_simplex_requestCandidate>(
-          id.to_tl(), true, true);
-      auto request = std::make_shared<IncomingOverlayRequest>(
-          std::nullopt, observer, std::move(data));
+      auto data = create_serialize_tl_object<tos_api::consensus_simplex_requestCandidate>(id.to_tl(), true, true);
+      auto request = std::make_shared<IncomingOverlayRequest>(std::nullopt, observer, std::move(data));
       auto result = co_await bus.publish(std::move(request)).wrap();
       if (result.is_ok()) {
         ++query_abuse_accepted_;
@@ -1024,9 +1277,8 @@ class TestConsensus : public td::actor::Actor {
     // leave permanent per-id state behind. Count only entries at or above the
     // injected slot base so legitimate in-flight consensus state (low slots)
     // does not mask a regression: this must be zero.
-    query_abuse_tracked_states_ = co_await bus.publish(
-        std::make_shared<simplex::QueryResolverTrackedStateCount>(simplex::QueryResolverTrackedStateCount{
-            .min_slot = 1000000}));
+    query_abuse_tracked_states_ = co_await bus.publish(std::make_shared<simplex::QueryResolverTrackedStateCount>(
+        simplex::QueryResolverTrackedStateCount{.min_slot = 1000000}));
     query_abuse_completed_ = true;
     co_return td::Unit{};
   }
@@ -1106,6 +1358,897 @@ class TestConsensus : public td::actor::Actor {
     return result;
   }
 
+  // ===== The post-quantum round and its persisted finality carrier =====
+
+  // Check a finality certificate the way a peer would, without reusing the code that
+  // produced it: every signature verified against the key the validator set records for
+  // that signer, no signer counted twice, and the weight behind it at or above the quorum.
+  std::string certificate_defect(const simplex::FinalCertRef& cert) const {
+    auto signed_bytes = serialize_tl_object(cert->vote.to_tl(), true);
+    std::set<size_t> signers;
+    ValidatorWeight weight = 0;
+    for (const auto& [validator, signature] : cert->signatures) {
+      auto idx = validator.value();
+      if (idx >= validators_.size()) {
+        return PSTRING() << "signer index " << idx << " is outside the validator set";
+      }
+      if (!signers.insert(idx).second) {
+        return PSTRING() << "signer " << idx << " appears twice in the certificate";
+      }
+      if (signature.size() != tos::pq::mldsa44_signature_bytes) {
+        return PSTRING() << "signer " << idx << " contributed a " << signature.size() << "-byte signature";
+      }
+      if (!validators_[idx].check_signature(SESSION_ID, signed_bytes, signature)) {
+        return PSTRING() << "signer " << idx << "'s signature does not verify under its post-quantum key";
+      }
+      if (!tos::checked_add_validator_weight(weight, validators_[idx].weight)) {
+        return "the certificate's signer weight overflows";
+      }
+    }
+    if (weight < tos::quorum_threshold(total_weight_)) {
+      return PSTRING() << "the certificate carries weight " << weight << ", below the quorum threshold "
+                       << tos::quorum_threshold(total_weight_);
+    }
+    return {};
+  }
+
+  td::actor::Task<> run_pq_finality_e2e_test() {
+    auto fail = [&](std::string message) { pq_finality_error_ = std::move(message); };
+
+    struct Adversity {
+      bool configured;
+      std::function<bool()> happened;
+      const char* name;
+    };
+    const std::vector<Adversity> adversities = {
+        {NET_LOSS > 0.0, [] { return INJECTED_PACKET_LOSSES.load() > 0; }, "packet loss"},
+        {GREMLIN_PERIOD.first >= 0.0, [] { return INJECTED_NODE_KILLS.load() > 0; }, "a node restart"},
+        {NET_GREMLIN_PERIOD.first >= 0.0, [] { return INJECTED_NETWORK_CUTS.load() > 0; }, "a network partition"},
+        {MALICIOUS_OBSERVER_ATTACK, [this] { return malicious_observer_messages_ > 0; }, "the malicious observer"},
+        {RELAY_LOOP_TEST, [this] { return candidate_relay_total_ > 0; }, "candidate relay traffic"},
+        {ADAPTIVE_BYZANTINE_N != 0, [this] { return adaptive_byzantine_epochs_ >= 2; },
+         "an adaptive Byzantine rotation"},
+        {QUERY_ABUSE_TEST, [this] { return query_abuse_completed_; }, "the candidate query flood"},
+        {BYZANTINE_RELAY_NODE >= 0, [] { return BYZANTINE_RELAYS_SENT.load() > 0; },
+         "a validator relaying another's signed vote"},
+        {FINALIZATION_BACKPRESSURE_TEST,
+         [] { return BACKLOG_OVER_LIMIT_REPORTS.load() > 0 && BACKLOG_CLEARED_REPORTS.load() > 0; },
+         "a finalization backlog activation and recovery"},
+    };
+    auto deadline = td::Timestamp::in(DURATION * 0.8);
+    for (const auto& adversity : adversities) {
+      if (!adversity.configured) {
+        continue;
+      }
+      while (!adversity.happened() && !deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+      }
+      if (!adversity.happened()) {
+        fail(PSTRING() << "this scenario configures " << adversity.name << ", but it never happened");
+        co_return td::Unit{};
+      }
+    }
+
+    const size_t required_consecutive_accepted_blocks = FINALIZATION_BACKPRESSURE_TEST ? 1 : 3;
+    while ((read_finality_log().empty() || accepted_carriers_.empty() ||
+            longest_consecutive_accepted_block_run() < required_consecutive_accepted_blocks) &&
+           !deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+    }
+    if (read_finality_log().empty()) {
+      fail("no verified FinalCert was observed");
+      co_return td::Unit{};
+    }
+    if (accepted_carriers_.empty()) {
+      fail("a verified FinalCert never reached the post-quantum block-signature carrier");
+      co_return td::Unit{};
+    }
+    const auto consecutive_accepted_blocks = longest_consecutive_accepted_block_run();
+    if (consecutive_accepted_blocks < required_consecutive_accepted_blocks) {
+      fail(PSTRING() << "post-quantum finality accepted only " << consecutive_accepted_blocks
+                     << " consecutive blocks, expected at least " << required_consecutive_accepted_blocks);
+      co_return td::Unit{};
+    }
+    if (FINALIZATION_BACKPRESSURE_TEST && CANDIDATES_WHILE_BACKLOGGED.load() != 0) {
+      fail(PSTRING() << "the network produced " << CANDIDATES_WHILE_BACKLOGGED.load()
+                     << " candidate(s) while finalization backpressure was active");
+      co_return td::Unit{};
+    }
+    if (FINALIZATION_BACKPRESSURE_TEST) {
+      LOG(WARNING) << "Finalization backpressure scenario: over-limit reports=" << BACKLOG_OVER_LIMIT_REPORTS.load()
+                   << "; cleared reports=" << BACKLOG_CLEARED_REPORTS.load()
+                   << "; candidates while throttled=" << CANDIDATES_WHILE_BACKLOGGED.load()
+                   << "; consecutive accepted blocks after recovery=" << consecutive_accepted_blocks;
+    }
+
+    size_t independently_verified_proofs = 0;
+    for (const auto& item : accepted_carriers_) {
+      const block::PQFinalityVerificationContext context{validator_set_, item.block_id, SESSION_ID};
+      auto verified = block::verify_pq_finality(context, *item.signatures, block::FinalityRole::Final);
+      if (verified.is_error()) {
+        fail(PSTRING() << "accepted proof " << item.block_id.to_str()
+                       << " failed independent trusted-context verification: " << verified.error());
+        co_return td::Unit{};
+      }
+      ++independently_verified_proofs;
+    }
+
+    std::optional<AcceptedCarrier> accepted;
+    simplex::FinalCertRef certificate;
+    for (const auto& item : accepted_carriers_) {
+      auto slot = item.signatures->pq_slot();
+      auto candidate_data = item.signatures->pq_candidate_data();
+      if (slot.is_error() || candidate_data.is_error()) {
+        continue;
+      }
+      auto candidate_hash = td::sha256_bits256(candidate_data.ok().as_slice());
+      auto item_pairs = item.signatures->export_pq_signatures();
+      if (item_pairs.is_error()) {
+        continue;
+      }
+      std::map<ValidatorId, td::Slice> item_by_id;
+      for (const auto& pair : item_pairs.ok()) {
+        item_by_id.emplace(pair.validator_id, pair.signature.as_slice());
+      }
+      for (const auto& observed : read_finality_log()) {
+        if (observed.id.slot != slot.ok() || observed.id.hash != candidate_hash ||
+            observed.cert->vote.id != observed.id || observed.cert->signatures.size() != item_by_id.size()) {
+          continue;
+        }
+        bool exact_certificate = true;
+        for (const auto& [signer_index, signature] : observed.cert->signatures) {
+          const auto index = signer_index.value();
+          if (index >= validators_.size()) {
+            exact_certificate = false;
+            break;
+          }
+          auto pair = item_by_id.find(validators_[index].validator_id);
+          if (pair == item_by_id.end() || pair->second != signature.as_slice()) {
+            exact_certificate = false;
+            break;
+          }
+        }
+        if (!exact_certificate) {
+          continue;
+        }
+        accepted = item;
+        certificate = observed.cert;
+        break;
+      }
+      if (accepted.has_value()) {
+        break;
+      }
+    }
+    if (certificate.is_null()) {
+      fail("no observed FinalCert matches an accepted post-quantum carrier's candidate and exact signature bytes");
+      co_return td::Unit{};
+    }
+    if (auto defect = certificate_defect(certificate); !defect.empty()) {
+      fail(PSTRING() << "the accepted FinalCert is defective: " << defect);
+      co_return td::Unit{};
+    }
+
+    auto carried = accepted->signatures->export_pq_signatures().move_as_ok();
+    auto persisted_cell = accepted->signatures->serialize(validator_set_).move_as_ok();
+    auto persisted_boc = vm::std_boc_serialize(persisted_cell, 31).move_as_ok();
+    auto roundtrip_store = std::make_shared<TestDbImpl::DbInner>();
+    TestDbImpl roundtrip_db(roundtrip_store);
+    td::BufferSlice roundtrip_key("pq-finality-carrier-roundtrip");
+    co_await roundtrip_db.set(roundtrip_key.clone(), persisted_boc.clone());
+    auto loaded_boc = co_await roundtrip_db.get_latest(roundtrip_key.clone());
+    if (!loaded_boc.has_value()) {
+      fail("the database round trip did not return the post-quantum carrier");
+      co_return td::Unit{};
+    }
+    auto loaded_cell = vm::std_boc_deserialize(loaded_boc->as_slice()).move_as_ok();
+    auto db_roundtrip = block::BlockSignatureSet::fetch(loaded_cell, validator_set_).move_as_ok();
+    auto db_pairs = db_roundtrip->export_pq_signatures().move_as_ok();
+
+    vm::CellBuilder proof_builder;
+    td::Ref<vm::Cell> proof_cell;
+    auto proof_payload = vm::CellBuilder{}.finalize_novm();
+    if (!proof_builder.store_long_bool(0xc3, 8)) {
+      fail("could not store the BlockProof constructor");
+      co_return td::Unit{};
+    }
+    if (!block::tlb::t_BlockIdExt.pack(proof_builder, accepted->block_id)) {
+      fail("could not store the BlockProof block id");
+      co_return td::Unit{};
+    }
+    if (!proof_builder.store_ref_bool(std::move(proof_payload))) {
+      fail("could not store the BlockProof payload");
+      co_return td::Unit{};
+    }
+    if (!proof_builder.store_bool_bool(true)) {
+      fail("could not store the BlockProof signature presence bit");
+      co_return td::Unit{};
+    }
+    if (!proof_builder.store_ref_bool(persisted_cell)) {
+      fail("could not store the BlockProof signature set");
+      co_return td::Unit{};
+    }
+    if (!proof_builder.finalize_to(proof_cell)) {
+      fail("could not finalize the BlockProof round-trip fixture");
+      co_return td::Unit{};
+    }
+    block::gen::BlockProof::Record proof;
+    if (!block::gen::t_BlockProof.cell_unpack(proof_cell, proof) || proof.signatures.is_null() ||
+        proof.signatures->size_refs() != 1) {
+      fail("could not load the post-quantum carrier from BlockProof");
+      co_return td::Unit{};
+    }
+    auto proof_set = block::BlockSignatureSet::fetch(proof.signatures->prefetch_ref(), validator_set_).move_as_ok();
+    auto proof_pairs = proof_set->export_pq_signatures().move_as_ok();
+
+    auto by_id = [](const std::vector<block::PQBlockSignature>& pairs) {
+      std::map<ValidatorId, td::Slice> result;
+      for (const auto& pair : pairs) {
+        result.emplace(pair.validator_id, pair.signature.as_slice());
+      }
+      return result;
+    };
+    auto carried_by_id = by_id(carried);
+    auto db_by_id = by_id(db_pairs);
+    auto proof_by_id = by_id(proof_pairs);
+    size_t compared = 0;
+    auto wanted_vote = serialize_tl_object(simplex::Vote{certificate->vote}.to_tl(), true);
+    for (const auto& [signer_index, cert_bytes] : certificate->signatures) {
+      const auto index = signer_index.value();
+      if (index >= nodes_.size()) {
+        fail(PSTRING() << "FinalCert signer " << index << " is outside the node set");
+        co_return td::Unit{};
+      }
+      auto journal = own_vote_journal(nodes_[index].instances[0]);
+      td::Slice journal_bytes;
+      for (const auto& entry : journal) {
+        if (entry.is_signed && serialize_tl_object(entry.vote, true).as_slice() == wanted_vote.as_slice()) {
+          journal_bytes = entry.signature.as_slice();
+        }
+      }
+      const auto validator_id = validators_[index].validator_id;
+      auto carrier_it = carried_by_id.find(validator_id);
+      auto db_it = db_by_id.find(validator_id);
+      auto proof_it = proof_by_id.find(validator_id);
+      if (journal_bytes.empty() || carrier_it == carried_by_id.end() || db_it == db_by_id.end() ||
+          proof_it == proof_by_id.end()) {
+        fail(PSTRING() << "signer " << index << " is missing from exact-byte source(s): journal="
+                       << !journal_bytes.empty() << " carrier=" << (carrier_it != carried_by_id.end())
+                       << " db=" << (db_it != db_by_id.end()) << " block-proof=" << (proof_it != proof_by_id.end()));
+        co_return td::Unit{};
+      }
+      if (journal_bytes != cert_bytes.as_slice() || cert_bytes.as_slice() != carrier_it->second ||
+          carrier_it->second != db_it->second || db_it->second != proof_it->second) {
+        fail(PSTRING() << "EXACT_SIGNATURE_BYTES_MISMATCH signer=" << index
+                       << " journal/final-cert/carrier/db/block-proof are not byte-identical");
+        co_return td::Unit{};
+      }
+      ++compared;
+    }
+    if (compared == 0) {
+      fail("the accepted carrier contained no signatures to compare");
+      co_return td::Unit{};
+    }
+    LOG(WARNING) << "PQ finality carrier: compared " << compared
+                 << " signature(s) byte-for-byte across journal, FinalCert, #13 carrier, database round trip and "
+                    "BlockProof; carrier-missing count=0; longest consecutive accepted run="
+                 << consecutive_accepted_blocks
+                 << "; independently verified accepted proofs=" << independently_verified_proofs;
+    pq_finality_completed_ = true;
+    co_return td::Unit{};
+  }
+
+  // ===== A failure retrying cannot mend =====
+  //
+  // Every finalization failure used to be treated as transient, which is
+  // not a policy but the absence of one: it commits a node to retrying a protocol violation
+  // for as long as it lives. The resolver now classifies, and this is the branch nothing in
+  // production cannot reach deterministically -- so it is injected, and what is required of it
+  // is the three things that make the classification worth having.
+  //
+  // The certificate is kept, because it is still evidence a quorum agreed. It is not
+  // retried, because retrying is what the classification says is pointless here. And the
+  // group stops producing, because a chain must not run ahead of a finality that is not
+  // coming.
+  td::actor::Task<> run_permanent_finalization_test() {
+    auto fail = [&](std::string message) { permanent_finalization_error_ = std::move(message); };
+
+    auto first_stalled =
+        [&]() -> td::actor::Task<std::optional<std::pair<size_t, simplex::QueryFinalizationState::Result>>> {
+      for (size_t node_idx = 0; node_idx < N_NODES; ++node_idx) {
+        for (auto& instance : nodes_[node_idx].instances) {
+          if (instance.status != Instance::Running) {
+            continue;
+          }
+          auto seen = co_await instance.bus.publish(std::make_shared<simplex::QueryFinalizationState>(0));
+          if (seen.finalizations_stalled_permanently > 0) {
+            co_return std::make_pair(node_idx, seen);
+          }
+        }
+      }
+      co_return std::nullopt;
+    };
+
+    auto deadline = td::Timestamp::in(DURATION * 0.5);
+    std::optional<std::pair<size_t, simplex::QueryFinalizationState::Result>> stalled;
+    while (!stalled.has_value() && !deadline.is_in_past()) {
+      stalled = co_await first_stalled();
+      if (!stalled.has_value()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+    }
+    if (!stalled.has_value()) {
+      fail("no node reported a finalization it cannot retry, so the injected failure never reached the seam");
+      co_return td::Unit{};
+    }
+    const size_t node_idx = stalled->first;
+    const auto first = stalled->second;
+
+    if (first.pending_finalizations == 0) {
+      fail(PSTRING() << "node " << node_idx
+                     << " reported a finalization it cannot retry but is holding none; a certificate a quorum "
+                     << "agreed on must be kept even when converting it cannot be retried");
+      co_return td::Unit{};
+    }
+
+    // Not retried: over a window in which a retryable failure would have been tried several
+    // times, neither the attempt count nor the stalled count moves.
+    auto candidates_before = CANDIDATES_GENERATED.load();
+    co_await td::actor::coro_sleep(td::Timestamp::in(std::min(DURATION * 0.1, 3.0)));
+    auto later =
+        co_await nodes_[node_idx].instances[0].bus.publish(std::make_shared<simplex::QueryFinalizationState>(0));
+
+    if (later.finalization_retries > first.finalization_retries) {
+      fail(PSTRING() << "node " << node_idx << " retried " << (later.finalization_retries - first.finalization_retries)
+                     << " finalization(s) after classifying one as beyond retrying");
+      co_return td::Unit{};
+    }
+    if (CANDIDATES_GENERATED.load() != candidates_before) {
+      fail(PSTRING() << "the network produced " << (CANDIDATES_GENERATED.load() - candidates_before)
+                     << " candidates while a node held a certificate it cannot finalize; the group has to stop "
+                     << "rather than run further ahead of a finality that is not coming");
+      co_return td::Unit{};
+    }
+
+    LOG(WARNING) << "Permanent finalization: node " << node_idx << " is holding " << later.pending_finalizations
+                 << " certificate(s) it cannot convert, has not retried them, and the network produced no further "
+                 << "candidate while it held them";
+    permanent_finalization_completed_ = true;
+    co_return td::Unit{};
+  }
+
+  // ===== This node's own vote journal =====
+  //
+  // The property under test is not "the node persists its votes". It is that the first
+  // signature bytes allowed to become observable are already durable, and that from then on
+  // those exact bytes are what comes back. ML-DSA-44 signing is randomized, so a node that
+  // signs again after a restart produces a second valid signature for a vote a peer may
+  // already hold inside a certificate.
+  struct JournalledVote {
+    td::BufferSlice key;
+    td::BufferSlice value;
+    bool is_signed = false;
+    td::int64 seqno = 0;
+    td::BufferSlice signature;
+    tos_api::consensus_simplex_UnsignedVote* vote = nullptr;  // owned by `parsed`
+    tl_object_ptr<tos_api::consensus_simplex_db_Vote> parsed;
+  };
+
+  // Every record this node wrote about a vote of its own, in journal order. Certificates
+  // share the key prefix and are deliberately excluded: they are peers' signatures, not
+  // this node's commitment.
+  std::vector<JournalledVote> own_vote_journal(const Instance& instance) const {
+    std::vector<std::pair<td::BufferSlice, td::BufferSlice>> raw;
+    {
+      std::scoped_lock lock(instance.db_inner->mutex);
+      const td::uint32 prefix = tos_api::consensus_simplex_db_key_vote::ID;
+      for (const auto& [key, value] : instance.db_inner->map) {
+        if (key.size() >= sizeof(prefix) && std::memcmp(key.data(), &prefix, sizeof(prefix)) == 0) {
+          raw.emplace_back(key.clone(), value.clone());
+        }
+      }
+    }
+
+    std::vector<JournalledVote> result;
+    for (auto& [key, value] : raw) {
+      auto parsed_r = fetch_tl_object<tos_api::consensus_simplex_db_Vote>(value, true);
+      if (parsed_r.is_error()) {
+        continue;
+      }
+      JournalledVote entry;
+      entry.key = key.clone();
+      entry.value = value.clone();
+      entry.parsed = parsed_r.move_as_ok();
+      bool is_own_vote = false;
+      auto intent_fn = [&](tos_api::consensus_simplex_db_ourVoteIntent& record) {
+        is_own_vote = true;
+        entry.seqno = record.seqno_;
+        entry.vote = record.vote_.get();
+      };
+      auto signed_fn = [&](tos_api::consensus_simplex_db_ourSignedVote& record) {
+        is_own_vote = true;
+        entry.is_signed = true;
+        entry.seqno = record.seqno_;
+        entry.signature = record.signature_.clone();
+        entry.vote = record.vote_.get();
+      };
+      auto cert_fn = [&](tos_api::consensus_simplex_db_cert&) {};
+      tos_api::downcast_call(*entry.parsed, td::overloaded(intent_fn, signed_fn, cert_fn));
+      if (is_own_vote) {
+        result.push_back(std::move(entry));
+      }
+    }
+    std::sort(result.begin(), result.end(),
+              [](const JournalledVote& a, const JournalledVote& b) { return a.seqno < b.seqno; });
+    return result;
+  }
+
+  // Certificates this node stored. With a single validator its own vote reaches the quorum
+  // immediately, so a certificate record appearing is proof that a vote was applied to the
+  // pool -- which is what must not happen before the signed record is committed.
+  size_t stored_certificate_count(const Instance& instance) const {
+    auto journal = own_vote_journal(instance);
+    std::scoped_lock lock(instance.db_inner->mutex);
+    const td::uint32 prefix = tos_api::consensus_simplex_db_key_vote::ID;
+    size_t total = 0;
+    for (const auto& [key, _] : instance.db_inner->map) {
+      if (key.size() >= sizeof(prefix) && std::memcmp(key.data(), &prefix, sizeof(prefix)) == 0) {
+        ++total;
+      }
+    }
+    return total - journal.size();
+  }
+
+  // Records that hold a signature now and did not before. Each one cost exactly one call to
+  // the signer, which is what makes the signer count comparable to the journal.
+  static size_t count_newly_signed(const std::vector<JournalledVote>& before,
+                                   const std::vector<JournalledVote>& after) {
+    std::map<td::Slice, bool> signed_before;
+    for (const auto& entry : before) {
+      signed_before.emplace(entry.key.as_slice(), entry.is_signed);
+    }
+    size_t newly_signed = 0;
+    for (const auto& entry : after) {
+      if (!entry.is_signed) {
+        continue;
+      }
+      auto it = signed_before.find(entry.key.as_slice());
+      if (it == signed_before.end() || !it->second) {
+        ++newly_signed;
+      }
+    }
+    return newly_signed;
+  }
+
+  void arm_write_failures(const Instance& instance, td::uint32 tl_constructor_id, size_t count) const {
+    std::scoped_lock lock(instance.db_inner->mutex);
+    instance.db_inner->fail_writes_of[tl_constructor_id] = count;
+  }
+
+  size_t failed_write_count(const Instance& instance) const {
+    std::scoped_lock lock(instance.db_inner->mutex);
+    return instance.db_inner->failed_write_count;
+  }
+
+  void overwrite_journal_record(const Instance& instance, td::Slice key, td::BufferSlice value) const {
+    std::scoped_lock lock(instance.db_inner->mutex);
+    auto it = instance.db_inner->map.find(td::BufferSlice{key});
+    CHECK(it != instance.db_inner->map.end());
+    it->second = std::move(value);
+  }
+
+  void put_journal_record(const Instance& instance, td::BufferSlice key, td::BufferSlice value) const {
+    std::scoped_lock lock(instance.db_inner->mutex);
+    instance.db_inner->map[std::move(key)] = std::move(value);
+  }
+
+  void erase_journal_record(const Instance& instance, td::Slice key) const {
+    std::scoped_lock lock(instance.db_inner->mutex);
+    instance.db_inner->map.erase(td::BufferSlice{key});
+  }
+
+  td::actor::Task<> run_vote_journal_test() {
+    auto& instance = nodes_[0].instances[0];
+    const auto& store = *nodes_[0].pq_store;
+
+    auto fail = [&](std::string message) { vote_journal_error_ = std::move(message); };
+
+    // --- Phase 1: what the node journalled about its own votes is signed and verifiable ---
+    //
+    // Stopping the node is itself a crash point, so a vote whose intent was committed when
+    // the stop arrived is legitimately left as an intent; that is the state the journal
+    // exists to express, and phase 3 shows how it recovers. What must hold here is that
+    // every record the node did finish carries a signature it can prove is its own.
+    // Two is the minimum complete local vote pair: notarize and finalize one candidate.
+    // It is also every shape the later phases need -- one record to compare byte for byte
+    // across a restart, and one to downgrade to an intent and watch be signed again.
+    constexpr size_t REQUIRED_VOTES = 2;
+    auto signed_count = [&] {
+      auto journal = own_vote_journal(instance);
+      return std::count_if(journal.begin(), journal.end(), [](const JournalledVote& v) { return v.is_signed; });
+    };
+    auto deadline = td::Timestamp::in(DURATION * 0.4);
+    while (static_cast<size_t>(signed_count()) < REQUIRED_VOTES && !deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+    }
+    co_await stop_instance(0, 0);
+
+    auto before = own_vote_journal(instance);
+    std::vector<const JournalledVote*> before_signed;
+    size_t before_intents = 0;
+    for (const auto& entry : before) {
+      if (!entry.is_signed) {
+        ++before_intents;
+        continue;
+      }
+      if (entry.signature.size() != tos::pq::mldsa44_signature_bytes) {
+        fail(PSTRING() << "a journalled signature is " << entry.signature.size() << " bytes");
+        co_return td::Unit{};
+      }
+      if (!validators_[0].check_signature(SESSION_ID, serialize_tl_object(entry.vote, true), entry.signature)) {
+        fail("a journalled signature does not verify under this node's consensus key");
+        co_return td::Unit{};
+      }
+      before_signed.push_back(&entry);
+    }
+    if (before_signed.size() < REQUIRED_VOTES) {
+      fail(PSTRING() << "the node journalled only " << before_signed.size() << " signed votes of its own, out of "
+                     << before.size() << " records");
+      co_return td::Unit{};
+    }
+
+    // --- Phase 2: a restart replays the stored bytes and signs nothing again ---
+    //
+    // New votes are blocked for the duration by rejecting every intent write, so that the
+    // signer count over this window belongs to the replay and nothing else. Without that,
+    // a vote signed just before the stop with its signed-record write still pending is a
+    // legitimate outcome that is indistinguishable from a stray signature, and the count
+    // would have to be loosened until it stopped proving anything. Phase 4 is what
+    // establishes that a rejected intent really does stop a vote from being signed.
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourVoteIntent::ID, 1000);
+    auto signatures_before = store.consensus_signatures_produced();
+    start_instance(0, 0);
+    co_await td::actor::coro_sleep(td::Timestamp::in(std::min(DURATION * 0.2, 1.0)));
+    co_await stop_instance(0, 0);
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourVoteIntent::ID, 0);
+
+    auto after = own_vote_journal(instance);
+    std::map<td::Slice, const JournalledVote*> after_by_key;
+    for (const auto& entry : after) {
+      after_by_key.emplace(entry.key.as_slice(), &entry);
+    }
+    for (const auto* entry : before_signed) {
+      auto it = after_by_key.find(entry->key.as_slice());
+      if (it == after_by_key.end()) {
+        fail(PSTRING() << "a journalled vote disappeared across the restart, seqno " << entry->seqno);
+        co_return td::Unit{};
+      }
+      // Byte identity of the whole record, which covers the signature inside it.
+      if (it->second->value.as_slice() != entry->value.as_slice()) {
+        fail(PSTRING() << "a journalled vote was rewritten across the restart, seqno " << entry->seqno);
+        co_return td::Unit{};
+      }
+    }
+    // Replaying an already-signed vote must not reach the signer at all. With no new vote
+    // able to start, every signature this window produced must have turned some record from
+    // an intent into a signed one, and every such record must have cost exactly one
+    // signature. An equality, not a bound: a record that was already signed accounts for
+    // nothing, so re-signing one breaks it in one direction and a lost signature breaks it
+    // in the other.
+    auto newly_signed = count_newly_signed(before, after);
+    auto signatures_made = store.consensus_signatures_produced() - signatures_before;
+    if (signatures_made != newly_signed) {
+      fail(PSTRING() << "the restart produced " << signatures_made << " signatures while " << newly_signed
+                     << " records became signed; replay must sign exactly the intents it recovered");
+      co_return td::Unit{};
+    }
+
+    // --- Phase 3: a crash between the intent and the signature is re-signed exactly once ---
+    // The crash window is reproduced by putting the journal back into the state it would
+    // have been left in: the decision committed, the signature not. Nothing could have
+    // observed that vote, so signing it again introduces no second object.
+    const JournalledVote* newest_signed = nullptr;
+    for (const auto& entry : after) {
+      if (entry.is_signed) {
+        newest_signed = &entry;
+      }
+    }
+    if (newest_signed == nullptr) {
+      fail("no signed vote survived the restart to downgrade");
+      co_return td::Unit{};
+    }
+    auto downgraded_key = newest_signed->key.clone();
+    auto downgraded_seqno = newest_signed->seqno;
+    auto original_record = newest_signed->value.clone();
+    auto original_signature = newest_signed->signature.clone();
+    auto downgraded_vote_tl = serialize_tl_object(take_unsigned_vote(original_record.as_slice()), true);
+    overwrite_journal_record(instance, downgraded_key.as_slice(),
+                             create_serialize_tl_object<tos_api::consensus_simplex_db_ourVoteIntent>(
+                                 take_unsigned_vote(original_record), downgraded_seqno));
+    if (erase_certificates_over_vote(instance, downgraded_vote_tl.as_slice()) == 0) {
+      // Not a formality. A single validator is its own quorum, so the vote being downgraded
+      // is inside a stored certificate; finding none means the record picked is not the one
+      // this phase believes it picked, and the recovery below would prove nothing.
+      fail("the downgraded vote was in no stored certificate, so the crash window was not reconstructed");
+      co_return td::Unit{};
+    }
+
+    // New votes are blocked here for the same reason as in phase 2: the signer count is
+    // only evidence while nothing else can reach the signer.
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourVoteIntent::ID, 1000);
+    auto before_resign = own_vote_journal(instance);
+    signatures_before = store.consensus_signatures_produced();
+    auto journalled_before = before_resign.size();
+    start_instance(0, 0);
+    auto resign_deadline = td::Timestamp::in(std::min(DURATION * 0.2, 1.0));
+    while (!resign_deadline.is_in_past()) {
+      auto current = own_vote_journal(instance);
+      auto it = std::find_if(current.begin(), current.end(),
+                             [&](const JournalledVote& v) { return v.key.as_slice() == downgraded_key.as_slice(); });
+      if (it != current.end() && it->is_signed) {
+        break;
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+    }
+    co_await stop_instance(0, 0);
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourVoteIntent::ID, 0);
+
+    auto resigned = own_vote_journal(instance);
+    auto resigned_it = std::find_if(resigned.begin(), resigned.end(), [&](const JournalledVote& v) {
+      return v.key.as_slice() == downgraded_key.as_slice();
+    });
+    if (resigned_it == resigned.end() || !resigned_it->is_signed) {
+      fail("an intent-only vote was not signed and committed on restart");
+      co_return td::Unit{};
+    }
+    if (!validators_[0].check_signature(SESSION_ID, serialize_tl_object(resigned_it->vote, true),
+                                        resigned_it->signature)) {
+      fail("the re-signed vote does not verify under this node's consensus key");
+      co_return td::Unit{};
+    }
+    // Randomized signing: the replacement must be a different object, which is exactly why
+    // this may only happen for a signature that never escaped.
+    if (resigned_it->signature.as_slice() == original_signature.as_slice()) {
+      fail("the re-signed vote reproduced the original signature byte for byte");
+      co_return td::Unit{};
+    }
+    if (resigned.size() != journalled_before) {
+      fail(PSTRING() << "the journal changed size while only recovering an intent: " << journalled_before << " -> "
+                     << resigned.size() << " records");
+      co_return td::Unit{};
+    }
+    auto resign_newly_signed = count_newly_signed(before_resign, resigned);
+    auto resign_signatures = store.consensus_signatures_produced() - signatures_before;
+    // Exactly the intents that were recovered, no more and no fewer. The downgraded record
+    // is one of them, so this is at least one.
+    if (resign_signatures != resign_newly_signed || resign_signatures < 1) {
+      fail(PSTRING() << "recovering intents produced " << resign_signatures << " signatures while "
+                     << resign_newly_signed << " records became signed");
+      co_return td::Unit{};
+    }
+
+    // --- Phase 4: an intent that will not commit means nothing is signed ---
+    // The decision must be durable before the key is used at all. With every intent write
+    // rejected, a node that respected only the second write would still sign and still
+    // commit a signed record; a node that respects the first writes nothing and signs
+    // nothing.
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourVoteIntent::ID, 1000);
+    signatures_before = store.consensus_signatures_produced();
+    journalled_before = own_vote_journal(instance).size();
+    auto failures_before = failed_write_count(instance);
+    start_instance(0, 0);
+    co_await td::actor::coro_sleep(td::Timestamp::in(std::min(DURATION * 0.15, 1.0)));
+    co_await stop_instance(0, 0);
+
+    if (failed_write_count(instance) <= failures_before) {
+      fail("no intent write was rejected; the injected failure never reached the journal");
+      co_return td::Unit{};
+    }
+    auto after_intent_failures = own_vote_journal(instance);
+    if (after_intent_failures.size() != journalled_before) {
+      fail(PSTRING() << "a vote was journalled although its intent write failed: " << journalled_before << " -> "
+                     << after_intent_failures.size() << " records");
+      co_return td::Unit{};
+    }
+    if (store.consensus_signatures_produced() != signatures_before) {
+      fail("a vote was signed although its intent write failed");
+      co_return td::Unit{};
+    }
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourVoteIntent::ID, 0);
+
+    // --- Phase 5: a signed record that will not commit is never applied ---
+    // Signing is allowed here; using the signature is not. With one validator, a vote that
+    // reaches the pool meets the quorum at once and a certificate is stored, so a stored
+    // certificate is the observable proof that a signature was used. The signer count
+    // rising is the positive control that this phase exercised the path at all.
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourSignedVote::ID, 1000);
+    signatures_before = store.consensus_signatures_produced();
+    auto certificates_before = stored_certificate_count(instance);
+    failures_before = failed_write_count(instance);
+    start_instance(0, 0);
+    co_await td::actor::coro_sleep(td::Timestamp::in(std::min(DURATION * 0.15, 1.0)));
+    co_await stop_instance(0, 0);
+
+    if (failed_write_count(instance) <= failures_before) {
+      fail("no signed-vote write was rejected; the injected failure never reached the journal");
+      co_return td::Unit{};
+    }
+    if (store.consensus_signatures_produced() == signatures_before) {
+      fail("no vote was signed while signed-vote writes were failing; the phase proved nothing");
+      co_return td::Unit{};
+    }
+    auto certificates_after = stored_certificate_count(instance);
+    if (certificates_after != certificates_before) {
+      fail(PSTRING() << "a vote was applied although its signed record was not committed; stored certificates "
+                     << certificates_before << " -> " << certificates_after);
+      co_return td::Unit{};
+    }
+    arm_write_failures(instance, tos_api::consensus_simplex_db_ourSignedVote::ID, 0);
+
+    // --- Phase 6: a record of our own that its key does not bind also stops the group ---
+    // The signature inside is genuine, so verifying it proves nothing; what is broken is
+    // the key/value binding. Skipping such a record would drop the vote out of the dedup
+    // set and let the node decide and sign it again, which is the same failure as accepting
+    // a signature it cannot verify. Three shapes are checked: a valid record filed under
+    // another vote's key, a record whose body cannot be read at all, and an intact record
+    // under a key that cannot be read.
+    auto journal_before_binding = own_vote_journal(instance);
+    std::vector<const JournalledVote*> binding_signed;
+    for (const auto& entry : journal_before_binding) {
+      if (entry.is_signed) {
+        binding_signed.push_back(&entry);
+      }
+    }
+    if (binding_signed.size() < 2) {
+      fail("not enough signed records to build a key/value binding mismatch");
+      co_return td::Unit{};
+    }
+    auto misfiled_key = binding_signed[0]->key.clone();
+    auto misfiled_original = binding_signed[0]->value.clone();
+    auto other_record = binding_signed[1]->value.clone();
+
+    // A key that carries the vote-record prefix, so it is still enumerated, but cannot be
+    // parsed. It is added alongside the real records rather than replacing one.
+    td::BufferSlice unreadable_key(4 + 32 + 1);
+    const td::uint32 key_prefix = tos_api::consensus_simplex_db_key_vote::ID;
+    std::memcpy(unreadable_key.as_slice().data(), &key_prefix, sizeof(key_prefix));
+    std::memset(unreadable_key.as_slice().data() + sizeof(key_prefix), 0x5a,
+                unreadable_key.size() - sizeof(key_prefix));
+
+    for (int shape = 0; shape < 3; ++shape) {
+      if (shape == 0) {
+        // A valid signed record, filed under a different vote's key.
+        overwrite_journal_record(instance, misfiled_key.as_slice(), other_record.clone());
+      } else if (shape == 1) {
+        // The constructor tag says this is one of ours; the body is unreadable.
+        td::BufferSlice unreadable(8);
+        const td::uint32 tag = tos_api::consensus_simplex_db_ourSignedVote::ID;
+        std::memcpy(unreadable.as_slice().data(), &tag, sizeof(tag));
+        std::memset(unreadable.as_slice().data() + sizeof(tag), 0xff, unreadable.size() - sizeof(tag));
+        overwrite_journal_record(instance, misfiled_key.as_slice(), std::move(unreadable));
+      } else {
+        // A perfectly good record of our own, under a key that cannot be read. The record
+        // is intact, so only the key says it is lost.
+        overwrite_journal_record(instance, misfiled_key.as_slice(), misfiled_original.clone());
+        put_journal_record(instance, unreadable_key.clone(), other_record.clone());
+      }
+
+      signatures_before = store.consensus_signatures_produced();
+      journalled_before = own_vote_journal(instance).size();
+      start_instance(0, 0);
+      co_await td::actor::coro_sleep(td::Timestamp::in(std::min(DURATION * 0.15, 1.0)));
+      co_await stop_instance(0, 0);
+
+      if (own_vote_journal(instance).size() != journalled_before) {
+        fail(PSTRING() << "the group kept voting with a journal record its key does not bind (shape " << shape
+                       << "): " << journalled_before << " -> " << own_vote_journal(instance).size() << " records");
+        co_return td::Unit{};
+      }
+      if (store.consensus_signatures_produced() != signatures_before) {
+        fail(PSTRING() << "the group signed a vote with a journal record its key does not bind (shape " << shape
+                       << ")");
+        co_return td::Unit{};
+      }
+    }
+    overwrite_journal_record(instance, misfiled_key.as_slice(), std::move(misfiled_original));
+    erase_journal_record(instance, unreadable_key.as_slice());
+
+    // --- Phase 7: a signature this node cannot verify as its own stops the group ---
+    // The node must not paper over it by signing again: it cannot know what it already
+    // told the network, and a fresh signature would be a second object for that vote.
+    auto journal_for_corruption = own_vote_journal(instance);
+    const JournalledVote* to_corrupt = nullptr;
+    for (const auto& entry : journal_for_corruption) {
+      if (entry.is_signed) {
+        to_corrupt = &entry;
+      }
+    }
+    if (to_corrupt == nullptr) {
+      fail("no signed vote survived to corrupt");
+      co_return td::Unit{};
+    }
+    auto corrupted = to_corrupt->value.clone();
+    auto corrupt_key = to_corrupt->key.clone();
+    auto corrupt_signature = to_corrupt->signature.clone();
+    corrupt_signature.as_slice()[0] = static_cast<char>(corrupt_signature.as_slice()[0] ^ 0x01);
+    overwrite_journal_record(instance, corrupt_key.as_slice(),
+                             create_serialize_tl_object<tos_api::consensus_simplex_db_ourSignedVote>(
+                                 take_unsigned_vote(corrupted), to_corrupt->seqno, std::move(corrupt_signature)));
+
+    signatures_before = store.consensus_signatures_produced();
+    journalled_before = own_vote_journal(instance).size();
+    start_instance(0, 0);
+    co_await td::actor::coro_sleep(td::Timestamp::in(std::min(DURATION * 0.2, 1.0)));
+    co_await stop_instance(0, 0);
+
+    auto quiescent = own_vote_journal(instance);
+    if (quiescent.size() != journalled_before) {
+      fail(PSTRING() << "the group kept voting with an unusable journal: " << journalled_before << " -> "
+                     << quiescent.size() << " records");
+      co_return td::Unit{};
+    }
+    if (store.consensus_signatures_produced() != signatures_before) {
+      fail("the group signed a vote with an unusable journal");
+      co_return td::Unit{};
+    }
+
+    LOG(WARNING) << "Vote journal: " << before_signed.size() << " signed records replayed byte-for-byte, "
+                 << before_intents << " intents left by the stop, a failed intent write stopped signing, a failed "
+                 << "signed write stopped application, one intent-only vote re-signed once, and an unverifiable "
+                 << "record stopped the group";
+    vote_journal_completed_ = true;
+    co_return td::Unit{};
+  }
+
+  // Move the unsigned vote out of a serialized journal record, whichever state it is in.
+  // Remove every cached certificate that carries this exact vote. A crash between the vote
+  // decision and its signature means the signature never existed, so nothing could have put
+  // it into a certificate either -- and a journal holding an intent while the certificate
+  // built from that vote's signature is still on disk is a state no crash could produce.
+  // Leaving one behind also finalizes the vote's slot at startup, which prunes the slot the
+  // recovered intent belongs to, so the recovery being tested never even starts.
+  size_t erase_certificates_over_vote(const Instance& instance, td::Slice unsigned_vote) const {
+    std::vector<td::BufferSlice> to_erase;
+    {
+      std::scoped_lock lock(instance.db_inner->mutex);
+      const td::uint32 prefix = tos_api::consensus_simplex_db_key_vote::ID;
+      for (const auto& [key, value] : instance.db_inner->map) {
+        if (key.size() < sizeof(prefix) || std::memcmp(key.data(), &prefix, sizeof(prefix)) != 0) {
+          continue;
+        }
+        auto parsed = fetch_tl_object<tos_api::consensus_simplex_db_Vote>(value.as_slice(), true);
+        if (parsed.is_error()) {
+          continue;
+        }
+        bool carries_the_vote = false;
+        tos_api::downcast_call(
+            *parsed.ok(), td::overloaded([&](tos_api::consensus_simplex_db_ourVoteIntent&) {},
+                                         [&](tos_api::consensus_simplex_db_ourSignedVote&) {},
+                                         [&](tos_api::consensus_simplex_db_cert& r) {
+                                           carries_the_vote =
+                                               serialize_tl_object(r.cert_->vote_, true).as_slice() == unsigned_vote;
+                                         }));
+        if (carries_the_vote) {
+          to_erase.push_back(key.clone());
+        }
+      }
+    }
+    for (const auto& key : to_erase) {
+      erase_journal_record(instance, key.as_slice());
+    }
+    return to_erase.size();
+  }
+
+  static tl_object_ptr<tos_api::consensus_simplex_UnsignedVote> take_unsigned_vote(td::Slice record) {
+    auto parsed = fetch_tl_object<tos_api::consensus_simplex_db_Vote>(record, true).move_as_ok();
+    tl_object_ptr<tos_api::consensus_simplex_UnsignedVote> vote;
+    tos_api::downcast_call(
+        *parsed, td::overloaded([&](tos_api::consensus_simplex_db_ourVoteIntent& r) { vote = std::move(r.vote_); },
+                                [&](tos_api::consensus_simplex_db_ourSignedVote& r) { vote = std::move(r.vote_); },
+                                [&](tos_api::consensus_simplex_db_cert&) {}));
+    CHECK(vote);
+    return vote;
+  }
+
   td::actor::Task<> run_empty_chain_restart_test() {
     // Keep the manager's masterchain-finalized watermark at genesis.  After
     // the first few real blocks, BlockProducer will therefore finalize only
@@ -1120,14 +2263,13 @@ class TestConsensus : public td::actor::Actor {
     }
     auto before_restart = candidate_record_count(instance);
     if (before_restart < EMPTY_CHAIN_LENGTH) {
-      empty_chain_restart_error_ =
-          PSTRING() << "built only " << before_restart << " candidates before the restart";
+      empty_chain_restart_error_ = PSTRING() << "built only " << before_restart << " candidates before the restart";
       co_return td::Unit{};
     }
     auto empty_chain_length = trailing_empty_candidate_count(instance);
     if (empty_chain_length <= 4096) {
-      empty_chain_restart_error_ =
-          PSTRING() << "built only " << empty_chain_length << " consecutive empty candidates before the restart";
+      empty_chain_restart_error_ = PSTRING() << "built only " << empty_chain_length
+                                             << " consecutive empty candidates before the restart";
       co_return td::Unit{};
     }
 
@@ -1142,15 +2284,13 @@ class TestConsensus : public td::actor::Actor {
 
     const size_t RECOVERY_CANDIDATES = SLOTS_PER_LEADER_WINDOW * 2;
     auto recovery_deadline = td::Timestamp::in(DURATION * 0.25);
-    while (candidate_record_count(instance) < stopped_count + RECOVERY_CANDIDATES &&
-           !recovery_deadline.is_in_past()) {
+    while (candidate_record_count(instance) < stopped_count + RECOVERY_CANDIDATES && !recovery_deadline.is_in_past()) {
       co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
     }
     auto after_restart = candidate_record_count(instance);
     if (after_restart < stopped_count + RECOVERY_CANDIDATES) {
-      empty_chain_restart_error_ =
-          PSTRING() << "candidate production did not resume after resolving " << stopped_count
-                    << " persisted candidates; count after restart=" << after_restart;
+      empty_chain_restart_error_ = PSTRING() << "candidate production did not resume after resolving " << stopped_count
+                                             << " persisted candidates; count after restart=" << after_restart;
       co_return td::Unit{};
     }
 
@@ -1185,9 +2325,8 @@ class TestConsensus : public td::actor::Actor {
     auto final_anchor_failures = EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load();
     if (final_anchor_failures != settled_anchor_failures) {
       empty_chain_restart_error_ =
-          PSTRING() << "manager anchor failures increased after startup requests settled: "
-                    << settled_anchor_failures << " -> " << final_anchor_failures
-                    << "; completed-ancestor cache was not reused";
+          PSTRING() << "manager anchor failures increased after startup requests settled: " << settled_anchor_failures
+                    << " -> " << final_anchor_failures << "; completed-ancestor cache was not reused";
       co_return td::Unit{};
     }
     LOG(WARNING) << "Long empty-chain restart recovered after " << empty_chain_length
@@ -1210,15 +2349,14 @@ class TestConsensus : public td::actor::Actor {
     LOG(WARNING) << "TEST RESULTS:";
     for (size_t idx = 0; idx < N_NODES; ++idx) {
       for (size_t inst_idx = 0; inst_idx < nodes_[idx].instances.size(); ++inst_idx) {
-        Instance &inst = nodes_[idx].instances[inst_idx];
+        Instance& inst = nodes_[idx].instances[inst_idx];
         LOG(WARNING) << "Node #" << idx << " instance #" << inst_idx << " : synced up to block "
                      << inst.last_accepted_block;
       }
     }
     if (last_accepted_block_.seqno() < MIN_FINALIZED_BLOCKS) {
-      co_return td::Status::Error(
-          PSTRING() << "finalized only " << last_accepted_block_.seqno() << " blocks, expected at least "
-                    << MIN_FINALIZED_BLOCKS);
+      co_return td::Status::Error(PSTRING() << "finalized only " << last_accepted_block_.seqno()
+                                            << " blocks, expected at least " << MIN_FINALIZED_BLOCKS);
     }
     if (MALICIOUS_OBSERVER_ATTACK && malicious_observer_messages_ == 0) {
       co_return td::Status::Error("malicious observer attack was not injected");
@@ -1236,43 +2374,42 @@ class TestConsensus : public td::actor::Actor {
         (!query_abuse_completed_ ||
          query_abuse_accepted_ != NewConsensusConfig{}.noncritical_params.candidate_resolve_rate_limit ||
          query_abuse_rejected_ != 3)) {
-      co_return td::Status::Error(
-          PSTRING() << "candidate query rate limit was not enforced: accepted=" << query_abuse_accepted_
-                    << " rejected=" << query_abuse_rejected_);
+      co_return td::Status::Error(PSTRING() << "candidate query rate limit was not enforced: accepted="
+                                            << query_abuse_accepted_ << " rejected=" << query_abuse_rejected_);
     }
     if (QUERY_ABUSE_TEST && query_abuse_tracked_states_ != 0) {
-      co_return td::Status::Error(
-          PSTRING() << "candidate requests for untracked ids grew the resolver state map: tracked_states="
-                    << query_abuse_tracked_states_);
+      co_return td::Status::Error(PSTRING()
+                                  << "candidate requests for untracked ids grew the resolver state map: tracked_states="
+                                  << query_abuse_tracked_states_);
     }
     if (CATCH_UP_DOWNTIME >= 0.0) {
       if (!catch_up_error_.empty()) {
         co_return td::Status::Error(catch_up_error_);
       }
       if (!catch_up_restarted_ || !catch_up_completed_) {
-        co_return td::Status::Error(
-            PSTRING() << "catch-up node did not reach restart target " << catch_up_target_
-                      << " (restarted=" << catch_up_restarted_ << ", completed=" << catch_up_completed_ << ")");
+        co_return td::Status::Error(PSTRING() << "catch-up node did not reach restart target " << catch_up_target_
+                                              << " (restarted=" << catch_up_restarted_
+                                              << ", completed=" << catch_up_completed_ << ")");
       }
       const auto caught_up_height = nodes_[catch_up_node_idx_].instances[0].last_accepted_block;
       if (caught_up_height + 2 < last_accepted_block_.seqno()) {
         co_return td::Status::Error(PSTRING() << "catch-up node ended at " << caught_up_height
-                                             << " while network finalized " << last_accepted_block_.seqno());
+                                              << " while network finalized " << last_accepted_block_.seqno());
       }
-      size_t latest_get_count = 0;
-      size_t latest_found_count = 0;
+      size_t finalized_latest_get_count = 0;
+      size_t finalized_latest_found_count = 0;
       for (const auto& node : nodes_) {
         for (const auto& instance : node.instances) {
           std::scoped_lock lock(instance.db_inner->mutex);
-          latest_get_count += instance.db_inner->latest_get_count;
-          latest_found_count += instance.db_inner->latest_found_count;
+          finalized_latest_get_count += instance.db_inner->finalized_latest_get_count;
+          finalized_latest_found_count += instance.db_inner->finalized_latest_found_count;
         }
       }
-      if (latest_found_count == 0) {
+      if (finalized_latest_found_count == 0) {
         co_return td::Status::Error("catch-up test never recovered an evicted finalized ID through live DB lookup");
       }
-      LOG(WARNING) << "StateResolver live DB lookup coverage: gets=" << latest_get_count
-                   << " found=" << latest_found_count;
+      LOG(WARNING) << "StateResolver live DB lookup coverage: gets=" << finalized_latest_get_count
+                   << " found=" << finalized_latest_found_count;
     }
     if (EMPTY_CHAIN_RESTART_TEST) {
       if (!empty_chain_restart_error_.empty()) {
@@ -1280,6 +2417,30 @@ class TestConsensus : public td::actor::Actor {
       }
       if (!empty_chain_restart_completed_) {
         co_return td::Status::Error("long empty-chain restart did not complete");
+      }
+    }
+    if (VOTE_JOURNAL_TEST) {
+      if (!vote_journal_error_.empty()) {
+        co_return td::Status::Error(vote_journal_error_);
+      }
+      if (!vote_journal_completed_) {
+        co_return td::Status::Error("the vote journal test did not complete");
+      }
+    }
+    if (PQ_FINALITY_E2E_TEST) {
+      if (!pq_finality_error_.empty()) {
+        co_return td::Status::Error(pq_finality_error_);
+      }
+      if (!pq_finality_completed_) {
+        co_return td::Status::Error("the post-quantum finality end-to-end test did not complete");
+      }
+    }
+    if (PERMANENT_FINALIZATION_TEST) {
+      if (!permanent_finalization_error_.empty()) {
+        co_return td::Status::Error(permanent_finalization_error_);
+      }
+      if (!permanent_finalization_completed_) {
+        co_return td::Status::Error("the permanent-finalization test did not complete");
       }
     }
     co_return td::Unit{};
@@ -1306,6 +2467,9 @@ class TestConsensus : public td::actor::Actor {
     adnl::AdnlNodeIdFull adnl_id_full;
     adnl::AdnlNodeIdShort adnl_id;
     ValidatorWeight weight = 0;
+    // The node's post-quantum consensus key: what it signs Simplex messages with and what
+    // the set records for it. The Ed25519 keys above stay for the transport/overlay layer.
+    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_store;
     std::vector<Instance> instances;
   };
   std::vector<Node> nodes_;
@@ -1334,39 +2498,63 @@ class TestConsensus : public td::actor::Actor {
   bool query_abuse_completed_ = false;
   bool empty_chain_restart_completed_ = false;
   std::string empty_chain_restart_error_;
+  bool vote_journal_completed_ = false;
+  std::string vote_journal_error_;
+  bool pq_finality_completed_ = false;
+  std::string pq_finality_error_;
+  bool permanent_finalization_completed_ = false;
+  std::string permanent_finalization_error_;
+  struct AcceptedCarrier {
+    BlockIdExt block_id;
+    td::Ref<block::BlockSignatureSet> signatures;
+  };
+  std::vector<AcceptedCarrier> accepted_carriers_;
   bool finishing_ = false;
 };
 
 td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockData> data, size_t creator_idx,
                                                   td::Ref<block::BlockSignatureSet> signatures,
-                                                  int block_broadcast_mode, int finality_broadcast_mode,
-                                                  bool send_shard_block_desc, bool apply) {
+                                                  ValidatorSessionId expected_session_id, int block_broadcast_mode,
+                                                  int finality_broadcast_mode, bool send_shard_block_desc, bool apply) {
+  if (signatures->is_pq() && signatures->pq_session_id().move_as_ok() != expected_session_id) {
+    co_return td::Status::Error("manager facade received a PQ carrier for an unexpected session");
+  }
+  auto prepared = prepare_accepted_block_signatures(validator_set_, signatures, id, expected_session_id);
+  if (prepared.is_error()) {
+    co_return prepared.move_as_error();
+  }
+  if (signatures->is_final() && prepared.ok().is_null()) {
+    co_return td::Status::Error("accept block did not materialize final signatures");
+  }
   CHECK(id.shard_full() == SHARD);
   CHECK(!send_shard_block_desc);
   LOG(WARNING) << "Accept block #" << id.seqno() << " (" << (signatures->is_final() ? "final" : "notarize")
                << " signatures), creator_idx=" << creator_idx;
   CHECK(id == data->block_id());
   if (signatures->is_final()) {
-    auto encoded = create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(
-        create_tl_block_id(id), signatures->tl());
+    auto encoded =
+        create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(create_tl_block_id(id), signatures->tl());
     auto decoded = fetch_tl_object<tos_api::tosNode_Broadcast>(std::move(encoded), true).move_as_ok();
     CHECK(decoded->get_id() == tos_api::tosNode_blockFinalityBroadcast::ID);
     auto finality = move_tl_object_as<tos_api::tosNode_blockFinalityBroadcast>(decoded);
     CHECK(create_block_id(finality->id_) == id);
-    auto decoded_signatures = block::BlockSignatureSet::fetch(finality->signature_set_);
-    CHECK(decoded_signatures.not_null());
+    auto decoded_signatures = block::BlockSignatureSet::fetch_node_checked(finality->signature_set_).move_as_ok();
     CHECK(decoded_signatures->is_final());
     CHECK(decoded_signatures->get_catchain_seqno() == signatures->get_catchain_seqno());
     CHECK(decoded_signatures->get_validator_set_hash() == signatures->get_validator_set_hash());
-    decoded_signatures->check_signatures(validator_set_, id).ensure();
+    decoded_signatures
+        ->check_pq_signatures_under_carried_session_for_test(validator_set_, id, block::FinalityRole::Final)
+        .ensure();
     auto tampered_id = id;
     tampered_id.id.seqno++;
-    CHECK(decoded_signatures->check_signatures(validator_set_, tampered_id).is_error());
+    CHECK(decoded_signatures
+              ->check_pq_signatures_under_carried_session_for_test(validator_set_, tampered_id,
+                                                                   block::FinalityRole::Final)
+              .is_error());
 
     auto tampered_signature_tl = signatures->tl();
-    CHECK(tampered_signature_tl->get_id() == tos_api::tosNode_signatureSet_simplex::ID);
-    auto *tampered_signature =
-        static_cast<tos_api::tosNode_signatureSet_simplex *>(tampered_signature_tl.get());
+    CHECK(tampered_signature_tl->get_id() == tos_api::tosNode_signatureSet_simplexPq::ID);
+    auto* tampered_signature = static_cast<tos_api::tosNode_signatureSet_simplexPq*>(tampered_signature_tl.get());
     CHECK(!tampered_signature->signatures_.empty());
     CHECK(!tampered_signature->signatures_.front()->signature_.empty());
     auto original_signature = tampered_signature->signatures_.front()->signature_.as_slice();
@@ -1374,17 +2562,19 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
     std::memcpy(tampered_signature_bytes.data(), original_signature.data(), original_signature.size());
     tampered_signature_bytes.data()[0] ^= 0x01;
     tampered_signature->signatures_.front()->signature_ = std::move(tampered_signature_bytes);
-    auto tampered_signature_set = block::BlockSignatureSet::fetch(tampered_signature_tl);
-    CHECK(tampered_signature_set.not_null());
-    CHECK(tampered_signature_set->check_signatures(validator_set_, id).is_error());
+    auto tampered_signature_set = block::BlockSignatureSet::fetch_node_checked(tampered_signature_tl).move_as_ok();
+    CHECK(tampered_signature_set
+              ->check_pq_signatures_under_carried_session_for_test(validator_set_, id, block::FinalityRole::Final)
+              .is_error());
 
     auto wrong_validator_set_tl = signatures->tl();
-    auto *wrong_validator_set =
-        static_cast<tos_api::tosNode_signatureSet_simplex *>(wrong_validator_set_tl.get());
+    auto* wrong_validator_set = static_cast<tos_api::tosNode_signatureSet_simplexPq*>(wrong_validator_set_tl.get());
     wrong_validator_set->validator_set_hash_ ^= 0x01;
-    auto wrong_validator_set_signatures = block::BlockSignatureSet::fetch(wrong_validator_set_tl);
-    CHECK(wrong_validator_set_signatures.not_null());
-    CHECK(wrong_validator_set_signatures->check_signatures(validator_set_, id).is_error());
+    auto wrong_validator_set_signatures =
+        block::BlockSignatureSet::fetch_node_checked(wrong_validator_set_tl).move_as_ok();
+    CHECK(wrong_validator_set_signatures
+              ->check_pq_signatures_under_carried_session_for_test(validator_set_, id, block::FinalityRole::Final)
+              .is_error());
   }
   td::actor::ask(test_consensus_, &TestConsensus::on_block_accepted, node_idx_, instance_idx_, data, creator_idx,
                  signatures)
@@ -1414,7 +2604,7 @@ void TestManagerFacade::send_block_candidate_broadcast(BlockIdExt id, td::Buffer
 }
 
 td::BufferSlice make_large_candidate_boc(td::uint32 leaf_count, td::uint32 salt, bool multi_root,
-                                         td::Bits256 &root_hash) {
+                                         td::Bits256& root_hash) {
   std::vector<td::Ref<vm::Cell>> level;
   level.reserve(leaf_count);
   for (td::uint32 i = 0; i < leaf_count; ++i) {
@@ -1455,19 +2645,17 @@ void test_configured_maximum_candidate() {
 
   size_t decompressed_size = 0;
   auto compressed = validatorsession::compress_candidate_data(block_data, collated_data, decompressed_size,
-                                                               "configured-maximum-test", block_root_hash)
+                                                              "configured-maximum-test", block_root_hash)
                         .move_as_ok();
   CHECK(decompressed_size <= static_cast<size_t>(max_envelope_size));
 
   auto src = from_hex("3333333333333333333333333333333333333333333333333333333333333333");
   auto envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
       0, src, 10, block_root_hash, static_cast<int>(decompressed_size), compressed.clone());
-  auto decoded =
-      validatorsession::deserialize_candidate(envelope, true, max_envelope_size).move_as_ok();
+  auto decoded = validatorsession::deserialize_candidate(envelope, true, max_envelope_size).move_as_ok();
   CHECK(decoded->data_.as_slice() == block_data.as_slice());
   CHECK(decoded->collated_data_.as_slice() == collated_data.as_slice());
-  CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1)
-            .is_error());
+  CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1).is_error());
 }
 
 void test_candidate_relay_eviction() {
@@ -1595,10 +2783,10 @@ void test_state_resolver_inflight_admission() {
 }
 
 void test_skipped_slot_resolution_policy() {
-  CandidateId requested{.slot = 411, .hash = from_hex(
-                                            "1111111111111111111111111111111111111111111111111111111111111111")};
-  CandidateId conflicting{.slot = 411, .hash = from_hex(
-                                              "2222222222222222222222222222222222222222222222222222222222222222")};
+  CandidateId requested{.slot = 411,
+                        .hash = from_hex("1111111111111111111111111111111111111111111111111111111111111111")};
+  CandidateId conflicting{.slot = 411,
+                          .hash = from_hex("2222222222222222222222222222222222222222222222222222222222222222")};
 
   CHECK(simplex::select_skipped_slot_resolution(requested, false, std::nullopt).move_as_ok() ==
         simplex::SkippedSlotResolution::ResolveCandidate);
@@ -1730,7 +2918,7 @@ void test_simplex_db_finalized_slot_dedup() {
 
 }  // namespace
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
   {
     auto authorized = from_hex("1111111111111111111111111111111111111111111111111111111111111111");
     auto unauthorized = from_hex("2222222222222222222222222222222222222222222222222222222222222222");
@@ -1740,15 +2928,18 @@ int main(int argc, char *argv[]) {
     CHECK(rules.check_rules(PublicKeyHash{authorized}, 2048, true, true) == overlay::BroadcastCheckResult::Forbidden);
     CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 512, true, true) == overlay::BroadcastCheckResult::Forbidden);
     CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 512, true, false) == overlay::BroadcastCheckResult::NeedCheck);
-    CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 2048, false, false) == overlay::BroadcastCheckResult::Forbidden);
+    CHECK(rules.check_rules(PublicKeyHash{unauthorized}, 2048, false, false) ==
+          overlay::BroadcastCheckResult::Forbidden);
   }
 
-  CHECK(should_replace_pending_finality(false, false, false));
-  CHECK(should_replace_pending_finality(false, false, true));
-  CHECK(!should_replace_pending_finality(true, false, false));
-  CHECK(should_replace_pending_finality(true, false, true));
-  CHECK(!should_replace_pending_finality(true, true, false));
-  CHECK(!should_replace_pending_finality(true, true, true));
+  CHECK(pending_finality_admission(false, false, false, false, false) == PendingFinalityAdmission::Replace);
+  CHECK(pending_finality_admission(false, false, false, false, true) == PendingFinalityAdmission::Replace);
+  CHECK(pending_finality_admission(true, true, false, false, false) == PendingFinalityAdmission::Keep);
+  CHECK(pending_finality_admission(true, true, false, true, true) == PendingFinalityAdmission::Replace);
+  CHECK(pending_finality_admission(true, true, true, false, false) == PendingFinalityAdmission::Keep);
+  // Equal-strength unverified finals coexist until trusted block context can
+  // identify the first cryptographically valid candidate.
+  CHECK(pending_finality_admission(true, false, true, false, true) == PendingFinalityAdmission::Append);
 
   CHECK(NewConsensusConfig{}.noncritical_params.target_rate == std::chrono::milliseconds{400});
   CHECK(NewConsensusConfig{}.protocol_version_supported());
@@ -1995,12 +3186,11 @@ int main(int argc, char *argv[]) {
     auto src = from_hex("1111111111111111111111111111111111111111111111111111111111111111");
     auto root_hash = td::Bits256{block_root->get_hash().bits()};
 
-    auto candidate = create_tl_object<tos_api::validatorSession_candidate>(
-        src, 7, root_hash, block_data.clone(), collated_data.clone());
+    auto candidate = create_tl_object<tos_api::validatorSession_candidate>(src, 7, root_hash, block_data.clone(),
+                                                                           collated_data.clone());
 
     auto raw = validatorsession::serialize_candidate(candidate, false).move_as_ok();
-    auto raw_decoded =
-        validatorsession::deserialize_candidate(raw, false, static_cast<int>(raw.size())).move_as_ok();
+    auto raw_decoded = validatorsession::deserialize_candidate(raw, false, static_cast<int>(raw.size())).move_as_ok();
     CHECK(raw_decoded->src_ == src);
     CHECK(raw_decoded->round_ == 7);
     CHECK(raw_decoded->root_hash_ == root_hash);
@@ -2009,16 +3199,14 @@ int main(int argc, char *argv[]) {
     CHECK(validatorsession::deserialize_candidate(raw, true, static_cast<int>(raw.size())).is_error());
 
     size_t decompressed_size = 0;
-    auto compressed = validatorsession::compress_candidate_data(block_data, collated_data, decompressed_size,
-                                                                 "test", root_hash)
-                          .move_as_ok();
+    auto compressed =
+        validatorsession::compress_candidate_data(block_data, collated_data, decompressed_size, "test", root_hash)
+            .move_as_ok();
     CHECK(decompressed_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
     auto compressed_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
         0, src, 7, root_hash, static_cast<int>(decompressed_size), compressed.clone());
-    const int legacy_limit =
-        static_cast<int>(std::max(decompressed_size, static_cast<size_t>(compressed.size())));
-    auto legacy_decoded =
-        validatorsession::deserialize_candidate(compressed_envelope, true, legacy_limit).move_as_ok();
+    const int legacy_limit = static_cast<int>(std::max(decompressed_size, static_cast<size_t>(compressed.size())));
+    auto legacy_decoded = validatorsession::deserialize_candidate(compressed_envelope, true, legacy_limit).move_as_ok();
     CHECK(legacy_decoded->data_.as_slice() == block_data.as_slice());
     CHECK(legacy_decoded->collated_data_.as_slice() == collated_data.as_slice());
     CHECK(validatorsession::deserialize_candidate(compressed_envelope, true, static_cast<int>(decompressed_size) - 1)
@@ -2062,12 +3250,10 @@ int main(int argc, char *argv[]) {
         vm::boc_compress({block_root, collated_root}, vm::CompressionAlgorithm::ImprovedStructureLZ4).move_as_ok();
     auto improved_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
         0, src, 7, root_hash, improved.clone());
-    auto improved_decoded =
-        validatorsession::deserialize_candidate(improved_envelope, true, 1 << 20).move_as_ok();
+    auto improved_decoded = validatorsession::deserialize_candidate(improved_envelope, true, 1 << 20).move_as_ok();
     CHECK(improved_decoded->data_.as_slice() == block_data.as_slice());
     CHECK(improved_decoded->collated_data_.as_slice() == collated_data.as_slice());
-    CHECK(validatorsession::deserialize_candidate(improved_envelope, true,
-                                                  static_cast<int>(improved.size()) - 1)
+    CHECK(validatorsession::deserialize_candidate(improved_envelope, true, static_cast<int>(improved.size()) - 1)
               .is_error());
 
     auto corrupt_improved = improved.clone();
@@ -2076,12 +3262,10 @@ int main(int argc, char *argv[]) {
         0, src, 7, root_hash, std::move(corrupt_improved));
     CHECK(validatorsession::deserialize_candidate(corrupt_improved_envelope, true, 1 << 20).is_error());
 
-    auto baseline =
-        vm::boc_compress({block_root, collated_root}, vm::CompressionAlgorithm::BaselineLZ4).move_as_ok();
+    auto baseline = vm::boc_compress({block_root, collated_root}, vm::CompressionAlgorithm::BaselineLZ4).move_as_ok();
     auto baseline_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
         0, src, 7, root_hash, std::move(baseline));
-    auto baseline_decoded =
-        validatorsession::deserialize_candidate(baseline_envelope, true, 1 << 20).move_as_ok();
+    auto baseline_decoded = validatorsession::deserialize_candidate(baseline_envelope, true, 1 << 20).move_as_ok();
     CHECK(baseline_decoded->data_.as_slice() == block_data.as_slice());
     CHECK(baseline_decoded->collated_data_.as_slice() == collated_data.as_slice());
 
@@ -2092,13 +3276,11 @@ int main(int argc, char *argv[]) {
 
     td::BufferSlice unknown_algorithm(1);
     unknown_algorithm.data()[0] = static_cast<char>(0x7f);
-    auto unknown_algorithm_envelope =
-        create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
-            0, src, 7, root_hash, std::move(unknown_algorithm));
+    auto unknown_algorithm_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
+        0, src, 7, root_hash, std::move(unknown_algorithm));
     CHECK(validatorsession::deserialize_candidate(unknown_algorithm_envelope, true, 1 << 20).is_error());
 
-    auto stateful = vm::boc_compress({block_root}, vm::CompressionAlgorithm::ImprovedStructureLZ4WithState,
-                                     block_root)
+    auto stateful = vm::boc_compress({block_root}, vm::CompressionAlgorithm::ImprovedStructureLZ4WithState, block_root)
                         .move_as_ok();
     auto stateful_envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidateV2>(
         0, src, 7, root_hash, std::move(stateful));
@@ -2137,7 +3319,7 @@ int main(int argc, char *argv[]) {
     auto root_hash = td::Bits256{level.front()->get_hash().bits()};
     size_t decompressed_size = 0;
     auto compressed = validatorsession::compress_candidate_data(large_block_data, collated_data, decompressed_size,
-                                                                 "compression-ratio-test", root_hash)
+                                                                "compression-ratio-test", root_hash)
                           .move_as_ok();
     CHECK(decompressed_size > 400U * 1024U);
     CHECK(compressed.size() * 8U < decompressed_size);
@@ -2146,13 +3328,11 @@ int main(int argc, char *argv[]) {
     auto src = from_hex("2222222222222222222222222222222222222222222222222222222222222222");
     auto envelope = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
         0, src, 9, root_hash, static_cast<int>(decompressed_size), compressed.clone());
-    const int exact_limit =
-        static_cast<int>(std::max(decompressed_size, static_cast<size_t>(compressed.size())));
+    const int exact_limit = static_cast<int>(std::max(decompressed_size, static_cast<size_t>(compressed.size())));
     auto decoded = validatorsession::deserialize_candidate(envelope, true, exact_limit).move_as_ok();
     CHECK(decoded->data_.as_slice() == large_block_data.as_slice());
     CHECK(decoded->collated_data_.as_slice() == collated_data.as_slice());
-    CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1)
-              .is_error());
+    CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1).is_error());
 
     auto oversized_declaration = create_serialize_tl_object<tos_api::validatorSession_compressedCandidate>(
         0, src, 9, root_hash, exact_limit + 1, compressed.clone());
@@ -2307,17 +3487,37 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "malicious-observer-attack",
                "inject repeated protocol votes from a member with no validator identity",
                [&]() { MALICIOUS_OBSERVER_ATTACK = true; });
-  p.add_option('\0', "relay-loop-test",
-               "duplicate candidate arrival events and require candidate-relay deduplication",
+  p.add_option('\0', "relay-loop-test", "duplicate candidate arrival events and require candidate-relay deduplication",
                [&]() { RELAY_LOOP_TEST = true; });
-  p.add_option('\0', "query-abuse-test",
-               "flood candidate queries from one observer and require rate limiting",
+  p.add_option('\0', "query-abuse-test", "flood candidate queries from one observer and require rate limiting",
                [&]() { QUERY_ABUSE_TEST = true; });
   p.add_option('\0', "empty-chain-restart-test",
                "restart after more than 4096 consecutive empty candidates and require recovery",
                [&]() { EMPTY_CHAIN_RESTART_TEST = true; });
-  p.add_option('\0', "candidate-relay-eviction-test",
-               "fill the candidate-relay LRU and verify oldest-entry eviction",
+  p.add_option('\0', "vote-journal-test", "restart across the two-phase own-vote journal and require exact-byte replay",
+               [&]() { VOTE_JOURNAL_TEST = true; });
+  p.add_option('\0', "permanent-finalization-test",
+               "require a finalization that cannot be retried to be kept, reported and to stop the group",
+               [&]() { PERMANENT_FINALIZATION_TEST = true; });
+  p.add_checked_option('\0', "byzantine-relay-node",
+                       "the validator that relays other validators' signed votes over its own transport",
+                       [&](td::Slice arg) {
+                         TRY_RESULT_ASSIGN(BYZANTINE_RELAY_NODE, td::to_integer_safe<int>(arg));
+                         if (BYZANTINE_RELAY_NODE < 0) {
+                           return td::Status::Error(PSTRING() << "invalid byzantine-relay-node value " << arg);
+                         }
+                         return td::Status::OK();
+                       });
+  p.add_option('\0', "finalization-retry-probe",
+               "refuse a finalization with the concurrency limit and require it to be tried again",
+               [&]() { FINALIZATION_RETRY_PROBE = true; });
+  p.add_option('\0', "finalization-backpressure-test",
+               "require finalization backlog throttling, recovery, and one accepted block after recovery",
+               [&]() { FINALIZATION_BACKPRESSURE_TEST = true; });
+  p.add_option('\0', "pq-finality-e2e-test",
+               "require an agreed post-quantum finality certificate on every node, and nothing past it",
+               [&]() { PQ_FINALITY_E2E_TEST = true; });
+  p.add_option('\0', "candidate-relay-eviction-test", "fill the candidate-relay LRU and verify oldest-entry eviction",
                [&]() { run_candidate_relay_eviction_test = true; });
   p.add_option('\0', "state-resolver-cache-unit-test",
                "verify completed-entry LRU ordering, bounds and failure removal",
@@ -2341,8 +3541,7 @@ int main(int argc, char *argv[]) {
                "verify bounded manager operation admission and exact-key idempotence",
                [&]() { run_validator_manager_resource_policy_unit_test = true; });
   p.add_checked_option('\0', "catch-up-downtime",
-                       "stop one validator for this many seconds, then require it to catch up",
-                       [&](td::Slice arg) {
+                       "stop one validator for this many seconds, then require it to catch up", [&](td::Slice arg) {
                          CATCH_UP_DOWNTIME = td::to_double(arg);
                          if (CATCH_UP_DOWNTIME < 0.0) {
                            return td::Status::Error(PSTRING() << "invalid catch-up downtime " << arg);
@@ -2415,6 +3614,7 @@ int main(int argc, char *argv[]) {
   CHECK(ADAPTIVE_BYZANTINE_N < N_NODES);
   CHECK(CATCH_UP_DOWNTIME < 0.0 || N_NODES >= 4);
   CHECK(!EMPTY_CHAIN_RESTART_TEST || N_NODES == 1);
+  CHECK(!VOTE_JOURNAL_TEST || N_NODES == 1);
   if (EMPTY_CHAIN_RESTART_TEST) {
     // Thousands of per-candidate WARNING lines dominate this stress test's
     // runtime and do not add coverage.

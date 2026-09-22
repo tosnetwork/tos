@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "consensus/misbehavior.h"
+#include "crypto/pq/consensus-pq-signer.h"
 #include "keyring/keyring.hpp"
 #include "overlay/overlays.h"
 #include "quic/quic-sender.h"
@@ -32,6 +33,24 @@ struct Start {
 using StartEvent = std::shared_ptr<const Start>;
 
 struct StopRequested {};
+
+// Finality has fallen far enough behind that this group must stop getting further ahead of
+// it, or has caught up again.
+//
+// Consensus does not wait for a certificate to be converted: the pool advances the round the
+// moment a quorum finalizes a slot. That is right while conversion keeps up, and it is how
+// an agreed certificate that cannot be converted turns into an unbounded problem -- every
+// later slot adds another certificate the resolver must hold, with its own retry, while the
+// one at the front never completes. Certificates are never dropped to make room, so the
+// group stops producing instead, and starts again when the backlog clears.
+//
+// The condition is reversible, and the event says which way it went.
+struct FinalizationBacklog {
+  bool over_limit;
+  size_t pending;
+
+  std::string contents_to_string() const;
+};
 
 struct FinalizeBlock {
   using ReturnType = td::Unit;
@@ -180,10 +199,11 @@ class Db {
 
 class Bus : public td::actor::Bus {
  public:
-  using Events = td::TypeList<Start, StopRequested, FinalizeBlock, OurLeaderWindowStarted, CandidateGenerated,
-                              CandidateReceived, ValidationRequest, IncomingProtocolMessage, OutgoingProtocolMessage,
-                              IncomingOverlayRequest, OutgoingOverlayRequest, BlockFinalizedInMasterchain,
-                              MisbehaviorReport, TraceEvent, NoncriticalParamsUpdated, PrecheckCandidateBroadcast>;
+  using Events =
+      td::TypeList<Start, StopRequested, FinalizeBlock, OurLeaderWindowStarted, CandidateGenerated, CandidateReceived,
+                   ValidationRequest, IncomingProtocolMessage, OutgoingProtocolMessage, IncomingOverlayRequest,
+                   OutgoingOverlayRequest, BlockFinalizedInMasterchain, MisbehaviorReport, TraceEvent,
+                   NoncriticalParamsUpdated, PrecheckCandidateBroadcast, FinalizationBacklog>;
 
   Bus() = default;
   ~Bus() override {
@@ -200,6 +220,11 @@ class Bus : public td::actor::Bus {
   ShardIdFull shard;
   td::actor::ActorId<ManagerFacade> manager;
   td::actor::ActorId<keyring::Keyring> keyring;
+  // The post-quantum consensus signer for the local validator, if this node is one. It is
+  // the exact key the set records for us (resolved by PqConsensusCustody::get_matching_store
+  // at group creation), and is the only key consensus signs with — never the keyring.
+  // Null for an observer, which produces nothing.
+  std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_signer;
   td::Ref<ValidatorManagerOptions> validator_opts;
 
   std::vector<PeerValidator> validator_set;

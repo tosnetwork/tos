@@ -42,7 +42,9 @@ void TcpListener::start_up() {
   }
 
   if (r_socket.is_error()) {
-    LOG(ERROR) << r_socket.error();
+    auto error = r_socket.move_as_error();
+    LOG(ERROR) << error;
+    callback_->on_listening(std::move(error));
     return stop();
   }
 
@@ -52,6 +54,7 @@ void TcpListener::start_up() {
   // NB: Interface will be changed
   td::actor::SchedulerContext::get().get_poll().subscribe(server_socket_fd_.get_poll_info().extract_pollable_fd(this),
                                                           PollFlags::Read());
+  callback_->on_listening(Status::OK());
 }
 
 void TcpListener::tear_down() {
@@ -111,6 +114,9 @@ void TcpInfiniteListener::loop() {
     void accept(SocketFd fd) override {
       actor::send_closure(parent_, &TcpInfiniteListener::accept, std::move(fd));
     }
+    void on_listening(Status status) override {
+      actor::send_closure(parent_, &TcpInfiniteListener::on_listening, std::move(status));
+    }
 
    private:
     actor::ActorShared<TcpInfiniteListener> parent_;
@@ -123,6 +129,10 @@ void TcpInfiniteListener::loop() {
 
 void TcpInfiniteListener::accept(SocketFd fd) {
   callback_->accept(std::move(fd));
+}
+
+void TcpInfiniteListener::on_listening(Status status) {
+  callback_->on_listening(std::move(status));
 }
 
 void TcpInfiniteListener::hangup_shared() {

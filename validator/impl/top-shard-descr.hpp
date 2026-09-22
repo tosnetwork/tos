@@ -30,6 +30,15 @@ using td::Ref;
 
 class ValidateShardTopBlockDescr;
 
+struct TopBlockDescrSignatureEnvelope {
+  BlockIdExt block_id;
+  td::Ref<block::BlockSignatureSet> signatures;
+  ValidatorWeight claimed_weight{0};
+};
+
+td::Result<TopBlockDescrSignatureEnvelope> parse_top_block_descr_signature_envelope(td::Ref<vm::Cell> root);
+td::Status validate_top_block_descr_governing_snapshot(BlockIdExt expected, BlockIdExt actual);
+
 class ShardTopBlockDescrQBase : public ShardTopBlockDescription {
  protected:
   td::BufferSlice data_;
@@ -53,9 +62,10 @@ class ShardTopBlockDescrQ final : public ShardTopBlockDescrQBase {
 
   bool may_be_valid(BlockHandle last_masterchain_block_handle,
                     Ref<MasterchainState> last_masterchain_block_state) const override;
-  td::Result<int> prevalidate(BlockIdExt last_mc_block_id, Ref<MasterchainState> last_mc_state, int mode,
-                              int& res_flags) const;
-  td::Result<int> validate(BlockIdExt last_mc_block_id, Ref<MasterchainState> last_mc_state, int mode);
+  td::Result<int> prevalidate(BlockIdExt last_mc_block_id, Ref<MasterchainState> last_mc_state,
+                              Ref<MasterchainState> governing_mc_state, int mode, int& res_flags) const;
+  td::Result<int> validate(BlockIdExt last_mc_block_id, Ref<MasterchainState> last_mc_state,
+                           Ref<MasterchainState> governing_mc_state, int mode);
 
   td::BufferSlice serialize() const override {
     return data_.clone();
@@ -95,6 +105,9 @@ class ShardTopBlockDescrQ final : public ShardTopBlockDescrQBase {
   }
   BlockSeqno get_vert_seqno() const {
     return vert_seqno_;
+  }
+  BlockIdExt governing_masterchain_block_id() const {
+    return chain_mc_blk_ids_.empty() ? BlockIdExt{} : chain_mc_blk_ids_.front();
   }
   ShardTopBlockDescrQ(td::BufferSlice data, bool is_fake = false)
       : ShardTopBlockDescrQBase(std::move(data)), is_fake_(is_fake) {
@@ -145,8 +158,8 @@ class ShardTopBlockDescrQ final : public ShardTopBlockDescrQBase {
   ShardTopBlockDescrQ(ShardTopBlockDescrQ&& other) = default;
 
   td::Status unpack_one_proof(BlockIdExt& cur_id, Ref<vm::Cell> proof_root, bool is_head);
-  td::Result<int> validate_internal(BlockIdExt last_mc_block_id, Ref<MasterchainState> last_mc_state, int& res_flags,
-                                    int mode) const;
+  td::Result<int> validate_internal(BlockIdExt last_mc_block_id, Ref<MasterchainState> last_mc_state,
+                                    Ref<MasterchainState> governing_mc_state, int& res_flags, int mode) const;
 
   enum ResFlags { invalid = 1, vset_cur = 4, vset_next = 8, sig_ok = 16, sig_bad = 32 };
 };
@@ -173,6 +186,7 @@ class ValidateShardTopBlockDescr : public td::actor::Actor {
   void alarm() override;
 
   void start_up() override;
+  void got_governing_state(td::Result<Ref<ShardState>> result);
 
  private:
   td::BufferSlice data_;
@@ -186,6 +200,8 @@ class ValidateShardTopBlockDescr : public td::actor::Actor {
   td::Timestamp timeout_;
   bool is_fake_;
   td::Promise<Ref<ShardTopBlockDescription>> promise_;
+
+  void validate_with_governing_state(Ref<MasterchainState> governing_state);
 };
 
 }  // namespace validator

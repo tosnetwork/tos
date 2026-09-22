@@ -29,9 +29,9 @@
 #include "block/workchain-execution-dispatch.h"
 #include "common/errorlog.h"
 #include "td/utils/format.h"
+#include "tol/extra-flags-constants.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
-#include "tol/extra-flags-constants.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
@@ -285,7 +285,7 @@ void ValidateQuery::finish_query() {
 void ValidateQuery::start_up() {
   LOG(WARNING) << "validate query for " << block_candidate.id.to_str() << " started";
   alarm_timestamp() = timeout;
-  created_by_ = block_candidate.pubkey;
+  created_by_ = block_candidate.producer.value;
 
   REJECT_UNLESS_VOID(id_ == block_candidate.id);
   if (ShardIdFull(id_) != shard_) {
@@ -1265,8 +1265,8 @@ bool ValidateQuery::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return reject_query(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(config_->get_workchain_list(),
+                                                                                       workchain(), *config_);
   if (execution_res.is_error()) {
     return reject_query(execution_res.move_as_error_prefix("cannot validate configured workchain: ").to_string());
   }
@@ -1902,6 +1902,37 @@ bool ValidateQuery::request_aux_mc_state(BlockSeqno seqno, Ref<MasterchainStateQ
   return true;
 }
 
+bool ValidateQuery::request_top_descr_governing_states() {
+  if (top_descr_governing_states_requested_ || !top_shard_descr_dict_) {
+    return true;
+  }
+  td::Status error;
+  bool ok = top_shard_descr_dict_->check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr, int) {
+    auto root = value->prefetch_ref();
+    auto parsed = ShardTopBlockDescrQ::fetch(std::move(root), is_fake_);
+    if (parsed.is_error()) {
+      error = parsed.move_as_error_prefix("cannot unpack ShardTopBlockDescr while loading governing state: ");
+      return false;
+    }
+    auto governing_id = parsed.ok()->governing_masterchain_block_id();
+    if (governing_id == mc_blkid_) {
+      return true;
+    }
+    Ref<MasterchainStateQ> state;
+    if (!request_aux_mc_state(governing_id.seqno(), state)) {
+      error = td::Status::Error("cannot request governing masterchain state");
+      return false;
+    }
+    return true;
+  });
+  if (!ok) {
+    return error.is_error() ? reject_query(error.to_string())
+                            : reject_query("cannot enumerate TopBlockDescrSet governing states");
+  }
+  top_descr_governing_states_requested_ = true;
+  return true;
+}
+
 /**
  * Retrieves the auxiliary masterchain state for a given block sequence number.
  * Almost the same as in Collator.
@@ -2071,7 +2102,19 @@ bool ValidateQuery::check_one_shard(const block::McShardHash& info, const block:
       }
       // following checks are similar to those of Collator::import_new_shard_top_blocks()
       int res_flags = 0;
-      auto chk_res = sh_bd->prevalidate(mc_blkid_, mc_state_,
+      Ref<MasterchainState> governing_state;
+      if (sh_bd->governing_masterchain_block_id() == mc_blkid_) {
+        governing_state = mc_state_;
+      } else {
+        auto auxiliary = get_aux_mc_state(sh_bd->governing_masterchain_block_id().seqno());
+        if (auxiliary.is_null() || auxiliary->get_block_id() != sh_bd->governing_masterchain_block_id()) {
+          return reject_query(PSTRING() << "governing masterchain state for ShardTopBlockDescr "
+                                        << sh_bd->block_id().to_str() << " is unavailable or does not match "
+                                        << sh_bd->governing_masterchain_block_id().to_str());
+        }
+        governing_state = std::move(auxiliary);
+      }
+      auto chk_res = sh_bd->prevalidate(mc_blkid_, mc_state_, std::move(governing_state),
                                         ShardTopBlockDescrQ::fail_new | ShardTopBlockDescrQ::fail_too_new, res_flags);
       if (chk_res.is_error()) {
         return reject_query(PSTRING() << "ShardTopBlockDescr for " << sh_bd->block_id().to_str()
@@ -2955,8 +2998,7 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
                         " has a non-zero minted value, but there is no mint InMsg");
   }
   if (value_flow_.minted.is_zero() && mint_msg_.not_null()) {
-    return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a zero minted value, but there is a mint InMsg");
+    return reject_query("ValueFlow of block "s + id_.to_str() + " has a zero minted value, but there is a mint InMsg");
   }
   if (is_masterchain()) {
     block::CurrencyCollection to_mint;
@@ -3839,12 +3881,10 @@ bool ValidateQuery::unpack_dispatch_queue_update() {
     // liveness/fairness only (not state-integrity), and the
     // attack window requires a specific cleanup_drops + post-
     // cleanup-add ratio.
-    const auto chain_defer_limit =
-        compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
+    const auto chain_defer_limit = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
     const bool need_dispatch_progress_check =
         have_out_msg_queue_size_in_state_ &&
-        (old_out_msg_queue_size_ <= chain_defer_limit ||
-         new_out_msg_queue_size_ <= chain_defer_limit);
+        (old_out_msg_queue_size_ <= chain_defer_limit || new_out_msg_queue_size_ <= chain_defer_limit);
     if (need_dispatch_progress_check) {
       // Check that at least one message was taken from each AccountDispatchQueue
       try {
@@ -6176,8 +6216,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   }
   if (!trs->compute_phase->accepted) {
     if (external) {
-      return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction "
-                                    << lt << " of account " << addr.to_hex()
+      return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction " << lt
+                                    << " of account " << addr.to_hex()
                                     << " was in fact rejected (such transaction cannot appear in valid blocks)");
     } else if (trs->compute_phase->skip_reason == block::ComputePhase::sk_none) {
       return reject_query(PSTRING() << "inbound internal message processed by ordinary transaction " << lt
@@ -7594,6 +7634,12 @@ bool ValidateQuery::try_validate() {
   try {
     if (stage_ == 0) {
       LOG(WARNING) << "try_validate stage 0";
+      if (!request_top_descr_governing_states()) {
+        return false;
+      }
+      if (pending) {
+        return true;
+      }
       {
         td::RealCpuTimer timer;
         SCOPE_EXIT {

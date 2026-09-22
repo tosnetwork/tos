@@ -34,6 +34,7 @@
 #include "full-node-custom-overlays.hpp"
 #include "full-node-fast-sync-overlays.hpp"
 #include "rate-limiter.h"
+#include "validator-transport-authority.h"
 
 namespace tos {
 
@@ -47,8 +48,8 @@ class FullNodeImpl : public FullNode {
     dht_ = dht;
   }
 
-  void add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) override;
-  void del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) override;
+  void add_validator_adnl_id(adnl::AdnlNodeIdShort id) override;
+  void del_validator_adnl_id(adnl::AdnlNodeIdShort id) override;
   void add_collator_adnl_id(adnl::AdnlNodeIdShort id) override;
   void del_collator_adnl_id(adnl::AdnlNodeIdShort id) override;
 
@@ -99,8 +100,8 @@ class FullNodeImpl : public FullNode {
 
   void process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                                bool send_to_custom) override;
-  void process_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
-                                        bool send_to_custom) override;
+  void process_block_finality_broadcast(BlockFinalityBroadcast finality, PublicKeyHash source_peer,
+                                        BroadcastSource source, bool send_to_custom) override;
   void process_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno, td::uint32 validator_set_hash,
                                          td::BufferSlice data, BroadcastSource source, bool send_to_custom) override;
   void process_shard_block_info_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data) override;
@@ -137,6 +138,7 @@ class FullNodeImpl : public FullNode {
   };
 
   void update_shard_actor(ShardIdFull shard, bool active, bool enable_plumtree_broadcast);
+  void update_validator_transport_authority();
 
   adnl::AdnlNodeIdShort adnl_id_;
   FileHash zero_state_file_hash_;
@@ -158,10 +160,8 @@ class FullNodeImpl : public FullNode {
   std::string db_root_;
 
   PublicKeyHash sign_cert_by_;
-  std::vector<PublicKeyHash> all_validators_;
-  std::map<PublicKeyHash, adnl::AdnlNodeIdShort> current_validators_;
-
-  std::set<PublicKeyHash> local_keys_;
+  std::vector<PublicKeyHash> validator_transport_roots_;
+  ValidatorAdnlRefCounts local_validator_adnl_ids_;
   std::map<adnl::AdnlNodeIdShort, int> local_collator_nodes_;
 
   td::Promise<td::Unit> started_promise_;

@@ -13,9 +13,11 @@ use crate::{
     define_HashmapE,
     error::BlockError,
     fail,
-    validators::{ValidatorBaseInfo, ValidatorDescr},
-    BuilderData, Cell, Deserializable, Ed25519KeyOption, HashmapE, HashmapType, IBitstring,
-    KeyOption, Result, Serializable, SliceData, UInt256, ED25519_PUBLIC_KEY_LENGTH,
+    pq_bytes::{pack_pq_bytes, unpack_pq_bytes},
+    read_single_root_boc,
+    validators::{ValidatorBaseInfo, ValidatorDescr, MLDSA44_ALGORITHM_ID},
+    BuilderData, Cell, CellType, Deserializable, Ed25519KeyOption, HashmapE, HashmapType,
+    IBitstring, KeyOption, Result, Serializable, SliceData, UInt256, ED25519_PUBLIC_KEY_LENGTH,
     ED25519_SIGNATURE_LENGTH,
 };
 use std::{
@@ -24,6 +26,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
+use thiserror::Error;
 
 /*
 ed25519_signature#5 R:bits256 s:bits256 = CryptoSignature;
@@ -291,7 +294,9 @@ impl BlockSignaturesPure {
         // Calc validators short ids
         let mut validators_map = HashMap::new();
         for vd in validators_list {
-            validators_map.insert(vd.compute_node_id_short(), vd);
+            // Fails loudly on a post-quantum descriptor: a PQ validator set must not be
+            // verified through the Ed25519 signature path.
+            validators_map.insert(vd.compute_node_id_short()?, vd);
         }
 
         // Check signatures
@@ -604,6 +609,415 @@ impl Deserializable for BlockSignaturesSimplex {
     }
 }
 
+const BLOCK_SIGNATURES_SIMPLEX_PQ_TAG: u8 = 0x13;
+const PQ_SIGNATURE_BYTES: usize = 2420;
+const PQ_SIGNATURE_MAX_SIGNERS: u32 = 400;
+const PQ_SIGNATURE_BOC_MAX_BYTES: usize = 1 << 20;
+const PQ_CANDIDATE_MAX_BYTES: usize = 1024;
+const PQ_CANDIDATE_MAX_CHAIN: usize = 16;
+const PQ_CANDIDATE_CHUNK_BYTES: usize = 127;
+
+/// Stable, language-independent classification of a rejected `#13` carrier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PqBlockSignatureReasonCode {
+    DuplicateValidatorId,
+    UnsupportedAlgorithm,
+    SignatureLength,
+    NoncanonicalPqbytes,
+    DictionaryIndex,
+    DictionaryMissingEntry,
+    DictionaryExtraEntry,
+    CandidateOversize,
+    CandidateNoncanonicalChunk,
+    CandidateNonByteAligned,
+    CandidateMultipleRefs,
+    CandidateChainLength,
+    CandidateTrailingRef,
+    CandidateTl,
+    SignerCount,
+    UnknownValidatorId,
+    ValidatorAlgorithmMismatch,
+    WeightMismatch,
+    UnsupportedCarrier,
+    CarrierOversize,
+}
+
+impl PqBlockSignatureReasonCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DuplicateValidatorId => "duplicate_validator_id",
+            Self::UnsupportedAlgorithm => "unsupported_algorithm",
+            Self::SignatureLength => "signature_length",
+            Self::NoncanonicalPqbytes => "noncanonical_pqbytes",
+            Self::DictionaryIndex => "dictionary_index",
+            Self::DictionaryMissingEntry => "dictionary_missing_entry",
+            Self::DictionaryExtraEntry => "dictionary_extra_entry",
+            Self::CandidateOversize => "candidate_oversize",
+            Self::CandidateNoncanonicalChunk => "candidate_noncanonical_chunk",
+            Self::CandidateNonByteAligned => "candidate_non_byte_aligned",
+            Self::CandidateMultipleRefs => "candidate_multiple_refs",
+            Self::CandidateChainLength => "candidate_chain_length",
+            Self::CandidateTrailingRef => "candidate_trailing_ref",
+            Self::CandidateTl => "candidate_tl",
+            Self::SignerCount => "signer_count",
+            Self::UnknownValidatorId => "unknown_validator_id",
+            Self::ValidatorAlgorithmMismatch => "validator_algorithm_mismatch",
+            Self::WeightMismatch => "weight_mismatch",
+            Self::UnsupportedCarrier => "unsupported_carrier",
+            Self::CarrierOversize => "carrier_oversize",
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("post-quantum block signatures [{code}]: {message}", code = .code.as_str())]
+pub struct PqBlockSignatureError {
+    pub code: PqBlockSignatureReasonCode,
+    message: String,
+}
+
+fn pq_reject<T>(code: PqBlockSignatureReasonCode, message: impl Into<String>) -> Result<T> {
+    Err(PqBlockSignatureError { code, message: message.into() }.into())
+}
+
+pub fn pq_block_signature_reason_code(error: &crate::Error) -> Option<PqBlockSignatureReasonCode> {
+    error.downcast_ref::<PqBlockSignatureError>().map(|error| error.code)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct PqBlockSignaturePair {
+    pub validator_id: UInt256,
+    pub algorithm_id: u16,
+    pub signature: Vec<u8>,
+}
+
+impl Serializable for PqBlockSignaturePair {
+    fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
+        if self.algorithm_id != MLDSA44_ALGORITHM_ID {
+            return pq_reject(
+                PqBlockSignatureReasonCode::UnsupportedAlgorithm,
+                "unsupported algorithm",
+            );
+        }
+        if self.signature.len() != PQ_SIGNATURE_BYTES {
+            return pq_reject(PqBlockSignatureReasonCode::SignatureLength, "signature length");
+        }
+        self.validator_id.write_to(cell)?;
+        self.algorithm_id.write_to(cell)?;
+        cell.checked_append_reference(pack_pq_bytes(&self.signature, PQ_SIGNATURE_BYTES)?)?;
+        Ok(())
+    }
+}
+
+impl Deserializable for PqBlockSignaturePair {
+    fn read_from(&mut self, cell: &mut SliceData) -> Result<()> {
+        self.validator_id.read_from(cell)?;
+        self.algorithm_id.read_from(cell)?;
+        if self.algorithm_id != MLDSA44_ALGORITHM_ID {
+            return pq_reject(
+                PqBlockSignatureReasonCode::UnsupportedAlgorithm,
+                "unsupported algorithm",
+            );
+        }
+        let signature_cell = cell.checked_drain_reference()?;
+        self.signature = match unpack_pq_bytes(&signature_cell, PQ_SIGNATURE_BYTES) {
+            Ok(value) => value,
+            Err(error) if error.to_string().contains("oversize") => {
+                return pq_reject(PqBlockSignatureReasonCode::SignatureLength, error.to_string())
+            }
+            Err(error) => {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::NoncanonicalPqbytes,
+                    error.to_string(),
+                )
+            }
+        };
+        if self.signature.len() != PQ_SIGNATURE_BYTES {
+            return pq_reject(PqBlockSignatureReasonCode::SignatureLength, "signature length");
+        }
+        Ok(())
+    }
+}
+
+define_HashmapE! {PqBlockSignaturePairDict, 16, PqBlockSignaturePair}
+
+/// Validator identity and financial weight used for structural `#13` validation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PqBlockValidatorWeight {
+    pub validator_id: UInt256,
+    pub algorithm_id: u16,
+    pub weight: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Default)]
+pub struct BlockSignaturesSimplexPq {
+    pub validator_info: ValidatorBaseInfo,
+    pub sig_count: u32,
+    pub sig_weight: u64,
+    pub signatures: Vec<PqBlockSignaturePair>,
+    pub session_id: UInt256,
+    pub slot: u32,
+    pub candidate_data: Cell,
+}
+
+fn read_candidate_data(root: &Cell) -> Result<Vec<u8>> {
+    // Establish the hard structural depth before checking the greedy chunk shape.
+    // This matches the production C++ refusal order for an overlong chain.
+    let mut probe = root.clone();
+    for depth in 0..PQ_CANDIDATE_MAX_CHAIN {
+        let slice = SliceData::load_cell_ref(&probe)?;
+        if slice.remaining_references() > 1 {
+            return pq_reject(
+                PqBlockSignatureReasonCode::CandidateMultipleRefs,
+                "multiple continuation refs",
+            );
+        }
+        if slice.remaining_references() == 0 {
+            break;
+        }
+        if depth + 1 == PQ_CANDIDATE_MAX_CHAIN {
+            return pq_reject(PqBlockSignatureReasonCode::CandidateChainLength, "chain too long");
+        }
+        let mut next = slice;
+        probe = next.checked_drain_reference()?;
+    }
+
+    let mut bytes = Vec::new();
+    let mut current = root.clone();
+    for depth in 0..PQ_CANDIDATE_MAX_CHAIN {
+        if current.cell_type() != CellType::Ordinary || current.level() != 0 {
+            return pq_reject(
+                PqBlockSignatureReasonCode::CandidateTl,
+                "non-ordinary candidate cell",
+            );
+        }
+        let mut slice = SliceData::load_cell_ref(&current)?;
+        if slice.remaining_bits() % 8 != 0 {
+            return pq_reject(
+                PqBlockSignatureReasonCode::CandidateNonByteAligned,
+                "non-byte-aligned cell",
+            );
+        }
+        if slice.remaining_references() > 1 {
+            return pq_reject(
+                PqBlockSignatureReasonCode::CandidateMultipleRefs,
+                "multiple continuation refs",
+            );
+        }
+        let count = slice.remaining_bits() / 8;
+        if slice.remaining_references() == 1 && count != PQ_CANDIDATE_CHUNK_BYTES {
+            return pq_reject(
+                PqBlockSignatureReasonCode::CandidateNoncanonicalChunk,
+                "noncanonical chunk size",
+            );
+        }
+        if bytes.len().checked_add(count).filter(|value| *value <= PQ_CANDIDATE_MAX_BYTES).is_none()
+        {
+            return pq_reject(PqBlockSignatureReasonCode::CandidateOversize, "oversize");
+        }
+        bytes.extend(slice.get_next_bytes(count)?);
+        if slice.remaining_references() == 0 {
+            if count == 0 && depth != 0 {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::CandidateTrailingRef,
+                    "trailing empty cell",
+                );
+            }
+            validate_candidate_tl(&bytes)?;
+            return Ok(bytes);
+        }
+        current = slice.checked_drain_reference()?;
+    }
+    pq_reject(PqBlockSignatureReasonCode::CandidateChainLength, "chain too long")
+}
+
+fn validate_candidate_tl(bytes: &[u8]) -> Result<()> {
+    let Some(tag) = bytes.get(..4) else {
+        return pq_reject(PqBlockSignatureReasonCode::CandidateTl, "invalid TL");
+    };
+    let tag = u32::from_le_bytes(tag.try_into()?);
+    let exact = match tag {
+        0x8354_642d => 120,
+        0x3f64_31f8 => {
+            let Some(parent) = bytes.get(116..120) else {
+                return pq_reject(PqBlockSignatureReasonCode::CandidateTl, "invalid TL");
+            };
+            match u32::from_le_bytes(parent.try_into()?) {
+                0x22cb_cca9 => 120,
+                0x1a4b_9af1 => 156,
+                _ => return pq_reject(PqBlockSignatureReasonCode::CandidateTl, "invalid TL"),
+            }
+        }
+        _ => return pq_reject(PqBlockSignatureReasonCode::CandidateTl, "invalid TL"),
+    };
+    if bytes.len() != exact {
+        return pq_reject(PqBlockSignatureReasonCode::CandidateTl, "invalid TL length");
+    }
+    Ok(())
+}
+
+impl BlockSignaturesSimplexPq {
+    pub fn validate_weights(&self, validators: &[PqBlockValidatorWeight]) -> Result<u64> {
+        let mut total = 0u64;
+        for signature in &self.signatures {
+            let Some(validator) = validators
+                .iter()
+                .find(|validator| validator.validator_id == signature.validator_id)
+            else {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::UnknownValidatorId,
+                    "unknown validator_id",
+                );
+            };
+            if validator.algorithm_id != signature.algorithm_id {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::ValidatorAlgorithmMismatch,
+                    "validator algorithm mismatch",
+                );
+            }
+            total = total.checked_add(validator.weight).ok_or_else(|| PqBlockSignatureError {
+                code: PqBlockSignatureReasonCode::WeightMismatch,
+                message: "weight overflow".into(),
+            })?;
+        }
+        if total != self.sig_weight {
+            return pq_reject(
+                PqBlockSignatureReasonCode::WeightMismatch,
+                "signature weight mismatch",
+            );
+        }
+        Ok(total)
+    }
+
+    pub fn construct_from_pq_boc(
+        bytes: &[u8],
+        validators: &[PqBlockValidatorWeight],
+    ) -> Result<Self> {
+        if bytes.len() > PQ_SIGNATURE_BOC_MAX_BYTES {
+            return pq_reject(
+                PqBlockSignatureReasonCode::CarrierOversize,
+                "carrier exceeds hard maximum",
+            );
+        }
+        let root = read_single_root_boc(bytes)?;
+        let parsed = match BlockSignaturesVariant::construct_from_full_cell(root)? {
+            BlockSignaturesVariant::SimplexPq(parsed) => parsed,
+            _ => {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::UnsupportedCarrier,
+                    "unsupported carrier",
+                )
+            }
+        };
+        parsed.validate_weights(validators)?;
+        Ok(parsed)
+    }
+}
+
+impl Serializable for BlockSignaturesSimplexPq {
+    fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
+        if self.sig_count > PQ_SIGNATURE_MAX_SIGNERS {
+            return pq_reject(
+                PqBlockSignatureReasonCode::SignerCount,
+                "signer count exceeds maximum",
+            );
+        }
+        if self.signatures.len() != self.sig_count as usize {
+            return pq_reject(
+                PqBlockSignatureReasonCode::DictionaryMissingEntry,
+                "signature count mismatch",
+            );
+        }
+        let mut ids = HashSet::new();
+        let mut dictionary = PqBlockSignaturePairDict::default();
+        for (index, signature) in self.signatures.iter().enumerate() {
+            if !ids.insert(signature.validator_id.clone()) {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::DuplicateValidatorId,
+                    "duplicate validator_id",
+                );
+            }
+            dictionary.set(&(index as u16), signature)?;
+        }
+        read_candidate_data(&self.candidate_data)?;
+        cell.append_u8(BLOCK_SIGNATURES_SIMPLEX_PQ_TAG)?;
+        self.validator_info.write_to(cell)?;
+        self.sig_count.write_to(cell)?;
+        self.sig_weight.write_to(cell)?;
+        dictionary.write_to(cell)?;
+        self.session_id.write_to(cell)?;
+        self.slot.write_to(cell)?;
+        cell.checked_append_reference(self.candidate_data.clone())?;
+        Ok(())
+    }
+}
+
+impl Deserializable for BlockSignaturesSimplexPq {
+    fn read_from(&mut self, cell: &mut SliceData) -> Result<()> {
+        if cell.get_next_byte()? != BLOCK_SIGNATURES_SIMPLEX_PQ_TAG {
+            return pq_reject(
+                PqBlockSignatureReasonCode::UnsupportedCarrier,
+                "unsupported carrier",
+            );
+        }
+        self.validator_info.read_from(cell)?;
+        self.sig_count.read_from(cell)?;
+        if self.sig_count > PQ_SIGNATURE_MAX_SIGNERS {
+            return pq_reject(
+                PqBlockSignatureReasonCode::SignerCount,
+                "signer count exceeds maximum",
+            );
+        }
+        self.sig_weight.read_from(cell)?;
+        let mut dictionary = PqBlockSignaturePairDict::default();
+        dictionary.read_from(cell)?;
+        let mut expected = 0u32;
+        let mut ids = HashSet::new();
+        dictionary.iterate_slices_with_keys(|mut key, mut value| {
+            let index = key.get_next_int(16)? as u32;
+            if index != expected {
+                return pq_reject(PqBlockSignatureReasonCode::DictionaryIndex, "dictionary index");
+            }
+            let signature = PqBlockSignaturePair::construct_from(&mut value)?;
+            if value.remaining_bits() != 0 || value.remaining_references() != 0 {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::DictionaryIndex,
+                    "dictionary value trailing data",
+                );
+            }
+            if !ids.insert(signature.validator_id.clone()) {
+                return pq_reject(
+                    PqBlockSignatureReasonCode::DuplicateValidatorId,
+                    "duplicate validator_id",
+                );
+            }
+            self.signatures.push(signature);
+            expected = expected.checked_add(1).ok_or_else(|| PqBlockSignatureError {
+                code: PqBlockSignatureReasonCode::DictionaryExtraEntry,
+                message: "dictionary count overflow".into(),
+            })?;
+            Ok(true)
+        })?;
+        if expected < self.sig_count {
+            return pq_reject(
+                PqBlockSignatureReasonCode::DictionaryMissingEntry,
+                "dictionary missing entry",
+            );
+        }
+        if expected > self.sig_count {
+            return pq_reject(
+                PqBlockSignatureReasonCode::DictionaryExtraEntry,
+                "dictionary extra entry",
+            );
+        }
+        self.session_id.read_from(cell)?;
+        self.slot.read_from(cell)?;
+        self.candidate_data = cell.checked_drain_reference()?;
+        read_candidate_data(&self.candidate_data)?;
+        Ok(())
+    }
+}
+
 /// Unified block signatures - either ordinary (catchain) or simplex
 ///
 /// This enum allows code to handle both signature formats uniformly,
@@ -615,6 +1029,8 @@ pub enum BlockSignaturesVariant {
     Ordinary(BlockSignatures),
     /// Simplex consensus signatures (tag 0x12)
     Simplex(BlockSignaturesSimplex),
+    /// Simplex post-quantum signatures (tag 0x13)
+    SimplexPq(BlockSignaturesSimplexPq),
 }
 
 impl Default for BlockSignaturesVariant {
@@ -625,18 +1041,20 @@ impl Default for BlockSignaturesVariant {
 
 impl BlockSignaturesVariant {
     /// Get pure signatures (common to both types)
-    pub fn pure_signatures(&self) -> &BlockSignaturesPure {
+    pub fn pure_signatures(&self) -> Result<&BlockSignaturesPure> {
         match self {
-            Self::Ordinary(s) => &s.pure_signatures,
-            Self::Simplex(s) => &s.pure_signatures,
+            Self::Ordinary(s) => Ok(&s.pure_signatures),
+            Self::Simplex(s) => Ok(&s.pure_signatures),
+            Self::SimplexPq(_) => fail!("post-quantum signatures have no CryptoSignature view"),
         }
     }
 
     /// Get mutable pure signatures
-    pub fn pure_signatures_mut(&mut self) -> &mut BlockSignaturesPure {
+    pub fn pure_signatures_mut(&mut self) -> Result<&mut BlockSignaturesPure> {
         match self {
-            Self::Ordinary(s) => &mut s.pure_signatures,
-            Self::Simplex(s) => &mut s.pure_signatures,
+            Self::Ordinary(s) => Ok(&mut s.pure_signatures),
+            Self::Simplex(s) => Ok(&mut s.pure_signatures),
+            Self::SimplexPq(_) => fail!("post-quantum signatures have no CryptoSignature view"),
         }
     }
 
@@ -645,6 +1063,7 @@ impl BlockSignaturesVariant {
         match self {
             Self::Ordinary(s) => &s.validator_info,
             Self::Simplex(s) => &s.validator_info,
+            Self::SimplexPq(s) => &s.validator_info,
         }
     }
 
@@ -653,6 +1072,7 @@ impl BlockSignaturesVariant {
         match self {
             Self::Ordinary(s) => &mut s.validator_info,
             Self::Simplex(s) => &mut s.validator_info,
+            Self::SimplexPq(s) => &mut s.validator_info,
         }
     }
 
@@ -666,6 +1086,10 @@ impl BlockSignaturesVariant {
         Self::Simplex(sigs)
     }
 
+    pub fn from_simplex_pq(sigs: BlockSignaturesSimplexPq) -> Self {
+        Self::SimplexPq(sigs)
+    }
+
     /// Returns true if this is an Ordinary variant
     pub fn is_ordinary(&self) -> bool {
         matches!(self, Self::Ordinary(_))
@@ -673,7 +1097,7 @@ impl BlockSignaturesVariant {
 
     /// Returns true if this is a Simplex variant
     pub fn is_simplex(&self) -> bool {
-        matches!(self, Self::Simplex(_))
+        matches!(self, Self::Simplex(_) | Self::SimplexPq(_))
     }
 
     /// Get as Ordinary variant if applicable
@@ -681,6 +1105,7 @@ impl BlockSignaturesVariant {
         match self {
             Self::Ordinary(s) => Some(s),
             Self::Simplex(_) => None,
+            Self::SimplexPq(_) => None,
         }
     }
 
@@ -689,6 +1114,14 @@ impl BlockSignaturesVariant {
         match self {
             Self::Ordinary(_) => None,
             Self::Simplex(s) => Some(s),
+            Self::SimplexPq(_) => None,
+        }
+    }
+
+    pub fn as_simplex_pq(&self) -> Option<&BlockSignaturesSimplexPq> {
+        match self {
+            Self::SimplexPq(s) => Some(s),
+            _ => None,
         }
     }
 }
@@ -698,6 +1131,7 @@ impl Serializable for BlockSignaturesVariant {
         match self {
             Self::Ordinary(s) => s.write_to(cell),
             Self::Simplex(s) => s.write_to(cell),
+            Self::SimplexPq(s) => s.write_to(cell),
         }
     }
 }
@@ -725,6 +1159,16 @@ impl Deserializable for BlockSignaturesVariant {
                 // See comment in BlockSignaturesSimplex::read_from
                 sigs.is_final = true;
                 *self = Self::Simplex(sigs);
+            }
+            BLOCK_SIGNATURES_SIMPLEX_PQ_TAG => {
+                let mut prefixed = BuilderData::new();
+                prefixed.append_u8(tag)?;
+                prefixed.checked_append_references_and_data(cell)?;
+                *self = Self::SimplexPq(BlockSignaturesSimplexPq::construct_from_full_cell(
+                    prefixed.into_cell()?,
+                )?);
+                cell.clear_all_bits();
+                cell.clear_all_references();
             }
             _ => fail!(BlockSignatures::invalid_tag(tag as u32)),
         }
@@ -814,3 +1258,7 @@ impl Deserializable for BlockProof {
 #[cfg(test)]
 #[path = "tests/test_signature.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/test_pq_block_signature_vectors.rs"]
+mod pq_block_signature_vectors;

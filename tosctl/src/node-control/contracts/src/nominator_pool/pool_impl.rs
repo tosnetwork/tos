@@ -89,21 +89,30 @@ fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> 
         array.copy_from_slice(&stack.number_bytes(4, 32).context("parse validator_address")?);
         array
     };
-    let validator_reward_share = stack.u64(5).context("parse validator_reward_share")? as u16;
-    let max_nominators_count = stack.u64(6).context("parse max_nominators_count")? as u16;
-    let min_validator_stake = stack.u64(7).context("parse min_validator_stake")?;
-    let min_nominator_stake = stack.u64(8).context("parse min_nominator_stake")?;
-    let stake_at = stack.u64(11).context("parse stake_at")? as u32;
+    // The config tuple carries two accounts now: who the pool validates for, and
+    // the controller its stake is relayed through. Everything after it moved by
+    // one slot, so reading the old positions would report a controller address
+    // as a reward share.
+    let controller_address = {
+        let mut array = [0u8; 32];
+        array.copy_from_slice(&stack.number_bytes(5, 32).context("parse controller_address")?);
+        array
+    };
+    let validator_reward_share = stack.u64(6).context("parse validator_reward_share")? as u16;
+    let max_nominators_count = stack.u64(7).context("parse max_nominators_count")? as u16;
+    let min_validator_stake = stack.u64(8).context("parse min_validator_stake")?;
+    let min_nominator_stake = stack.u64(9).context("parse min_nominator_stake")?;
+    let stake_at = stack.u64(12).context("parse stake_at")? as u32;
     let saved_validator_set_hash = {
-        let bytes = stack.number_bytes(12, 32).context("parse saved_validator_set_hash")?;
+        let bytes = stack.number_bytes(13, 32).context("parse saved_validator_set_hash")?;
         let mut array = [0u8; 32];
         array.copy_from_slice(&bytes);
         array
     };
     let validator_set_changes_count =
-        stack.i64(13).context("parse validator_set_changes_count")? as i32;
-    let validator_set_change_time = stack.u64(14).context("parse validator_set_change_time")?;
-    let stake_held_for = stack.u64(15).context("parse stake_held_for")?;
+        stack.i64(14).context("parse validator_set_changes_count")? as i32;
+    let validator_set_change_time = stack.u64(15).context("parse validator_set_change_time")?;
+    let stake_held_for = stack.u64(16).context("parse stake_held_for")?;
 
     Ok(NominatorPoolData {
         state,
@@ -111,6 +120,7 @@ fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> 
         stake_amount_sent,
         validator_amount,
         validator_address,
+        controller_address,
         validator_reward_share,
         max_nominators_count,
         min_validator_stake,
@@ -143,8 +153,9 @@ impl NominatorPoolWrapperImpl {
     /// - nominators_count: uint16 (0)
     /// - stake_amount_sent: Coins (0)
     /// - validator_amount: Coins (0)
-    /// - config: ref cell { validator_address: uint256, validator_reward_share: uint16,
-    ///           max_nominators_count: uint16, min_validator_stake: Coins, min_nominator_stake: Coins }
+    /// - config: ref cell { validator_address: uint256, controller_address: uint256,
+    ///           validator_reward_share: uint16, max_nominators_count: uint16,
+    ///           min_validator_stake: Coins, min_nominator_stake: Coins }
     /// - nominators: dict (empty)
     /// - withdraw_requests: dict (empty)
     /// - stake_at: uint32 (0)
@@ -155,6 +166,7 @@ impl NominatorPoolWrapperImpl {
     /// - config_proposal_votings: dict (empty)
     pub fn build_state_init(
         validator_address: &[u8; 32],
+        controller_address: &[u8; 32],
         validator_reward_share: u16,
         max_nominators_count: u16,
         min_validator_stake: u64,
@@ -163,6 +175,7 @@ impl NominatorPoolWrapperImpl {
         // Build config sub-cell
         let mut config_builder = BuilderData::new();
         config_builder.append_raw(validator_address, 256)?; // validator_address: uint256
+        config_builder.append_raw(controller_address, 256)?; // controller_address: uint256
         config_builder.append_u16(validator_reward_share)?; // validator_reward_share: uint16
         config_builder.append_u16(max_nominators_count)?; // max_nominators_count: uint16
         Coins::new(min_validator_stake).write_to(&mut config_builder)?; // min_validator_stake: Coins
@@ -200,6 +213,7 @@ impl NominatorPoolWrapperImpl {
     pub fn calculate_address(
         wc: i32,
         validator_address: &[u8; 32],
+        controller_address: &[u8; 32],
         validator_reward_share: u16,
         max_nominators_count: u16,
         min_validator_stake: u64,
@@ -207,6 +221,7 @@ impl NominatorPoolWrapperImpl {
     ) -> anyhow::Result<MsgAddressInt> {
         let state_init = Self::build_state_init(
             validator_address,
+            controller_address,
             validator_reward_share,
             max_nominators_count,
             min_validator_stake,
@@ -468,6 +483,7 @@ mod tests {
             number("3000"),
             number("2000"),
             number("0xabc"),
+            number("0xdef"), // the controller the stake is relayed through
             number("4000"),
             number("40"),
             number("1000"),
@@ -487,6 +503,12 @@ mod tests {
         assert_eq!(parsed.nominators_count, 1);
         assert_eq!(parsed.stake_amount_sent, 3000);
         assert_eq!(parsed.validator_amount, 2000);
+        // Two accounts, read from two slots. Reading the old positions would take the
+        // controller for a reward share and report every later field one slot early.
+        assert_eq!(parsed.validator_address[31], 0xbc);
+        assert_eq!(parsed.validator_address[30], 0x0a);
+        assert_eq!(parsed.controller_address[31], 0xef);
+        assert_eq!(parsed.controller_address[30], 0x0d);
         assert_eq!(parsed.validator_reward_share, 4000);
         assert_eq!(parsed.max_nominators_count, 40);
         assert_eq!(parsed.min_validator_stake, 1000);
@@ -543,6 +565,7 @@ mod tests {
                     number("0"),
                     number("2000"),
                     number("0xabc"),
+                    number("0xdef"),
                     number("4000"),
                     number("40"),
                     number("1000"),
@@ -610,6 +633,7 @@ mod tests {
         let addr = NominatorPoolWrapperImpl::calculate_address(
             -1,
             &[0xAB; 32],
+            &[0xCD; 32],
             4000,
             40,
             5_000_000_000_000,
@@ -618,7 +642,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             addr.to_string(),
-            "-1:f551c09c2533d56aad15ef67cd72d4d2b79ef93f447d49e76eda9b09a8bd4382"
+            "-1:39ebb7d066bc471da3bbdcde82f5259651929d357a9eab25bebdf7b83292eeb2"
         );
     }
 

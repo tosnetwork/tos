@@ -33,7 +33,7 @@ namespace tos::validator::fullnode {
 
 static td::Result<td::BufferSlice> serialize_block_broadcast_v2(const BlockBroadcast& broadcast,
                                                                 std::string called_from) {
-  size_t total_signatures_size = broadcast.sig_set->get_size() * 96;
+  TRY_RESULT(total_signatures_size, broadcast.sig_set->get_signature_data_size());
 
   TRY_RESULT(data_root, vm::std_boc_deserialize(broadcast.data));
 
@@ -63,7 +63,7 @@ td::Result<td::BufferSlice> serialize_block_broadcast(const BlockBroadcast& broa
     return serialize_block_broadcast_v2(broadcast, std::move(called_from));
   }
   std::vector<tl_object_ptr<tos_api::tosNode_blockSignature>> sigs = broadcast.sig_set->tl_legacy();
-  size_t total_signatures_size = sigs.size() * 96;
+  TRY_RESULT(total_signatures_size, broadcast.sig_set->get_signature_data_size());
 
   TRY_RESULT(proof_root, vm::std_boc_deserialize(broadcast.proof));
   TRY_RESULT(data_root, vm::std_boc_deserialize(broadcast.data));
@@ -94,26 +94,31 @@ static td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_b
   auto block_id = create_block_id(f.id_);
   auto t_decompression_start = td::Time::now();
 
-  td::Ref<block::BlockSignatureSet> sig_set =
-      block::BlockSignatureSet::fetch(f.signatures_, f.catchain_seqno_, f.validator_set_hash_);
+  TRY_RESULT(sig_set,
+             block::BlockSignatureSet::fetch_legacy_checked(f.signatures_, f.catchain_seqno_, f.validator_set_hash_));
+  TRY_RESULT(total_signatures_size, sig_set->get_signature_data_size());
   auto result = BlockBroadcast{block_id, std::move(sig_set), std::move(f.data_), std::move(f.proof_)};
   VLOG(FULL_NODE_BENCHMARK) << "Broadcast_benchmark deserialize_block_broadcast block_id=" << block_id.to_str()
                             << " called_from=" << called_from
                             << " time_sec=" << (td::Time::now() - t_decompression_start) << " compression=" << "none"
-                            << " compressed_size="
-                            << result.data.size() + result.proof.size() + f.signatures_.size() * 96;
+                            << " compressed_size=" << result.data.size() + result.proof.size() + total_signatures_size;
   return result;
 }
 
 static td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_blockBroadcastCompressed& f,
-                                                              int max_decompressed_size, std::string called_from) {
+                                                              int max_decompressed_size, std::string called_from,
+                                                              BlockBroadcastParseStats* stats) {
   auto block_id = create_block_id(f.id_);
   auto t_decompression_start = td::Time::now();
 
+  if (stats != nullptr) {
+    ++stats->decompression_attempts;
+  }
   TRY_RESULT(decompressed, td::lz4_decompress(f.compressed_, max_decompressed_size));
   TRY_RESULT(f2, fetch_tl_object<tos_api::tosNode_blockBroadcastCompressed_data>(decompressed, true));
-  td::Ref<block::BlockSignatureSet> sig_set =
-      block::BlockSignatureSet::fetch(f2->signatures_, f.catchain_seqno_, f.validator_set_hash_);
+  TRY_RESULT(sig_set,
+             block::BlockSignatureSet::fetch_legacy_checked(f2->signatures_, f.catchain_seqno_, f.validator_set_hash_));
+  TRY_RESULT(total_signatures_size, sig_set->get_signature_data_size());
   TRY_RESULT(roots, vm::std_boc_deserialize_multi(f2->proof_data_, 2));
   if (roots.size() != 2) {
     return td::Status::Error("expected 2 roots in boc");
@@ -126,7 +131,7 @@ static td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_b
   TRY_RESULT(proof, vm::std_boc_serialize(roots[0], 0));
   TRY_RESULT(data, vm::std_boc_serialize(roots[1], 31));
   VLOG(FULL_NODE_DEBUG) << "Decompressing block broadcast: " << f.compressed_.size() << " -> "
-                        << data.size() + proof.size() + f2->signatures_.size() * 96;
+                        << data.size() + proof.size() + total_signatures_size;
   return BlockBroadcast{block_id, std::move(sig_set), std::move(data), std::move(proof)};
 }
 
@@ -176,19 +181,45 @@ td::Result<bool> need_state_for_decompression(tos_api::tosNode_DataFull& data_fu
   return result;
 }
 
-BlockBroadcast get_block_broadcast_without_data(const tos_api::tosNode_blockBroadcastCompressedV2& f) {
-  td::Ref<block::BlockSignatureSet> sig_set = block::BlockSignatureSet::fetch(f.signature_set_);
+td::Result<BlockBroadcast> get_block_broadcast_without_data(const tos_api::tosNode_blockBroadcastCompressedV2& f) {
+  TRY_RESULT(sig_set, block::BlockSignatureSet::fetch_node_checked(f.signature_set_));
   return BlockBroadcast{create_block_id(f.id_), sig_set, td::BufferSlice(), f.proof_.clone()};
+}
+
+td::BufferSlice serialize_block_finality_broadcast(const BlockFinalityBroadcast& broadcast) {
+  return create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(create_tl_block_id(broadcast.block_id),
+                                                                             broadcast.sig_set->tl());
+}
+
+td::Bits256 block_finality_broadcast_transport_id(const BlockFinalityBroadcast& broadcast) {
+  auto block_identity = serialize_tl_object(
+      create_tl_object<tos_api::tosNode_finalityBroadcastId>(create_tl_block_id(broadcast.block_id)), true);
+  auto signature_set_hash = get_tl_object_sha_bits256(broadcast.sig_set->tl());
+  td::BufferSlice identity(block_identity.size() + signature_set_hash.as_slice().size());
+  auto destination = identity.as_slice();
+  destination.substr(0, block_identity.size()).copy_from(block_identity.as_slice());
+  destination.substr(block_identity.size()).copy_from(signature_set_hash.as_slice());
+  return td::sha256_bits256(identity.as_slice());
+}
+
+td::Result<BlockFinalityBroadcast> deserialize_block_finality_broadcast(
+    tos_api::tosNode_blockFinalityBroadcast& broadcast) {
+  TRY_RESULT(signatures, block::BlockSignatureSet::fetch_node_checked(broadcast.signature_set_));
+  return BlockFinalityBroadcast{create_block_id(broadcast.id_), std::move(signatures)};
 }
 
 static td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_blockBroadcastCompressedV2& f,
                                                               int max_decompressed_size, std::string called_from,
-                                                              td::Ref<vm::Cell> state) {
+                                                              td::Ref<vm::Cell> state,
+                                                              BlockBroadcastParseStats* stats) {
   auto block_id = create_block_id(f.id_);
   auto t_decompression_start = td::Time::now();
 
-  td::Ref<block::BlockSignatureSet> sig_set = block::BlockSignatureSet::fetch(f.signature_set_);
-  size_t total_signatures_size = sig_set->get_size() * 96;
+  TRY_RESULT(sig_set, block::BlockSignatureSet::fetch_node_checked(f.signature_set_));
+  TRY_RESULT(total_signatures_size, sig_set->get_signature_data_size());
+  if (stats != nullptr) {
+    ++stats->decompression_attempts;
+  }
   TRY_RESULT(roots, vm::boc_decompress(f.data_compressed_, max_decompressed_size, state));
   if (roots.size() != 1) {
     return td::Status::Error("expected 1 root in boc");
@@ -204,15 +235,16 @@ static td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_b
 }
 
 td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_Broadcast& obj, int max_decompressed_data_size,
-                                                       std::string called_from, td::Ref<vm::Cell> state) {
+                                                       std::string called_from, td::Ref<vm::Cell> state,
+                                                       BlockBroadcastParseStats* stats) {
   td::Result<BlockBroadcast> B;
   tos_api::downcast_call(
       obj, td::overloaded([&](tos_api::tosNode_blockBroadcast& f) { B = deserialize_block_broadcast(f, called_from); },
                           [&](tos_api::tosNode_blockBroadcastCompressed& f) {
-                            B = deserialize_block_broadcast(f, max_decompressed_data_size, called_from);
+                            B = deserialize_block_broadcast(f, max_decompressed_data_size, called_from, stats);
                           },
                           [&](tos_api::tosNode_blockBroadcastCompressedV2& f) {
-                            B = deserialize_block_broadcast(f, max_decompressed_data_size, called_from, state);
+                            B = deserialize_block_broadcast(f, max_decompressed_data_size, called_from, state, stats);
                           },
                           [&](auto&) { B = td::Status::Error("unknown broadcast type"); }));
   return B;

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import nacl.signing
 from contract import Provider, WalletV1
-from pytosiq_core import Address
+from pytosiq_core import Address, Builder, Cell
 from tosapi import tos_api
 
 from .install import Install, run_fift
@@ -101,6 +101,48 @@ class Zerostate:
 
     def main_wallet(self, provider: Provider) -> WalletV1:
         return WalletV1(provider, self.main_wallet_address, self.main_wallet_key)
+
+
+@dataclass(frozen=True)
+class PqInitialValidator:
+    validator_id: bytes
+    key_id: bytes
+    public_key: bytes
+    adnl_id: bytes
+
+
+def _pq_byte_chain(data: bytes) -> Cell:
+    parts = [data[offset : offset + 127] for offset in range(0, len(data), 127)]
+    tail = Builder().store_bytes(parts[-1]).end_cell()
+    for part in reversed(parts[:-1]):
+        tail = Builder().store_bytes(part).store_ref(tail).end_cell()
+    return tail
+
+
+def _pq_validator_descriptor(validator: PqInitialValidator, weight: int) -> Cell:
+    if not all(
+        len(value) == 32 for value in (validator.validator_id, validator.key_id, validator.adnl_id)
+    ):
+        raise ValueError("post-quantum validator identities must be 32 bytes")
+    if len(validator.public_key) != 1312:
+        raise ValueError("ML-DSA-44 validator public key must be 1312 bytes")
+    packed_key = (
+        Builder()
+        .store_uint(len(validator.public_key), 32)
+        .store_ref(_pq_byte_chain(validator.public_key))
+        .end_cell()
+    )
+    return (
+        Builder()
+        .store_uint(0xB3, 8)
+        .store_bytes(validator.validator_id)
+        .store_uint(1, 16)
+        .store_bytes(validator.key_id)
+        .store_ref(packed_key)
+        .store_uint(weight, 64)
+        .store_bytes(validator.adnl_id)
+        .end_cell()
+    )
 
 
 _TEMPLATE = """
@@ -407,8 +449,17 @@ def _punishment_params(election_params: str) -> str:
 
 
 def create_zerostate(
-    install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
+    install: Install,
+    state_dir: Path,
+    config: NetworkConfig,
+    validator_keys: list[Key],
+    pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
+    pq_validators = [] if pq_validators is None else pq_validators
+    if pq_validators and validator_keys:
+        raise ValueError(
+            "a bootstrap validator set cannot mix classical and post-quantum descriptors"
+        )
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
     bootstrap_valid_for = config.bootstrap_validator_set_valid_for
@@ -451,6 +502,12 @@ def create_zerostate(
         keys.append(
             f"B{{{key.public_key.key.hex()}}} B{{{key.id.hex()}}} 256 B>u@ 17 add-adnl-validator"
         )
+    for index, validator in enumerate(pq_validators):
+        descriptor_name = f"pq-validator-{index}.boc"
+        _ = (state_dir / descriptor_name).write_bytes(
+            _pq_validator_descriptor(validator, 17).to_boc()
+        )
+        keys.append(f'17 "{descriptor_name}" file>B B>boc register-validator')
 
     if config.validator_economics_profile:
         profile = {

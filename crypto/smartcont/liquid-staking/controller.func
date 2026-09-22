@@ -69,6 +69,18 @@ global slice governor;
 global slice halter;
 global slice approver;
 
+;; The account that stands in the election with this contract's money. This contract is a
+;; staking controller, which is a different thing: it holds the loan and the validator's
+;; own funds, and has no validator authority. The elector takes a stake from a post-quantum
+;; Validator Controller and from nowhere else, so a stake goes there.
+;;
+;; It is stored rather than built into this account's address. The address is derived by
+;; the pool, which deploys controllers for whichever validator asks and has no way to know
+;; that validator's Validator Controller; and a validator that rotates its controller
+;; should not have to abandon a staking controller holding a loan to do it. Until it is
+;; set there is no stake this contract can make, and it says so.
+global slice validator_controller;
+
 
 
 const int state::REST = 0;
@@ -102,7 +114,12 @@ int check_new_stake_msg(slice cs);
         if (in_msg_body.slice_bits() >= 64) {
             in_msg_body~skip_bounce(); ;; skip 0xFFFFFFFF bounced prefix
             int op = in_msg_body~load_op();
-            if ((op == elector::new_stake) & (is_elector_address(sender_address))) {
+            ;; A stake this contract sent, come back. It goes to the Validator Controller
+            ;; now rather than to the elector, so this is that account refusing to relay it
+            ;; -- for a key it is not bound to, or for too little to pay the elector with.
+            ;; Returning to REST is what lets the next round be tried; without it the
+            ;; contract waits in SENT_STAKE_REQUEST for an answer that has already come.
+            if ((op == controller::relay_stake) & (equal_slice_bits(sender_address, validator_controller))) {
                 ;; `new_stake` from nominator-pool should always be handled without throws by elector
                 ;; because nominator-pool do `check_new_stake_msg` and `msg_value` checks before sending `new_stake`.
                 ;; If the stake is not accepted elector will send `new_stake_error` response message.
@@ -324,9 +341,32 @@ int check_new_stake_msg(slice cs);
                              msgflag::NON_BOUNCEABLE,
                              sendmode::REGULAR);
 
+                } elseif (op == controller::set_validator_controller) {
+                    ;; The validator names the account its stake will travel through. It is
+                    ;; the validator's to name because the validator already decides every
+                    ;; stake this contract makes, and the money comes back here either way:
+                    ;; the relay states its own sender as the owner, and that is this
+                    ;; account.
+                    ;;
+                    ;; Only while nothing is out. A stake in flight is answered by the
+                    ;; account it went through, and moving the name while it travels would
+                    ;; leave this contract unable to recognise its own answer.
+                    assert_state!(state::REST);
+                    assert_sender!(sender_address, validator);
+                    throw_if(error::validator_controller_in_use, borrowed_amount);
+                    slice named = in_msg_body~load_msg_addr();
+                    in_msg_body.end_parse();
+                    (int named_wc, _) = parse_std_addr(named);
+                    throw_unless(error::no_validator_controller, named_wc == -1);
+                    validator_controller = named;
+
                 } elseif (op == controller::new_stake) {
                     assert_state!(state::REST);
                     assert_sender!(sender_address, validator);
+                    ;; Nowhere to send it. Said here rather than discovered as a message to
+                    ;; an address that does not parse.
+                    throw_unless(error::no_validator_controller,
+                                 validator_controller.slice_bits() > 2);
 
                     throw_unless(error::incorrect_new_stake::query_id, query_id); ;; query_id must be greater then 0 to receive confirmation message from elector
 
@@ -367,9 +407,13 @@ int check_new_stake_msg(slice cs);
                     validator_set_changes_count = 0;
                     validator_set_change_time = utime_since;
 
-                    send_msg(elector_address(),
+                    ;; To the Validator Controller, which reads this contract as the
+                    ;; account the money came from and states it to the elector. The terms
+                    ;; travel unchanged: this contract checks their shape and reads neither
+                    ;; the key nor the signature, as it never did.
+                    send_msg(validator_controller,
                              value,
-                             begin_cell().store_body_header(elector::new_stake, query_id).store_slice(msg).end_cell(),
+                             begin_cell().store_body_header(controller::relay_stake, query_id).store_slice(msg).end_cell(),
                              msgflag::BOUNCEABLE,
                              sendmode::PAY_FEES_SEPARETELY); ;; pay fee separately, revert on errors
 
@@ -466,6 +510,7 @@ int check_new_stake_msg(slice cs);
         .store_slice(sudoer)
         .store_timestamp(sudoer_set_at)
         .store_share(max_expected_interest)
+        .store_slice(validator_controller)
         .store_slice(static_data)
         .end_cell());
 }
@@ -492,6 +537,7 @@ int check_new_stake_msg(slice cs);
     sudoer_set_at = ds~load_timestamp();
 
     max_expected_interest = ds~load_share();
+    validator_controller = ds~load_msg_addr();
 
     static_data = ds;
 
@@ -526,11 +572,16 @@ int is_elector_address(slice address) inline_ref {
 
 ;; check the validity of the new_stake message
 int check_new_stake_msg(slice cs) impure inline_ref {
-    var validator_pubkey = cs~load_uint(256);
+    ;; The terms of a post-quantum stake, checked for shape and passed on. The key and the
+    ;; signature are the validator's; the Validator Controller compares the key against
+    ;; the one it was bound to, and the elector verifies the signature.
     var stake_at = cs~load_uint(32);
     var max_factor = cs~load_uint(32);
     var adnl_addr = cs~load_uint(256);
-    var signature = cs~load_ref().begin_parse().preload_bits(512);
+    var algorithm_id = cs~load_uint(16);
+    var public_key = cs~load_ref();
+    var signature = cs~load_ref();
+    var witness = cs~load_maybe_ref();
     cs.end_parse();
     return stake_at; ;; supposed start of next validation round (utime_since)
 }
@@ -550,7 +601,10 @@ _ get_validator_controller_data() method_id {
       stake_held_for,
       
       borrowed_amount, borrowing_time,
-      validator, pool, sudoer
+      validator, pool, sudoer,
+      ;; Where a stake would go. Reported because a controller that cannot stake looks
+      ;; exactly like one that can until it is asked to.
+      validator_controller
       );
 }
 

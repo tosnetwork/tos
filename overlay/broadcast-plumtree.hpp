@@ -40,6 +40,11 @@ namespace overlay {
 
 class OverlayImpl;
 
+// The payload-size admission shared by Plumtree send and receive paths.  A
+// caller may supply a lower bound when testing configuration headroom without
+// constructing an overlay actor graph.
+td::Status check_plumtree_payload_size(std::size_t size, std::size_t maximum = Overlays::max_fec_broadcast_size());
+
 struct PlumtreeOutboundFecPayload {
   td::Bits256 broadcast_id;
   td::uint32 flags = 0;

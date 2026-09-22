@@ -10,6 +10,7 @@ crypto/block/block-auto.cpp
 crypto/block/block-auto.h
 crypto/smartcont/auto/
 test/regression-tests.cache/
+test/regression-tests.ans.lock
 *.swp
 **/*build*/
 # Convenience symlink to a build dir so tos_sandbox::compile can find func/fift

@@ -5,6 +5,7 @@ Deploys wallet, Jetton, NFT, and DNS contracts on a live TOS testnet using
 the pre-funded main wallet at -1:000...000.  All deployment happens via Fift
 scripts + the JSON-RPC ``sendBoc`` endpoint — no lite-client needed.
 """
+
 import base64
 import hashlib
 import json
@@ -36,6 +37,7 @@ MAIN_WALLET_ADDR = "-1:000000000000000000000000000000000000000000000000000000000
 
 
 # ── Low-level helpers ────────────────────────────────────────────────────
+
 
 def run_fift(script: str, working_dir: Optional[Path] = None) -> str:
     """Execute a Fift script, return stdout."""
@@ -74,9 +76,7 @@ def get_seqno(endpoint: str, address: str) -> int:
         stack = data["result"]["stack"]
         if stack:
             return int(stack[0][1])
-    raise RuntimeError(
-        f"Failed to fetch seqno for {address}: {data}"
-    )
+    raise RuntimeError(f"Failed to fetch seqno for {address}: {data}")
 
 
 def send_boc(endpoint: str, boc_b64: str) -> dict:
@@ -260,7 +260,7 @@ def _transfer_from_main_wallet(
     else:
         si_code = "b{0} s,  // no StateInit"
 
-    bounce_bit = 'b{1}' if bounce else 'b{0}'
+    bounce_bit = "b{1}" if bounce else "b{0}"
 
     script = _TRANSFER_TEMPLATE_V2.format(
         pk_path=str(MAIN_WALLET_PK),
@@ -343,6 +343,7 @@ def deploy_wallet_contract(
 
     # Copy main wallet key for Fift access
     import shutil
+
     shutil.copy(str(MAIN_WALLET_PK), str(working_dir / "main-wallet.pk"))
 
     script = _WALLET_INIT_TEMPLATE.format(
@@ -604,9 +605,13 @@ def deploy_generic_contract(
     shutil.copy(str(MAIN_WALLET_PK), str(working_dir / "main-wallet.pk"))
 
     # Copy compiled BOC files for code references
-    for boc in ["/tmp/jetton-minter-code.boc", "/tmp/jetton-wallet-code.boc",
-                "/tmp/nft-collection-code.boc", "/tmp/nft-item-code.boc",
-                "/tmp/pool-code.boc"]:
+    for boc in [
+        "/tmp/jetton-minter-code.boc",
+        "/tmp/jetton-wallet-code.boc",
+        "/tmp/nft-collection-code.boc",
+        "/tmp/nft-item-code.boc",
+        "/tmp/pool-code.boc",
+    ]:
         if os.path.exists(boc):
             shutil.copy(boc, str(working_dir / os.path.basename(boc)))
 
@@ -619,9 +624,12 @@ def deploy_generic_contract(
 
     address = si_boc_hex = code_hash = None
     for line in output.strip().split("\n"):
-        if line.startswith("ADDR:"): address = line[5:].strip()
-        elif line.startswith("SI_BOC:"): si_boc_hex = line[7:].strip()
-        elif line.startswith("CODE_HASH:"): code_hash = line[10:].strip().lower()
+        if line.startswith("ADDR:"):
+            address = line[5:].strip()
+        elif line.startswith("SI_BOC:"):
+            si_boc_hex = line[7:].strip()
+        elif line.startswith("CODE_HASH:"):
+            code_hash = line[10:].strip().lower()
 
     if not address or not si_boc_hex:
         raise RuntimeError(f"Failed to parse contract init:\n{output}")
@@ -664,7 +672,8 @@ b>
 
     boc_hex = None
     for line in output2.strip().split("\n"):
-        if line.startswith("BOC:"): boc_hex = line[4:].strip()
+        if line.startswith("BOC:"):
+            boc_hex = line[4:].strip()
     if not boc_hex:
         raise RuntimeError(f"No BOC in transfer:\n{output2}")
 
@@ -706,7 +715,9 @@ dup hashu mw_pk ed25519_sign_uint constant signature
 2 boc+>B dup ."BOC:" Bx. cr
 """
     output = run_fift(script)
-    boc_hex = next((line[4:].strip() for line in output.splitlines() if line.startswith("BOC:")), None)
+    boc_hex = next(
+        (line[4:].strip() for line in output.splitlines() if line.startswith("BOC:")), None
+    )
     if not boc_hex:
         raise RuntimeError(f"No BOC in internal transfer:\n{output}")
     result = send_boc(endpoint, base64.b64encode(bytes.fromhex(boc_hex)).decode())
@@ -733,7 +744,12 @@ b>
     while time.time() < deadline:
         response = requests.post(
             f"{endpoint}jsonRPC",
-            json={"jsonrpc": "2.0", "id": 1, "method": "getAccountJettons", "params": {"address": owner}},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountJettons",
+                "params": {"address": owner},
+            },
             timeout=8,
         ).json()
         rows = response.get("result", {}).get("jettons", [])
@@ -746,11 +762,14 @@ b>
 def mint_test_nft(endpoint: str, collection: str, owner: str) -> str:
     """Mint one canonical TEP-62 fixture and return its indexed item address."""
     owner_wc, owner_hash = owner.split(":", 1)
-    metadata = _tep64_content_fift({
-        "name": "TOS Test NFT #0",
-        "description": "Deterministic local TOS NFT item fixture",
-        "image": "https://example.invalid/tos-test-nft-0.png",
-    }, "item_content")
+    metadata = _tep64_content_fift(
+        {
+            "name": "TOS Test NFT #0",
+            "description": "Deterministic local TOS NFT item fixture",
+            "image": "https://example.invalid/tos-test-nft-0.png",
+        },
+        "item_content",
+    )
     body = f"""\
 {metadata}
 <b 1 32 u, 2 64 u, 0 64 u, 100000000 Tomi,
@@ -763,7 +782,12 @@ b>
     while time.time() < deadline:
         response = requests.post(
             f"{endpoint}jsonRPC",
-            json={"jsonrpc": "2.0", "id": 1, "method": "getAccountNfts", "params": {"address": owner}},
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountNfts",
+                "params": {"address": owner},
+            },
             timeout=8,
         ).json()
         rows = response.get("result", {}).get("nfts", [])
@@ -950,7 +974,7 @@ def deploy_nominator_pool(
     endpoint: str,
     dest_wc: int = 0,
     amount_nano: int = 2_000_000_000,
-    validator_reward_share: int = 4000,   # 40%
+    validator_reward_share: int = 4000,  # 40%
     max_nominators: int = 40,
     min_validator_stake: int = 1_000_000_000,
     min_nominator_stake: int = 100_000_000,
@@ -976,9 +1000,9 @@ def deploy_nominator_pool(
     #   stake_held_for(32) + config_proposal_votings(dict)
     #
     # Config cell:
-    #   validator_address(256) + validator_reward_share(16) +
-    #   max_nominators_count(16) + min_validator_stake(Grams) +
-    #   min_nominator_stake(Grams)
+    #   validator_address(256) + controller_address(256) +
+    #   validator_reward_share(16) + max_nominators_count(16) +
+    #   min_validator_stake(Grams) + min_nominator_stake(Grams)
     #
     # Nominator dict: udict keyed by 256-bit address, value = coins(amount) +
     #   coins(pending_deposit_amount).
@@ -1002,6 +1026,7 @@ constant nominators_dict
   0 Tomi,                            // validator_amount = 0
   <b                                  // config cell
     0 256 u,                          // validator_address (zero hash = fake)
+    0 256 u,                          // controller_address (zero hash = fake)
     {validator_reward_share} 16 u,
     {max_nominators} 16 u,
     {min_validator_stake} Tomi,
@@ -1073,6 +1098,7 @@ constant withdraw_dict
   0 Tomi,                            // validator_amount = 0
   <b
     0 256 u,                          // validator_address (fake)
+    0 256 u,                          // controller_address (fake)
     4000 16 u,
     40 16 u,
     1000000000 Tomi,
@@ -1155,7 +1181,8 @@ def _compile_func(src_dir: Path, main_file: str) -> Path:
     result = subprocess.run(
         [str(FUNC_EXE), "-SPA", "-o", str(out), main_file],
         cwd=str(src_dir),
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(f"func compile failed: {result.stderr}")
@@ -1185,10 +1212,12 @@ def _tep64_content_fift(metadata: dict[str, str], constant: str) -> str:
     for key, value in metadata.items():
         digest = hashlib.sha256(key.encode()).hexdigest()
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        lines.extend([
-            f'<b <b 0 8 u, "{escaped}" $, b> ref, b> <s',
-            f'0x{digest} rot 256 udict! not abort"cannot store TEP-64 {key}"',
-        ])
+        lines.extend(
+            [
+                f'<b <b 0 8 u, "{escaped}" $, b> ref, b> <s',
+                f'0x{digest} rot 256 udict! not abort"cannot store TEP-64 {key}"',
+            ]
+        )
     lines.append(f"<b 0 8 u, swap dict, b> constant {constant}")
     return "\n".join(lines)
 
@@ -1201,13 +1230,16 @@ def deploy_jetton_master(endpoint: str, admin_addr: str) -> dict:
     admin_hash = parts[1]
 
     # Data: total_supply(coins=0) + admin_address + content(cell) + wallet_code(cell)
-    metadata_fift = _tep64_content_fift({
-        "name": "TOS Test Jetton",
-        "symbol": "TTJ",
-        "decimals": "9",
-        "description": "Deterministic local TOS Jetton fixture",
-        "image": "https://example.invalid/tos-test-jetton.png",
-    }, "jetton_content")
+    metadata_fift = _tep64_content_fift(
+        {
+            "name": "TOS Test Jetton",
+            "symbol": "TTJ",
+            "decimals": "9",
+            "description": "Deterministic local TOS Jetton fixture",
+            "image": "https://example.invalid/tos-test-jetton.png",
+        },
+        "jetton_content",
+    )
     data_fift = f"""\
 {metadata_fift}
 <b
@@ -1229,11 +1261,14 @@ def deploy_nft_collection(endpoint: str, owner_addr: str) -> dict:
     owner_hash = parts[1]
 
     # Data: owner + next_item_index + content_ref + item_code_ref + royalty_ref
-    metadata_fift = _tep64_content_fift({
-        "name": "TOS Test NFTs",
-        "description": "Deterministic local TOS NFT collection fixture",
-        "image": "https://example.invalid/tos-test-nft.png",
-    }, "collection_content")
+    metadata_fift = _tep64_content_fift(
+        {
+            "name": "TOS Test NFTs",
+            "description": "Deterministic local TOS NFT collection fixture",
+            "image": "https://example.invalid/tos-test-nft.png",
+        },
+        "collection_content",
+    )
     data_fift = f"""\
 {metadata_fift}
 <b
@@ -1321,6 +1356,7 @@ def deploy_all(endpoint: str, force: bool = False) -> dict:
 
 if __name__ == "__main__":
     import sys
+
     endpoint = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8011/"
     force = "--force" in sys.argv
     result = deploy_all(endpoint, force=force)

@@ -295,7 +295,7 @@ TEST(Crypto, crc32c) {
   }
 }
 
-TEST(Crypto, crc32c_benchmark) {
+TEST(Crypto, BenchCrc32c) {
   class Crc32cExtendBenchmark : public td::Benchmark {
    public:
     explicit Crc32cExtendBenchmark(size_t chunk_size) : chunk_size_(chunk_size) {

@@ -11,7 +11,8 @@
 
 #include "stdlib.fc";
 
-int op::new_stake() asm "0x4e73744b PUSHINT"; ;; see elector-code.fc (TOS adapted from tos-blockchain)
+int op::new_stake() asm "0x4e73744b PUSHINT"; ;; what an operator calls this command
+int op::relay_stake() asm "0x5051726c PUSHINT"; ;; "PQrl", what the controller relays
 int op::new_stake_error() asm "0xee6f454c PUSHINT"; ;; return_stake - see elector-code.fc
 int op::new_stake_ok() asm "0xf374484c PUSHINT"; ;; send_confirmation - see elector-code.fc
 
@@ -139,11 +140,16 @@ int get_validator_config() inline_ref {
 
 ;; check the validity of the new_stake message (see elector-code.fc)
 int check_new_stake_msg(slice cs) impure inline_ref {
-    var validator_pubkey = cs~load_uint(256);
+    ;; The terms of a post-quantum stake, checked for shape and passed on. The key and the
+    ;; signature are the validator's; the controller compares the key against the one it
+    ;; was bound to, and the elector verifies the signature. Neither happens here.
     var stake_at = cs~load_uint(32);
     var max_factor = cs~load_uint(32);
     var adnl_addr = cs~load_uint(256);
-    var signature = cs~load_ref().begin_parse().preload_bits(512);
+    var algorithm_id = cs~load_uint(16);
+    var public_key = cs~load_ref();
+    var signature = cs~load_ref();
+    var witness = cs~load_maybe_ref();
     cs.end_parse();
     return stake_at; ;; supposed start of next validation round (utime_since)
 }
@@ -159,9 +165,14 @@ builder pack_nominator(int amount, int pending_deposit_amount) inline_ref {
     );
 }
 
-cell pack_config(int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake) inline_ref {
+;; The validator commands this pool; the controller is the account that stands in the
+;; election with its money. They used to be one address because the account that gave the
+;; orders was also the account that staked. A post-quantum controller is authorised by a
+;; root key that is not on the validator's machine, so the two parted.
+cell pack_config(int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake) inline_ref {
     return begin_cell()
         .store_uint(validator_address, ADDR_SIZE())
+        .store_uint(controller_address, ADDR_SIZE())
         .store_uint(validator_reward_share, 16)
         .store_uint(max_nominators_count, 16)
         .store_coins(min_validator_stake)
@@ -169,9 +180,10 @@ cell pack_config(int validator_address, int validator_reward_share, int max_nomi
         .end_cell();
 }
 
-(int, int, int, int, int) unpack_config(slice ds) inline_ref {
+(int, int, int, int, int, int) unpack_config(slice ds) inline_ref {
     return (
         ds~load_uint(ADDR_SIZE()), ;; validator_address
+        ds~load_uint(ADDR_SIZE()), ;; controller_address
         ds~load_uint(16), ;; validator_reward_share
         ds~load_uint(16), ;; max_nominators_count
         ds~load_coins(), ;; min_validator_stake
@@ -197,7 +209,7 @@ cell pack_config(int validator_address, int validator_reward_share, int max_nomi
         .end_cell());
 }
 
-(int, int, int, int, (int, int, int, int, int), cell, cell, int, int, int, int, int, cell) load_data() inline_ref {
+(int, int, int, int, (int, int, int, int, int, int), cell, cell, int, int, int, int, int, cell) load_data() inline_ref {
     slice ds = get_data().begin_parse();
     return (
         ds~load_uint(8), ;; state
@@ -334,13 +346,14 @@ cell distribute_share(int reward, cell nominators) inline_ref {
         if (in_msg_body.slice_bits() >= 64) {
             in_msg_body~skip_bits(32); ;; skip 0xFFFFFFFF bounced prefix
             int op = in_msg_body~load_uint(32);
-            if ((op == op::new_stake()) & (is_elector_address(sender_wc, sender_addr))) {
-                ;; `new_stake` from nominator-pool should always be handled without throws by elector
-                ;; because nominator-pool do `check_new_stake_msg` and `msg_value` checks before sending `new_stake`.
-                ;; If the stake is not accepted elector will send `new_stake_error` response message.
-                ;; Nevertheless we do process theoretically possible bounced `new_stake`.
-
-                (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+            (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+            ;; A stake this pool sent, come back. It goes to the controller now rather than
+            ;; to the elector, so this is the controller refusing to relay it -- for a key
+            ;; it is not bound to, or for too little to pay the elector with. The money is
+            ;; back; what matters is that the pool stops believing a stake is out, or it
+            ;; would refuse every later order until the validator set had changed three
+            ;; times.
+            if ((op == op::relay_stake()) & (sender_wc == -1) & (sender_addr == controller_address)) {
                 if (state == 1) {
                     state = 0;
                 }
@@ -349,7 +362,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                     nominators_count,
                     stake_amount_sent,
                     validator_amount,
-                    pack_config(validator_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
+                    pack_config(validator_address, controller_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
                     nominators,
                     withdraw_requests,
                     stake_at,
@@ -366,7 +379,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
 
     int op = in_msg_body~load_uint(32);
 
-   (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+   (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
 
     if (op == 0) {
         ;; We use simple text comments for nominator operations so nominators can do it from any wallet app.
@@ -650,7 +663,10 @@ cell distribute_share(int reward, cell nominators) inline_ref {
                 validator_set_change_time = utime_since;
                 stake_held_for = get_validator_config(); ;; save `stake_held_for` in case the config changes in the process
 
-                send_msg(elector_address(), value, begin_cell().store_uint(op, 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE(), SEND_MODE_PAY_FEE_SEPARATELY()); ;; pay fee separately, rever on errors
+                ;; To the controller, which reads this pool as the account the money came
+                ;; from and states it to the elector. The terms travel unchanged: this pool
+                ;; checks they are the right shape and reads neither key nor signature.
+                send_msg(make_address(-1, controller_address), value, begin_cell().store_uint(op::relay_stake(), 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE(), SEND_MODE_PAY_FEE_SEPARATELY()); ;; pay fee separately, rever on errors
             }
         }
     }
@@ -660,7 +676,7 @@ cell distribute_share(int reward, cell nominators) inline_ref {
         nominators_count,
         stake_amount_sent,
         validator_amount,
-        pack_config(validator_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
+        pack_config(validator_address, controller_address, validator_reward_share, max_nominators_count, min_validator_stake, min_nominator_stake),
         nominators,
         withdraw_requests,
         stake_at,
@@ -679,12 +695,12 @@ _ get_pool_data() method_id {
 }
 
 int has_withdraw_requests() method_id {
-    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
     return ~ cell_null?(withdraw_requests);
 }
 
 (int, int, int) get_nominator_data(int nominator_address) method_id {
-    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
 
     (slice nominator, int found) = nominators.udict_get?(ADDR_SIZE(), nominator_address);
     throw_unless(86, found);
@@ -699,7 +715,7 @@ int get_max_punishment(int stake) method_id {
 }
 
 tuple list_nominators() method_id {
-    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
     var list = null();
     int address = -1;
     do {
@@ -714,7 +730,7 @@ tuple list_nominators() method_id {
 }
 
 tuple list_votes() method_id {
-    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
     var list = null();
     int proposal_hash = -1;
     do {
@@ -728,7 +744,7 @@ tuple list_votes() method_id {
 }
 
 tuple list_voters(int proposal_hash) method_id {
-    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
+    (int state, int nominators_count, int stake_amount_sent, int validator_amount, (int validator_address, int controller_address, int validator_reward_share, int max_nominators_count, int min_validator_stake, int min_nominator_stake), cell nominators, cell withdraw_requests, int stake_at, int saved_validator_set_hash, int validator_set_changes_count, int validator_set_change_time, int stake_held_for, cell config_proposal_votings) = load_data();
     var list = null();
     (slice votes_slice, int found) = config_proposal_votings.udict_get?(256, proposal_hash);
     throw_unless(133, found);

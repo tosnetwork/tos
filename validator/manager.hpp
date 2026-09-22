@@ -26,6 +26,10 @@
 
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
+#include "consensus/session-compat.h"
+#include "consensus/validator-cleanup-manager.h"
+#include "consensus/validator-cleanup-worker.h"
+#include "consensus/validator-cleanup.h"
 #include "db/db-event-publisher.hpp"
 #include "impl/ext-message-pool.hpp"
 #include "interfaces/db.h"
@@ -40,13 +44,12 @@
 #include "td/utils/port/Poll.h"
 #include "td/utils/port/StdStreams.h"
 
+#include "finality-cache-policy.h"
 #include "liteserver-admission.h"
 #include "manager-init.h"
 #include "manager-resource-policy.h"
-#include "consensus/session-compat.h"
-#include "consensus/validator-cleanup.h"
-#include "consensus/validator-cleanup-manager.h"
-#include "consensus/validator-cleanup-worker.h"
+#include "node-consensus-status.h"
+#include "pending-finality-ingress.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
@@ -67,7 +70,7 @@ class WaitShardState;
 class WaitBlockData;
 class AppliedExtMessageCleanupActor;
 
-struct PendingBlockFinality {
+struct PendingBlockFinalityCandidate {
   td::Ref<block::BlockSignatureSet> sig_set;
   BroadcastSource source;
 };
@@ -224,19 +227,18 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::LRUCache<BlockIdExt, td::BufferSlice> cached_block_data_{/* max_size = */ 128};
   td::LRUCache<BlockIdExt, td::BufferSlice> cached_masterchain_block_candidates_{/* max_size = */ 128};
   td::LRUCache<BlockIdExt, td::Unit> cached_checked_shard_block_descriptions_{/* max_size = */ 1024};
-  td::LRUCache<BlockIdExt, PendingBlockFinality> pending_block_finality_{/* max_size = */ 256};
+  PendingFinalityStore<BlockIdExt, PendingBlockFinalitySender, PendingBlockFinalityCandidate> pending_block_finality_;
+  td::optional<BlockIdExt> pending_finality_authority_memo_state_;
+  PendingFinalityAuthorityMemo pending_finality_authority_memo_;
 
   td::actor::ActorOwn<ExtMessagePool> ext_message_pool_;
   td::actor::ActorOwn<AppliedExtMessageCleanupActor> applied_ext_message_cleanup_actor_;
 
  private:
   // VALIDATOR GROUPS
-  ValidatorSessionId get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set,
-                                          td::Bits256 opts_hash, BlockSeqno last_key_block_seqno,
-                                          const consensus::ValidatorSessionOptions &opts);
   td::actor::ActorOwn<IValidatorGroup> create_validator_group(ValidatorSessionId session_id, ShardIdFull shard,
                                                               td::Ref<block::ValidatorSet> validator_set,
-                                                              BlockSeqno key_seqno,
+                                                              BlockSeqno key_seqno, NewConsensusConfig config,
                                                               consensus::ValidatorSessionOptions opts,
                                                               bool create_catchain);
   td::actor::ActorOwn<IValidatorGroup> create_observer_group(ValidatorSessionId session_id, ShardIdFull shard,
@@ -372,6 +374,23 @@ class ValidatorManagerImpl : public ValidatorManager {
     temp_keys_.erase(key);
     promise.set_value(td::Unit());
   }
+  // Declaring that this node holds the consensus key for a validator identity. This is
+  // what makes it that validator; the Ed25519 setters above cannot. The key identity is
+  // recorded so membership lapses on its own once the set records a different one,
+  // rather than a node continuing to act for a validator that has rotated away from it.
+  void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
+                            td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store));
+    if (status.is_error()) {
+      promise.set_error(std::move(status));
+      return;
+    }
+    promise.set_value(td::Unit());
+  }
+  void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) override {
+    pq_custody_.remove(validator_id);
+    promise.set_value(td::Unit());
+  }
 
   void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                     td::Promise<td::Unit> promise) override;
@@ -382,7 +401,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void validate_block(ReceivedBlock block, td::Promise<BlockHandle> promise) override;
   void new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                            td::Promise<td::Unit> promise) override;
-  td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source) override;
+  td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
+                                                 td::optional<PublicKeyHash> source_peer = {}) override;
   void validate_block_broadcast_signatures(BlockBroadcast broadcast, td::Promise<td::Unit> promise) override;
   td::actor::Task<> validated_accepted_block_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno);
   td::actor::Task<> generate_shard_block_description(BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set);
@@ -517,7 +537,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_block_data_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<BlockData>> promise) override;
   void get_shard_state_from_db(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) override;
   void get_shard_state_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<ShardState>> promise) override;
-  void get_block_candidate_from_db(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  void get_block_candidate_from_db(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                                    td::Promise<BlockCandidate> promise) override;
   void get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) override;
   void get_block_proof_from_db(ConstBlockHandle handle, td::Promise<td::Ref<Proof>> promise) override;
@@ -598,6 +618,15 @@ class ValidatorManagerImpl : public ValidatorManager {
   void add_shard_block_description(td::Ref<ShardTopBlockDescription> desc);
   void add_cached_block_data(BlockIdExt block_id, td::BufferSlice data);
   void try_process_pending_block_finality(BlockIdExt block_id);
+  void failed_pending_block_finality(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token, td::Status error,
+                                     td::Slice operation);
+  void schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at);
+  void expire_pending_block_finality(BlockIdExt block_id);
+  void checked_pending_block_finality(BlockIdExt block_id, BlockBroadcast broadcast, BroadcastSource source,
+                                      bool was_final, PendingFinalityAttemptToken attempt_token,
+                                      td::Result<td::Unit> result);
+  void processed_pending_block_finality(BlockIdExt block_id, bool was_final, PendingFinalityAttemptToken attempt_token,
+                                        td::Result<td::Unit> result);
   void preload_msg_queue_to_masterchain(td::Ref<ShardTopBlockDescription> desc, td::Promise<td::Unit> promise);
   void loaded_msg_queue_to_masterchain(td::Ref<ShardTopBlockDescription> desc, td::Ref<OutMsgQueueProof> res,
                                        td::Promise<td::Unit> promise);
@@ -634,9 +663,15 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();
 
-  bool is_validator();
+  // Whether this node holds any validator keys at all, which decides operational
+  // behaviour such as mempool admission, monitoring and non-final queries.
+  //
+  // This is NOT consensus membership and must never be used as it. Holding an Ed25519
+  // network or operator key says nothing about whether this node is a validator in a
+  // given set; get_validator_id() and local_consensus_member() answer that, from custody.
+  bool has_local_validator_keys();
   bool validating_masterchain();
-  PublicKeyHash get_validator(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set);
+  tos::ValidatorId get_validator_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set);
   bool is_shard_collator(ShardIdFull shard);
 
   ValidatorManagerImpl(td::Ref<ValidatorManagerOptions> opts, std::string db_root,
@@ -716,7 +751,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void process_lookup_block_for_litequery_error(AccountIdPrefixFull account, int type, td::uint64 value,
                                                 td::Result<ConstBlockHandle> r_handle,
                                                 td::Promise<ConstBlockHandle> promise);
-  void get_block_candidate_for_litequery(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash,
+  void get_block_candidate_for_litequery(ValidatorId source, BlockIdExt block_id, FileHash collated_data_hash,
                                          td::Promise<BlockCandidate> promise) override;
   void get_validator_groups_info_for_litequery(
       td::optional<ShardIdFull> shard,
@@ -751,6 +786,10 @@ class ValidatorManagerImpl : public ValidatorManager {
  private:
   std::set<PublicKeyHash> permanent_keys_;
   std::set<PublicKeyHash> temp_keys_;
+  // Which post-quantum consensus keys this node actually holds, by the validator
+  // identity each belongs to. Consensus membership is decided from this; the Ed25519
+  // sets above are for network and operator duties and cannot confer it.
+  PqConsensusCustody pq_custody_;
 
  private:
   td::Ref<ValidatorManagerOptions> opts_;

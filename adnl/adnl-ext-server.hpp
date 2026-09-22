@@ -82,11 +82,14 @@ class AdnlExtServerImpl : public AdnlExtServer {
  public:
   void add_tcp_port(td::uint16 port) override;
   void add_local_id(AdnlNodeIdShort id) override;
+  void wait_listening(td::Promise<td::Unit> promise) override;
   void accepted(td::SocketFd fd);
+  void tcp_port_listening(td::uint16 port, td::Status status);
   void connection_closed(std::string peer_ip);
   void decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
 
   void start_up() override {
+    initial_ports_pending_ = ports_;
     for (auto &port : ports_) {
       add_tcp_port(port);
     }
@@ -111,7 +114,10 @@ class AdnlExtServerImpl : public AdnlExtServer {
   td::actor::ActorId<AdnlPeerTable> peer_table_;
   std::set<AdnlNodeIdShort> local_ids_;
   std::set<td::uint16> ports_;
+  std::set<td::uint16> initial_ports_pending_;
   std::map<td::uint16, td::actor::ActorOwn<td::TcpInfiniteListener>> listeners_;
+  std::vector<td::Promise<td::Unit>> listening_waiters_;
+  td::Status listening_status_;
   ExtServerConnectionLimits connection_limits_{1024, 64};
   // Bound parked and executing requests across connections. The per-IP limit
   // stays below the validator execution budget so one address cannot monopolize it.

@@ -56,8 +56,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 from contract import WalletV1, WalletV1Blueprint  # noqa: E402
-from pytosiq_core.boc.deserialize import BocError  # noqa: E402
-from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -69,6 +67,8 @@ from pytosiq_core import (  # noqa: E402
     Transaction,
     WalletMessage,
 )
+from pytosiq_core.boc.deserialize import BocError  # noqa: E402
+from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
@@ -133,8 +133,7 @@ TASK_SEND_PROCESS_VIEW_SCOPE = (
     "distinct RPC process views; no independent-operator or Byzantine-finality claim"
 )
 TASK_SEND_BLOCK_REFERENCE_SCOPE = (
-    "RPC-asserted transaction and block identifiers; "
-    "no inclusion proof was verified"
+    "RPC-asserted transaction and block identifiers; no inclusion proof was verified"
 )
 SIDECAR_NETWORK = "tos:local-accelerated-nominator-pool-sidecar"
 SIDECAR_EVIDENCE_CLASS = "IDENTITY_BOUND_SIMULATION"
@@ -577,15 +576,19 @@ def build_pool_state_init(
     code: Cell,
     *,
     validator_account: bytes,
+    controller_account: bytes,
     reward_share_bps: int,
     max_nominators: int,
     min_validator_stake: int,
     min_nominator_stake: int,
 ) -> StateInit:
     """The initial storage pool.fc's save_data expects, in its exact order."""
+    # Two accounts where there was one: the validator commands the pool, the controller
+    # stands in the election with its money.
     config = (
         Builder()
         .store_bytes(validator_account)
+        .store_bytes(controller_account)
         .store_uint(reward_share_bps, 16)
         .store_uint(max_nominators, 16)
     )
@@ -617,11 +620,12 @@ def build_pool_stake_body(
     adnl_id: bytes,
     signature: bytes,
 ) -> Cell:
-    """pool.fc's new_stake body.
+    """The classical new_stake body, which nothing on this chain accepts any more.
 
-    Identical to the Elector's own, with the amount to forward inserted after
-    the query id -- the pool needs to be told how much of its balance to stake,
-    and everything after that it passes through untouched.
+    Kept because the rest of this harness reads as a record of what the path used
+    to be; its one caller now refuses instead of sending. The pool forwards
+    post-quantum terms to a Validator Controller, and those carry a key and a
+    signature this function has no room for.
     """
     if len(validator_pubkey) != 32 or len(adnl_id) != 32 or len(signature) != 64:
         raise ValueError("invalid validator election field length")
@@ -1126,7 +1130,7 @@ def match_agent_pool_transaction(
         boc = base64.b64decode(encoded, validate=True)
         transaction_cell = Cell.one_from_boc(boc)
         transaction = Transaction.deserialize(transaction_cell.begin_parse())
-    except (TypeError, ValueError, TlbError, BocError, IndexError):
+    except TypeError, ValueError, TlbError, BocError, IndexError:
         return None
     if transaction.account_addr != sender.hash_part or getattr(
         transaction.description, "aborted", True
@@ -1851,7 +1855,7 @@ class PoolLifecycle:
         if match is None:
             raise RuntimeError(f"get_pool_data returned no result:\n{output[-1500:]}")
         tokens = self._stack_tokens(match.group(1))
-        if len(tokens) < 16:
+        if len(tokens) < 17:
             raise RuntimeError(f"unexpected get_pool_data stack: {tokens}")
 
         def number(index: int) -> int:
@@ -1860,15 +1864,17 @@ class PoolLifecycle:
                 raise RuntimeError(f"stack slot {index} is not a number: {token}")
             return int(token)
 
-        # Slot order follows pool.fc's save_data; 9 and 10 are the nominator and
-        # withdraw-request dictionaries.
+        # Slot order follows pool.fc's save_data, with the config flattened into it:
+        # 4 through 9 are its six fields, 10 and 11 the nominator and withdraw-request
+        # dictionaries. The config gained the controller address, so everything after it
+        # sits one slot later than it used to.
         return PoolData(
             state=number(0),
             nominators_count=number(1),
             stake_amount_sent=number(2),
             validator_amount=number(3),
-            stake_at=number(11),
-            validator_set_changes_count=number(13),
+            stake_at=number(12),
+            validator_set_changes_count=number(14),
         )
 
     async def active_election_id(self) -> int:
@@ -2681,6 +2687,7 @@ class PoolLifecycle:
         state_init = build_pool_state_init(
             self.pool_code,
             validator_account=validator_account,
+            controller_account=validator_account,
             reward_share_bps=VALIDATOR_REWARD_SHARE_BPS,
             max_nominators=MAX_NOMINATORS,
             min_validator_stake=self.min_validator_stake,
@@ -3097,31 +3104,16 @@ class PoolLifecycle:
         return Cell.one_from_boc(body_file.read_bytes())
 
     async def stake_through_pool(self, election_id: int, *, label: str) -> None:
-        assert self.pool_address is not None
-        node = self.nodes[0]
-        await self.signed_election_body(
-            source=self.pool_address,
-            node=node,
-            election_id=election_id,
-            label=label,
-        )
-        signature = self._last_signature
-
-        body = build_pool_stake_body(
-            query_id=int(time.time()),
-            stake_value=POOL_STAKE_VALUE,
-            validator_pubkey=node.validator_key.public_key.key,
-            election_id=election_id,
-            max_factor=MAX_FACTOR,
-            adnl_id=node.validator_key.id,
-            signature=signature,
-        )
-        await self.send(
-            self.wallets[0],
-            dest=self.pool_address,
-            amount=POOL_STAKE_GAS,
-            body=body,
-            label=label,
+        raise RuntimeError(
+            "a pool's stake is relayed through a post-quantum Validator Controller, and "
+            "placing one needs three things this harness does not have: a deployed "
+            "controller bound to the node's ML-DSA-44 consensus key, that key's signature "
+            "over terms naming the pool as the funding account, and the controller's code "
+            "admitted by ConfigParam 47. The Ed25519 stake this used to build is one the "
+            "elector no longer accepts, so it is not sent rather than sent in a form the "
+            "chain refuses. What it would have exercised is covered by "
+            "a_pools_money_reaches_an_election_through_a_real_controller in the elector "
+            "sandbox, which runs the same path against the real contracts."
         )
 
     async def nominator_components(self, nominator: Nominator) -> tuple[int, int]:

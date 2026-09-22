@@ -13,14 +13,16 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "json-rpc-server-parse.h"
-
 #include "td/utils/SharedSlice.h"
+#include "td/utils/StringBuilder.h"
+#include "td/utils/base64.h"
 #include "td/utils/misc.h"
 #include "vm/boc.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/dict.h"
 #include "vm/excno.hpp"
+
+#include "json-rpc-server-parse.h"
 
 namespace tos {
 
@@ -142,6 +144,45 @@ td::Result<td::uint32> parse_restricted_wallet_start_at(td::Ref<vm::Cell> data_c
     cs.advance(320);
     return static_cast<td::uint32>(cs.fetch_ulong(32));
   });
+}
+
+td::Result<std::string> render_masterchain_block_signatures_json(const lite_api::liteServer_SignatureSet* signatures,
+                                                                 td::Slice id_json) {
+  auto emit_sig_array = [](td::StringBuilder& out, const auto& sig_vec) {
+    bool first = true;
+    for (const auto& signature : sig_vec) {
+      if (!first) {
+        out << ',';
+      }
+      first = false;
+      out << "{\"@type\":\"blocks.signature\",\"node_id_short\":\""
+          << td::base64_encode(signature->node_id_short_.as_slice()) << "\",\"signature\":\""
+          << td::base64_encode(signature->signature_.as_slice()) << "\"}";
+    }
+  };
+
+  td::StringBuilder out;
+  if (!signatures || signatures->get_id() == lite_api::liteServer_signatureSet_ordinary::ID) {
+    out << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json << ",\"signatures\":[";
+    if (signatures) {
+      emit_sig_array(out, static_cast<const lite_api::liteServer_signatureSet_ordinary*>(signatures)->signatures_);
+    }
+    out << "]}";
+    return out.as_cslice().str();
+  }
+  if (signatures->get_id() == lite_api::liteServer_signatureSet_simplex::ID) {
+    const auto* simplex = static_cast<const lite_api::liteServer_signatureSet_simplex*>(signatures);
+    out << "{\"@type\":\"blocks.blockSignatures.simplex\",\"id\":" << id_json << ",\"session_id\":\""
+        << td::base64_encode(simplex->session_id_.as_slice()) << "\",\"slot\":" << simplex->slot_ << ",\"candidate\":\""
+        << td::base64_encode(simplex->candidate_.as_slice()) << "\",\"signatures\":[";
+    emit_sig_array(out, simplex->signatures_);
+    out << "]}";
+    return out.as_cslice().str();
+  }
+  if (signatures->get_id() == lite_api::liteServer_signatureSet_simplexPq::ID) {
+    return td::Status::Error("post-quantum block signatures are not supported by JSON-RPC yet");
+  }
+  return td::Status::Error("unsupported block signature carrier in JSON-RPC");
 }
 
 }  // namespace tos

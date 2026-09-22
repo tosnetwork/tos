@@ -26,6 +26,10 @@ const int controller::approve = 0x7b4b42e6;
 const int controller::disapprove = 0xe8a0abfe;
 const int controller::recover_stake = 0xeb373a05;
 const int controller::new_stake = elector::new_stake;
+;; "PQrl": what a Validator Controller relays to the elector on this contract's behalf.
+const int controller::relay_stake = 0x5051726c;
+;; Name the Validator Controller this contract's stake travels through.
+const int controller::set_validator_controller = 0x5051736c;
 const int controller::credit = 0x1690c604;
 const int controller::withdraw_validator = 0x8efed779;
 const int controller::return_unused_loan = 0xed7378a6;

@@ -30,11 +30,12 @@ void AdnlExtConnection::send_uninit(td::BufferSlice data) {
 
 void AdnlExtConnection::send(td::BufferSlice data) {
   LOG(DEBUG) << "sending packet of size " << data.size();
-  auto data_size = td::narrow_cast<td::uint32>(data.size()) + 32 + 32;
-  if (data_size < 32 || data_size > (1 << 24)) {
-    LOG(WARNING) << "bad packet size " << data_size;
+  auto size_status = check_adnl_ext_payload_size(data.size());
+  if (size_status.is_error()) {
+    LOG(WARNING) << size_status;
     return;
   }
+  auto data_size = td::narrow_cast<td::uint32>(data.size() + adnl_ext_packet_framing_bytes);
 
   td::BufferSlice d{data.size() + 4 + 32 + 32};
   auto S = d.as_slice();
@@ -82,7 +83,7 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
       // Packet layout after decrypt:
       //   [32 bytes random prefix] [payload bytes (may be empty)] [32 bytes sha256]
       // So minimal valid length is 64 bytes (keepalive has empty payload).
-      if (len_ > (1 << 24) || len_ < 64) {
+      if (check_adnl_ext_framed_size(len_).is_error()) {
         return td::Status::Error(ErrorCode::protoviolation, PSTRING() << "bad packet size: size=" << len_);
       }
       read_len_ = true;
@@ -165,7 +166,7 @@ td::Status AdnlExtConnection::init_crypto(td::Slice S) {
 
 td::Status AdnlExtConnection::receive_packet(td::BufferSlice data) {
   LOG(DEBUG) << "received packet of size " << data.size();
-  if (data.size() < 64) {
+  if (data.size() < adnl_ext_packet_framing_bytes) {
     return td::Status::Error(ErrorCode::protoviolation, "too small packet");
   }
   auto S = data.as_slice();

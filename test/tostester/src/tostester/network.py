@@ -2,6 +2,7 @@ import asyncio
 import functools
 import logging
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -22,7 +23,7 @@ from toslib import EngineConsoleClient, ToslibClient, ToslibError, ToslibEventLo
 from .install import Install
 from .key import Key
 from .log_streamer import LogStreamer
-from .zerostate import NetworkConfig, Zerostate, create_zerostate
+from .zerostate import NetworkConfig, PqInitialValidator, Zerostate, create_zerostate
 
 l = logging.getLogger(__name__)
 
@@ -298,10 +299,10 @@ class Network:
         self.__nodes.append(node)
         return node
 
-    def create_full_node(self) -> "FullNode":
+    def create_full_node(self, validator_key: Key | None = None) -> "FullNode":
         assert self._status < _Status.CLOSED
 
-        node = FullNode(self, f"node-{len(self.__nodes)}")
+        node = FullNode(self, f"node-{len(self.__nodes)}", validator_key)
         self.__nodes.append(node)
         self.__full_nodes.append(node)
         return node
@@ -319,7 +320,16 @@ class Network:
             self._install,
             state_dir,
             self.__network_config,
-            [node.validator_key for node in self.__full_nodes if node.is_initial_validator],
+            [
+                node.validator_key
+                for node in self.__full_nodes
+                if node.is_initial_validator and node.pq_initial_validator is None
+            ],
+            [
+                node.pq_initial_validator
+                for node in self.__full_nodes
+                if node.is_initial_validator and node.pq_initial_validator is not None
+            ],
         )
         self._status = _Status.ZEROSTATE_GENERATED
         return self.__zerostate
@@ -459,7 +469,7 @@ class DHTNode(Network.Node):
 
 @final
 class FullNode(Network.Node):
-    def __init__(self, network: "Network", name: str):
+    def __init__(self, network: "Network", name: str, validator_key: Key | None = None):
         super().__init__(network, name)
 
         KEY_EXPIRATION = (1 << 31) - 1
@@ -469,7 +479,11 @@ class FullNode(Network.Node):
         self._engine_console_addr = self._new_network_address()
 
         self._fullnode_key, _ = self._new_keyring_key()
-        self._validator_key, _ = self._new_keyring_key()
+        if validator_key is None:
+            self._validator_key, _ = self._new_keyring_key()
+        else:
+            self._validator_key = validator_key
+            _ = self._validator_key.add_to_keyring(self._keyring)
         self._liteserver_key, _ = self._new_keyring_key()
         self._engine_console_server_key, _ = self._new_keyring_key()
         self._engine_console_client_key = Key()
@@ -531,6 +545,7 @@ class FullNode(Network.Node):
         )
 
         self._is_initial_validator = False
+        self._pq_initial_validator: PqInitialValidator | None = None
 
         self._client: ToslibClient | None = None
         self._engine_console: EngineConsoleClient | None = None
@@ -541,9 +556,52 @@ class FullNode(Network.Node):
         self._ensure_no_zerostate_yet()
         self._is_initial_validator = True
 
+    def make_initial_pq_validator(self, validator_id: bytes, seed: bytes):
+        self._ensure_no_zerostate_yet()
+        if len(validator_id) != 32 or len(seed) != 32:
+            raise ValueError("post-quantum validator id and seed must each be 32 bytes")
+        # The production loader refuses a consensus seed in a group-writable directory.
+        # Test worktrees commonly use umask 0002, so make this validator's directory
+        # owner-only before asking the production provisioning tool to place the seed.
+        self._directory.chmod(0o700)
+        key_file = (self._directory / "pq-consensus.seed").resolve()
+        result = subprocess.run(
+            [str(self._network.install.pq_consensus_key_exe), "import", str(key_file)],
+            input=seed.hex() + "\n",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"failed to provision post-quantum validator key: {result.stderr.strip()}"
+            )
+        key_id_match = re.search(r"^key_id\s+([0-9a-f]{64})$", result.stdout, re.MULTILINE)
+        public_match = re.search(r"^public\s+([0-9a-f]{2624})$", result.stdout, re.MULTILINE)
+        if key_id_match is None or public_match is None:
+            raise RuntimeError("post-quantum key tool did not report the key identity")
+        self._pq_initial_validator = PqInitialValidator(
+            validator_id=validator_id,
+            key_id=bytes.fromhex(key_id_match.group(1)),
+            public_key=bytes.fromhex(public_match.group(1)),
+            adnl_id=self._validator_key.id,
+        )
+        self._local_config.extraconfig = tos_api.Engine_validator_extraConfig(
+            state_serializer_enabled=True,
+            pq_consensus=tos_api.Engine_validator_pqConsensus(
+                validator_id=validator_id,
+                consensus_key_file=str(key_file),
+            ),
+        )
+        self._is_initial_validator = True
+
     @property
     def is_initial_validator(self):
         return self._is_initial_validator
+
+    @property
+    def pq_initial_validator(self):
+        return self._pq_initial_validator
 
     @property
     def validator_key(self):

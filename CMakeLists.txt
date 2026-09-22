@@ -700,6 +700,7 @@ add_test(
   NAME test-quorum-static-grep
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quorum-static.sh
           ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(test-quorum-static-grep PROPERTIES LABELS "source-guard")
 
 add_executable(test-overlay test/test-overlay.cpp)
 target_link_libraries(test-overlay overlay tdutils tdactor adnl adnltest tl_api dht )
@@ -786,7 +787,27 @@ target_link_libraries(inject-validator-cleanup-record PRIVATE tos_crypto_core td
 add_executable(test-node-consensus-membership test/test-node-consensus-membership.cpp)
 target_include_directories(test-node-consensus-membership PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor)
+target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor
+                      tos_pq_consensus_signer tos_pq_consensus)
+
+add_executable(test-validator-transport-authority test/pq-native/validator-transport-authority-test.cpp)
+target_include_directories(test-validator-transport-authority PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-validator-transport-authority PRIVATE overlay tos_block tos_crypto keys tdutils tdactor adnl
+                      tl_api dht)
+
+add_executable(test-pending-finality-cache test/pq-native/pending-finality-cache-test.cpp)
+target_include_directories(test-pending-finality-cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-pending-finality-cache PRIVATE full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer
+                      tos_pq_consensus tl_lite_api tdutils)
+target_compile_definitions(test-pending-finality-cache PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+add_executable(test-pq-lite-forward-proof test/pq-native/pq-lite-forward-proof-test.cpp)
+target_include_directories(test-pq-lite-forward-proof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-pq-lite-forward-proof PRIVATE lite-client-common tos_block tos_pq_consensus_signer
+                      tos_pq_consensus tos_crypto tl_api tl_lite_api tl-lite-utils tdutils tdactor adnl keys dht)
 
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -827,6 +848,15 @@ target_link_libraries(test-download-state-budget PRIVATE validator-common full-n
 # rejection for the b8c0acaf parallel-block-download port.
 add_executable(test-download-next-blocks-validation test/test-download-next-blocks-validation.cpp)
 target_link_libraries(test-download-next-blocks-validation PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
+add_executable(test-pq-network-parser-resource test/pq-native/pq-network-parser-resource-test.cpp)
+target_link_libraries(test-pq-network-parser-resource PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht
+                      tl_lite_api tl-lite-utils tos_mldsa44 tos_pq_consensus)
+
+add_executable(test-pq-signature-persistence test/pq-native/pq-signature-persistence-test.cpp)
+target_link_libraries(test-pq-signature-persistence PRIVATE tos_validator validator-common validator-db full-node tos_db
+                      tos_crypto tdutils tdactor adnl overlay tl_api dht tos_mldsa44 tos_pq_consensus_signer
+                      tos_pq_consensus)
 
 # Phase B Step 8 — five invariant regression tests for the true
 # CellDb-backed streaming importer (replacement-hash equality, no
@@ -1070,19 +1100,25 @@ target_link_libraries(all_tests INTERFACE tdutils tdactor tdnet tdfec tos_db tos
 endif()
 #END internal
 
-set(TEST_OPTIONS "--regression ${CMAKE_CURRENT_SOURCE_DIR}/test/regression-tests.ans --filter -Bench")
-separate_arguments(TEST_OPTIONS)
-tos_test(test-ed25519)
+set(BENCHMARK_FILTER "--filter -Bench")
+separate_arguments(BENCHMARK_FILTER)
+function(tos_regression_test TEST_NAME)
+  tos_test(${TEST_NAME}
+    --regression ${CMAKE_CURRENT_SOURCE_DIR}/test/regression-tests.ans
+    --regression-cache ${CMAKE_CURRENT_BINARY_DIR}/${TEST_NAME}.regression-cache
+    ${BENCHMARK_FILTER})
+endfunction()
+tos_test(test-ed25519 ${BENCHMARK_FILTER})
 tos_test(test-bigint)
-tos_test(test-vm ${TEST_OPTIONS})
-tos_test(test-fift ${TEST_OPTIONS})
-tos_test(test-cells ${TEST_OPTIONS})
+tos_regression_test(test-vm)
+tos_regression_test(test-fift)
+tos_regression_test(test-cells)
 tos_test(test-smartcont)
 tos_test(test-net)
 tos_test(test-tdactor)
 
 #BEGIN toslib
-tos_test(test-tdutils)
+tos_test(test-tdutils ${BENCHMARK_FILTER})
 tos_test(test-toslib-offline)
 #END toslib
 
@@ -1162,6 +1198,17 @@ tos_test(test-rldp-http-proxy-routing)
 tos_test(test-overlay-peer-cleanup)
 tos_test(test-overlay-broadcast-capacity)
 tos_test(test-download-state-budget)
+tos_test(test-pq-network-parser-resource)
+tos_test(test-pq-signature-persistence)
+tos_test(test-validator-transport-authority)
+tos_test(test-pending-finality-cache)
+add_test(NAME finality-evidence-admission-source
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-evidence-admission.sh ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(finality-evidence-admission-source PROPERTIES LABELS "source-guard")
+add_test(NAME pending-finality-retry-policy-source
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-retry-policy.sh ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pending-finality-retry-policy-source PROPERTIES LABELS "source-guard")
+tos_test(test-pq-lite-forward-proof)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
@@ -1186,6 +1233,7 @@ if (Python3_Interpreter_FOUND)
   add_test(NAME jsonrpc-route-gating
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
+  set_tests_properties(jsonrpc-route-gating PROPERTIES LABELS "source-guard")
 endif()
 tos_test(test-http-server-limits)
 tos_test(test-wallet-message-processor)
@@ -1208,10 +1256,32 @@ tos_test(test-quorum)
 tos_test(test-emulator)
 
 tos_test(test-fec)
-tos_test(test-tddb ${TEST_OPTIONS})
+tos_regression_test(test-tddb)
 set_tests_properties(test-tddb PROPERTIES ENVIRONMENT
   "TOS_ROCKSDB_BLOCK_CACHE_SIZE=33554432;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_SIZE=67108864;TOS_ROCKSDB_CRITICAL_WRITE_BUFFER_ALLOW_STALL=1;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_SIZE=134217728;TOS_ROCKSDB_GLOBAL_WRITE_BUFFER_ALLOW_STALL=1")
-tos_test(test-db ${TEST_OPTIONS})
+tos_regression_test(test-db)
+add_test(NAME benchmark-exclusion-source
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-benchmark-exclusion.sh ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(benchmark-exclusion-source PROPERTIES LABELS "source-guard")
+add_test(NAME frozen-boc-toolchain-resolution
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-frozen-boc-toolchain.sh ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(frozen-boc-toolchain-resolution PROPERTIES LABELS "source-guard")
+add_test(NAME quic-ctest-isolation-source
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quic-ctest-isolation.sh ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(quic-ctest-isolation-source PROPERTIES LABELS "source-guard")
+add_test(NAME validator-session-assembly-source
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-session-assembly.sh ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(validator-session-assembly-source PROPERTIES LABELS "source-guard")
+add_test(NAME regression-fixture-concurrency
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
+          ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+
+# Keep cheap source-only policy checks visible on every branch and pull
+# request, independently of the native build. Each guard owns its label next
+# to its add_test(), so a newly registered guard cannot require a second YAML
+# inventory and a branch cannot label a test it does not define.
+# regression-fixture-concurrency is intentionally unlabelled: despite its name
+# it executes test-fift and test-cells, and therefore requires build artifacts.
 
 # Network-safety regressions. test-quic-sender is a multi-suite binary (it also
 # holds large-scale/fairness suites that must not gate every change), so the
@@ -1222,9 +1292,16 @@ tos_test(test-db ${TEST_OPTIONS})
 # only labelled here. All are tagged "network-safety" so the instrumented
 # network-safety workflow can select exactly this set.
 add_dependencies(all-tests test-quic-sender)
-add_test(NAME quic-inbound-stream-timeout COMMAND test-quic-sender -f AbandonedInboundStreamIsReaped)
-add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender -f PartialResponseDoesNotExtendDeadline)
-add_test(NAME quic-connection-count-cap COMMAND test-quic-sender -f MaxConnectionsRejectsBeyondCap)
+# Each filtered entry is a distinct process. Give it a disjoint database root
+# and a widely separated port range so parallel ctest cannot make one process
+# delete another's fixtures or bind its sockets. The ranges also leave room for
+# QuicSender::NODE_PORT_OFFSET and every next_port() allocation in each case.
+add_test(NAME quic-inbound-stream-timeout COMMAND test-quic-sender
+  -p 21000 -d tmp-dir-test-quic-inbound -f AbandonedInboundStreamIsReaped)
+add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender
+  -p 31000 -d tmp-dir-test-quic-outbound -f PartialResponseDoesNotExtendDeadline)
+add_test(NAME quic-connection-count-cap COMMAND test-quic-sender
+  -p 41000 -d tmp-dir-test-quic-cap -f MaxConnectionsRejectsBeyondCap)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline

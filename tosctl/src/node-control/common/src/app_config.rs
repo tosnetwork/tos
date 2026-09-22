@@ -607,6 +607,11 @@ pub enum PoolConfig {
         address: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<String>,
+        /// The validator controller this pool relays its stake through.
+        ///
+        /// Part of the contract's storage and therefore of its address, like the other
+        /// two roles.
+        controller: String,
     },
     #[serde(rename = "core")]
     CorePool { addresses: [String; 2], validator_share: u64 },
@@ -616,6 +621,12 @@ pub enum PoolConfig {
         address: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<String>,
+        /// The validator controller this pool relays its stake through.
+        ///
+        /// A pool no longer reaches the elector by itself, so this is part of what its
+        /// address is derived from: a pool named without it is a different account than
+        /// the one the operator means, and there is nothing to fall back on.
+        controller: String,
         validator_reward_share: u16,
         max_nominators: u16,
         min_validator_stake: u64,
@@ -1172,6 +1183,8 @@ mod tests {
         "-1:bd313e9e1114bbbe7af6f28ef59be0ff3f02ac795423f10397a70dc16396c4ea";
     const OWNER: &'static str =
         "0:c5770dc489bef32419959c174b787ab95ff9109e0e43239c18059509819697fb";
+    const CONTROLLER: &'static str =
+        "-1:1a6b2f0e4d8c7b5a39e2c1f04b8d6a7e5c3910284f6b7d1e8a2c4f60b3d597e1";
 
     fn minimal_config_json() -> serde_json::Value {
         serde_json::json!({
@@ -1315,17 +1328,39 @@ mod tests {
             "kind": "snp",
             "address": addr,
             "owner": owner,
+            "controller": CONTROLLER,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
         assert_eq!(
             cfg,
-            PoolConfig::SNP { address: Some(addr.to_string()), owner: Some(owner.to_string()) }
+            PoolConfig::SNP {
+                address: Some(addr.to_string()),
+                owner: Some(owner.to_string()),
+                controller: CONTROLLER.to_string(),
+            }
         );
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");
         assert_eq!(json["address"], addr);
         assert_eq!(json["owner"], owner);
+        assert_eq!(json["controller"], CONTROLLER);
+    }
+
+    /// A pool written before a stake travelled through a controller.
+    ///
+    /// Such a config describes a contract that no longer exists: the controller is part of
+    /// the storage the address is derived from, so there is nothing to default to and the
+    /// only honest answer is to refuse the file and say which field is missing.
+    #[test]
+    fn a_pool_without_a_controller_is_refused_rather_than_guessed() {
+        let value = serde_json::json!({
+            "kind": "snp",
+            "address": ADDR,
+            "owner": OWNER,
+        });
+        let err = serde_json::from_value::<PoolConfig>(value).unwrap_err().to_string();
+        assert!(err.contains("controller"), "the refusal did not name the missing field: {err}");
     }
 
     #[test]
@@ -1334,9 +1369,17 @@ mod tests {
         let value = serde_json::json!({
             "kind": "snp",
             "address": addr,
+            "controller": CONTROLLER,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(cfg, PoolConfig::SNP { address: Some(addr.to_string()), owner: None });
+        assert_eq!(
+            cfg,
+            PoolConfig::SNP {
+                address: Some(addr.to_string()),
+                owner: None,
+                controller: CONTROLLER.to_string(),
+            }
+        );
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");

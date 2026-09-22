@@ -15,11 +15,12 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "auto/tl/tos_api_json.h"
-#include "common/delay.h"
-#include "interfaces/validator-full-id.h"
 #include <fstream>
+#include <type_traits>
 
+#include "auto/tl/tos_api_json.h"
+#include "block/validator-session-members.h"
+#include "common/delay.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
@@ -29,6 +30,7 @@
 #include "checksum.h"
 #include "full-node-fast-sync-overlays.hpp"
 #include "full-node-serializer.hpp"
+#include "validator-transport-authority.h"
 
 namespace tos::validator::fullnode {
 
@@ -47,6 +49,11 @@ void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosN
 }
 
 void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query) {
+  auto R_block_wo_data = get_block_broadcast_without_data(query);
+  if (R_block_wo_data.is_error()) {
+    LOG(DEBUG) << "Dropped V2 broadcast because of malformed signatures: " << R_block_wo_data.move_as_error();
+    return;
+  }
   auto R_requires_state = need_state_for_decompression(query);
   if (R_requires_state.is_error()) {
     LOG(DEBUG) << "Failed to check if state is required for broadcast: " << R_requires_state.move_as_error();
@@ -54,7 +61,7 @@ void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosN
   }
 
   if (R_requires_state.move_as_ok()) {
-    auto block_wo_data = get_block_broadcast_without_data(query);
+    auto block_wo_data = R_block_wo_data.move_as_ok();
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), src,
                                          query = std::move(query)](td::Result<td::Unit> R) mutable {
       if (R.is_error()) {
@@ -72,8 +79,9 @@ void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosN
   process_block_broadcast(src, query);
 }
 
-void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query) {
-  process_block_finality_broadcast(src, query);
+void FullNodeFastSyncOverlay::process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query,
+                                                std::size_t received_bytes) {
+  process_block_finality_broadcast(src, query, received_bytes);
 }
 
 void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query) {
@@ -88,13 +96,19 @@ void FullNodeFastSyncOverlay::process_block_broadcast(PublicKeyHash src, tos_api
                           BroadcastSource::fast_sync_overlay, true);
 }
 
-void FullNodeFastSyncOverlay::process_block_finality_broadcast(
-    PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query) {
-  auto block_id = create_block_id(query.id_);
-  BlockFinalityBroadcast finality{block_id, block::BlockSignatureSet::fetch(query.signature_set_)};
+void FullNodeFastSyncOverlay::process_block_finality_broadcast(PublicKeyHash src,
+                                                               tos_api::tosNode_blockFinalityBroadcast &query,
+                                                               std::size_t received_bytes) {
+  auto finality = deserialize_block_finality_broadcast(query);
+  if (finality.is_error()) {
+    LOG(DEBUG) << "Dropped blockFinalityBroadcast because of malformed signatures: " << finality.move_as_error();
+    return;
+  }
+  auto parsed_finality = finality.move_as_ok();
+  parsed_finality.received_bytes = received_bytes;
   VLOG(FULL_NODE_DEBUG) << "Received blockFinalityBroadcast in fast sync overlay from " << src << ": "
-                        << block_id.to_str();
-  td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(finality),
+                        << parsed_finality.block_id.to_str();
+  td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(parsed_finality), src,
                           BroadcastSource::fast_sync_overlay, true);
 }
 
@@ -267,6 +281,7 @@ void FullNodeFastSyncOverlay::process_telemetry_broadcast(
 }
 
 void FullNodeFastSyncOverlay::receive_broadcast(PublicKeyHash src, td::BufferSlice broadcast) {
+  auto received_bytes = broadcast.size();
   auto B = fetch_tl_object<tos_api::tosNode_Broadcast>(std::move(broadcast), true);
   if (B.is_error()) {
     if (collect_telemetry_ && src != local_id_.pubkey_hash()) {
@@ -278,7 +293,14 @@ void FullNodeFastSyncOverlay::receive_broadcast(PublicKeyHash src, td::BufferSli
     return;
   }
 
-  tos_api::downcast_call(*B.move_as_ok(), [src, Self = this](auto &obj) { Self->process_broadcast(src, obj); });
+  tos_api::downcast_call(*B.move_as_ok(), [src, Self = this, received_bytes](auto &obj) {
+    using Broadcast = std::decay_t<decltype(obj)>;
+    if constexpr (std::is_same_v<Broadcast, tos_api::tosNode_blockFinalityBroadcast>) {
+      Self->process_broadcast(src, obj, received_bytes);
+    } else {
+      Self->process_broadcast(src, obj);
+    }
+  });
 }
 
 void FullNodeFastSyncOverlay::send_shard_block_info(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data) {
@@ -319,10 +341,8 @@ void FullNodeFastSyncOverlay::send_block_finality_broadcast(BlockFinalityBroadca
   }
   VLOG(FULL_NODE_DEBUG) << "Sending Plumtree blockFinalityBroadcast in fast sync overlay: "
                         << finality.block_id.to_str();
-  auto broadcast_id = get_tl_object_sha_bits256(
-      create_tl_object<tos_api::tosNode_finalityBroadcastId>(create_tl_block_id(finality.block_id)));
-  auto B = create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(
-      create_tl_block_id(finality.block_id), finality.sig_set->tl());
+  auto broadcast_id = block_finality_broadcast_transport_id(finality);
+  auto B = serialize_block_finality_broadcast(finality);
   td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree, local_id_, overlay_id_,
                           local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), broadcast_id,
                           std::move(B));
@@ -345,8 +365,7 @@ void FullNodeFastSyncOverlay::send_block_candidate(BlockIdExt block_id, Catchain
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree_fec, local_id_, overlay_id_,
                             local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), B.move_as_ok());
   } else {
-    VLOG(FULL_NODE_DEBUG) << "Sending newBlockCandidate in fast sync overlay (with compression): "
-                          << block_id.to_str();
+    VLOG(FULL_NODE_DEBUG) << "Sending newBlockCandidate in fast sync overlay (with compression): " << block_id.to_str();
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_ex, local_id_, overlay_id_,
                             local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), B.move_as_ok());
   }
@@ -370,8 +389,8 @@ void FullNodeFastSyncOverlay::collect_validator_telemetry(std::string filename) 
   collect_telemetry_ = true;
   telemetry_filename_ = std::move(filename);
   telemetry_rotate_failed_ = false;
-  LOG(FULL_NODE_WARNING) << "Collecting validator telemetry to " << telemetry_filename_
-                         << " (local id: " << local_id_ << ")";
+  LOG(FULL_NODE_WARNING) << "Collecting validator telemetry to " << telemetry_filename_ << " (local id: " << local_id_
+                         << ")";
 }
 
 void FullNodeFastSyncOverlay::send_out_msg_queue_proof_broadcast(td::Ref<OutMsgQueueProofBroadcast> broadcast) {
@@ -623,25 +642,19 @@ void FullNodeFastSyncOverlays::update_overlays(
   if (!last_key_block_seqno_ || last_key_block_seqno_.value() != state->last_key_block_id().seqno()) {
     updated_validators = true;
     last_key_block_seqno_ = state->last_key_block_id().seqno();
-    root_public_keys_.clear();
-    current_validators_adnl_.clear();
+    std::vector<ValidatorDescr> validators;
     // Previous, current and next validator sets
     for (int i = -1; i <= 1; ++i) {
       auto val_set = state->get_total_validator_set(i);
       if (val_set.is_null()) {
         continue;
       }
-      for (const ValidatorDescr &val : val_set->export_vector()) {
-        PublicKeyHash public_key_hash = ValidatorFullId{val.key}.compute_short_id();
-        root_public_keys_.push_back(public_key_hash);
-        current_validators_adnl_.emplace_back(val.addr.is_zero() ? public_key_hash.bits256_value() : val.addr);
-      }
+      auto set_validators = val_set->export_vector();
+      validators.insert(validators.end(), set_validators.begin(), set_validators.end());
     }
-    std::sort(root_public_keys_.begin(), root_public_keys_.end());
-    root_public_keys_.erase(std::unique(root_public_keys_.begin(), root_public_keys_.end()), root_public_keys_.end());
-    std::sort(current_validators_adnl_.begin(), current_validators_adnl_.end());
-    current_validators_adnl_.erase(std::unique(current_validators_adnl_.begin(), current_validators_adnl_.end()),
-                                   current_validators_adnl_.end());
+    auto authority = fast_sync_validator_transport_authority(validators);
+    root_public_keys_ = std::move(authority.roots);
+    current_validators_adnl_ = std::move(authority.validator_adnl_ids);
 
     for (auto &[local_id, overlays_info] : id_to_overlays_) {
       overlays_info.is_validator_ =
@@ -708,10 +721,9 @@ void FullNodeFastSyncOverlays::update_overlays(
       // Enable twostep broadcasts by ConfigParam 30
       auto new_consensus_config = state->get_new_consensus_config(shard.workchain);
       bool send_twostep_broadcasts = (bool)new_consensus_config;
-      bool enable_plumtree_broadcast =
-          new_consensus_config && new_consensus_config.value().enable_plumtree_broadcast();
-      bool receive_broadcasts =
-          enable_plumtree_broadcast ? !overlays_info.is_validator_ && monitoring_shards.contains(shard)
+      bool enable_plumtree_broadcast = new_consensus_config && new_consensus_config.value().enable_plumtree_broadcast();
+      bool receive_broadcasts = enable_plumtree_broadcast
+                                    ? !overlays_info.is_validator_ && monitoring_shards.contains(shard)
                                     : monitoring_shards.contains(shard);
       auto &overlay = overlays_info.overlays_[shard];
       if (overlay.empty()) {

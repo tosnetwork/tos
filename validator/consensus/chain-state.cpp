@@ -120,7 +120,13 @@ td::Ref<ChainState> ChainState::apply(const BlockCandidate& candidate) const {
     bool rc = block::gen::unpack_cell(block->root_cell(), rec);
     LOG_CHECK(rc) << "Failed to unpack block " << candidate.id.to_str();
 
-    auto state = vm::MerkleUpdate::apply(root_, rec.state_update).ensure().move_as_ok();
+    auto state_result = vm::MerkleUpdate::apply(root_, rec.state_update);
+    if (state_result.is_error()) {
+      state_result = state_result.move_as_error_prefix(PSTRING() << "candidate block id = " << candidate.id.to_str()
+                                                                 << "; base state root hash = "
+                                                                 << root_->get_hash().to_hex() << ": ");
+    }
+    auto state = state_result.ensure().move_as_ok();
 
     return td::Ref<ChainState>(new ChainState{NormalTip{block, state}, min_mc_block_id_},
                                td::Ref<ChainState>::acquire_t{});

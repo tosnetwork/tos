@@ -932,19 +932,27 @@ class DelQuicAddressQuery : public Query {
   std::vector<td::int32> prio_cats_;
 };
 
-class CreateElectionBidQuery : public Query {
+/// This validator's permission to stand in one election, with one account's money.
+///
+/// It replaced `create-election-bid`, which built an Ed25519 stake transaction the
+/// elector does not accept. A stake is placed by a controller account, authorised by a
+/// root key this host never holds; what this node can give is the signature the elector
+/// will check, over the exact terms it was asked to agree to.
+class CreatePqStakeAuthorizationQuery : public Query {
  public:
-  CreateElectionBidQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
+  CreatePqStakeAuthorizationQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
       : Query(console, std::move(tokenizer)) {
   }
   td::Status run() override;
   td::Status send() override;
   td::Status receive(td::BufferSlice data) override;
   static std::string get_name() {
-    return "create-election-bid";
+    return "create-stake-authorization";
   }
   static std::string get_help() {
-    return "create-election-bid <date> <elector> <wallet> <fname>\tcreate election bid";
+    return "create-stake-authorization <election-date> <max-factor> <adnl-addr> <stake-owner> "
+           "<fname>\tsign this validator's permission to stand in an election with that account's "
+           "money";
   }
   std::string name() const override {
     return get_name();
@@ -952,8 +960,9 @@ class CreateElectionBidQuery : public Query {
 
  private:
   td::uint32 date_;
-  std::string elector_addr_;
-  std::string wallet_;
+  td::uint32 max_factor_;
+  tos::Bits256 adnl_addr_;
+  tos::Bits256 stake_owner_;
   std::string fname_;
 };
 

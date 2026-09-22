@@ -29,6 +29,8 @@
 #include "td/utils/crypto.h"
 #include "tl-utils/tl-utils.hpp"
 
+#include "adnl-ext-limits.h"
+
 namespace tos {
 
 namespace adnl {

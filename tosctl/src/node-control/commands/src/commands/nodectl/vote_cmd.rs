@@ -358,11 +358,10 @@ impl VoteOfferCastCmd {
         use common::time_format::format_ts;
         use contracts::{
             ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, SmartContract, Wallet,
-            config_contract, contract_provider_from,
+            contract_provider_from,
         };
         use control_client::{
-            client_adnl::ControlClientAdnl,
-            client_api::{ClientAPI, SignRq},
+            client_adnl::ControlClientAdnl, client_api::ClientAPI,
             config_params::parse_config_param_34,
         };
         use std::path::Path;
@@ -507,8 +506,10 @@ impl VoteOfferCastCmd {
                 continue;
             }
             // Search for this public key in the current validator set
-            if let Some(idx) =
-                vset.list().iter().position(|item| item.public_key.as_slice() == &key)
+            if let Some(idx) = vset
+                .list()
+                .iter()
+                .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
             {
                 found_idx = Some(idx as u16);
                 found_key_id = Some(validator.id.clone());
@@ -542,20 +543,17 @@ impl VoteOfferCastCmd {
         }
 
         // --- Build and sign the vote ---
-        println!("{}", "Signing vote...".cyan());
-        let unsigned_body =
-            config_contract::messages::unsigned_vote(validator_idx, &proposal.hash)?;
+        let _ = (&client, &key_id);
+        anyhow::bail!(
+            "a configuration vote is authorised by the current post-quantum validator set, \
+             and producing one needs two things this node cannot yet supply: a signature \
+             from its ML-DSA-44 consensus key, and the hash of the stored ConfigParam 34 \
+             cell that the vote is bound to. The control protocol carries neither, so the \
+             vote is not sent rather than sent in a form the chain refuses"
+        );
 
-        let signature = client
-            .sign(&SignRq { key_hash: key_id, data: unsigned_body.data().to_vec() })
-            .await
-            .context("sign vote")?;
-        println!("  {} Vote signed", "OK".green().bold());
-
-        // Build the signed vote message body
-        let query_id = 0u64;
-        let vote_body =
-            config_contract::messages::signed_vote(query_id, &unsigned_body, &signature)?;
+        #[allow(unreachable_code)]
+        let vote_body: chain_block::Cell = unreachable!();
 
         // --- Send via wallet ---
         println!("{}", "Sending vote transaction...".cyan());
@@ -699,11 +697,10 @@ impl VoteComplaintCastCmd {
         use colored::Colorize;
         use contracts::{
             DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract, Wallet,
-            contract_provider_from, elector,
+            contract_provider_from,
         };
         use control_client::{
-            client_adnl::ControlClientAdnl,
-            client_api::{ClientAPI, SignRq},
+            client_adnl::ControlClientAdnl, client_api::ClientAPI,
             config_params::parse_config_param_34,
         };
         use std::path::Path;
@@ -790,8 +787,10 @@ impl VoteComplaintCastCmd {
                 continue;
             }
             // Search for this public key in the current validator set
-            if let Some(idx) =
-                vset.list().iter().position(|item| item.public_key.as_slice() == &key)
+            if let Some(idx) = vset
+                .list()
+                .iter()
+                .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
             {
                 found_idx = Some(idx as u16);
                 found_key_id = Some(validator.id.clone());
@@ -814,37 +813,17 @@ impl VoteComplaintCastCmd {
         let key_id = found_key_id.unwrap();
 
         // --- Build and sign the complaint vote ---
-        println!("{}", "Signing complaint vote...".cyan());
-        let unsigned_body = elector::messages::unsigned_complaint_vote(
-            validator_idx,
-            self.election_id,
-            &complaint_hash,
-        )?;
+        let _ = (&client, &key_id, validator_idx);
+        anyhow::bail!(
+            "a complaint vote is authorised by the current post-quantum validator set, \
+             and producing one needs two things this node cannot yet supply: a signature \
+             from its ML-DSA-44 consensus key, and the hash of the stored ConfigParam 34 \
+             cell that the vote is bound to. The control protocol carries neither, so the \
+             vote is not sent rather than sent in a form the chain refuses"
+        );
 
-        let signature = client
-            .sign(&SignRq { key_hash: key_id, data: unsigned_body.data().to_vec() })
-            .await
-            .context("sign complaint vote")?;
-        println!("  {} Complaint vote signed", "OK".green().bold());
-
-        // Build the signed complaint vote message body.
-        // Query ID follows the same convention as complaint-vote-signed.fif:
-        //   now << 32 | (complaint_hash % (1 << 32))
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        // complaint_hash interpreted as big-endian 256-bit number, take low 32 bits
-        let hash_low32 = u32::from_be_bytes([
-            complaint_hash[28],
-            complaint_hash[29],
-            complaint_hash[30],
-            complaint_hash[31],
-        ]);
-        let query_id = (now << 32) | (hash_low32 as u64 % (1u64 << 32));
-
-        let vote_body =
-            elector::messages::signed_complaint_vote(query_id, &unsigned_body, &signature)?;
+        #[allow(unreachable_code)]
+        let vote_body: chain_block::Cell = unreachable!();
 
         // --- Send via wallet ---
         println!("{}", "Sending complaint vote transaction...".cyan());

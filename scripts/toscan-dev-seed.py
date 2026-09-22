@@ -14,6 +14,7 @@ import subprocess
 import time
 import urllib.request
 from pathlib import Path
+
 from pytosiq_core import Address
 
 REPO = Path(__file__).resolve().parents[1]
@@ -36,9 +37,14 @@ class Seeder:
         )
 
     def rpc_call(self, method: str, **params):
-        payload = json.dumps({
-            "jsonrpc": "2.0", "id": 1, "method": method, "params": params,
-        }).encode()
+        payload = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": method,
+                "params": params,
+            }
+        ).encode()
         request = urllib.request.Request(
             f"{self.rpc}/jsonRPC",
             data=payload,
@@ -63,9 +69,7 @@ class Seeder:
             stderr=subprocess.PIPE,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"{' '.join(command)} failed\n{result.stdout}\n{result.stderr}"
-            )
+            raise RuntimeError(f"{' '.join(command)} failed\n{result.stdout}\n{result.stderr}")
         return json.loads(result.stdout) if json_output else result.stdout
 
     def config_data(self):
@@ -76,7 +80,11 @@ class Seeder:
         if not self.config.exists():
             subprocess.run(
                 [
-                    str(self.tosctl), "config", "generate", "-o", str(self.config),
+                    str(self.tosctl),
+                    "config",
+                    "generate",
+                    "-o",
+                    str(self.config),
                     "--force",
                 ],
                 check=True,
@@ -151,19 +159,30 @@ class Seeder:
         print(f"  {name}: {address}")
         return address
 
-    def ensure_nominator_pool(self, owner_name: str, validator_name: str):
+    def ensure_nominator_pool(self, owner_name: str, validator_name: str, controller: str):
         """Deploy the canonical pool and enter through its real deposit path."""
         pool_name = "toscan-staking"
         if pool_name not in self.config_data().get("pools", {}):
             self.run(
-                "pool", "nominator", "create",
-                "-n", pool_name,
-                "--owner", owner_name,
-                "--validator", validator_name,
-                "--validator-reward-share", "4000",
-                "--max-nominators", "40",
-                "--min-validator-stake", "1",
-                "--min-nominator-stake", "0.1",
+                "pool",
+                "nominator",
+                "create",
+                "-n",
+                pool_name,
+                "--owner",
+                owner_name,
+                "--validator",
+                validator_name,
+                "--controller",
+                controller,
+                "--validator-reward-share",
+                "4000",
+                "--max-nominators",
+                "40",
+                "--min-validator-stake",
+                "1",
+                "--min-nominator-stake",
+                "0.1",
             )
 
         pool = self.config_data()["pools"][pool_name]
@@ -211,16 +230,36 @@ class Seeder:
         agent = config.get("agent_wallets", {}).get("atlas-research")
         if agent is None:
             self.run(
-                "agent", "wallet", "create", "--name", "atlas-research",
-                "-v", "V3R2", "-w", "0", "--max-per-tx", "2",
-                "--daily-limit", "10",
+                "agent",
+                "wallet",
+                "create",
+                "--name",
+                "atlas-research",
+                "-v",
+                "V3R2",
+                "-w",
+                "0",
+                "--max-per-tx",
+                "2",
+                "--daily-limit",
+                "10",
             )
             agent = self.config_data()["agent_wallets"]["atlas-research"]
         agent_address = agent.get("agent_account_address")
         if not agent_address or not self.address_active(agent_address):
             output = self.run(
-                "agent", "account", "deploy", "--wallet", "atlas-research",
-                "--from", "alice-planner", "-w", "0", "--amount", "2", "--yes",
+                "agent",
+                "account",
+                "deploy",
+                "--wallet",
+                "atlas-research",
+                "--from",
+                "alice-planner",
+                "-w",
+                "0",
+                "--amount",
+                "2",
+                "--yes",
                 json_output=True,
             )
             agent_address = output["address"]
@@ -231,27 +270,69 @@ class Seeder:
             "capability_registries",
             "nova-capabilities",
             [
-                "agent", "registry", "deploy", "--name", "nova-capabilities",
-                "--owner", provider, "--verifier", verifier,
-                "--task-categories-hash", "11" * 32,
-                "--pricing-hash", "22" * 32,
-                "--metadata-hash", "33" * 32,
-                "--verification-method-hash", "44" * 32,
-                "--bond", "1", "--from", "nova-provider", "--amount", "1.2",
-                "-w", "0", "--yes",
+                "agent",
+                "registry",
+                "deploy",
+                "--name",
+                "nova-capabilities",
+                "--owner",
+                provider,
+                "--verifier",
+                verifier,
+                "--task-categories-hash",
+                "11" * 32,
+                "--pricing-hash",
+                "22" * 32,
+                "--metadata-hash",
+                "33" * 32,
+                "--verification-method-hash",
+                "44" * 32,
+                "--bond",
+                "1",
+                "--from",
+                "nova-provider",
+                "--amount",
+                "1.2",
+                "-w",
+                "0",
+                "--yes",
             ],
         )
         service = self.ensure_deploy(
             "service_actors",
             "nova-inference",
             [
-                "agent", "service", "deploy", "--name", "nova-inference",
-                "--owner", provider, "--open-access", "--price-per-call", "0.05",
-                "--storage-fee", "0.2", "--cleanup-bounty", "0.1",
-                "--response-sla", "3600", "--refund-claim-window", "3600",
-                "--rate-limit-per-day", "1000", "--metadata-hash", "33" * 32,
-                "--proof-scheme-hash", "44" * 32, "--from", "nova-provider",
-                "--amount", "2", "-w", "0", "--yes",
+                "agent",
+                "service",
+                "deploy",
+                "--name",
+                "nova-inference",
+                "--owner",
+                provider,
+                "--open-access",
+                "--price-per-call",
+                "0.05",
+                "--storage-fee",
+                "0.2",
+                "--cleanup-bounty",
+                "0.1",
+                "--response-sla",
+                "3600",
+                "--refund-claim-window",
+                "3600",
+                "--rate-limit-per-day",
+                "1000",
+                "--metadata-hash",
+                "33" * 32,
+                "--proof-scheme-hash",
+                "44" * 32,
+                "--from",
+                "nova-provider",
+                "--amount",
+                "2",
+                "-w",
+                "0",
+                "--yes",
             ],
         )
         deadline = int(time.time()) + 30 * 24 * 3600
@@ -259,25 +340,70 @@ class Seeder:
             "agent_tasks",
             "market-research",
             [
-                "agent", "task", "create", "--name", "market-research",
-                "--creator", planner, "--agent", agent_address, "--verifier", verifier,
-                "--budget", "5", "--deadline", str(deadline), "--review-period", "3600",
-                "--policy-hash", POLICY_HASH, "--from", "alice-planner",
-                "--amount", "5.2", "-w", "0", "--yes",
+                "agent",
+                "task",
+                "create",
+                "--name",
+                "market-research",
+                "--creator",
+                planner,
+                "--agent",
+                agent_address,
+                "--verifier",
+                verifier,
+                "--budget",
+                "5",
+                "--deadline",
+                str(deadline),
+                "--review-period",
+                "3600",
+                "--policy-hash",
+                POLICY_HASH,
+                "--from",
+                "alice-planner",
+                "--amount",
+                "5.2",
+                "-w",
+                "0",
+                "--yes",
             ],
         )
         dispute = self.ensure_deploy(
             "disputes",
             "quality-review",
             [
-                "agent", "dispute", "deploy", "--name", "quality-review",
-                "--claimant", planner, "--respondent", owner, "--reviewer", reviewer,
-                "--deadline", str(deadline), "--subject-hash", "66" * 32,
-                "--claimant-evidence-hash", "77" * 32,
-                "--from", "alice-planner", "--amount", "0.2", "-w", "0", "--yes",
+                "agent",
+                "dispute",
+                "deploy",
+                "--name",
+                "quality-review",
+                "--claimant",
+                planner,
+                "--respondent",
+                owner,
+                "--reviewer",
+                reviewer,
+                "--deadline",
+                str(deadline),
+                "--subject-hash",
+                "66" * 32,
+                "--claimant-evidence-hash",
+                "77" * 32,
+                "--from",
+                "alice-planner",
+                "--amount",
+                "0.2",
+                "-w",
+                "0",
+                "--yes",
             ],
         )
-        nominator_pool = self.ensure_nominator_pool("atlas-owner", "nova-provider")
+        # A stand-in for the validator controller a stake is relayed through. This seed
+        # deploys no controller, so the pool it produces can hold deposits and be read but
+        # cannot carry a stake to the elector.
+        nominator_pool = self.ensure_nominator_pool(
+            "atlas-owner", "nova-provider", "-1:" + "00" * 32
+        )
 
         value = {
             "chain_id": chain_id,

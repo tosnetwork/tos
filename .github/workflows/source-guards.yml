@@ -1,0 +1,32 @@
+name: Source guards
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-guards:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install configure-time tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build ripgrep
+
+      - name: Configure the CTest registry
+        run: cmake -S . -B build-source-guards -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Run every registered source guard
+        working-directory: build-source-guards
+        run: ctest -L source-guard --no-tests=error --output-on-failure

@@ -1,0 +1,65 @@
+"Asm.fif" include
+"Test.fif" include
+
+// A validator controller proves the code it was born with by sending four numbers: the
+// hash and depth of its code and of its data. The elector rebuilds the two pruned
+// branches from them, stands them in for the real children, and requires the resulting
+// state-init commitment to equal the sender's address.
+//
+// This is that reconstruction, run in this virtual machine, on the instructions the
+// contract uses. The other executor runs the same steps through the contract itself.
+// Keeping both is the point: a reconstruction the two disagreed about would admit a
+// validator on one and refuse it on the other.
+
+."a state init rebuilt from four numbers" cr
+test-reset
+
+// Children with references of their own, so their depths are not zero and a depth that
+// went unused could not pass for the right answer.
+<b x{01} s, b> constant leaf-a
+<b x{02} s, b> constant leaf-b
+<b x{c0} s, leaf-a ref, leaf-b ref, b> constant code
+<b x{da} s, leaf-a ref, b> constant data
+
+// The state init the account was deployed with: no split depth, no tick-tock, code and
+// data present, no library. Five bits and two references, code first.
+<b b{00110} s, code ref, data ref, b> constant state-init
+state-init hash constant address
+
+// ( code-hash code-depth data-hash data-depth -- commitment )
+//
+// The data branch is built first because its two numbers are on top; each branch is a
+// type byte, a level mask, the child's hash and the child's depth.
+<{  SETCP0
+    NEWC x{0101} STSLICECONST s2 PUSH SWAP 256 STU 16 STU NIP TRUE ENDXC
+    NEWC x{0101} STSLICECONST s3 PUSH SWAP 256 STU s2 PUSH SWAP 16 STU TRUE ENDXC
+    NEWC b{00110} STSLICECONST STREF STREF ENDC
+    0 CHASHI
+    // Nothing exotic survives this point: what is committed is an ordinary cell holding
+    // the commitment, which is the whole reason the witness can be carried at all.
+    DUP NEWC 256 STU ENDC POPROOT
+}>s constant rebuild
+
+{ rebuild 0 runvmx drop } : commitment-of   // ( 4 numbers -- commitment )
+
+code hash 1 data hash 1 commitment-of
+address "the commitment rebuilt from four numbers is the address" test-eq
+2drop
+
+// Each number is part of the commitment. A witness that gets one wrong describes a
+// different account and is refused by the address check rather than believed.
+code hash 1 + 1 data hash 1 commitment-of
+address = 0 "a changed code hash still committed to the same address" test-eq 2drop
+code hash 2 data hash 1 commitment-of
+address = 0 "a changed code depth still committed to the same address" test-eq 2drop
+code hash 1 data hash 1 + 1 commitment-of
+address = 0 "a changed data hash still committed to the same address" test-eq 2drop
+code hash 1 data hash 2 commitment-of
+address = 0 "a changed data depth still committed to the same address" test-eq 2drop
+
+// The two halves are not interchangeable, which is the mistake a reader of the TL-B
+// would make.
+data hash 1 code hash 1 commitment-of
+address = 0 "the two halves were interchangeable" test-eq 2drop
+
+test-summary

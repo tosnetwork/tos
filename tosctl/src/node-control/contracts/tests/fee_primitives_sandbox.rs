@@ -24,7 +24,11 @@ const TOS: u64 = 1_000_000_000;
 /// them by name. `compile_func_with_stdlib` prepends the live `stdlib.fc`, so the v6
 /// helpers are in scope without an `#include`.
 fn probe_code() -> Cell {
-    let src = std::env::temp_dir().join("tos_fee_primitive_probe.fc");
+    let src = std::env::temp_dir().join(format!(
+        "tos_fee_primitive_probe-{}-{:?}.fc",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     std::fs::write(
         &src,
         r#"

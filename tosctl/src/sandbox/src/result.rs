@@ -37,25 +37,38 @@ impl SendResult {
 
     // ---- fluent assertions (panic on failure — designed for #[test]) ----
 
+    /// Whether the first transaction aborted, and what its compute phase did, for either
+    /// kind of transaction. A tick transaction carries the same two facts as an ordinary
+    /// one, and an assertion that only understood ordinary transactions would have to be
+    /// skipped for exactly the contracts whose state machine runs on ticks.
+    fn primary_outcome(&self) -> (bool, TrComputePhase) {
+        let tr = self.first_transaction().expect("no transactions in SendResult");
+        match tr.read_description().expect("failed to read transaction description") {
+            TransactionDescr::Ordinary(descr) => (descr.aborted, descr.compute_ph),
+            TransactionDescr::TickTock(descr) => (descr.aborted, descr.compute_ph),
+            other => panic!("transaction has no compute phase to judge: {other:?}"),
+        }
+    }
+
     /// Asserts that the first transaction was not aborted.
     pub fn expect_success(&self) -> &Self {
-        let descr = self.read_primary_description();
-        assert!(!descr.aborted, "expected first transaction to succeed, but it was aborted");
+        let (aborted, _) = self.primary_outcome();
+        assert!(!aborted, "expected first transaction to succeed, but it was aborted");
         self
     }
 
     /// Asserts that the first transaction was aborted.
     pub fn expect_aborted(&self) -> &Self {
-        let descr = self.read_primary_description();
-        assert!(descr.aborted, "expected first transaction to be aborted, but it succeeded");
+        let (aborted, _) = self.primary_outcome();
+        assert!(aborted, "expected first transaction to be aborted, but it succeeded");
         self
     }
 
     /// Asserts that the compute phase of the first transaction finished with the
     /// given `exit_code`.
     pub fn expect_exit_code(&self, code: i32) -> &Self {
-        let descr = self.read_primary_description();
-        match descr.compute_ph {
+        let (_, compute_ph) = self.primary_outcome();
+        match compute_ph {
             TrComputePhase::Vm(ref vm) => {
                 assert_eq!(vm.exit_code, code, "expected exit code {code}, got {}", vm.exit_code);
             }

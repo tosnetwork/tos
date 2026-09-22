@@ -25,11 +25,21 @@ namespace tos::validator::fullnode {
 
 enum class StateUsage { None, DecompressOnly, CompressAndDecompress };
 
+struct BlockBroadcastParseStats {
+  std::size_t decompression_attempts{0};
+};
+
 td::Result<td::BufferSlice> serialize_block_broadcast(const BlockBroadcast& broadcast, std::string called_from);
 td::Result<BlockBroadcast> deserialize_block_broadcast(tos_api::tosNode_Broadcast& obj, int max_decompressed_data_size,
                                                        std::string called_from,
-                                                       td::Ref<vm::Cell> state = td::Ref<vm::Cell>());
-BlockBroadcast get_block_broadcast_without_data(const tos_api::tosNode_blockBroadcastCompressedV2& obj);
+                                                       td::Ref<vm::Cell> state = td::Ref<vm::Cell>(),
+                                                       BlockBroadcastParseStats* stats = nullptr);
+td::Result<BlockBroadcast> get_block_broadcast_without_data(const tos_api::tosNode_blockBroadcastCompressedV2& obj);
+
+td::BufferSlice serialize_block_finality_broadcast(const BlockFinalityBroadcast& broadcast);
+td::Bits256 block_finality_broadcast_transport_id(const BlockFinalityBroadcast& broadcast);
+td::Result<BlockFinalityBroadcast> deserialize_block_finality_broadcast(
+    tos_api::tosNode_blockFinalityBroadcast& broadcast);
 
 td::Result<std::vector<BlockIdExt>> extract_prev_blocks_from_proof(td::Slice proof, const BlockIdExt& block_id);
 

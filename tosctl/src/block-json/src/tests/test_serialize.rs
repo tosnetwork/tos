@@ -1256,8 +1256,11 @@ fn test_db_serialize_block_proof_simplex() {
     let original_proof = BlockProof::construct_from_cell(cell).unwrap();
 
     // Create pure signatures (copy weight from original)
-    let original_weight =
-        original_proof.signatures.as_ref().map(|s| s.pure_signatures().weight()).unwrap_or(0);
+    let original_weight = original_proof
+        .signatures
+        .as_ref()
+        .map(|s| s.pure_signatures().unwrap().weight())
+        .unwrap_or(0);
     let mut pure_signatures = BlockSignaturesPure::new();
     pure_signatures.set_weight(original_weight);
     pure_signatures.add_sigpair(CryptoSignaturePair {

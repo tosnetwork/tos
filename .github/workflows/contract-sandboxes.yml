@@ -57,10 +57,81 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       # The sandbox compiles FunC in-process through tos_sandbox, which shells
-      # out to these two binaries via FUNC_PATH / FIFT_PATH. Nothing else from
-      # the node is needed, so this stays far cheaper than a full build.
-      - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+      # out to these binaries via FUNC_PATH / FIFT_PATH. The elector suite also
+      # generates a real zerostate, which needs create-state and the compiled
+      # system contracts it deploys. Still far cheaper than a full build.
+      - name: Build FunC, Fift and the zerostate tooling
+        run: cmake --build build --target func fift create-state gen_fif -j2
+
+      # The post-quantum elector suite signs real ML-DSA-44 requests. Signing is
+      # deliberately absent from the node's libraries, so it shells out to the operator
+      # key tool, which is its own project.
+      # The contracts depend on rules the executor enforces, not only on their own code.
+      # `test-fift` holds those, and no workflow ran it, so a change to the executor that
+      # invalidated one would have reached a green pull request.
+      - name: Executor rules the contracts depend on
+        run: |
+          cmake --build build --target test-fift test-cells -j2
+          ./build/test-fift
+          ./build/test-cells
+
+      # The message bodies the node sends to the governance contracts, and the parsing
+      # of the subject an operator names. The contracts' side of these bytes is covered
+      # by the sandbox suites below; this is the producing side.
+      - name: Validator vote bodies
+        run: |
+          cmake --build build --target test-pq-vote-body test-vote-carrier -j2
+          ./build/crypto/pq/test-pq-vote-body
+          # The recorded carriers. The tooling's half of this lock is a Rust test, which
+          # the sandbox step below runs; both read the same file, so a layout that drifts
+          # on one side fails on that side rather than on chain.
+          ./build/crypto/pq/test-vote-carrier
+
+      # The node's own key file, and the tool that provisions one. Both are held to the
+      # same rules, because the tool linking a different copy of them is how a key that
+      # a provisioning run reported as written becomes one the node refuses at startup.
+      - name: Consensus key file
+        run: |
+          cmake --build build --target test-consensus-key-file tos-pq-consensus-key -j2
+          ./build/crypto/pq/test-consensus-key-file
+          python3 test/pq-mldsa44/consensus_key_tool_test.py \
+            --tool build/crypto/pq/tos-pq-consensus-key
+
+      # `REGRESSION_VERIFY` compares nothing unless the binary is given `--regression`,
+      # and until this step nothing gave it. The recorded answers had drifted for as long
+      # as that was true.
+      - name: Recorded answers
+        run: |
+          cmake --build build --target test-fift test-cells test-vm test-smartcont -j2
+          ./scripts/check-regression-db.sh . build
+
+      # The shared vector files. Their readers compare against the file, so a generator
+      # that drifts away from what it once produced is invisible until someone tries to
+      # regenerate and cannot explain the diff. One of them is produced by the operator
+      # tooling instead, and the Rust test that writes it also verifies it; this step only
+      # requires it to still be there.
+      - name: Vector files match their generators
+        run: |
+          mapfile -t vector_generators < <(./scripts/check-vector-files.sh --list-generators)
+          if [ "${#vector_generators[@]}" -eq 0 ]; then
+            echo "vector check failed: generator manifest is empty" >&2
+            exit 1
+          fi
+          cmake --build build --target "${vector_generators[@]}" -j2
+          ./scripts/check-vector-files.sh . build
+
+      - name: Build the post-quantum key tool
+        run: |
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
+
+      # The two programs the suites run rather than imitate: the node's vote producer
+      # and the operator's root-authorisation tool. The tests that use them panic when
+      # they are absent, which is the right behaviour and also means this step is not
+      # optional -- without it those suites cannot run at all, and a job that never runs
+      # a test reports nothing about it.
+      - name: Build the post-quantum producers the suites drive
+        run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
 
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
@@ -89,6 +160,18 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      # A guard nothing reaches is decoration. This removes each rule the validator
+      # controller work added and requires a test to go red for it; a mutation that
+      # survives fails the job.
+      - name: Every controller rule is held by a test
+        run: python3 test/pq-native/contract-guard-mutations.py --out mutations.json
+
+      # The cutover deleted several validator-authority paths rather than refusing them
+      # by name, so nothing in the contracts announces their return. This fails if one
+      # comes back.
+      - name: No removed validator-authority path has returned
+        run: ./scripts/check-removed-validator-authority.sh .
 
       - name: Frozen BOCs match their sources
         run: git diff --exit-code

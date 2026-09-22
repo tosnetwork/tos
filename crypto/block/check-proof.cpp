@@ -21,6 +21,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "block/validator-session-id.h"
 #include "openssl/digest.hpp"
 #include "tos/tos-shard.h"
 #include "vm/cells/MerkleProof.h"
@@ -504,7 +505,7 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
                                  << to.to_str() << " with utime " << info.gen_utime << " and cc_seqno "
                                  << info.gen_catchain_seqno << " starting from previous key block " << from.to_str());
       }
-      td::Ref<ValidatorSet> vset{true, sig_set->get_catchain_seqno(), shard, std::move(nodes)};
+      td::Ref<ValidatorSet> vset{true, info.gen_catchain_seqno, shard, std::move(nodes)};
       // check computed validator set hash
       if (vset->get_validator_set_hash() != info.gen_validator_list_hash_short) {
         return td::Status::Error(PSTRING()
@@ -515,7 +516,27 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
                                  << info.gen_validator_list_hash_short << " stated in block header");
       }
       // check signatures
-      auto result = sig_set->check_signatures(vset, to);
+      td::Result<tos::ValidatorWeight> result;
+      if (sig_set->is_pq()) {
+        auto selected = config->get_selected_new_consensus_config(to.id.workchain);
+        if (!selected) {
+          return td::Status::Error(
+              "while checking a forward BlockProofLink: selected ConfigParam 30 is missing or malformed");
+        }
+        if (!selected.value().config.protocol_version_supported()) {
+          return td::Status::Error(
+              "while checking a forward BlockProofLink: selected ConfigParam 30 protocol version is unsupported");
+        }
+        const auto session_config = config->get_consensus_config();
+        const auto identity = derive_validator_session_identity(
+            config->get_global_blockchain_id(), validator_session_options_hash(session_config),
+            selected.value().cell_hash, to.shard_full(), vset->get_catchain_seqno(), vset->export_vector(),
+            info.vert_seq_no, info.prev_key_block_seqno, session_config.new_catchain_ids);
+        result = verify_pq_finality(PQFinalityVerificationContext{vset, to, identity.session_id}, *sig_set,
+                                    FinalityRole::Final);
+      } else {
+        result = sig_set->check_signatures(vset, to);
+      }
       if (result.is_error()) {
         return result.move_as_error_prefix(PSTRING() << "error checking signatures for block " << to.to_str()
                                                      << " in a forward BlockProofLink: ");

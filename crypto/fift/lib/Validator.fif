@@ -5,14 +5,6 @@ library Validator  // Validator request, vote, and signed body codecs
                     // (validator-elect-signed.fif etc.) that need PK' / parse-val-pubkey.
 "Msg.fif" include
 
-// Carries query-time across the `if` block and the post-check in
-// `normalize-vote-expire-at`. Intentionally retained as a `variable`
-// (not refactored to pure stack like `config-vote-ext-msg`) because
-// the name documents the value's role ("the base time we're
-// normalizing relative to") and is reused at two points across a
-// control-flow boundary.
-variable @normalize-vote-expire-base
-
 // ( S -- B )
 { base64>B dup Blen 64 <> abort"validator Ed25519 signature must be exactly 64 bytes long"
 } : parse-val-signature
@@ -41,42 +33,7 @@ variable @normalize-vote-expire-base
   swap <b swap B, b> ref, b>
 } : validator-elect-body+stake
 
-// ( seqno expire-at validator-idx proposal-hash -- B )
-{ 4 0 reverse B{566f7465} swap 32 u>B B+ swap 32 u>B B+ swap 16 u>B B+ swap 256 u>B B+
-} : config-vote-req-ext>B
-
-// ( validator-idx proposal-hash -- B )
-{ 2 0 reverse B{566f7445} swap 16 u>B B+ swap 256 u>B B+
-} : config-vote-req-int>B
-
-// ( query-time proposal-hash -- query-id )
-{ swap 32 << swap 32 1<< mod + } : config-vote-query-id
-
-// ( query-id signature to-sign -- c )
-{ <b x{566f7465} s, 3 roll 64 u, rot B, swap B, b>
-} : config-vote-int-body
-
-// ( wc addr signature to-sign -- c )
-// Build inner signed body from (signature, to-sign), then wrap the outer
-// external-message envelope using (wc, addr) carried through the stack.
-{ swap <b swap B, swap B, b>
-  -rot
-  <b b{1000100} s, -rot addr, 0 Tomi, 0 1 i, swap append-msg-body b>
-} : config-vote-ext-msg
-
-// ( validator-idx elect-id complaint-hash -- B )
-{ 3 0 reverse B{56744350} swap 16 u>B B+ swap 32 u>B B+ swap 256 u>B B+
-} : complaint-vote-req>B
-
-// ( query-time complaint-hash -- query-id )
-{ swap 32 << swap 32 1<< mod + } : complaint-vote-query-id
-
-// ( query-id signature to-sign -- c )
-{ <b x{56744370} s, 3 roll 64 u, rot B, swap B, b>
-} : complaint-vote-body
-
-// ( raw-expire-at query-time -- expire-at )
-{ @normalize-vote-expire-base ! dup 30 1<< < { @normalize-vote-expire-base @ + 1000 + 2000 /c 2000 * } if
-  dup @normalize-vote-expire-base @ <= abort"expiration time must be in the future"
-  dup 32 ufits not abort"invalid expiration time"
-} : normalize-vote-expire-at
+// A validator's vote on a configuration proposal or on a complaint is not built here.
+// It is signed with the validator's post-quantum consensus key over a preimage that
+// names the validator set counting it, which a script has no way to know, and the node
+// builds the message itself.

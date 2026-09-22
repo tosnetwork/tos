@@ -34,9 +34,9 @@ void CollationManager::start_up() {
 }
 
 void CollationManager::collate_block(ShardIdFull shard, BlockIdExt min_masterchain_block_id,
-                                     std::vector<BlockIdExt> prev, Ed25519_PublicKey creator,
-                                     BlockCandidatePriority priority, td::Ref<block::ValidatorSet> validator_set,
-                                     td::uint64 max_answer_size, td::CancellationToken cancellation_token,
+                                     std::vector<BlockIdExt> prev, ValidatorId creator, BlockCandidatePriority priority,
+                                     td::Ref<block::ValidatorSet> validator_set, td::uint64 max_answer_size,
+                                     td::CancellationToken cancellation_token,
                                      td::Promise<GeneratedCandidate> promise) {
   if (shard.is_masterchain()) {
     run_collate_query(CollateParams{.shard = shard,
@@ -56,7 +56,7 @@ void CollationManager::collate_block(ShardIdFull shard, BlockIdExt min_mastercha
 }
 
 void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_masterchain_block_id,
-                                           std::vector<BlockIdExt> prev, Ed25519_PublicKey creator,
+                                           std::vector<BlockIdExt> prev, ValidatorId creator,
                                            BlockCandidatePriority priority, td::Ref<block::ValidatorSet> validator_set,
                                            td::uint64 max_answer_size, td::CancellationToken cancellation_token,
                                            td::Promise<GeneratedCandidate> promise, td::Timestamp timeout) {
@@ -180,7 +180,7 @@ void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_mas
   }
 
   td::BufferSlice query = create_serialize_tl_object<tos_api::collatorNode_generateBlock>(
-      create_tl_shard_id(shard), validator_set->get_catchain_seqno(), std::move(prev_blocks), creator.as_bits256(),
+      create_tl_shard_id(shard), validator_set->get_catchain_seqno(), std::move(prev_blocks), creator.value,
       priority.round, priority.first_block_round, priority.priority);
   LOG(INFO) << "sending collate query for " << next_block_id.to_str() << ": send to #" << selected_idx << "("
             << selected_collator << ")";
@@ -196,7 +196,7 @@ void CollationManager::collate_shard_block(ShardIdFull shard, BlockIdExt min_mas
     }
     TRY_RESULT_PROMISE(P, f, fetch_tl_object<tos_api::collatorNode_Candidate>(data, true));
     TRY_RESULT_PROMISE(P, candidate, deserialize_candidate(std::move(f), td::narrow_cast<int>(max_answer_size)));
-    if (candidate.pubkey.as_bits256() != creator.as_bits256()) {
+    if (candidate.producer.value != creator.value) {
       P.set_error(td::Status::Error("collate query: block candidate source mismatch"));
       return;
     }

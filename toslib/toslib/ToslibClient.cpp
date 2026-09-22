@@ -185,6 +185,7 @@ td::Result<toslib_api::object_ptr<toslib_api::blocks_BlockSignatures>> to_toslib
     return td::Status::Error("not final signature set");
   }
   toslib_api::object_ptr<toslib_api::blocks_BlockSignatures> result;
+  bool pq_carrier = false;
   tos::tos_api::downcast_call(*sig_set->tl(),
                               td::overloaded(
                                   [&](const tos::tos_api::tosNode_signatureSet_ordinary& obj) {
@@ -205,7 +206,11 @@ td::Result<toslib_api::object_ptr<toslib_api::blocks_BlockSignatures>> to_toslib
                                     result = tos::create_tl_object<toslib_api::blocks_blockSignatures_simplex>(
                                         to_toslib_api(blk), std::move(signatures), obj.session_id_, obj.slot_,
                                         tos::serialize_tl_object(obj.candidate_, true).as_slice().str());
-                                  }));
+                                  },
+                                  [&](const tos::tos_api::tosNode_signatureSet_simplexPq&) { pq_carrier = true; }));
+  if (pq_carrier) {
+    return td::Status::Error("post-quantum block signatures are not supported by toslib yet");
+  }
   return result;
 }
 

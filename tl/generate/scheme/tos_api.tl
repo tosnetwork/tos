@@ -409,6 +409,9 @@ tosNode.blockSignature who:int256 signature:bytes = tosNode.BlockSignature;
 tosNode.signatureSet.ordinary cc_seqno:int validator_set_hash:int signatures:(vector tosNode.blockSignature) = tosNode.SignatureSet;
 tosNode.signatureSet.simplex final:Bool cc_seqno:int validator_set_hash:int signatures:(vector tosNode.blockSignature)
     session_id:int256 slot:int candidate:consensus.CandidateHashData = tosNode.SignatureSet;
+tosNode.pqBlockSignature validator_id:int256 algorithm_id:int signature:bytes = tosNode.PqBlockSignature;
+tosNode.signatureSet.simplexPq final:Bool cc_seqno:int validator_set_hash:int signatures:(vector tosNode.pqBlockSignature)
+    session_id:int256 slot:int candidate:consensus.CandidateHashData = tosNode.SignatureSet;
 
 tosNode.blockId workchain:int shard:long seqno:int = tosNode.BlockId;
 tosNode.blockIdExt workchain:int shard:long seqno:int root_hash:int256 file_hash:int256 = tosNode.BlockIdExt;
@@ -580,8 +583,8 @@ db.blockdb.lru id:tosNode.blockIdExt prev:int256 next:int256 = db.blockdb.Lru;
 db.blockdb.key.lru id:tosNode.blockIdExt = db.blockdb.Key;
 db.blockdb.key.value id:tosNode.blockIdExt = db.blockdb.Key;
 
-db.candidate source:PublicKey id:tosNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
-db.candidate.id source:PublicKey id:tosNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id;
+db.candidate source:int256 id:tosNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
+db.candidate.id source:int256 id:tosNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id;
 
 db.filedb.key.empty = db.filedb.Key;
 db.filedb.key.blockFile block_id:tosNode.blockIdExt = db.filedb.Key;
@@ -647,9 +650,15 @@ db.event.blockCandidateReceived block_id:tosNode.blockIdExt = db.Event;
 ---types---
 
 validator.groupMember public_key_hash:int256 adnl:int256 weight:long = engine.validator.GroupMember;
-validator.group workchain:int shard:long catchain_seqno:int config_hash:int256 members:(vector validator.groupMember) = validator.Group;
-validator.groupEx workchain:int shard:long vertical_seqno:int catchain_seqno:int config_hash:int256 members:(vector validator.groupMember) = validator.Group;
-validator.groupNew workchain:int shard:long vertical_seqno:int last_key_block_seqno:int catchain_seqno:int config_hash:int256 members:(vector validator.groupMember) = validator.Group;
+// A post-quantum member commits to both of its identities: the stable one that says
+// which validator this is, and the one naming the consensus key it currently holds.
+// Rotating a key therefore changes the session while the validator stays the same
+// member. The member vector is boxed so the two forms carry distinct constructor ids
+// and a classical member can never be read as a post-quantum one.
+validator.groupMemberPQ validator_id:int256 key_id:int256 adnl:int256 weight:long = engine.validator.GroupMember;
+validator.group workchain:int shard:long catchain_seqno:int config_hash:int256 members:(vector engine.validator.GroupMember) = validator.Group;
+validator.groupEx workchain:int shard:long vertical_seqno:int catchain_seqno:int config_hash:int256 members:(vector engine.validator.GroupMember) = validator.Group;
+validator.groupNew workchain:int shard:long vertical_seqno:int last_key_block_seqno:int catchain_seqno:int config_hash:int256 members:(vector engine.validator.GroupMember) = validator.Group;
 
 validator.telemetry flags:# timestamp:double adnl_id:int256
     node_version:string os_version:string node_started_at:int
@@ -709,9 +718,17 @@ engine.validator.fullNodeConfig ext_messages_broadcast_disabled:Bool = engine.va
 engine.validator.fastSyncMemberCertificate adnl_id:int256 certificate:overlay.MemberCertificate = engine.validator.FastSyncMemberCertificate;
 engine.validator.fastSyncOverlayClient adnl_id:int256 slot:int = engine.validator.FastSyncOverlayClient;
 engine.validator.collatorNodeWhitelist enabled:Bool adnl_ids:(vector int256) = engine.validator.CollatorNodeWhitelist;
+// Which validator this node holds a post-quantum consensus key for, and where that key
+// is. The identity is the controller account the validator was registered as; it is
+// stated here because it cannot be derived from the key, which rotates while the identity
+// does not. No key identity is configured: that is derived from the seed, so a
+// configuration cannot claim to hold a key it does not.
+engine.validator.pqConsensus validator_id:int256 consensus_key_file:string = engine.validator.PqConsensus;
+
 engine.validator.extraConfig state_serializer_enabled:Bool fast_sync_member_certificates:(vector engine.validator.fastSyncMemberCertificate)
     collator_node_whitelist:engine.validator.collatorNodeWhitelist
-    fast_sync_overlay_clients:(vector engine.validator.fastSyncOverlayClient) = engine.validator.ExtraConfig;
+    fast_sync_overlay_clients:(vector engine.validator.fastSyncOverlayClient)
+    pq_consensus:engine.validator.pqConsensus = engine.validator.ExtraConfig;
 engine.validator.config out_port:int addrs:(vector engine.Addr) adnl:(vector engine.adnl)
         dht:(vector engine.dht)
         validators:(vector engine.validator) collators:(vector engine.collator)
@@ -778,7 +795,7 @@ engine.validator.success = engine.validator.Success;
 
 engine.validator.jsonConfig data:string = engine.validator.JsonConfig;
 
-engine.validator.electionBid election_date:int perm_key:int256 adnl_addr:int256 to_send_payload:bytes = engine.validator.ElectionBid;
+engine.validator.pqStakeAuthorization validator_id:int256 key_id:int256 signature:bytes = engine.validator.PqStakeAuthorization;
 engine.validator.proposalVote perm_key:int256 to_send:bytes = engine.validator.ProposalVote;
 
 engine.validator.dhtServerStatus id:int256 status:int = engine.validator.DhtServerStatus;
@@ -861,7 +878,7 @@ engine.validator.getConfig = engine.validator.JsonConfig;
 
 engine.validator.setVerbosity verbosity:int = engine.validator.Success;
 
-engine.validator.createElectionBid election_date:int election_addr:string wallet:string = engine.validator.ElectionBid;
+engine.validator.createPqStakeAuthorization election_date:int max_factor:int adnl_addr:int256 stake_owner:int256 = engine.validator.PqStakeAuthorization;
 engine.validator.createProposalVote vote:bytes = engine.validator.ProposalVote;
 engine.validator.createComplaintVote election_id:int vote:bytes = engine.validator.ProposalVote;
 
@@ -1035,9 +1052,9 @@ validatorStats.collatorNodeResponse self:int256 validator_id:int256 timestamp:do
     block_id:tosNode.blockIdExt original_block_id:tosNode.blockIdExt collated_data_hash:int256
     = validatorStats.CollatorNodeResponse;
 
-collatorNode.candidate source:PublicKey id:tosNode.blockIdExt data:bytes collated_data:bytes = collatorNode.Candidate;
-collatorNode.compressedCandidate flags:# source:PublicKey id:tosNode.blockIdExt decompressed_size:int data:bytes = collatorNode.Candidate;
-collatorNode.compressedCandidateV2 flags:# source:PublicKey id:tosNode.blockIdExt data:bytes = collatorNode.Candidate;
+collatorNode.candidate source:int256 id:tosNode.blockIdExt data:bytes collated_data:bytes = collatorNode.Candidate;
+collatorNode.compressedCandidate flags:# source:int256 id:tosNode.blockIdExt decompressed_size:int data:bytes = collatorNode.Candidate;
+collatorNode.compressedCandidateV2 flags:# source:int256 id:tosNode.blockIdExt data:bytes = collatorNode.Candidate;
 collatorNode.pong#5bbf0521 flags:# version:flags.0?int = collatorNode.Pong;
 collatorNode.error code:int message:string = collatorNode.Error;
 
@@ -1229,7 +1246,12 @@ consensus.simplex.certificate vote:consensus.simplex.UnsignedVote signatures:con
 consensus.simplex.candidateAndCert candidate:bytes notar:bytes = consensus.simplex.CandidateAndCert;
 
 consensus.simplex.db.key.vote vote_hash:int256 = consensus.simplex.db.key.Vote;
-consensus.simplex.db.ourVote vote:consensus.simplex.UnsignedVote seqno:long = consensus.simplex.db.Vote;
+// This node's own vote, in its two durable states under one key. The intent commits the
+// vote decision before anything is signed; the signed record commits the exact signature
+// bytes before they are allowed to affect local state or leave the process, so a restart
+// replays what was emitted instead of signing again.
+consensus.simplex.db.ourVoteIntent vote:consensus.simplex.UnsignedVote seqno:long = consensus.simplex.db.Vote;
+consensus.simplex.db.ourSignedVote vote:consensus.simplex.UnsignedVote seqno:long signature:bytes = consensus.simplex.db.Vote;
 consensus.simplex.db.cert cert:consensus.simplex.Certificate = consensus.simplex.db.Vote;
 
 consensus.simplex.db.key.poolState = consensus.simplex.db.key.PoolState;
