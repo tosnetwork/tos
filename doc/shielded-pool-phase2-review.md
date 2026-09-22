@@ -6,6 +6,14 @@ time cannot close from inside. You are that outside reading.
 
 Work in `~/tos-privacy` on `feat/shielded-pool`.
 
+**This is not the ceremony.** It produces a review and a rehearsal that gets
+deleted. The real one is `doc/shielded-pool-phase2-runbook.md`, and what makes
+it real is published beforehand and checked by outsiders afterwards, none of
+which is in the code. If you are an automated agent, read that file's section
+on who can be a participant before assuming you could be one: you can verify
+a finished ceremony usefully, because verification is a computation that does
+not depend on your being trusted. Contributing is not.
+
 ---
 
 ## 0. Rules that override everything else in this document

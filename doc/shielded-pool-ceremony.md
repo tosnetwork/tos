@@ -694,6 +694,11 @@ Five tests establish that the gate judges rather than nods:
 
 ## Running a ceremony
 
+> The commands are below. **What turns running them into a ceremony is in
+> `doc/shielded-pool-phase2-runbook.md`** -- what has to be published before
+> the first contribution, who counts as an independent participant, and who
+> checks afterwards. None of it is in the code and none of it can be.
+
 Four commands. Each one rebuilds the starting key from the committed slice
 before doing anything, which is the slow part (a couple of minutes) and the
 reason to trust the result: a participant who reads a starting key out of the
