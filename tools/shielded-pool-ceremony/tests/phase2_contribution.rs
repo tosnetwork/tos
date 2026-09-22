@@ -106,6 +106,29 @@ impl ConstraintSynthesizer<Fr> for Tiny {
 
 const PUBLIC_INPUTS: [u64; 3] = [3, 5, 15];
 
+/// Publicly rescaling both proof points must invalidate their challenge.
+/// The transformation uses only a published contribution, not its secret.
+/// This demonstrates proof malleability if the points are omitted from the
+/// challenge; it does not demonstrate recovery of the contribution scalar.
+#[test]
+fn publicly_rerandomizing_the_proof_points_is_rejected() {
+    let initial = starting_key();
+    let (key, contributions) = run(1, b"test-only-auditor-randomness-01!");
+    verify_chain(&initial, &key, &contributions, &mut auditor())
+        .expect("the unchanged published contribution must audit");
+    let mut changed = contributions[0].clone();
+    changed.s = (changed.s * Fr::from(2u64)).into_affine();
+    changed.s_delta = (changed.s_delta * Fr::from(2u64)).into_affine();
+    assert!(changed.to_bytes() != contributions[0].to_bytes());
+    let transcript = Transcript::begin(&initial).expect("the opening transcript");
+    let error = verify_step(&initial, &key, &changed, &transcript, &mut auditor())
+        .expect_err("a publicly rerandomized proof was accepted");
+    assert!(format!("{error}").contains("proof of knowledge"), "{error}");
+    let error = verify_chain(&initial, &key, &[changed], &mut auditor())
+        .expect_err("the audit accepted a publicly rerandomized proof");
+    assert!(format!("{error}").contains("proof of knowledge"), "{error}");
+}
+
 /// The key a ceremony over [`Tiny`] starts from.
 ///
 /// Built through the real path -- a reference string, the Lagrange transform,

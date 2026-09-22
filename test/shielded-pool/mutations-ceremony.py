@@ -19,13 +19,11 @@ Two rules, both learned the hard way on this code:
   battery reported every mutation killed because the tree did not build before
   any of them was applied.
 
-One case is expected to survive and says so. `pok-challenge-points` removes the
-participant's own `s` and `s_delta` from the challenge hash. That input is what
-makes the knowledge extractor work in the security proof this construction
-follows; no concrete forgery in the suite distinguishes a build without it, and
-inventing a test that appeared to would be worse than recording the gap. If a
-real test ever kills it, this file has to be updated -- which is the point of
-pinning it.
+`pok-challenge-points` removes the participant's own `s` and `s_delta` from
+the challenge hash. A public rerandomization now distinguishes that build:
+scale both points by the same public factor, leaving the key and all other
+contribution fields unchanged. The weakened verifier accepts the modified
+proof. This tests proof binding, not scalar recovery or a forged pool proof.
 
 The anchors below are exact source text, so `rustfmt` can invalidate them
 without changing a line of logic -- it collapsed two multi-line calls the first
@@ -53,7 +51,7 @@ ENTROPY = CRATE / 'src/entropy.rs'
 RECORD = CRATE / 'src/record.rs'
 CROSSCHECK = CRATE / 'src/crosscheck.rs'
 
-# Deliberately not backed by a test. See the module docstring.
+# Marker for any explicitly recorded coverage gap.
 UNTESTED = '<no test: rests on the security proof, not on this suite>'
 
 
@@ -86,7 +84,7 @@ CASES = [
          CONTRIBUTION,
          '    message.extend_from_slice(&g1_to_uncompressed(s));\n'
          '    message.extend_from_slice(&g1_to_uncompressed(s_delta));\n', '',
-         UNTESTED),
+         'publicly_rerandomizing_the_proof_points_is_rejected'),
 
     # The transcript itself.
     Case('transcript-absorb', 'the transcript does not absorb the contribution', CONTRIBUTION,
