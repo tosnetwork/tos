@@ -1,5 +1,31 @@
 # Phase-2 conformance review and rehearsal — 2026-09-22
 
+> ## Disposition, added 2026-09-22 after the review landed
+>
+> The review is kept as written. What was done about it:
+>
+> | finding | status |
+> |---|---|
+> | **R1** summary transcript outside the final audit | **fixed** — `phase2-verify` now compares the computed ending against `record.transcript` |
+> | **R2** provenance and dimensions printed as facts | **fixed** — the ceremony name and both dimensions are compared against reconstructed values before anything is printed |
+> | **R3** malformed digests panic | **fixed** — every digest in a record is validated as 64 hex characters before anything indexes it |
+> | `pok-challenge-points` survivor | **closed by the review's own test.** It found the concrete counterexample I could not build: publicly rescaling `s` and `s_delta` by 2 leaves the proof equation intact if the challenge omits them. The mutation is now killed by name and **no recorded survivor remains** |
+> | stale `crosscheck.rs` comment about shared weights | **fixed** — each side draws its own, which the comment now says |
+> | wipes bypassed by early `?` returns | **fixed** — `secret.rs` and `entropy.rs` use `Zeroizing`, so the buffers are wiped on every exit rather than only the successful one |
+> | beacon is an already-mined block | **not a defect; a recorded choice.** `artifacts/phase2/ANNOUNCEMENT.md` states what it gives up and that a redo should use a future height |
+> | announcement-before-contribution not provable from the checkout | **correct, and unfixable here.** Only external publication can evidence it |
+> | contribution 1 unsigned and operator-controlled | **as stated in its own attestation.** The ceremony rests on nobody until contribution 2 |
+>
+> `test/shielded-pool/review-phase2-cli.py` was a reproducer asserting the
+> defects were present. It now asserts the refusal **and names the reason**,
+> so a refusal for some other cause cannot keep it green.
+>
+> The review's own caveat is worth repeating: it did not run the
+> secret-formatting mutation, correctly, because doing so would have violated
+> the handling rules. That case is still covered when the battery is run by
+> someone who accepts that one mutation prints a scalar to a local terminal.
+
+
 Reviewed revision: `16f8d9aef6dc53a116d249dd244c076c08350f3c`, branch
 `feat/shielded-pool`, in a fresh clone at
 `/Users/tomisetsu/tos-shielded-pool-phase2-review`.

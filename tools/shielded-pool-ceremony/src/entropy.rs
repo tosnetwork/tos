@@ -140,9 +140,14 @@ impl<E: Entropy> Entropy for Stirred<E> {
 
         // Fresh bytes from the inner source for every block, so the counter is
         // a domain separator rather than the only thing that changes.
-        let mut fresh = [0u8; 64];
+        //
+        // `Zeroizing` rather than a wipe at the end, for the reason the draw
+        // in `secret.rs` gives: the `?` on the next line is an early return,
+        // and a wipe after the loop is skipped by exactly the path that took
+        // it.
+        let mut fresh = zeroize::Zeroizing::new([0u8; 64]);
         for block in out.chunks_mut(64) {
-            self.inner.fill(&mut fresh)?;
+            self.inner.fill(fresh.as_mut())?;
             self.counter = self.counter.checked_add(1).ok_or_else(|| {
                 Error::Entropy("this source has produced more blocks than it can count".into())
             })?;
@@ -150,15 +155,15 @@ impl<E: Entropy> Entropy for Stirred<E> {
             let mut hasher = Sha512::new();
             hasher.update(STIR_DOMAIN);
             hasher.update(self.counter.to_le_bytes());
-            hasher.update(fresh);
+            hasher.update(fresh.as_ref());
             hasher.update(&self.material);
-            let stirred = hasher.finalize();
+            // The digest is derived from the material and is as sensitive as
+            // it is, so it is wiped rather than left on the stack.
+            let mut stirred = zeroize::Zeroizing::new([0u8; 64]);
+            stirred.copy_from_slice(&hasher.finalize());
             block.copy_from_slice(&stirred[..block.len()]);
         }
 
-        // The inner source's bytes are no longer needed and there is no reason
-        // to leave them on the stack.
-        zeroize::Zeroize::zeroize(&mut fresh);
         Ok(())
     }
 }

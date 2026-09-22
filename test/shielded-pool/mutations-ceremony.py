@@ -191,8 +191,8 @@ CASES = [
          '        if value == Fr::ONE {', '        if false {',
          'secret::tests::a_draw_of_one_is_refused'),
     Case('secret-narrow', 'the secret is reduced from 32 bytes instead of 64', SECRET,
-         '        let value = Fr::from_le_bytes_mod_order(&wide);',
-         '        let value = Fr::from_le_bytes_mod_order(&wide[..32]);',
+         '        let value = Fr::from_le_bytes_mod_order(wide.as_ref());',
+         '        let value = Fr::from_le_bytes_mod_order(&wide.as_ref()[..32]);',
          'secret::tests::the_whole_draw_is_used'),
     Case('secret-printed', 'the secret prints itself', SECRET,
          '        formatter.write_str("Secret(<withheld>)")',
@@ -275,11 +275,11 @@ CASES = [
          '            hasher.update(&self.material);\n', '',
          'entropy::tests::the_material_changes_the_answer'),
     Case('stir-inner', 'stirring ignores the system generator', ENTROPY,
-         '            hasher.update(fresh);\n', '',
+         '            hasher.update(fresh.as_ref());\n', '',
          'entropy::tests::the_inner_source_is_not_ignored'),
     Case('stir-one-block', 'a long draw expands one read instead of taking several', ENTROPY,
-         '            self.inner.fill(&mut fresh)?;\n            self.counter = self.counter',
-         '            if self.counter == 0 { self.inner.fill(&mut fresh)?; }\n'
+         '            self.inner.fill(fresh.as_mut())?;\n            self.counter = self.counter',
+         '            if self.counter == 0 { self.inner.fill(fresh.as_mut())?; }\n'
          '            self.counter = self.counter',
          'entropy::tests::each_block_reads_the_inner_source_again'),
     Case('stir-empty', 'stirring in nothing is offered as protection', ENTROPY,
@@ -324,6 +324,27 @@ def main() -> int:
     cases = CASES if options.only is None else [c for c in CASES if c.name in options.only]
     if options.only and len(cases) != len(options.only):
         raise SystemExit(f'unknown case name in {options.only}')
+
+    # Every anchor, checked by counting, before a single suite is run.
+    #
+    # A mismatch used to surface as `anchor appears 0 times` partway through a
+    # thirty-five minute run, after everything before it had already been
+    # spent. Counting answers the same question in well under a second, and
+    # the question is asked often: any edit to the files below can move one.
+    stale = [
+        (case.name, case.path.name, case.path.read_text().count(case.before))
+        for case in CASES
+        if case.path.read_text().count(case.before) != 1
+    ]
+    if stale:
+        lines = "\n".join(
+            f"  {name}: appears {count} times in {filename}, expected once"
+            for name, filename, count in stale
+        )
+        raise SystemExit(
+            "anchors no longer match the source -- re-copy them before running:\n" + lines
+        )
+    print(f"{len(CASES)} anchors, each appearing once", flush=True)
 
     baseline = run_suite()
     blob = baseline.stdout + baseline.stderr

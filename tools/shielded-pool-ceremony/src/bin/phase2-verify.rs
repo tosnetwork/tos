@@ -36,8 +36,10 @@ use std::process::ExitCode;
 
 use shielded_pool_ceremony::contribution::{verify_beacon_step, verify_chain, Transcript};
 use shielded_pool_ceremony::entropy::{Entropy, OperatingSystem};
-use shielded_pool_ceremony::record::{digest_of, key_digest, Directory, Step};
-use shielded_pool_ceremony::{committed, Error, Result};
+use shielded_pool_ceremony::record::{
+    checked_digest, digest_of, key_digest, short, Directory, Step,
+};
+use shielded_pool_ceremony::{committed, shape, Error, Result};
 use shielded_pool_circuit::groth16;
 
 fn main() -> ExitCode {
@@ -97,9 +99,25 @@ fn run() -> Result<()> {
         )));
     }
 
+    // Every digest in the record is held to being a digest before any of the
+    // messages below index into it.
+    for (field, value) in [
+        ("phase1_slice_sha256", &record.phase1_slice_sha256),
+        ("starting_key_sha256", &record.starting_key_sha256),
+        ("key_sha256", &record.key_sha256),
+        ("transcript", &record.transcript),
+    ] {
+        checked_digest(value, field)?;
+    }
+    for entry in &record.entries {
+        checked_digest(&entry.sha256, "an entry's sha256")?;
+        checked_digest(&entry.transcript_after, "an entry's transcript_after")?;
+        if let Step::Beacon { beacon_sha256 } = &entry.step {
+            checked_digest(beacon_sha256, "a beacon's sha256")?;
+        }
+    }
+
     println!("ceremony   {}", directory.path().display());
-    println!("phase 1    {} ({})", record.phase1_transcript, &record.phase1_slice_sha256[..16]);
-    println!("circuit    {} constraints", record.constraints);
     println!("steps      {}", record.entries.len());
 
     // --- the starting key, rebuilt not read -------------------------------
@@ -119,11 +137,48 @@ fn run() -> Result<()> {
     if rebuilt != record.starting_key_sha256 {
         return Err(Error::Structure(format!(
             "the starting key this checkout builds is {} and the record says {}",
-            &rebuilt[..16],
-            &record.starting_key_sha256[..16]
+            short(&rebuilt, "the rebuilt key")?,
+            short(&record.starting_key_sha256, "starting_key_sha256")?
         )));
     }
     println!("starting key matches: {rebuilt}");
+
+    // The record's descriptive fields, held against what was reconstructed
+    // rather than printed as facts.
+    //
+    // The digests above already bind the real slice and the real circuit, so
+    // a record that lies here cannot substitute a different circuit -- but it
+    // can put a false ceremony name and a false constraint count in front of
+    // whoever reads the audit, and an audit that prints unchecked strings in
+    // its own voice is the wrong place to learn that.
+    let measured = shape(committed::the_circuit()?)?;
+    if record.phase1_transcript != provenance.transcript {
+        return Err(Error::Structure(format!(
+            "the record says this ceremony inherits {:?} and the slice it was begun over is \
+             from {:?}",
+            record.phase1_transcript, provenance.transcript
+        )));
+    }
+    if record.constraints != measured.constraints
+        || record.instance_variables != measured.instance_variables
+    {
+        return Err(Error::Structure(format!(
+            "the record says {} constraints and {} instance variables; this circuit has {} and {}",
+            record.constraints,
+            record.instance_variables,
+            measured.constraints,
+            measured.instance_variables
+        )));
+    }
+    println!(
+        "phase 1    {} ({})",
+        record.phase1_transcript,
+        short(&record.phase1_slice_sha256, "phase1_slice_sha256")?
+    );
+    println!(
+        "circuit    {} constraints, {} instance variables",
+        record.constraints, record.instance_variables
+    );
 
     // --- the chain --------------------------------------------------------
     verify_chain(&initial, &key, &contributions, &mut OperatingSystem)?;
@@ -177,6 +232,22 @@ fn run() -> Result<()> {
                 entry.index
             )));
         }
+    }
+
+    // The summary the record publishes has to be the transcript the chain
+    // actually produced.
+    //
+    // Every entry's `transcript_after` was checked in the loop above, and the
+    // writing commands check this field too -- but the final audit did not,
+    // so a record could carry a summary digest belonging to nothing and still
+    // be reported finished. The summary is what a reader quotes.
+    let ending = shielded_pool_ceremony::record::digest_of_transcript(&transcript);
+    if ending != record.transcript {
+        return Err(Error::Structure(format!(
+            "the chain ends at transcript {} and the record summarises it as {}",
+            short(&ending, "the computed transcript")?,
+            short(&record.transcript, "the record's transcript")?
+        )));
     }
 
     // --- the bytes --------------------------------------------------------

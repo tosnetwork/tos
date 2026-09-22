@@ -283,6 +283,31 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// A digest field from a record, held to being one before anything indexes it.
+///
+/// Every `[..16]` in a message below used to run straight off an unchecked
+/// string: a record carrying `"x"` panicked instead of refusing, and a
+/// multi-byte character could land a byte index inside a UTF-8 code point.
+/// A malformed directory has to produce a refusal with a reason, not a crash
+/// -- a panic tells whoever is auditing nothing about what was wrong with the
+/// thing they were handed.
+pub fn checked_digest<'a>(value: &'a str, field: &str) -> Result<&'a str> {
+    if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(Error::Structure(format!(
+            "{field} is not a SHA-256 digest: {} characters, {:?}",
+            value.len(),
+            value.chars().take(24).collect::<String>()
+        )));
+    }
+    Ok(value)
+}
+
+/// The first 16 characters of a digest, for a message, after it has been
+/// checked to be one.
+pub fn short<'a>(value: &'a str, field: &str) -> Result<&'a str> {
+    Ok(&checked_digest(value, field)?[..16])
+}
+
 pub fn digest_of(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();

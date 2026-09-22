@@ -67,10 +67,14 @@ impl Secret {
     /// seeing one of these errors means the generator is broken, not that the
     /// draw was unlucky. That is the whole reason to check.
     pub fn draw(entropy: &mut dyn Entropy) -> Result<Self> {
-        let mut wide = [0u8; 64];
-        entropy.fill(&mut wide)?;
-        let value = Fr::from_le_bytes_mod_order(&wide);
-        wide.zeroize();
+        // `Zeroizing` rather than a call at the end: every `?` below is an
+        // early return, and an explicit wipe placed after them is skipped by
+        // exactly the paths that took one. A buffer wiped only on success is
+        // wiped only when nothing went wrong.
+        let mut wide = zeroize::Zeroizing::new([0u8; 64]);
+        entropy.fill(wide.as_mut())?;
+        let value = Fr::from_le_bytes_mod_order(wide.as_ref());
+        drop(wide);
 
         if value.is_zero() {
             return Err(Error::Entropy(

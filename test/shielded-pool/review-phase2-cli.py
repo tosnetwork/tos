@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Reproduce the phase-2 review observations, using temporary rehearsal data.
+"""The three record-validation defects the 2026-09-22 review found, now refused.
 
-This is a reproducer for the reviewed revision, not an acceptance gate:
-successful reproduction of an erroneous acceptance is still a finding.
+Written as a reproducer: it asserted that a tampered record was *accepted*,
+which was true and was the finding. The defects are fixed, so it asserts the
+refusal instead -- and names the reason, because a refusal for the wrong
+reason would keep this green while the check it is about was gone.
+
+R1  the summary transcript was outside the final audit
+R2  provenance and dimensions were printed as facts, never compared
+R3  a malformed digest string panicked instead of naming a refusal
+
+Findings and analysis: doc/shielded-pool-phase2-review-results.md
 """
 import importlib.util
 import json
@@ -26,13 +34,14 @@ def main():
         finally:
             sys.argv = previous_args
 
-        for name, changes in (
-            ("false-transcript", {"transcript": "00" * 32}),
+        for name, changes, reason in (
+            ("false-transcript", {"transcript": "00" * 32},
+             "the record summarises it as"),
             ("false-provenance", {
                 "phase1_transcript": "review-false-provenance",
                 "constraints": 1,
                 "instance_variables": 1,
-            }),
+            }, "the slice it was begun over is from"),
         ):
             directory = work / name
             shutil.copytree(work / "ceremony", directory)
@@ -40,10 +49,18 @@ def main():
             record = json.loads(record_file.read_text())
             record.update(changes)
             record_file.write_text(json.dumps(record))
-            result = cli.run([str(cli.BINARIES / "phase2-verify"), str(directory)])
-            if "This ceremony is finished" not in result.stdout:
-                raise RuntimeError("the expected erroneous acceptance was not reproduced")
-            print(f"FINDING REPRODUCED: {name} was accepted", flush=True)
+            result = cli.run(
+                [str(cli.BINARIES / "phase2-verify"), str(directory)], expect_success=False
+            )
+            blob = result.stdout + result.stderr
+            if "This ceremony is finished" in blob:
+                raise RuntimeError(f"{name}: a tampered record was accepted")
+            if reason not in blob:
+                raise RuntimeError(
+                    f"{name}: refused, but not for {reason!r} -- a refusal for another "
+                    f"reason would hide the loss of this check\n{blob[-800:]}"
+                )
+            print(f"REFUSED for the right reason: {name}", flush=True)
 
         directory = work / "short-digest"
         shutil.copytree(work / "ceremony", directory)
@@ -54,9 +71,12 @@ def main():
         result = cli.run(
             [str(cli.BINARIES / "phase2-verify"), str(directory)], expect_success=False
         )
-        if "panicked" not in result.stderr or "out of bounds" not in result.stderr:
-            raise RuntimeError("the expected parsing panic was not reproduced")
-        print("FINDING REPRODUCED: a short digest panics instead of naming a refusal")
+        blob = result.stdout + result.stderr
+        if "panicked" in blob:
+            raise RuntimeError(f"a malformed digest still panics\n{blob[-800:]}")
+        if "is not a SHA-256 digest" not in blob:
+            raise RuntimeError(f"refused, but not for the digest format\n{blob[-800:]}")
+        print("REFUSED for the right reason: short-digest")
     if work.exists():
         raise RuntimeError("rehearsal cleanup failed")
     print("All rehearsal artifacts removed; no signing key was generated.")

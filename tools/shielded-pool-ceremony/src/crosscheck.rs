@@ -44,9 +44,16 @@
 //! 4. the queries were divided by what `delta` was multiplied by, batched:
 //!    `e(sum(rho_i * l_after_i), delta_after_g2) == e(sum(rho_i * l_before_i), delta_before_g2)`.
 //!
-//! The weights in 4 are passed in rather than drawn, because the point is to
-//! ask the two implementations about the *same* question. Drawing separately
-//! would make a disagreement ambiguous.
+//! The weights in 4 are a parameter rather than drawn inside, so a caller
+//! decides where its own randomness comes from and this side never silently
+//! answers a different question from the one it was asked.
+//!
+//! It does **not** follow that both implementations are given the same
+//! weights, and an earlier version of this comment said it did.
+//! `crosscheck_agrees.rs` lets each side draw its own, which is the stronger
+//! arrangement: two implementations agreeing under independently drawn
+//! weights says more than agreeing under one weighting, and a batched check
+//! that only worked for particular weights would show up as a disagreement.
 
 use ark_bls12_381::{Bls12_381, Fr, G1Affine, G2Affine};
 use ark_ec::AffineRepr;
