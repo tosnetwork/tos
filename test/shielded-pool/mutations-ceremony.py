@@ -320,6 +320,12 @@ def failed_tests(output: str) -> set[str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--only', nargs='*', default=None)
+    parser.add_argument(
+        '--check-anchors',
+        action='store_true',
+        help='check that every anchor still matches the source, then stop. '
+             'Under a second, and it is the whole of what CI can afford to run.',
+    )
     options = parser.parse_args()
     cases = CASES if options.only is None else [c for c in CASES if c.name in options.only]
     if options.only and len(cases) != len(options.only):
@@ -331,10 +337,11 @@ def main() -> int:
     # thirty-five minute run, after everything before it had already been
     # spent. Counting answers the same question in well under a second, and
     # the question is asked often: any edit to the files below can move one.
+    sources = {case.path: case.path.read_text() for case in CASES}
     stale = [
-        (case.name, case.path.name, case.path.read_text().count(case.before))
+        (case.name, case.path.name, count)
         for case in CASES
-        if case.path.read_text().count(case.before) != 1
+        if (count := sources[case.path].count(case.before)) != 1
     ]
     if stale:
         lines = "\n".join(
@@ -345,6 +352,8 @@ def main() -> int:
             "anchors no longer match the source -- re-copy them before running:\n" + lines
         )
     print(f"{len(CASES)} anchors, each appearing once", flush=True)
+    if options.check_anchors:
+        return 0
 
     baseline = run_suite()
     blob = baseline.stdout + baseline.stderr

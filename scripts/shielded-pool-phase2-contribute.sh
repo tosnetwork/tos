@@ -105,13 +105,20 @@ record = json.load(open(sys.argv[1]))
 entry = record["entries"][-1]
 if entry["kind"] != "participant":
     sys.exit(f'the last step is a {entry["kind"]}, not a contribution')
-print(entry["index"], entry["sha256"], entry["transcript_after"])
+print(entry["index"], entry["sha256"], entry["transcript_after"],
+      record["starting_key_sha256"])
 PY
 )
 INDEX=$(echo "$DIGESTS" | cut -d' ' -f1)
 CONTRIBUTION=$(echo "$DIGESTS" | cut -d' ' -f2)
 TRANSCRIPT=$(echo "$DIGESTS" | cut -d' ' -f3)
+STARTING=$(echo "$DIGESTS" | cut -d' ' -f4)
 
+# The four digests are the whole of what is verifiable here; the prose around
+# them is yours to change. `test/shielded-pool/verify-attestations.py` reads
+# them by label and compares each against the record, so a document naming a
+# contribution the chain does not contain, or naming the right one at the
+# wrong index, is refused rather than filed.
 ATTESTATION="$CEREMONY/../attestation-$INDEX.txt"
 cat > "$ATTESTATION" <<ATTEST
 TOS shielded pool, phase 2 -- contribution $INDEX
@@ -119,13 +126,16 @@ TOS shielded pool, phase 2 -- contribution $INDEX
 I drew a scalar from my machine's random generator, applied it, and destroyed
 it. I did not record it, copy it, or transmit it, and I do not have it.
 
-  built from    $COMMIT
-  contribution  $CONTRIBUTION
-  transcript    $TRANSCRIPT
+  built from     $COMMIT
+  starting key   $STARTING
+  contribution   $CONTRIBUTION
+  transcript     $TRANSCRIPT
 
-The second digest names my position: every later contribution's challenge is
-derived from it, so this record cannot be reordered, shortened or substituted
-without invalidating what follows.
+The starting key says which ceremony this is: it is a function of the circuit
+and the phase-1 slice, so a contribution cannot be moved to a ceremony over a
+different circuit. The transcript names my position within it: every later
+contribution's challenge is derived from it, so this record cannot be
+reordered, shortened or substituted without invalidating what follows.
 ATTEST
 
 echo

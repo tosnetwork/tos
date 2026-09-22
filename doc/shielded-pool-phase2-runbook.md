@@ -91,6 +91,29 @@ So it has to be announced first, publicly, in a form that cannot be quietly
 reinterpreted: not "a Bitcoin block hash around the end of the month" but a
 named source, a named height, and a named witness.
 
+### The height must not have been mined
+
+Naming a height in advance removes the adaptive choice at closing time —
+whoever decides *when* to finalise no longer decides *which* block. That is
+the smaller half.
+
+The larger half is that **contributors must not be able to read the beacon
+while contributing**, and a height that already exists gives it to all of
+them. Ceremony 1 named a block that was already six deep, said so in its own
+announcement, and was withdrawn for it.
+
+So: announce a height that has not been reached, and **express the closing
+deadline in blocks too** — contributions close when the chain reaches some
+height strictly below the beacon's, by a margin of a day or so. Then "every
+contribution was in before the beacon could be computed" is structural rather
+than probabilistic, and an outside auditor can check it. A calendar deadline
+has to be trusted, and a fast stretch of mining can move the beacon inside the
+contribution window with nobody noticing.
+
+If the participants are not done by the closing height, **re-announce; do not
+extend**. Extending after seeing which contributions arrived is the same
+adaptive choice, performed at the other end.
+
 ---
 
 ## Opening it
@@ -126,6 +149,13 @@ secret — goes to the next participant by any means at all.
 They appear in the record, and nothing ties the record to a person who can be
 asked. Decide before opening whether such a contribution is acceptable.
 
+The key they sign with must be one that was **already publicly theirs**, and
+must appear on the roster pinned by the announcement. A key minted for the
+occasion produces a signature anyone could have made — worth exactly what no
+signature is worth, while looking like more. The contribution script refuses
+to generate one, and `verify-attestations.py` refuses a signature from a key
+the roster does not carry.
+
 ---
 
 ## Closing it
@@ -151,15 +181,30 @@ Each verifier, independently:
 ```sh
 target/release/phase2-verify /path/to/ceremony --vk-out vk.bin
 
+python3 test/shielded-pool/verify-attestations.py /path/to/ceremony \
+    --roster /path/to/roster.json
+
 TOS_ROOT=<a checkout with a built func/fift> \
 cargo run --release --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml \
     --example ceremony-gate -- /path/to/ceremony
 ```
 
 The first rebuilds the starting key from the committed slice, audits every
-contribution, recomputes the beacon step and emits the 1,248 bytes. The second
+contribution, recomputes the beacon step and emits the 1,248 bytes. The third
 deploys a pool carrying exactly those bytes and requires it to accept a real
 private transfer.
+
+**The second is not optional, and it is the one that was missing.** The first
+and third are arithmetic, and arithmetic is identical whoever performed it: a
+ceremony run entirely by one person under nine invented names passes both. The
+second checks that each attestation names the contribution the chain actually
+contains, that its signature verifies under a key on the roster pinned before
+the ceremony opened, and that at least one verified participant is declared
+independent of the operator. It refuses a ceremony that has none.
+
+Signature checking is `ssh-keygen -Y verify` and `gpg --verify`, run as
+subprocesses against a keyring built only from the roster — never the
+verifier's own, or "did it verify" would depend on whose machine ran it.
 
 **What each verifier publishes is the verifying key's SHA-256.** Two people
 who never spoke reproducing the same digest from the same record is the
@@ -196,11 +241,25 @@ Each of these turns a ceremony back into a rehearsal, and none of them is
 detectable from the artifacts afterwards:
 
 - the beacon named, or its height chosen, after contributions began;
+- **a beacon height that was already mined when it was announced**, so every
+  contributor could read it;
+- **a contribution accepted after the announced closing height**, or a closing
+  deadline extended rather than the ceremony re-announced;
+- **the roster changed after the announcement**, so a participant cannot be
+  shown not to have been added because of what the earlier contributions were;
 - every participant under one party's control;
 - participants who published nothing, so nobody can be asked;
+- **a participant signing with a key created for the ceremony**, which proves
+  only that somebody had a keyboard;
 - a participant who ran a binary somebody handed them rather than building
   from the announced commit;
 - verification done only by the people who ran it.
 
 The record proves the arithmetic. It cannot prove any of the above, which is
 why they are written down here instead.
+
+Three of the entries above are checkable by `verify-attestations.py` — the
+roster ones and the key one — and the rest are not checkable by anything,
+which is the distinction worth keeping in mind. A tool that could check them
+all would be a tool that could tell an honest ceremony from a performance of
+one, and no such tool exists.
