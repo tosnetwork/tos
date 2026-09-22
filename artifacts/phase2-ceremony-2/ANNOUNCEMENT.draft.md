@@ -109,7 +109,9 @@ than this circuit and should stop.
 
 ## 3. The participants, fixed before this opens
 
-The roster is [`roster.json`](roster.json), sha256 `TO FIX`.
+The roster is `roster.json`, sha256 `TO FIX` — built from
+[`roster.template.json`](roster.template.json), which is what is in this
+directory until the participants are known.
 
 **The roster is pinned by this announcement and does not change afterwards.**
 A participant added after contributions began cannot be shown not to have been

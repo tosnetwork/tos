@@ -49,6 +49,14 @@ Exit status is 0 only if every rule passes. Refusals name the rule.
 `--unattested-ok` waives rule 2 and 3 for named indices, loudly and in the
 output, because a ceremony may deliberately include a contribution nobody
 stands behind. It never waives rule 1, and it never waives rule 4.
+
+`--in-progress` reports rule 4 rather than enforcing it, for a participant
+checking their own work halfway through. Rule 4 is a property of the finished
+ceremony: the first contributor to run this would otherwise be told the
+ceremony rests on nobody -- true, expected, and not their fault. A refusal
+that arrives when nothing is wrong teaches people to ignore refusals, which
+costs more than the rule buys. Rules 1 to 3 still bite, because those *are*
+their fault, and the final gate is run without this flag.
 """
 
 import argparse
@@ -370,7 +378,18 @@ def find_signature(directory: Path, index: int) -> Path | None:
 # --------------------------------------------------------------------------
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The options this program accepts, separated so a test can ask.
+
+    `ceremony-docs-tests.py` checks that the flags the participant guide tells
+    people to type are flags this parser has. It used to ask by grepping
+    `--help`, which is worthless here: `description=__doc__` prints the module
+    docstring, and the docstring names the flags in prose, so the help output
+    mentions `--in-progress` whether or not the parser does. Asking the parser
+    through a subprocess failed differently -- argparse reports a missing
+    required argument before an unrecognised one, so the probe never got to
+    the question. Building the parser here lets the test look straight at it.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ceremony", type=Path)
     parser.add_argument("--roster", type=Path, required=True)
@@ -380,7 +399,17 @@ def main() -> int:
         default="",
         help="comma-separated contribution indices that may carry no signature",
     )
-    options = parser.parse_args()
+    parser.add_argument(
+        "--in-progress",
+        action="store_true",
+        help="report the independence rule instead of enforcing it, for a "
+             "participant checking their own work before the ceremony closes",
+    )
+    return parser
+
+
+def main() -> int:
+    options = build_parser().parse_args()
 
     attestations = options.attestations or options.ceremony.parent
     waived = {int(n) for n in options.unattested_ok.split(",") if n.strip()}
@@ -455,13 +484,23 @@ def main() -> int:
     print(f"{len(contributions)} contribution(s), {len(signed)} verified against the roster")
 
     if not independent:
-        raise Refused(
+        complaint = (
             "no verified contribution comes from a participant declared independent of "
             "the operator. The security argument is that one participant destroyed a "
             "scalar without the others being able to compel or observe them; with every "
             "contribution inside one party's control that reduces to 'trust us', which "
             "is what the ceremony existed to avoid"
         )
+        if not options.in_progress:
+            raise Refused(complaint)
+        print()
+        print(f"NOT YET SATISFIED: {complaint}.")
+        print(
+            "Reported rather than refused because --in-progress was passed. This is "
+            "expected while the ceremony is still open, and it must be satisfied before "
+            "the ceremony closes -- the final check is run without that flag."
+        )
+        return 0
 
     print(f"independent participants: {', '.join(sorted(independent))}")
     return 0

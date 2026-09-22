@@ -535,8 +535,56 @@ def case_script_template_parses(scratch: Path) -> tuple:
     return "the script's own template parses", None, result, None
 
 
+def case_in_progress_reports_independence(scratch: Path) -> tuple:
+    """Mid-ceremony, the independence rule is reported and not enforced."""
+    setup = build(scratch, outsider_independent=False)
+    result = run(setup, "--in-progress")
+    if result.returncode != 0:
+        return "--in-progress reports the independence rule", None, result, "accepted"
+    if "NOT YET SATISFIED" not in result.stdout:
+        return "--in-progress reports the independence rule", None, result, "reported loudly"
+    return "--in-progress reports the independence rule", None, result, None
+
+
+def case_in_progress_still_catches_a_forgery(scratch: Path) -> tuple:
+    """The escape hatch must not become a way to switch off the real checks.
+
+    `--in-progress` exists so a participant is not told the ceremony rests on
+    nobody while they are still the only contributor. If it also let a
+    tampered document through, the flag every participant is told to pass
+    would be the flag that disables the verifier.
+    """
+    setup = build(scratch)
+    target = setup["attestations"] / "attestation-2.txt"
+    target.write_text(document(2, "9" * 64, T2))
+    sign(setup["outsider"], target)
+    return (
+        "--in-progress still catches a tampered document",
+        "attests to contribution",
+        run(setup, "--in-progress"),
+        None,
+    )
+
+
+def case_in_progress_still_catches_a_stranger(scratch: Path) -> tuple:
+    setup = build(scratch)
+    stranger = setup["keys"] / "stranger"
+    keygen(stranger)
+    (setup["attestations"] / "attestation-2.txt.sig").unlink()
+    sign(stranger, setup["attestations"] / "attestation-2.txt")
+    return (
+        "--in-progress still catches a key nobody published",
+        "not made by any key on the roster",
+        run(setup, "--in-progress"),
+        None,
+    )
+
+
 CASES = [
     case_script_template_parses,
+    case_in_progress_reports_independence,
+    case_in_progress_still_catches_a_forgery,
+    case_in_progress_still_catches_a_stranger,
     case_intact,
     case_waiver_works,
     case_tampered_digest,

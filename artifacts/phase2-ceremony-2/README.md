@@ -23,10 +23,17 @@ the ones before it are already public.
 | 7 | contributions, in any order, each signed | participants | blocked on 6 |
 | 8 | close at the announced beacon, verify from outside | verifiers | blocked on 7 |
 
+## If you are going to contribute
+
+**[`PARTICIPANT-GUIDE.md`](PARTICIPANT-GUIDE.md)** — every command, from an
+empty VPS to a published attestation. It assumes you have never seen this
+repository. Roughly 25 minutes, most of it waiting.
+
 ## What is in here
 
 ```
 ANNOUNCEMENT.draft.md    the announcement, with every undecided field marked TO FIX
+PARTICIPANT-GUIDE.md     how to contribute, from a bare VPS, one command at a time
 roster.template.json     the participant roster to fill in and pin
 ```
 

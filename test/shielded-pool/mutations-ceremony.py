@@ -317,7 +317,13 @@ def failed_tests(output: str) -> set[str]:
     return set(re.findall(r'^test (\S+) \.\.\. FAILED$', output, flags=re.M))
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The options this battery accepts, separated so a test can ask.
+
+    `ceremony-docs-tests.py` reads the flags straight off this parser rather
+    than off `--help` output, because help text is prose and prose can name a
+    flag the parser no longer has.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument('--only', nargs='*', default=None)
     parser.add_argument(
@@ -326,7 +332,11 @@ def main() -> int:
         help='check that every anchor still matches the source, then stop. '
              'Under a second, and it is the whole of what CI can afford to run.',
     )
-    options = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    options = build_parser().parse_args()
     cases = CASES if options.only is None else [c for c in CASES if c.name in options.only]
     if options.only and len(cases) != len(options.only):
         raise SystemExit(f'unknown case name in {options.only}')
