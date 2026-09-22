@@ -9,10 +9,10 @@
     {
       "index": 1,
       "kind": "participant",
-      "sha256": "b113fd1d4579e25aa2c2dab4d42011ff53a2279dda715859608487a4b218762e",
-      "transcript_after": "d11a0dd9783917acd1ed28a966c2102367b7219a6cfb46153123cd449355798b"
+      "sha256": "12cb3972742853d0db434f2c5be59965e35d45ef370bdea2037b2ee260795521",
+      "transcript_after": "41949b6ffdc08d0d2361353e23f7b4298e0bf9c4518b69cd39013f8b2b77d0cf"
     }
   ],
-  "key_sha256": "e134ff0c1e46bb5a3c7967035cc9f0de078cd38caf1978ab4093ca826fbd4ac5",
-  "transcript": "d11a0dd9783917acd1ed28a966c2102367b7219a6cfb46153123cd449355798b"
+  "key_sha256": "68df0ab8efb2d6f26aef302a025f305a38434d8f0422cd3d751136e4b6d56fe5",
+  "transcript": "41949b6ffdc08d0d2361353e23f7b4298e0bf9c4518b69cd39013f8b2b77d0cf"
 }

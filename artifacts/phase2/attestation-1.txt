@@ -1,15 +1,22 @@
 TOS shielded pool, phase 2 -- contribution 1
 
-  built from    0fb5a36c1325901a4815a3134f69ba2e822f4a80
-  contribution  b113fd1d4579e25aa2c2dab4d42011ff53a2279dda715859608487a4b218762e
-  transcript    d11a0dd9783917acd1ed28a966c2102367b7219a6cfb46153123cd449355798b
+  built from    7ec052e0035f1cac7f2ad0ffd16f5d1d2d1e2933
+  contribution  12cb3972742853d0db434f2c5be59965e35d45ef370bdea2037b2ee260795521
+  transcript    41949b6ffdc08d0d2361353e23f7b4298e0bf9c4518b69cd39013f8b2b77d0cf
+
+Made after ANNOUNCEMENT.md was published, which names the beacon.
 
 ## What happened
 
 A scalar was drawn from /dev/urandom inside phase2-contribute, applied, and
 wiped. It was never a return value, never written to a file, and cannot be
 printed -- the type that holds it has no Display and its Debug prints a
-placeholder, so logging it does not compile. Nothing on the machine holds it.
+placeholder, so logging it does not compile. Nothing on this machine holds it.
+
+The starting key was rebuilt from the committed phase-1 slice before
+contributing and matched the announced digest, so this contribution was
+applied to the key this repository's slice and circuit determine, not to
+whatever was in the directory.
 
 ## What this contribution is worth, stated plainly
 
@@ -17,41 +24,29 @@ placeholder, so logging it does not compile. Nothing on the machine holds it.
 deploying this pool, and it adds nothing to the trust set beyond that party.**
 
 The security argument is that at least one participant destroyed a scalar
-without the others being able to compel or observe them. This contribution
-does not satisfy that for anybody except the operator: the agent genuinely
-cannot see the scalar, but the trust boundary is the machine, not the agent,
-and the machine is the operator's. Counting this as an independent
-contribution would be counting the operator twice.
+without the others being able to compel or observe them. This does not satisfy
+that for anybody except the operator: the agent genuinely cannot see the
+scalar, but the trust boundary is the machine, not the agent, and the machine
+is the operator's. Counting this as an independent contribution would be
+counting the operator twice.
 
-It is here because a chain has to start somewhere, and because contributions
-2..N are where the property comes from.
+**So this ceremony currently rests on nobody.** It starts being worth
+something at contribution 2, if contribution 2 comes from someone who can fail
+independently of the operator.
 
 ## Unsigned, and why
 
 A signature is worth what the identity behind it is worth. An agent has no
 identity that predates this ceremony, and generating a key to sign with would
-produce a signature anyone could have made -- worth exactly as much as no
-signature, while looking like more.
+produce a signature anyone could have made -- worth exactly what no signature
+is worth, while looking like more.
 
 If the operator wishes to stand behind this contribution, the right signature
 is theirs, made with a key that was already publicly theirs:
 
-    gpg --local-user <key-id> --clearsign --output attestation-1.txt.asc attestation-1.txt
+    gpg --local-user <key-id> --clearsign \
+        --output artifacts/phase2/attestation-1.txt.asc \
+        artifacts/phase2/attestation-1.txt
 
 That would say something true: the party who controls the machine vouches for
-what ran on it. Nothing else here can say that.
-
-## Known gap in the announcement
-
-**The beacon had not been named when this contribution was made.**
-
-doc/shielded-pool-phase2-runbook.md requires the beacon -- its source, its
-exact height or round, and its witness -- to be published before the ceremony
-opens, because its entire property is about *when* it was chosen and no
-program can check that afterwards.
-
-It was not, and this record says so rather than leaving it to be noticed. The
-gap is recoverable: nothing is deployed, no address is published, and redoing
-the ceremony costs only the time. **It must be closed before contribution 2**,
-or every later contributor inherits a ceremony whose anchor could have been
-chosen to suit the contributions already in it.
+what ran on it. Nothing else here can.
