@@ -94,8 +94,13 @@ class FakeNode(LiteClientTransport):
         if command == 'getconfig 8':
             return 'version:16 capabilities:494\n'
         if command == 'getconfig 21':
-            # Production-shaped basechain prices. These deliberately include a
-            # flat prefix so a test that falls back to gas_price/2^16 is wrong.
+            # Production-shaped basechain prices, flat prefix included. The
+            # prefix is priced at the variable rate -- flat_gas_price is
+            # gas_price * flat_gas_limit / 2^16 -- so above the limit the flat
+            # formula and the naive product agree to the nanoton, here and at
+            # the prices this chain charged before the cut. The prefix is only
+            # observable below flat_gas_limit, which is where the test looks
+            # for it.
             return ('gas_price:4369067 flat_gas_limit:100 '
                     'flat_gas_price:6667\n')
         if command == 'getconfig 25':
@@ -162,7 +167,23 @@ class SigningWithoutAChain(unittest.TestCase):
         gas = self.node.gas_prices(0)
         self.assertEqual(budget.module_compute,
                          self.node._gas_fee(64_400, gas))
-        self.assertEqual(budget.module_compute, 25_760_000)
+        # The same number from the prices this node served, with the flat
+        # prefix written out, rather than a literal product. The literal that
+        # stood here was not cut when the basechain prices were, and said so
+        # to nobody: the step that runs this file dies on an earlier script,
+        # so this assertion had never once been evaluated.
+        variable = gas['gas_price'] * (64_400 - gas['flat_gas_limit'])
+        self.assertEqual(budget.module_compute,
+                         gas['flat_gas_price'] + -(-variable // (1 << 16)))
+        # Below the limit the whole charge is the flat price, which is the
+        # one place the prefix is visible: above it these prices make the
+        # flat formula and the naive product agree exactly, so asserting the
+        # difference there would assert nothing.
+        self.assertEqual(self.node._gas_fee(gas['flat_gas_limit'] // 2, gas),
+                         gas['flat_gas_price'])
+        # A reader that matched flat_gas_price instead of gas_price would put
+        # the estimate hundreds of times lower.
+        self.assertGreater(budget.module_compute, 100 * gas['flat_gas_price'])
         self.assertEqual(budget.account_execution,
                          self.node._gas_fee(20_000, gas))
         # The forward charge is based on Config25 and the cell tree the module
