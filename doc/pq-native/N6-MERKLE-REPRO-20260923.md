@@ -89,6 +89,37 @@ The diagnostic logging change was removed and the binary rebuilt from the
 restored source. This negative result explains why generic stress is not a
 substitute for a controlled certificate and descendant timing test.
 
+## Production ingress constraints on an actor reproduction
+
+The code path narrows the required timing. `Consensus::try_notarize()` awaits
+`WaitForParent(candidate)` before calling `ResolveState(candidate.parent_id)`.
+Pool's `maybe_resolve_request()` waits if that **immediate parent** does not
+have an installed NotarCert. Thus a local candidate-validation test that
+supplies C with `C.parent_id=P` while this node has only SkipCert(P) will wait;
+it will not by itself exercise the shortcut. The same ordering exists in both
+historical failing commits `68ea21db4` and `efd22ce46`.
+
+There is a separate production ingress: Pool can install a received
+NotarCert(C) without first establishing C's entire ancestry on this node.
+Its `available_base` can then select C for a new leader window, and
+`Consensus::start_generation(C)` calls `ResolveState(C)` without
+`WaitForParent(C)`. `StateResolver` resolves C and then walks its signed
+parent chain. If P is a full ancestor in that chain, this node has SkipCert(P)
+but has not installed NotarCert(P), the current `QuerySlotSkipped(P)` may
+replace P with `available_base` and omit its state transition. The same
+possibility applies to an older ancestor reached when validating a candidate
+whose immediate parent *is* locally notarized.
+
+An actor regression should therefore deliver a signed chain with a full P,
+install a later NotarCert(C) and SkipCert(P) on the target node while withholding
+NotarCert(P), then trigger leader-base resolution of C (or validation through
+a locally notarized immediate parent). It must assert that the shortcut is
+actually taken and that applying the later candidate's Merkle update to the
+older base fails N/N-1; after the exact-ancestor change the same timing must
+resolve P or return bounded notready. The component test above does not satisfy
+this production-ingress condition, and the two green stress runs did not
+observe a nonempty shortcut.
+
 This is an executable counterexample to the local skip decision plus Merkle
 state transition. It does **not** run `StateResolverImpl`, prove that a
 descendant actually names this candidate under a particular certificate
