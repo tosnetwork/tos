@@ -13,7 +13,8 @@
       },
       "published_at": [
         "https://github.com/gtosnetwork-dotcom",
-        "https://github.com/tosnetwork/tos/blob/f5a45898fa810f1bea5bbcaf4f0803be0b2bfb4b/artifacts/phase2/keys/tosman.pub"
+        "https://github.com/tosnetwork/tos/blob/f5a45898fa810f1bea5bbcaf4f0803be0b2bfb4b/artifacts/phase2/keys/tosman.pub",
+        "https://api.github.com/users/gtosnetwork-dotcom/ssh_signing_keys"
       ]
     },
     {
