@@ -57,10 +57,16 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       # The sandbox compiles FunC in-process through tos_sandbox, which shells
-      # out to these two binaries via FUNC_PATH / FIFT_PATH. Nothing else from
-      # the node is needed, so this stays far cheaper than a full build.
-      - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+      # out to these binaries via FUNC_PATH / FIFT_PATH / CREATE_STATE_PATH.
+      # Nothing else from the node is needed, so this stays far cheaper than a
+      # full build.
+      #
+      # create-state belongs here for the same reason the other two do: a suite
+      # that reads the chain's own zero state builds it with this tool, and
+      # without it the suite does not report a wrong answer, it reports that it
+      # could not find the tool -- which is a suite that never ran.
+      - name: Build FunC, Fift and create-state
+        run: cmake --build build --target func fift create-state -j2
 
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
@@ -82,6 +88,7 @@ jobs:
           TOS_ROOT: ${{ github.workspace }}
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          CREATE_STATE_PATH: ${{ github.workspace }}/build/crypto/create-state
         # --no-fail-fast is load-bearing, not tidiness. cargo stops after the
         # first test target that fails, so a single red unit test in --lib
         # means every suite under tests/ is never executed and the run reports
