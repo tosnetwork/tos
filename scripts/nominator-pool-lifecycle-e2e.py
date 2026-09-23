@@ -3865,11 +3865,10 @@ class PoolLifecycle:
         return 1 if self.failures else 0
 
     async def shutdown(self) -> None:
-        for node in self.nodes:
-            try:
-                await node.stop()
-            except Exception:  # noqa: BLE001 - shutdown is best effort
-                pass
+        if self.network is not None:
+            # Network owns the DHT as well as the validators. Stopping only
+            # self.nodes leaves its DHT child running after the report is written.
+            await self.network.aclose()
 
     def write_report(self) -> None:
         if self.report_written:

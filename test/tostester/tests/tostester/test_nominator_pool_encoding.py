@@ -50,6 +50,20 @@ def _lifecycle_module():
 lifecycle = _lifecycle_module()
 
 
+@pytest.mark.asyncio
+async def test_lifecycle_shutdown_closes_the_whole_network(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="dht-shutdown-test")
+    stopped = []
+
+    class FakeNetwork:
+        async def aclose(self):
+            stopped.extend(["dht", "validator"])
+
+    runner.network = FakeNetwork()
+    await runner.shutdown()
+    assert stopped == ["dht", "validator"], "DHT and validator ownership must close together"
+
+
 requires_code = pytest.mark.skipif(
     not POOL_CODE.exists(),
     reason="run scripts/build-nominator-pool-v1.sh to produce the pool artifact",
