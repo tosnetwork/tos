@@ -782,8 +782,24 @@ escaping through `AdnlInboundConnection::query_finished()` as silence until
 the client's ten-second deadline. This does **not** attribute the observed
 timeouts to that path; admission drops and reconnect gaps remain possible.
 The `lite-query-error-response-source` guard fails if the wrapper is removed
-or if its error branch reverts to `set_error`. The five-point ADNL query-id
-trace is the next diagnostic unit.
+or if its error branch reverts to `set_error`.
+
+The five-point ADNL query-id trace then ran a four-validator functional
+topology at exact commit `9c1353d4a` (diagnostic only; outer log SHA-256
+`3b4f16e70d2402560edae4f1c9580ff91cca2d69ba58fead1083b3f3ad6ad488`).
+Of 477 client query IDs, 475 have client create/transmit, server
+ingress/completion, and client answer events. One query ID,
+`8A40FD03BC172DAB2FD24864281D959E70F153A21D87ED075CD05DC36D9A62F5`,
+was created for `liteServer_getMasterchainInfo` with
+`connection_present=false`, never transmitted, never observed at server
+ingress, and timed out after 10,000.2 ms. This run therefore identifies the
+client reconnect/no-transmit branch, not a slow lite-server response. A
+remaining query had no terminal event at log teardown and is not classified
+as success or timeout. The join is produced by
+`scripts/analyze-adnl-query-id-trace.py`; its source and decision branches
+have source-guard coverage. The run does **not** attribute earlier unjoined
+timeouts or prove that every timeout has this cause. The diagnostic registry
+remains open until the demonstrated no-transmit path has a regression gate.
 
 After the observation window, the harness waits for the production
 `TraceCollector`'s five-second structured-log flush and reads every node's

@@ -81,6 +81,25 @@ def main() -> int:
                 f"{field}: expected={expected!r} actual={finalcert.get(field)!r}"
             )
 
+    query_trace = observations["colocated-lite-query-timeouts"].get("query_id_trace_follow_up", {})
+    expected_query_trace = {
+        "exact_commit": "9c1353d4ac4bf0a35d1d06e59a5f068cfa4cdf37",
+        "outer_log_sha256": "3b4f16e70d2402560edae4f1c9580ff91cca2d69ba58fead1083b3f3ad6ad488",
+        "query_count": 477,
+        "fully_answered_query_count": 475,
+        "timed_out_query_id": "8A40FD03BC172DAB2FD24864281D959E70F153A21D87ED075CD05DC36D9A62F5",
+        "timed_out_query_connection_present_at_create": False,
+        "timed_out_query_transmitted": False,
+        "timed_out_query_server_ingress": False,
+        "classification": "CLIENT_RECONNECT_NO_TRANSMIT",
+    }
+    for field, expected in expected_query_trace.items():
+        if query_trace.get(field) != expected:
+            fail(
+                "colocated-lite-query-timeouts changed query-id trace field "
+                f"{field}: expected={expected!r} actual={query_trace.get(field)!r}"
+            )
+
     skip_observation = observations["colocated-launch-committee-skip-runs"]
     observed_at = skip_observation.get("observed_at", {})
     discrepancy = observed_at.get("text_structured_discrepancy_follow_up", {})

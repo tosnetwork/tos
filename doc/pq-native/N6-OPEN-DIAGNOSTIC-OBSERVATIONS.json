@@ -28,7 +28,22 @@
         ]
       },
       "diagnostic_question": "For each timed-out query, did the request reach the selected lite-server? Receipt without a client response localizes the loss to server processing or the response path; no receipt localizes it to ingress or request transport.",
-      "contract_error_response_fix": "run_ext_query now wraps its promise before the first early refusal, serializing any liteServer-contract error as liteServer_error and sending it as an ADNL answer. The generic ADNL query_finished error branch remains silent for non-lite failures; this change does not attribute the previously observed timeouts to the manager path. The source-guard gate checks wrapper ordering and error serialization, including mutations that remove the wrapper or restore set_error. Five-point query-id tracing remains required to identify the observed path.",
+      "contract_error_response_fix": "run_ext_query now wraps its promise before the first early refusal, serializing any liteServer-contract error as liteServer_error and sending it as an ADNL answer. The generic ADNL query_finished error branch remains silent for non-lite failures; this change does not attribute the previously observed timeouts to the manager path. The source-guard gate checks wrapper ordering and error serialization, including mutations that remove the wrapper or restore set_error.",
+      "query_id_trace_follow_up": {
+        "exact_commit": "9c1353d4ac4bf0a35d1d06e59a5f068cfa4cdf37",
+        "evidence_class": "COLOCATED_DIAGNOSTIC_ONLY",
+        "outer_log_sha256": "3b4f16e70d2402560edae4f1c9580ff91cca2d69ba58fead1083b3f3ad6ad488",
+        "query_count": 477,
+        "fully_answered_query_count": 475,
+        "timed_out_query_id": "8A40FD03BC172DAB2FD24864281D959E70F153A21D87ED075CD05DC36D9A62F5",
+        "timed_out_query_function": "liteServer_getMasterchainInfo",
+        "timed_out_query_elapsed_ms": 10000.2,
+        "timed_out_query_connection_present_at_create": false,
+        "timed_out_query_transmitted": false,
+        "timed_out_query_server_ingress": false,
+        "classification": "CLIENT_RECONNECT_NO_TRANSMIT",
+        "scope": "This exact-commit run identifies one client-side no-transmit timeout. It does not attribute the earlier unjoined timeouts, or rule out admission drops in other runs. One additional query lacked a terminal event when logging ended and was not counted as answered or timed out."
+      },
       "closure_condition": "Capture the same query identity at the client send point, lite-server receipt point, response send point and client completion point in a reproducing run; identify the first missing transition and add a regression gate for the demonstrated cause. Changing the timeout or relying on retry success is not closure."
     },
     "colocated-launch-committee-finalcert-tail": {
