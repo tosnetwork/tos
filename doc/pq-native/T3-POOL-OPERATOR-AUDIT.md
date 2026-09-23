@@ -41,6 +41,33 @@ the production pool body. Its fixture can supply a witness, but neither its
 static conversion nor Stage A's accepted stakes supplies the missing product
 handoff for these two callers.
 
+The shared Rust contracts crate now has a testable local refusal seam:
+`nominator::new_stake_with_verified_controller_birth` accepts the controller's
+*original deployment* `StateInit`, the node-bound validator ID, and an admitted
+code hash obtained from live ConfigParam 47. It refuses absent code/data, a
+non-code/data-only `StateInit`, a mismatched derived address, or a code hash
+outside the supplied admission choice before building the fee-bearing pool
+order. Its tests parse the resulting body and require the 544-bit witness in
+the final reference; mutations that bypass either binding or omit the witness
+fail. This is a pure verifier, not a live ConfigParam 47 reader. Passing a hash
+copied from the artifact instead of one confirmed admitted on chain would
+defeat the policy half; neither product caller uses this seam yet.
+
+The product handoff should retain the original deployment `StateInit` BOC as a
+public controller artifact associated with the configured pool. Reading a
+controller's *current* account data cannot reconstruct its birth witness:
+controller storage changes after deployment. At each first-stake attempt, the
+daemon and interactive bid must deserialize that artifact, read live Param 47,
+require its code hash in the admitted dictionary, compare the artifact-derived
+address with both the node authorization's `validator_id` and the pool's
+configured controller address, then call the verified builder. If the artifact
+is absent, the dictionary is absent, or any binding differs, refuse locally
+before wallet message construction or send. The current config has pool
+addresses and controller roles but no deployment-StateInit artifact field or
+locator. Choosing how that durable artifact is provisioned into product config
+is still a separate handoff; the fixture's in-memory StateInit is not a product
+source. First accepted stakes plus live ConfigParam 34 remain the closure gate.
+
 For the multi-nominator path specifically, `nominator-pool/pool.fc:142` parses
 the same pool-order field sequence as the single-nominator pool and `:669`
 relays those terms unchanged to the controller. This is why the shared
@@ -73,7 +100,7 @@ credit for that pool falling to zero afterward. No new live lifecycle run
 has yet exercised those assertions.
 
 The exact classical Fift dependency inventory is maintained by
-`scripts/check-classical-stake-callers.py`. It currently contains nine
+`scripts/check-classical-stake-callers.py`. It currently contains eight
 executable files, including the base tools and legacy fixtures. The count is
-not a count of nine launch-facing failures, and reducing it by deleting a
+not a count of eight launch-facing failures, and reducing it by deleting a
 textual reference does not demonstrate a working replacement.

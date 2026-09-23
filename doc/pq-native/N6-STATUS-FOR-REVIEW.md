@@ -568,6 +568,18 @@ The observed 600+600 run discharges the script-wide T2 classical-stake
 dependency and repeats the end-to-end accepted-stake/activated-election proof
 on a co-located diagnostic topology, **not** as release-scale evidence. The
 other classical Fift callers remain a separate T3 retirement task.
+
+T3's multi-nominator lifecycle preflight and first-round assertions remain
+static/unit evidence only; no new real chain has been started for that route.
+The launch-facing `runner.rs` and `config_wallet_cmd.rs` still pass no
+controller birth witness. A shared Rust builder now locally verifies a
+controller's original deployment StateInit against a node-bound validator ID
+and a caller-supplied admitted code hash before it emits a witnessed pool
+order, but neither product caller yet supplies the artifact or reads live
+ConfigParam 47 for it. This is a testable refusal seam, not first-stake
+acceptance evidence. T3 and `pool-first-stake-birth-witness-missing` stay OPEN;
+the source/binding plan and remaining handoffs are in
+`T3-POOL-OPERATOR-AUDIT.md`.
 Supervisor acceptance at `c15d9f852` marks **T2 COMPLETE within
 `validator-election-stage-a.py`**: both the default launch gate and explicit
 experiment now use the node-authorized production builder, pool, controller,
