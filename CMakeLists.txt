@@ -1309,6 +1309,10 @@ add_test(NAME pq-election-fixture-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-election-fixture-source.py
     ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pq-election-fixture-source PROPERTIES LABELS "source-guard")
+add_test(NAME classical-stake-callers-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-classical-stake-callers.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(classical-stake-callers-source PROPERTIES LABELS "source-guard")
 add_test(NAME config-genesis-data-layout-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-config-genesis-data-layout.py
           ${CMAKE_CURRENT_SOURCE_DIR})
