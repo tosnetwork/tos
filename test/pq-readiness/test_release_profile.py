@@ -57,8 +57,17 @@ def ceiling(*flags: str) -> tuple[int, ...]:
                      subprocess.check_output([str(root / 'probe')], text=True).split())
 
 
-supported, mldsa, poseidon2 = ceiling()
-built = {'PQCHECKSIG_MLDSA44': mldsa, 'POSEIDON2_PERM8/POSEIDON2_HASH7': poseidon2}
+# Zipped against GATES, which PROBE must print in the same order, so that
+# adding a gate means editing those two and nothing else. The fixed-arity form
+# did not survive that: PATH7 joined PROBE and GATES and left this line
+# expecting three values, so the check stopped checking and started crashing.
+# The length guard is what makes the drift say so instead of unpacking wrongly.
+values = ceiling()
+if len(values) != len(GATES) + 1:
+    raise SystemExit(f'the probe printed {len(values)} numbers, but GATES names {len(GATES)} '
+                     'instruction gates; PROBE and GATES have drifted apart')
+supported, *gates = values
+built = dict(zip(GATES, gates))
 if built != GATES:
     raise SystemExit(f'the built gates {built} are not the expected {GATES}')
 if supported != max(GATES.values()):
