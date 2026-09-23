@@ -361,6 +361,14 @@ proofs fail closed with a named error rather than terminating the process.
 `test-pq-lite-forward-proof` reads 19/29/30 back from a generated virtual
 proof with distinguishable values, and branch CI builds and executes it.
 
+The DNS governance E2E now asks the validator node for a complete PQ proposal
+vote body instead of signing the classical, set-unbound preimage in Python.
+Its ConfigParam 4 activation and post-activation DNS resolution checks pass
+on the final tree. This diagnostic fixture explicitly uses global version 16
+to exercise the PQ vote instruction; production Genesis remains at version 14
+pending coordinated activation. A source guard pins node-origin vote assembly
+and the absence of the classical config-vote tag under `scripts/`.
+
 ## Open diagnostic observations
 
 `N6-OPEN-DIAGNOSTIC-OBSERVATIONS.json` records operational findings that need

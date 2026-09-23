@@ -17,6 +17,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "branch-chain-python-ci-source",
         "consensus-no-fallback",
         "config-genesis-data-layout-source",
+        "dns-pq-vote-source",
         "finality-evidence-admission-marker-mutations",
         "finality-evidence-admission-source",
         "frozen-boc-toolchain-resolution",

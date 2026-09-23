@@ -33,7 +33,7 @@ A second network then rehearses the OTHER activation path (DNS.md §11):
              fails closed; the Root and Collection deploy; an ordinary
              config-change proposal carrying the Root account id is
              registered with the config contract, the genesis validator
-             votes for it with its validator key, ConfigParam 4 appears,
+             obtains a PQ vote body from the validator node, ConfigParam 4 appears,
              and resolution starts working on the running chain.
 
 Full-lifecycle pieces that need wall-clock time (auction completion after the
@@ -55,9 +55,6 @@ import time
 import urllib.request
 from pathlib import Path
 
-from tostester.install import Install
-from tostester.network import Network, StartOptions
-from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import (
     Address,
     Cell,
@@ -68,6 +65,10 @@ from pytosiq_core import (
 )
 from pytosiq_core.boc import begin_cell
 from pytosiq_core.tlb.account import StateInit
+from tosapi import tos_api
+from tostester.install import Install
+from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
@@ -297,8 +298,7 @@ def config_contract_address() -> str:
     return "-1:" + cell.begin_parse().load_bytes(32).hex()
 
 
-async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
-                                validator_key) -> None:
+async def run_governance_checks(faucet, artifacts: dict, global_config: Path, validator_node) -> None:
     root_addr = artifacts["root"]
     collection_addr = artifacts["collection"]
     root_id = bytes.fromhex(root_addr.split(":")[1])
@@ -435,20 +435,26 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
             print(f"  faucet dump error: {exc}")
     check("proposal registered with the config contract", registered)
 
-    # the genesis validator (index 0 in ConfigParam 34) votes: the vote body
-    # carries an Ed25519 signature over sign_tag(32) idx(16) proposal_hash(256)
-    to_sign = (0x566F7445).to_bytes(4, "big") + (0).to_bytes(2, "big") + phash_bytes
-    signature = validator_key.key.sign(to_sign).signature
-    vote = (begin_cell()
-            .store_uint(0x566F7465, 32)
-            .store_uint(0, 64)
-            .store_bytes(signature)
-            .store_bytes(to_sign)
-            .end_cell())
+    # The node resolves current-set identity, builds the PQ preimage, signs with
+    # its custodied consensus key, and returns the complete contract vote body.
+    request = tos_api.Engine_validator_createProposalVoteRequest(
+        ("0x" + phash_bytes.hex()).encode()
+    )
+    response = request.parse_result(await validator_node.engine_console.request(request))
+    vote = Cell.one_from_boc(response.to_send)
     await faucet.send(transfer_message(faucet, config_addr, 1 * NANO, vote))
 
-    check("ConfigParam 4 appears after the validator vote",
-          await async_poll(lambda: param4_root_id() == root_addr.split(":")[1], timeout=120))
+    activated = await async_poll(lambda: param4_root_id() == root_addr.split(":")[1], timeout=120)
+    if not activated:
+        try:
+            txs = rpc_call("getTransactionsStd", address=config_addr, limit=20)["result"]
+            for tx in txs.get("transactions", []):
+                if tx.get("transaction_type") != "tock":
+                    compact = {k: v for k, v in tx.items() if k != "data"}
+                    print(f"  post-vote config transaction: {compact}")
+        except Exception as exc:
+            print(f"  post-vote transaction dump failed: {exc}")
+    check("ConfigParam 4 appears after the validator vote", activated)
 
     out = lite_client_dnsresolve(global_config, f"{LABEL}.tos")
     check("resolution works on the running chain after activation",
@@ -625,6 +631,9 @@ async def main() -> int:
     if "governance" in phases:
       async with Network(install, WORKDIR / "net-gov", base_port=25500) as network:
         network.config.enable_config_voting = True
+        # This phase exercises the PQ vote instruction. Production Genesis
+        # remains at v14 pending a separate, coordinated v16 activation.
+        network.config.global_version = 16
         dht = network.create_dht_node()
         node = network.create_full_node()
         make_deterministic_pq_initial_validator(node, 0)
@@ -637,7 +646,7 @@ async def main() -> int:
             faucet = network.zerostate.main_wallet(client)
             lite_cfg = WORKDIR / "liteclient.gov.config.json"
             lite_cfg.write_text(node.liteserver_config.to_json())
-            await run_governance_checks(faucet, artifacts, lite_cfg, node.validator_key)
+            await run_governance_checks(faucet, artifacts, lite_cfg, node)
         finally:
             for t in (node_task, dht_task):
                 t.cancel()
