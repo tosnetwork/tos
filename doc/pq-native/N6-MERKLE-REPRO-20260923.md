@@ -1,6 +1,103 @@
 # N6 Merkle exact-ancestor investigation — component reproduction
 
-Status: **component mechanism reproduced; historical actor ordering remains unproved**.
+Status: **actor-level old-RED/new-GREEN gate met at `1a2f33940`; attribution of the two
+September incidents to this ordering remains unproved** (their CandidateIds and stacks
+were not retained).
+
+## Actor-level reproduction under controlled certificate order (`1a2f33940`)
+
+`test/validator/consensus/test-merkle-prospective-notar.cpp` runs one validator
+node with the production `Pool`, `CandidateResolver`, `StateResolver` and `Db`
+actors; `Consensus` and `BlockProducer` are not registered, so the node casts no
+votes of its own. The test holds all four validator keys and delivers real
+quorum certificates through `IncomingProtocolMessage`, in this order:
+
+1. NotarCerts for candidates `1..n-1` (A is `n-1`), each awaited until Pool
+   publishes `NotarizationObserved`.
+2. NotarCert(P), P = candidate `n`. The test database holds this certificate's
+   write, so Pool knows it only as `being_saved`; `notarized_block()` is empty.
+3. SkipCert(P.slot), signed by validators 1-3. Validators 1 and 2 also signed
+   NotarCert(P); only finalize+skip is a vote conflict.
+4. NotarCert(C), C = candidate `n+1`, `C.parent = P`.
+
+Slots are laid out so C ends a leader window and the node under test is the
+leader of the next window. Before triggering anything, the binary checks and
+prints: Pool opened that window on base C (`LeaderWindowObserved`), NotarCert(C)
+installed, NotarCert(P) held exactly once and not installed, P not yet
+requested from peers, and no `MisbehaviorReport`. It then publishes
+`ResolveState(C)`, which is what `start_generation(C)` does without
+`WaitForParent`. A run whose ordering did not hold stops with
+`MERKLE_ACTOR_PRECONDITION_FAILED` instead of resolving.
+
+`check-merkle-prospective-notar.py` decides from that transcript, not from the
+exit code alone. It computes the synthetic state hashes itself; they equal the
+full retained incident hashes (`C8D1…/9234…` at n=5, `69A2…/1908…` at n=23).
+
+The old resolver is this exact tree with only the five production files that
+`bc379ec2c` changed restored to `e5b49ca45` (a zero-line diff against that
+commit). `68ea21db4` and `efd22ce46` have the same `QuerySlotSkipped` logic.
+The test source compiles unchanged against both resolvers.
+
+| Binary | Expectation | n | Runs | Result |
+| --- | --- | --- | ---: | --- |
+| pre-fix | `red`: abort with `expected old = H(n), applied to = H(n-1)`, `candidate block id = C`, P never requested, hold still active | 5, 23 | 20 each | 40/40 |
+| pre-fix | `control`: NotarCert(P) installed first, resolves to H(n+1) | 5, 23 | 20 each | 40/40 |
+| pre-fix | `gate`: misaimed hold detected by the harness | 5 | 5 | 5/5 |
+| fixed | `green`: requests P, waits while held, reaches H(n+1) after release | 5, 23 | 20 each | 40/40 |
+| fixed | `bounded`: P never obtainable, `notready` "cannot resolve exact ancestor" | 5, 23 | 20 each | 40/40 |
+| fixed | `control` | 5, 23 | 20 each | 40/40 |
+| fixed | `gate` | 5, 23 | 20 each | 40/40 |
+| pre-fix | `green` (must fail) | 5 | 1 | fails: exit -6 |
+| fixed | `red` (must fail) | 5 | 1 | fails: "skip-shortcut resolver did not fail" |
+
+The pre-fix abort is raised by the `StateResolver` actor inside
+`ChainState::apply`. For n=5 it reports
+`invalid Merkle update: expected old value hash = C8D1E14FE26D8983DA2383CF719AFF88B3F9EFA8A5B09C625AB12EFFC2926932, applied to value with hash = 92345EFB21EC9E506E9FDB654AC3E84E46282531698C7F6AF88877245121DD54`;
+for n=23 it reports `69A2DC37…8FAA` / `19088211…CB57`. Both lines are identical to
+the corresponding retained September errors.
+
+CTest registers the four fixed-tree expectations as
+`test-consensus-simplex2-merkle-prospective-notar-{exact-ancestor,bounded-refusal,control,gate-control}`.
+The old-RED run needs the pre-fix resolver, so it is recorded here rather than
+in CTest. To rerun it:
+
+```sh
+F="validator/consensus/simplex/bus.cpp validator/consensus/simplex/bus.h \
+   validator/consensus/simplex/candidate-resolver.cpp \
+   validator/consensus/simplex/pool.cpp validator/consensus/simplex/state-resolver.cpp"
+git checkout e5b49ca45 -- $F
+cmake --build build --target test-merkle-prospective-notar
+cp build/test/validator/consensus/test-merkle-prospective-notar /tmp/prefix
+git restore --staged --worktree --source=HEAD -- $F
+python3 test/validator/consensus/check-merkle-prospective-notar.py /tmp/prefix red --n 5 --n 23 --runs 20
+```
+
+Artifacts are under
+`/home/tomi/tos-carrier/merkle-repro-artifacts/prospective-notar-actor/1a2f33940/`.
+Both binaries were built from `1a2f33940`, and a rebuild of the fixed binary
+is byte-identical:
+
+| File | SHA-256 |
+| --- | --- |
+| `fixed` | `ab569a827fc7502eef840f163d2f0ac9f05c1f09e8d91996092ca176c66111dc` |
+| `prefix-e5b49ca45` | `846b84d00f4995a73bbf94febca220f31dba31dd223ed0c1a621604c1d7decfa` |
+| `transcript-prefix-red-n5.log` | `e5557b710c31514c5acc7acfd32962c7f751fc47e20d1ad78768d42717ac1a2a` |
+| `transcript-prefix-red-n23.log` | `34843e96b1df98b657b3d7c2b9b1ec3271371760455f93f28a3110fd5b3e4e43` |
+| `transcript-fixed-green-n5.log` | `f2035d47a1b888004f1e07019323a1096f5d9fd54878ffa7addd1749002ce862` |
+| `transcript-fixed-green-n23.log` | `462fe24d24bee863c9257e5386e898ac27e21f7411597453d28f728574fae1a2` |
+| `transcript-fixed-bounded-n5.log` | `dcab2cdcfe8d5467587ced9ae2aee0e226b170f163ceac6fea3fdb0ce24f5fb8` |
+| `transcript-fixed-bounded-n23.log` | `865945f918d6044d7892a3bc12318e2cc4e638d94567848f5365410bd863ce6f` |
+| `repeat20-prefix-red.log` | `182ea1b61b185dfe0725b310246963048f2f4aa0fd6ac0e788c71aabd7dde975` |
+| `repeat20-fixed-green.log` | `4c8a058eb04c8fe6d2ba29a9df0f5492b8335381587d42e561fd8deac3c2b160` |
+| `repeat20-fixed-bounded.log` | `c6ee8e8d7d7e7ef244c3fc27fb787371c9158b8915ce2f40992ce2592b8742f0` |
+
+What this establishes: the fixed resolver removes a deterministic, reachable
+failure. With production actors and legal certificates, a leader resolving its
+new window's base while a parent's NotarCert is still being saved reproduces
+the recorded N/N-1 abort byte for byte. What it does not establish: that the
+two September failures took this path. The lost CandidateIds and stacks cannot
+be recovered, so that attribution stays probable but unproved.
+
 
 ## Post-fix validation on `00ded9cf6`
 
@@ -41,7 +138,8 @@ and its test. At current branch head, the registered test is
 Merkle N/N-1 symptom, and the separate source guard pins exact CandidateId
 resolution. Neither exercises `StateResolverImpl` under a controlled
 certificate arrival order. Thus the historical actor-level RED/GREEN gate
-remains OPEN; do not cite the older component log as post-fix runtime proof.
+remained OPEN at that stage; it is now met by the actor-level section above. Do not cite
+the older component log as post-fix runtime proof.
 
 ## Historical component reproduction (`bb3cdc788`)
 
@@ -172,5 +270,5 @@ stack. The next required result is a deterministic actor or integration test
 that holds `SaveCertificate(NotarCert(P))` while SkipCert(P.slot) is installed,
 drives resolution of a descendant that explicitly names P, and records a red
 N/N-1 result with the shortcut versus a green exact-ancestor result without
-it. Keep `merkle-base-state-mismatch` OPEN until that result and the required
-consensus regressions exist.
+it. That result now exists; see "Actor-level reproduction under controlled
+certificate order" at the top of this note.
