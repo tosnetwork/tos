@@ -992,8 +992,9 @@ td::Result<bool> Config::config_del_gc(tos::PublicKeyHash key) {
 //
 // What a node can do is say, with the one key it holds, that this validator agrees to
 // stand in this election with this money behind it. That is what this returns: a
-// signature, over the bytes the elector will rebuild, and nothing else. It signs one
-// tuple rather than bytes it is handed, so the key cannot be asked to sign anything else.
+// signature, over the bytes the elector will rebuild, together with the exact
+// algorithm and public key held by the signer. It signs one tuple rather than
+// bytes it is handed, so the key cannot be asked to sign anything else.
 class PqStakeAuthorizationCreator : public td::actor::Actor {
  public:
   PqStakeAuthorizationCreator(td::uint32 election_date, td::uint32 max_factor, td::Bits256 adnl_addr,
@@ -1046,8 +1047,10 @@ class PqStakeAuthorizationCreator : public td::actor::Actor {
       return;
     }
 
+    const auto &held_key = self.signer->consensus_key();
     promise_.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_pqStakeAuthorization>(
-        self.validator_id.value, authorization->key_id, td::BufferSlice(authorization->signature.signature)));
+        self.validator_id.value, authorization->key_id, static_cast<td::int32>(held_key.algorithm_id),
+        td::BufferSlice(held_key.public_key), td::BufferSlice(authorization->signature.signature)));
     stop();
   }
 

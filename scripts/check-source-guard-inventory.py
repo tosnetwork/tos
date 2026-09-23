@@ -31,6 +31,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "n6-skip-vote-semantics",
         "n6-threshold-proposal",
         "pending-finality-retry-policy-source",
+        "pq-stake-auth-response-source",
         "pq-e2e-initial-validators-source",
         "pq-finality-boundary-source",
         "pq-launch-cap-mutations",
