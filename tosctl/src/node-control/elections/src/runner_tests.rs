@@ -28,7 +28,43 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 // ---- Address helpers ----
 
 const POOL_ADDR: [u8; 32] = [0xBBu8; 32];
-const CONTROLLER_ADDR: [u8; 32] = [0x07u8; 32];
+struct ControllerFixture {
+    artifact: tempfile::NamedTempFile,
+    address: [u8; 32],
+    policy: Cell,
+}
+
+static CONTROLLER_FIXTURE: std::sync::LazyLock<ControllerFixture> =
+    std::sync::LazyLock::new(|| {
+        use chain_block::{HashmapE, HashmapType, IBitstring, Serializable, StateInit, write_boc};
+        let code =
+            BuilderData::with_raw(vec![0x11], 8).expect("code").into_cell().expect("code cell");
+        let data =
+            BuilderData::with_raw(vec![0x22], 8).expect("data").into_cell().expect("data cell");
+        let state = StateInit::with_code_and_data(code.clone(), data);
+        let state_cell = state.write_to_new_cell().expect("state").into_cell().expect("state cell");
+        let mut address = [0u8; 32];
+        address.copy_from_slice(state_cell.repr_hash().as_slice());
+        let mut dict = HashmapE::with_bit_len(256);
+        let key = SliceData::load_builder(
+            BuilderData::with_raw(code.repr_hash().as_slice().to_vec(), 256).expect("hash key"),
+        )
+        .expect("hash slice");
+        dict.set(key, &SliceData::default()).expect("admission");
+        let mut value = BuilderData::new();
+        value.append_bit_one().expect("presence");
+        value
+            .checked_append_reference(HashmapType::data(&dict).expect("root").clone())
+            .expect("root ref");
+        let mut artifact = tempfile::NamedTempFile::new().expect("birth artifact");
+        std::io::Write::write_all(&mut artifact, &write_boc(&state_cell).expect("BOC"))
+            .expect("artifact bytes");
+        ControllerFixture { artifact, address, policy: value.into_cell().expect("policy") }
+    });
+
+fn controller_addr() -> [u8; 32] {
+    CONTROLLER_FIXTURE.address
+}
 
 fn wallet_address() -> MsgAddressInt {
     MsgAddressInt::standard(-1, [0xAAu8; 32])
@@ -88,6 +124,7 @@ mock! {
         async fn new_adnl_addr(&mut self, perm_key_id: Vec<u8>, until: u64) -> anyhow::Result<Vec<u8>>;
         async fn validator_config(&mut self) -> anyhow::Result<ValidatorConfig>;
         async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
+        async fn live_controller_policy(&mut self) -> anyhow::Result<Cell>;
         async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;
         async fn sign(&mut self, key_hash: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>>;
         async fn create_pq_stake_authorization(
@@ -304,7 +341,8 @@ fn validate_message_parameters(
     if chain_block::pq_bytes::unpack_pq_bytes(&key_cell, 1312).ok() != Some(PQ_PUBLIC_KEY.to_vec())
         || chain_block::pq_bytes::unpack_pq_bytes(&sig_cell, 2420).ok()
             != Some(PQ_SIGNATURE.to_vec())
-        || slice.get_next_bit().ok() != Some(false)
+        || slice.get_next_bit().ok() != Some(true)
+        || slice.checked_drain_reference().ok().map(|witness| witness.bit_length()) != Some(544)
         || slice.remaining_bits() != 0
         || slice.remaining_references() != 0
     {
@@ -317,7 +355,13 @@ fn validate_message_parameters(
 // ---- Builder helpers ----
 
 fn default_binding(enable: bool) -> NodeBinding {
-    NodeBinding { wallet: "wallet".to_string(), pool: None, enable, status: Default::default() }
+    NodeBinding {
+        wallet: "wallet".to_string(),
+        pool: None,
+        controller_birth_state_init_boc: None,
+        enable,
+        status: Default::default(),
+    }
 }
 
 struct TestHarness {
@@ -348,6 +392,14 @@ impl TestHarness {
 
     fn with_pool(mut self) -> Self {
         self.pool_mock = Some(MockNominatorWrapperImpl::new());
+        let mut binding = default_binding(true);
+        binding.pool = Some("pool".to_string());
+        binding.controller_birth_state_init_boc =
+            Some(CONTROLLER_FIXTURE.artifact.path().to_string_lossy().into_owned());
+        self.bindings.insert("node-1".to_string(), binding);
+        self.provider_mock
+            .expect_live_controller_policy()
+            .returning(|| Ok(CONTROLLER_FIXTURE.policy.clone()));
         self
     }
 
@@ -420,7 +472,7 @@ fn setup_default_provider(
         })
         .returning(|_, _, _, _| {
             Ok(control_client::client_api::PqStakeAuthorization {
-                validator_id: vec![0x07; 32],
+                validator_id: controller_addr().to_vec(),
                 key_id: vec![0x08; 32],
                 algorithm_id: 1,
                 public_key: PQ_PUBLIC_KEY.to_vec(),
@@ -498,7 +550,7 @@ fn setup_pool(pool: &mut MockNominatorWrapperImpl) {
         Ok(NominatorRoles {
             owner_address: wallet_address(),
             validator_address: wallet_address(),
-            controller_address: MsgAddressInt::standard(-1, CONTROLLER_ADDR),
+            controller_address: MsgAddressInt::standard(-1, controller_addr()),
         })
     });
 }
@@ -575,8 +627,62 @@ async fn test_participate_new_key_with_pool() {
     let participant = node.participant.as_ref().unwrap();
     assert!(participant.stake > 0);
     assert_eq!(participant.stake, expected_stake);
+    assert!(
+        node.last_error.is_none(),
+        "pool stake failed before wallet send: {:?}",
+        node.last_error
+    );
     // With pool, wallet_addr should be the pool address
     assert_eq!(participant.wallet_addr, addr_bytes(&pool_address()));
+}
+
+#[tokio::test]
+async fn test_pool_first_stake_missing_birth_artifact_refuses_before_wallet_message() {
+    let node_id = "node-1";
+    let mut harness = TestHarness::new().with_pool();
+    harness.bindings.get_mut(node_id).expect("binding").controller_birth_state_init_boc = None;
+    setup_default_elector(&mut harness.elector_mock, ELECTION_ID, 0);
+    setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, Some(POOL_BALANCE));
+    harness.wallet_mock.expect_address().returning(|| wallet_address());
+    harness.wallet_mock.expect_message().times(0);
+    setup_pool(harness.pool_mock.as_mut().expect("pool"));
+    let mut runner = harness.build(node_id);
+    runner.run().await.expect("runner keeps the named node error");
+    let node = runner.nodes.get(node_id).expect("node");
+    assert!(node.participant.is_some(), "negative control never reached the stake attempt");
+    assert!(
+        node.last_error.as_deref().unwrap_or("").contains("no controller birth StateInit BOC"),
+        "wrong local refusal: {:?}",
+        node.last_error
+    );
+}
+
+#[tokio::test]
+async fn test_pool_controller_wrong_workchain_refuses_before_wallet_message() {
+    let node_id = "node-1";
+    let mut harness = TestHarness::new().with_pool();
+    setup_default_elector(&mut harness.elector_mock, ELECTION_ID, 0);
+    setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, Some(POOL_BALANCE));
+    harness.wallet_mock.expect_address().returning(|| wallet_address());
+    harness.wallet_mock.expect_message().times(0);
+    let pool = harness.pool_mock.as_mut().expect("pool");
+    pool.expect_address().returning(|| pool_address());
+    pool.expect_get_roles().returning(|| {
+        Ok(NominatorRoles {
+            owner_address: wallet_address(),
+            validator_address: wallet_address(),
+            controller_address: MsgAddressInt::standard(0, controller_addr()),
+        })
+    });
+    let mut runner = harness.build(node_id);
+    runner.run().await.expect("runner keeps the named node error");
+    let node = runner.nodes.get(node_id).expect("node");
+    assert!(node.participant.is_some(), "negative control never reached the stake attempt");
+    assert!(
+        node.last_error.as_deref().unwrap_or("").contains("masterchain account"),
+        "wrong local refusal: {:?}",
+        node.last_error
+    );
 }
 
 // =====================================================
@@ -644,7 +750,7 @@ async fn test_stake_already_accepted() {
             failed: false,
             finished: false,
             participants: vec![Participant {
-                pub_key: CONTROLLER_ADDR.to_vec(),
+                pub_key: controller_addr().to_vec(),
                 adnl_addr: ADNL_ADDR.to_vec(),
                 wallet_addr: wallet_addr_clone.clone(),
                 stake: MIN_STAKE,
@@ -866,7 +972,7 @@ async fn test_elections_finished_stake_accepted() {
             failed: true,
             finished: true,
             participants: vec![Participant {
-                pub_key: CONTROLLER_ADDR.to_vec(),
+                pub_key: controller_addr().to_vec(),
                 adnl_addr: ADNL_ADDR.to_vec(),
                 wallet_addr: wallet_addr_clone.clone(),
                 stake: MIN_STAKE,
@@ -1187,6 +1293,7 @@ async fn test_multiple_nodes_one_excluded() {
         NodeBinding {
             wallet: "w1".to_string(),
             pool: None,
+            controller_birth_state_init_boc: None,
             enable: true,
             status: Default::default(),
         },
@@ -1196,6 +1303,7 @@ async fn test_multiple_nodes_one_excluded() {
         NodeBinding {
             wallet: "w2".to_string(),
             pool: None,
+            controller_birth_state_init_boc: None,
             enable: false,
             status: Default::default(),
         },
@@ -1440,7 +1548,7 @@ async fn test_send_boc_failure() {
     provider.expect_sign().returning(|_key, _data| Ok(SIGNATURE.to_vec()));
     provider.expect_create_pq_stake_authorization().returning(|_, _, _, _| {
         Ok(control_client::client_api::PqStakeAuthorization {
-            validator_id: vec![0x07; 32],
+            validator_id: controller_addr().to_vec(),
             key_id: vec![0x08; 32],
             algorithm_id: 1,
             public_key: PQ_PUBLIC_KEY.to_vec(),
@@ -1685,7 +1793,7 @@ async fn test_second_tick_stake_already_sent() {
                 failed: false,
                 finished: false,
                 participants: vec![Participant {
-                    pub_key: CONTROLLER_ADDR.to_vec(),
+                    pub_key: controller_addr().to_vec(),
                     adnl_addr: ADNL_ADDR.to_vec(),
                     wallet_addr: wallet_addr_clone.clone(),
                     stake: MIN_STAKE,

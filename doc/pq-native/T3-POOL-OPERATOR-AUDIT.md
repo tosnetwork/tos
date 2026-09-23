@@ -51,22 +51,35 @@ order. Its tests parse the resulting body and require the 544-bit witness in
 the final reference; mutations that bypass either binding or omit the witness
 fail. This is a pure verifier, not a live ConfigParam 47 reader. Passing a hash
 copied from the artifact instead of one confirmed admitted on chain would
-defeat the policy half; neither product caller uses this seam yet.
+defeat the policy half. Both product callers now use the composed file-and-live-policy
+entry point described below; the pure verifier alone is not their evidence.
 
-The product handoff should retain the original deployment `StateInit` BOC as a
-public controller artifact associated with the configured pool. Reading a
+Both product callers now share an optional, backward-compatible
+`NodeBinding.controller_birth_state_init_boc` absolute-path locator. It names a
+public artifact, not a key. Old configurations deserialize without it, but a
+first stake then refuses locally; relative or unreadable paths also refuse.
+`config bind add --controller-birth-state-init-boc` sets it, preserves it when
+rebinding the same pool without a new value, and clears it when the pool
+changes. This config command does not produce the artifact or deploy an
+account.
+The runner compares the node's authorization ID with `pool.get_roles()`; the
+interactive command compares it with the controller in its configured SNP
+pool. Both read live ConfigParam 47 as a raw cell through chain RPC, check
+dictionary membership for the artifact's code hash, then use the verified
+builder before constructing or sending a wallet message. The source guard pins
+both callers to the live-policy read and verified builder. Rust negative tests
+cover the runner's missing locator, the command's missing/relative locator,
+and the shared builder's missing file, wrong controller and non-admitted code.
+This is local refusal and assembly evidence, not a real first-stake result.
+
+The operator must retain the original deployment `StateInit` BOC as a
+public controller artifact associated with the configured binding. Reading a
 controller's *current* account data cannot reconstruct its birth witness:
-controller storage changes after deployment. At each first-stake attempt, the
-daemon and interactive bid must deserialize that artifact, read live Param 47,
-require its code hash in the admitted dictionary, compare the artifact-derived
-address with both the node authorization's `validator_id` and the pool's
-configured controller address, then call the verified builder. If the artifact
-is absent, the dictionary is absent, or any binding differs, refuse locally
-before wallet message construction or send. The current config has pool
-addresses and controller roles but no deployment-StateInit artifact field or
-locator. Choosing how that durable artifact is provisioned into product config
-is still a separate handoff; the fixture's in-memory StateInit is not a product
-source. First accepted stakes plus live ConfigParam 34 remain the closure gate.
+controller storage changes after deployment. Existing deployment commands do
+not create or own this artifact, so a real operator must supply and retain the
+BOC at the configured absolute path; no deployment command or custody boundary
+was changed here. The fixture's in-memory StateInit is not a product source.
+First accepted stakes plus live ConfigParam 34 remain the closure gate.
 
 For the multi-nominator path specifically, `nominator-pool/pool.fc:142` parses
 the same pool-order field sequence as the single-nominator pool and `:669`

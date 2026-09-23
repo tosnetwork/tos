@@ -15,7 +15,10 @@ mod single_nominator;
 /// Trait for single nominator contract
 mod wrapper;
 
-pub use controller_birth::{new_stake_with_verified_controller_birth, verified_controller_birth_witness};
+pub use controller_birth::{
+    new_stake_from_birth_artifact, new_stake_with_verified_controller_birth,
+    require_live_controller_admission, verified_controller_birth_witness,
+};
 pub use messages::*;
 pub use single_nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapperImpl};
 pub use wrapper::*;

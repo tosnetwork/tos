@@ -34,7 +34,7 @@ def main() -> None:
         for marker in (
             route_marker,
             "create_pq_stake_authorization(",
-            "nominator::new_stake(&nominator::NewStakeParams {",
+            "live_controller_policy().await?",
             "validator_pubkey: authorization.public_key.as_slice()"
             if name == "election daemon"
             else "validator_pubkey: &authorization.public_key",
@@ -46,6 +46,30 @@ def main() -> None:
                 fail(f"{name} has {source.count(marker)} occurrences of {marker!r}, expected 1")
         if "0x654C5074" in source or ".sign(" in source:
             fail(f"{name} still contains the classical stake tag or a local signer call")
+        builder_calls = re.findall(
+            r"nominator::new_stake_from_birth_artifact\(\s*&nominator::NewStakeParams\s*\{",
+            source,
+        )
+        if len(builder_calls) != 1:
+            fail(f"{name} reaches the verified controller birth builder {len(builder_calls)} times, expected 1")
+        if "nominator::new_stake(&" in source or "nominator::new_stake_with_witness(&" in source:
+            fail(f"{name} bypasses the verified controller birth artifact builder")
+
+    runner = collapsed(pool_callers["election daemon"][0])
+    if runner.count("controller_birth_state_init_boc.as_deref().ok_or_else") != 1:
+        fail("election daemon no longer refuses a missing controller birth artifact")
+    wallet = collapsed(pool_callers["config-wallet pool command"][0])
+    path_read = wallet.find("let artifact_path = configured_birth_artifact_path(binding, &self.binding)?;")
+    message = wallet.find("let msg = wallet.message(")
+    if path_read < 0 or message < 0 or path_read >= message:
+        fail("config-wallet birth artifact refusal no longer precedes the fee-bearing wallet message")
+
+    policy_provider = collapsed(
+        root / "tosctl/src/node-control/elections/src/providers/default.rs"
+    )
+    for marker in ("chain_provider.get_config_param(47).await?", "ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell)"):
+        if policy_provider.count(marker) != 1:
+            fail(f"shared live controller policy reader no longer uses the raw ConfigParam 47 cell: {marker}")
 
     direct_path = collapsed(
         root / "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs"
@@ -67,7 +91,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization, the direct bid refuses, and the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization and the verified birth-artifact builder with live policy reads; the direct bid refuses; the multi-pool harness uses the production builder"
     )
 
 

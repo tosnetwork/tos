@@ -5,7 +5,11 @@
  * See the LICENSE file in the root of this repository.
  */
 
-use chain_block::{BuilderData, Cell, IBitstring, Serializable, StateInit};
+use chain_block::{
+    BuilderData, Cell, Deserializable, HashmapE, IBitstring, Serializable, SliceData, StateInit,
+    read_single_root_boc,
+};
+use std::path::Path;
 
 use super::messages::{NewStakeParams, new_stake_with_witness};
 
@@ -22,6 +26,65 @@ pub fn new_stake_with_verified_controller_birth(
     let witness =
         verified_controller_birth_witness(deployment, expected_validator_id, admitted_code_hash)?;
     new_stake_with_witness(params, Some(&witness))
+}
+
+/// Read a public birth artifact and live controller policy before building a
+/// fee-bearing pool order. The two identities must agree with each other and
+/// with the address derived from the original deployment StateInit.
+pub fn new_stake_from_birth_artifact(
+    params: &NewStakeParams<'_>,
+    artifact_path: &Path,
+    authorization_validator_id: &[u8; 32],
+    pool_controller_id: &[u8; 32],
+    live_param47: &Cell,
+) -> anyhow::Result<Cell> {
+    anyhow::ensure!(artifact_path.is_absolute(), "controller birth artifact path must be absolute");
+    anyhow::ensure!(
+        authorization_validator_id == pool_controller_id,
+        "node PQ stake identity does not match the pool's validator controller"
+    );
+    let bytes = std::fs::read(artifact_path).map_err(|error| {
+        anyhow::anyhow!(
+            "controller birth artifact {} cannot be read: {error}",
+            artifact_path.display()
+        )
+    })?;
+    let deployment = StateInit::construct_from_cell(read_single_root_boc(&bytes)?)?;
+    let code = deployment
+        .code
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("controller deployment StateInit has no code"))?;
+    let mut code_hash = [0u8; 32];
+    code_hash.copy_from_slice(code.repr_hash().as_slice());
+    require_live_controller_admission(live_param47, &code_hash)?;
+    new_stake_with_verified_controller_birth(
+        params,
+        &deployment,
+        authorization_validator_id,
+        &code_hash,
+    )
+}
+
+/// Require membership in the live ConfigParam 47 HashmapE(256), not merely
+/// equality with a code hash supplied by the artifact being checked.
+pub fn require_live_controller_admission(
+    policy: &Cell,
+    code_hash: &[u8; 32],
+) -> anyhow::Result<()> {
+    let mut view = SliceData::load_cell(policy.clone())?;
+    anyhow::ensure!(view.get_next_bit()?, "live ConfigParam 47 has no admitted controller codes");
+    let root = view.checked_drain_reference()?;
+    anyhow::ensure!(
+        view.remaining_bits() == 0 && view.remaining_references() == 0,
+        "live ConfigParam 47 has trailing data"
+    );
+    let dict = HashmapE::with_hashmap(256, Some(root));
+    let key = SliceData::load_builder(BuilderData::with_raw(code_hash.to_vec(), 256)?)?;
+    anyhow::ensure!(
+        dict.get(key)?.is_some(),
+        "controller deployment code is not admitted by live ConfigParam 47"
+    );
+    Ok(())
 }
 
 /// Derive the first-stake witness from the controller's original deployment StateInit.
@@ -75,7 +138,22 @@ pub fn verified_controller_birth_witness(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chain_block::{Deserializable, SliceData};
+    use chain_block::{HashmapType, SliceData, write_boc};
+
+    fn policy(admitted_code_hash: &[u8; 32]) -> Cell {
+        let mut dict = HashmapE::with_bit_len(256);
+        let key = SliceData::load_builder(
+            BuilderData::with_raw(admitted_code_hash.to_vec(), 256).expect("key"),
+        )
+        .expect("key slice");
+        dict.set(key, &SliceData::default()).expect("admission");
+        let mut value = BuilderData::new();
+        value.append_bit_one().expect("presence");
+        value
+            .checked_append_reference(HashmapType::data(&dict).expect("root").clone())
+            .expect("root ref");
+        value.into_cell().expect("policy cell")
+    }
 
     fn fixture() -> (StateInit, [u8; 32], [u8; 32]) {
         let mut code = BuilderData::new();
@@ -201,5 +279,68 @@ mod tests {
                 .to_string()
                 .contains("ConfigParam 47")
         );
+    }
+
+    #[test]
+    fn birth_artifact_requires_live_membership_and_matching_pool_controller() {
+        let (state, address, code_hash) = fixture();
+        let dir = tempfile::tempdir().expect("temporary artifact directory");
+        let path = dir.path().join("controller-state-init.boc");
+        let cell = state.write_to_new_cell().expect("state").into_cell().expect("cell");
+        std::fs::write(&path, write_boc(&cell).expect("BOC")).expect("artifact");
+        let signature = vec![0x33; 2420];
+        let public_key = vec![0x11; 1312];
+        let params = NewStakeParams {
+            query_id: 1,
+            stake_amount: 10_000_000_000_000,
+            validator_pubkey: &public_key,
+            stake_at: 1_700_000_000,
+            max_factor: 65_536,
+            adnl_addr: &[0x22; 32],
+            signature: &signature,
+        };
+        let body =
+            new_stake_from_birth_artifact(&params, &path, &address, &address, &policy(&code_hash))
+                .expect("admitted witnessed pool order");
+        let mut fields = SliceData::load_cell(body).expect("pool body");
+        fields.get_next_bits(32 + 64).expect("op and query");
+        let _coins = chain_block::Coins::construct_from(&mut fields).expect("stake");
+        fields.get_next_bits(32 + 32 + 256 + 16).expect("pool order fields");
+        fields.checked_drain_reference().expect("key");
+        fields.checked_drain_reference().expect("signature");
+        assert!(fields.get_next_bit().expect("witness presence"));
+        assert_eq!(fields.checked_drain_reference().expect("witness").bit_length(), 544);
+
+        let mut wrong = address;
+        wrong[0] ^= 1;
+        let error =
+            new_stake_from_birth_artifact(&params, &path, &address, &wrong, &policy(&code_hash))
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("pool's validator controller"), "wrong refusal: {error}");
+        let error =
+            new_stake_from_birth_artifact(&params, &path, &address, &address, &policy(&wrong))
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("not admitted by live ConfigParam 47"), "wrong refusal: {error}");
+        let empty_policy = BuilderData::with_raw(vec![0], 1)
+            .expect("empty policy")
+            .into_cell()
+            .expect("empty policy cell");
+        let error =
+            new_stake_from_birth_artifact(&params, &path, &address, &address, &empty_policy)
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("no admitted controller codes"), "wrong refusal: {error}");
+        let error = new_stake_from_birth_artifact(
+            &params,
+            &dir.path().join("absent.boc"),
+            &address,
+            &address,
+            &policy(&code_hash),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("cannot be read"), "wrong refusal: {error}");
     }
 }

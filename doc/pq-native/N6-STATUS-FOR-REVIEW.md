@@ -571,13 +571,15 @@ other classical Fift callers remain a separate T3 retirement task.
 
 T3's multi-nominator lifecycle preflight and first-round assertions remain
 static/unit evidence only; no new real chain has been started for that route.
-The launch-facing `runner.rs` and `config_wallet_cmd.rs` still pass no
-controller birth witness. A shared Rust builder now locally verifies a
-controller's original deployment StateInit against a node-bound validator ID
-and a caller-supplied admitted code hash before it emits a witnessed pool
-order, but neither product caller yet supplies the artifact or reads live
-ConfigParam 47 for it. This is a testable refusal seam, not first-stake
-acceptance evidence. T3 and `pool-first-stake-birth-witness-missing` stay OPEN;
+The launch-facing `runner.rs` and `config_wallet_cmd.rs` now read a configured
+original controller StateInit BOC, match it against node authorization and the
+pool controller, and require its code hash in the live ConfigParam 47
+dictionary before building a witnessed pool order. Missing or mismatched
+inputs refuse locally; legacy config remains readable but has no locator and
+therefore refuses a first stake. This is testable local assembly, not first-stake
+acceptance evidence. The deployment commands do not yet produce or retain this
+public artifact, and no real product-path stake has been observed. T3 and
+`pool-first-stake-birth-witness-missing` stay OPEN;
 the source/binding plan and remaining handoffs are in
 `T3-POOL-OPERATOR-AUDIT.md`.
 Supervisor acceptance at `c15d9f852` marks **T2 COMPLETE within

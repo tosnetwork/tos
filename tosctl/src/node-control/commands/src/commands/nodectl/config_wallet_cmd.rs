@@ -20,13 +20,14 @@ use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountS
 use colored::Colorize;
 use common::{
     WalletVersion,
-    app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
+    app_config::{AppConfig, KeyConfig, NodeBinding, PoolConfig, WalletConfig},
     chain_utils::{display_tos, tos_to_nanotos},
     task_cancellation::CancellationCtx,
     time_format,
 };
 use contracts::{
-    ElectorWrapper, ElectorWrapperImpl, NominatorWrapperImpl, Wallet, contract_provider, nominator,
+    DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, NominatorWrapperImpl, Wallet,
+    contract_provider, nominator,
 };
 use elections::providers::{DefaultElectionsProvider, ElectionsProvider};
 use secrets_vault::{errors::error::VaultError, vault::SecretVault};
@@ -472,7 +473,10 @@ impl WalletStakeCmd {
             .to_node_adnl_config(Some(vault.clone()))
             .await
             .context("ADNL client config")?;
-        let mut provider = DefaultElectionsProvider::new(adnl_client_cfg);
+        let mut provider = DefaultElectionsProvider::new(
+            adnl_client_cfg,
+            Arc::new(DefaultChainProvider::new(rpc_client.clone())),
+        );
 
         // Get active election ID from elector via RPC
         let elector = ElectorWrapperImpl::new(contract_provider!(rpc_client.clone()));
@@ -578,16 +582,47 @@ impl WalletStakeCmd {
             );
         }
 
-        // Build NEW_STAKE payload for nominator pool
-        let payload = nominator::new_stake(&nominator::NewStakeParams {
-            query_id: time_format::now(),
-            stake_amount: stake_nanotos,
-            validator_pubkey: &authorization.public_key,
-            stake_at: election_id as u32,
-            max_factor: max_factor_raw,
-            adnl_addr: &adnl_addr,
-            signature: &authorization.signature,
-        })?;
+        // The public birth artifact is separate from the node authorization:
+        // the node signs with its custodied key, while live Param47 admits the
+        // controller's deploy code. Refuse before constructing a wallet send.
+        let artifact_path = configured_birth_artifact_path(binding, &self.binding)?;
+        let controller = match pool_cfg {
+            PoolConfig::SNP { controller, .. } => controller
+                .parse::<MsgAddressInt>()
+                .context("invalid configured validator controller address")?,
+            _ => anyhow::bail!("manual PQ stake requires a single-nominator pool"),
+        };
+        anyhow::ensure!(
+            controller.workchain_id() == -1,
+            "configured pool validator controller must be a masterchain account"
+        );
+        let node_id_bytes: [u8; 32] = authorization
+            .validator_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("node PQ stake validator_id is not 32 bytes"))?;
+        let pool_id_bytes: [u8; 32] = controller
+            .address()
+            .get_bytestring(0)
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("pool validator controller ID is not 32 bytes"))?;
+        let live_policy = provider.live_controller_policy().await?;
+        let payload = nominator::new_stake_from_birth_artifact(
+            &nominator::NewStakeParams {
+                query_id: time_format::now(),
+                stake_amount: stake_nanotos,
+                validator_pubkey: &authorization.public_key,
+                stake_at: election_id as u32,
+                max_factor: max_factor_raw,
+                adnl_addr: &adnl_addr,
+                signature: &authorization.signature,
+            },
+            artifact_path,
+            &node_id_bytes,
+            &pool_id_bytes,
+            &live_policy,
+        )?;
 
         // Build wallet message to nominator pool (wallet sends only gas, pool has the stake)
         let wallet =
@@ -701,6 +736,21 @@ fn confirm(prompt: &str) -> anyhow::Result<bool> {
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
 }
 
+fn configured_birth_artifact_path<'a>(
+    binding: &'a NodeBinding,
+    name: &str,
+) -> anyhow::Result<&'a Path> {
+    let configured = binding.controller_birth_state_init_boc.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("binding '{name}' has no controller birth StateInit BOC configured; first PQ stake refused locally")
+    })?;
+    let path = Path::new(configured);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "binding '{name}' controller birth StateInit BOC path must be absolute; first PQ stake refused locally"
+    );
+    Ok(path)
+}
+
 fn resolve_pool_address(
     pool_cfg: &PoolConfig,
     validator_addr: &MsgAddressInt,
@@ -724,5 +774,35 @@ fn resolve_pool_address(
             (None, None) => anyhow::bail!("Pool has neither address nor owner configured"),
         },
         _ => anyhow::bail!("Unsupported pool kind for manual stake"),
+    }
+}
+
+#[cfg(test)]
+mod birth_artifact_tests {
+    use super::*;
+
+    fn binding(path: Option<&str>) -> NodeBinding {
+        NodeBinding {
+            wallet: "wallet".into(),
+            pool: Some("pool".into()),
+            controller_birth_state_init_boc: path.map(str::to_string),
+            enable: true,
+            status: Default::default(),
+        }
+    }
+
+    #[test]
+    fn wallet_stake_refuses_missing_or_relative_birth_artifact_locator() {
+        let missing = binding(None);
+        let error = configured_birth_artifact_path(&missing, "node-1").unwrap_err().to_string();
+        assert!(error.contains("no controller birth StateInit BOC"), "wrong refusal: {error}");
+        let relative = binding(Some("controller.boc"));
+        let error = configured_birth_artifact_path(&relative, "node-1").unwrap_err().to_string();
+        assert!(error.contains("must be absolute"), "wrong refusal: {error}");
+        let absolute = binding(Some("/var/lib/tos/controller.boc"));
+        assert_eq!(
+            configured_birth_artifact_path(&absolute, "node-1").unwrap(),
+            Path::new("/var/lib/tos/controller.boc")
+        );
     }
 }

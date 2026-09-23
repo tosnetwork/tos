@@ -37,6 +37,11 @@ pub struct BindAddCmd {
     wallet: String,
     #[arg(short = 'p', long = "pool", help = "Pool name (optional, must exist in pools)")]
     pool: Option<String>,
+    #[arg(
+        long = "controller-birth-state-init-boc",
+        help = "Absolute path to the controller's original public deployment StateInit BOC"
+    )]
+    controller_birth_state_init_boc: Option<String>,
 }
 
 #[derive(clap::Args, Clone)]
@@ -90,9 +95,16 @@ impl BindAddCmd {
             }
         }
 
+        let previous = config.bindings.get(&self.node);
+        let birth_artifact = select_birth_artifact_path(
+            self.controller_birth_state_init_boc.as_deref(),
+            previous,
+            self.pool.as_deref(),
+        )?;
         let binding = NodeBinding {
             wallet: self.wallet.clone(),
             pool: self.pool.clone(),
+            controller_birth_state_init_boc: birth_artifact,
             enable: false,
             status: Default::default(),
         };
@@ -108,6 +120,59 @@ impl BindAddCmd {
             pool_info
         );
         Ok(())
+    }
+}
+
+fn select_birth_artifact_path(
+    requested: Option<&str>,
+    previous: Option<&NodeBinding>,
+    pool: Option<&str>,
+) -> anyhow::Result<Option<String>> {
+    if requested.is_some() && pool.is_none() {
+        anyhow::bail!("controller birth StateInit BOC requires a pool binding");
+    }
+    let value = requested.or_else(|| {
+        previous.and_then(|old| {
+            (old.pool.as_deref() == pool)
+                .then(|| old.controller_birth_state_init_boc.as_deref())
+                .flatten()
+        })
+    });
+    if let Some(path) = value {
+        anyhow::ensure!(
+            Path::new(path).is_absolute(),
+            "controller birth StateInit BOC path must be absolute"
+        );
+    }
+    Ok(value.map(str::to_string))
+}
+
+#[cfg(test)]
+mod birth_artifact_binding_tests {
+    use super::*;
+
+    #[test]
+    fn binding_preserves_artifact_only_for_the_same_pool() {
+        let old = NodeBinding {
+            wallet: "wallet".into(),
+            pool: Some("pool-a".into()),
+            controller_birth_state_init_boc: Some("/var/lib/tos/controller.boc".into()),
+            enable: false,
+            status: Default::default(),
+        };
+        assert_eq!(
+            select_birth_artifact_path(None, Some(&old), Some("pool-a")).unwrap(),
+            old.controller_birth_state_init_boc
+        );
+        assert_eq!(select_birth_artifact_path(None, Some(&old), Some("pool-b")).unwrap(), None);
+        let error = select_birth_artifact_path(Some("relative.boc"), Some(&old), Some("pool-a"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must be absolute"), "wrong refusal: {error}");
+        let error = select_birth_artifact_path(Some("/tmp/controller.boc"), None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("requires a pool"), "wrong refusal: {error}");
     }
 }
 
