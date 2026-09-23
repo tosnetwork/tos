@@ -208,6 +208,7 @@ def main() -> int:
     if len(positive_lines) != 2:
         fail(f"PQ first election has {len(positive_lines)} positive stake call sites, expected three-then-four")
     restart_line = one_call(election, "restart_node")
+    console_ready_line = one_call(election, "wait_pq_console_ready_after_restart")
     pool_negative_line = one_call(election, "assert_pq_first_round_negative_cases")
     duplicate_line = one_call(election, "assert_duplicate_pq_key_refused")
     activation_events = [
@@ -224,7 +225,7 @@ def main() -> int:
     recovery_line = one_call(election, "assert_pq_early_recovery_no_credit")
     if not (
         negative_line < pool_negative_line < positive_lines[0]
-        < restart_line < positive_lines[1] < duplicate_line
+        < restart_line < console_ready_line < positive_lines[1] < duplicate_line
         < activated_line < liveness_line < recovery_line
     ):
         fail("PQ first election no longer orders negative, three stakes, restart, fourth stake")
@@ -256,6 +257,11 @@ def main() -> int:
             fail(f"PQ first election lost {property_name}")
     if "actual_adnl != expected_adnl" not in election_text or "self.first_config34.main != VALIDATOR_COUNT" not in election_text:
         fail("PQ election no longer requires four matching ADNL identities and four main validators")
+    if len(call_lines(election, "require_pq_config34_associations")) != 1:
+        fail("PQ election no longer checks controller-to-ADNL pairs from the same ConfigParam 34 records")
+    association = method(tree, "require_pq_config34_associations")
+    if "actual != expected" not in ast.unparse(association):
+        fail("PQ ConfigParam 34 association check no longer compares paired identities and ADNL IDs")
     pq_negatives = method(tree, "assert_pq_first_round_negative_cases")
     negative_text = ast.unparse(pq_negatives)
     for expected in ("'under-minimum', election_id, 1001 * NANO, False, 5",
@@ -273,9 +279,15 @@ def main() -> int:
     recovery_text = ast.unparse(recovery)
     if "compute_returned_stake" not in recovery_text or "after_credit != 0" not in recovery_text:
         fail("PQ early recovery no longer checks the pool-owned elector credit")
+    readiness = method(tree, "wait_pq_console_ready_after_restart")
+    readiness_text = ast.unparse(readiness)
+    if "get_actor_stats" not in readiness_text or "error.message != 'Connection closed'" not in readiness_text:
+        fail("PQ node restart no longer uses a bounded, read-only console readiness probe")
     config_reader = method(tree, "get_config34")
     if "validator_id:x([0-9A-Fa-f]{64})" not in ast.unparse(config_reader):
         fail("live ConfigParam 34 reader no longer extracts PQ validator IDs")
+    if len(call_lines(config_reader, "parse_pq_validator_adnl_pairs")) != 1:
+        fail("live ConfigParam 34 reader no longer parses identity/ADNL from each PQ record")
     print(
         "PQ_ELECTION_FIXTURE_SOURCE_OK: controller identity is asserted before boot; "
         "the live Param 47 read-back call precedes deployment; "
@@ -283,8 +295,9 @@ def main() -> int:
         "Python engine-console transport admits the PQ authorization query; "
         "generated TL response fields are checked before snapshot/node boot and hashed in the snapshot; "
         "PQ candidates call the shared node-authorized, keyword-compatible Rust nominator::new_stake_with_witness pool-order path; "
-        "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with exact PQ IDs are required; "
-        "reason-8 negative control precedes positive stakes"
+        "the three exact pool-route refusals precede three accepted stakes, a restarted and console-ready fourth stake, and a duplicate-key refusal; "
+        "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
+        "three-of-four liveness and pool-owned early recovery checks follow activation"
     )
     return 0
 

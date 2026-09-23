@@ -63,6 +63,7 @@ from pytosiq_core import (  # noqa: E402
 )
 from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
 from tosapi import tos_api  # noqa: E402
+from toslib.errors import LocalError  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
@@ -190,7 +191,46 @@ class Config34:
     validator_ids: list[str]
     public_keys: list[str]
     adnl_ids: list[str]
+    validator_adnl_pairs: list[tuple[str, str]]
     raw: str
+
+
+def parse_pq_validator_adnl_pairs(output: str) -> list[tuple[str, str]]:
+    """Bind identity and ADNL from the same decoded ConfigParam 34 record."""
+    markers = list(re.finditer(r"\bvalidator_pq\b", output))
+    identities = list(re.finditer(
+        r"\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})", output
+    ))
+    if len(markers) != len(identities):
+        raise ValueError(
+            "ConfigParam 34 has a PQ validator record without a 256-bit validator_id"
+        )
+    pairs = []
+    for index, identity in enumerate(identities):
+        end = identities[index + 1].start() if index + 1 < len(identities) else len(output)
+        section = output[identity.end():end]
+        adnl = re.findall(r"\badnl_addr:x([0-9A-Fa-f]{64})", section)
+        if len(adnl) != 1:
+            raise ValueError(
+                f"ConfigParam 34 PQ validator {identity.group(1)} has {len(adnl)} ADNL IDs, expected one"
+            )
+        pairs.append((identity.group(1).upper(), adnl[0].upper()))
+    if len({identity for identity, _ in pairs}) != len(pairs):
+        raise ValueError("ConfigParam 34 repeats a PQ validator ID")
+    if len({adnl for _, adnl in pairs}) != len(pairs):
+        raise ValueError("ConfigParam 34 repeats a PQ validator ADNL ID")
+    return pairs
+
+
+def require_pq_config34_associations(
+    config: Config34, expected: dict[str, str]
+) -> None:
+    actual = dict(config.validator_adnl_pairs)
+    if len(config.validator_adnl_pairs) != len(expected) or actual != expected:
+        raise AssertionError(
+            "PQ elected ConfigParam 34 controller-to-ADNL association differs: "
+            f"expected={expected} actual={actual}"
+        )
 
 
 def utc_now() -> str:
@@ -1155,6 +1195,7 @@ class ValidatorElectionRehearsal:
             validator_ids=re.findall(r"validator_id:x([0-9A-Fa-f]{64})", output),
             public_keys=re.findall(r"pubkey:x([0-9A-Fa-f]{64})", output),
             adnl_ids=re.findall(r"adnl_addr:x([0-9A-Fa-f]{64})", output),
+            validator_adnl_pairs=parse_pq_validator_adnl_pairs(output),
             raw=output,
         )
 
@@ -2902,6 +2943,7 @@ class ValidatorElectionRehearsal:
             total_stake=three_stake, required_total=VALIDATOR_COUNT * EFFECTIVE_STAKE,
         )
         await self.restart_node(3, "open first PQ election")
+        await self.wait_pq_console_ready_after_restart(3)
         await self.submit_pq_candidate(3, self.first_election_id)
         participant_output = await self.runmethod("participant_list_extended")
         (self.artifacts_dir / "pq-first-participants.txt").write_text(participant_output)
@@ -2933,6 +2975,11 @@ class ValidatorElectionRehearsal:
         }
         expected_adnl = {node.validator_key.id.hex().upper() for node in self.nodes}
         actual_adnl = {value.upper() for value in self.first_config34.adnl_ids}
+        expected_associations = {
+            controller.address.hash_part.hex().upper(): node.validator_key.id.hex().upper()
+            for controller, node in zip(self.controllers, self.nodes, strict=True)
+        }
+        require_pq_config34_associations(self.first_config34, expected_associations)
         if (
             actual_ids != expected_ids_hex
             or actual_adnl != expected_adnl
@@ -2953,6 +3000,30 @@ class ValidatorElectionRehearsal:
         )
         await self.verify_three_of_four_liveness()
         await self.assert_pq_early_recovery_no_credit()
+
+    async def wait_pq_console_ready_after_restart(
+        self, index: int, *, timeout: float = 30.0
+    ) -> None:
+        """Probe the restarted node without risking a stake in a reconnect window."""
+        deadline = time.monotonic() + timeout
+        retries = 0
+        while time.monotonic() < deadline:
+            try:
+                await self.nodes[index].engine_console.get_actor_stats()
+                self.event(
+                    "pq_console_ready_after_restart", node=index + 1,
+                    transient_connection_closures=retries,
+                )
+                return
+            except LocalError as error:
+                if error.code != 0 or error.message != "Connection closed":
+                    raise
+                retries += 1
+                await asyncio.sleep(0.5)
+        raise TimeoutError(
+            f"validator {index + 1} engine console stayed disconnected for "
+            f"{timeout:.1f}s after restart; transient Connection closed count={retries}"
+        )
 
     async def assert_pq_early_recovery_no_credit(self) -> None:
         """The pool owns the credit; the validator wallet does not."""

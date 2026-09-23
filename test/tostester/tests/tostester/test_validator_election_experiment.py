@@ -159,6 +159,67 @@ def test_pq_first_round_negatives_pin_three_elector_reasons_and_unchanged_stake(
         asyncio.run(rehearsal.assert_pq_first_round_negative_cases(1_700_000_000))
 
 
+def test_restarted_pq_node_waits_on_read_only_console_probe(tmp_path):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pq-restart", base_port=26_000,
+        build_dir=REPO / "build", sample_interval=10,
+        profile=stage_a.PROFILES["a"], pq_election=True,
+    )
+    calls = []
+
+    class FakeConsole:
+        async def get_actor_stats(self):
+            calls.append("get_actor_stats")
+            if len(calls) == 1:
+                raise stage_a.LocalError(0, "Connection closed")
+            return "ready"
+
+    rehearsal.nodes = [SimpleNamespace(engine_console=FakeConsole())]
+    asyncio.run(rehearsal.wait_pq_console_ready_after_restart(0))
+    assert calls == ["get_actor_stats", "get_actor_stats"]
+    assert rehearsal.events[-1]["transient_connection_closures"] == 1
+
+    class WrongFailure:
+        async def get_actor_stats(self):
+            raise stage_a.LocalError(500, "not authorized")
+
+    rehearsal.nodes = [SimpleNamespace(engine_console=WrongFailure())]
+    with pytest.raises(stage_a.LocalError, match="not authorized"):
+        asyncio.run(rehearsal.wait_pq_console_ready_after_restart(0))
+
+
+def test_pq_config34_requires_identity_adnl_pairs_not_just_two_sets():
+    first = "11" * 32
+    second = "22" * 32
+    first_adnl = "AA" * 32
+    second_adnl = "BB" * 32
+    output = (
+        f"value:(validator_pq validator_id:x{first} algorithm_id:1 "
+        f"key_id:x{'33' * 32} weight:17 adnl_addr:x{first_adnl})\n"
+        f"value:(validator_pq validator_id:x{second} algorithm_id:1 "
+        f"key_id:x{'44' * 32} weight:17 adnl_addr:x{second_adnl})"
+    )
+    expected = {first.upper(): first_adnl, second.upper(): second_adnl}
+
+    def config(raw):
+        return stage_a.Config34(
+            utime_since=1, utime_until=2, total=2, main=2, total_weight=34,
+            validator_ids=[first, second], public_keys=[],
+            adnl_ids=stage_a.re.findall(r"adnl_addr:x([0-9A-Fa-f]{64})", raw),
+            validator_adnl_pairs=stage_a.parse_pq_validator_adnl_pairs(raw), raw=raw,
+        )
+
+    stage_a.require_pq_config34_associations(config(output), expected)
+    swapped = output.replace(first_adnl, "CC" * 32).replace(second_adnl, first_adnl).replace(
+        "CC" * 32, second_adnl
+    )
+    assert set(config(swapped).adnl_ids) == {first_adnl, second_adnl}
+    with pytest.raises(AssertionError, match="controller-to-ADNL association differs"):
+        stage_a.require_pq_config34_associations(config(swapped), expected)
+    with pytest.raises(ValueError, match="has 0 ADNL IDs"):
+        stage_a.parse_pq_validator_adnl_pairs(output.replace(second_adnl, ""))
+
+
 def test_experiment_reserves_four_consecutive_loopback_rpc_ports():
     profile = stage_a.ExperimentProfile(
         duration_seconds=10_800,
