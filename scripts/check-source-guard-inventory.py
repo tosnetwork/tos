@@ -25,6 +25,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "n6-manifest-completeness",
         "n6-microbench-results",
         "n6-scale-sweep-cardinality",
+        "n6-skip-vote-semantics",
         "n6-threshold-proposal",
         "pending-finality-retry-policy-source",
         "pq-e2e-initial-validators-source",

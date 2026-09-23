@@ -793,6 +793,35 @@ zero. This does not assert that the structured channel lacks skip votes: it is
 a run-local refusal because a run without cast skip votes and a telemetry path
 that dropped them are observationally identical from those batches alone.
 
+The original soak3 node logs and structured batches were deleted during an
+environment disk cleanup after the reduced 576-text/zero-structured summary
+was extracted. Those exact lines cannot be classified now; their absence is
+not evidence that they never existed. A fresh 21-validator run at `e586c9dc7`
+retained both sources and did exhibit masterchain skip votes. The
+`audit-n6-skip-vote-semantics.py` site audit classified all 21 validator logs:
+
+| Masterchain text source site | Lines |
+|---|---:|
+| Local `BroadcastVote` requests | 233 |
+| Local cast `TraceEvent(Voted)` | 233 |
+| Local vote persistence | 466 |
+| Certificate / other diagnostic rendering | 561 |
+
+Incoming and outgoing protocol renderings contributed zero in this run; the
+classifier has separate buckets for them. Of the 233 local-cast text events,
+222 lie within their node's structured-log flush horizon and match **exactly
+one** structured `Voted(skipVote)` by node and slot. The remaining 11 occurred
+after the last structured batch timestamp during teardown and are reported as
+unflushed tail events, not as lost telemetry. The site-audit artifact is
+`/tmp/n6-skip-vote-semantics-e586c9dc7.json` (SHA-256
+`f77311000a3303a58578fc9abb4ccecaea5b6cd8a945592ad1f6ca1c0e25ff83`).
+The source-only `n6-skip-vote-semantics` gate distinguishes peer, cast and
+basechain text and fails if a local cast lacks its structured counterpart.
+The registry machine-refuses treating a raw `SkipVote` substring count as a
+vote count. This fresh join establishes text-log semantics and the local-cast
+invariant; it does **not** recreate soak3's deleted 576 lines or explain the
+separate long FinalCert tail.
+
 This is `COLOCATED_DIAGNOSTIC_ONLY` evidence with
 `release_evidence_eligible=false`. Its observation intervals measure when all colocated
 nodes expose the agreed block; they are not persisted-finality p99 and do not

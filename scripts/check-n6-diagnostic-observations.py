@@ -104,6 +104,30 @@ def main() -> int:
             "colocated-launch-committee-skip-runs no longer records that measured "
             "skip runs and slow intervals were disjoint"
         )
+    semantics = observed_at.get("text_semantics_follow_up", {})
+    expected_semantics = {
+        "status": "LOCAL_CAST_INVARIANT_CONFIRMED_ON_FRESH_RUN",
+        "result_artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
+        "site_audit_sha256": "f77311000a3303a58578fc9abb4ccecaea5b6cd8a945592ad1f6ca1c0e25ff83",
+        "text_lines_by_site": {
+            "local_broadcast_vote_request": 233,
+            "local_cast_trace_event": 233,
+            "local_vote_persistence": 466,
+            "certificate_or_other_diagnostic": 561,
+        },
+        "structured_local_cast_events": 222,
+        "local_casts_after_structured_horizon": 11,
+        "local_cast_to_structured_one_to_one_within_horizon": True,
+        "raw_skipvote_substring_count_eligible_as_vote_evidence": False,
+    }
+    for field, expected in expected_semantics.items():
+        if semantics.get(field) != expected:
+            fail(
+                "colocated-launch-committee-skip-runs changed SkipVote evidence field "
+                f"{field}: expected={expected!r} actual={semantics.get(field)!r}"
+            )
+    if "LOST_TO_ENVIRONMENT_CLEANUP" not in semantics.get("original_soak3_artifact", ""):
+        fail("the lost soak3 source artifact is no longer disclosed")
     print(
         "N6_DIAGNOSTIC_OBSERVATIONS_OK: "
         f"validated {len(observations)} durable diagnostic observation"

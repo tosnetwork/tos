@@ -109,6 +109,23 @@
           "slow_observation_intervals": 6,
           "tail_assessment": "The six intervals are mixed: 698->699 is dominated by a 2751.8 ms first-FinalCert interval; other tails contain shorter FinalCert intervals and material successful-query or local accepted-to-exposed lag. 393->394 has no measured component near its 1200.4 ms all-node observation interval, so it is not attributed to consensus. The per-height and per-node join is in the result artifact and summarized in N6-STATUS-FOR-REVIEW.md. These components are not additive and do not establish a production cause."
         },
+        "text_semantics_follow_up": {
+          "status": "LOCAL_CAST_INVARIANT_CONFIRMED_ON_FRESH_RUN",
+          "exact_commit": "e586c9dc7",
+          "result_artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
+          "site_audit_sha256": "f77311000a3303a58578fc9abb4ccecaea5b6cd8a945592ad1f6ca1c0e25ff83",
+          "text_lines_by_site": {
+            "local_broadcast_vote_request": 233,
+            "local_cast_trace_event": 233,
+            "local_vote_persistence": 466,
+            "certificate_or_other_diagnostic": 561
+          },
+          "structured_local_cast_events": 222,
+          "local_casts_after_structured_horizon": 11,
+          "local_cast_to_structured_one_to_one_within_horizon": true,
+          "raw_skipvote_substring_count_eligible_as_vote_evidence": false,
+          "original_soak3_artifact": "LOST_TO_ENVIRONMENT_CLEANUP; the reduced result preserved 576 masterchain text lines and zero structured events, but not the originating text lines or structured batches. The fresh run establishes the source-site semantics and within-horizon invariant; it cannot classify the historical 576 lines individually."
+        },
         "committee_wide_structured_follow_up": {
           "exact_commit": "85be09801f9b58de75f904e4615ff74f7897f54c",
           "duration_seconds": 180,
@@ -146,8 +163,8 @@
           "ordinary_intervals_coincident_with_skip_run": 3
         }
       },
-      "diagnostic_question": "Why did the 82f2e8134 run contain 576 masterchain SkipVote text lines and zero structured skipVote events: do the text lines represent peer broadcasts or relays that should not produce local voted events, or did the structured path lose events? Independently, which component contributes each slow all-node exposure interval: consensus finalization, local block application, lite-server exposure, query latency, or the slowest-node barrier?",
-      "closure_condition": "Trace the identity and direction of a text-logged SkipVote through receipt, relay and local vote casting into consensus.simplex.stats.voted, demonstrating which interpretation explains the text/structured discrepancy. Identify the concrete cause class of the slow intervals on co-located and one-validator-per-host topologies and add a regression gate for each demonstrated defect. A single-node count, an assumption that co-location is responsible, preserved safety, or the now-refuted assertion that skip runs explain the slow intervals is not closure."
+      "diagnostic_question": "The fresh 21-validator run established that text SkipVote sites have different semantics and that every comparable-window local cast has one structured Voted(skipVote) event. The original soak3's exact 576/0 source lines were lost during environment cleanup and cannot be individually reclassified. The remaining open question is the concrete cause of the slow consensus and non-consensus exposure components on co-located and one-validator-per-host topologies.",
+      "closure_condition": "Identify the concrete cause class of the slow intervals on co-located and one-validator-per-host topologies and add a regression gate for each demonstrated defect. The fresh run's classified, node-and-slot-joined local-cast invariant closes the generic text-versus-structured semantics question without pretending to reconstruct the deleted soak3 lines. A raw substring count, an assumption that co-location is responsible, preserved safety, or the now-refuted assertion that skip runs explain the slow intervals is not closure."
     }
   }
 }
