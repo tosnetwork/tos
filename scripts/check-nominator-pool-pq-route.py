@@ -46,6 +46,16 @@ def keyword(call: ast.Call, name: str) -> str | None:
 
 def validate(source: str) -> None:
     tree = ast.parse(source)
+    assignments = {
+        target.id: ast.unparse(node.value)
+        for node in tree.body if isinstance(node, ast.Assign)
+        for target in node.targets if isinstance(target, ast.Name)
+    }
+    require(assignments.get("CONTROLLER_FORWARDING_ALLOWANCE") == "1 * NANO",
+            "controller forwarding allowance is not one TOS")
+    require(assignments.get("POOL_STAKE_VALUE") ==
+            "NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE + CONTROLLER_FORWARDING_ALLOWANCE",
+            "pool stake no longer includes both Elector and controller forwarding allowances")
     for legacy in ("validator-elect-req.fif", "validator-elect-signed.fif", "validator-elect-req>B"):
         require(legacy not in source, f"multi-nominator lifecycle still calls classical {legacy}")
     prepare = method(tree, "prepare_pq_election_fixture")
@@ -107,6 +117,7 @@ def validate(source: str) -> None:
         "signature": "auth.signature",
         "witness": "controller.birth_witness",
         "adnl_addr": "node.validator_key.id",
+        "stake_amount": "POOL_STAKE_VALUE",
     }.items():
         require(keyword(builder, field) == expected,
                 f"production pool builder {field} is not bound to node/controller data")
@@ -150,6 +161,12 @@ def self_test(source: str) -> None:
         "one support principal": ("SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE", "SUPPORT_POOL_CAPITAL = 1 * POOL_STAKE_VALUE"),
         "wrong election accepted": ("data.stake_at == election_id", "data.stake_at >= 0"),
         "credit not consumed": ("predicate=lambda value: value == 0", "predicate=lambda value: value >= 0"),
+        "controller allowance omitted":
+            (" + CONTROLLER_FORWARDING_ALLOWANCE\n", "\n"),
+        "controller allowance zeroed":
+            ("CONTROLLER_FORWARDING_ALLOWANCE = 1 * NANO", "CONTROLLER_FORWARDING_ALLOWANCE = 0 * NANO"),
+        "stake builder bypasses budgeted amount":
+            ("stake_amount=POOL_STAKE_VALUE", "stake_amount=NETWORK_MIN_STAKE"),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
@@ -165,7 +182,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and paired Config34 lookup are wired; no live stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder with both forwarding and Elector allowances, and paired Config34 lookup are wired; no live stake is claimed")
 
 
 if __name__ == "__main__":

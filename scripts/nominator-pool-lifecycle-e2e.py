@@ -112,7 +112,10 @@ MIN_NOMINATOR_STAKE = 100 * NANO
 # remaining principal (with the max-factor surplus reported separately).
 NETWORK_MIN_STAKE = 10_000 * NANO
 ELECTOR_CONFIRMATION_ALLOWANCE = 1 * NANO
-POOL_STAKE_VALUE = NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE
+# The multi-nominator pool forwards the exact order amount. Its controller's
+# forwarding fee comes out of that value before the Elector reserves 1 TOS.
+CONTROLLER_FORWARDING_ALLOWANCE = 1 * NANO
+POOL_STAKE_VALUE = NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE + CONTROLLER_FORWARDING_ALLOWANCE
 # ConfigParam 40's worst tier is TM$2500 plus a quarter of the stake, so the
 # validator has to have posted at least that before pool.fc will stake.
 VALIDATOR_OWN_DEPOSIT = 5_100 * NANO

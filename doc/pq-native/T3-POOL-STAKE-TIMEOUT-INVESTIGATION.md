@@ -1,8 +1,45 @@
 # T3 multi-nominator first-stake timeout: bounded investigation
 
-Status: **OPEN — the rejection path and root cause are not yet observed.** This
-is a same-host diagnostic run, not launch or release acceptance. Do not extend
-the 180-second wait or mark the stake accepted on this evidence.
+Status: **OPEN — a contract sandbox reproduces a precise amount-based refusal,
+but the retained live run did not capture its Elector reply.** This is a
+same-host diagnostic, not launch or release acceptance. Do not extend the
+180-second wait or mark the live stake accepted on this evidence.
+
+## Contract-level falsification and bounded fixture correction
+
+The original section below deliberately preserves the hypothesis and its
+pre-test uncertainty. `a_multi_nominator_first_stake_exposes_the_exact_refusal`
+now exercises the compiled multi-nominator pool, PQ controller and Elector
+with the production `nominator::new_stake_with_witness` builder. The pool is
+provisioned with the same 5,100 TOS validator contribution but no nominator
+entries; this isolates transfer economics and does **not** recreate the full
+eight-nominator live state. With the lifecycle script's old 10,001 TOS order:
+
+| Observable | Sandbox result |
+| --- | ---: |
+| Pool → controller | 10,001 TOS |
+| Controller → Elector | 10,000.26741 TOS |
+| Controller aborted / bounce to pool / Elector aborted | false / false / false |
+| Elector reply | `STAKE_RETURNED` (`0xee6f454c`), reason **5** |
+| Pool state / controller membership | 0 / absent |
+
+The controller forwarding path consumed 0.73259 TOS. The Elector then reserves
+1 TOS before its 10,000 TOS minimum check, so the old order has only
+9,999.26741 TOS left for the minimum. This is a measured contract-path
+mechanism, **not** a recovered reply from the earlier live report. The
+paired `a_multi_nominator_first_stake_with_forwarding_allowance_is_accepted`
+test requests 10,002 TOS. It measures pool → controller 10,002 TOS,
+controller → Elector 10,001.26741 TOS, no abort or bounce, Elector
+`STAKE_ACCEPTED` (`0xf374484c`) with reason 0, pool state 2, and the
+controller in the Elector participant book. Both tests complete as a short
+contract sandbox without booting a network.
+
+The lifecycle fixture now budgets a separate 1 TOS controller forwarding
+allowance as well as the existing 1 TOS Elector confirmation allowance. Its
+route guard pins both the formula and the builder argument; its budget test
+pins the resulting amount. This changes no production consensus or contract
+parameter and does not close T3. Closure still needs a fixed-tree live run
+showing `STAKE_ACCEPTED` and pool state 2, with its own preserved report.
 
 ## Exact retained report and observed boundary
 

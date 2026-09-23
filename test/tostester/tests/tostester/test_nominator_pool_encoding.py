@@ -196,6 +196,12 @@ def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_wit
 
 
 def test_lifecycle_budget_covers_genesis_and_two_support_principals(monkeypatch):
+    assert lifecycle.CONTROLLER_FORWARDING_ALLOWANCE == lifecycle.NANO
+    assert lifecycle.POOL_STAKE_VALUE == (
+        lifecycle.NETWORK_MIN_STAKE
+        + lifecycle.ELECTOR_CONFIRMATION_ALLOWANCE
+        + lifecycle.CONTROLLER_FORWARDING_ALLOWANCE
+    )
     ordinary = lifecycle.require_lifecycle_funding_budget(
         integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
     )
