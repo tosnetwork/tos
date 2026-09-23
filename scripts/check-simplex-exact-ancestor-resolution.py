@@ -39,5 +39,11 @@ candidate_resolver = (root / "validator/consensus/simplex/candidate-resolver.cpp
 for required in ("DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS = 16", "TOS_SIMPLEX_CANDIDATE_RESOLVE_MAX_ATTEMPTS"):
     if required not in candidate_resolver:
         fail(f"candidate resolution retry bound missing: {required}")
+if not re.search(
+    r"if\s*\(attempts_remaining--\s*<=\s*0\)\s*\{\s*"
+    r"co_return\s+td::Status::Error\(\s*ErrorCode::notready",
+    candidate_resolver,
+):
+    fail("exhausted exact-candidate retries must return notready")
 
 print("SIMPLEX_EXACT_ANCESTOR_OK")

@@ -2,8 +2,21 @@
 
 Status: **component mechanism reproduced; historical actor ordering remains unproved**.
 
-The investigation branch `n6/merkle-repro-investigation` adds
-`test-consensus-simplex2-merkle-skipped-exact-ancestor-repro`. It calls the
+## Evidence versions
+
+The component RED/GREEN logs below belong to the **pre-fix** `bb3cdc788`
+investigation stage. The fix commit `bc379ec2c` removed the unsafe selector
+and its test. At current branch head, the registered test is
+`test-consensus-simplex2-merkle-exact-parent-height-control`; it checks the
+Merkle N/N-1 symptom, and the separate source guard pins exact CandidateId
+resolution. Neither exercises `StateResolverImpl` under a controlled
+certificate arrival order. Thus the historical actor-level RED/GREEN gate
+remains OPEN; do not cite the older component log as post-fix runtime proof.
+
+## Historical component reproduction (`bb3cdc788`)
+
+At `bb3cdc788`, the branch added
+`test-consensus-simplex2-merkle-skipped-exact-ancestor-repro`. It called the
 production `select_skipped_slot_resolution()` with an exact requested
 `CandidateId`, an installed slot-level SkipCert indication, and no locally
 installed NotarCert. The current policy selects `UseAvailableBase`. The test
@@ -19,7 +32,8 @@ hashes as both retained September errors:
 | 5 | 4 | `C8D1E14FE26D8983DA2383CF719AFF88B3F9EFA8A5B09C625AB12EFFC2926932` | `92345EFB21EC9E506E9FDB654AC3E84E46282531698C7F6AF88877245121DD54` |
 | 23 | 22 | `69A2DC37E67A1D7398E4D188E1468DD4CEB1181358C0CAB56BAE28BF661F8FAA` | `19088211A6DB566029368CE0D6F45C68DF030896091F186C070725F49A43CB57` |
 
-Run the component test with:
+To rerun the historical component test, use a separate worktree checked out
+at `bb3cdc788`, then run:
 
 ```sh
 cmake --build build --target test-consensus -j2
