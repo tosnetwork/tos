@@ -1,6 +1,7 @@
 # N6 Merkle exact-ancestor investigation — component reproduction
 
-Status: **actor-level old-RED/new-GREEN gate met at `1a2f33940`; attribution of the two
+Status: **actor-level old-RED/new-GREEN gate met at `1a2f33940`, extended to the
+peer-only ordering and the real `Consensus::start_generation` caller at `528f0864e`; attribution of the two
 September incidents to this ordering remains unproved** (their CandidateIds and stacks
 were not retained).
 
@@ -90,6 +91,65 @@ is byte-identical:
 | `repeat20-prefix-red.log` | `182ea1b61b185dfe0725b310246963048f2f4aa0fd6ac0e788c71aabd7dde975` |
 | `repeat20-fixed-green.log` | `4c8a058eb04c8fe6d2ba29a9df0f5492b8335381587d42e561fd8deac3c2b160` |
 | `repeat20-fixed-bounded.log` | `c6ee8e8d7d7e7ef244c3fc27fb787371c9158b8915ce2f40992ce2592b8742f0` |
+
+### Peer-only NotarCert(P) through the real leader path (`528f0864e`)
+
+The `peer-consensus` mode of the same binary covers two things the single-node
+modes do not. First, the resolution is triggered by the production caller rather than
+by the test. Second, the missing certificate is recovered from another node, not from a
+delayed local write.
+
+- **Two nodes.** The peer registers only `CandidateResolver` and `Db`. It
+  holds every candidate and its NotarCert, and it runs no `Pool`, so it never
+  gossips a certificate. The node under test never receives NotarCert(P) by
+  any path. Before the trigger, the test proves the peer can serve
+  NotarCert(P) by asking it as a third validator would.
+- **A skip run.** Two skip-certified slots separate A from P, followed by
+  SkipCert(P.slot). For n=5 the layout is Q1..Q4 at slots 0..3, skips at 4 and
+  5, P at 6, C at 7, and the window opens at 8.
+- **The real caller.** The node under test registers the production
+  `Consensus` actor. Installing NotarCert(C) makes Pool open this node's own
+  leader window on C, and `Consensus::start_generation(C)` issues
+  `ResolveState(C)`. The test publishes no `ResolveState` in this mode. Own
+  votes are kept out with 600 s first-block and standstill timeouts. The
+  target never votes notarize, so it never casts a finalize vote.
+- **The GREEN check.** The target requests P, the peer serves NotarCert(P),
+  and `OurLeaderWindowStarted` is published for the window on base C with
+  state H(n+1) and `next_seqno = n+2`. The target Pool never installs
+  NotarCert(P), and no misbehavior is reported.
+
+| Binary | Expectation | n | Runs | Result |
+| --- | --- | --- | ---: | --- |
+| pre-fix | `peer-red`: N/N-1 abort in `StateResolver`, `candidate block id = C`, P never requested, the window on C never starts | 5, 23 | 20 each | 40/40 |
+| fixed | `peer-green` | 5, 23 | 20 each | 40/40 |
+| pre-fix | `peer-green` (must fail) | 5 | 1 | fails: exit -6 |
+| fixed | `peer-red` (must fail) | 5 | 1 | fails: "skip-shortcut resolver did not fail" |
+
+The pre-fix aborts again carry `C8D1E14F…/92345EFB…` (n=5) and
+`69A2DC37…/19088211…` (n=23). CTest registers the mode as
+`test-consensus-simplex2-merkle-peer-notar-leader-path`.
+
+At `528f0864e` every expectation in the first table was rerun with the same
+counts and the same results; the pre-fix gate control ran 5 times. Artifacts
+are in `merkle-repro-artifacts/prospective-notar-actor/528f0864e/`. Both
+binaries were built from that commit, and a rebuild of the fixed binary is
+byte-identical.
+
+| File | SHA-256 |
+| --- | --- |
+| `fixed` | `63c9dd327f9ac543cdcc2d8baadea44b7fc60ee0f4d7897bec2656a400c637fc` |
+| `prefix-e5b49ca45` | `fa51c14f84cae77e52ffd93f3ba56f181d8998ed71ff16cf2c5bb9d4f5807121` |
+| `transcript-prefix-peer-red-n5.log` | `24b1f345255c6b5c322550a6bdddbbe199e5aacb2672f35cdb80ef168eed5002` |
+| `transcript-prefix-peer-red-n23.log` | `a418fc4067c034e6870ac38b31a7ba707fe02edc847fa60fac5184f19a255062` |
+| `transcript-fixed-peer-green-n5.log` | `d5afbf812dcddbd7e1a65655f8ca5b392c7f72868718be4bdd5927da1c37bafa` |
+| `transcript-fixed-peer-green-n23.log` | `7397aea90ce3a2df456a4165838c27c453cf40be3bc8b6263211e1041223221e` |
+| `repeat20-prefix-peer-red.log` | `dd168e4631b7d804577e28058dee6e91908f800a1ef33530b923588ab4bd7b53` |
+| `repeat20-fixed-peer-green.log` | `8f5f084d3b7eac308157fc3a6e5b0133d5b2ed43031d8c38fa9e629d5be75045` |
+
+Both unsafe orderings named by the investigation now fail the pre-fix resolver
+through production actors. One is a NotarCert(P) still being saved locally.
+The other is a NotarCert(P) that exists only on a peer, reached through the
+real leader path. The fixed resolver passes both.
 
 What this establishes: the fixed resolver removes a deterministic, reachable
 failure. With production actors and legal certificates, a leader resolving its
