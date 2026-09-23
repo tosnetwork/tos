@@ -95,6 +95,15 @@ class ToslibClient:
         request = toslib_api.Blocks_getMasterchainInfoRequest()
         return request.parse_result(await self._toslib_wrapper.execute(request))
 
+    async def get_config_param(self, param: int) -> Cell:
+        """Read a parameter from the running chain, not the local Genesis file."""
+        assert self._toslib_wrapper is not None
+        request = toslib_api.GetConfigParamRequest(mode=0, param=param)
+        result = request.parse_result(await self._toslib_wrapper.execute(request))
+        if result.config is None:
+            raise RuntimeError(f"live ConfigParam {param} is absent")
+        return Cell.one_from_boc(result.config.bytes_)
+
     @property
     def latest_state_reader(self) -> ToslibStateReader:
         return ToslibStateReader(self)

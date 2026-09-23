@@ -19,6 +19,11 @@ experiment.  It exposes one loopback JSON-RPC endpoint per validator, publishes
 a readiness manifest without private key material, continuously participates
 in elections and recovers matured stakes, and emits validator reward/election
 allocation evidence.  The default remains the finite launch-gate rehearsal.
+
+``fixture-check`` is a deliberately narrower diagnostic: four real PQ
+controllers and four single-nominator pools are deployed, and the Genesis
+ConfigParam 47 policy is read back from the live chain. It makes no claim that
+an election occurred; the launch-gate path is converted in the next unit.
 """
 
 from __future__ import annotations
@@ -55,11 +60,20 @@ from pytosiq_core import (  # noqa: E402
     MessageAny,
     WalletMessage,
 )
+from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
+)
+from tostester.pq_election_fixture import (  # noqa: E402
+    ControllerFixture,
+    PoolFixture,
+    assert_controller_identity,
+    compile_controller_code,
+    make_controller_fixture,
+    make_pool_fixture,
 )
 
 NANO = 1_000_000_000
@@ -302,6 +316,7 @@ class ValidatorElectionRehearsal:
         soak_min_interval: float = 1.0,
         soak_max_interval: float = 5.0,
         soak_wallet_funding_tos: int = 2000,
+        fixture_only: bool = False,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
@@ -321,6 +336,11 @@ class ValidatorElectionRehearsal:
         self.soak_min_interval = soak_min_interval
         self.soak_max_interval = soak_max_interval
         self.soak_wallet_funding = soak_wallet_funding_tos * NANO
+        self.fixture_only = fixture_only
+        self.controller_code: Cell | None = None
+        self.pool_code: Cell | None = None
+        self.controllers: list[ControllerFixture] = []
+        self.pools: list[PoolFixture] = []
         # ACCEPTANCE-ONLY opt-in: arm the gated validator consensus-DB cleanup on every
         # validator engine and shrink state/archive TTLs so the GC floor can advance
         # once the election produces a post-genesis key block. Default off leaves the
@@ -377,6 +397,13 @@ class ValidatorElectionRehearsal:
         config.shard_validators = VALIDATOR_COUNT
         config.validator_economics_profile = True
         config.validator_election_stage_a_profile = self.profile.accelerated
+        if self.fixture_only:
+            if self.controller_code is None:
+                raise AssertionError("PQ controller code was not compiled before Genesis")
+            # This is an explicitly diagnostic fixture while canonical production
+            # genesis stays at v14 pending its coordinated v16 activation.
+            config.global_version = 16
+            config.validator_controller_code_hash = self.controller_code.hash
         if self.experiment is not None:
             config.validator_election_experiment_faucet_balance_nanotos = (
                 EXPERIMENT_GENESIS_FAUCET_FUNDING
@@ -925,6 +952,8 @@ class ValidatorElectionRehearsal:
             "validator-engine-console/validator-engine-console",
             "blockchain-explorer/blockchain-explorer",
         ]
+        if self.fixture_only:
+            binary_paths += ["crypto/func", "crypto/fift"]
         binaries: dict[str, dict[str, Any]] = {}
         for relative in binary_paths:
             source = self.original_build_dir / relative
@@ -1131,10 +1160,11 @@ class ValidatorElectionRehearsal:
         amount: int,
         body: Cell,
         label: str,
+        init=None,
     ) -> None:
         before = await self.wallet_seqno(wallet)
         await wallet.send(
-            internal_message(wallet.address, dest, amount, body),
+            internal_message(wallet.address, dest, amount, body, init=init),
             seqno=before,
         )
         await self.wait_wallet_seqno(wallet, before + 1)
@@ -2568,12 +2598,105 @@ class ValidatorElectionRehearsal:
         )
         await self.record_balance("negative-wallet-funded", self.negative_wallet)
 
+    async def verify_live_controller_policy(self) -> None:
+        if self.controller_code is None or self.client is None:
+            raise AssertionError("controller policy read-back has no compiled code or lite client")
+        policy = await self.client.get_config_param(47)
+        view = policy.begin_parse()
+        admitted = view.load_dict(256)
+        expected = int.from_bytes(self.controller_code.hash, "big")
+        if admitted is None or set(admitted) != {expected}:
+            raise AssertionError(
+                "live ConfigParam 47 does not admit exactly the compiled controller code: "
+                f"expected={self.controller_code.hash.hex()} "
+                f"actual={[] if admitted is None else [f'{key:064x}' for key in admitted]}"
+            )
+        if view.remaining_bits or view.remaining_refs:
+            raise AssertionError("live ConfigParam 47 contains trailing data")
+        version = ConfigParam8.deserialize((await self.client.get_config_param(8)).begin_parse())
+        if version.version != 16:
+            raise AssertionError(
+                f"live PQ fixture global version is {version.version}, expected 16"
+            )
+        self.event(
+            "controller_policy_read_back",
+            parameter=47,
+            admitted_code_hash=self.controller_code.hash.hex(),
+            code_count=1,
+            global_version=version.version,
+        )
+
+    async def deploy_pq_fixture_accounts(self, faucet: WalletV1) -> None:
+        if self.controller_code is None or self.pool_code is None:
+            raise AssertionError("PQ fixture contracts were not compiled or loaded")
+        if len(self.controllers) != VALIDATOR_COUNT or len(self.wallets) != VALIDATOR_COUNT:
+            raise AssertionError("PQ fixture does not have four controllers and four wallets")
+        assert self.client is not None
+
+        for index, (wallet, controller) in enumerate(zip(self.wallets, self.controllers)):
+            pool = make_pool_fixture(self.pool_code, wallet.address, controller.address)
+            self.pools.append(pool)
+            for label, address, state_init, code, sender in (
+                ("controller", controller.address, controller.state_init, self.controller_code, faucet),
+                ("pool", pool.address, pool.state_init, self.pool_code, wallet),
+            ):
+                await self.send_from_wallet(
+                    sender,
+                    dest=address,
+                    amount=10 * NANO,
+                    body=Cell.empty(),
+                    init=state_init,
+                    label=f"validator-{index + 1}-{label}-deployment",
+                )
+
+                async def deployed_code() -> bytes:
+                    return (await self.client.raw_get_account_state(address)).code
+
+                code_boc = await self.retry(
+                    deployed_code,
+                    timeout=60,
+                    description=f"validator {index + 1} {label} deployment",
+                    predicate=bool,
+                )
+                observed = Cell.one_from_boc(code_boc).hash
+                if observed != code.hash:
+                    raise AssertionError(
+                        f"validator {index + 1} {label} deployed unexpected code: "
+                        f"expected={code.hash.hex()} actual={observed.hex()}"
+                    )
+            self.event(
+                "pq_fixture_accounts_deployed",
+                validator=index + 1,
+                controller=raw_address(controller.address),
+                pool=raw_address(pool.address),
+                controller_code_hash=self.controller_code.hash.hex(),
+                pool_code_hash=self.pool_code.hash.hex(),
+            )
+
     async def execute(self) -> None:
         self.ensure_experiment_rpc_ports_available()
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.network_dir.mkdir()
         self.artifacts_dir.mkdir()
         self.prepare_artifact_snapshot()
+        if self.fixture_only:
+            self.install.toslibjson.client_set_verbosity_level(0)
+            self.controller_code = compile_controller_code(
+                self.install, self.artifacts_dir / "compiled-controller"
+            )
+            self.pool_code = Cell.one_from_boc(
+                bytes.fromhex(
+                    (self.install.source_dir /
+                     "crypto/smartcont/single-nominator-pool/single-nominator-code.hex")
+                    .read_text().strip()
+                )
+            )
+            self.controllers = [
+                make_controller_fixture(
+                    self.install, self.artifacts_dir / "controller-keys", self.controller_code, index
+                )
+                for index in range(VALIDATOR_COUNT)
+            ]
         start_event = (
             "validator_experiment_start"
             if self.experiment is not None
@@ -2582,12 +2705,13 @@ class ValidatorElectionRehearsal:
         self.event(
             start_event,
             stage=self.profile.label,
-            mode="experiment" if self.experiment is not None else "launch-gate",
+            mode=("fixture-check" if self.fixture_only else
+                  "experiment" if self.experiment is not None else "launch-gate"),
             accelerated=self.profile.accelerated,
             source_commit=self.provenance["source_commit"],
             artifact_snapshot=str(self.run_dir / "artifact-snapshot"),
             base_port=self.base_port,
-            production_defaults_unchanged=True,
+            production_defaults_unchanged=not self.fixture_only,
         )
 
         network = Network(
@@ -2602,7 +2726,21 @@ class ValidatorElectionRehearsal:
             dht = network.create_dht_node()
             for validator_index in range(VALIDATOR_COUNT):
                 node = network.create_full_node()
-                make_deterministic_pq_initial_validator(node, validator_index)
+                if self.fixture_only:
+                    controller = self.controllers[validator_index]
+                    make_deterministic_pq_initial_validator(
+                        node, validator_index, validator_id=controller.address.hash_part
+                    )
+                    assert_controller_identity(node, controller, index=validator_index + 1)
+                    self.event(
+                        "controller_identity_bound",
+                        validator=validator_index + 1,
+                        controller_id=controller.address.hash_part.hex(),
+                        node_validator_id=node.pq_initial_validator.validator_id.hex(),
+                        node_key_id=node.pq_initial_validator.key_id.hex(),
+                    )
+                else:
+                    make_deterministic_pq_initial_validator(node, validator_index)
                 node.announce_to(dht)
                 self.nodes.append(node)
 
@@ -2613,6 +2751,8 @@ class ValidatorElectionRehearsal:
             self.lite_config.write_text(self.nodes[0]._liteserver_config.to_json())
             await asyncio.wait_for(network.wait_mc_block(seqno=3), timeout=120)
             self.client = await self.nodes[0].toslib_client()
+            if self.fixture_only:
+                await self.verify_live_controller_policy()
             self.monitor_task = asyncio.create_task(self.metrics_monitor())
 
             config15 = await self.lite("time", "getconfig 15 16 17 28 34")
@@ -2646,6 +2786,17 @@ class ValidatorElectionRehearsal:
                 return
 
             await self.setup_wallets(faucet)
+
+            if self.fixture_only:
+                await self.deploy_pq_fixture_accounts(faucet)
+                self.event(
+                    "pq_election_fixture_ready",
+                    controllers=len(self.controllers),
+                    pools=len(self.pools),
+                    live_policy_admitted=True,
+                    rehearsal_election_executed=False,
+                )
+                return
 
             if self.experiment is not None:
                 await self.run_experiment()
@@ -2830,7 +2981,8 @@ class ValidatorElectionRehearsal:
             "status": self.report_status(),
             "generated_at": utc_now(),
             "run_dir": str(self.run_dir),
-            "mode": "experiment" if self.experiment is not None else "launch-gate",
+            "mode": ("fixture-check" if self.fixture_only else
+                     "experiment" if self.experiment is not None else "launch-gate"),
             "source_commit": self.provenance["source_commit"],
             "source_commit_at_report": subprocess.run(
                 ["git", "rev-parse", "HEAD"],
@@ -2906,12 +3058,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("launch-gate", "experiment", "transfer-soak"),
+        choices=("launch-gate", "experiment", "transfer-soak", "fixture-check"),
         default="launch-gate",
         help=(
             "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
             "experiment runs stable Stage A for a requested observation window; "
-            "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks"
+            "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks; "
+            "fixture-check provisions four PQ controllers and pools without claiming an election"
         ),
     )
     parser.add_argument("--soak-duration", type=float, default=600.0,
@@ -3035,6 +3188,7 @@ async def async_main() -> int:
             if experiment is not None
             else REPO / f"test/integration/.validator-election-stage-{profile.stage}"
         )
+    output_root = output_root.resolve()
     sample_interval = args.sample_interval
     if sample_interval is None:
         sample_interval = 10.0 if profile.accelerated else 60.0
@@ -3059,6 +3213,7 @@ async def async_main() -> int:
         soak_min_interval=args.soak_min_interval,
         soak_max_interval=args.soak_max_interval,
         soak_wallet_funding_tos=args.soak_wallet_funding_tos,
+        fixture_only=(args.mode == "fixture-check"),
     )
     try:
         await stage.execute()

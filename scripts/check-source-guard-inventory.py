@@ -34,6 +34,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "pending-finality-retry-policy-source",
         "pq-stake-auth-response-source",
         "pq-e2e-initial-validators-source",
+        "pq-election-fixture-source",
         "pq-finality-boundary-source",
         "pq-launch-cap-mutations",
         "pq-launch-cap-source",

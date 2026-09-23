@@ -338,8 +338,24 @@ owner to the controller rather than the pool makes that gate red after both
 relays. These are enablement paths, not rollback repairs: the earlier generic
 keyring produced a 64-byte Ed25519 signature and the shared builder refused it
 locally. The registry remains open for the operator Fift tools and other
-retained callers. The multi-nominator pool's launch status has not been ruled
-in or out; this change does not alter its hand-built sandbox bodies.
+retained callers. The multi-nominator pool uses the same PQ order-body layout;
+its two sandbox cases now call the production builder. Liquid staking remains
+outside the launch set.
+
+T2 launch-gate conversion is deliberately split. Unit 1 provisions four
+production-source PQ validator controllers and four single-nominator pools in
+the real local-network rehearsal. Each controller address is derived before
+its node's PQ validator identity is configured, and provisioning asserts that
+the two identities and the bound consensus key agree. A named Config.fif
+helper installs the compiled controller code hash as ConfigParam 47 with
+`47 config!` in the genesis dictionary, the same assembly path used for other
+genesis parameters. The fixture reads the live Param47 back before deploying
+accounts and confirms exactly that code hash is admitted; it also checks the
+deployed code hashes. This diagnostic fixture uses global version 16 and
+deterministic test keys; it does **not** claim that a stake or election has
+occurred. Unit 2 must route actual authorizations through those accounts and
+prove elector acceptance before T2 can close. Canonical production genesis
+remains unchanged by the fixture.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or

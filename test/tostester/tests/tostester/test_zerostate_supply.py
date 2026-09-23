@@ -61,6 +61,34 @@ def test_launch_validator_count_boundary_is_explicit():
         _launch_validator_counts(22, 21)
 
 
+def test_controller_policy_uses_genesis_config_dictionary(tmp_path):
+    code_hash = bytes(range(32))
+    zerostate = create_zerostate(
+        Install(BUILD_DIR, REPO),
+        tmp_path,
+        NetworkConfig(validator_controller_code_hash=code_hash),
+        [Key()],
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    policy = state.custom.config.config[47].copy()
+    admitted = policy.load_dict(256)
+    assert admitted is not None
+    assert set(admitted) == {int.from_bytes(code_hash, "big")}, (
+        "genesis ConfigParam 47 did not admit exactly the controller code hash"
+    )
+    assert policy.remaining_bits == 0 and policy.remaining_refs == 0, (
+        "genesis ConfigParam 47 has trailing data"
+    )
+
+    with pytest.raises(ValueError, match="controller code hash must be 32 bytes"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path / "invalid",
+            NetworkConfig(validator_controller_code_hash=b"short"),
+            [Key()],
+        )
+
+
 def test_local_genesis_builds_21_validators_and_refuses_22_before_fift(tmp_path):
     install = Install(BUILD_DIR, REPO)
     keys = [Key() for _ in range(21)]

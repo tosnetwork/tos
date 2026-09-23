@@ -1305,6 +1305,10 @@ add_test(NAME pq-e2e-initial-validators-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-e2e-initial-validators.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pq-e2e-initial-validators-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-election-fixture-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-election-fixture-source.py
+    ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-election-fixture-source PROPERTIES LABELS "source-guard")
 add_test(NAME config-genesis-data-layout-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-config-genesis-data-layout.py
           ${CMAKE_CURRENT_SOURCE_DIR})
