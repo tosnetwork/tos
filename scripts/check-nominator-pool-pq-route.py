@@ -60,11 +60,28 @@ def validate(source: str) -> None:
 
     require(bool(calls(prepare, "require_pq_stake_authorization_binding")),
             "PQ authorization TL binding is not preflighted")
+    require("for index in range(5)" in ast.unparse(prepare),
+            "fixture no longer prepares five controller identities")
     require("network.config.validator_controller_code_hash = self.controller_code.hash" in ast.unparse(bring_up),
             "Genesis no longer admits the compiled controller code")
     provision = one_call(bring_up, "make_deterministic_pq_initial_validator")
+    spare = one_call(bring_up, "make_deterministic_pq_spare_validator")
     require(keyword(provision, "validator_id") == "controller.address.hash_part",
             "PQ validator_id is not bound to the controller address")
+    require(keyword(spare, "validator_id") == "controller.address.hash_part",
+            "spare PQ validator_id is not bound to its controller address")
+    branches = [
+        node for node in ast.walk(bring_up)
+        if isinstance(node, ast.If) and ast.unparse(node.test) == "validator_index < 4"
+    ]
+    require(
+        len(branches) == 1
+        and provision in calls(ast.Module(body=branches[0].body, type_ignores=[]),
+                               "make_deterministic_pq_initial_validator")
+        and spare in calls(ast.Module(body=branches[0].orelse, type_ignores=[]),
+                           "make_deterministic_pq_spare_validator"),
+        "Genesis topology is not exactly four initial PQ validators plus one noninitial spare",
+    )
     node_boots = [
         call.lineno for call in calls(bring_up, "run")
         if isinstance(call.func, ast.Attribute)
@@ -111,6 +128,8 @@ def self_test(source: str) -> None:
         "no support stake": ("await self.stake_support_pool(index, election_id)", "await self.elector_participant_ids()"),
         "classical Fift call": ("return build_production_pool_stake_order(",
                                  "# validator-elect-req.fif\n        return build_production_pool_stake_order("),
+        "five Genesis validators": ("validator_index < 4", "validator_index < 5"),
+        "spare made initial": ("make_deterministic_pq_spare_validator(\n", "make_deterministic_pq_initial_validator(\n"),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
@@ -126,7 +145,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: Genesis policy, node authorization, witness, production pool builder, supporting pools and paired Config34 lookup are wired; no live stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and paired Config34 lookup are wired; no live stake is claimed")
 
 
 if __name__ == "__main__":

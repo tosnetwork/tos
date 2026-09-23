@@ -46,6 +46,16 @@ the same pool-order field sequence as the single-nominator pool and `:669`
 relays those terms unchanged to the controller. This is why the shared
 production builder applies, even though the lifecycle script is not a
 single-nominator test.
+Its accelerated economics Genesis must contain exactly four validators
+(`zerostate.py:524`). The fifth controller-bound node therefore provisions PQ
+custody without setting `is_initial_validator`; `Network._get_or_generate_zerostate`
+filters on that flag when assembling Genesis. After boot, the node's
+`get_local_pq_identity` requires a custodied signer and configured controller
+identity but explicitly does not require present validator-set membership
+(`validator-engine.cpp:5864-5879`), allowing the spare to authorize its first
+pool stake for a later election. A unit test drives the actual network Genesis
+filter with four initial identities and one noninitial spare. No live run has
+yet confirmed the fifth candidate's election.
 
 The exact classical Fift dependency inventory is maintained by
 `scripts/check-classical-stake-callers.py`. It currently contains nine

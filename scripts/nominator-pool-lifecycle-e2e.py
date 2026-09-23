@@ -75,6 +75,7 @@ from tostester.key import Key  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
+    make_deterministic_pq_spare_validator,
 )
 from tostester.pq_election_fixture import (  # noqa: E402
     ControllerFixture,
@@ -2329,16 +2330,21 @@ class PoolLifecycle:
         dht = network.create_dht_node()
         for validator_index, controller in enumerate(self.controllers):
             node = network.create_full_node()
-            make_deterministic_pq_initial_validator(
-                node, validator_index, validator_id=controller.address.hash_part
-            )
+            if validator_index < 4:
+                make_deterministic_pq_initial_validator(
+                    node, validator_index, validator_id=controller.address.hash_part
+                )
+            else:
+                make_deterministic_pq_spare_validator(
+                    node, validator_index, validator_id=controller.address.hash_part
+                )
             assert_controller_identity(node, controller, index=validator_index + 1)
             node.announce_to(dht)
             self.nodes.append(node)
 
-        # A fifth admitted PQ identity can enter an election while the primary
-        # pool's stake is frozen. A non-validator spare cannot obtain the
-        # node-bound authorization needed for that controller identity.
+        # Genesis economics permits exactly four validators. The fifth node
+        # custodizes its controller-bound PQ key but is not in Genesis; node
+        # authorization can sign its first pool stake before set membership.
 
         await dht.run(StartOptions(threads=2, verbosity=3))
         for index, node in enumerate(self.nodes):
