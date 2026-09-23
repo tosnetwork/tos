@@ -144,6 +144,10 @@ add_test(
     COMMAND test-consensus --skipped-slot-resolution-unit-test
 )
 add_test(
+    NAME test-consensus-simplex2-merkle-skipped-exact-ancestor-repro
+    COMMAND test-consensus --merkle-skipped-exact-ancestor-repro-test
+)
+add_test(
     NAME test-consensus-simplex2-candidate-resolver-retention-unit
     COMMAND test-consensus --candidate-resolver-retention-unit-test
 )

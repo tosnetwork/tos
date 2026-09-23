@@ -33,6 +33,7 @@
 #include "validator/manager-resource-policy.h"
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
+#include "vm/cells/MerkleUpdate.h"
 
 #include "block-auto.h"
 
@@ -2797,6 +2798,35 @@ void test_skipped_slot_resolution_policy() {
   CHECK(simplex::select_skipped_slot_resolution(requested, true, conflicting).is_error());
 }
 
+void test_merkle_skipped_exact_ancestor_repro() {
+  // Reproduce the decision and the fixture's observed old-root mismatch
+  // without relying on actor scheduling. This does not establish which
+  // certificate arrival order occurred in the historical failures.
+  CandidateId parent{.slot = 411,
+                     .hash = from_hex("1111111111111111111111111111111111111111111111111111111111111111")};
+  auto decision = simplex::select_skipped_slot_resolution(parent, true, std::nullopt);
+  CHECK(decision.is_ok());
+  CHECK(decision.move_as_ok() == simplex::SkippedSlotResolution::UseAvailableBase);
+
+  for (BlockSeqno expected : {BlockSeqno{5}, BlockSeqno{23}}) {
+    auto exact_parent_state = gen_shard_state(expected);
+    auto skipped_base_state = gen_shard_state(expected - 1);
+    auto next_state = gen_shard_state(expected + 1);
+    auto update = vm::CellBuilder::create_merkle_update(exact_parent_state, next_state);
+
+    auto correct = vm::MerkleUpdate::apply(exact_parent_state, update);
+    CHECK(correct.is_ok());
+    CHECK(correct.move_as_ok()->get_hash() == next_state->get_hash());
+
+    auto mismatched = vm::MerkleUpdate::apply(skipped_base_state, update);
+    CHECK(mismatched.is_error());
+    LOG(WARNING) << "Merkle exact-ancestor component repro: expected parent height " << expected
+                 << " root=" << exact_parent_state->get_hash().to_hex() << ", skip-selected base height "
+                 << expected - 1 << " root=" << skipped_base_state->get_hash().to_hex() << ": "
+                 << mismatched.error();
+  }
+}
+
 void test_candidate_resolver_retention() {
   using State = simplex::CandidateEvictionState;
 
@@ -3347,6 +3377,7 @@ int main(int argc, char* argv[]) {
   bool run_state_resolver_cache_unit_test = false;
   bool run_state_resolver_inflight_admission_unit_test = false;
   bool run_skipped_slot_resolution_unit_test = false;
+  bool run_merkle_skipped_exact_ancestor_repro_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
   bool run_simplex_db_finalized_slot_dedup_unit_test = false;
@@ -3528,6 +3559,9 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "skipped-slot-resolution-unit-test",
                "verify skip-only and simultaneous skip/notar candidate resolution",
                [&]() { run_skipped_slot_resolution_unit_test = true; });
+  p.add_option('\0', "merkle-skipped-exact-ancestor-repro-test",
+               "reproduce skip-selected N-1 Merkle base against an exact N ancestor",
+               [&]() { run_merkle_skipped_exact_ancestor_repro_test = true; });
   p.add_option('\0', "candidate-resolver-retention-unit-test",
                "verify finalized-window pruning and in-flight retention",
                [&]() { run_candidate_resolver_retention_unit_test = true; });
@@ -3592,6 +3626,10 @@ int main(int argc, char* argv[]) {
   }
   if (run_skipped_slot_resolution_unit_test) {
     test_skipped_slot_resolution_policy();
+    return 0;
+  }
+  if (run_merkle_skipped_exact_ancestor_repro_test) {
+    test_merkle_skipped_exact_ancestor_repro();
     return 0;
   }
   if (run_candidate_resolver_retention_unit_test) {
