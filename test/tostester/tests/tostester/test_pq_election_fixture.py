@@ -1,5 +1,6 @@
 """The controller identity is fixed before a node joins the Genesis committee."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ from tostester.install import Install
 from tostester.pq_election_fixture import (
     assert_controller_identity,
     build_pool_stake_order,
+    build_production_pool_stake_order,
     elector_reply,
     elector_return_reason,
     make_controller_fixture,
@@ -104,6 +106,39 @@ def test_pool_stake_order_round_trips_every_field_in_contract_parser_order():
     assert pq_bytes(view.load_ref()) == bytes([0x33]) * 2420, "signature changed"
     assert view.load_maybe_ref() == witness, "birth witness is not the trailing maybe-ref"
     assert view.remaining_bits == 0 and view.remaining_refs == 0, "pool order has trailing data"
+
+
+def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatch):
+    """Execute the caller's keyword interface; a source marker cannot bind it."""
+    seen = {}
+
+    def fake_run(command, *, input, text, capture_output, check):
+        seen.update(json.loads(input))
+        assert command == ["/diagnostic/pq_pool_stake_order"]
+        assert text and capture_output and not check
+        return SimpleNamespace(returncode=0, stdout=Cell.empty().to_boc().hex(), stderr="")
+
+    monkeypatch.setattr("tostester.pq_election_fixture.subprocess.run", fake_run)
+    witness = Builder().store_uint(7, 32).end_cell()
+    args = dict(
+        query_id=3, stake_amount=11_000_000_000_000, stake_at=1_700_000_000,
+        max_factor=65_536, adnl_addr=bytes([0x22]) * 32,
+        public_key=bytes([0x11]) * 1312, signature=bytes([0x33]) * 2420,
+        witness=witness,
+    )
+    result = build_production_pool_stake_order(
+        Path("/diagnostic/pq_pool_stake_order"), algorithm_id=1, **args
+    )
+    assert result == Cell.empty()
+    assert seen["query_id"] == 3 and seen["stake_at"] == 1_700_000_000
+    assert seen["adnl_addr_hex"] == (bytes([0x22]) * 32).hex()
+    assert seen["public_key_hex"] == (bytes([0x11]) * 1312).hex()
+    assert seen["signature_hex"] == (bytes([0x33]) * 2420).hex()
+    assert seen["witness_boc_hex"] == witness.to_boc().hex()
+    with pytest.raises(ValueError, match="algorithm 1"):
+        build_production_pool_stake_order(
+            Path("/diagnostic/pq_pool_stake_order"), algorithm_id=2, **args
+        )
 
 
 def test_elector_reason_reader_skips_source_less_wallet_externals_and_pins_query():

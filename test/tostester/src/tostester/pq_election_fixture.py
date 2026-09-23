@@ -141,10 +141,12 @@ def build_pool_stake_order(
 
 def build_production_pool_stake_order(
     executable: Path, *, query_id: int, stake_amount: int, stake_at: int,
-    max_factor: int, adnl_addr: bytes, public_key: bytes, signature: bytes,
+    max_factor: int, adnl_addr: bytes, algorithm_id: int, public_key: bytes, signature: bytes,
     witness: Cell,
 ) -> Cell:
     """Invoke Rust nominator::new_stake_with_witness, not a second Python encoder."""
+    if algorithm_id != 1:
+        raise ValueError(f"production pool order requires ML-DSA-44 algorithm 1, got {algorithm_id}")
     payload = {
         "query_id": query_id,
         "stake_amount": stake_amount,

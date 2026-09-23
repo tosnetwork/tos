@@ -117,6 +117,21 @@ def main() -> int:
         fail("PQ candidate no longer asks the node for a stake authorization")
     if len(call_lines(candidate, "build_production_pool_stake_order")) != 1:
         fail("PQ candidate no longer uses the production Rust pool-order builder")
+    fixture = root / "test/tostester/src/tostester/pq_election_fixture.py"
+    builder = method(ast.parse(fixture.read_text(), filename=str(fixture)),
+                     "build_production_pool_stake_order")
+    builder_calls = [
+        node for node in ast.walk(candidate)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "build_production_pool_stake_order"
+    ]
+    passed = {keyword.arg for keyword in builder_calls[0].keywords}
+    accepted = {argument.arg for argument in builder.args.kwonlyargs}
+    if len(builder_calls[0].args) != 1 or passed != accepted:
+        fail(
+            "PQ candidate and production pool-order bridge keyword interface differ: "
+            f"missing={sorted(accepted - passed)} unexpected={sorted(passed - accepted)}"
+        )
     bridge = (root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs").read_text()
     if not re.search(r"\blet body\s*=\s*new_stake_with_witness\s*\(", bridge):
         fail("live PQ pool-order bridge no longer calls nominator::new_stake_with_witness")
@@ -185,7 +200,7 @@ def main() -> int:
         "the live Param 47 read-back call precedes deployment; "
         "the Genesis helper contains 47 config!; "
         "Python engine-console transport admits the PQ authorization query; "
-        "PQ candidates use node signatures and Rust nominator::new_stake_with_witness for pool orders; "
+        "PQ candidates use node signatures and a keyword-compatible Rust nominator::new_stake_with_witness bridge for pool orders; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with exact PQ IDs are required; "
         "reason-8 negative control precedes positive stakes"
     )
