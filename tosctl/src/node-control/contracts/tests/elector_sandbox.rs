@@ -2358,6 +2358,7 @@ fn complaint_voters(chain: &Chain, election: u32, complaint: &[u8; 32]) -> Vec<u
 #[test]
 fn a_pools_money_reaches_an_election_through_a_real_controller() {
     use chain_block::IBitstring;
+    use contracts::nominator::{NewStakeParams, new_stake_with_witness};
 
     let (mut chain, _treasury, election) = open_election("pool-e2e", 200_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
@@ -2393,25 +2394,22 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
         &validators[0].consensus.key_id(),
         &validators[0].consensus.adnl,
     );
+    // This Rust preimage routine is pinned to the node's C++ stake-preimage
+    // vectors; the production message builder below supplies the pool body.
+    // Neither the test nor the operator constructs an elector-directed body.
     let signature = validators[0].consensus.sign(&preimage);
+    let witness = birth_witness(&chain, &controller);
 
-    // The operator's order to the pool, carrying those terms and the controller's proof
-    // of what it was deployed as.
-    let mut order = chain_block::BuilderData::new();
-    order.append_u32(0x4e73_744b).expect("operation");
-    order.append_u64(1).expect("query id");
-    chain_block::Serializable::write_to(&chain_block::Coins::new(11_000 * TOS), &mut order)
-        .expect("stake amount");
-    order.append_u32(election).expect("election");
-    order.append_u32(0x10000).expect("max factor");
-    order.append_raw(&validators[0].consensus.adnl, 256).expect("transport address");
-    order.append_u16(1).expect("algorithm");
-    order
-        .checked_append_reference(stored_bytes(&validators[0].consensus.public_key))
-        .expect("the key");
-    order.checked_append_reference(stored_bytes(&signature)).expect("the signature");
-    order.append_bit_one().expect("a witness is present");
-    order.checked_append_reference(birth_witness(&chain, &controller)).expect("the proof");
+    let params = NewStakeParams {
+        query_id: 1,
+        stake_amount: 11_000 * TOS,
+        validator_pubkey: &validators[0].consensus.public_key,
+        stake_at: election,
+        max_factor: 0x10000,
+        adnl_addr: &validators[0].consensus.adnl,
+        signature: &signature,
+    };
+    let order = new_stake_with_witness(&params, Some(&witness)).expect("production pool order");
 
     let result = chain
         .blockchain
@@ -2419,7 +2417,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
             &pool,
             2 * TOS,
             true,
-            Some(order.into_cell().expect("an order")),
+            Some(order),
         ))
         .expect("the order is delivered");
     result.expect_success();
