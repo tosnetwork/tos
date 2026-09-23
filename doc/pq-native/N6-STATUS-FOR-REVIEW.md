@@ -218,7 +218,10 @@ stopping old E2E scripts before their config contract could run.
 
 All fifteen retained entry points were rerun from the clean `7533ab5d9`
 fixture-repair commit (DNS owns two networks, for sixteen helper calls).
-Eight advertised routes passed and seven reached the named boundary below.
+**Counts: eight routes pass; seven fail at named boundaries. Four failing
+routes are pre-existing on `main`; three failing routes remain on the PQ
+branch, representing two distinct PQ workstreams (DNS activation and staking).**
+The two staking routes stop at different points and are not interchangeable.
 The first pass used an obsolete local build-directory default for several
 scripts; those routes were rerun with `TOS_BUILD_DIR` pointing to the freshly
 built tree and the setup failures are not counted. A concurrent disk-full
@@ -227,23 +230,23 @@ the first pool report was also contaminated during teardown, so the pool was
 rerun alone to obtain its own clean `exit=1` report. Neither environment error
 is attributed to a route.
 
-| Entry point | Post-repair result | Furthest demonstrated step or named failure |
-|---|---|---|
-| `test/integration/test_simplex2_release.py` | PASS | 27 observer groups created, 27 started, 24 destroyed, 27 distinct sessions; no refusals |
-| `scripts/localnet-jsonrpc.py` | PASS | resident demo transfer changed balance from zero to 4.999999000 TOS; stopped after the demo |
-| `scripts/agent-wallet-account-e2e.py` | FAIL | native Gift preparation still refuses ambiguous broadcast without finalized-state resolution |
-| `scripts/agent-query-api-e2e.py` | PASS | all advertised query routes |
-| `scripts/agent-chain-index-e2e.py` | PASS | all advertised indexing routes |
-| `scripts/agent-task-escrow-e2e.py` | FAIL | controller accept still requires two `--quorum-config` values |
-| `scripts/proof-attestation-e2e.py` | PASS | all advertised proof-attestation routes |
-| `scripts/capability-registry-e2e.py` | PASS | all advertised registry routes |
-| `scripts/agent-economy-composed-e2e.py` | FAIL | isolated rerun again reached controller accept and required two `--quorum-config` values |
-| `scripts/validator-election-stage-a.py` | FAIL | wallets funded and negative cases passed; validator 1's classical stake was not accepted |
-| `scripts/dispute-e2e.py` | PASS | all advertised dispute routes |
-| `scripts/service-actor-e2e.py` | FAIL | HTTP checks passed; `service_show` still failed through its sole chain-RPC endpoint |
-| `scripts/wc0-token-index-e2e.py` | PASS | all advertised workchain-zero token-index routes |
-| `scripts/dns-e2e.py` | FAIL | proposal **registered**; ConfigParam 4 did not appear after the validator vote, so resolution after activation failed |
-| `scripts/nominator-pool-lifecycle-e2e.py` | FAIL | validator wallets funded, pool obligations passed and the election opened; local refusal names the missing PQ Validator Controller, pool-owned authorization and ConfigParam 47 admission |
+| Entry point | Post-repair | Boundary now | Change from original PQ pass |
+|---|---|---|---|
+| `test/integration/test_simplex2_release.py` | PASS | 27 observer groups created, 27 started, 24 destroyed, 27 distinct sessions; no refusals | **Moved:** original zero observer counters are fixed |
+| `scripts/localnet-jsonrpc.py` | PASS | resident demo transfer changed balance from zero to 4.999999000 TOS; stopped after the demo | Already passed |
+| `scripts/agent-wallet-account-e2e.py` | FAIL | native Gift preparation refuses ambiguous broadcast without finalized-state resolution | **Unchanged:** pre-existing on `main` |
+| `scripts/agent-query-api-e2e.py` | PASS | all advertised query routes | Already passed |
+| `scripts/agent-chain-index-e2e.py` | PASS | all advertised indexing routes | Already passed |
+| `scripts/agent-task-escrow-e2e.py` | FAIL | controller accept requires two `--quorum-config` values | **Unchanged:** pre-existing on `main` |
+| `scripts/proof-attestation-e2e.py` | PASS | all advertised proof-attestation routes | Already passed |
+| `scripts/capability-registry-e2e.py` | PASS | all advertised registry routes | Already passed |
+| `scripts/agent-economy-composed-e2e.py` | FAIL | isolated rerun reached controller accept and required two `--quorum-config` values | **Unchanged:** pre-existing on `main`; disk-full run discarded |
+| `scripts/validator-election-stage-a.py` | FAIL | wallets funded and negative cases passed; validator 1's classical stake was not accepted | **Unchanged:** PQ stake-shape boundary |
+| `scripts/dispute-e2e.py` | PASS | all advertised dispute routes | Already passed |
+| `scripts/service-actor-e2e.py` | FAIL | HTTP checks passed; `service_show` failed through its sole chain-RPC endpoint | **Unchanged:** pre-existing on `main` |
+| `scripts/wc0-token-index-e2e.py` | PASS | all advertised workchain-zero token-index routes | Already passed |
+| `scripts/dns-e2e.py` | FAIL | proposal **registered**; ConfigParam 4 did not appear after the validator vote, so resolution after activation failed | **Moved:** registration fixed; PQ vote/activation boundary survives |
+| `scripts/nominator-pool-lifecycle-e2e.py` | FAIL | validator wallets funded, pool obligations passed and election opened; local refusal names missing PQ Validator Controller, pool-owned authorization and ConfigParam 47 admission | **Moved:** old “wallet 0 unfunded” boundary was a bricked-contract fixture artifact; PQ pool-stake boundary survives |
 
 The old nominator “validator wallet 0 unfunded” boundary was an artifact of
 the bricked harness config contract, not the route's current state. The clean
