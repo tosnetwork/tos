@@ -140,7 +140,10 @@ impl Probe {
         let mut bc = Blockchain::with_global_version_and_base_workchain(version)
             .expect("blockchain at the requested version");
         let payer = bc.treasury("deployer", 1_000 * TOS).expect("treasury");
-        let path = std::env::temp_dir().join("tos_poseidon2_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let path = probe_dir.path().join("tos_poseidon2_probe.fc");
         std::fs::write(&path, probe_source()).expect("write probe source");
         let code =
             compile_func_with_stdlib(&[path]).expect("compile the probe (needs build/crypto/func)");

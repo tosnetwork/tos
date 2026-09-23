@@ -229,7 +229,11 @@ impl FrontierProbe {
         bc.set_workchain(0);
         let payer = bc.treasury("frontier_deployer", 1_000 * TOS)?;
         let library = library_dir();
-        let probe_path = std::env::temp_dir().join("tos_shielded_frontier_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir()
+            .map_err(|error| CrossCheckError::Sandbox(format!("probe directory: {error}")))?;
+        let probe_path = probe_dir.path().join("tos_shielded_frontier_probe.fc");
         std::fs::write(&probe_path, PROBE)
             .map_err(|error| CrossCheckError::Sandbox(format!("write probe: {error}")))?;
         let code = compile_func(&[

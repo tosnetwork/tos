@@ -200,7 +200,10 @@ fn library() -> &'static str {
 }
 
 fn deploy_source(bc: &mut Blockchain, name: &str, source: &str, extra: &[&str]) -> MsgAddressInt {
-    let path = std::env::temp_dir().join(format!("tos_shielded_{name}.fc"));
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+    let path = probe_dir.path().join(format!("tos_shielded_{name}.fc"));
     std::fs::write(&path, source).expect("write probe");
     let mut sources: Vec<std::path::PathBuf> =
         extra.iter().map(|f| format!("{}/{f}", library()).into()).collect();

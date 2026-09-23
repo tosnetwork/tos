@@ -145,7 +145,10 @@ int backing_ok() method_id {
 "#;
 
 fn probe_code() -> Cell {
-    let src = std::env::temp_dir().join("tos_shielded_pool_deposit_probe.fc");
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let src_dir = tempfile::tempdir().expect("a directory for the probe");
+    let src = src_dir.path().join("tos_shielded_pool_deposit_probe.fc");
     std::fs::write(&src, PROBE_SRC).expect("write probe source");
     compile_func_with_stdlib(&[src]).expect("compile the deposit probe (needs build/crypto/func)")
 }

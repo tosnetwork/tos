@@ -102,7 +102,10 @@ impl Probe {
         bc.set_workchain(0);
         let payer = bc.treasury("genesis_probe", 1_000 * TOS).expect("treasury");
         let library = library_dir();
-        let path = std::env::temp_dir().join("tos_shielded_genesis_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let path = probe_dir.path().join("tos_shielded_genesis_probe.fc");
         std::fs::write(&path, PROBE).expect("write the probe");
         let code = compile_func(&[
             stdlib_path(),

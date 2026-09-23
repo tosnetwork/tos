@@ -265,7 +265,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
     bc.set_workchain(0);
     let payer = bc.treasury("bench", 1_000 * TOS)?;
-    let path = std::env::temp_dir().join("tos_poseidon2_bench.fc");
+    // A directory of this run's own. A fixed name under the shared temporary
+    // directory is truncated by a second run of this tool while the first is
+    // still compiling from it.
+    let probe_dir = tempfile::tempdir()?;
+    let path = probe_dir.path().join("tos_poseidon2_bench.fc");
     std::fs::write(&path, probe_source())?;
     let stdlib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../crypto/smartcont/stdlib.fc");

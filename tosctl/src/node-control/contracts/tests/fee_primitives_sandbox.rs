@@ -24,7 +24,10 @@ const TOS: u64 = 1_000_000_000;
 /// them by name. `compile_func_with_stdlib` prepends the live `stdlib.fc`, so the v6
 /// helpers are in scope without an `#include`.
 fn probe_code() -> Cell {
-    let src = std::env::temp_dir().join("tos_fee_primitive_probe.fc");
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let src_dir = tempfile::tempdir().expect("a directory for the probe");
+    let src = src_dir.path().join("tos_fee_primitive_probe.fc");
     std::fs::write(
         &src,
         r#"

@@ -1047,6 +1047,7 @@ name = "poseidon2-bench"
 version = "0.1.0"
 dependencies = [
  "chain_block",
+ "tempfile",
  "tos_sandbox",
  "tos_vm",
 ]

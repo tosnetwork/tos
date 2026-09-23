@@ -1826,6 +1826,7 @@ dependencies = [
  "shielded-pool-circuit",
  "shielded-pool-genesis",
  "shielded-pool-wallet",
+ "tempfile",
  "tos_sandbox",
  "tos_vm",
 ]

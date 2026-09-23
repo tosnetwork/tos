@@ -109,7 +109,10 @@ fn compute_gas_used(result: &SendResult) -> u64 {
 }
 
 fn always_abort_recipient_code() -> Cell {
-    let source = std::env::temp_dir().join("prediction_market_always_abort_recipient.fc");
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let source_dir = tempfile::tempdir().expect("a directory for the probe");
+    let source = source_dir.path().join("prediction_market_always_abort_recipient.fc");
     std::fs::write(
         &source,
         r#"

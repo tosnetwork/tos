@@ -18,6 +18,9 @@ ark-ff = "=0.5.0"
 # end-to-end transaction needs a signer to produce signatures over a digest
 # the contract itself computes. Pinned exactly; never used outside tests.
 fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+# A private directory per probe compile. The pinned version is the one
+# the sandbox crate already locks, so this adds an edge, not a resolution.
+tempfile = "=3.27.0"
 
 [dev-dependencies]
 # The ceremony, for one test: run a real phase-2 over the committed phase-1

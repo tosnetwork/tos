@@ -58,7 +58,10 @@ fn payload(seed: u8) -> Vec<u8> {
 }
 
 fn deploy_destination(bc: &mut Blockchain, name: &str, source: &str) -> MsgAddressInt {
-    let path = std::env::temp_dir().join(format!("tos_shielded_round_trip_{name}.fc"));
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+    let path = probe_dir.path().join(format!("tos_shielded_round_trip_{name}.fc"));
     std::fs::write(&path, source).expect("write the destination");
     let stdlib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../crypto/smartcont/stdlib.fc");

@@ -385,7 +385,10 @@ impl Probe {
         // which may be another checkout, and compiling that checkout's FunC
         // here would make every mutation appear to survive.
         let library = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/shielded");
-        let probe_path = std::env::temp_dir().join("tos_shielded_auth_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let probe_path = probe_dir.path().join("tos_shielded_auth_probe.fc");
         std::fs::write(&probe_path, PROBE).expect("write probe");
         let code = compile_func_with_stdlib(&[
             format!("{library}/domains.fc").into(),

@@ -81,7 +81,10 @@ fn account_of(addr: &MsgAddressInt) -> [u8; 32] {
 }
 
 fn deploy_forger(bc: &mut Blockchain) -> MsgAddressInt {
-    let path = std::env::temp_dir().join("tos_shielded_bounce_forger.fc");
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+    let path = probe_dir.path().join("tos_shielded_bounce_forger.fc");
     std::fs::write(&path, FORGER).expect("write the forger");
     let stdlib = shielded_pool_circuit_crosscheck::stdlib_path();
     let code = compile_func(&[stdlib, path]).expect("compile the forger");

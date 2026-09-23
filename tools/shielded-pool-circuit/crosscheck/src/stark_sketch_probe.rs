@@ -218,7 +218,11 @@ impl StarkSketch {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
         bc.set_workchain(0);
         let payer = bc.treasury("stark_sketch", 1_000 * TOS)?;
-        let path = std::env::temp_dir().join("tos_stark_sketch.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir()
+            .map_err(|error| CrossCheckError::Sandbox(format!("probe directory: {error}")))?;
+        let path = probe_dir.path().join("tos_stark_sketch.fc");
         std::fs::write(&path, PROBE)
             .map_err(|error| CrossCheckError::Sandbox(format!("write probe: {error}")))?;
         let code = compile_func(&[stdlib_path(), path])?;

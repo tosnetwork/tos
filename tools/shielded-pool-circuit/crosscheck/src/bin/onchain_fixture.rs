@@ -663,7 +663,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Where the withdrawal goes. A contract that takes the money, deployed by
     // the harness at the address its own code hashes to.
-    let destination_path = std::env::temp_dir().join(if refuses {
+    // A directory of this run's own. A fixed name under the shared temporary
+    // directory is truncated by a second run of this tool while the first is
+    // still compiling from it.
+    let destination_dir = tempfile::tempdir()?;
+    let destination_path = destination_dir.path().join(if refuses {
         "tos_shielded_onchain_refuser.fc"
     } else {
         "tos_shielded_onchain_accepter.fc"

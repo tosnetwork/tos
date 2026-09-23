@@ -486,7 +486,10 @@ impl Probe {
         // The library belongs to the checkout that owns this test file, which
         // is not necessarily the checkout TOS_ROOT points at.
         let library = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/shielded");
-        let probe_path = std::env::temp_dir().join("tos_shielded_imt_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let probe_path = probe_dir.path().join("tos_shielded_imt_probe.fc");
         std::fs::write(&probe_path, PROBE).expect("write probe");
         let code = compile_func_with_stdlib(&[
             format!("{library}/domains.fc").into(),
