@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import math
@@ -10,6 +11,7 @@ import os
 import re
 import subprocess
 import time
+from bisect import bisect_right
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
@@ -360,24 +362,58 @@ async def _wait_all_heights(
 async def _masterchain_heights(
     clients: dict[str, Any],
     *,
+    query_events: list[dict[str, Any]] | None = None,
     transport_retry_counts: dict[str, dict[str, int]] | None = None,
     transport_retry_budget_seconds: float = SUSTAINED_TRANSPORT_RETRY_SECONDS,
     transport_retry_delay_seconds: float = SUSTAINED_TRANSPORT_RETRY_DELAY_SECONDS,
 ) -> dict[str, int]:
-    infos = await asyncio.gather(
-        *(
-            _retry_lite_transport(
-                name,
-                "get_masterchain_info",
-                client.get_masterchain_info,
-                retry_counts=transport_retry_counts,
-                retry_count_operation="get_masterchain_info",
-                retry_budget_seconds=transport_retry_budget_seconds,
-                retry_delay_seconds=transport_retry_delay_seconds,
-            )
-            for name, client in clients.items()
+    async def query(name: str, client: Any) -> Any:
+        async def attempt() -> Any:
+            started = time.monotonic_ns()
+            started_wall = time.time_ns()
+            try:
+                info = await client.get_masterchain_info()
+            except Exception as error:
+                if query_events is not None:
+                    query_events.append(
+                        {
+                            "node": name,
+                            "operation": "get_masterchain_info",
+                            "start_monotonic_ns": started,
+                            "end_monotonic_ns": time.monotonic_ns(),
+                            "start_wall_unix_ns": started_wall,
+                            "end_wall_unix_ns": time.time_ns(),
+                            "error": str(error),
+                            "reported_height": None,
+                        }
+                    )
+                raise
+            if query_events is not None:
+                query_events.append(
+                    {
+                        "node": name,
+                        "operation": "get_masterchain_info",
+                        "start_monotonic_ns": started,
+                        "end_monotonic_ns": time.monotonic_ns(),
+                        "start_wall_unix_ns": started_wall,
+                        "end_wall_unix_ns": time.time_ns(),
+                        "error": None,
+                        "reported_height": info.last.seqno,
+                    }
+                )
+            return info
+
+        return await _retry_lite_transport(
+            name,
+            "get_masterchain_info",
+            attempt,
+            retry_counts=transport_retry_counts,
+            retry_count_operation="get_masterchain_info",
+            retry_budget_seconds=transport_retry_budget_seconds,
+            retry_delay_seconds=transport_retry_delay_seconds,
         )
-    )
+
+    infos = await asyncio.gather(*(query(name, client) for name, client in clients.items()))
     return {name: info.last.seqno for name, info in zip(clients, infos, strict=True)}
 
 
@@ -385,26 +421,58 @@ async def require_agreed_masterchain_block(
     clients: dict[str, Any],
     height: int,
     *,
+    query_events: list[dict[str, Any]] | None = None,
     transport_retry_counts: dict[str, dict[str, int]] | None = None,
     transport_retry_budget_seconds: float = SUSTAINED_TRANSPORT_RETRY_SECONDS,
     transport_retry_delay_seconds: float = SUSTAINED_TRANSPORT_RETRY_DELAY_SECONDS,
 ) -> str:
-    blocks = await asyncio.gather(
-        *(
-            _retry_lite_transport(
-                name,
-                f"lookup_block(height={height})",
-                lambda client=client: client.lookup_block(
-                    workchain=-1, shard=-(2**63), seqno=height
-                ),
-                retry_counts=transport_retry_counts,
-                retry_count_operation="lookup_block",
-                retry_budget_seconds=transport_retry_budget_seconds,
-                retry_delay_seconds=transport_retry_delay_seconds,
-            )
-            for name, client in clients.items()
+    async def query(name: str, client: Any) -> Any:
+        async def attempt() -> Any:
+            started = time.monotonic_ns()
+            started_wall = time.time_ns()
+            try:
+                block = await client.lookup_block(workchain=-1, shard=-(2**63), seqno=height)
+            except Exception as error:
+                if query_events is not None:
+                    query_events.append(
+                        {
+                            "node": name,
+                            "operation": "lookup_block",
+                            "height": height,
+                            "start_monotonic_ns": started,
+                            "end_monotonic_ns": time.monotonic_ns(),
+                            "start_wall_unix_ns": started_wall,
+                            "end_wall_unix_ns": time.time_ns(),
+                            "error": str(error),
+                        }
+                    )
+                raise
+            if query_events is not None:
+                query_events.append(
+                    {
+                        "node": name,
+                        "operation": "lookup_block",
+                        "height": height,
+                        "start_monotonic_ns": started,
+                        "end_monotonic_ns": time.monotonic_ns(),
+                        "start_wall_unix_ns": started_wall,
+                        "end_wall_unix_ns": time.time_ns(),
+                        "error": None,
+                    }
+                )
+            return block
+
+        return await _retry_lite_transport(
+            name,
+            f"lookup_block(height={height})",
+            attempt,
+            retry_counts=transport_retry_counts,
+            retry_count_operation="lookup_block",
+            retry_budget_seconds=transport_retry_budget_seconds,
+            retry_delay_seconds=transport_retry_delay_seconds,
         )
-    )
+
+    blocks = await asyncio.gather(*(query(name, client) for name, client in clients.items()))
     by_node = {name: block_id_text(block) for name, block in zip(clients, blocks, strict=True)}
     distinct = set(by_node.values())
     if len(distinct) != 1:
@@ -448,6 +516,163 @@ def _observation_intervals(observed: list[ObservedBlock]) -> list[dict[str, Any]
     ]
 
 
+def _sustained_timing_split(
+    observed: list[ObservedBlock],
+    query_events: list[dict[str, Any]],
+    consensus_by_height: dict[int, dict[str, Any]],
+    node_names: list[str],
+    common_height_barriers: list[dict[str, Any]],
+    *,
+    wall_clocks_comparable: bool,
+) -> dict[str, Any]:
+    """Keep consensus, node exposure, query, and all-node barrier times separate."""
+    per_height: dict[str, dict[str, Any]] = {}
+    info_by_node = {
+        name: sorted(
+            (
+                event
+                for event in query_events
+                if event["node"] == name
+                and event["operation"] == "get_masterchain_info"
+                and event["error"] is None
+            ),
+            key=lambda event: event["end_monotonic_ns"],
+        )
+        for name in node_names
+    }
+    info_cursor = {name: 0 for name in node_names}
+    successful_info = sorted(
+        (event for events in info_by_node.values() for event in events),
+        key=lambda event: event["end_monotonic_ns"],
+    )
+    info_end_times = [event["end_monotonic_ns"] for event in successful_info]
+    lookup_by_height: dict[int, list[dict[str, Any]]] = {}
+    for event in query_events:
+        if event["operation"] == "lookup_block" and event["error"] is None:
+            lookup_by_height.setdefault(event["height"], []).append(event)
+    barrier_cursor = 0
+    for current in observed:
+        height = current.height
+        exposures: dict[str, dict[str, Any]] = {}
+        for name in node_names:
+            reports = info_by_node[name]
+            cursor = info_cursor[name]
+            while cursor < len(reports) and reports[cursor]["reported_height"] < height:
+                cursor += 1
+            info_cursor[name] = cursor
+            if cursor == len(reports):
+                raise RuntimeError(
+                    "N6_SUSTAINED_CONSENSUS_FAILURE: no successful lite query exposed "
+                    f"height {height} on {name}"
+                )
+            first = reports[cursor]
+            exposures[name] = {
+                "first_reported_at_or_above_height": first["reported_height"],
+                "first_exposed_monotonic_ns": first["end_monotonic_ns"],
+                "first_exposed_wall_unix_ns": first["end_wall_unix_ns"],
+                "first_exposure_query_start_monotonic_ns": first["start_monotonic_ns"],
+            }
+        slowest = max(
+            exposures,
+            key=lambda name: (exposures[name]["first_exposed_monotonic_ns"], name),
+        )
+        earliest = min(item["first_exposed_monotonic_ns"] for item in exposures.values())
+        lag_ms = (exposures[slowest]["first_exposed_monotonic_ns"] - earliest) / 1_000_000
+        consensus = consensus_by_height.get(height)
+        accepted_to_exposure: dict[str, float | None] = {}
+        for name in node_names:
+            accepted_ns = (consensus or {}).get("block_accepted_wall_unix_ns_by_node", {}).get(name)
+            if not wall_clocks_comparable or accepted_ns is None:
+                accepted_to_exposure[name] = None
+                continue
+            delta_ms = (exposures[name]["first_exposed_wall_unix_ns"] - accepted_ns) / 1_000_000
+            if delta_ms < 0:
+                raise RuntimeError(
+                    "N6_SUSTAINED_CONSENSUS_FAILURE: node exposed an agreed height "
+                    f"before blockAccepted: height={height} node={name} delta_ms={delta_ms}"
+                )
+            accepted_to_exposure[name] = delta_ms
+        while (
+            barrier_cursor < len(common_height_barriers)
+            and common_height_barriers[barrier_cursor]["common_height"] < height
+        ):
+            barrier_cursor += 1
+        if barrier_cursor == len(common_height_barriers):
+            raise RuntimeError(
+                "N6_SUSTAINED_CONSENSUS_FAILURE: no all-node barrier exposed "
+                f"agreed height {height}"
+            )
+        barrier = common_height_barriers[barrier_cursor]
+        per_height[str(height)] = {
+            "per_node_first_exposure": exposures,
+            "common_height_determining_nodes": barrier["determining_nodes"],
+            "common_height_barrier_monotonic_ns": barrier["at_monotonic_ns"],
+            "slowest_node_exposure_lag_ms": lag_ms,
+            "block_accepted_to_node_exposure_ms": accepted_to_exposure,
+            "missing_block_accepted_nodes": sorted(
+                name
+                for name in node_names
+                if name not in (consensus or {}).get("block_accepted_wall_unix_ns_by_node", {})
+            ),
+            "consensus": consensus,
+        }
+
+    intervals = []
+    for previous, current in zip(observed, observed[1:], strict=False):
+        previous_consensus = consensus_by_height.get(previous.height)
+        current_consensus = consensus_by_height.get(current.height)
+        finalization_interval = None
+        if wall_clocks_comparable and previous_consensus and current_consensus:
+            finalization_interval = (
+                current_consensus["first_finalize_certificate_wall_unix_ns"]
+                - previous_consensus["first_finalize_certificate_wall_unix_ns"]
+            ) / 1_000_000
+            if finalization_interval < 0:
+                raise RuntimeError(
+                    "N6_SUSTAINED_CONSENSUS_FAILURE: consensus finalization timestamps "
+                    f"regressed between heights {previous.height} and {current.height}"
+                )
+        lower = bisect_right(info_end_times, previous.observed_monotonic_ns)
+        upper = bisect_right(info_end_times, current.observed_monotonic_ns)
+        query_latency = [
+            (event["end_monotonic_ns"] - event["start_monotonic_ns"]) / 1_000_000
+            for event in [*successful_info[lower:upper], *lookup_by_height.get(current.height, [])]
+        ]
+        intervals.append(
+            {
+                "from_height": previous.height,
+                "to_height": current.height,
+                "consensus_finalization_interval_ms": finalization_interval,
+                "block_accepted_to_node_exposure_ms": per_height[str(current.height)][
+                    "block_accepted_to_node_exposure_ms"
+                ],
+                "lite_query_latency_ms": {
+                    "successful_only": True,
+                    "count": len(query_latency),
+                    "maximum": max(query_latency) if query_latency else None,
+                },
+                "slowest_node_exposure_lag_ms": per_height[str(current.height)][
+                    "slowest_node_exposure_lag_ms"
+                ],
+                "observation_interval_ms": (
+                    current.observed_monotonic_ns - previous.observed_monotonic_ns
+                )
+                / 1_000_000,
+            }
+        )
+    return {
+        "evidence_class": EVIDENCE_CLASS,
+        "wall_clocks_comparable": wall_clocks_comparable,
+        "consensus_timestamp_source": "earliest local Simplex certObserved(finalizeVote) for the agreed block",
+        "node_exposure_timestamp_source": "first successful get_masterchain_info result at or above height",
+        "node_exposure_is_upper_bound_when_height_jumps": True,
+        "query_events": query_events,
+        "common_height_barriers": common_height_barriers,
+        "per_height": per_height,
+        "intervals": intervals,
+    }
+
+
 def _simplex_session_log_paths(nodes: list[Any], validator_names: list[str]) -> dict[str, Path]:
     nodes_by_name = {node.name: node for node in nodes}
     if len(nodes_by_name) != len(nodes):
@@ -461,6 +686,190 @@ def _simplex_session_log_paths(nodes: list[Any], validator_names: list[str]) -> 
     return {
         node_name: Path(nodes_by_name[node_name].session_log_path) for node_name in validator_names
     }
+
+
+def _structured_masterchain_timing(
+    session_logs: dict[str, Path], agreed_block_ids: dict[int, str]
+) -> dict[int, dict[str, Any]]:
+    """Join local finalization and block acceptance to full agreed block ids."""
+    metadata: set[tuple[str, str]] = set()
+    candidates: dict[tuple[str, int, str], tuple[int, str]] = {}
+    parents: dict[tuple[str, int, str], tuple[str, int, str] | None] = {}
+    finalization: dict[tuple[str, int, str], list[tuple[str, float]]] = {}
+    accepted: dict[tuple[str, int, str], list[tuple[str, float]]] = {}
+
+    def key(session_id: str, candidate: Any) -> tuple[str, int, str] | None:
+        if not isinstance(candidate, dict):
+            return None
+        slot, digest = candidate.get("slot"), candidate.get("hash")
+        if not isinstance(slot, int) or not isinstance(digest, str):
+            return None
+        return session_id, slot, digest
+
+    for node_name, path in session_logs.items():
+        if not path.is_file():
+            raise RuntimeError(
+                "N6_SUSTAINED_CONSENSUS_FAILURE: structured consensus session log "
+                f"is missing for {node_name}: {path}"
+            )
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line:
+                continue
+            try:
+                batch = json.loads(line)
+            except json.JSONDecodeError as error:
+                raise RuntimeError(
+                    "N6_SUSTAINED_CONSENSUS_FAILURE: malformed structured consensus "
+                    f"log for {node_name} at {path}:{line_number}"
+                ) from error
+            if batch.get("@type") != "consensus.stats.events":
+                continue
+            session_id = batch.get("id")
+            events = batch.get("events")
+            if not isinstance(session_id, str) or not isinstance(events, list):
+                raise RuntimeError(
+                    "N6_SUSTAINED_CONSENSUS_FAILURE: invalid structured consensus "
+                    f"batch for {node_name} at {path}:{line_number}"
+                )
+            for timestamped in events:
+                if not isinstance(timestamped, dict):
+                    continue
+                event = timestamped.get("event")
+                ts = timestamped.get("ts")
+                if not isinstance(event, dict) or not isinstance(ts, (int, float)):
+                    continue
+                event_type = event.get("@type")
+                if event_type == "consensus.stats.id" and event.get("workchain") == -1:
+                    metadata.add((session_id, node_name))
+                elif event_type == "consensus.stats.candidateReceived":
+                    candidate_key = key(session_id, event.get("id"))
+                    if candidate_key is None:
+                        continue
+                    parent = event.get("parent")
+                    if not isinstance(parent, dict):
+                        raise RuntimeError(
+                            "N6_SUSTAINED_CONSENSUS_FAILURE: candidate parent is missing "
+                            f"for {node_name} at {path}:{line_number}"
+                        )
+                    if parent.get("@type") == "consensus.candidateWithoutParents":
+                        parent_key = None
+                    elif parent.get("@type") == "consensus.candidateParent":
+                        parent_key = key(session_id, parent.get("id"))
+                        if parent_key is None:
+                            raise RuntimeError(
+                                "N6_SUSTAINED_CONSENSUS_FAILURE: candidate parent id is "
+                                f"invalid for {node_name} at {path}:{line_number}"
+                            )
+                    else:
+                        raise RuntimeError(
+                            "N6_SUSTAINED_CONSENSUS_FAILURE: unknown candidate parent "
+                            f"type for {node_name} at {path}:{line_number}"
+                        )
+                    if candidate_key in parents and parents[candidate_key] != parent_key:
+                        raise RuntimeError(
+                            "N6_SUSTAINED_CONSENSUS_FAILURE: candidate parent mapping "
+                            f"conflicts for {candidate_key}"
+                        )
+                    parents[candidate_key] = parent_key
+                    block = event.get("block")
+                    block_id = block.get("id") if isinstance(block, dict) else None
+                    if not isinstance(block_id, dict):
+                        continue
+                    if block_id.get("workchain") != -1:
+                        continue
+                    height = block_id.get("seqno")
+                    try:
+                        root = base64.b64decode(block_id["root_hash"], validate=True)
+                        file = base64.b64decode(block_id["file_hash"], validate=True)
+                        shard = int(block_id["shard"])
+                    except (KeyError, TypeError, ValueError) as error:
+                        raise RuntimeError(
+                            "N6_SUSTAINED_CONSENSUS_FAILURE: malformed candidate block id "
+                            f"for {node_name} at {path}:{line_number}"
+                        ) from error
+                    if not isinstance(height, int) or len(root) != 32 or len(file) != 32:
+                        raise RuntimeError(
+                            "N6_SUSTAINED_CONSENSUS_FAILURE: invalid candidate block id "
+                            f"for {node_name} at {path}:{line_number}"
+                        )
+                    shard &= 2**64 - 1
+                    block_text = f"(-1,{shard:016x},{height}):{root.hex()}:{file.hex()}"
+                    previous = candidates.setdefault(candidate_key, (height, block_text))
+                    if previous != (height, block_text):
+                        raise RuntimeError(
+                            "N6_SUSTAINED_CONSENSUS_FAILURE: candidate block-id mapping "
+                            f"conflicts for {candidate_key}"
+                        )
+                elif event_type == "consensus.simplex.stats.certObserved":
+                    vote = event.get("vote")
+                    if (
+                        isinstance(vote, dict)
+                        and vote.get("@type") == "consensus.simplex.finalizeVote"
+                    ):
+                        candidate_key = key(session_id, vote.get("id"))
+                        if candidate_key is not None:
+                            finalization.setdefault(candidate_key, []).append(
+                                (node_name, float(ts))
+                            )
+                elif event_type == "consensus.stats.blockAccepted":
+                    candidate_key = key(session_id, event.get("id"))
+                    if candidate_key is not None:
+                        accepted.setdefault(candidate_key, []).append((node_name, float(ts)))
+
+    # A FinalCert for an empty descendant finalizes its parent chain too. A
+    # block candidate can therefore be accepted without a direct FinalCert.
+    finalized_ancestors: dict[
+        tuple[str, int, str], list[tuple[str, float, tuple[str, int, str]]]
+    ] = {}
+    for finalizing_key, observations in finalization.items():
+        for node, ts in observations:
+            if (finalizing_key[0], node) not in metadata:
+                continue
+            ancestor: tuple[str, int, str] | None = finalizing_key
+            visited: set[tuple[str, int, str]] = set()
+            while ancestor is not None:
+                if ancestor in visited:
+                    raise RuntimeError(
+                        "N6_SUSTAINED_CONSENSUS_FAILURE: candidate parent cycle "
+                        f"contains {ancestor}"
+                    )
+                visited.add(ancestor)
+                finalized_ancestors.setdefault(ancestor, []).append((node, ts, finalizing_key))
+                ancestor = parents.get(ancestor)
+
+    result: dict[int, dict[str, Any]] = {}
+    for candidate_key, (height, block_text) in candidates.items():
+        if agreed_block_ids.get(height) != block_text:
+            continue
+        session_id = candidate_key[0]
+        finalized = finalized_ancestors.get(candidate_key, [])
+        accepted_by_node = {
+            node: min(ts for name, ts in accepted.get(candidate_key, []) if name == node)
+            for node in {name for name, _ in accepted.get(candidate_key, [])}
+            if (session_id, node) in metadata
+        }
+        if not finalized:
+            continue
+        earliest_node, earliest_ts, finalizing_key = min(finalized, key=lambda item: item[1])
+        current = {
+            "session_id": session_id,
+            "candidate_slot": candidate_key[1],
+            "candidate_hash": candidate_key[2],
+            "first_finalize_certificate_node": earliest_node,
+            "finalizing_candidate_slot": finalizing_key[1],
+            "finalization_through_descendant": finalizing_key != candidate_key,
+            "first_finalize_certificate_wall_unix_ns": round(earliest_ts * 1_000_000_000),
+            "block_accepted_wall_unix_ns_by_node": {
+                node: round(ts * 1_000_000_000) for node, ts in accepted_by_node.items()
+            },
+        }
+        if height in result:
+            raise RuntimeError(
+                "N6_SUSTAINED_CONSENSUS_FAILURE: more than one finalized candidate "
+                f"maps to agreed masterchain height {height}"
+            )
+        result[height] = current
+    return result
 
 
 def analyze_simplex_skip_runs(
@@ -739,6 +1148,7 @@ def summarize_sustained_observation(
     transport_retry_counts: dict[str, dict[str, int]] | None = None,
     interval_retry_baseline: int = 0,
     simplex_skip_evidence: dict[str, Any] | None = None,
+    timing_split: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if len(observed) < 3:
         raise RuntimeError(
@@ -803,6 +1213,11 @@ def summarize_sustained_observation(
         "per_node_final_height": per_node_final_height,
         "lite_transport_retries": retry_summary,
         "simplex_skip_runs": skip_evidence,
+        "timing_split": timing_split
+        or {
+            "analysis_available": False,
+            "reason": "per-call lite and structured Simplex timing were not requested by this caller",
+        },
         "observation_intervals": observation_intervals,
         "observation_interval_distribution_ms": {
             "count": len(values),
@@ -831,6 +1246,7 @@ async def observe_sustained_consensus(
     zerostate_block_id: str,
     *,
     simplex_validator_names: list[str] | None = None,
+    wall_clocks_comparable: bool = True,
 ) -> dict[str, Any]:
     if (config.blocks is None) == (config.seconds is None):
         raise ValueError(
@@ -849,14 +1265,31 @@ async def observe_sustained_consensus(
     transport_retry_counts = {
         name: {"get_masterchain_info": 0, "lookup_block": 0} for name in clients
     }
-    heights = await _masterchain_heights(clients, transport_retry_counts=transport_retry_counts)
+    query_events: list[dict[str, Any]] = []
+    common_height_barriers: list[dict[str, Any]] = []
+    heights = await _masterchain_heights(
+        clients, transport_retry_counts=transport_retry_counts, query_events=query_events
+    )
     start_height = min(heights.values())
+    common_height_barriers.append(
+        {
+            "common_height": start_height,
+            "node_heights": heights,
+            "determining_nodes": sorted(
+                name for name, height in heights.items() if height == start_height
+            ),
+            "at_monotonic_ns": time.monotonic_ns(),
+        }
+    )
     if not zerostate_block_id:
         raise ValueError("N6_SUSTAINED_CONSENSUS_FAILURE: zerostate block id is missing")
     block_ids: dict[int, str] = {0: zerostate_block_id}
     for height in range(1, start_height + 1):
         block_ids[height] = await require_agreed_masterchain_block(
-            clients, height, transport_retry_counts=transport_retry_counts
+            clients,
+            height,
+            transport_retry_counts=transport_retry_counts,
+            query_events=query_events,
         )
 
     interval_retry_baseline = _lite_transport_retry_total(transport_retry_counts)
@@ -874,12 +1307,27 @@ async def observe_sustained_consensus(
 
     while True:
         final_heights = await _masterchain_heights(
-            clients, transport_retry_counts=transport_retry_counts
+            clients,
+            transport_retry_counts=transport_retry_counts,
+            query_events=query_events,
         )
         common_height = min(final_heights.values())
+        common_height_barriers.append(
+            {
+                "common_height": common_height,
+                "node_heights": final_heights,
+                "determining_nodes": sorted(
+                    name for name, height in final_heights.items() if height == common_height
+                ),
+                "at_monotonic_ns": time.monotonic_ns(),
+            }
+        )
         while next_height <= common_height:
             block_id = await require_agreed_masterchain_block(
-                clients, next_height, transport_retry_counts=transport_retry_counts
+                clients,
+                next_height,
+                transport_retry_counts=transport_retry_counts,
+                query_events=query_events,
             )
             block_ids[next_height] = block_id
             observed.append(ObservedBlock(next_height, block_id, time.monotonic_ns()))
@@ -898,15 +1346,36 @@ async def observe_sustained_consensus(
         await asyncio.sleep(0.05)
 
     skip_evidence = None
+    consensus_by_height: dict[int, dict[str, Any]] = {}
     if simplex_validator_names is not None:
         # TraceCollector flushes structured events every five seconds. Waiting
         # once at the end avoids treating its final buffered batch as no skips.
         await asyncio.sleep(SUSTAINED_SESSION_LOG_FLUSH_SECONDS)
+        session_logs = _simplex_session_log_paths(nodes, simplex_validator_names)
         skip_evidence = analyze_simplex_skip_runs(
-            _simplex_session_log_paths(nodes, simplex_validator_names),
+            session_logs,
             _observation_intervals(observed),
             simplex_validator_names,
         )
+        consensus_by_height = _structured_masterchain_timing(session_logs, block_ids)
+        missing = sorted({item.height for item in observed} - set(consensus_by_height))
+        if missing:
+            raise RuntimeError(
+                "N6_SUSTAINED_CONSENSUS_FAILURE: structured finalization is missing "
+                f"for agreed masterchain heights {missing}"
+            )
+
+    timing_split = _sustained_timing_split(
+        observed,
+        query_events,
+        consensus_by_height,
+        list(clients),
+        common_height_barriers,
+        wall_clocks_comparable=wall_clocks_comparable,
+    )
+    timing_split["analysis_available"] = bool(consensus_by_height)
+    if not consensus_by_height:
+        timing_split["reason"] = "structured Simplex finalization timestamps were not available"
 
     return summarize_sustained_observation(
         config=config,
@@ -918,6 +1387,7 @@ async def observe_sustained_consensus(
         transport_retry_counts=transport_retry_counts,
         interval_retry_baseline=interval_retry_baseline,
         simplex_skip_evidence=skip_evidence,
+        timing_split=timing_split,
     )
 
 
@@ -1043,6 +1513,7 @@ async def run_cluster(
                 sustained,
                 block_id_text(network.zerostate.as_block()),
                 simplex_validator_names=[node.name for node in validator_nodes],
+                wall_clocks_comparable=backend.manifest()["kind"] == "local-process",
             )
             if sustained is not None
             else None

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -22,10 +23,13 @@ from tostester.n6_cluster import (  # noqa: E402
     _masterchain_heights,
     _resource_monitor,
     _simplex_session_log_paths,
+    _structured_masterchain_timing,
+    _sustained_timing_split,
     _wait_all_heights,
     analyze_consensus_milestones,
     analyze_live_finality,
     analyze_simplex_skip_runs,
+    block_id_text,
     load_latency_profile,
     observe_sustained_consensus,
     require_agreed_masterchain_block,
@@ -634,6 +638,214 @@ def check_latency_profile_binding() -> None:
     )
 
 
+def check_sustained_timing_split(directory: Path) -> None:
+    session = "masterchain-session"
+    nodes = ("node-a", "node-b")
+    agreed: dict[int, str] = {}
+    logs: dict[str, Path] = {}
+
+    def candidate_for_height(height: int) -> dict[str, object]:
+        return {
+            "@type": "consensus.candidateId",
+            "slot": height,
+            "hash": base64.b64encode(bytes([height + 20]) * 32).decode(),
+        }
+
+    for node in nodes:
+        events = [
+            {
+                "ts": 99.0,
+                "event": {"@type": "consensus.stats.id", "workchain": -1},
+            }
+        ]
+        for height in (5, 6, 7):
+            candidate = candidate_for_height(height)
+            parent = (
+                {"@type": "consensus.candidateWithoutParents"}
+                if height == 5
+                else {"@type": "consensus.candidateParent", "id": candidate_for_height(height - 1)}
+            )
+            block = SimpleNamespace(
+                workchain=-1,
+                shard=-(2**63),
+                seqno=height,
+                root_hash=bytes([height]) * 32,
+                file_hash=bytes([height + 10]) * 32,
+            )
+            agreed[height] = block_id_text(block)
+            block_data = {
+                "workchain": -1,
+                "shard": str(block.shard),
+                "seqno": height,
+                "root_hash": base64.b64encode(block.root_hash).decode(),
+                "file_hash": base64.b64encode(block.file_hash).decode(),
+            }
+            finalized = 100.0 + (height - 5) * 0.4
+            events.extend(
+                [
+                    {
+                        "ts": finalized - 0.02,
+                        "event": {
+                            "@type": "consensus.stats.candidateReceived",
+                            "id": candidate,
+                            "parent": parent,
+                            "block": {"id": block_data},
+                        },
+                    },
+                    {
+                        "ts": finalized + (0.02 if node == "node-a" else 0.03),
+                        "event": {
+                            "@type": "consensus.stats.blockAccepted",
+                            "id": candidate,
+                        },
+                    },
+                ]
+            )
+            finalizing_candidate = candidate
+            if height == 6:
+                finalizing_candidate = {
+                    "@type": "consensus.candidateId",
+                    "slot": 60,
+                    "hash": base64.b64encode(bytes([90]) * 32).decode(),
+                }
+                events.append(
+                    {
+                        "ts": finalized - 0.01,
+                        "event": {
+                            "@type": "consensus.stats.candidateReceived",
+                            "id": finalizing_candidate,
+                            "parent": {"@type": "consensus.candidateParent", "id": candidate},
+                            "block": {"@type": "consensus.stats.emptyBlock"},
+                        },
+                    }
+                )
+            events.append(
+                {
+                    "ts": finalized,
+                    "event": {
+                        "@type": "consensus.simplex.stats.certObserved",
+                        "vote": {
+                            "@type": "consensus.simplex.finalizeVote",
+                            "id": finalizing_candidate,
+                        },
+                    },
+                }
+            )
+        path = directory / f"timing-{node}.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "@type": "consensus.stats.events",
+                    "id": session,
+                    "events": events,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        logs[node] = path
+
+    consensus = _structured_masterchain_timing(logs, agreed)
+    require(set(consensus) == {5, 6, 7}, "structured finalization did not join by full block id")
+    require(
+        consensus[6]["finalization_through_descendant"] is True
+        and consensus[6]["finalizing_candidate_slot"] == 60,
+        "an empty descendant FinalCert did not finalize its block-bearing parent",
+    )
+
+    def info(node: str, height: int, end_ms: int) -> dict[str, object]:
+        return {
+            "node": node,
+            "operation": "get_masterchain_info",
+            "start_monotonic_ns": (end_ms - 5) * 1_000_000,
+            "end_monotonic_ns": end_ms * 1_000_000,
+            "end_wall_unix_ns": (100_000 + end_ms - 10_000) * 1_000_000,
+            "reported_height": height,
+            "error": None,
+        }
+
+    observed = [
+        ObservedBlock(5, agreed[5], 10_100_000_000),
+        ObservedBlock(6, agreed[6], 10_900_000_000),
+        ObservedBlock(7, agreed[7], 11_250_000_000),
+    ]
+    queries = [
+        info("node-a", 5, 10_080),
+        info("node-b", 5, 10_090),
+        info("node-a", 7, 10_850),
+        info("node-b", 6, 10_880),
+        info("node-b", 7, 11_200),
+        {
+            "node": "node-b",
+            "operation": "lookup_block",
+            "height": 6,
+            "start_monotonic_ns": 10_880_000_000,
+            "end_monotonic_ns": 10_887_000_000,
+            "error": None,
+        },
+    ]
+    barriers = [
+        {
+            "common_height": 5,
+            "node_heights": {"node-a": 5, "node-b": 5},
+            "determining_nodes": ["node-a", "node-b"],
+            "at_monotonic_ns": 10_100_000_000,
+        },
+        {
+            "common_height": 6,
+            "node_heights": {"node-a": 7, "node-b": 6},
+            "determining_nodes": ["node-b"],
+            "at_monotonic_ns": 10_900_000_000,
+        },
+        {
+            "common_height": 7,
+            "node_heights": {"node-a": 7, "node-b": 7},
+            "determining_nodes": ["node-a", "node-b"],
+            "at_monotonic_ns": 11_250_000_000,
+        },
+    ]
+    split = _sustained_timing_split(
+        observed,
+        queries,
+        consensus,
+        list(nodes),
+        barriers,
+        wall_clocks_comparable=True,
+    )
+    middle = split["intervals"][0]
+    require(
+        middle["consensus_finalization_interval_ms"] == 400.0
+        and middle["observation_interval_ms"] == 800.0,
+        "consensus finalization was conflated with all-node observation latency",
+    )
+    require(
+        split["per_height"]["6"]["common_height_determining_nodes"] == ["node-b"],
+        "common-height determinant was inferred from the wrong node",
+    )
+    require(
+        middle["slowest_node_exposure_lag_ms"] == 30.0
+        and middle["block_accepted_to_node_exposure_ms"]["node-b"] == 450.0,
+        "node exposure lag or accepted-to-exposure latency was not separated",
+    )
+    require(
+        middle["lite_query_latency_ms"]["maximum"] == 7.0,
+        "successful lite query latency was not recorded separately",
+    )
+    remote = _sustained_timing_split(
+        observed,
+        queries,
+        consensus,
+        list(nodes),
+        barriers,
+        wall_clocks_comparable=False,
+    )
+    require(
+        remote["intervals"][0]["consensus_finalization_interval_ms"] is None
+        and remote["intervals"][0]["block_accepted_to_node_exposure_ms"]["node-b"] is None,
+        "unsynchronised remote node clocks were treated as comparable",
+    )
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -709,6 +921,7 @@ def main() -> int:
         asyncio.run(check_observer_retry_window_composition())
         check_sustained_summary()
         check_simplex_skip_run_correlation(root)
+        check_sustained_timing_split(root)
         check_latency_profile_binding()
         no_latency = load_latency_profile(
             ROOT / "test/pq-native/n6-scale-profiles/no-simulated-latency.json"
