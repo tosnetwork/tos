@@ -759,13 +759,18 @@ class FullNode(Network.Node):
     @override
     async def stop(self):
         if self._client:
-            await self._client.aclose()
+            client = self._client
+            self._client = None
+            await client.aclose()
         if self._engine_console:
-            self._engine_console.close()
+            console = self._engine_console
+            self._engine_console = None
+            console.close()
         if self._blockchain_explorer:
             _ = self._blockchain_explorer.cancel()
             try:
                 await self._blockchain_explorer
             except asyncio.CancelledError:
                 pass
+            self._blockchain_explorer = None
         await super().stop()
