@@ -403,7 +403,7 @@ def test_json_rpc_is_added_only_in_experiment_mode(tmp_path):
         assert options.args[rpc_flag + 1] == expected
 
 
-def test_experiment_wallet_funding_supports_three_concurrent_unrecovered_stakes(
+def test_experiment_pool_capital_supports_three_concurrent_unrecovered_stakes(
     tmp_path,
 ):
     launch_gate = stage_a.ValidatorElectionRehearsal(
@@ -430,26 +430,27 @@ def test_experiment_wallet_funding_supports_three_concurrent_unrecovered_stakes(
     assert launch_gate.validator_wallet_funding() == 20_020 * stage_a.NANO
     assert launch_gate.validator_wallet_funding() == stage_a.VALIDATOR_WALLET_FUNDING
     assert stage_a.EXPERIMENT_CONCURRENT_STAKE_CAPACITY == 3
-    assert experiment.validator_wallet_funding() == 30_030 * stage_a.NANO
+    assert experiment.pq_election is True
+    assert experiment.validator_wallet_funding() == (
+        stage_a.PQ_EXPERIMENT_POOL_CAPITAL + stage_a.EXPERIMENT_OPERATOR_FEE_RESERVE
+    )
     assert (
         experiment.validator_wallet_funding()
         == stage_a.EXPERIMENT_VALIDATOR_WALLET_FUNDING
     )
     assert (
-        experiment.validator_wallet_funding() - 3 * stage_a.STAKE_MESSAGE_VALUE
-        == 27 * stage_a.NANO
+        stage_a.PQ_EXPERIMENT_POOL_CAPITAL
+        == 3 * (stage_a.PQ_STAKE_MESSAGE_VALUE + 20 * stage_a.NANO)
     )
     assert (
-        experiment.validator_wallet_funding() - 2 * stage_a.STAKE_MESSAGE_VALUE
-        >= stage_a.STAKE_MESSAGE_VALUE + 2 * stage_a.NANO
+        stage_a.PQ_EXPERIMENT_POOL_CAPITAL - 2 * stage_a.PQ_STAKE_MESSAGE_VALUE
+        >= stage_a.PQ_STAKE_MESSAGE_VALUE + 2 * stage_a.NANO
     )
-    assert (
-        launch_gate.validator_wallet_funding() - 2 * stage_a.STAKE_MESSAGE_VALUE
-        < stage_a.STAKE_MESSAGE_VALUE + 2 * stage_a.NANO
-    )
+    assert launch_gate.validator_wallet_funding() < stage_a.PQ_EXPERIMENT_POOL_CAPITAL
 
     launch_config = stage_a.NetworkConfig()
     experiment_config = stage_a.NetworkConfig()
+    experiment.controller_code = stage_a.Cell.empty()
     launch_gate.configure_network_profile(launch_config)
     experiment.configure_network_profile(experiment_config)
     assert launch_config.validator_election_experiment_faucet_balance_nanotos is None
@@ -460,11 +461,305 @@ def test_experiment_wallet_funding_supports_three_concurrent_unrecovered_stakes(
     assert stage_a.EXPERIMENT_GENESIS_FAUCET_FUNDING == (
         4 * stage_a.EXPERIMENT_VALIDATOR_WALLET_FUNDING
         + stage_a.NEGATIVE_WALLET_FUNDING
+        + 4 * 10 * stage_a.NANO
         + stage_a.EXPERIMENT_FAUCET_FEE_RESERVE
     )
 
 
-def test_v3_reconciliation_keeps_exact_credits_and_retained_rollover_separate(
+def test_experiment_candidate_records_node_authorized_pool_owner(tmp_path, monkeypatch):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path, base_port=36_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"],
+        experiment=stage_a.ExperimentProfile(600, 600, "127.0.0.1", 8111),
+    )
+    wallet = stage_a.Address((-1, bytes([0x11]) * 32))
+    pool = stage_a.Address((-1, bytes([0x22]) * 32))
+    controller = stage_a.Address((-1, bytes([0x33]) * 32))
+    adnl = bytes([0x44]) * 32
+    rehearsal.wallets = [SimpleNamespace(address=wallet)]
+    rehearsal.pools = [SimpleNamespace(address=pool)]
+    rehearsal.controllers = [SimpleNamespace(
+        address=controller, consensus=SimpleNamespace(key_id=bytes([0x55]) * 32),
+    )]
+    rehearsal.nodes = [SimpleNamespace(validator_key=SimpleNamespace(id=adnl))]
+
+    async def balance(address):
+        return 50 * stage_a.NANO if address == wallet else stage_a.PQ_EXPERIMENT_POOL_CAPITAL
+
+    async def submit(index, election_id, *, round_number):
+        assert (index, election_id, round_number) == (0, 100, 1)
+        return {
+            "query_id": 1, "authorization_key_id_hex": (bytes([0x55]) * 32).hex(),
+            "body_boc": {"sha256": "pq-body"},
+            "effective_stake_nanotos": 11_001 * stage_a.NANO,
+        }
+
+    monkeypatch.setattr(rehearsal, "balance", balance)
+    monkeypatch.setattr(rehearsal, "submit_pq_candidate", submit)
+    monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
+    asyncio.run(rehearsal.submit_experiment_candidate(index=0, election_id=100, round_number=1))
+    candidate = rehearsal.election_allocations[100]["validators"]["1"]
+    assert candidate["controller_id_hex"] == controller.hash_part.hex()
+    assert candidate["pool_stake_owner_raw"] == stage_a.raw_address(pool)
+    assert candidate["recovery_destination_raw"] == stage_a.raw_address(pool)
+    assert candidate["operator_wallet_raw"] == stage_a.raw_address(wallet)
+    assert candidate["effective_stake_nanotos"] == 11_001 * stage_a.NANO
+    assert candidate["pq_authorized_order"]["body_boc"]["sha256"] == "pq-body"
+
+
+@pytest.mark.parametrize("reply_opcode", [0xF96F7324, 0xEE6F454C])
+def test_experiment_recovery_credits_pool_and_requires_mature_reply(
+    tmp_path, monkeypatch, reply_opcode,
+):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path, base_port=36_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"],
+        experiment=stage_a.ExperimentProfile(600, 600, "127.0.0.1", 8111),
+    )
+    wallets = [stage_a.Address((-1, bytes([0x10 + index]) * 32)) for index in range(4)]
+    pools = [stage_a.Address((-1, bytes([0x20 + index]) * 32)) for index in range(4)]
+    controllers = [stage_a.Address((-1, bytes([0x30 + index]) * 32)) for index in range(4)]
+    rehearsal.wallets = [SimpleNamespace(address=value) for value in wallets]
+    rehearsal.pools = [SimpleNamespace(address=value) for value in pools]
+    rehearsal.controllers = [SimpleNamespace(address=value) for value in controllers]
+    rehearsal.nodes = [
+        SimpleNamespace(validator_key=SimpleNamespace(id=bytes([0x40 + index]) * 32))
+        for index in range(4)
+    ]
+    principal = 11_001 * stage_a.NANO
+    credit = principal + 15 * stage_a.NANO
+    rehearsal.election_allocations = {
+        100: {"stake_unfreeze_at": 150, "validators": {
+            "1": {"recovery_status": "pending", "effective_stake_nanotos": principal},
+        }},
+    }
+    sent = False
+
+    async def runmethod(name, pool_id):
+        assert name == "compute_returned_stake"
+        assert pool_id.startswith("0x")
+        return (0 if sent else credit) if pool_id == "0x" + pools[0].hash_part.hex() else 0
+
+    async def balance(address):
+        assert address == pools[0]
+        return 100 * stage_a.NANO + (credit - stage_a.NANO if sent else 0)
+
+    async def recovery_body(label):
+        return (stage_a.Builder().store_uint(0x47657424, 32)
+                .store_uint(77, 64).end_cell())
+
+    async def send(wallet, *, dest, amount, body, label):
+        nonlocal sent
+        assert wallet.address == wallets[0]
+        assert dest == pools[0] and amount == stage_a.NANO
+        sent = True
+
+    async def reply(index, query_id, **kwargs):
+        assert (index, query_id) == (0, 77)
+        return reply_opcode, 0
+
+    async def retry(fn, *, predicate, **kwargs):
+        value = await fn()
+        assert predicate(value)
+        return value
+
+    monkeypatch.setattr(rehearsal, "runmethod_int", runmethod)
+    monkeypatch.setattr(rehearsal, "balance", balance)
+    monkeypatch.setattr(rehearsal, "recovery_body", recovery_body)
+    monkeypatch.setattr(rehearsal, "send_from_wallet", send)
+    monkeypatch.setattr(rehearsal, "wait_pq_pool_elector_reply", reply)
+    monkeypatch.setattr(rehearsal, "retry", retry)
+    monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
+    if reply_opcode != 0xF96F7324:
+        with pytest.raises(AssertionError, match="did not receive mature recovery"):
+            asyncio.run(rehearsal.recover_experiment_stakes(200))
+        assert rehearsal.recovery_records == []
+    else:
+        assert asyncio.run(rehearsal.recover_experiment_stakes(200)) == 1
+        record = rehearsal.recovery_records[0]
+        assert record["principal_nanotos"] == principal
+        assert record["reward_nanotos"] == 15 * stage_a.NANO
+        assert record["pool_stake_owner_raw"] == stage_a.raw_address(pools[0])
+        assert record["pool_balance_delta_nanotos"] == credit - stage_a.NANO
+        assert record["elector_reply_opcode"] == "0xf96f7324"
+
+
+@pytest.mark.parametrize("swap_controller_adnl", [False, True])
+def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
+    tmp_path, monkeypatch, swap_controller_adnl,
+):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path, base_port=36_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"],
+        experiment=stage_a.ExperimentProfile(600, 600, "127.0.0.1", 8111),
+    )
+    controllers = [stage_a.Address((-1, bytes([0x31 + index]) * 32)) for index in range(4)]
+    adnl = [bytes([0x41 + index]) * 32 for index in range(4)]
+    rehearsal.controllers = [SimpleNamespace(address=value) for value in controllers]
+    rehearsal.nodes = [SimpleNamespace(validator_key=SimpleNamespace(id=value)) for value in adnl]
+    rehearsal.artifacts_dir.mkdir()
+    pairs = [(controller.hash_part.hex().upper(), key.hex().upper())
+             for controller, key in zip(controllers, adnl)]
+    if swap_controller_adnl:
+        pairs[0], pairs[1] = (pairs[0][0], pairs[1][1]), (pairs[1][0], pairs[0][1])
+    config = stage_a.Config34(
+        utime_since=100, utime_until=400, total=4, main=4, total_weight=100,
+        validator_ids=[item[0] for item in pairs], public_keys=[],
+        adnl_ids=[item[1] for item in pairs], validator_adnl_pairs=pairs, raw="pq-set",
+    )
+    rehearsal.election_allocations = {
+        100: {"selection_status": "pending", "validators": {
+            str(index + 1): {"controller_id_hex": controllers[index].hash_part.hex(),
+                             "adnl_id_hex": adnl[index].hex()}
+            for index in range(4)
+        }, "elector_snapshots": []},
+    }
+
+    async def rpc_consensus(election_id):
+        assert election_id == 100
+        return {"observations": [{"validator_set": {
+            "utime_since": 100,
+            "validators": [{
+                "public_key": stage_a.base64.b64encode(bytes(32)).decode(),
+                "adnl_address": stage_a.base64.b64encode(key).decode(),
+                "weight": str(index + 1), "cumulative_weight": str(index + 1),
+            } for index, key in enumerate(adnl)],
+        }}]}
+
+    async def snapshot(label):
+        return {"label": label}
+
+    async def get_config():
+        return config
+
+    monkeypatch.setattr(rehearsal, "get_config34", get_config)
+    monkeypatch.setattr(rehearsal, "rpc_config34_consensus", rpc_consensus)
+    monkeypatch.setattr(rehearsal, "capture_elector_snapshot", snapshot)
+    monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
+    if swap_controller_adnl:
+        with pytest.raises(AssertionError, match="controller.*ADNL|association"):
+            asyncio.run(rehearsal.observe_experiment_activation())
+    else:
+        assert asyncio.run(rehearsal.observe_experiment_activation()) is True
+        allocation = rehearsal.election_allocations[100]
+        assert allocation["selection_status"] == "selected"
+        assert [allocation["validators"][str(index + 1)]["individual_weight"]
+                for index in range(4)] == [str(index + 1) for index in range(4)]
+
+
+@pytest.mark.parametrize("case", ["retained-only", "mixed", "insufficient"])
+def test_experiment_pool_credit_includes_matured_rollover_without_greedy_attribution(
+    tmp_path, monkeypatch, case,
+):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path, base_port=36_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"],
+        experiment=stage_a.ExperimentProfile(600, 600, "127.0.0.1", 8111),
+    )
+    wallets = [stage_a.Address((-1, bytes([0x50 + index]) * 32)) for index in range(4)]
+    pools = [stage_a.Address((-1, bytes([0x60 + index]) * 32)) for index in range(4)]
+    controllers = [stage_a.Address((-1, bytes([0x70 + index]) * 32)) for index in range(4)]
+    rehearsal.wallets = [SimpleNamespace(address=value) for value in wallets]
+    rehearsal.pools = [SimpleNamespace(address=value) for value in pools]
+    rehearsal.controllers = [SimpleNamespace(address=value) for value in controllers]
+    rehearsal.nodes = [
+        SimpleNamespace(validator_key=SimpleNamespace(id=bytes([0x80 + index]) * 32))
+        for index in range(4)
+    ]
+    primary_principal = 11_001 * stage_a.NANO
+    rollover_principal = 11_002 * stage_a.NANO
+    if case != "retained-only":
+        rehearsal.election_allocations[100] = {
+            "purpose": "primary-window", "selection_status": "selected",
+            "stake_unfreeze_at": 150, "validators": {"1": {
+                "selection_status": "selected", "recovery_status": "pending",
+                "effective_stake_nanotos": primary_principal,
+            }},
+        }
+    rehearsal.election_allocations[400] = {
+        "purpose": "settlement-rollover", "selection_status": "selected",
+        "stake_unfreeze_at": 450, "validators": {"1": {
+            "selection_status": "selected", "recovery_status": "retained-settlement-rollover",
+            "effective_stake_nanotos": rollover_principal,
+        }},
+    }
+    rehearsal.experiment_last_chain_timestamp = 500
+    expected_principal = rollover_principal + (primary_principal if case == "mixed" else 0)
+    credit = (
+        primary_principal + 15 * stage_a.NANO if case == "insufficient"
+        else expected_principal + 15 * stage_a.NANO
+    )
+    sent = False
+
+    async def runmethod(name, pool_id):
+        assert name == "compute_returned_stake"
+        return (0 if sent else credit) if pool_id == "0x" + pools[0].hash_part.hex() else 0
+
+    async def balance(address):
+        assert address == pools[0]
+        return 100 * stage_a.NANO + (credit - stage_a.NANO if sent else 0)
+
+    async def send(wallet, *, dest, amount, body, label):
+        nonlocal sent
+        assert wallet.address == wallets[0] and dest == pools[0]
+        sent = True
+
+    async def retry(fn, *, predicate, **kwargs):
+        value = await fn()
+        assert predicate(value)
+        return value
+
+    async def recovery_body(label):
+        return (stage_a.Builder().store_uint(0x47657424, 32)
+                .store_uint(78, 64).end_cell())
+
+    async def reply(index, query_id, **kwargs):
+        assert (index, query_id) == (0, 78)
+        return 0xF96F7324, 0
+
+    monkeypatch.setattr(rehearsal, "runmethod_int", runmethod)
+    monkeypatch.setattr(rehearsal, "balance", balance)
+    monkeypatch.setattr(rehearsal, "send_from_wallet", send)
+    monkeypatch.setattr(rehearsal, "retry", retry)
+    monkeypatch.setattr(rehearsal, "recovery_body", recovery_body)
+    monkeypatch.setattr(rehearsal, "wait_pq_pool_elector_reply", reply)
+    monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
+    monkeypatch.setattr(rehearsal, "zero_state_evidence", lambda: {"fixture": True})
+    monkeypatch.setattr(rehearsal, "validator_identity_evidence", lambda index: {
+        "validator_index": index + 1,
+        "operator_wallet_raw": stage_a.raw_address(wallets[index]),
+        "pool_stake_owner_raw": stage_a.raw_address(pools[index]),
+    })
+
+    recovered = asyncio.run(rehearsal.recover_experiment_stakes(500))
+    rollover = rehearsal.election_allocations[400]["validators"]["1"]
+    evidence = rehearsal.allocation_evidence("complete")
+    if case == "insufficient":
+        assert recovered == 0 and sent is False
+        assert rollover["recovery_status"] == "retained-settlement-rollover"
+        assert evidence["reconciliation"]["matured_retained_unrecovered_allocations"] == [
+            {"election_id": 400, "validator_index": 1},
+        ]
+        assert evidence["reconciliation"]["outstanding_allocations"] >= 1
+        assert evidence["status"] == "partial-settlement"
+    else:
+        assert recovered == 1 and sent is True
+        assert rollover["recovery_status"] in ("recovered", "recovered-in-aggregate")
+        assert rollover["recovered_despite_retained_rollover"] is True
+        assert evidence["reconciliation"]["retained_settlement_rollover_allocations"] == 0
+        record = rehearsal.recovery_records[0]
+        assert record["principal_nanotos"] == expected_principal
+        if case == "mixed":
+            assert record["candidate_election_ids"] == [100, 400]
+            assert record["pool_aggregate_attribution_status"] == "EXACT"
+            assert record["per_election_reward_attribution_status"] == "NOT_ATTRIBUTABLE"
+            assert rollover["reward_attribution_status"] == "NOT_ATTRIBUTABLE"
+        else:
+            assert record["candidate_election_ids"] == [400]
+            assert record["per_election_reward_attribution_status"] == "EXACT"
+
+
+def test_v4_reconciliation_keeps_exact_pool_credits_and_retained_rollover_separate(
     tmp_path,
 ):
     experiment_profile = stage_a.ExperimentProfile(
@@ -483,7 +778,8 @@ def test_v3_reconciliation_keeps_exact_credits_and_retained_rollover_separate(
     )
     rehearsal.validator_identity_evidence = lambda index: {  # type: ignore[method-assign]
         "validator_index": index + 1,
-        "reward_wallet_raw": f"-1:{index + 1:064x}",
+        "operator_wallet_raw": f"-1:{index + 1:064x}",
+        "pool_stake_owner_raw": f"-1:{index + 11:064x}",
     }
     rehearsal.zero_state_evidence = lambda: {"fixture": True}  # type: ignore[method-assign]
     rehearsal.election_allocations = {
@@ -540,12 +836,13 @@ def test_v3_reconciliation_keeps_exact_credits_and_retained_rollover_separate(
 
     evidence = rehearsal.allocation_evidence("complete")
 
-    assert evidence["schema_version"] == 3
+    assert evidence["schema_version"] == 4
     assert evidence["status"] == "complete"
     assert evidence["reconciliation"]["total_reward_nanotos"] == 123_456_789
     assert evidence["reconciliation"]["outstanding_allocations"] == 0
     assert evidence["reconciliation"]["retained_settlement_rollover_allocations"] == 1
     assert "equal-share inference" in evidence["elector"]["allocation_basis"]
+    assert "pool-level" in evidence["elector"]["allocation_basis"]
 
 
 def test_missing_primary_candidates_are_explicit_outstanding_and_fail_completion(
@@ -566,7 +863,8 @@ def test_missing_primary_candidates_are_explicit_outstanding_and_fail_completion
     )
     rehearsal.validator_identity_evidence = lambda index: {  # type: ignore[method-assign]
         "validator_index": index + 1,
-        "reward_wallet_raw": f"-1:{index + 1:064x}",
+        "operator_wallet_raw": f"-1:{index + 1:064x}",
+        "pool_stake_owner_raw": f"-1:{index + 11:064x}",
     }
     rehearsal.zero_state_evidence = lambda: {"fixture": True}  # type: ignore[method-assign]
     rehearsal.election_allocations = {
@@ -603,18 +901,18 @@ def test_missing_primary_candidates_are_explicit_outstanding_and_fail_completion
         rehearsal.require_complete_experiment_settlement(4)
 
 
-def test_multi_election_credit_is_exact_only_at_wallet_aggregate():
+def test_multi_election_credit_is_exact_only_at_pool_aggregate():
     single = stage_a.recovery_attribution([100])
     aggregate = stage_a.recovery_attribution([100, 400])
 
     assert single == {
         "attribution_status": "exact-single-election",
-        "wallet_aggregate_attribution_status": "EXACT",
+        "pool_aggregate_attribution_status": "EXACT",
         "per_election_reward_attribution_status": "EXACT",
     }
     assert aggregate == {
-        "attribution_status": "wallet-exact-multi-election-aggregate",
-        "wallet_aggregate_attribution_status": "EXACT",
+        "attribution_status": "pool-exact-multi-election-aggregate",
+        "pool_aggregate_attribution_status": "EXACT",
         "per_election_reward_attribution_status": "NOT_ATTRIBUTABLE",
     }
     with pytest.raises(ValueError, match="at least one election"):

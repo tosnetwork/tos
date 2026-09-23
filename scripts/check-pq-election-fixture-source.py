@@ -358,6 +358,29 @@ def main() -> int:
     ):
         if marker not in ast.unparse(method(tree, name)):
             fail(f"full PQ rehearsal {name} lost {marker!r}")
+    constructor = ast.unparse(method(tree, "__init__"))
+    if "self.pq_election = pq_election or (experiment is not None and (not soak_mode))" not in constructor:
+        fail("the election experiment no longer provisions the PQ controller/pool fixture")
+    if one_call(execute, "deploy_pq_fixture_accounts") >= one_call(execute, "run_experiment"):
+        fail("the election experiment no longer starts after PQ controller/pool deployment")
+    experiment_candidate = method(tree, "submit_experiment_candidate")
+    if len(call_lines(experiment_candidate, "submit_pq_candidate")) != 1:
+        fail("the election experiment no longer obtains a node-authorized production pool order")
+    experiment_activation = method(tree, "observe_experiment_activation")
+    if len(call_lines(experiment_activation, "require_pq_config34_associations")) != 1:
+        fail("the election experiment no longer binds controller identities to ADNL IDs in live ConfigParam 34")
+    experiment_recovery = ast.unparse(method(tree, "recover_experiment_stakes"))
+    for marker in ("pool_id = '0x' + pool.address.hash_part.hex()", "dest=pool.address",
+                   "opcode != 4184830756", "pool_balance_after_nanotos"):
+        if marker not in experiment_recovery:
+            fail(f"the election experiment no longer proves pool-owned recovery: missing {marker!r}")
+    evidence = ast.unparse(method(tree, "allocation_evidence"))
+    if "tos.validator-reward-election-allocation-evidence.v4" not in evidence:
+        fail("the election experiment lost its separate pool-owned v4 evidence schema")
+    source = script.read_text()
+    for obsolete in ("validator-elect-req.fif", "validator-elect-signed.fif", "0x654C5074", ".key.sign("):
+        if obsolete in source:
+            fail(f"the election script still contains a classical stake producer: {obsolete}")
     print(
         "PQ_ELECTION_FIXTURE_SOURCE_OK: controller identity is asserted before boot; "
         "the live Param 47 read-back call precedes deployment; "
@@ -369,7 +392,9 @@ def main() -> int:
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
         "three-of-four liveness and pool-owned early recovery checks follow activation; "
         "the default and explicit full PQ routes budget their faucet in Genesis before the first election and retain "
-        "second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt"
+        "second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt; "
+        "experiment uses the PQ fixture, node-authorized pool orders, controller/ADNL activation and pool-owned v4 recovery; "
+        "no classical Fift stake producer remains in this script"
     )
     return 0
 
