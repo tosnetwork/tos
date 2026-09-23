@@ -449,7 +449,32 @@ deadline. Unit tests cover recovery, unrelated-error refusal and deadline
 exhaustion; source/behavior mutations reject disabling the fourth-stake retry
 or broadening the error class. This successful run does **not** convert the
 historical default launch-gate's second/rollover elections or mature-stake
-recoveries; overall T2 remains open for those units.
+recoveries; at that first-round checkpoint T2 remained open for those units.
+
+T2's opt-in full Stage-A diagnostic then exercised the later rounds on exact
+source commit `36ac27039`. The retained report is
+`test/integration/.pq-full-launch-gate-budgeted/20260923T133630Z/report.json`
+(SHA-256 `a8ac3f21dd616bbf1eb7feeef6cd27b6cecfaeed7c8365e8d12ce42f0d7aebbd`,
+`status=pass`, no failures). All three PQ elections activated ConfigParam 34
+with four controller/ADNL pairs; twelve round-distinct production-builder
+pool orders received `STAKE_ACCEPTED`. Four first-round pool credits of
+11,015.482978133 TOS and four second-round credits of 11,015.129446576 TOS
+were each read by pool address, paid with the elector's 96-bit mature-recovery
+reply, deleted from the credit table and reflected in pool balance. Duplicate
+recovery received the exact no-credit reply. With two validators stopped,
+eight height samples all remained at 3437; after restoration the chain reached
+3440. The previous full-mode run at `52689aa0f` failed before any second-round
+stake because the ordinary 100,000-TOS test faucet could not fund its first
+11,040-TOS top-up. Its report and node databases are retained as a fixture
+funding diagnostic. `36ac27039` uses the existing Stage-A Genesis faucet
+override, only for explicit `pq-launch-gate`, to budget 185,440 TOS from
+initial wallets/controller deployments, two later rounds of fresh capital and
+two distinct fee reserves. It reads back a minimum post-fixture balance of
+89,320 TOS before opening the first election; the passing run observed 90,320.
+Neither this diagnostic faucet nor the accelerated period changes production
+Genesis or release criteria. The historical default `--mode launch-gate` is
+still classical and has not been switched or rerun, so overall T2 remains
+open for the final default-entry migration despite this full opt-in pass.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or

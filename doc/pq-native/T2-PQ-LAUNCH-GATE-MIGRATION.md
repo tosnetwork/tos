@@ -56,10 +56,10 @@ of that literal does not clear a Fift caller that imports the library word.
 | A duplicate validator key is refused without changing the first stake | After controller 1 registers, send a deliberate test-only elector-layout request from the negative wallet carrying that held PQ key. Source checks key ownership before controller admission and should return reason 4; assert that exact reply and unchanged `participates_in(controller_1)`. This is not a client staking path. | Proven live: reason 4, unchanged participation. |
 | First ConfigParam 34 activation elects the expected four and the network runs 3-of-4 | Require `utime_since == election_id`, `total=main=4`, and the exact four controller IDs (plus ADNL IDs); then retain the existing 3-of-4 height-advance test. | Proven live: exact controller/ADNL pairs, four main validators, and seqno 1485→1515 with one stopped. |
 | Early stake recovery pays nothing | Send recovery from validator wallet **to the pool**, not directly to elector. The pool forwards the request, and the elector credits the pool that owns the stake. Check the pool's returned-stake value and balance; wallet balance is no longer the payout authority. | Proven live: pool credit remained zero; no-credit elector reply. |
-| Second election accepts four, survives restarts, and activates a second set | Reauthorize for the second `election_id`, fund each pool for another order, require four `STAKE_ACCEPTED` replies and exact controller IDs in the second live ConfigParam 34. Preserve the pre/post-activation node restarts. | Not migrated |
-| Rollover election opens, accepts four, and activates the third set | Use the same node-authorized pool route for all four, retaining the `past_elections` readbacks and exact third ConfigParam 34 activation. Fund pools for the third stake without conflating a top-up with an election reward. | Not migrated |
-| First and second held stakes recover with bonus; duplicate recovery does not pay | Query `compute_returned_stake` for each **pool address**, order recovery through each pool after unfreeze, then require that pool's credit is removed and its balance increases by the recorded amount. Require the credit to exceed the original effective stake, and repeat recovery to prove no second credit. The wallet-based legacy assertions would inspect the wrong owner. | Not migrated |
-| 2-of-4 validators safely halt and resume when restored | Keep the existing height-sample and restart assertions after PQ rollover; no stake encoding change is needed for this consensus property. | Not migrated |
+| Second election accepts four, survives restarts, and activates a second set | Reauthorize for the second `election_id`, fund each pool for another order, require four `STAKE_ACCEPTED` replies and exact controller IDs in the second live ConfigParam 34. Preserve the pre/post-activation node restarts. | Proven in opt-in full PQ Stage A at `36ac27039`; default entry not yet switched. |
+| Rollover election opens, accepts four, and activates the third set | Use the same node-authorized pool route for all four, retaining the `past_elections` readbacks and exact third ConfigParam 34 activation. Fund pools for the third stake without conflating a top-up with an election reward. | Proven in opt-in full PQ Stage A at `36ac27039`; fresh pool top-ups recorded separately. |
+| First and second held stakes recover with bonus; duplicate recovery does not pay | Query `compute_returned_stake` for each **pool address**, order recovery through each pool after unfreeze, then require that pool's credit is removed and its balance increases by the recorded amount. Require the credit to exceed the original effective stake, and repeat recovery to prove no second credit. The wallet-based legacy assertions would inspect the wrong owner. | Proven: four credits per round, mature-success/no-credit opcodes, credit deletion and pool balance increase. |
+| 2-of-4 validators safely halt and resume when restored | Keep the existing height-sample and restart assertions after PQ rollover; no stake encoding change is needed for this consensus property. | Proven: eight height samples at 3437, then 3440 after restart. |
 
 The first-round results above come from the exact-tree diagnostic report
 `test/integration/.pq-election-authority-retry/20260923T125649Z/report.json`
@@ -67,6 +67,13 @@ at `af79222b9` (SHA-256
 `9b6c369d4ffe2e4a6685e45b46c348a4f525a617530c36507460209517eacfb7`).
 A wallet without a birth witness separately returned reason 8. It is an
 admission control, not a substitute for the three pool-route negatives.
+The second/rollover and recovery rows use the exact-tree opt-in full-mode
+report `test/integration/.pq-full-launch-gate-budgeted/20260923T133630Z/report.json`
+at `36ac27039` (SHA-256
+`a8ac3f21dd616bbf1eb7feeef6cd27b6cecfaeed7c8365e8d12ce42f0d7aebbd`).
+The previous full-mode report at `52689aa0f` stopped at a test-faucet
+funding boundary before a second-round stake, not at the elector; it remains
+retained rather than silently replaced.
 
 ## Serial implementation units
 
@@ -83,6 +90,8 @@ admission control, not a substitute for the three pool-route negatives.
    three distinct pool stakes; account for the owner/pool balance separately
    from validator-wallet fees. Require two bonus recoveries, duplicate
    recovery refusal, all ConfigParam 34 transitions and the 2-of-4 safe halt.
+   **Implemented and passed** in explicit `pq-launch-gate` Stage A on
+   `36ac27039`; this is not yet the default command.
 4. Only after every old assertion has a live PQ counterpart, make the full
    route the default and remove this script's classical
    `validator-elect-req.fif`/`validator-elect-signed.fif` calls and local
