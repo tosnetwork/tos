@@ -426,10 +426,16 @@ path may have dropped events. A 180-second committee-wide run at exact commit
 `85be09801f9b58de75f904e4615ff74f7897f54c` measured 433 blocks from height 12
 through 445, p50 399.0 ms and p95 539.9 ms. It found three structured skip
 runs of lengths 1, 2 and 3, with five to six skip votes per validator, and five
-slow intervals between roughly 1.2 and 2.5 seconds. The sets were disjoint:
-all five slow intervals reported no skip run, while all three skip runs fell
-in ordinary intervals. Thus the earlier skip-causes-tail hypothesis is
-refuted for that run rather than merely unmeasured. The slow intervals and the
+slow intervals between roughly 1.2 and 2.5 seconds. That analyser used
+`Voted(skipVote)` as run authority. This event is published before vote-intent
+persistence, signing and signed-vote persistence, any of which can fail before
+the vote is applied or broadcast. The three lengths and reported disjointness
+are retained as **unverified attempt-based figures**—neither confirmed nor
+known false. The earlier statement that this refuted a skip-causes-tail
+hypothesis is withdrawn. The analyser now requires
+`certObserved(skipVote)` (a quorum SkipCert) for a protocol skip run and keeps
+`Voted(skipVote)` only as per-node attempt telemetry. A test with Voted events
+but no SkipCert refuses to claim a run. The slow intervals and the
 text/structured discrepancy remain unattributed; co-location remains a caveat
 rather than a diagnosis.
 
@@ -894,7 +900,10 @@ classifier has separate buckets for them. Of the 233 local-cast text events,
 222 lie within their node's structured-log flush horizon and match **exactly
 one** structured `Voted(skipVote)` by node and slot. The remaining 11 occurred
 after the last structured batch timestamp during teardown and are reported as
-unflushed tail events, not as lost telemetry. The site-audit artifact is
+unflushed tail events, not as lost telemetry. Here “local cast” names the
+trace site, not a successfully persisted, signed or broadcast protocol vote;
+the one-to-one invariant establishes attempted-participation telemetry only.
+The site-audit artifact is
 `/tmp/n6-skip-vote-semantics-e586c9dc7.json` (SHA-256
 `f77311000a3303a58578fc9abb4ccecaea5b6cd8a945592ad1f6ca1c0e25ff83`).
 The source-only `n6-skip-vote-semantics` gate distinguishes peer, cast and

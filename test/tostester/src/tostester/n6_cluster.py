@@ -877,7 +877,11 @@ def analyze_simplex_skip_runs(
     observation_intervals: list[dict[str, Any]],
     validator_names: list[str],
 ) -> dict[str, Any]:
-    """Correlate structured Simplex skip votes with accepted masterchain blocks."""
+    """Correlate observed SkipCerts with accepted masterchain blocks.
+
+    Voted(skipVote) is an attempt emitted before persistence and signing. It is
+    retained as per-node telemetry, never as authority that a skip occurred.
+    """
     session_events: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for node_name, path in session_logs.items():
         if not path.is_file():
@@ -907,7 +911,8 @@ def analyze_simplex_skip_runs(
             session_events.setdefault(session_id, {}).setdefault(node_name, []).extend(events)
 
     validator_set = set(validator_names)
-    per_node_slots = {node_name: set() for node_name in session_logs}
+    attempted_slots = {node_name: set() for node_name in session_logs}
+    certified_slots = {node_name: set() for node_name in session_logs}
     candidate_heights: dict[tuple[str, int, str], int] = {}
     accepted_candidates: set[tuple[str, int, str]] = set()
     session_metadata: dict[str, tuple[int, int]] = {}
@@ -981,7 +986,13 @@ def analyze_simplex_skip_runs(
                     if isinstance(vote, dict) and vote.get("@type") == "consensus.simplex.skipVote":
                         slot = vote.get("slot")
                         if isinstance(slot, int):
-                            per_node_slots[node_name].add((session_id, slot))
+                            attempted_slots[node_name].add((session_id, slot))
+                elif event_type == "consensus.simplex.stats.certObserved":
+                    vote = event.get("vote")
+                    if isinstance(vote, dict) and vote.get("@type") == "consensus.simplex.skipVote":
+                        slot = vote.get("slot")
+                        if isinstance(slot, int):
+                            certified_slots[node_name].add((session_id, slot))
 
     accepted_height_slots: dict[int, tuple[str, int]] = {}
     for key in accepted_candidates:
@@ -999,11 +1010,15 @@ def analyze_simplex_skip_runs(
     # A node logs shard and masterchain sessions into the same file. Only the
     # sessions whose structured id event says workchain -1 describe the block
     # intervals observed above.
-    per_node_slots = {
+    attempted_slots = {
         node_name: {item for item in slots if item[0] in session_metadata}
-        for node_name, slots in per_node_slots.items()
+        for node_name, slots in attempted_slots.items()
     }
-    if not any(per_node_slots.values()):
+    certified_slots = {
+        node_name: {item for item in slots if item[0] in session_metadata}
+        for node_name, slots in certified_slots.items()
+    }
+    if not any(certified_slots.values()):
         interval_correlations = [
             {
                 "from_height": interval["from_height"],
@@ -1023,16 +1038,23 @@ def analyze_simplex_skip_runs(
         return {
             "analysis_available": False,
             "reason": (
-                "no consensus.simplex.stats.voted(skipVote) event appeared in this run; "
-                "run-local data cannot distinguish zero cast skip votes from absent skip telemetry"
+                "no consensus.simplex.stats.certObserved(skipVote) SkipCert appeared in this run; "
+                "attempted votes cannot establish a certified skip run"
             ),
             "run_count": None,
             "runs": [],
-            "skip_votes_per_node": None,
-            "skip_slots_per_node": None,
+            "skip_votes_per_node": {
+                node_name: len(slots) for node_name, slots in attempted_slots.items()
+            },
+            "skip_slots_per_node": {
+                node_name: [
+                    {"session_id": session_id, "slot": slot} for session_id, slot in sorted(slots)
+                ]
+                for node_name, slots in attempted_slots.items()
+            },
             "interval_correlations": interval_correlations,
         }
-    all_skip_slots = sorted({slot for slots in per_node_slots.values() for slot in slots})
+    all_skip_slots = sorted({slot for slots in certified_slots.values() for slot in slots})
     grouped: list[list[tuple[str, int]]] = []
     for session_slot in all_skip_slots:
         if (
@@ -1080,9 +1102,9 @@ def analyze_simplex_skip_runs(
                 "length": len(slot_numbers),
                 "slots": slot_numbers,
                 "leaders": leaders,
-                "votes_per_node": {
+                "cert_observations_per_node": {
                     node_name: sum((session_id, slot) in node_slots for slot in slot_numbers)
-                    for node_name, node_slots in per_node_slots.items()
+                    for node_name, node_slots in certified_slots.items()
                 },
             }
         )
@@ -1125,13 +1147,13 @@ def analyze_simplex_skip_runs(
         "run_count": len(runs),
         "runs": runs,
         "skip_votes_per_node": {
-            node_name: len(slots) for node_name, slots in per_node_slots.items()
+            node_name: len(slots) for node_name, slots in attempted_slots.items()
         },
         "skip_slots_per_node": {
             node_name: [
                 {"session_id": session_id, "slot": slot} for session_id, slot in sorted(slots)
             ]
-            for node_name, slots in per_node_slots.items()
+            for node_name, slots in attempted_slots.items()
         },
         "interval_correlations": interval_correlations,
     }

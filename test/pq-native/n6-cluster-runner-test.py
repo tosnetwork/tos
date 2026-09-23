@@ -508,6 +508,16 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
             )
             for slot in node_skip_slots[node_name]
         )
+        if node_name == "node-a":
+            events.extend(
+                timestamped(
+                    {
+                        "@type": "consensus.simplex.stats.certObserved",
+                        "vote": {"@type": "consensus.simplex.skipVote", "slot": slot},
+                    }
+                )
+                for slot in [*range(101, 113), *range(115, 120)]
+            )
         path = directory / f"{node_name}-session.jsonl"
         path.write_text(
             json.dumps({"@type": "consensus.stats.events", "id": session_id, "events": events})
@@ -534,7 +544,7 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
         for previous, current in zip(observed, observed[1:], strict=False)
     ]
     evidence = analyze_simplex_skip_runs(logs, intervals, validator_names)
-    require(evidence["run_count"] == 2, "structured skip votes were not grouped into two runs")
+    require(evidence["run_count"] == 2, "observed SkipCerts were not grouped into two runs")
     require(
         [run["length"] for run in evidence["runs"]] == [12, 5],
         "skip-run lengths did not retain every distinct skipped slot",
@@ -582,6 +592,29 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
         "a skip run without a flagged slow interval was not retained",
     )
 
+    # Voted is published before PersistOwnVoteIntent, signing and signed-vote
+    # persistence. Any of those can fail, leaving an attempted vote but no
+    # signed/broadcast skip and therefore no SkipCert. It must not make a run.
+    attempted_only_logs: dict[str, Path] = {}
+    for node_name, path in logs.items():
+        batches = [json.loads(line) for line in path.read_text().splitlines()]
+        for batch in batches:
+            batch["events"] = [
+                item for item in batch["events"]
+                if item.get("event", {}).get("@type") != "consensus.simplex.stats.certObserved"
+            ]
+        attempted_path = directory / f"attempted-only-{node_name}-session.jsonl"
+        attempted_path.write_text(json.dumps(batches[0]) + "\n", encoding="utf-8")
+        attempted_only_logs[node_name] = attempted_path
+    attempted_only = analyze_simplex_skip_runs(attempted_only_logs, intervals, validator_names)
+    require(
+        attempted_only["analysis_available"] is False
+        and attempted_only["run_count"] is None
+        and attempted_only["skip_votes_per_node"]["node-a"] == 17
+        and all(item["coincides_with_skip_run"] is None for item in attempted_only["interval_correlations"]),
+        "a Voted(skipVote) attempt without a SkipCert was claimed as a skip run",
+    )
+
     blind_logs: dict[str, Path] = {}
     for node_name, path in logs.items():
         batches = [json.loads(line) for line in path.read_text().splitlines()]
@@ -601,12 +634,12 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
     require(
         unavailable["analysis_available"] is False
         and unavailable["run_count"] is None
-        and unavailable["skip_votes_per_node"] is None,
+        and unavailable["skip_votes_per_node"]["node-a"] == 0,
         "a skip-blind structured channel reported a measured zero",
     )
     require(
-        "consensus.simplex.stats.voted(skipVote)" in unavailable["reason"]
-        and "cannot distinguish zero cast skip votes from absent skip telemetry"
+        "consensus.simplex.stats.certObserved(skipVote)" in unavailable["reason"]
+        and "attempted votes cannot establish a certified skip run"
         in unavailable["reason"]
         and all(
             item["coincides_with_skip_run"] is None for item in unavailable["interval_correlations"]

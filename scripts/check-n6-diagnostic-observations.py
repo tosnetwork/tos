@@ -115,13 +115,14 @@ def main() -> int:
         )
     committee_follow_up = observed_at.get("committee_wide_structured_follow_up", {})
     if (
-        committee_follow_up.get("slow_intervals_coincident_with_skip_run") != 0
+        committee_follow_up.get("authority_status") != "UNVERIFIED_ATTEMPT_BASED"
+        or committee_follow_up.get("slow_intervals_coincident_with_skip_run") != 0
         or committee_follow_up.get("ordinary_intervals_coincident_with_skip_run") != 3
         or committee_follow_up.get("skip_run_lengths") != [1, 2, 3]
     ):
         fail(
-            "colocated-launch-committee-skip-runs no longer records that measured "
-            "skip runs and slow intervals were disjoint"
+            "colocated-launch-committee-skip-runs no longer retains the historical "
+            "attempt-based figures as unverified"
         )
     semantics = observed_at.get("text_semantics_follow_up", {})
     expected_semantics = {
