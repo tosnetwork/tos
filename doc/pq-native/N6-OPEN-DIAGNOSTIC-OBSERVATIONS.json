@@ -78,6 +78,18 @@
             "the structured stats path dropped cast skip-vote events"
           ]
         },
+        "timing_split_follow_up": {
+          "exact_commit": "e586c9dc7",
+          "evidence_class": "COLOCATED_DIAGNOSTIC_ONLY",
+          "artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
+          "masterchain_blocks_produced": 726,
+          "start_height": 13,
+          "final_height": 739,
+          "queried_nodes": 22,
+          "lite_transport_retries": 0,
+          "slow_observation_intervals": 6,
+          "tail_assessment": "The six intervals are mixed: 698->699 is dominated by a 2751.8 ms first-FinalCert interval; other tails contain shorter FinalCert intervals and material successful-query or local accepted-to-exposed lag. 393->394 has no measured component near its 1200.4 ms all-node observation interval, so it is not attributed to consensus. The per-height and per-node join is in the result artifact and summarized in N6-STATUS-FOR-REVIEW.md. These components are not additive and do not establish a production cause."
+        },
         "committee_wide_structured_follow_up": {
           "exact_commit": "85be09801f9b58de75f904e4615ff74f7897f54c",
           "duration_seconds": 180,

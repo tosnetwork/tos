@@ -798,6 +798,49 @@ fail with `nodes on different masterchain blocks were reported as agreeing`.
 It also pins per-node final heights, the interval distribution, and the
 individual slow-interval record rather than accepting an average.
 
+### Audit timing split: finalization versus all-node exposure
+
+At `e586c9dc7`, the sustained observer records the monotonic start/end of
+every `get_masterchain_info` and `lookup_block` attempt, each node's first
+reported height, the node(s) determining the common-height barrier, and
+structured Simplex `certObserved(finalizeVote)` and `blockAccepted` events
+joined to the **full agreed block id**. A FinalCert for an empty descendant
+can finalize a block-bearing ancestor; the join follows candidate parents,
+and removing that step makes `n6-cluster-runner` fail with `structured
+finalization did not join by full block id`. On a local-process backend the
+node and observer wall clocks are comparable; a remote-command backend keeps
+cross-clock durations null. A lite query that jumps several heights gives an
+upper bound on first exposure, not an exact block-production timestamp.
+
+The exact-commit 21-validator, 300-second run produced 726 blocks (heights
+13→739). All 22 queried nodes agreed on full block ids through height 739;
+there were zero lite transport retries. All-node observation intervals had
+p50 399.3 ms and p95 498.7 ms. Six exceeded the 1,200 ms slow threshold.
+The full per-height/per-node/query artifact is retained at
+`/tmp/n6-timing-split-e586c9dc7-21-300s/result.json` (SHA-256
+`6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6`);
+the table below is a compact, diagnostic-only join of its tail rows. Durations
+are milliseconds; exposure and query maxima are across nodes and are **not
+additive** with the intervals.
+
+| Heights | Observation | First FinalCert interval | Max accepted→exposed | Max successful lite query | Slowest-node exposure lag |
+|---|---:|---:|---:|---:|---:|
+| 317→318 | 2712.2 | 993.8 | 126.3 | 1307.1 | 103.6 |
+| 393→394 | 1200.4 | 433.7 | 157.3 | 199.0 | 134.8 |
+| 471→472 | 1251.7 | 830.9 | 194.1 | 482.5 | 143.2 |
+| 587→588 | 2126.6 | 1259.4 | 298.9 | 800.4 | 233.7 |
+| 620→621 | 2233.1 | 663.2 | 1023.1 | 807.7 | 201.5 |
+| 698→699 | 2826.8 | 2751.8 | 134.4 | 931.0 | 230.2 |
+
+Thus the tail is **not one category**. Height 698→699 contains a 2752 ms
+FinalCert interval, nearly the whole 2827 ms observation interval. At
+317→318, 587→588 and 620→621, successful-but-slow queries and/or local
+accepted-to-exposed lag are material alongside shorter FinalCert intervals.
+The 393→394 interval has no single measured component near 1200 ms; polling,
+height catch-up and the all-node barrier remain possible contributors, so it
+would be false to assign it to consensus. These are co-located diagnostics,
+not a reason to tune Simplex, PQ or timeout parameters and not a release p99.
+
 ## Four-validator sustained functional regression
 
 The existing `test/integration/test_basic.py` remains the single wallet
