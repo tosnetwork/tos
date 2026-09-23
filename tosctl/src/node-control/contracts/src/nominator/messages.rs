@@ -9,6 +9,8 @@
 use chain_block::{BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, pq_bytes};
 
 const MLDSA44_SIGNATURE_BYTES: usize = 2420;
+const MLDSA44_PUBLIC_KEY_BYTES: usize = 1312;
+const MLDSA44_ALGORITHM_ID: u16 = 1;
 
 /// Opcodes for single-nominator contract messages
 pub mod opcodes {
@@ -33,7 +35,7 @@ pub struct NewStakeParams<'a> {
     pub query_id: u64,
     /// Stake amount in nanotos
     pub stake_amount: u64,
-    /// Validator public key (256 bits)
+    /// ML-DSA-44 consensus public key (1312 bytes); never a key-hash prefix.
     pub validator_pubkey: &'a [u8],
     /// Elections id fetched from elector
     pub stake_at: u32,
@@ -108,9 +110,28 @@ pub fn upgrade(query_id: u64, new_code: Cell) -> anyhow::Result<Cell> {
 
 /// Build new stake message body
 ///
-/// Sends stake to the elector for the next validation cycle.
-/// Must be sent from validator address.
+/// Sends stake to the single-nominator pool for the next validation cycle.
+/// The pool's `check_new_stake_msg` consumes stake_at, max_factor, adnl_addr,
+/// algorithm_id, public-key ref, signature ref, then optional witness. The
+/// elector consumes a different field order and an owner declaration; this is
+/// deliberately not an elector-directed body.
 pub fn new_stake(params: &NewStakeParams) -> anyhow::Result<Cell> {
+    new_stake_with_witness(params, None)
+}
+
+pub fn new_stake_with_witness(
+    params: &NewStakeParams,
+    witness: Option<&Cell>,
+) -> anyhow::Result<Cell> {
+    if params.validator_pubkey.len() != MLDSA44_PUBLIC_KEY_BYTES {
+        anyhow::bail!(
+            "a stake authorization needs an ML-DSA-44 public key of {MLDSA44_PUBLIC_KEY_BYTES} bytes, not {}",
+            params.validator_pubkey.len()
+        );
+    }
+    if params.adnl_addr.len() != 32 {
+        anyhow::bail!("a stake ADNL address is 32 bytes, not {}", params.adnl_addr.len());
+    }
     if params.signature.len() != MLDSA44_SIGNATURE_BYTES {
         anyhow::bail!(
             "a stake authorization is signed with ML-DSA-44, which is {MLDSA44_SIGNATURE_BYTES} \
@@ -118,18 +139,25 @@ pub fn new_stake(params: &NewStakeParams) -> anyhow::Result<Cell> {
             params.signature.len()
         );
     }
-    // Build the signature cell (stored as reference)
+    let public_key_cell =
+        pq_bytes::pack_pq_bytes(params.validator_pubkey, MLDSA44_PUBLIC_KEY_BYTES)?;
     let signature_cell = pq_bytes::pack_pq_bytes(params.signature, MLDSA44_SIGNATURE_BYTES)?;
     let mut builder = BuilderData::new();
     builder
         .append_u32(opcodes::NEW_STAKE)?
         .append_u64(params.query_id)?
         .append_builder(&build_coins(params.stake_amount)?)?
-        .append_raw(params.validator_pubkey, 256)?
         .append_u32(params.stake_at)?
         .append_u32(params.max_factor)?
         .append_raw(params.adnl_addr, 256)?
+        .append_u16(MLDSA44_ALGORITHM_ID)?
+        .checked_append_reference(public_key_cell)?
         .checked_append_reference(signature_cell)?;
+    if let Some(witness) = witness {
+        builder.append_bit_one()?.checked_append_reference(witness.clone())?;
+    } else {
+        builder.append_bit_zero()?;
+    }
     builder.into_cell()
 }
 
@@ -235,7 +263,7 @@ mod tests {
         let params = NewStakeParams {
             query_id: 33333u64,
             stake_amount: 10_000_000_000_000u64,
-            validator_pubkey: &[0x11u8; 32],
+            validator_pubkey: &[0x11u8; MLDSA44_PUBLIC_KEY_BYTES],
             stake_at: 1700000000u32,
             max_factor: 65536u32,
             adnl_addr: &[0x22u8; 32],
@@ -254,9 +282,8 @@ mod tests {
         let coins = Coins::construct_from(&mut slice).unwrap();
         assert_eq!(coins.as_u128(), params.stake_amount as u128);
 
-        let pubkey = slice.get_next_bits(256).unwrap();
-        assert_eq!(pubkey, params.validator_pubkey.to_vec());
-
+        // Field order is the single-nominator pool parser's order, not the
+        // elector parser's algorithm/key-first layout.
         let parsed_stake_at = slice.get_next_u32().unwrap();
         assert_eq!(parsed_stake_at, params.stake_at);
 
@@ -266,11 +293,23 @@ mod tests {
         let adnl = slice.get_next_bits(256).unwrap();
         assert_eq!(adnl, params.adnl_addr.to_vec());
 
+        let algorithm_id = slice.get_next_u16().unwrap();
+        assert_eq!(algorithm_id, MLDSA44_ALGORITHM_ID);
+
+        let key_cell = slice.checked_drain_reference().unwrap();
+        assert_eq!(
+            pq_bytes::unpack_pq_bytes(&key_cell, MLDSA44_PUBLIC_KEY_BYTES).unwrap(),
+            params.validator_pubkey
+        );
+
         let sig_cell = slice.checked_drain_reference().unwrap();
         assert_eq!(
             pq_bytes::unpack_pq_bytes(&sig_cell, MLDSA44_SIGNATURE_BYTES).unwrap(),
             params.signature
         );
+        assert!(!slice.get_next_bit().unwrap());
+        assert_eq!(slice.remaining_bits(), 0);
+        assert_eq!(slice.remaining_references(), 0);
     }
 
     #[test]
@@ -278,7 +317,7 @@ mod tests {
         let params = NewStakeParams {
             query_id: 1,
             stake_amount: 1,
-            validator_pubkey: &[0x11; 32],
+            validator_pubkey: &[0x11; MLDSA44_PUBLIC_KEY_BYTES],
             stake_at: 1,
             max_factor: 65536,
             adnl_addr: &[0x22; 32],
@@ -289,6 +328,54 @@ mod tests {
         assert!(error.contains("ML-DSA-44"), "wrong refusal: {error}");
         assert!(error.contains("2420"), "wrong refusal: {error}");
         assert!(error.contains("64"), "wrong refusal: {error}");
+    }
+
+    #[test]
+    fn test_new_stake_refuses_truncated_public_key() {
+        let signature = vec![0x33; MLDSA44_SIGNATURE_BYTES];
+        let params = NewStakeParams {
+            query_id: 1,
+            stake_amount: 1,
+            validator_pubkey: &[0x11; 32],
+            stake_at: 1,
+            max_factor: 65536,
+            adnl_addr: &[0x22; 32],
+            signature: &signature,
+        };
+        let error = new_stake(&params).unwrap_err().to_string();
+        assert!(error.contains("ML-DSA-44 public key"), "wrong refusal: {error}");
+        assert!(error.contains("1312"), "wrong refusal: {error}");
+        assert!(error.contains("32"), "wrong refusal: {error}");
+    }
+
+    #[test]
+    fn test_pool_stake_optional_witness_is_a_final_reference() {
+        let signature = vec![0x33; MLDSA44_SIGNATURE_BYTES];
+        let params = NewStakeParams {
+            query_id: 1,
+            stake_amount: 1,
+            validator_pubkey: &[0x11; MLDSA44_PUBLIC_KEY_BYTES],
+            stake_at: 2,
+            max_factor: 65536,
+            adnl_addr: &[0x22; 32],
+            signature: &signature,
+        };
+        let witness = BuilderData::new().into_cell().unwrap();
+        let mut slice =
+            SliceData::load_cell(new_stake_with_witness(&params, Some(&witness)).unwrap()).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), opcodes::NEW_STAKE);
+        assert_eq!(slice.get_next_u64().unwrap(), params.query_id);
+        let _stake_amount = Coins::construct_from(&mut slice).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), params.stake_at);
+        assert_eq!(slice.get_next_u32().unwrap(), params.max_factor);
+        assert_eq!(slice.get_next_bits(256).unwrap(), params.adnl_addr);
+        assert_eq!(slice.get_next_u16().unwrap(), MLDSA44_ALGORITHM_ID);
+        let _key = slice.checked_drain_reference().unwrap();
+        let _signature = slice.checked_drain_reference().unwrap();
+        assert!(slice.get_next_bit().unwrap());
+        assert_eq!(slice.checked_drain_reference().unwrap().repr_hash(), witness.repr_hash());
+        assert_eq!(slice.remaining_bits(), 0);
+        assert_eq!(slice.remaining_references(), 0);
     }
 
     #[test]
