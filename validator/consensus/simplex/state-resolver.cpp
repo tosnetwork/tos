@@ -403,15 +403,22 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         break;
       }
 
-      // A skip-only slot never had a Candidate object. Pool's available_base
-      // jumps directly past the skip run. Query the exact CandidateId so Pool
-      // can reject the shortcut when the slot also has a NotarCert.
-      if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(*id)) {
-        id = *skip_base;
-        continue;
+      // An already-signed candidate names this exact parent CandidateId.
+      // Local skip-certificate visibility cannot replace that ancestry.
+      // Resolve the exact candidate or fail closed; a missing ancestor must
+      // never silently omit a full state transition.
+      auto resolved_candidate = co_await owning_bus().publish<ResolveCandidate>(*id).wrap();
+      if (resolved_candidate.is_error()) {
+        co_return td::Status::Error(resolved_candidate.error().code(),
+                                    PSTRING() << "Simplex state-resolver: cannot resolve exact ancestor " << *id
+                                              << ": " << resolved_candidate.error().message());
       }
-
-      auto candidate = (co_await owning_bus().publish<ResolveCandidate>(*id)).candidate;
+      auto candidate = resolved_candidate.move_as_ok().candidate;
+      if (candidate->id != *id) {
+        co_return td::Status::Error(ErrorCode::protoviolation,
+                                    PSTRING() << "Simplex state-resolver: resolver returned candidate " << candidate->id
+                                              << " for exact ancestor " << *id);
+      }
       if (candidate->is_empty()) {
         id = candidate->parent_id;
         continue;

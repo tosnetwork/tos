@@ -140,12 +140,8 @@ add_test(
     COMMAND test-consensus --state-resolver-inflight-admission-unit-test
 )
 add_test(
-    NAME test-consensus-simplex2-skipped-slot-resolution-unit
-    COMMAND test-consensus --skipped-slot-resolution-unit-test
-)
-add_test(
-    NAME test-consensus-simplex2-merkle-skipped-exact-ancestor-repro
-    COMMAND test-consensus --merkle-skipped-exact-ancestor-repro-test
+    NAME test-consensus-simplex2-merkle-exact-parent-height-control
+    COMMAND test-consensus --merkle-exact-parent-height-control-test
 )
 add_test(
     NAME test-consensus-simplex2-candidate-resolver-retention-unit
@@ -351,6 +347,9 @@ add_test(
 # a legacy carrier built and thrown away, and a keyring signature produced and discarded.
 # They are checked where they exist, in the code.
 if(Python3_Interpreter_FOUND)
+    add_test(NAME simplex-exact-ancestor-source-guard
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check-simplex-exact-ancestor-resolution.py ${CMAKE_SOURCE_DIR})
+    set_tests_properties(simplex-exact-ancestor-source-guard PROPERTIES LABELS "source-guard")
     add_test(NAME consensus-no-fallback
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check-no-fallback.py)
     set_tests_properties(consensus-no-fallback PROPERTIES LABELS "source-guard")
