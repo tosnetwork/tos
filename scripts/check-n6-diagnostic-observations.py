@@ -80,6 +80,15 @@ def main() -> int:
                 "colocated-launch-committee-finalcert-tail changed field "
                 f"{field}: expected={expected!r} actual={finalcert.get(field)!r}"
             )
+    tail_join = observations["colocated-launch-committee-finalcert-tail"].get("stage_resource_join", {})
+    for field, expected in {
+        "source_artifact_sha256": expected_finalcert["artifact_sha256"],
+        "candidate_slot": 713,
+        "finalizing_candidate_slot": 716,
+        "skip_certificate_slots_observed_by_all_21_validators": [713, 714, 715],
+    }.items():
+        if tail_join.get(field) != expected:
+            fail(f"FinalCert stage/resource join changed {field}: expected={expected!r} actual={tail_join.get(field)!r}")
 
     query_trace = observations["colocated-lite-query-timeouts"].get("query_id_trace_follow_up", {})
     expected_query_trace = {

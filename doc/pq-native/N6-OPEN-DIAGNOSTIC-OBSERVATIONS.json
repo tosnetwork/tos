@@ -62,6 +62,25 @@
         "lite_transport_retries": 0,
         "all_nodes_agreed_full_block_id": true
       },
+      "stage_resource_join": {
+        "source_artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
+        "analysis_command": "python3 scripts/analyze-n6-finalcert-tail.py /tmp/n6-timing-split-e586c9dc7-21-300s --height 699",
+        "candidate_slot": 713,
+        "finalizing_candidate_slot": 716,
+        "skip_certificate_slots_observed_by_all_21_validators": [713, 714, 715],
+        "prior_normal_height_698_median_stage_ms": {
+          "previous_finalcert_to_candidate_received": 289.462,
+          "candidate_received_to_validation_started": 4.673,
+          "notarize_vote_attempt_to_notarize_certificate": 28.782
+        },
+        "tail_height_699_median_stage_ms": {
+          "previous_finalcert_to_candidate_received": 668.017,
+          "candidate_received_to_validation_started": 428.933,
+          "notarize_vote_attempt_to_notarize_certificate": 1077.101
+        },
+        "resource_window": "Across 21 validators, 13 approximately 200-ms samples on node2 between its prior and target FinalCert: CPU tick deltas 89..152, maximum node RSS 590548 KiB, per-node write_bytes deltas 815104..1634304. These process samples do not measure host scheduling latency, so they do not establish a cause.",
+        "assessment": "The first expanded stage is prior FinalCert to candidate reception; candidate reception to validation start also expands, and the largest median expansion is notarize-vote attempt to NotarCert. Three actual SkipCerts, not just Voted attempts, occur before the descendant slot-716 FinalCert. This localizes the timeline but does not identify whether actor scheduling, candidate availability, vote delivery, persistence or another resource caused the expansion. No parameter tuning follows."
+      },
       "diagnostic_question": "What caused the 2751.8 ms interval between first locally observed FinalCert events for agreed blocks 698 and 699: delayed proposals, votes, certificate assembly or another consensus transition, and does that cause occur on one-validator-per-host topology?",
       "closure_condition": "Join the full structured Simplex event timeline for this interval to a named consensus transition, reproduce or rule out the cause on a one-validator-per-host topology, and add a regression gate for the demonstrated defect. A long all-node exposure interval alone, preserved agreement or an assumption of co-location is not closure."
     },

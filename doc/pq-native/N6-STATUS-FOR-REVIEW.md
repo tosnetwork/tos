@@ -974,6 +974,23 @@ The 698→699 consensus tail is separately registered as the open
 `colocated-launch-committee-finalcert-tail` observation, pinned to the result
 artifact hash; it is not buried inside the broader exposure/skip observation.
 
+A diagnostic stage/resource join of that same retained artifact, reproduced by
+`scripts/analyze-n6-finalcert-tail.py ... --height 699`, follows the agreed
+height-699 block at candidate slot 713 to its descendant slot-716 FinalCert.
+Across all 21 validators, the first expanded stage is prior FinalCert to
+candidate reception (median 668.0 ms versus 289.5 ms at the adjacent normal
+height 698). Reception to validation start is 428.9 versus 4.7 ms; the largest
+median expansion is local notarize-vote attempt to observed NotarCert, 1077.1
+versus 28.8 ms. All 21 structured logs observe actual SkipCerts for slots
+713–715 before the descendant FinalCert. During each node's prior-to-target
+FinalCert window, sampled CPU-tick deltas span 89–152, maximum process RSS is
+590,548 KiB, and per-node write-byte deltas span 815,104–1,634,304 bytes.
+These process samples do not measure host scheduling latency. The join names
+where the timeline expands; it does **not** establish whether scheduling,
+candidate availability, vote delivery, persistence or another resource caused
+it. No Simplex/PQ tuning follows from it, and it remains co-located diagnostic
+evidence rather than a release p99.
+
 ## Four-validator sustained functional regression
 
 The existing `test/integration/test_basic.py` remains the single wallet
