@@ -75,6 +75,20 @@ Both certificate orders occur in a running network, but neither run showed
 that a descendant named the affected candidate while its NotarCert was absent
 locally. These green runs do not establish or refute the historical race.
 
+## Resolver shortcut trace
+
+For two further 30-second, 100-node runs, I temporarily logged every time
+`StateResolverImpl` received a nonempty result from `QuerySlotSkipped`. Both
+runs used 50–200 ms DB write delay; one also set
+`TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES=1` to force repeated ancestor walks.
+Both exited 0, and neither emitted the shortcut log or a Merkle error.
+The raw logs have SHA-256
+`6f0efd4f4ae24cb45ecd7e9d86279e459582daba882481889f27df5d9e7e0ab2`
+and `5bd23487d6869baa9affd5236bacc13661dcc71aa90418839287dc7fbc6f355f`.
+The diagnostic logging change was removed and the binary rebuilt from the
+restored source. This negative result explains why generic stress is not a
+substitute for a controlled certificate and descendant timing test.
+
 This is an executable counterexample to the local skip decision plus Merkle
 state transition. It does **not** run `StateResolverImpl`, prove that a
 descendant actually names this candidate under a particular certificate
