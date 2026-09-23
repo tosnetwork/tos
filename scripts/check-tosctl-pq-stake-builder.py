@@ -80,6 +80,29 @@ def main() -> None:
     if "0x654C5074" in direct_path or ".sign(" in direct_path or "Bid signed" in direct_path:
         fail("interactive bid still exposes classical stake signing")
 
+    birth_import = collapsed(
+        root / "tosctl/src/node-control/commands/src/commands/nodectl/config_bind_cmd.rs"
+    )
+    for marker in (
+        "ImportBirth(BindImportBirthCmd)",
+        "configured_pool_controller(&config, pool_name)?",
+        "Transaction::construct_from_cell(root)?",
+        "transaction.end_status == AccountStatus::AccStateActive",
+        "!description.aborted",
+        "transaction.account_id() == id",
+        "message.dst_ref() == Some(controller)",
+        "verified_controller_birth_witness(state, &expected_id, &code_hash)?",
+        "OpenOptions::new().write(true).create_new(true).open(output)?",
+        "binding.controller_birth_state_init_boc = Some(output.display().to_string())",
+    ):
+        if birth_import.count(marker) != 1:
+            fail(f"controller birth import does not pin supplied transaction structure and binding: {marker}")
+    import_command = birth_import.split("impl BindImportBirthCmd", 1)[-1].split("fn import_birth_artifact", 1)[0]
+    import_position = import_command.find("import_birth_artifact(binding, &transaction, &controller, output)?")
+    save_position = import_command.find("save_config(&config, path)?")
+    if import_position < 0 or save_position < 0 or import_position >= save_position:
+        fail("controller birth binding can be saved before its artifact is imported")
+
     multi_pool_test = collapsed(
         root / "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs"
     )
@@ -91,7 +114,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization and the verified birth-artifact builder with live policy reads; the direct bid refuses; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization and the verified birth-artifact builder with live policy reads; the direct bid refuses; deployment transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 

@@ -62,6 +62,20 @@ first stake then refuses locally; relative or unreadable paths also refuse.
 rebinding the same pool without a new value, and clears it when the pool
 changes. This config command does not produce the artifact or deploy an
 account.
+
+`tosctl config --config CONFIG bind import-birth --node NODE
+--transaction-boc DEPLOYMENT_TRANSACTION.boc --output /absolute/controller-birth.boc`
+does produce the public artifact from an existing deployment transaction BOC.
+It extracts the inbound message's original StateInit, requires a non-aborted
+ordinary transaction that activates the account, checks the transaction
+account and message destination against the pool's configured masterchain
+controller, verifies the StateInit-derived identity, creates a new file without
+overwriting one, and binds that path to the idle node. The transaction BOC can
+be retained from the deployment receipt (`getTransactions` returns it as the
+base64 `data` field, which must be decoded to a BOC file). This offline import
+checks identity and shape; it does **not** independently prove that the supplied
+transaction is finalized on chain. Both fee-bearing callers still require the
+live ConfigParam 47 dictionary and matching node authorization.
 The runner compares the node's authorization ID with `pool.get_roles()`; the
 interactive command compares it with the controller in its configured SNP
 pool. Both read live ConfigParam 47 as a raw cell through chain RPC, check
@@ -76,9 +90,13 @@ The operator must retain the original deployment `StateInit` BOC as a
 public controller artifact associated with the configured binding. Reading a
 controller's *current* account data cannot reconstruct its birth witness:
 controller storage changes after deployment. Existing deployment commands do
-not create or own this artifact, so a real operator must supply and retain the
-BOC at the configured absolute path; no deployment command or custody boundary
-was changed here. The fixture's in-memory StateInit is not a product source.
+not create or own this artifact; the operator imports the retained deployment
+transaction, and the import command retains the extracted StateInit. No
+deployment command or custody boundary was changed here. `pool liquid
+controller create` is for unsupported liquid-staking, not a PQ controller
+deployment precedent. A new PQ deployment command would need a separate review
+of offline root-key and node consensus-key sourcing. The fixture's in-memory
+StateInit is not a product source.
 First accepted stakes plus live ConfigParam 34 remain the closure gate.
 
 For the multi-nominator path specifically, `nominator-pool/pool.fc:142` parses
@@ -111,6 +129,33 @@ Recovery requires a positive matured Elector credit before sending the
 request, the pool returning idle with zero stake sent, and the Elector's
 credit for that pool falling to zero afterward. No new live lifecycle run
 has yet exercised those assertions.
+
+### Bounded ordinary multi-nominator live run plan
+
+This is the non-integrated sidecar, **not** the two-hour integrated campaign.
+The accelerated election profile uses 300-second terms and the script waits
+through an initial election, recovery/withdrawal and a later restake. Reserve
+45–75 minutes wall time; individual 900-second election waits mean this is an
+estimate, not a script-enforced deadline. A 75-minute supervisory cutoff must
+report a partial run rather than a pass. Prior five-node diagnostic networks
+retained 3.7–4.1 GiB; this six-process (one DHT plus five nodes) run gets a
+**6 GiB run-directory ceiling**, with an early stop if root free space falls
+below 8 GiB. Stop and preserve the partial directory at either limit—never
+delete old completed networks to make it pass.
+
+Use a fresh timestamped directory under `test/integration/.pq-nominator-pool-t3/`
+with `--base-port 25000` (the harness allocates upward; expected 25001–25016).
+The two orphaned historical DHT probes currently hold 21001, so do not use
+the default 21000. Check the entire selected range with `ss` immediately
+before starting and run no other network or native/Rust build concurrently.
+The current native binaries and the production PQ pool-order example must be
+built from the exact source commit being exercised; their existing timestamps
+alone are not evidence of that. Capture the source commit, tracked-diff status,
+binary hashes, manifest digest, report and raw network logs, then retain the
+whole run directory. Do not launch at the present 16 GiB free merely because
+the static checks pass: confirm the exact-head build and post-build free-space
+margin first. This run can assess the multi-nominator diagnostic route; it
+cannot close either tosctl product caller's first-stake witness question.
 
 The exact classical Fift dependency inventory is maintained by
 `scripts/check-classical-stake-callers.py`. It currently contains eight
