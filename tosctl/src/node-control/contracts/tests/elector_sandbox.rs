@@ -6657,6 +6657,33 @@ fn the_operator_tools_carry_a_validator_from_no_key_to_a_governed_change() {
     assert_eq!(exit_code_of(&result), 0, "the node's own vote was refused");
     assert_eq!(proposal_voters(&chain, &proposal), vec![idx], "the node's vote was not counted");
 
+    // A body signed for another ConfigParam 34 cell must not count on this
+    // chain. The signer receives a deliberately different set hash; the
+    // contract independently hashes the actual cell it holds.
+    let mut other_set_id = current_set_id(&chain);
+    other_set_id[0] ^= 1;
+    let wrong_set_vote = run_vote_tool(&[
+        "config".to_string(),
+        seed_file_for(&voter.consensus).to_str().expect("path").to_string(),
+        global_id(&chain).to_string(),
+        hex::encode(other_set_id),
+        hex::encode(voter.id().as_slice()),
+        idx.to_string(),
+        hex::encode(proposal),
+    ]);
+    chain
+        .blockchain
+        .send_message(relay.build_message(
+            &chain.config_contract,
+            VOTE_VALUE,
+            true,
+            Some(wrong_set_vote),
+        ))
+        .expect("the wrong-set vote is delivered")
+        .expect_aborted()
+        .expect_exit_code(ERROR_BAD_VOTE_SIGNATURE);
+    assert_eq!(proposal_voters(&chain, &proposal), vec![idx], "a wrong-set vote was counted");
+
     // --- and complains about a validator of the closed election ---------------------
     let accused = validator_id_at(&chain, index_of_pq(&chain, &validators[3].consensus));
     let complainant =
