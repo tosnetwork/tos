@@ -2721,9 +2721,16 @@ class ValidatorElectionRehearsal:
                 pool_code_hash=self.pool_code.hash.hex(),
             )
 
-    async def submit_pq_candidate(self, index: int, election_id: int) -> None:
+    async def authorized_pq_pool_order(
+        self, index: int, election_id: int, query_id: int
+    ) -> tuple[Cell, bytes]:
+        """Obtain one node-bound authorization and encode the production pool body.
+
+        The finite launch-gate rounds and the one-round diagnostic must share
+        this path; neither may reconstruct a preimage or borrow a key from a
+        different source.
+        """
         node = self.nodes[index]
-        wallet = self.wallets[index]
         pool = self.pools[index]
         controller = self.controllers[index]
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
@@ -2741,7 +2748,7 @@ class ValidatorElectionRehearsal:
             raise AssertionError(f"validator {index + 1} authorization differs from the bound key")
         body = build_production_pool_stake_order(
             self.install.build_dir / "tosctl/pq_pool_stake_order",
-            query_id=index + 1,
+            query_id=query_id,
             stake_amount=PQ_STAKE_MESSAGE_VALUE,
             stake_at=election_id,
             max_factor=MAX_FACTOR,
@@ -2750,6 +2757,15 @@ class ValidatorElectionRehearsal:
             public_key=auth.public_key,
             signature=auth.signature,
             witness=controller.birth_witness,
+        )
+        return body, auth.key_id
+
+    async def submit_pq_candidate(self, index: int, election_id: int) -> None:
+        wallet = self.wallets[index]
+        pool = self.pools[index]
+        controller = self.controllers[index]
+        body, authorization_key_id = await self.authorized_pq_pool_order(
+            index, election_id, index + 1
         )
         await self.send_from_wallet(
             wallet, dest=pool.address, amount=2 * NANO, body=body,
@@ -2786,7 +2802,7 @@ class ValidatorElectionRehearsal:
             "pq_candidate_accepted", validator=index + 1,
             controller=raw_address(controller.address),
             pool=raw_address(pool.address), election_id=election_id,
-            effective_stake=actual, authorization_key_id=auth.key_id.hex(),
+            effective_stake=actual, authorization_key_id=authorization_key_id.hex(),
             stake_accepted=True, elector_reply_opcode=f"0x{opcode:08x}",
         )
 

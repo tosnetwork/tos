@@ -1,8 +1,10 @@
 """Unit coverage for the validator-election experiment control surface."""
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +31,69 @@ def test_default_cli_preserves_launch_gate_profile():
     assert args.stage == "a"
     assert args.base_port == 26_000
     assert args.output_root is None
+
+
+def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
+    tmp_path, monkeypatch
+):
+    """Drive the composition, not merely each of its checked inputs."""
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pq", base_port=26_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"], pq_election=True,
+    )
+    controller_id = bytes([0x11]) * 32
+    pool_id = bytes([0x22]) * 32
+    key_id = bytes([0x33]) * 32
+    public_key = bytes([0x44]) * 1312
+    signature = bytes([0x55]) * 2420
+    adnl_id = bytes([0x66]) * 32
+    witness = stage_a.Cell.empty()
+    built_order = stage_a.Builder().store_uint(0xCAFE, 16).end_cell()
+    authorization = stage_a.tos_api.Engine_validator_pqStakeAuthorization(
+        validator_id=controller_id, key_id=key_id, algorithm_id=1,
+        public_key=public_key, signature=signature,
+    )
+    seen = {}
+
+    class FakeConsole:
+        async def request(self, request):
+            seen["request"] = request
+            return authorization.to_dict()
+
+    rehearsal.nodes = [SimpleNamespace(
+        validator_key=SimpleNamespace(id=adnl_id), engine_console=FakeConsole()
+    )]
+    rehearsal.pools = [SimpleNamespace(address=stage_a.Address((-1, pool_id)))]
+    rehearsal.controllers = [SimpleNamespace(
+        address=stage_a.Address((-1, controller_id)),
+        consensus=SimpleNamespace(key_id=key_id, public_key=public_key),
+        birth_witness=witness,
+    )]
+
+    def fake_builder(path, **fields):
+        seen["path"] = path
+        seen["fields"] = fields
+        return built_order
+
+    monkeypatch.setattr(stage_a, "build_production_pool_stake_order", fake_builder)
+    body, actual_key = asyncio.run(rehearsal.authorized_pq_pool_order(0, 1_700_000_000, 19))
+    assert body == built_order and actual_key == key_id
+    assert seen["request"].election_date == 1_700_000_000
+    assert seen["request"].stake_owner == pool_id
+    assert seen["request"].adnl_addr == adnl_id
+    assert seen["path"].name == "pq_pool_stake_order"
+    assert seen["fields"] == {
+        "query_id": 19, "stake_amount": stage_a.PQ_STAKE_MESSAGE_VALUE,
+        "stake_at": 1_700_000_000, "max_factor": stage_a.MAX_FACTOR,
+        "adnl_addr": adnl_id, "algorithm_id": 1,
+        "public_key": public_key, "signature": signature, "witness": witness,
+    }
+
+    authorization.key_id = bytes(32)
+    seen.pop("fields")
+    with pytest.raises(AssertionError, match="wrong consensus key"):
+        asyncio.run(rehearsal.authorized_pq_pool_order(0, 1_700_000_000, 20))
+    assert "fields" not in seen, "a mismatched authorization reached the pool builder"
 
 
 def test_experiment_reserves_four_consecutive_loopback_rpc_ports():

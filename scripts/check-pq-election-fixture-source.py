@@ -125,16 +125,19 @@ def main() -> int:
     if "case tos::tos_api::engine_validator_createPqStakeAuthorization::ID:" not in console:
         fail("Python engine-console transport no longer admits the PQ stake authorization query")
 
+    order = method(tree, "authorized_pq_pool_order")
     candidate = method(tree, "submit_pq_candidate")
-    if len(call_lines(candidate, "Engine_validator_createPqStakeAuthorizationRequest")) != 1:
-        fail("PQ candidate no longer asks the node for a stake authorization")
-    if len(call_lines(candidate, "build_production_pool_stake_order")) != 1:
-        fail("PQ candidate no longer uses the production Rust pool-order builder")
+    if len(call_lines(candidate, "authorized_pq_pool_order")) != 1:
+        fail("PQ candidate no longer uses the shared authorization and production pool-order path")
+    if len(call_lines(order, "Engine_validator_createPqStakeAuthorizationRequest")) != 1:
+        fail("shared PQ pool order no longer asks the node for a stake authorization")
+    if len(call_lines(order, "build_production_pool_stake_order")) != 1:
+        fail("shared PQ pool order no longer uses the production Rust builder")
     fixture = root / "test/tostester/src/tostester/pq_election_fixture.py"
     builder = method(ast.parse(fixture.read_text(), filename=str(fixture)),
                      "build_production_pool_stake_order")
     builder_calls = [
-        node for node in ast.walk(candidate)
+        node for node in ast.walk(order)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         and node.func.id == "build_production_pool_stake_order"
     ]
@@ -142,7 +145,7 @@ def main() -> int:
     accepted = {argument.arg for argument in builder.args.kwonlyargs}
     if len(builder_calls[0].args) != 1 or passed != accepted:
         fail(
-            "PQ candidate and production pool-order bridge keyword interface differ: "
+            "shared PQ pool order and production bridge keyword interface differ: "
             f"missing={sorted(accepted - passed)} unexpected={sorted(passed - accepted)}"
         )
     bridge = (root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs").read_text()
@@ -150,12 +153,17 @@ def main() -> int:
         fail("live PQ pool-order bridge no longer calls nominator::new_stake_with_witness")
     if "Some(&witness)" not in bridge:
         fail("live PQ pool-order bridge no longer carries the controller birth witness")
-    if call_lines(candidate, "election_body") or call_lines(candidate, "sign"):
-        fail("PQ candidate constructs a classical stake preimage or signs locally")
+    if any(call_lines(path, "election_body") or call_lines(path, "sign") for path in (order, candidate)):
+        fail("shared PQ stake path constructs a classical preimage or signs locally")
+    order_text = ast.unparse(order)
     candidate_text = ast.unparse(candidate)
     for expression, property_name in (
         ("stake_owner=pool.address.hash_part", "pool-owned authorization"),
         ("signature=auth.signature", "node-produced PQ signature"),
+    ):
+        if expression not in order_text:
+            fail(f"shared PQ pool order lost {property_name}: expected {expression}")
+    for expression, property_name in (
         ("dest=pool.address", "pool rather than elector destination"),
         ("stake_accepted=True", "accepted stake outcome field"),
     ):
@@ -214,7 +222,7 @@ def main() -> int:
         "the Genesis helper contains 47 config!; "
         "Python engine-console transport admits the PQ authorization query; "
         "generated TL response fields are checked before snapshot/node boot and hashed in the snapshot; "
-        "PQ candidates use node signatures and a keyword-compatible Rust nominator::new_stake_with_witness bridge for pool orders; "
+        "PQ candidates call the shared node-authorized, keyword-compatible Rust nominator::new_stake_with_witness pool-order path; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with exact PQ IDs are required; "
         "reason-8 negative control precedes positive stakes"
     )
