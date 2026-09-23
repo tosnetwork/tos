@@ -43,6 +43,40 @@ def test_pq_followup_requires_the_pq_election_fixture(tmp_path):
         )
 
 
+def test_pq_full_genesis_faucet_is_budgeted_and_checked_before_elections(tmp_path, monkeypatch):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pq-full-faucet", base_port=26_000,
+        build_dir=REPO / "build", sample_interval=10,
+        profile=stage_a.PROFILES["a"], pq_election=True, pq_full=True,
+    )
+    rehearsal.controller_code = stage_a.Cell.empty()
+    config = SimpleNamespace()
+    rehearsal.configure_network_profile(config)
+    expected = (
+        4 * stage_a.VALIDATOR_WALLET_FUNDING
+        + stage_a.NEGATIVE_WALLET_FUNDING
+        + 4 * 10 * stage_a.NANO
+        + 2 * 4 * (stage_a.PQ_STAKE_MESSAGE_VALUE + 40 * stage_a.NANO)
+        + 2 * 1_000 * stage_a.NANO
+    )
+    assert config.validator_election_experiment_faucet_balance_nanotos == expected
+    faucet = SimpleNamespace(address=stage_a.Address((-1, bytes(32))))
+    required = stage_a.PQ_FULL_FOLLOWUP_FAUCET_CAPITAL + stage_a.PQ_FULL_FAUCET_FEE_RESERVE
+    current = required - 1
+
+    async def balance(address):
+        assert address == faucet.address
+        return current
+
+    monkeypatch.setattr(rehearsal, "balance", balance)
+    with pytest.raises(AssertionError, match="cannot fund rounds 2 and 3"):
+        asyncio.run(rehearsal.require_pq_full_faucet_capacity(faucet))
+    current = required
+    asyncio.run(rehearsal.require_pq_full_faucet_capacity(faucet))
+    assert rehearsal.events[-1]["balance"] == required
+    assert rehearsal.events[-1]["genesis_budget"] == expected
+
+
 def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypatch):
     rehearsal = stage_a.ValidatorElectionRehearsal(
         run_dir=tmp_path / "pq-round-queries", base_port=26_000,

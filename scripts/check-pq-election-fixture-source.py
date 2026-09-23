@@ -50,6 +50,12 @@ def main() -> int:
     main_text = ast.unparse(method(tree, "async_main"))
     if "pq-launch-gate" not in cli_text or "pq_full=args.mode == 'pq-launch-gate'" not in main_text:
         fail("the opt-in full PQ launch-gate CLI no longer reaches the full rehearsal")
+    genesis_profile = method(tree, "configure_network_profile")
+    if "if self.pq_full:\n" not in ast.unparse(genesis_profile) or "PQ_FULL_GENESIS_FAUCET_FUNDING" not in ast.unparse(genesis_profile):
+        fail("full PQ mode no longer sets its three-round faucet budget in Genesis")
+    capacity_line = one_call(execute, "require_pq_full_faucet_capacity")
+    if not capacity_line < one_call(execute, "run_pq_first_election"):
+        fail("full PQ faucet capacity is no longer checked before the first election")
     fixture_branches = [
         node for node in ast.walk(execute) if isinstance(node, ast.If)
         and ast.unparse(node.test) == "self.fixture_only or self.pq_election"
@@ -358,7 +364,8 @@ def main() -> int:
         "the three exact pool-route refusals precede three accepted stakes, a restarted fourth stake with bounded pre-send authorization retry, and a duplicate-key refusal; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
         "three-of-four liveness and pool-owned early recovery checks follow activation; "
-        "an opt-in full PQ route retains second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt"
+        "an opt-in full PQ route budgets its faucet in Genesis before the first election and retains "
+        "second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt"
     )
     return 0
 

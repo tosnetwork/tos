@@ -100,6 +100,17 @@ EXPERIMENT_GENESIS_FAUCET_FUNDING = (
     + NEGATIVE_WALLET_FUNDING
     + EXPERIMENT_FAUCET_FEE_RESERVE
 )
+PQ_FULL_FOLLOWUP_FAUCET_CAPITAL = (
+    2 * VALIDATOR_COUNT * (PQ_STAKE_MESSAGE_VALUE + 40 * NANO)
+)
+PQ_FULL_FAUCET_FEE_RESERVE = 1_000 * NANO
+PQ_FULL_GENESIS_FAUCET_FUNDING = (
+    VALIDATOR_COUNT * VALIDATOR_WALLET_FUNDING
+    + NEGATIVE_WALLET_FUNDING
+    + VALIDATOR_COUNT * 10 * NANO  # controller deployment from the faucet
+    + PQ_FULL_FOLLOWUP_FAUCET_CAPITAL
+    + 2 * PQ_FULL_FAUCET_FEE_RESERVE  # fees before read-back, then retained reserve
+)
 MAX_FACTOR = 1 << 16
 MAX_ARCHIVE_FDS = 512
 ROCKSDB_CACHE_BYTES = 256 * 1024 * 1024
@@ -391,6 +402,8 @@ class ValidatorElectionRehearsal:
         self.pq_full = pq_full
         if pq_full and not pq_election:
             raise ValueError("the full PQ rehearsal requires the PQ election fixture")
+        if pq_full and not profile.accelerated:
+            raise ValueError("the full PQ diagnostic faucet is defined only for Stage A")
         self.controller_code: Cell | None = None
         self.pool_code: Cell | None = None
         self.controllers: list[ControllerFixture] = []
@@ -458,7 +471,11 @@ class ValidatorElectionRehearsal:
             # genesis stays at v14 pending its coordinated v16 activation.
             config.global_version = 16
             config.validator_controller_code_hash = self.controller_code.hash
-        if self.experiment is not None:
+        if self.pq_full:
+            config.validator_election_experiment_faucet_balance_nanotos = (
+                PQ_FULL_GENESIS_FAUCET_FUNDING
+            )
+        elif self.experiment is not None:
             config.validator_election_experiment_faucet_balance_nanotos = (
                 EXPERIMENT_GENESIS_FAUCET_FUNDING
             )
@@ -3152,6 +3169,19 @@ class ValidatorElectionRehearsal:
             pool_balance_before=before, pool_balance_after=after,
         )
 
+    async def require_pq_full_faucet_capacity(self, faucet: WalletV1) -> None:
+        actual = await self.balance(faucet.address)
+        required = PQ_FULL_FOLLOWUP_FAUCET_CAPITAL + PQ_FULL_FAUCET_FEE_RESERVE
+        if actual < required:
+            raise AssertionError(
+                f"full PQ rehearsal faucet cannot fund rounds 2 and 3: "
+                f"balance={actual} required={required}"
+            )
+        self.event(
+            "pq_full_faucet_capacity", balance=actual, required=required,
+            genesis_budget=PQ_FULL_GENESIS_FAUCET_FUNDING,
+        )
+
     async def recover_pq_round(self, round_number: int) -> list[int]:
         election_id = self.first_election_id if round_number == 1 else self.second_election_id
         unfreeze_at = election_id + self.profile.elected_for + self.profile.stakes_frozen_for
@@ -3561,6 +3591,8 @@ class ValidatorElectionRehearsal:
                 )
                 if self.fixture_only:
                     return
+                if self.pq_full:
+                    await self.require_pq_full_faucet_capacity(faucet)
                 await self.run_pq_first_election()
                 if self.pq_full:
                     await self.run_pq_followup_elections(faucet)
