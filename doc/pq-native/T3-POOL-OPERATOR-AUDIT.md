@@ -23,6 +23,11 @@ stake succeed. The diagnostic Stage A path obtains the witness from its
 controller deployment fixture and uses `new_stake_with_witness`. The product
 operator path needs a separately verified deployment-artifact witness source;
 no contract or node-protocol change is implied by this audit.
+The launch-facing defect is separately OPEN as
+`pool-first-stake-birth-witness-missing` in
+`N6-OPEN-CORRECTNESS-QUESTIONS.json`, with both tosctl callers named. Static
+source conversion is not its closure; a first accepted stake and activated
+live ConfigParam 34 are still required.
 
 For the multi-nominator path specifically, `nominator-pool/pool.fc:142` parses
 the same pool-order field sequence as the single-nominator pool and `:669`

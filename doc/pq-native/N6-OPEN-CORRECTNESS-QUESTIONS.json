@@ -4,6 +4,7 @@
     "classical-e2e-fixtures-incompatible-with-pq-consensus",
     "classical-config-vote-tooling-incompatible-with-pq-contract",
     "classical-stake-producers-incompatible-with-pq-elector",
+    "pool-first-stake-birth-witness-missing",
     "merkle-base-state-mismatch"
   ],
   "questions": {
@@ -33,6 +34,13 @@
       "location": "validator/consensus/chain-state.cpp:123",
       "observation": "Two recovered error lines from test-consensus-simplex2-pq-finality-e2e-100 under whole-suite parallel load show the same one-height mismatch. At 68ea21db4 on 2026-09-22 07:02:35 UTC, StateResolver actors 87 and 77 reported the same invalid Merkle update 4 ms apart: the update expected synthetic fixture state seqno 5 but the resolver applied it to seqno 4. At efd22ce46 on 2026-09-22 12:46:23 UTC, StateResolver actor 83 reported expected seqno 23, applied to seqno 22. The four hashes were independently decoded against the fixture state encoding; original BOCs, candidate IDs and stacks were not retained. Source: memo/pq-native/N6-MERKLE-RECOVERED-EVIDENCE-20260923.md. This establishes a missing one-block state transition on the resolver's path, not which component omitted it; H2 (skipping a block-referencing empty candidate), a skip/anchor shortcut, and a stale fixture-manager state remain hypotheses, not diagnoses.",
       "observed_commit": "efd22ce46",
+      "status": "OPEN"
+    },
+    "pool-first-stake-birth-witness-missing": {
+      "closure_condition": "For both launch-facing pool stake callers, elections/src/runner.rs and commands/src/commands/nodectl/config_wallet_cmd.rs, provide a controller_birth_witness from the controller's deployment artifact, bind it to that configured controller address and the admitted ConfigParam 47 code hash, and pass it through production nominator::new_stake_with_witness. Missing, mismatched or unverified witness must refuse locally before a fee-bearing message. Prove a first stake from the supported single-nominator pool reaches STAKE_ACCEPTED and its controller enters live ConfigParam 34; prove both product callers use the checked witness path rather than only a diagnostic fixture. Neither an authorization response nor a shape-only sandbox test alone closes this item.",
+      "location": "tosctl/src/node-control/elections/src/runner.rs:756; tosctl/src/node-control/commands/src/commands/nodectl/config_wallet_cmd.rs:582; tosctl/src/node-control/contracts/src/nominator/messages.rs:118; crypto/smartcont/elector-code.fc:364",
+      "observation": "Both product pool callers obtain node-bound PQ authorization but call nominator::new_stake, which fixes the optional controller birth witness to None. The production controller forwards that absence to the Elector, and the Elector returns reason 8 for the first stake of a new controller. Stage A's passing fixture instead supplies a witness made from its controller deployment state init and calls new_stake_with_witness; it is not proof that the two product callers can place their first stake. The multi-nominator lifecycle script is a separate test route and currently deploys its primary pool with the validator wallet in the controller slot. See T3-POOL-OPERATOR-AUDIT.md for the source-level call graph. Liquid staking remains outside the launch set.",
+      "observed_commit": "717e2879e",
       "status": "OPEN"
     }
   }

@@ -25,6 +25,7 @@ REQUIRED_CORRECTNESS_QUESTION_IDS = (
     "classical-e2e-fixtures-incompatible-with-pq-consensus",
     "classical-config-vote-tooling-incompatible-with-pq-contract",
     "classical-stake-producers-incompatible-with-pq-elector",
+    "pool-first-stake-birth-witness-missing",
     "merkle-base-state-mismatch",
 )
 REQUIRED_MEASUREMENT_GAP_IDS = (
