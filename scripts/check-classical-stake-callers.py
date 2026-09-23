@@ -37,16 +37,17 @@ EXPECTED: dict[str, dict[str, int]] = {
     "crypto/test/fift/validator-proposal-legacy-parity.fif": {
         "validator-elect-req>B": 1,
     },
-    "scripts/nominator-pool-lifecycle-e2e.py": {
-        "validator-elect-req.fif": 1,
-        "validator-elect-signed.fif": 1,
-    },
 }
 SUFFIXES = {".py", ".fif", ".fc", ".cpp", ".rs"}
 # This source guard quotes the retired Fift filenames to forbid their use in
 # Stage A; it is not an executable Fift caller. Exclude only this known guard
 # so an unrelated new script containing the literal still fails the inventory.
-NON_CALLER_SOURCE_GUARDS = {"scripts/check-pq-election-fixture-source.py"}
+NON_CALLER_SOURCE_GUARDS = {
+    "scripts/check-pq-election-fixture-source.py",
+    # This guard quotes the retired names only to forbid them in the
+    # multi-nominator lifecycle route; it does not invoke either Fift tool.
+    "scripts/check-nominator-pool-pq-route.py",
+}
 
 
 def fail(message: str) -> None:

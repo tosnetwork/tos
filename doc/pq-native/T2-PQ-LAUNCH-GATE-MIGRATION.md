@@ -20,9 +20,9 @@ IDs. Neither a sent message nor `STAKE_ACCEPTED` alone proves election.
 ## Classical stake caller inventory at `8fdc1c044`
 
 This is an exact-file inventory, not the shorthand globs in the open
-correctness entry. The first nine rows are the retained Fift/caller surface
-that prevents deleting the base election tools today; the tenth is a now-cleared
-caller retained here as migration history. The remaining paths are
+correctness entry. Eight rows retain literal Fift dependencies and prevent
+deleting the base election tools today; two cleared callers remain here as
+migration history. The remaining paths are
 recorded to keep already-converted tosctl callers and intentional legacy
 fixtures from being confused with an unconverted launch path.
 
@@ -36,7 +36,7 @@ fixtures from being confused with an unconverted launch path.
 | `crypto/test/test-smartcont.cpp` | Loads both base Fift tools and the single-pool script; update in the same T3 change that retires tools. |
 | `crypto/test/fift/validator-proposal-test.fif` | Calls `validator-elect-req>B`; migrate or explicitly preserve as a self-contained legacy vector before removing the library word. |
 | `crypto/test/fift/validator-proposal-legacy-parity.fif` | Same dependency, with an explicit classical parity vector. |
-| `scripts/nominator-pool-lifecycle-e2e.py` | Still invokes the two base Fift tools for its election route; convert through the admitted controller/pool. |
+| `scripts/nominator-pool-lifecycle-e2e.py` | Cleared as a literal Fift caller in the T3 multi-nominator lifecycle conversion. Its node-authorization and production pool-body path remains static/diagnostic until a live run; it does not prove either tosctl product caller can supply a first-stake witness. |
 | `scripts/validator-election-stage-a.py` | Cleared at `471e0a027`: default, PQ diagnostic and explicit `experiment` all use node authorization and the production pool body. The experiment credits/reclaims pool-owned stake and joins selected controller/ADNL identities, not classical keys or validator wallets. Remove this script from the live Fift-caller count, but retain this row to explain the prior dependency. |
 | `tosctl/src/node-control/elections/src/runner.rs` | Converted: node authorization and pool order; no-pool route refuses. |
 | `tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs` | Converted to a local refusal for its direct wallet-to-elector bid; no classical signature is sent. |

@@ -29,6 +29,18 @@ The launch-facing defect is separately OPEN as
 source conversion is not its closure; a first accepted stake and activated
 live ConfigParam 34 are still required.
 
+The two product callers need separate, inspectable witness handoffs:
+
+| Caller | Missing source and transmission closure | Required product evidence |
+| --- | --- | --- |
+| `elections/src/runner.rs` | Resolve the configured controller's deployment artifact before the daemon builds its pool order; check that its derived address is the node-bound `validator_id` and its code hash is admitted by live ConfigParam 47; pass that artifact's birth witness to `new_stake_with_witness`. An absent or mismatched artifact must refuse locally. | The daemon's first real pool stake receives `STAKE_ACCEPTED`, followed by a live ConfigParam 34 pairing that controller ID with its ADNL. |
+| `commands/src/commands/nodectl/config_wallet_cmd.rs` | Obtain the same verified deployment artifact for the interactive pool bid, rather than treating the node's authorization response as a witness; bind the witness to the configured controller and the destination pool, then pass it to `new_stake_with_witness`. An absent or mismatched artifact must refuse before sending. | The command's first real pool stake receives `STAKE_ACCEPTED`, and the controller appears in live ConfigParam 34. |
+
+The multi-nominator lifecycle script is a different diagnostic consumer of
+the production pool body. Its fixture can supply a witness, but neither its
+static conversion nor Stage A's accepted stakes supplies the missing product
+handoff for these two callers.
+
 For the multi-nominator path specifically, `nominator-pool/pool.fc:142` parses
 the same pool-order field sequence as the single-nominator pool and `:669`
 relays those terms unchanged to the controller. This is why the shared

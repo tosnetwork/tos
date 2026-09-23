@@ -69,12 +69,25 @@ from pytosiq_core import (  # noqa: E402
 )
 from pytosiq_core.boc.deserialize import BocError  # noqa: E402
 from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
+from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
 from tostester.install import Install  # noqa: E402
-from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
+from tostester.key import Key  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
 )
+from tostester.pq_election_fixture import (  # noqa: E402
+    ControllerFixture,
+    PoolFixture,
+    assert_controller_identity,
+    build_production_pool_stake_order,
+    compile_controller_code,
+    make_controller_fixture,
+    make_pool_fixture,
+    participant_ids_from_runmethod,
+    require_pq_stake_authorization_binding,
+)
+from tosapi import tos_api  # noqa: E402
 
 T = TypeVar("T")
 
@@ -613,37 +626,6 @@ def build_pool_state_init(
     return StateInit(code=code, data=data.end_cell())
 
 
-def build_pool_stake_body(
-    *,
-    query_id: int,
-    stake_value: int,
-    validator_pubkey: bytes,
-    election_id: int,
-    max_factor: int,
-    adnl_id: bytes,
-    signature: bytes,
-) -> Cell:
-    """The classical new_stake body, which nothing on this chain accepts any more.
-
-    Kept because the rest of this harness reads as a record of what the path used
-    to be; its one caller now refuses instead of sending. The pool forwards
-    post-quantum terms to a Validator Controller, and those carry a key and a
-    signature this function has no room for.
-    """
-    if len(validator_pubkey) != 32 or len(adnl_id) != 32 or len(signature) != 64:
-        raise ValueError("invalid validator election field length")
-    builder = Builder().store_uint(0x4E73744B, 32).store_uint(query_id, 64)
-    store_coins(builder, stake_value)
-    return (
-        builder.store_bytes(validator_pubkey)
-        .store_uint(election_id, 32)
-        .store_uint(max_factor, 32)
-        .store_bytes(adnl_id)
-        .store_ref(Builder().store_bytes(signature).end_cell())
-        .end_cell()
-    )
-
-
 @dataclass
 class PoolData:
     state: int
@@ -665,9 +647,32 @@ class Config34Selection:
     total: int
     main: int
     total_weight: int
-    public_keys: list[str]
-    adnl_ids: list[str]
+    validator_adnl_pairs: list[tuple[str, str]]
     weights: list[int]
+
+
+def parse_pq_validator_adnl_pairs(output: str) -> list[tuple[str, str]]:
+    """Keep each PQ controller ID paired with the ADNL in its own Config34 record."""
+    markers = list(re.finditer(r"\bvalidator_pq\b", output))
+    identities = list(re.finditer(
+        r"\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})", output
+    ))
+    if len(markers) != len(identities):
+        raise ValueError("ConfigParam 34 has a PQ record without a validator ID")
+    pairs: list[tuple[str, str]] = []
+    for index, identity in enumerate(identities):
+        end = identities[index + 1].start() if index + 1 < len(identities) else len(output)
+        adnl = re.findall(r"\badnl_addr:x([0-9A-Fa-f]{64})", output[identity.end():end])
+        if len(adnl) != 1:
+            raise ValueError(
+                f"ConfigParam 34 PQ validator {identity.group(1)} has {len(adnl)} ADNL IDs"
+            )
+        pairs.append((identity.group(1).lower(), adnl[0].lower()))
+    if len(set(pairs)) != len(pairs) or len({key for key, _ in pairs}) != len(pairs):
+        raise ValueError("ConfigParam 34 repeats a PQ validator ID")
+    if len({adnl for _, adnl in pairs}) != len(pairs):
+        raise ValueError("ConfigParam 34 repeats a PQ validator ADNL ID")
+    return pairs
 
 
 @dataclass
@@ -1528,6 +1533,10 @@ class PoolLifecycle:
         self.count_validator_sends = False
         self.pool_address: Address | None = None
         self.pool_code: Cell | None = None
+        self.controller_code: Cell | None = None
+        self.single_pool_code: Cell | None = None
+        self.controllers: list[ControllerFixture] = []
+        self.support_pools: dict[int, PoolFixture] = {}
         self.pool_reward_evidence: dict[str, Any] = {}
         self.pool_validator_selection: dict[str, Any] = {}
         self.integrated_profiles: list[IntegratedAgentProfile] = []
@@ -1543,7 +1552,6 @@ class PoolLifecycle:
         self.campaign_start_positions: list[dict[str, Any]] = []
         self.queued_leaver: Nominator | None = None
         self.failures: list[str] = []
-        self._last_signature: bytes = b""
 
     @property
     def nominator_deposit_value(self) -> int:
@@ -1902,36 +1910,31 @@ class PoolLifecycle:
             total=required(r"\btotal:(\d+)", "total"),
             main=required(r"\bmain:(\d+)", "main"),
             total_weight=required(r"total_weight:(\d+)", "total_weight"),
-            public_keys=[
-                value.lower() for value in re.findall(r"pubkey:x([0-9A-Fa-f]{64})", output)
-            ],
-            adnl_ids=[
-                value.lower() for value in re.findall(r"adnl_addr:x([0-9A-Fa-f]{64})", output)
-            ],
+            validator_adnl_pairs=parse_pq_validator_adnl_pairs(output),
             weights=[int(value) for value in re.findall(r"\bweight:(\d+)", output)],
         )
 
     async def record_pool_validator_selection(self, election_id: int) -> None:
-        public_key = self.nodes[0].validator_key.public_key.key.hex()
+        controller_id = self.controllers[0].address.hash_part.hex()
         adnl_id = self.nodes[0].validator_key.id.hex()
         selection = await self.retry(
             self.config34_selection,
             timeout=900,
             description="pool validator appears in the elected ConfigParam 34",
             predicate=lambda value: (
-                value.utime_since == election_id and public_key in value.public_keys
+                value.utime_since == election_id
+                and (controller_id, adnl_id) in value.validator_adnl_pairs
             ),
             interval=5,
         )
-        index = selection.public_keys.index(public_key)
+        index = selection.validator_adnl_pairs.index((controller_id, adnl_id))
         selected_weight = selection.weights[index] if index < len(selection.weights) else None
-        selected_adnl = selection.adnl_ids[index] if index < len(selection.adnl_ids) else None
         self.pool_validator_selection = {
             "selection_status": "selected",
             "election_id": election_id,
-            "validator_public_key": public_key,
+            "controller_validator_id": controller_id,
             "validator_adnl_id": adnl_id,
-            "selected_adnl_id": selected_adnl,
+            "selected_pair": selection.validator_adnl_pairs[index],
             "selected_weight": selected_weight,
             "validator_set_utime_since": selection.utime_since,
             "validator_set_utime_until": selection.utime_until,
@@ -1941,7 +1944,7 @@ class PoolLifecycle:
         }
         self.check(
             "the pool validator is selected into ConfigParam 34",
-            selected_adnl == adnl_id and selected_weight is not None and selected_weight > 0,
+            selected_weight is not None and selected_weight > 0,
             **self.pool_validator_selection,
         )
 
@@ -2275,7 +2278,38 @@ class PoolLifecycle:
 
     # ----- phases ---------------------------------------------------------
 
+    def prepare_pq_election_fixture(self) -> None:
+        """Bind five admitted controller identities before Genesis is assembled."""
+        require_pq_stake_authorization_binding(
+            tos_api.Engine_validator_pqStakeAuthorization
+        )
+        builder = subprocess.run(
+            ["cargo", "build", "--manifest-path", "tosctl/src/Cargo.toml",
+             "-p", "contracts", "--example", "pq_pool_stake_order", "--locked"],
+            cwd=REPO, text=True, capture_output=True, check=False,
+        )
+        if builder.returncode:
+            raise RuntimeError(
+                "cannot build production PQ pool order bridge: " + builder.stderr[-4000:]
+            )
+        self.controller_code = compile_controller_code(
+            self.install, self.artifacts_dir / "compiled-controller"
+        )
+        self.single_pool_code = Cell.one_from_boc(bytes.fromhex(
+            (REPO / "crypto/smartcont/single-nominator-pool/single-nominator-code.hex")
+            .read_text().strip()
+        ))
+        self.controllers = [
+            make_controller_fixture(
+                self.install, self.artifacts_dir / "controller-keys",
+                self.controller_code, index,
+            )
+            for index in range(5)
+        ]
+
     async def bring_up_network(self) -> None:
+        if self.controller_code is None or len(self.controllers) != 5:
+            raise RuntimeError("PQ controller policy and five identities must precede Genesis")
         network = Network(self.install, self.network_dir, base_port=self.base_port)
         self.network = network
         if self.integrated_mode:
@@ -2289,25 +2323,22 @@ class PoolLifecycle:
         network.config.shard_validators = 4
         network.config.validator_economics_profile = True
         network.config.validator_election_stage_a_profile = True
+        network.config.global_version = 16
+        network.config.validator_controller_code_hash = self.controller_code.hash
 
         dht = network.create_dht_node()
-        for validator_index in range(4):
+        for validator_index, controller in enumerate(self.controllers):
             node = network.create_full_node()
-            make_deterministic_pq_initial_validator(node, validator_index)
+            make_deterministic_pq_initial_validator(
+                node, validator_index, validator_id=controller.address.hash_part
+            )
+            assert_controller_identity(node, controller, index=validator_index + 1)
             node.announce_to(dht)
             self.nodes.append(node)
 
-        # A fifth identity, not in the genesis set. While the pool's stake is
-        # frozen its validator cannot enter the next election, and with only
-        # four keys that election has three participants -- below both the
-        # minimum count and the minimum total stake. It fails, the validator
-        # set never rotates, and the pool's recover guard, which counts
-        # rotations, stays shut forever with the principal inside. A pool
-        # therefore needs the network to keep electing without it, which is the
-        # same reason a real operator runs two pools on alternating rounds.
-        spare = network.create_full_node()
-        spare.announce_to(dht)
-        self.nodes.append(spare)
+        # A fifth admitted PQ identity can enter an election while the primary
+        # pool's stake is frozen. A non-validator spare cannot obtain the
+        # node-bound authorization needed for that controller identity.
 
         await dht.run(StartOptions(threads=2, verbosity=3))
         for index, node in enumerate(self.nodes):
@@ -2322,6 +2353,7 @@ class PoolLifecycle:
         self.lite_config.write_text(self.nodes[0]._liteserver_config.to_json())
         await asyncio.wait_for(network.wait_mc_block(seqno=3), timeout=180)
         self.client = await self.nodes[0].toslib_client()
+        await self.verify_live_controller_policy()
         await self.wait_integrated_rpc_readiness()
         self.event(
             "network_ready",
@@ -2338,6 +2370,29 @@ class PoolLifecycle:
                 if self.integrated_mode
                 else None
             ),
+        )
+
+    async def verify_live_controller_policy(self) -> None:
+        if self.client is None or self.controller_code is None:
+            raise AssertionError("controller policy read-back lacks client or compiled code")
+        policy = await self.client.get_config_param(47)
+        view = policy.begin_parse()
+        admitted = view.load_dict(256)
+        expected = int.from_bytes(self.controller_code.hash, "big")
+        if admitted is None or set(admitted) != {expected}:
+            raise AssertionError(
+                "live ConfigParam 47 does not admit exactly the lifecycle controller code: "
+                f"expected={self.controller_code.hash.hex()} "
+                f"actual={[] if admitted is None else [f'{key:064x}' for key in admitted]}"
+            )
+        if view.remaining_bits or view.remaining_refs:
+            raise AssertionError("live ConfigParam 47 contains trailing data")
+        version = ConfigParam8.deserialize((await self.client.get_config_param(8)).begin_parse())
+        if version.version != 16:
+            raise AssertionError(f"live PQ fixture version {version.version}, expected 16")
+        self.event(
+            "controller_policy_read_back", parameter=47,
+            admitted_code_hash=self.controller_code.hash.hex(), global_version=version.version,
         )
 
     async def deploy_integrated_agent_accounts(self, faucet: WalletV1) -> None:
@@ -2671,6 +2726,34 @@ class PoolLifecycle:
 
     async def deploy_pool(self) -> None:
         """Deploy the pool from the compiled artifact, at its derived address."""
+        if self.network is None or self.client is None:
+            raise AssertionError("PQ pool deployment needs a running chain")
+        if self.controller_code is None or self.single_pool_code is None:
+            raise AssertionError("PQ pool deployment needs compiled controller and pool code")
+        if len(self.controllers) != len(self.nodes) or len(self.wallets) != len(self.nodes):
+            raise AssertionError("each PQ validator needs a controller and operator wallet")
+        faucet = self.network.zerostate.main_wallet(self.client)
+        for index, controller in enumerate(self.controllers):
+            await self.send(
+                faucet, dest=controller.address, amount=10 * NANO,
+                body=Cell.empty(), init=controller.state_init,
+                label=f"controller-{index + 1}-deploy",
+            )
+            async def controller_code() -> bytes:
+                return (await self.client.raw_get_account_state(controller.address)).code
+
+            code_boc = await self.retry(
+                controller_code, timeout=60,
+                description=f"controller {index + 1} deployment",
+                predicate=bool,
+            )
+            actual_code = Cell.one_from_boc(code_boc).hash
+            if actual_code != self.controller_code.hash:
+                raise AssertionError(
+                    f"controller {index + 1} deployed unexpected code: "
+                    f"expected={self.controller_code.hash.hex()} actual={actual_code.hex()}"
+                )
+
         build = subprocess.run(
             [str(REPO / "scripts/build-nominator-pool-v1.sh")],
             capture_output=True,
@@ -2690,7 +2773,7 @@ class PoolLifecycle:
         state_init = build_pool_state_init(
             self.pool_code,
             validator_account=validator_account,
-            controller_account=validator_account,
+            controller_account=self.controllers[0].address.hash_part,
             reward_share_bps=VALIDATOR_REWARD_SHARE_BPS,
             max_nominators=MAX_NOMINATORS,
             min_validator_stake=self.min_validator_stake,
@@ -2721,6 +2804,50 @@ class PoolLifecycle:
             state=data.state_name,
         )
         self.check("pool starts idle with no nominators", data.nominators_count == 0)
+
+        for index in range(1, len(self.nodes)):
+            wallet = self.wallets[index]
+            pool = make_pool_fixture(
+                self.single_pool_code, wallet.address, self.controllers[index].address
+            )
+            self.support_pools[index] = pool
+            await self.send(
+                wallet, dest=pool.address, amount=10 * NANO,
+                body=Cell.empty(), init=pool.state_init,
+                label=f"support-pool-{index + 1}-deploy",
+            )
+            async def support_pool_code() -> bytes:
+                return (await self.client.raw_get_account_state(pool.address)).code
+
+            code_boc = await self.retry(
+                support_pool_code, timeout=60,
+                description=f"support pool {index + 1} deployment",
+                predicate=bool,
+            )
+            actual_code = Cell.one_from_boc(code_boc).hash
+            if actual_code != self.single_pool_code.hash:
+                raise AssertionError(
+                    f"support pool {index + 1} deployed unexpected code: "
+                    f"expected={self.single_pool_code.hash.hex()} actual={actual_code.hex()}"
+                )
+            # Two concurrent election principals are required to keep the
+            # network rotating while the primary pool waits to recover.
+            capital = 2 * POOL_STAKE_VALUE + 20 * NANO
+            await self.send(
+                wallet, dest=pool.address, amount=capital,
+                body=Cell.empty(), label=f"support-pool-{index + 1}-capital",
+            )
+            observed_capital = await self.retry(
+                lambda: self.balance(pool.address), timeout=60,
+                description=f"support pool {index + 1} funded",
+                predicate=lambda value: value >= capital,
+            )
+            self.event(
+                "support_pool_ready", validator=index + 1,
+                pool=raw_address(pool.address),
+                controller=raw_address(self.controllers[index].address),
+                code_hash=actual_code.hex(), capital_nanotos=observed_capital,
+            )
 
     async def deposit(self) -> None:
         agent_nominators = [n for n in self.nominators if n.agent is not None]
@@ -3040,10 +3167,10 @@ class PoolLifecycle:
                     for index in range(1, len(self.nodes)):
                         if (index, election_id) in entered:
                             continue
-                        balance = await self.balance(self.wallets[index].address)
-                        if balance < POOL_STAKE_VALUE + NANO:
+                        balance = await self.balance(self.support_pools[index].address)
+                        if balance < POOL_STAKE_VALUE + MIN_TOS_FOR_STORAGE:
                             continue
-                        await self.stake_directly(index, election_id)
+                        await self.stake_support_pool(index, election_id)
                         entered.add((index, election_id))
             except asyncio.CancelledError:
                 raise
@@ -3051,72 +3178,61 @@ class PoolLifecycle:
                 self.event("keep_elections_alive_error", error=repr(error))
             await asyncio.sleep(20)
 
-    async def stake_directly(self, index: int, election_id: int) -> None:
-        """The other validators stake the ordinary way.
-
-        Without them the election has one participant and fails, and a pool
-        that is never elected earns nothing to distribute -- which would make
-        the reward check below vacuous rather than passing.
-        """
-        wallet = self.wallets[index]
-        node = self.nodes[index]
-        body = await self.signed_election_body(
-            source=wallet.address,
-            node=node,
-            election_id=election_id,
-            label=f"direct-{index}",
-        )
-        await self.send(
-            wallet,
-            dest=ELECTOR,
-            amount=POOL_STAKE_VALUE,
-            body=body,
-            label=f"direct-validator-{index}-stake",
-        )
-
-    async def signed_election_body(
-        self, *, source: Address, node: FullNode, election_id: int, label: str
+    async def authorized_pool_order(
+        self, index: int, election_id: int, pool_address: Address
     ) -> Cell:
-        """The Elector checks the signature against whoever sent the stake.
+        """Node authority plus the production builder; no local stake signer."""
+        node = self.nodes[index]
+        controller = self.controllers[index]
+        request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
+            election_date=election_id,
+            max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id,
+            stake_owner=pool_address.hash_part,
+        )
+        auth = request.parse_result(await node.engine_console.request(request))
+        if auth.validator_id != controller.address.hash_part:
+            raise AssertionError(f"validator {index + 1} authorized the wrong controller")
+        if auth.key_id != controller.consensus.key_id:
+            raise AssertionError(f"validator {index + 1} authorized the wrong consensus key")
+        if auth.algorithm_id != 1 or auth.public_key != controller.consensus.public_key:
+            raise AssertionError(f"validator {index + 1} authorization differs from its bound key")
+        return build_production_pool_stake_order(
+            REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order",
+            query_id=time.time_ns(), stake_amount=POOL_STAKE_VALUE,
+            stake_at=election_id, max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id, algorithm_id=auth.algorithm_id,
+            public_key=auth.public_key, signature=auth.signature,
+            witness=controller.birth_witness,
+        )
 
-        For a pool that is the pool's address, not the wallet driving it, which
-        is the one detail that makes staking through a pool different.
-        """
-        request = self.artifacts_dir / f"{label}-to-sign.bin"
-        body_file = self.artifacts_dir / f"{label}-body.boc"
-        await self.run_fift(
-            REPO / "crypto/smartcont/validator-elect-req.fif",
-            raw_address(source),
-            str(election_id),
-            "1",
-            node.validator_key.id.hex(),
-            str(request),
+    async def stake_support_pool(self, index: int, election_id: int) -> None:
+        """Keep a PQ controller-backed candidate beside the primary pool."""
+        pool = self.support_pools[index]
+        body = await self.authorized_pool_order(index, election_id, pool.address)
+        await self.send(
+            self.wallets[index], dest=pool.address, amount=POOL_STAKE_GAS,
+            body=body, label=f"support-validator-{index}-pool-stake",
         )
-        signature = node.validator_key.key.sign(request.read_bytes()).signature
-        await self.run_fift(
-            REPO / "crypto/smartcont/validator-elect-signed.fif",
-            raw_address(source),
-            str(election_id),
-            "1",
-            node.validator_key.id.hex(),
-            base64.b64encode(PUB_ED25519_PREFIX + node.validator_key.public_key.key).decode(),
-            base64.b64encode(signature).decode(),
-            str(body_file),
+        controller_id = int.from_bytes(self.controllers[index].address.hash_part, "big")
+        await self.retry(
+            lambda: self.elector_participant_ids(), timeout=120,
+            description=f"support controller {index + 1} accepted by Elector",
+            predicate=lambda ids: controller_id in ids,
         )
-        self._last_signature = signature
-        return Cell.one_from_boc(body_file.read_bytes())
+
+    async def elector_participant_ids(self) -> set[int]:
+        return participant_ids_from_runmethod(
+            await self.runmethod(raw_address(ELECTOR), "participant_list_extended")
+        )
 
     async def stake_through_pool(self, election_id: int, *, label: str) -> None:
-        raise RuntimeError(
-            "a pool's stake is relayed through a post-quantum Validator Controller, and "
-            "placing one needs three things this harness does not have: a deployed "
-            "controller bound to the node's ML-DSA-44 consensus key, that key's signature "
-            "over terms naming the pool as the funding account, and the controller's code "
-            "admitted by ConfigParam 47. The Ed25519 stake this used to build is one the "
-            "elector no longer accepts, so it is not sent rather than sent in a form the "
-            "chain refuses. What it would have exercised is covered by "
-            "a_pools_money_reaches_an_election_through_a_real_controller in the elector "
-            "sandbox, which runs the same path against the real contracts."
+        if self.pool_address is None:
+            raise AssertionError("primary pool is not deployed")
+        body = await self.authorized_pool_order(0, election_id, self.pool_address)
+        await self.send(
+            self.wallets[0], dest=self.pool_address, amount=POOL_STAKE_GAS,
+            body=body, label=label,
         )
 
     async def nominator_components(self, nominator: Nominator) -> tuple[int, int]:
@@ -3525,6 +3641,7 @@ class PoolLifecycle:
         upkeep: asyncio.Task | None = None
         try:
             self.prepare_integrated_mode()
+            self.prepare_pq_election_fixture()
             await self.bring_up_network()
             await self.fund_wallets()
             await self.deploy_pool()
