@@ -64,6 +64,20 @@ async def test_lifecycle_shutdown_closes_the_whole_network(tmp_path):
     assert stopped == ["dht", "validator"], "DHT and validator ownership must close together"
 
 
+@pytest.mark.asyncio
+async def test_lifecycle_shutdown_failure_is_reported(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="dht-shutdown-error")
+
+    class FailingNetwork:
+        async def aclose(self):
+            raise RuntimeError("DHT did not stop")
+
+    runner.network = FailingNetwork()
+    await runner.shutdown()
+    assert runner.failures == ["network shutdown failed: RuntimeError('DHT did not stop')"]
+    assert any(event["event"] == "network_shutdown_error" for event in runner.report.events)
+
+
 requires_code = pytest.mark.skipif(
     not POOL_CODE.exists(),
     reason="run scripts/build-nominator-pool-v1.sh to produce the pool artifact",

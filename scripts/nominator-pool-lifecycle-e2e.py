@@ -3868,7 +3868,11 @@ class PoolLifecycle:
         if self.network is not None:
             # Network owns the DHT as well as the validators. Stopping only
             # self.nodes leaves its DHT child running after the report is written.
-            await self.network.aclose()
+            try:
+                await self.network.aclose()
+            except Exception as error:  # noqa: BLE001 - preserve the run report
+                self.event("network_shutdown_error", error=repr(error))
+                self.failures.append(f"network shutdown failed: {error!r}")
 
     def write_report(self) -> None:
         if self.report_written:
