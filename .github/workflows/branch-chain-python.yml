@@ -64,8 +64,14 @@ jobs:
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key \
-            dht-server validator-engine-console validator-engine
+            dht-server validator-engine-console validator-engine \
+            test-pq-lite-forward-proof
           ccache --show-stats
+
+      # A virtualized key-block proof must retain every PQ finality context
+      # field. This is a compiled behavior test, not a source-only guard.
+      - name: Check PQ key-block proof context
+        run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
 
       - name: Prepare generated Python API and dependencies
         run: |

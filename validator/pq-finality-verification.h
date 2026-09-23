@@ -45,22 +45,30 @@ inline td::Result<block::PQFinalityVerificationContext> derive_pq_finality_conte
 inline td::Result<block::PQFinalityVerificationContext> derive_pq_finality_context(
     const MasterchainState& governing_state, td::Ref<block::ValidatorSet> validator_set, BlockIdExt block_id,
     td::uint32 vertical_seqno, BlockSeqno previous_key_block_seqno) {
-  TRY_RESULT(governing_config, governing_state.get_config_holder());
-  TRY_STATUS(detail::check_governing_global_id(governing_state.get_global_id(), *governing_config));
-  return detail::derive_pq_finality_context(governing_state.get_global_id(), governing_state.get_consensus_config(),
-                                            governing_state.get_selected_new_consensus_config(block_id.id.workchain),
-                                            std::move(validator_set), block_id, vertical_seqno,
-                                            previous_key_block_seqno);
+  try {
+    TRY_RESULT(governing_config, governing_state.get_config_holder());
+    TRY_STATUS(detail::check_governing_global_id(governing_state.get_global_id(), *governing_config));
+    return detail::derive_pq_finality_context(governing_state.get_global_id(), governing_state.get_consensus_config(),
+                                              governing_state.get_selected_new_consensus_config(block_id.id.workchain),
+                                              std::move(validator_set), block_id, vertical_seqno,
+                                              previous_key_block_seqno);
+  } catch (vm::VmVirtError& error) {
+    return error.as_status("pq finality context is unavailable in the governing state proof: ");
+  }
 }
 
 inline td::Result<block::PQFinalityVerificationContext> derive_pq_finality_context(
     const ConfigHolder& governing_config, td::Ref<block::ValidatorSet> validator_set, BlockIdExt block_id,
     td::uint32 vertical_seqno, BlockSeqno previous_key_block_seqno) {
-  TRY_STATUS(detail::check_governing_global_id(governing_config.get_global_id(), governing_config));
-  return detail::derive_pq_finality_context(governing_config.get_global_id(), governing_config.get_consensus_config(),
-                                            governing_config.get_selected_new_consensus_config(block_id.id.workchain),
-                                            std::move(validator_set), block_id, vertical_seqno,
-                                            previous_key_block_seqno);
+  try {
+    TRY_STATUS(detail::check_governing_global_id(governing_config.get_global_id(), governing_config));
+    return detail::derive_pq_finality_context(governing_config.get_global_id(), governing_config.get_consensus_config(),
+                                              governing_config.get_selected_new_consensus_config(block_id.id.workchain),
+                                              std::move(validator_set), block_id, vertical_seqno,
+                                              previous_key_block_seqno);
+  } catch (vm::VmVirtError& error) {
+    return error.as_status("pq finality context is unavailable in the governing key-block proof: ");
+  }
 }
 
 inline td::Result<ValidatorWeight> verify_pq_proof_signatures(const block::PQFinalityVerificationContext& context,

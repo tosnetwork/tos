@@ -306,19 +306,30 @@ td::Status Config::unpack() {
 }
 
 td::Status Config::visit_validator_params() const {
-  {
-    // current validator set
-    TRY_RESULT(vset, unpack_validator_set(get_config_param(34)));
-  }
-  for (int i = 32; i < 38; i++) {
-    // prev/current/next persistent and temporary validator sets
-    auto vs = get_config_param(i);
-    if (vs.not_null()) {
-      TRY_RESULT(vset, unpack_validator_set(std::move(vs)));
+  try {
+    {
+      // current validator set
+      TRY_RESULT(vset, unpack_validator_set(get_config_param(34)));
     }
+    for (int i = 32; i < 38; i++) {
+      // prev/current/next persistent and temporary validator sets
+      auto vs = get_config_param(i);
+      if (vs.not_null()) {
+        TRY_RESULT(vset, unpack_validator_set(std::move(vs)));
+      }
+    }
+    get_catchain_validators_config();
+    // A key-block proof is also used as the trusted PQ finality context. The
+    // verifier reads these parameters through that virtualized proof; visiting
+    // them here keeps their dictionary paths and value cells in the proof.
+    static_cast<void>(get_config_param(19));
+    get_consensus_config();
+    get_selected_new_consensus_config(tos::masterchainId);
+    get_selected_new_consensus_config(0);
+    return td::Status::OK();
+  } catch (vm::VmVirtError& error) {
+    return error.as_status("key-block validator and PQ finality parameters are unavailable: ");
   }
-  get_catchain_validators_config();
-  return td::Status::OK();
 }
 
 tos::ValidatorSessionConfig Config::get_consensus_config() const {

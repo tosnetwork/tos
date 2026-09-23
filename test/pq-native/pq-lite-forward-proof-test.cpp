@@ -31,7 +31,9 @@
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
 #include "vm/boc.h"
+#include "vm/cells/CellUsageTree.h"
 #include "vm/cells/MerkleProof.h"
+#include "vm/cells/UsageCell.h"
 #include "vm/dict.h"
 
 namespace {
@@ -114,7 +116,7 @@ td::Ref<vm::Cell> consensus_options_cell() {
   block::gen::ConsensusConfig::Record_consensus_config_v3 record{
       .flags = 0,
       .new_catchain_ids = true,
-      .round_candidates = 3,
+      .round_candidates = 7,
       .next_candidate_delay_ms = 20,
       .consensus_timeout_ms = 100,
       .fast_attempts = 3,
@@ -147,15 +149,19 @@ td::Ref<vm::Cell> simplex_config_cell(unsigned discriminator) {
   return result;
 }
 
-td::Ref<vm::Cell> config_dictionary(const std::vector<ValidatorDescr>& validators, unsigned discriminator) {
-  auto selected = simplex_config_cell(discriminator);
+td::Ref<vm::Cell> config_dictionary(const std::vector<ValidatorDescr>& validators, unsigned discriminator,
+                                    td::int32 global_id) {
+  auto masterchain_selected = simplex_config_cell(discriminator);
+  auto shard_selected = simplex_config_cell(discriminator + 100);
   vm::CellBuilder all;
-  if (!(all.store_long_bool(0x10, 8) && all.store_bool_bool(true) && all.store_ref_bool(selected) &&
-        all.store_bool_bool(true) && all.store_ref_bool(selected))) {
+  if (!(all.store_long_bool(0x10, 8) && all.store_bool_bool(true) && all.store_ref_bool(masterchain_selected) &&
+        all.store_bool_bool(true) && all.store_ref_bool(shard_selected))) {
     fail("Param30 wrapper build");
   }
   vm::Dictionary dictionary{32};
-  if (!(dictionary.set_ref(td::BitArray<32>{29}, consensus_options_cell()) &&
+  auto global_id_cell = vm::CellBuilder{}.store_long(global_id, 32).finalize_novm();
+  if (!(dictionary.set_ref(td::BitArray<32>{19}, global_id_cell) &&
+        dictionary.set_ref(td::BitArray<32>{29}, consensus_options_cell()) &&
         dictionary.set_ref(td::BitArray<32>{30}, all.finalize_novm()) &&
         dictionary.set_ref(td::BitArray<32>{34}, validator_set_cell(validators)))) {
     fail("config dictionary build");
@@ -267,6 +273,42 @@ BlockFixture make_masterchain_block(td::int32 global_id, BlockSeqno seqno, const
 td::Ref<vm::Cell> merkle_proof(td::Ref<vm::Cell> root) {
   return require_ok(vm::MerkleProof::generate(std::move(root), [](const td::Ref<vm::Cell>&) { return false; }),
                     "Merkle proof");
+}
+
+void assert_key_proof_carries_pq_context(const BlockFixture& key_block, td::int32 expected_global_id,
+                                         unsigned expected_target_rate) {
+  auto usage_tree = std::make_shared<vm::CellUsageTree>();
+  auto visited_root = vm::UsageCell::create(key_block.root, usage_tree->root_ptr());
+  auto original = require_ok(block::Config::extract_from_key_block(visited_root, block::Config::needValidatorSet),
+                             "key-block config before proof generation");
+  require_ok(original->visit_validator_params(), "visit key-block proof parameters");
+  auto proof = require_ok(vm::MerkleProof::generate(key_block.root, usage_tree.get()), "key-block context proof");
+  auto virtual_root = require_ok(vm::MerkleProof::virtualize(proof), "virtualized key-block context proof");
+  auto from_proof = require_ok(block::Config::extract_from_key_block(virtual_root, block::Config::needValidatorSet),
+                               "key-block config from proof");
+  try {
+    auto global_id = from_proof->get_config_param(19);
+    if (global_id.is_null()) {
+      fail("key-block proof omitted ConfigParam 19");
+    }
+    auto global_id_slice = vm::load_cell_slice(global_id);
+    if (global_id_slice.size() != 32 || global_id_slice.fetch_long(32) != expected_global_id) {
+      fail("key-block proof carried the wrong ConfigParam 19 global id");
+    }
+    if (from_proof->get_consensus_config().round_candidates != 7) {
+      fail("key-block proof carried the wrong ConfigParam 29 consensus options");
+    }
+    for (WorkchainId wc : {masterchainId, WorkchainId{0}}) {
+      auto selected = from_proof->get_selected_new_consensus_config(wc);
+      const auto expected = expected_target_rate + (wc == masterchainId ? 0 : 100);
+      if (!selected || selected.value().config.noncritical_params.target_rate != std::chrono::milliseconds(expected)) {
+        fail(wc == masterchainId ? "key-block proof omitted or changed masterchain ConfigParam 30"
+                                 : "key-block proof omitted or changed shard ConfigParam 30");
+      }
+    }
+  } catch (vm::VmVirtError&) {
+    fail("key-block proof pruned a PQ finality context parameter");
+  }
 }
 
 using pq_block_signature_test::candidate;
@@ -602,13 +644,14 @@ int main() {
   constexpr td::int32 global_id = -239;
   Authority first{21, 1};
   Authority second{21, 2};
-  auto config_a = config_dictionary(first.descriptors, 1);
-  auto config_b = config_dictionary(second.descriptors, 2);
+  auto config_a = config_dictionary(first.descriptors, 1, global_id);
+  auto config_b = config_dictionary(second.descriptors, 2, global_id);
   auto set_a = td::Ref<block::ValidatorSet>{true, 101, ShardIdFull{masterchainId}, first.descriptors};
   auto set_b = td::Ref<block::ValidatorSet>{true, 102, ShardIdFull{masterchainId}, second.descriptors};
 
   BlockIdExt zero{masterchainId, shardIdAll, 0, hash_of("lite-zero-root"), hash_of("lite-zero-file")};
   auto a = make_masterchain_block(global_id, 1, zero, 100, 0, 0, config_a);
+  assert_key_proof_carries_pq_context(a, global_id, 401);
   auto b = make_masterchain_block(global_id, 2, a.id, set_a->get_catchain_seqno(), set_a->get_validator_set_hash(),
                                   a.id.seqno(), config_b);
   auto c = make_masterchain_block(global_id, 3, b.id, set_b->get_catchain_seqno(), set_b->get_validator_set_hash(),
@@ -728,7 +771,7 @@ int main() {
                "previous-set-on-next-step", 21);
 
   Authority hundred{100, 3};
-  auto config_hundred = config_dictionary(hundred.descriptors, 3);
+  auto config_hundred = config_dictionary(hundred.descriptors, 3, global_id);
   auto set_hundred = td::Ref<block::ValidatorSet>{true, 103, ShardIdFull{masterchainId}, hundred.descriptors};
   auto h0 = make_masterchain_block(global_id, 10, zero, 100, 0, 0, config_hundred);
   auto h1 = make_masterchain_block(global_id, 11, h0.id, set_hundred->get_catchain_seqno(),

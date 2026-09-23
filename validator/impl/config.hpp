@@ -49,15 +49,19 @@ class ConfigHolderQ : public ConfigHolder {
     return config_->get_global_blockchain_id();
   }
   td::Result<td::int32> get_config_global_id() const override {
-    auto cell = config_->get_config_param(19);
-    if (cell.is_null()) {
-      return td::Status::Error("ConfigParam 19 is missing");
+    try {
+      auto cell = config_->get_config_param(19);
+      if (cell.is_null()) {
+        return td::Status::Error("ConfigParam 19 is missing");
+      }
+      auto cs = vm::load_cell_slice(std::move(cell));
+      if (cs.size() != 32 || cs.size_refs() != 0) {
+        return td::Status::Error("ConfigParam 19 is malformed");
+      }
+      return static_cast<td::int32>(cs.fetch_long(32));
+    } catch (vm::VmVirtError &error) {
+      return error.as_status("ConfigParam 19 is unavailable in the governing proof: ");
     }
-    auto cs = vm::load_cell_slice(std::move(cell));
-    if (cs.size() != 32 || cs.size_refs() != 0) {
-      return td::Status::Error("ConfigParam 19 is malformed");
-    }
-    return static_cast<td::int32>(cs.fetch_long(32));
   }
   ValidatorSessionConfig get_consensus_config() const override {
     return config_->get_consensus_config();

@@ -350,6 +350,17 @@ unreferenced files (`test_parser.rs` and `test_reducers.rs`, 15 test functions)
 were removed: they referenced the absent `block_parser` API and had never been
 compiled as crate tests. They were not counted as recovered coverage.
 
+A separate key-block proof defect surfaced while converting DNS vote tooling.
+`ValidateBroadcast` verifies PQ finality against a trusted key-block proof,
+independent of DNS. The proof generator visited validator-set fields but pruned
+the ConfigParam 19 global-ID mirror and Param29/30 consensus context that the
+verifier subsequently reads. A valid broadcast after a governance key block
+could therefore throw `VmVirtError` through the actor instead of being
+checked. Proof construction now retains those paths; legacy or incomplete
+proofs fail closed with a named error rather than terminating the process.
+`test-pq-lite-forward-proof` reads 19/29/30 back from a generated virtual
+proof with distinguishable values, and branch CI builds and executes it.
+
 ## Open diagnostic observations
 
 `N6-OPEN-DIAGNOSTIC-OBSERVATIONS.json` records operational findings that need

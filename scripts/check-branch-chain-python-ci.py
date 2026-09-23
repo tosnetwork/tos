@@ -16,6 +16,7 @@ REQUIRED_NATIVE_TARGETS = {
     "dht-server",
     "validator-engine-console",
     "validator-engine",
+    "test-pq-lite-forward-proof",
 }
 
 
@@ -51,6 +52,10 @@ def main() -> int:
     require(
         "uv run python test/integration/test_basic.py" in text,
         "four-validator PQ chain regression is absent",
+    )
+    require(
+        "ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'" in text,
+        "PQ key-block proof context behavior gate is absent",
     )
     rust_job = re.search(
         r"(?ms)^  rust-workspace-tests-compile:\s*\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)",
@@ -93,7 +98,8 @@ def main() -> int:
     )
     print(
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
-        "boots the four-validator PQ chain, and compiles every Rust test target"
+        "boots the four-validator PQ chain, checks PQ key-block proof context, "
+        "and compiles every Rust test target"
     )
     return 0
 
