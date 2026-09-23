@@ -374,6 +374,13 @@ to exercise the PQ vote instruction; production Genesis remains at version 14
 pending coordinated activation. A source guard pins node-origin vote assembly
 and the absence of the classical config-vote tag under `scripts/`.
 
+Rust `BlockSignaturesSimplexPq` now names its check as structural signer
+membership and declared weight, and `construct_from_pq_boc` states that it
+does not verify a signature or establish finality. The three-variant enum
+documentation no longer promises uniform `check_signatures()` dispatch for a
+PQ variant with no such method. The classical signature-weight sum also uses
+checked addition instead of relying on an unstated overflow bound.
+
 ## Open diagnostic observations
 
 `N6-OPEN-DIAGNOSTIC-OBSERVATIONS.json` records operational findings that need
