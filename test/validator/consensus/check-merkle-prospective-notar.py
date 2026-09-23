@@ -12,6 +12,10 @@ Expectations:
   control  NotarCert(P) installed before resolution: state n+1 (either resolver)
   gate     the hold is misaimed, and the harness must refuse to run the scenario
   red      skip-shortcut resolver: aborts applying C's update to state n-1
+  peer-green  two nodes, NotarCert(P) only on the peer, real Consensus leader path:
+              the window starts on state n+1 after P is fetched from the peer
+  peer-red    the same ordering against the skip-shortcut resolver: N/N-1 abort,
+              P never requested
 """
 
 import argparse
@@ -34,6 +38,8 @@ MODES = {
     "control": "no-hold",
     "gate": "hold-wrong-slot",
     "red": "hold-release",
+    "peer-green": "peer-consensus",
+    "peer-red": "peer-consensus",
 }
 
 
@@ -58,12 +64,17 @@ def check_once(binary: str, expect: str, n: int, run: int, timeout: float) -> No
     lower = text.lower()
 
     chain = re.search(r"MERKLE_ACTOR_CHAIN n=(\d+) .* P=\{slot=(\d+), hash=([0-9A-Fa-f]{64})\} "
-                      r"C=\{slot=\d+, hash=[0-9A-Fa-f]{64}\} C_block=(\S+)", text)
+                      r"C=\{slot=(\d+), hash=[0-9A-Fa-f]{64}\} C_block=(\S+)", text)
     require(chain is not None and int(chain.group(1)) == n, n, run, "no chain line for this n", text)
-    p_slot, p_hash, c_block = chain.group(2), chain.group(3).lower(), chain.group(4)
+    p_slot, p_hash, c_block = chain.group(2), chain.group(3).lower(), chain.group(5)
+    c_window = int(chain.group(4)) + 1
     p_request = re.compile(r"MERKLE_ACTOR_OVERLAY_REQUEST id=\{slot=" + p_slot + r", hash=" + p_hash + r"\}",
                            re.IGNORECASE)
     merkle_error = "invalid merkle update" in lower
+
+    if expect.startswith("peer-"):
+        check_peer(proc.returncode, text, expect, n, run, p_request, c_block, c_window)
+        return
 
     if expect == "gate":
         require(proc.returncode != 0, n, run, "misaimed gate run exited 0", text)
@@ -109,6 +120,35 @@ def check_once(binary: str, expect: str, n: int, run: int, timeout: float) -> No
     elif expect == "control":
         require(f"MERKLE_ACTOR_CONTROL_OK state={state_hash(n + 1)}".lower() in lower, n, run,
                 "control run did not resolve to state n+1", text)
+
+
+def check_peer(returncode: int, text: str, expect: str, n: int, run: int, p_request, c_block: str,
+               c_window: int) -> None:
+    lower = text.lower()
+    require(re.search(r"MERKLE_ACTOR_PEER_PRECONDITION peer_serves_notar_P=yes target_notar_cert_P=absent "
+                      r"skip_run=[1-9]\d*", text) is not None, n, run, "peer-only preconditions not established", text)
+    require("MERKLE_ACTOR_TRIGGER NotarCert(C) -> Consensus::start_generation(C)" in text, n, run,
+            "the leader path was never triggered", text)
+    expect_line = f"expected_old={state_hash(n)} applied_to={state_hash(n - 1)}"
+    require(expect_line in lower, n, run, "binary and checker disagree on the state hashes", text)
+    merkle_error = "invalid merkle update" in lower
+    if expect == "peer-red":
+        require(returncode != 0, n, run, "skip-shortcut resolver did not fail", text)
+        pair = (f"invalid merkle update: expected old value hash = {state_hash(n)}, "
+                f"applied to value with hash = {state_hash(n - 1)}")
+        require(pair in lower, n, run, "abort is not the N/N-1 Merkle mismatch", text)
+        require(f"candidate block id = {c_block}".lower() in lower, n, run, "the failing update is not C's", text)
+        require(p_request.search(text) is None, n, run, "P was requested: the shortcut was not what failed", text)
+        # Earlier windows led by the same node start normally; the one opened on C must not.
+        require(f"MERKLE_ACTOR_WINDOW_STARTED start_slot={c_window} " not in text, n, run,
+                "the leader window on C started", text)
+        return
+    require(returncode == 0, n, run, f"exit code {returncode}", text)
+    require(not merkle_error, n, run, "a Merkle update was applied to the wrong base", text)
+    require(p_request.search(text) is not None, n, run, "the exact ancestor P was never requested", text)
+    require("MERKLE_ACTOR_PEER_SERVED_NOTAR" in text, n, run, "the peer never served NotarCert(P)", text)
+    require(f"MERKLE_ACTOR_PEER_GREEN state={state_hash(n + 1)} next_seqno={n + 2}".lower() in lower, n, run,
+            "the leader window did not start on state n+1", text)
 
 
 def main() -> None:

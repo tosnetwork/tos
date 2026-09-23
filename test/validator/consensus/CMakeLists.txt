@@ -383,6 +383,11 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME test-consensus-simplex2-merkle-prospective-notar-control
              COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
                      $<TARGET_FILE:test-merkle-prospective-notar> control --n 5 --n 23)
+    # NotarCert(P) only on a peer node without a Pool; the node under test resolves C from
+    # the real Consensus::start_generation after Pool opens its leader window on C.
+    add_test(NAME test-consensus-simplex2-merkle-peer-notar-leader-path
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> peer-green --n 5 --n 23)
     add_test(NAME test-consensus-simplex2-merkle-prospective-notar-gate-control
              COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
                      $<TARGET_FILE:test-merkle-prospective-notar> gate --n 5)

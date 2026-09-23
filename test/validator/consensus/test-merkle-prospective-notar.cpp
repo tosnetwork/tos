@@ -23,6 +23,15 @@
 // resolves the exact ancestor waits for P, and either produces state n+1 once NotarCert(P)
 // is installed or refuses with a bounded error when P can never be obtained.
 //
+// The peer-consensus mode takes the other ordering and the real caller. A second node holds
+// P and NotarCert(P) in its CandidateResolver and has no Pool, so it never gossips the
+// certificate; the node under test never receives NotarCert(P) at all. Two skip-certified
+// slots separate A from P, so Pool carries A as the available base across a skip run. The
+// node under test registers the production Consensus actor: installing NotarCert(C) opens
+// its own leader window on C, and Consensus::start_generation(C) resolves the state. A
+// resolver that resolves the exact ancestor fetches NotarCert(P) from the peer and starts
+// the window on state n+1; the skip shortcut aborts with the same N/N-1 mismatch.
+//
 // The source uses only bus events that exist both before and after the exact-ancestor change,
 // so the identical file builds against either resolver. Every run prints the preconditions it
 // established before triggering resolution; a run whose ordering did not hold stops with
@@ -122,6 +131,9 @@ enum class Mode {
   // Gate positive control: the hold is aimed at the wrong slot, so the ordering the test
   // depends on never happens and the harness itself must say so.
   HoldWrongSlot,
+  // Two nodes: NotarCert(P) exists only on the peer, and the real Consensus leader path
+  // resolves C.
+  PeerConsensus,
 };
 
 std::string candidate_id_str(const CandidateId& id) {
@@ -136,6 +148,16 @@ struct Observations {
   std::vector<std::pair<td::uint32, ParentId>> leader_windows;
   std::vector<CandidateId> overlay_requests;
   size_t misbehavior_reports = 0;
+  // OurLeaderWindowStarted as published by the node under test.
+  struct WindowStarted {
+    td::uint32 start_slot = 0;
+    ParentId base;
+    std::string state_hash;
+    BlockSeqno next_seqno = 0;
+  };
+  std::vector<WindowStarted> windows_started;
+  // Requests for P that the peer answered with a notarization certificate.
+  size_t peer_served_notar = 0;
   // Written by the database gate.
   size_t held_writes = 0;
 };
@@ -146,6 +168,11 @@ Observations observations;
 std::atomic<long long> gate_slot{-1};
 std::atomic<bool> gate_released{false};
 std::atomic<bool> refuse_overlay_requests{false};
+
+// Peer-consensus mode: the node whose CandidateResolver answers the target's requests.
+std::mutex peer_mutex;
+std::optional<simplex::BusHandle> peer_bus;
+std::optional<PeerValidatorId> peer_idx;
 
 bool notarized(const CandidateId& id) {
   std::scoped_lock lock(observations.mutex);
@@ -175,6 +202,21 @@ std::optional<ParentId> leader_window_base(td::uint32 start_slot) {
     }
   }
   return std::nullopt;
+}
+
+std::optional<Observations::WindowStarted> window_started(td::uint32 start_slot) {
+  std::scoped_lock lock(observations.mutex);
+  for (const auto& started : observations.windows_started) {
+    if (started.start_slot == start_slot) {
+      return started;
+    }
+  }
+  return std::nullopt;
+}
+
+size_t peer_served_notar() {
+  std::scoped_lock lock(observations.mutex);
+  return observations.peer_served_notar;
 }
 
 size_t misbehavior_reports() {
@@ -279,7 +321,24 @@ class ObserverActor : public td::actor::SpawnsWith<simplex::Bus>, public td::act
     std::scoped_lock lock(observations.mutex);
     ++observations.misbehavior_reports;
   }
+
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const OurLeaderWindowStarted> event) {
+    Observations::WindowStarted started{.start_slot = event->start_slot,
+                                        .base = event->base,
+                                        .state_hash = event->state->state().at(0)->get_hash().to_hex(),
+                                        .next_seqno = event->state->next_seqno()};
+    emit(PSTRING() << "MERKLE_ACTOR_WINDOW_STARTED start_slot=" << started.start_slot
+                   << " next_seqno=" << started.next_seqno << " state=" << started.state_hash);
+    std::scoped_lock lock(observations.mutex);
+    observations.windows_started.push_back(std::move(started));
+  }
 };
+
+bool response_has_notar(const ProtocolMessage& response) {
+  auto decoded = fetch_tl_object<tos_api::consensus_simplex_candidateAndCert>(response.data, true);
+  return decoded.is_ok() && !decoded.ok()->notar_.empty();
+}
 
 // Stands in for the private overlay. Nothing is broadcast anywhere; candidate requests are
 // recorded, then either left unanswered until their own timeout or refused at once.
@@ -297,7 +356,15 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
   }
 
   template <>
-  td::actor::Task<ProtocolMessage> process(simplex::BusHandle, std::shared_ptr<OutgoingOverlayRequest> message) {
+  td::actor::Task<ProtocolMessage> process(simplex::BusHandle bus, std::shared_ptr<OutgoingOverlayRequest> message) {
+    std::optional<simplex::BusHandle> peer;
+    {
+      std::scoped_lock lock(peer_mutex);
+      if (peer_idx.has_value() && bus->local_id->idx == *peer_idx) {
+        co_return td::Status::Error(ErrorCode::failure, "the peer makes no requests in this test");
+      }
+      peer = peer_bus;
+    }
     auto request = fetch_tl_object<tos_api::consensus_simplex_requestCandidate>(message->request.data, true);
     if (request.is_ok()) {
       auto id = CandidateId::from_tl(request.ok()->id_);
@@ -305,6 +372,19 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
                      << request.ok()->want_candidate_ << " want_notar=" << request.ok()->want_notar_);
       std::scoped_lock lock(observations.mutex);
       observations.overlay_requests.push_back(id);
+    }
+    if (peer.has_value()) {
+      // Every request goes to the one peer, so which node serves P is not left to chance.
+      auto forwarded = std::make_shared<IncomingOverlayRequest>(bus->local_id->idx, bus->local_adnl_id,
+                                                                ProtocolMessage{message->request.data.clone()});
+      auto response = co_await peer->publish(std::move(forwarded)).wrap();
+      if (response.is_ok() && request.is_ok() && response_has_notar(response.ok())) {
+        emit(PSTRING() << "MERKLE_ACTOR_PEER_SERVED_NOTAR id="
+                       << candidate_id_str(CandidateId::from_tl(request.ok()->id_)));
+        std::scoped_lock lock(observations.mutex);
+        ++observations.peer_served_notar;
+      }
+      co_return response;
     }
     if (refuse_overlay_requests.load()) {
       co_return ProtocolMessage{create_serialize_tl_object<tos_api::consensus_requestError>()};
@@ -425,16 +505,27 @@ class Driver : public td::actor::Actor {
   std::vector<std::shared_ptr<const tos::pq::ValidatorPQKeyStore>> signers_;
   td::actor::Runtime runtime_;
   td::actor::ActorOwn<StaticManager> manager_;
+  td::actor::Runtime peer_runtime_;
+  td::actor::ActorOwn<StaticManager> peer_manager_;
+  simplex::BusHandle peer_bus_;
   simplex::BusHandle bus_;
   std::shared_ptr<simplex::Bus> bus_ptr_;
   // candidates_[k] is the full candidate producing state k (index 0 unused).
   std::vector<CandidateRef> candidates_;
 
+  // Skip-certified slots between A and P. The peer-consensus mode puts a skip run there so
+  // that Pool has to carry A as the available base across it.
+  td::uint32 gap() const {
+    return mode_ == Mode::PeerConsensus ? 2 : 0;
+  }
+
   td::uint32 slot_of(BlockSeqno seqno) const {
-    // Candidate k sits at slot k-1+offset. The offset puts C at the last slot of a leader
-    // window, so that installing NotarCert(C) opens the next window on base C.
-    td::uint32 offset = (SLOTS_PER_LEADER_WINDOW - (n_ + 1) % SLOTS_PER_LEADER_WINDOW) % SLOTS_PER_LEADER_WINDOW;
-    return seqno - 1 + offset;
+    // Candidates 1..n-1 sit at consecutive slots after `offset` leading skipped slots; P follows
+    // A after gap() skipped slots and C follows P. The offset puts C at the last slot of a
+    // leader window, so that installing NotarCert(C) opens the next window on base C.
+    td::uint32 offset =
+        (SLOTS_PER_LEADER_WINDOW - (n_ + gap() + 1) % SLOTS_PER_LEADER_WINDOW) % SLOTS_PER_LEADER_WINDOW;
+    return seqno - 1 + offset + (seqno >= n_ ? gap() : 0);
   }
 
   td::BufferSlice sign(size_t signer, td::Slice inner) const {
@@ -447,7 +538,7 @@ class Driver : public td::actor::Actor {
   }
 
   template <typename T>
-  td::BufferSlice certificate(const T& vote, const std::vector<size_t>& signers) const {
+  simplex::CertificateRef<T> make_certificate(const T& vote, const std::vector<size_t>& signers) const {
     auto inner = serialize_tl_object(vote.to_tl(), true);
     std::vector<simplex::tl::VoteSignatureRef> signatures;
     for (size_t i : signers) {
@@ -457,7 +548,12 @@ class Driver : public td::actor::Actor {
     auto set = create_tl_object<simplex::tl::voteSignatureSet>(std::move(signatures));
     auto cert = simplex::Certificate<T>::from_tl(std::move(*set), vote, *bus_ptr_);
     CHECK(cert.is_ok());
-    return cert.move_as_ok()->serialize();
+    return cert.move_as_ok();
+  }
+
+  template <typename T>
+  td::BufferSlice certificate(const T& vote, const std::vector<size_t>& signers) const {
+    return make_certificate(vote, signers)->serialize();
   }
 
   void deliver(td::BufferSlice message, size_t source) {
@@ -493,6 +589,41 @@ class Driver : public td::actor::Actor {
     return (slot_of(n_ + 1) + 1) / SLOTS_PER_LEADER_WINDOW % VALIDATORS;
   }
 
+  // Peer-consensus mode: the one node the target can fetch P from.
+  size_t peer() const {
+    return (target() + 1) % VALIDATORS;
+  }
+
+  std::shared_ptr<simplex::Bus> make_bus(const std::vector<PeerValidator>& validators, ValidatorWeight total_weight,
+                                         size_t local, td::actor::ActorId<StaticManager> manager) const {
+    auto bus = std::make_shared<simplex::Bus>();
+    bus->shard = SHARD;
+    bus->manager = manager;
+    bus->pq_signer = signers_.at(local);
+    bus->validator_set = validators;
+    for (const auto& validator : validators) {
+      bus->all_validators.push_back(validator.adnl_id);
+    }
+    bus->total_weight = total_weight;
+    bus->local_id = validators.at(local);
+    bus->local_adnl_id = validators.at(local).adnl_id;
+    bus->config = NewConsensusConfig{
+        .max_block_size = 1 << 20,
+        .max_collated_data_size = 1 << 20,
+        .protocol_version = 2,
+        .slots_per_leader_window = SLOTS_PER_LEADER_WINDOW,
+    };
+    // Every skip in the scenario is a certificate the test delivers. Nothing may time out
+    // into a vote of the node's own while the scenario runs.
+    bus->config.noncritical_params.first_block_timeout = std::chrono::milliseconds(600'000);
+    bus->config.noncritical_params.standstill_timeout = std::chrono::milliseconds(600'000);
+    bus->session_id = fill(0x42);
+    bus->cc_seqno = CC_SEQNO;
+    bus->validator_set_hash = 0;
+    bus->db = std::make_unique<GatedDb>();
+    return bus;
+  }
+
   void start_node() {
     std::vector<PeerValidator> validators;
     ValidatorWeight total_weight = 0;
@@ -517,30 +648,30 @@ class Driver : public td::actor::Actor {
     simplex::Pool::register_in(runtime_);
     simplex::StateResolver::register_in(runtime_);
     simplex::Db::register_in(runtime_);
+    if (mode_ == Mode::PeerConsensus) {
+      simplex::Consensus::register_in(runtime_);
+    }
     simplex::DefaultCollatorSchedule::provide_for(runtime_);
 
-    manager_ = td::actor::create_actor<StaticManager>("StaticManager");
-    auto bus = std::make_shared<simplex::Bus>();
-    bus->shard = SHARD;
-    bus->manager = manager_.get();
-    bus->pq_signer = signers_.at(target());
-    bus->validator_set = validators;
-    for (const auto& validator : validators) {
-      bus->all_validators.push_back(validator.adnl_id);
+    if (mode_ == Mode::PeerConsensus) {
+      // The peer only answers candidate requests. Without a Pool it never gossips a
+      // certificate, so NotarCert(P) cannot reach the target by any other path.
+      peer_runtime_.register_actor<OverlayStub>("PrivateOverlay");
+      simplex::CandidateResolver::register_in(peer_runtime_);
+      simplex::Db::register_in(peer_runtime_);
+      simplex::DefaultCollatorSchedule::provide_for(peer_runtime_);
+      peer_manager_ = td::actor::create_actor<StaticManager>("PeerManager");
+      auto peer = make_bus(validators, total_weight, this->peer(), peer_manager_.get());
+      peer_bus_ = peer_runtime_.start(std::static_pointer_cast<simplex::Bus>(peer), "merkle-peer");
+      peer_bus_.publish<Start>(
+          td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+      std::scoped_lock lock(peer_mutex);
+      peer_bus = peer_bus_;
+      peer_idx = validators.at(this->peer()).idx;
     }
-    bus->total_weight = total_weight;
-    bus->local_id = validators.at(target());
-    bus->local_adnl_id = validators.at(target()).adnl_id;
-    bus->config = NewConsensusConfig{
-        .max_block_size = 1 << 20,
-        .max_collated_data_size = 1 << 20,
-        .protocol_version = 2,
-        .slots_per_leader_window = SLOTS_PER_LEADER_WINDOW,
-    };
-    bus->session_id = fill(0x42);
-    bus->cc_seqno = CC_SEQNO;
-    bus->validator_set_hash = 0;
-    bus->db = std::make_unique<GatedDb>();
+
+    manager_ = td::actor::create_actor<StaticManager>("StaticManager");
+    auto bus = make_bus(validators, total_weight, target(), manager_.get());
     bus_ptr_ = bus;
     bus_ = runtime_.start(std::static_pointer_cast<simplex::Bus>(bus), "merkle-target");
     bus_.publish<Start>(
@@ -577,6 +708,9 @@ class Driver : public td::actor::Actor {
     for (BlockSeqno seqno = 1; seqno <= n_ + 1; ++seqno) {
       co_await bus_.publish<simplex::StoreCandidate>(candidates_[seqno]);
     }
+    if (mode_ == Mode::PeerConsensus) {
+      co_return co_await run_peer_consensus();
+    }
 
     for (td::uint32 slot = 0; slot < slot_of(1); ++slot) {
       deliver_skip(slot);
@@ -597,6 +731,7 @@ class Driver : public td::actor::Actor {
         gate_slot = static_cast<long long>(P->id.slot) + 1000;
         break;
       case Mode::NoHold:
+      case Mode::PeerConsensus:
         break;
     }
     refuse_overlay_requests = mode_ == Mode::HoldRefuse;
@@ -720,8 +855,102 @@ class Driver : public td::actor::Actor {
       }
       case Mode::HoldWrongSlot:
         test_failed("the misaimed gate reached resolution");
+      case Mode::PeerConsensus:
+        test_failed("the peer-consensus scenario ran the single-node path");
     }
     co_return td::Unit{};
+  }
+
+  // Asks the peer for NotarCert(P) the way a third validator would, so the target's own
+  // request budget at the peer is untouched.
+  td::actor::Task<bool> peer_serves_notar(const CandidateId& id) {
+    const auto& asker = bus_ptr_->validator_set.at((target() + 2) % VALIDATORS);
+    auto request = create_serialize_tl_object<tos_api::consensus_simplex_requestCandidate>(id.to_tl(), false, true);
+    auto response = co_await peer_bus_
+                        .publish(std::make_shared<IncomingOverlayRequest>(asker.idx, asker.adnl_id,
+                                                                          ProtocolMessage{std::move(request)}))
+                        .wrap();
+    co_return response.is_ok() && response_has_notar(response.ok());
+  }
+
+  td::actor::Task<> run_peer_consensus() {
+    const auto& A = candidates_.at(n_ - 1);
+    const auto& P = candidates_.at(n_);
+    const auto& C = candidates_.at(n_ + 1);
+
+    // The peer holds every candidate and its notarization, delivered straight to its
+    // CandidateResolver.
+    for (BlockSeqno seqno = 1; seqno <= n_ + 1; ++seqno) {
+      co_await peer_bus_.publish<simplex::StoreCandidate>(candidates_[seqno]);
+      peer_bus_.publish<simplex::NotarizationObserved>(
+          candidates_[seqno]->id, make_certificate(simplex::NotarizeVote{candidates_[seqno]->id}, {0, 1, 2}));
+    }
+    // The preload is consumed asynchronously. Poll below the peer's per-source rate limit.
+    bool peer_ready = false;
+    for (int attempt = 0; attempt < 40 && !peer_ready; ++attempt) {
+      peer_ready = co_await peer_serves_notar(P->id);
+      if (!peer_ready) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.15));
+      }
+    }
+    if (!peer_ready) {
+      precondition_failed("the peer cannot serve NotarCert(P)");
+    }
+
+    for (td::uint32 slot = 0; slot < slot_of(1); ++slot) {
+      deliver_skip(slot);
+    }
+    for (BlockSeqno seqno = 1; seqno + 1 <= n_; ++seqno) {
+      deliver_notar(seqno);
+      if (!co_await wait_until([&] { return notarized(candidates_[seqno]->id); })) {
+        precondition_failed(PSTRING() << "NotarCert of candidate " << seqno << " was never installed");
+      }
+    }
+    for (td::uint32 slot = A->id.slot + 1; slot <= P->id.slot; ++slot) {
+      deliver_skip(slot);
+    }
+    // Pool cannot open the window after C until P's slot is skip-certified, so a window
+    // started on C below also proves SkipCert(P.slot) was installed first.
+    if (notarized(P->id) || overlay_requested(P->id) || misbehavior_reports() != 0) {
+      precondition_failed("P was notarized, requested or disputed before C");
+    }
+    auto skip_run = P->id.slot - A->id.slot - 1;
+    emit(PSTRING() << "MERKLE_ACTOR_PEER_PRECONDITION peer_serves_notar_P=yes target_notar_cert_P=absent"
+                   << " skip_run=" << skip_run);
+    emit(PSTRING() << "MERKLE_ACTOR_EXPECT stale_base_would_fail_with expected_old=" << state_hash_hex(n_)
+                   << " applied_to=" << state_hash_hex(n_ - 1));
+
+    // Nothing else is needed: installing NotarCert(C) opens this node's leader window on C,
+    // and Consensus::start_generation(C) resolves the state.
+    emit("MERKLE_ACTOR_TRIGGER NotarCert(C) -> Consensus::start_generation(C)");
+    deliver_notar(n_ + 1);
+    td::uint32 next_window = C->id.slot + 1;
+    if (!co_await wait_until([&] { return window_started(next_window).has_value(); }, 60.0)) {
+      test_failed(PSTRING() << "the leader window at " << next_window << " never started");
+    }
+    auto started = *window_started(next_window);
+    auto base = leader_window_base(next_window);
+    if (!base.has_value() || *base != ParentId{C->id} || started.base != ParentId{C->id}) {
+      test_failed("the leader window did not start on C");
+    }
+    if (bus_ptr_->collator_schedule->expected_collator_for(next_window) != bus_ptr_->local_id->idx) {
+      test_failed("the node under test is not the leader of the window");
+    }
+    if (!overlay_requested(P->id) || peer_served_notar() == 0) {
+      test_failed("the target never obtained NotarCert(P) from the peer");
+    }
+    if (notarized(P->id)) {
+      test_failed("the target's Pool installed NotarCert(P); the peer-only ordering did not hold");
+    }
+    if (misbehavior_reports() != 0) {
+      test_failed("a misbehavior report was published");
+    }
+    if (started.state_hash != state_hash_hex(n_ + 1) || started.next_seqno != n_ + 2) {
+      test_failed(PSTRING() << "the window started on state " << started.state_hash << " with next seqno "
+                            << started.next_seqno);
+    }
+    finish(0,
+           PSTRING() << "MERKLE_ACTOR_PEER_GREEN state=" << started.state_hash << " next_seqno=" << started.next_seqno);
   }
 
   [[noreturn]] void check_state(td::Result<simplex::ResolveState::Result> resolved, const char* label) {
@@ -743,7 +972,7 @@ class Driver : public td::actor::Actor {
 
 int main(int argc, char* argv[]) {
   if (argc != 3) {
-    std::fprintf(stderr, "usage: %s hold-release|hold-refuse|no-hold|hold-wrong-slot <n>\n", argv[0]);
+    std::fprintf(stderr, "usage: %s hold-release|hold-refuse|no-hold|hold-wrong-slot|peer-consensus <n>\n", argv[0]);
     return 2;
   }
   std::string mode_name = argv[1];
@@ -756,6 +985,8 @@ int main(int argc, char* argv[]) {
     mode = Mode::NoHold;
   } else if (mode_name == "hold-wrong-slot") {
     mode = Mode::HoldWrongSlot;
+  } else if (mode_name == "peer-consensus") {
+    mode = Mode::PeerConsensus;
   } else {
     std::fprintf(stderr, "unknown mode %s\n", argv[1]);
     return 2;
