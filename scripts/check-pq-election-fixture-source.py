@@ -369,14 +369,28 @@ def main() -> int:
     experiment_activation = method(tree, "observe_experiment_activation")
     if len(call_lines(experiment_activation, "require_pq_config34_associations")) != 1:
         fail("the election experiment no longer binds controller identities to ADNL IDs in live ConfigParam 34")
+    activation_source = ast.unparse(experiment_activation)
+    for marker in (
+        "self.experiment_current_config34_since = config.utime_since",
+        "self.experiment_current_config34_hash = int.from_bytes((await self.client.get_config_param(34)).hash, 'big')",
+        "parse_past_elections_list(await self.runmethod('past_elections_list'))",
+    ):
+        if marker not in activation_source:
+            fail(f"experiment no longer reads live active set and Elector unfreeze state: missing {marker!r}")
     experiment_recovery = ast.unparse(method(tree, "recover_experiment_stakes"))
     for marker in ("pool_id = '0x' + pool.address.hash_part.hex()", "dest=pool.address",
-                   "opcode != 4184830756", "pool_balance_after_nanotos"):
+                   "opcode != 4184830756", "pool_balance_after_nanotos",
+                   "self.experiment_retention_state(election_id) == 'matured-unrecovered'"):
         if marker not in experiment_recovery:
             fail(f"the election experiment no longer proves pool-owned recovery: missing {marker!r}")
     evidence = ast.unparse(method(tree, "allocation_evidence"))
     if "tos.validator-reward-election-allocation-evidence.v4" not in evidence:
         fail("the election experiment lost its separate pool-owned v4 evidence schema")
+    for marker in ("active_retained_allocations", "retired_frozen_retained_allocations",
+                   "matured_retained_unrecovered_allocations", "unmeasured_retained_allocations",
+                   "current_config34_cell_hash", "past_elections_on_chain"):
+        if marker not in evidence:
+            fail(f"v4 evidence lost its live Elector retention classification: {marker}")
     source = script.read_text()
     for obsolete in ("validator-elect-req.fif", "validator-elect-signed.fif", "0x654C5074", ".key.sign("):
         if obsolete in source:
@@ -393,7 +407,8 @@ def main() -> int:
         "three-of-four liveness and pool-owned early recovery checks follow activation; "
         "the default and explicit full PQ routes budget their faucet in Genesis before the first election and retain "
         "second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt; "
-        "experiment uses the PQ fixture, node-authorized pool orders, controller/ADNL activation and pool-owned v4 recovery; "
+        "experiment uses the PQ fixture, node-authorized pool orders, controller/ADNL activation, "
+        "live Config34/past_elections_list retention classification and pool-owned v4 recovery; "
         "no classical Fift stake producer remains in this script"
     )
     return 0

@@ -529,10 +529,14 @@ def test_experiment_recovery_credits_pool_and_requires_mature_reply(
     principal = 11_001 * stage_a.NANO
     credit = principal + 15 * stage_a.NANO
     rehearsal.election_allocations = {
-        100: {"stake_unfreeze_at": 150, "validators": {
-            "1": {"recovery_status": "pending", "effective_stake_nanotos": principal},
+        100: {"initial_unfreeze_estimate": 150, "config34_cell_hash": 1, "validators": {
+            "1": {"selection_status": "selected", "recovery_status": "pending", "effective_stake_nanotos": principal},
         }},
     }
+    rehearsal.experiment_current_config34_since = 400
+    rehearsal.experiment_current_config34_hash = 2
+    rehearsal.experiment_past_elections = {100: {"unfreeze_at": 150, "vset_hash": 1, "stake_held": 180}}
+    rehearsal.experiment_last_chain_timestamp = 200
     sent = False
 
     async def runmethod(name, pool_id):
@@ -632,7 +636,18 @@ def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
     async def get_config():
         return config
 
+    rehearsal.client = SimpleNamespace(
+        get_config_param=lambda param: asyncio.sleep(
+            0, result=SimpleNamespace(hash=(123).to_bytes(32, "big"))
+        )
+    )
+
+    async def past_elections(method):
+        assert method == "past_elections_list"
+        return "result: [ ([100 500 123 180]) ]\nremote result (not to be trusted): [ ]"
+
     monkeypatch.setattr(rehearsal, "get_config34", get_config)
+    monkeypatch.setattr(rehearsal, "runmethod", past_elections)
     monkeypatch.setattr(rehearsal, "rpc_config34_consensus", rpc_consensus)
     monkeypatch.setattr(rehearsal, "capture_elector_snapshot", snapshot)
     monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
@@ -671,19 +686,25 @@ def test_experiment_pool_credit_includes_matured_rollover_without_greedy_attribu
     if case != "retained-only":
         rehearsal.election_allocations[100] = {
             "purpose": "primary-window", "selection_status": "selected",
-            "stake_unfreeze_at": 150, "validators": {"1": {
+            "initial_unfreeze_estimate": 150, "config34_cell_hash": 1, "validators": {"1": {
                 "selection_status": "selected", "recovery_status": "pending",
                 "effective_stake_nanotos": primary_principal,
             }},
         }
     rehearsal.election_allocations[400] = {
         "purpose": "settlement-rollover", "selection_status": "selected",
-        "stake_unfreeze_at": 450, "validators": {"1": {
+        "initial_unfreeze_estimate": 900, "config34_cell_hash": 2, "validators": {"1": {
             "selection_status": "selected", "recovery_status": "retained-settlement-rollover",
             "effective_stake_nanotos": rollover_principal,
         }},
     }
     rehearsal.experiment_last_chain_timestamp = 500
+    rehearsal.experiment_current_config34_since = 700
+    rehearsal.experiment_current_config34_hash = 3
+    rehearsal.experiment_past_elections = {
+        100: {"unfreeze_at": 150, "vset_hash": 1, "stake_held": 180},
+        400: {"unfreeze_at": 450, "vset_hash": 2, "stake_held": 180},
+    }
     expected_principal = rollover_principal + (primary_principal if case == "mixed" else 0)
     credit = (
         primary_principal + 15 * stage_a.NANO if case == "insufficient"
@@ -808,6 +829,7 @@ def test_v4_reconciliation_keeps_exact_pool_credits_and_retained_rollover_separa
         400: {
             "election_id": 400,
             "purpose": "settlement-rollover",
+            "config34_cell_hash": 2,
             "validators": {
                 "1": {
                     "selection_status": "selected",
@@ -833,6 +855,12 @@ def test_v4_reconciliation_keeps_exact_pool_credits_and_retained_rollover_separa
             for index in range(2, 5)
         ),
     ]
+    rehearsal.experiment_current_config34_since = 400
+    rehearsal.experiment_current_config34_hash = 2
+    rehearsal.experiment_last_chain_timestamp = 600
+    rehearsal.experiment_past_elections = {
+        400: {"unfreeze_at": 450, "vset_hash": 2, "stake_held": 180},
+    }
 
     evidence = rehearsal.allocation_evidence("complete")
 
@@ -843,6 +871,105 @@ def test_v4_reconciliation_keeps_exact_pool_credits_and_retained_rollover_separa
     assert evidence["reconciliation"]["retained_settlement_rollover_allocations"] == 1
     assert "equal-share inference" in evidence["elector"]["allocation_basis"]
     assert "pool-level" in evidence["elector"]["allocation_basis"]
+
+
+def test_past_elections_list_parser_reads_actual_unfreeze_and_rejects_unknown_shape():
+    output = (
+        "result: [ ([100 280 12345 180] [400 700 67890 180]) ]\n"
+        "remote result (not to be trusted): [ () ]"
+    )
+    assert stage_a.parse_past_elections_list(output) == {
+        100: {"unfreeze_at": 280, "vset_hash": 12345, "stake_held": 180},
+        400: {"unfreeze_at": 700, "vset_hash": 67890, "stake_held": 180},
+    }
+    with pytest.raises(ValueError, match="unparsed record"):
+        stage_a.parse_past_elections_list(
+            "result: [ ([100 280 12345]) ]\nremote result (not to be trusted): [ () ]"
+        )
+
+
+@pytest.mark.parametrize(
+    ("current_set", "actual_unfreeze_at", "expected_state", "expected_outstanding"),
+    [
+        (400, 450, "active-retained", 0),
+        (700, 650, "retired-frozen", 0),
+        (700, 480, "matured-unrecovered", 1),
+    ],
+)
+def test_retained_rollover_uses_current_set_and_real_elector_unfreeze(
+    tmp_path, current_set, actual_unfreeze_at, expected_state, expected_outstanding,
+):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path, base_port=36_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"],
+        experiment=stage_a.ExperimentProfile(600, 900, "127.0.0.1", 8111),
+    )
+    rehearsal.validator_identity_evidence = lambda index: {  # type: ignore[method-assign]
+        "validator_index": index + 1,
+        "operator_wallet_raw": f"-1:{index + 1:064x}",
+        "pool_stake_owner_raw": f"-1:{index + 11:064x}",
+    }
+    rehearsal.zero_state_evidence = lambda: {"fixture": True}  # type: ignore[method-assign]
+    rehearsal.election_allocations = {
+        400: {
+            "election_id": 400,
+            "purpose": "settlement-rollover",
+            "config34_cell_hash": 12345,
+            # Deliberately already in the past in all cases: this estimate is
+            # never authority for maturity after Elector changes active sets.
+            "initial_unfreeze_estimate": 450,
+            "validators": {"1": {
+                "selection_status": "selected",
+                "recovery_status": "retained-settlement-rollover",
+            }},
+        },
+    }
+    rehearsal.experiment_last_chain_timestamp = 500
+    rehearsal.experiment_current_config34_since = current_set
+    rehearsal.experiment_current_config34_hash = (
+        12345 if current_set == 400 else 67890
+    )
+    rehearsal.experiment_past_elections = {
+        400: {"unfreeze_at": actual_unfreeze_at, "vset_hash": 12345, "stake_held": 180},
+    }
+
+    evidence = rehearsal.allocation_evidence("complete")
+    retained = evidence["validators"][0]["elections"][0]
+    reconciliation = evidence["reconciliation"]
+    assert retained["retention_state"] == expected_state
+    assert evidence["elections"][0]["on_chain_unfreeze_at"] == actual_unfreeze_at
+    assert reconciliation["outstanding_allocations"] == expected_outstanding
+    assert reconciliation["active_retained_allocations"] == (
+        [{"election_id": 400, "validator_index": 1}]
+        if expected_state == "active-retained" else []
+    )
+    assert reconciliation["matured_retained_unrecovered_allocations"] == (
+        [{"election_id": 400, "validator_index": 1}]
+        if expected_state == "matured-unrecovered" else []
+    )
+    assert evidence["status"] == (
+        "partial-settlement" if expected_outstanding else "complete"
+    )
+
+
+def test_retained_rollover_refuses_a_config34_past_election_hash_mismatch(tmp_path):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path, base_port=36_000, build_dir=REPO / "build",
+        sample_interval=10, profile=stage_a.PROFILES["a"],
+        experiment=stage_a.ExperimentProfile(600, 900, "127.0.0.1", 8111),
+    )
+    rehearsal.election_allocations = {
+        400: {"config34_cell_hash": 12345},
+    }
+    rehearsal.experiment_last_chain_timestamp = 500
+    rehearsal.experiment_current_config34_since = 400
+    rehearsal.experiment_current_config34_hash = 67890
+    rehearsal.experiment_past_elections = {
+        400: {"unfreeze_at": 450, "vset_hash": 12345, "stake_held": 180},
+    }
+    assert rehearsal.experiment_retention_state(400) == "unmeasured"
+    rehearsal.experiment_current_config34_hash = 12345
+    assert rehearsal.experiment_retention_state(400) == "active-retained"
 
 
 def test_missing_primary_candidates_are_explicit_outstanding_and_fail_completion(

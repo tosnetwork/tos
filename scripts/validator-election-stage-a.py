@@ -248,6 +248,30 @@ def require_pq_config34_associations(
         )
 
 
+def parse_past_elections_list(output: str) -> dict[int, dict[str, int]]:
+    """Read the Elector's actual, possibly reset unfreeze times."""
+    result = re.search(r"\bresult:\s*\[(.*?)\]\s*remote result", output, re.S)
+    if result is None:
+        raise ValueError("Elector past_elections_list has no trusted result")
+    body = result.group(1)
+    entries = re.findall(r"\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]", body)
+    if len(entries) != len(re.findall(r"\[\s*\d+", body)):
+        raise ValueError("Elector past_elections_list has an unparsed record")
+    if not entries and not re.fullmatch(r"\s*\(\s*\)\s*", body):
+        raise ValueError("Elector past_elections_list has an unknown empty shape")
+    parsed = {
+        int(election_id): {
+            "unfreeze_at": int(unfreeze_at),
+            "vset_hash": int(vset_hash),
+            "stake_held": int(stake_held),
+        }
+        for election_id, unfreeze_at, vset_hash, stake_held in entries
+    }
+    if len(parsed) != len(entries):
+        raise ValueError("Elector past_elections_list repeats an election ID")
+    return parsed
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -435,6 +459,9 @@ class ValidatorElectionRehearsal:
         self.settlement_deadline_at: str | None = None
         self.experiment_final_status: str | None = None
         self.experiment_last_chain_timestamp: int | None = None
+        self.experiment_current_config34_since: int | None = None
+        self.experiment_current_config34_hash: int | None = None
+        self.experiment_past_elections: dict[int, dict[str, int]] | None = None
         self.election_allocations: dict[int, dict[str, Any]] = {}
         self.recovery_records: list[dict[str, Any]] = []
         self.rpc_readiness: list[dict[str, Any]] = []
@@ -784,6 +811,31 @@ class ValidatorElectionRehearsal:
             },
         }
 
+    def experiment_retention_state(self, election_id: int) -> str:
+        """Classify a retained stake from the live set and Elector's true clock.
+
+        The initial election schedule is not an unfreeze promise: when a set
+        retires, Elector resets its unfreeze time to now + stake_held, and it
+        never unfreezes the current active set.
+        """
+        current = self.experiment_current_config34_since
+        current_hash = self.experiment_current_config34_hash
+        past = self.experiment_past_elections
+        now = self.experiment_last_chain_timestamp
+        if current is None or current_hash is None or past is None or now is None:
+            return "unmeasured"
+        entry = past.get(election_id)
+        recorded_hash = self.election_allocations[election_id].get("config34_cell_hash")
+        if recorded_hash is None or (entry is not None and entry["vset_hash"] != recorded_hash):
+            return "unmeasured"
+        if election_id == current:
+            if entry is None or entry["vset_hash"] != current_hash:
+                return "unmeasured"
+            return "active-retained"
+        if entry is not None and now < entry["unfreeze_at"]:
+            return "retired-frozen"
+        return "matured-unrecovered"
+
     def allocation_evidence(self, status: str) -> dict[str, Any]:
         validators: list[dict[str, Any]] = []
         missing_primary_allocations: list[dict[str, Any]] = []
@@ -814,13 +866,16 @@ class ValidatorElectionRehearsal:
                         validator_missing_primary.append(missing)
                         missing_primary_allocations.append(missing)
                     continue
-                allocations.append(
-                    {
-                        "election_id": election_id,
-                        "purpose": allocation["purpose"],
-                        **candidate,
-                    }
-                )
+                rendered_candidate = {
+                    "election_id": election_id,
+                    "purpose": allocation["purpose"],
+                    **candidate,
+                }
+                if candidate.get("recovery_status") == "retained-settlement-rollover":
+                    rendered_candidate["retention_state"] = self.experiment_retention_state(
+                        election_id
+                    )
+                allocations.append(rendered_candidate)
             recovered = [
                 record for record in self.recovery_records if record["validator_index"] == index + 1
             ]
@@ -856,18 +911,23 @@ class ValidatorElectionRehearsal:
                 or allocation.get("recovery_status") not in recovered_statuses
             )
         )
-        matured_retained_unrecovered = [
-            {"election_id": election_id, "validator_index": index + 1}
-            for election_id, allocation in self.election_allocations.items()
-            for index in range(VALIDATOR_COUNT)
-            if (candidate := allocation.get("validators", {}).get(str(index + 1))) is not None
-            and candidate.get("recovery_status") == "retained-settlement-rollover"
-            and self.experiment_last_chain_timestamp is not None
-            and allocation["stake_unfreeze_at"] <= self.experiment_last_chain_timestamp
-        ]
+        retained_by_state: dict[str, list[dict[str, int]]] = {
+            name: [] for name in (
+                "active-retained", "retired-frozen", "matured-unrecovered", "unmeasured"
+            )
+        }
+        for election_id, allocation in self.election_allocations.items():
+            for index in range(VALIDATOR_COUNT):
+                candidate = allocation.get("validators", {}).get(str(index + 1))
+                if candidate is None or candidate.get("recovery_status") != "retained-settlement-rollover":
+                    continue
+                retained_by_state[self.experiment_retention_state(election_id)].append(
+                    {"election_id": election_id, "validator_index": index + 1}
+                )
+        matured_retained_unrecovered = retained_by_state["matured-unrecovered"]
         outstanding = (
             outstanding_recorded + len(missing_primary_allocations)
-            + len(matured_retained_unrecovered)
+            + len(matured_retained_unrecovered) + len(retained_by_state["unmeasured"])
         )
         retained_rollover = sum(
             1
@@ -879,6 +939,16 @@ class ValidatorElectionRehearsal:
         for election_id in sorted(self.election_allocations):
             allocation = self.election_allocations[election_id]
             rendered = dict(allocation)
+            on_chain = (self.experiment_past_elections or {}).get(election_id)
+            rendered["current_config34_active"] = (
+                election_id == self.experiment_current_config34_since
+            )
+            rendered["on_chain_unfreeze_at"] = (
+                on_chain["unfreeze_at"] if on_chain is not None else None
+            )
+            rendered["on_chain_vset_hash"] = (
+                on_chain["vset_hash"] if on_chain is not None else None
+            )
             if allocation.get("purpose") == "primary-window":
                 missing_indices = [
                     index
@@ -948,6 +1018,12 @@ class ValidatorElectionRehearsal:
                 "missing_primary_candidate_allocations": missing_primary_allocations,
                 "missing_primary_candidate_count": len(missing_primary_allocations),
                 "matured_retained_unrecovered_allocations": matured_retained_unrecovered,
+                "active_retained_allocations": retained_by_state["active-retained"],
+                "retired_frozen_retained_allocations": retained_by_state["retired-frozen"],
+                "unmeasured_retained_allocations": retained_by_state["unmeasured"],
+                "current_config34_since": self.experiment_current_config34_since,
+                "current_config34_cell_hash": self.experiment_current_config34_hash,
+                "past_elections_on_chain": self.experiment_past_elections,
                 "recovery_transactions": len(self.recovery_records),
                 "recovered_allocations": sum(
                     len(record["candidate_election_ids"])
@@ -1842,6 +1918,7 @@ class ValidatorElectionRehearsal:
             "participant_list_extended",
             "past_election_ids",
             "past_elections",
+            "past_elections_list",
         ):
             output = await self.runmethod(method)
             path = self.artifacts_dir / f"{safe_label}-{method}.txt"
@@ -1863,7 +1940,7 @@ class ValidatorElectionRehearsal:
                 "first_observed_at": utc_now(),
                 "target_set_since": election_id,
                 "target_set_until": election_id + self.profile.elected_for,
-                "stake_unfreeze_at": (
+                "initial_unfreeze_estimate": (
                     election_id + self.profile.elected_for + self.profile.stakes_frozen_for
                 ),
                 "submission_status": "submitting",
@@ -1928,6 +2005,13 @@ class ValidatorElectionRehearsal:
 
     async def observe_experiment_activation(self) -> bool:
         config = await self.get_config34()
+        self.experiment_current_config34_since = config.utime_since
+        self.experiment_current_config34_hash = int.from_bytes(
+            (await self.client.get_config_param(34)).hash, "big"
+        )
+        self.experiment_past_elections = parse_past_elections_list(
+            await self.runmethod("past_elections_list")
+        )
         allocation = self.election_allocations.get(config.utime_since)
         if allocation is None or allocation["selection_status"] == "selected":
             return False
@@ -1959,6 +2043,7 @@ class ValidatorElectionRehearsal:
         if len(rpc_validators_by_adnl) != VALIDATOR_COUNT:
             raise AssertionError("JSON-RPC PQ ConfigParam 34 ADNL IDs are not unique")
         allocation["selection_status"] = "selected"
+        allocation["config34_cell_hash"] = self.experiment_current_config34_hash
         allocation["selected_at"] = utc_now()
         allocation["config34"] = self.config34_evidence(config)
         allocation["config34_artifact"] = self.file_provenance(config_path)
@@ -2002,7 +2087,10 @@ class ValidatorElectionRehearsal:
                     "pending", "retained-settlement-rollover"
                 ):
                     continue
-                if allocation["stake_unfreeze_at"] <= chain_timestamp:
+                if (
+                    candidate.get("selection_status") == "selected"
+                    and self.experiment_retention_state(election_id) == "matured-unrecovered"
+                ):
                     eligible.append((election_id, candidate))
             if not eligible:
                 raise AssertionError(

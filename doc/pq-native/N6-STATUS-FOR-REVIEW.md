@@ -524,8 +524,27 @@ elector-observed accepted principal; reward was positive. Four successor
 allocations remain explicitly retained as not-yet-mature settlement rollover.
 The final `outstanding_allocations=0` does not claim those successor stakes
 were recovered. The matured-retained and mixed-credit attribution branches
-have fake-client tests but have **not yet been exercised by a live rollover
-recovery**; a 600+900-second exact-tree run is queued for that boundary.
+have fake-client tests but were **not** exercised by that live rollover.
+The later 600+900-second exact-tree run at `8dd38d088` was deliberately
+retained as a red result: report
+`test/integration/.pq-experiment-v4-matured-rollover/20260923T152341Z/report.json`
+(SHA-256 `2a29b4f79be100410497be277890af6bcd6af163714d1f8a0b6a59dc3495e1ad`)
+ended with four alleged `matured_retained_unrecovered` allocations. That
+classification was wrong, not evidence of a failed pool recovery: live
+ConfigParam 34 still named the second election, `1790177922`, as the active
+set. Elector `check_unfreeze` requires `id != active_id`, and on a set change
+`update_active_vset_id` resets the retiring set's unfreeze time to
+`now()+stake_held`. The v4 code had used the initial election-schedule
+estimate `election_id+elected_for+frozen_for` as if it were the final on-chain
+unfreeze time. The final `past_elections` artifact (SHA-256
+`0728abdb54a8db1df684ca276a0426a70858d0275265852e9dbcb462ffdd4854`)
+still listed that second election; an open third election is not an activated
+third validator set. The corrected classifier uses current ConfigParam 34's
+cell hash and the Elector's `past_elections_list` real unfreeze time to
+distinguish active-retained, retired-but-frozen, and matured-unrecovered.
+Its corrected-tree live rerun is pending. It does not claim a second-round
+recovery from this experiment. The separate default three-election Stage A
+above remains the live second-round recovery proof.
 The observed 600+600 run discharges the script-wide T2 classical-stake
 dependency and repeats the end-to-end accepted-stake/activated-election proof
 on a co-located diagnostic topology, **not** as release-scale evidence. The

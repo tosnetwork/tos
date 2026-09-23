@@ -142,8 +142,20 @@ not-yet-mature settlement rollover, not misattributed to the first election.
 `outstanding_allocations=0` counts matured and primary obligations, not a claim
 that those successor stakes have already recovered. The matured-retained and
 mixed-credit attribution branches are covered by fake-client tests, not by
-this live run; a 600+900-second exact-tree run is queued to cross the
-successor's unfreeze boundary. The 600+600 observation completes the
+this live run. A subsequent 600+900-second exact-tree run at `8dd38d088`
+ended red (report SHA-256
+`2a29b4f79be100410497be277890af6bcd6af163714d1f8a0b6a59dc3495e1ad`)
+after classifying four still-active successor stakes as matured merely because
+the *initial estimate* had passed. The live ConfigParam 34 had not changed
+from that successor set. Elector `check_unfreeze` cannot credit an active set,
+and `update_active_vset_id` resets the old set's unfreeze time on retirement.
+The corrected v4 classifier reads current ConfigParam 34 and its cell hash
+against Elector `past_elections_list` and distinguishes active-retained,
+retired-frozen and matured-unrecovered. The red run is preserved as the reason
+for the correction, not described as a pool-recovery failure; the corrected-tree
+live rerun is pending. Second-round
+recovery is shown by the separate three-election default launch-gate report,
+not by either experiment-mode run. The 600+600 observation completes the
 script-wide T2 classical-stake conversion on a co-located diagnostic topology;
 it is **not** release-scale evidence and does not retire other T3 Fift callers.
 
