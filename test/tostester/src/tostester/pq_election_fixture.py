@@ -7,6 +7,7 @@ ConfigParam 47; that must be done through the chain's configuration contract.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -15,6 +16,7 @@ from pathlib import Path
 
 from contract.pq_auth import byte_chain
 from pytosiq_core import Address, Builder, Cell, StateInit
+from tosapi import toslib_api
 
 from .install import Install
 from .pq_initial_validator import deterministic_pq_initial_validator_seed
@@ -101,6 +103,107 @@ def _packed_key(public_key: bytes) -> Cell:
     if len(public_key) != 1312:
         raise ValueError(f"controller root key must be 1312 bytes, got {len(public_key)}")
     return Builder().store_uint(len(public_key), 32).store_ref(byte_chain(public_key)).end_cell()
+
+
+def build_pool_stake_order(
+    *, query_id: int, stake_amount: int, stake_at: int, max_factor: int,
+    adnl_addr: bytes, algorithm_id: int, public_key: bytes, signature: bytes,
+    witness: Cell | None,
+) -> Cell:
+    """NEW_STAKE as consumed by single-nominator's check_new_stake_msg.
+
+    This is a pool order, never an elector-directed body. The value-round-trip
+    test pins every field to the contract parser's order.
+    """
+    if query_id <= 0 or stake_amount <= 0:
+        raise ValueError("pool stake order needs a positive query ID and amount")
+    if len(adnl_addr) != 32:
+        raise ValueError(f"stake ADNL address must be 32 bytes, got {len(adnl_addr)}")
+    if algorithm_id != 1:
+        raise ValueError(f"pool stake order requires ML-DSA-44 algorithm 1, got {algorithm_id}")
+    if len(signature) != 2420:
+        raise ValueError(f"ML-DSA-44 signature must be 2420 bytes, got {len(signature)}")
+    return (
+        Builder()
+        .store_uint(0x4E73744B, 32)
+        .store_uint(query_id, 64)
+        .store_coins(stake_amount)
+        .store_uint(stake_at, 32)
+        .store_uint(max_factor, 32)
+        .store_bytes(adnl_addr)
+        .store_uint(algorithm_id, 16)
+        .store_ref(_packed_key(public_key))
+        .store_ref(Builder().store_uint(len(signature), 32).store_ref(byte_chain(signature)).end_cell())
+        .store_maybe_ref(witness)
+        .end_cell()
+    )
+
+
+def build_production_pool_stake_order(
+    executable: Path, *, query_id: int, stake_amount: int, stake_at: int,
+    max_factor: int, adnl_addr: bytes, public_key: bytes, signature: bytes,
+    witness: Cell,
+) -> Cell:
+    """Invoke Rust nominator::new_stake_with_witness, not a second Python encoder."""
+    payload = {
+        "query_id": query_id,
+        "stake_amount": stake_amount,
+        "stake_at": stake_at,
+        "max_factor": max_factor,
+        "adnl_addr_hex": adnl_addr.hex(),
+        "public_key_hex": public_key.hex(),
+        "signature_hex": signature.hex(),
+        "witness_boc_hex": witness.to_boc().hex(),
+    }
+    result = subprocess.run(
+        [str(executable)], input=json.dumps(payload), text=True,
+        capture_output=True, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"production PQ pool stake builder failed ({result.returncode}): {result.stderr.strip()}"
+        )
+    try:
+        return Cell.one_from_boc(bytes.fromhex(result.stdout.strip()))
+    except ValueError as error:
+        raise RuntimeError("production PQ pool stake builder returned invalid BOC hex") from error
+
+
+def elector_reply(transactions: list, query_id: int) -> tuple[int, int] | None:
+    """Find an exact elector answer, ignoring source-less wallet externals."""
+    elector = Address((-1, bytes.fromhex("33" * 32)))
+    for transaction in transactions:
+        message = transaction.in_msg
+        if message is None or message.source is None:
+            continue
+        source_text = message.source.account_address
+        if not source_text or Address(source_text) != elector:
+            continue
+        if not isinstance(message.msg_data, toslib_api.Msg_dataRaw):
+            continue
+        reply = Cell.one_from_boc(message.msg_data.body).begin_parse()
+        if reply.remaining_bits < 128:
+            continue
+        opcode = reply.load_uint(32)
+        if reply.load_uint(64) == query_id:
+            return opcode, reply.load_uint(32)
+    return None
+
+
+def elector_return_reason(transactions: list, query_id: int) -> int | None:
+    reply = elector_reply(transactions, query_id)
+    return reply[1] if reply is not None and reply[0] == 0xEE6F454C else None
+
+
+def participant_ids_from_runmethod(output: str) -> set[int]:
+    """Read outer validator IDs from lite-client's decimal get-method stack."""
+    match = re.search(r"\bresult:\s*\[[^\n]*?\(\s*(.*?)\s*\)\s+0\s+0\s*\]", output)
+    if match is None:
+        raise ValueError("participant_list_extended has no parseable result")
+    ids = {int(value) for value in re.findall(r"\[(\d+)\s+\[", match.group(1))}
+    if not ids:
+        raise ValueError("participant_list_extended has no validator entries")
+    return ids
 
 
 def _birth_witness(code: Cell, data: Cell) -> Cell:

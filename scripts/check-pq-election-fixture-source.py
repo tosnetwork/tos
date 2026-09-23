@@ -48,9 +48,7 @@ def main() -> int:
     execute = method(tree, "execute")
     fixture_branches = [
         node for node in ast.walk(execute) if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Attribute)
-        and isinstance(node.test.value, ast.Name)
-        and node.test.value.id == "self" and node.test.attr == "fixture_only"
+        and ast.unparse(node.test) == "self.fixture_only or self.pq_election"
         and any(call_lines(child, "assert_controller_identity") for child in node.body)
     ]
     if len(fixture_branches) != 1:
@@ -110,10 +108,86 @@ def main() -> int:
     genesis = (root / "test/tostester/src/tostester/zerostate.py").read_text()
     if "{controller_policy_param}" not in genesis or "config.validator_controller_code!" not in genesis:
         fail("zerostate no longer invokes the Config.fif policy helper")
+    console = (root / "toslib/toslib/EngineConsoleClient.cpp").read_text()
+    if "case tos::tos_api::engine_validator_createPqStakeAuthorization::ID:" not in console:
+        fail("Python engine-console transport no longer admits the PQ stake authorization query")
+
+    candidate = method(tree, "submit_pq_candidate")
+    if len(call_lines(candidate, "Engine_validator_createPqStakeAuthorizationRequest")) != 1:
+        fail("PQ candidate no longer asks the node for a stake authorization")
+    if len(call_lines(candidate, "build_production_pool_stake_order")) != 1:
+        fail("PQ candidate no longer uses the production Rust pool-order builder")
+    bridge = (root / "tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs").read_text()
+    if not re.search(r"\blet body\s*=\s*new_stake_with_witness\s*\(", bridge):
+        fail("live PQ pool-order bridge no longer calls nominator::new_stake_with_witness")
+    if "Some(&witness)" not in bridge:
+        fail("live PQ pool-order bridge no longer carries the controller birth witness")
+    if call_lines(candidate, "election_body") or call_lines(candidate, "sign"):
+        fail("PQ candidate constructs a classical stake preimage or signs locally")
+    candidate_text = ast.unparse(candidate)
+    for expression, property_name in (
+        ("stake_owner=pool.address.hash_part", "pool-owned authorization"),
+        ("signature=auth.signature", "node-produced PQ signature"),
+        ("dest=pool.address", "pool rather than elector destination"),
+        ("stake_accepted=True", "accepted stake outcome field"),
+    ):
+        if expression not in candidate_text:
+            fail(f"PQ candidate lost {property_name}: expected {expression}")
+    if not any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name) and node.left.id == "opcode"
+        and len(node.ops) == 1 and isinstance(node.ops[0], ast.NotEq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == 0xF374484C
+        for node in ast.walk(candidate)
+    ):
+        fail("PQ candidate no longer refuses a reply other than STAKE_ACCEPTED")
+    negative = method(tree, "assert_unwitnessed_wallet_stake_refused")
+    negative_text = ast.unparse(negative)
+    if "reason != 8" not in negative_text or not call_lines(negative, "elector_reply"):
+        fail("negative wallet no longer pins elector admission reason 8")
+    if not any(
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name) and node.left.id == "opcode"
+        and len(node.ops) == 1 and isinstance(node.ops[0], ast.NotEq)
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == 0xEE6F454C
+        for node in ast.walk(negative)
+    ):
+        fail("negative wallet no longer requires an elector return-stake opcode")
+    if not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and node.func.attr == "store_uint"
+        and len(node.args) >= 1 and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == 0x50517374
+        for node in ast.walk(negative)
+    ):
+        fail("negative wallet no longer uses the elector PQst opcode")
+    election = method(tree, "run_pq_first_election")
+    negative_line = one_call(election, "assert_unwitnessed_wallet_stake_refused")
+    positive_line = one_call(election, "submit_pq_candidate")
+    if negative_line >= positive_line:
+        fail("negative wallet no-witness control no longer precedes positive stakes")
+    election_text = ast.unparse(election)
+    if "participant_ids != expected_ids" not in election_text:
+        fail("PQ election no longer requires exactly the four controller participants")
+    if "value.utime_since == self.first_election_id" not in election_text:
+        fail("PQ election no longer requires live ConfigParam 34 activation")
+    if "actual_ids != expected_ids_hex" not in election_text or "self.first_config34.total != VALIDATOR_COUNT" not in election_text:
+        fail("PQ election no longer requires exactly four controller IDs in live ConfigParam 34")
+    config_reader = method(tree, "get_config34")
+    if "validator_id:x([0-9A-Fa-f]{64})" not in ast.unparse(config_reader):
+        fail("live ConfigParam 34 reader no longer extracts PQ validator IDs")
     print(
         "PQ_ELECTION_FIXTURE_SOURCE_OK: controller identity is asserted before boot; "
         "the live Param 47 read-back call precedes deployment; "
-        "the Genesis helper contains 47 config!"
+        "the Genesis helper contains 47 config!; "
+        "Python engine-console transport admits the PQ authorization query; "
+        "PQ candidates use node signatures and Rust nominator::new_stake_with_witness for pool orders; "
+        "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with exact PQ IDs are required; "
+        "reason-8 negative control precedes positive stakes"
     )
     return 0
 

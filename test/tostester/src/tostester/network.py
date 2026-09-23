@@ -29,6 +29,19 @@ from .zerostate import NetworkConfig, PqInitialValidator, Zerostate, create_zero
 l = logging.getLogger(__name__)
 
 
+def _retryable_startup_lite_error(error: BaseException) -> bool:
+    """Only the known 500-class transport races while the first node starts."""
+    return (
+        isinstance(error, ToslibError)
+        and error.result.code == 500
+        and error.result.message in {
+            "LITE_SERVER_NETWORKtimeout for adnl query query",
+            "LITE_SERVER_NETWORK",
+            "LITE_SERVER_NETWORKconn not ready",
+        }
+    )
+
+
 @dataclass
 class _IPv4AddressAndPort:
     ip: IPv4Address
@@ -375,20 +388,9 @@ class Network:
                 mc_info = await client.get_masterchain_info()
             except ToslibError as e:
                 # FIXME: We should really let node notify us that it is ready.
-                try:
-                    if (
-                        e.result.code == 500
-                        and (
-                            e.result.message
-                            == "LITE_SERVER_NETWORKtimeout for adnl query query"  # node is not synced yet
-                            or e.result.message
-                            == "LITE_SERVER_NETWORK"  # node is not listening the socket
-                        )
-                    ):
-                        await asyncio.sleep(0.2)
-                        continue
-                except Exception:
-                    pass
+                if _retryable_startup_lite_error(e):
+                    await asyncio.sleep(0.2)
+                    continue
                 raise
 
             assert mc_info.last is not None

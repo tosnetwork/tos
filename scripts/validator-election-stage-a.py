@@ -51,6 +51,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 from contract import WalletV1, WalletV1Blueprint  # noqa: E402
+from contract.pq_auth import byte_chain  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
     Builder,
@@ -61,6 +62,7 @@ from pytosiq_core import (  # noqa: E402
     WalletMessage,
 )
 from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
+from tosapi import tos_api  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
@@ -71,9 +73,12 @@ from tostester.pq_election_fixture import (  # noqa: E402
     ControllerFixture,
     PoolFixture,
     assert_controller_identity,
+    build_production_pool_stake_order,
+    elector_reply,
     compile_controller_code,
     make_controller_fixture,
     make_pool_fixture,
+    participant_ids_from_runmethod,
 )
 
 NANO = 1_000_000_000
@@ -82,6 +87,7 @@ ELECTOR = Address((-1, bytes.fromhex("33" * 32)))
 EFFECTIVE_STAKE = 10_000 * NANO
 ELECTOR_CONFIRMATION_ALLOWANCE = 1 * NANO
 STAKE_MESSAGE_VALUE = EFFECTIVE_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE
+PQ_STAKE_MESSAGE_VALUE = 11_000 * NANO  # sandbox-tested margin above the 10,000 TOS floor
 VALIDATOR_WALLET_FUNDING = 20_020 * NANO
 EXPERIMENT_CONCURRENT_STAKE_CAPACITY = 3
 EXPERIMENT_VALIDATOR_WALLET_FUNDING = 30_030 * NANO
@@ -180,6 +186,7 @@ class Config34:
     total: int
     main: int
     total_weight: int
+    validator_ids: list[str]
     public_keys: list[str]
     adnl_ids: list[str]
     raw: str
@@ -317,6 +324,7 @@ class ValidatorElectionRehearsal:
         soak_max_interval: float = 5.0,
         soak_wallet_funding_tos: int = 2000,
         fixture_only: bool = False,
+        pq_election: bool = False,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
@@ -337,6 +345,7 @@ class ValidatorElectionRehearsal:
         self.soak_max_interval = soak_max_interval
         self.soak_wallet_funding = soak_wallet_funding_tos * NANO
         self.fixture_only = fixture_only
+        self.pq_election = pq_election
         self.controller_code: Cell | None = None
         self.pool_code: Cell | None = None
         self.controllers: list[ControllerFixture] = []
@@ -397,7 +406,7 @@ class ValidatorElectionRehearsal:
         config.shard_validators = VALIDATOR_COUNT
         config.validator_economics_profile = True
         config.validator_election_stage_a_profile = self.profile.accelerated
-        if self.fixture_only:
+        if self.fixture_only or self.pq_election:
             if self.controller_code is None:
                 raise AssertionError("PQ controller code was not compiled before Genesis")
             # This is an explicitly diagnostic fixture while canonical production
@@ -952,11 +961,18 @@ class ValidatorElectionRehearsal:
             "validator-engine-console/validator-engine-console",
             "blockchain-explorer/blockchain-explorer",
         ]
-        if self.fixture_only:
+        if self.fixture_only or self.pq_election:
             binary_paths += ["crypto/func", "crypto/fift"]
         binaries: dict[str, dict[str, Any]] = {}
         for relative in binary_paths:
             source = self.original_build_dir / relative
+            target = snapshot_build / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+            binaries[relative] = self.file_provenance(target)
+        if self.pq_election:
+            relative = "tosctl/pq_pool_stake_order"
+            source = REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order"
             target = snapshot_build / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
@@ -993,6 +1009,11 @@ class ValidatorElectionRehearsal:
         script_target = snapshot_source / "scripts/validator-election-stage-a.py"
         script_target.parent.mkdir(parents=True)
         shutil.copy2(Path(__file__), script_target)
+        if self.pq_election:
+            relative = Path("tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs")
+            target = snapshot_source / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / relative, target)
 
         source_commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -1115,6 +1136,7 @@ class ValidatorElectionRehearsal:
             total=required(r"\btotal:(\d+)", "total"),
             main=required(r"\bmain:(\d+)", "main"),
             total_weight=required(r"total_weight:(\d+)", "total_weight"),
+            validator_ids=re.findall(r"validator_id:x([0-9A-Fa-f]{64})", output),
             public_keys=re.findall(r"pubkey:x([0-9A-Fa-f]{64})", output),
             adnl_ids=re.findall(r"adnl_addr:x([0-9A-Fa-f]{64})", output),
             raw=output,
@@ -2664,6 +2686,16 @@ class ValidatorElectionRehearsal:
                         f"validator {index + 1} {label} deployed unexpected code: "
                         f"expected={code.hash.hex()} actual={observed.hex()}"
                     )
+            if self.pq_election:
+                await self.send_from_wallet(
+                    wallet, dest=pool.address, amount=PQ_STAKE_MESSAGE_VALUE + 20 * NANO,
+                    body=Cell.empty(), label=f"validator-{index + 1}-pool-capital",
+                )
+                capital = await self.balance(pool.address)
+                if capital < PQ_STAKE_MESSAGE_VALUE + 20 * NANO:
+                    raise AssertionError(
+                        f"validator {index + 1} pool capital {capital} is below its stake order"
+                    )
             self.event(
                 "pq_fixture_accounts_deployed",
                 validator=index + 1,
@@ -2673,13 +2705,199 @@ class ValidatorElectionRehearsal:
                 pool_code_hash=self.pool_code.hash.hex(),
             )
 
+    async def submit_pq_candidate(self, index: int, election_id: int) -> None:
+        node = self.nodes[index]
+        wallet = self.wallets[index]
+        pool = self.pools[index]
+        controller = self.controllers[index]
+        request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
+            election_date=election_id,
+            max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id,
+            stake_owner=pool.address.hash_part,
+        )
+        auth = request.parse_result(await node.engine_console.request(request))
+        if auth.validator_id != controller.address.hash_part:
+            raise AssertionError(f"validator {index + 1} node authorized the wrong controller")
+        if auth.key_id != controller.consensus.key_id:
+            raise AssertionError(f"validator {index + 1} node authorized the wrong consensus key")
+        if auth.public_key != controller.consensus.public_key or auth.algorithm_id != 1:
+            raise AssertionError(f"validator {index + 1} authorization differs from the bound key")
+        body = build_production_pool_stake_order(
+            self.install.build_dir / "tosctl/pq_pool_stake_order",
+            query_id=index + 1,
+            stake_amount=PQ_STAKE_MESSAGE_VALUE,
+            stake_at=election_id,
+            max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id,
+            algorithm_id=auth.algorithm_id,
+            public_key=auth.public_key,
+            signature=auth.signature,
+            witness=controller.birth_witness,
+        )
+        await self.send_from_wallet(
+            wallet, dest=pool.address, amount=2 * NANO, body=body,
+            label=f"pq-validator-{index + 1}-pool-stake-order",
+        )
+        assert self.client is not None
+
+        async def pool_answer() -> tuple[int, int] | None:
+            state = await self.client.raw_get_account_state(pool.address)
+            if state.last_transaction_id is None:
+                return None
+            transactions = await self.client.raw_get_transactions(
+                pool.address, state.last_transaction_id
+            )
+            return elector_reply(transactions.transactions, index + 1)
+
+        opcode, detail = await self.retry(
+            pool_answer, timeout=60,
+            description=f"validator {index + 1} elector answer to pool",
+        )
+        if opcode != 0xF374484C:
+            raise AssertionError(
+                f"PQ validator {index + 1} did not receive STAKE_ACCEPTED: "
+                f"elector opcode=0x{opcode:08x} reason={detail}"
+            )
+        participant_id = "0x" + controller.address.hash_part.hex()
+        actual = await self.retry(
+            lambda: self.runmethod_int("participates_in", participant_id),
+            timeout=90,
+            description=f"PQ controller {index + 1} accepted stake",
+            predicate=lambda value: value >= EFFECTIVE_STAKE,
+        )
+        self.event(
+            "pq_candidate_accepted", validator=index + 1,
+            controller=raw_address(controller.address),
+            pool=raw_address(pool.address), election_id=election_id,
+            effective_stake=actual, authorization_key_id=auth.key_id.hex(),
+            stake_accepted=True, elector_reply_opcode=f"0x{opcode:08x}",
+        )
+
+    async def run_pq_first_election(self) -> None:
+        if len(self.pools) != VALIDATOR_COUNT:
+            raise AssertionError("PQ election has no four-pool fixture")
+        self.first_election_id = await self.retry(
+            lambda: self.runmethod_int("active_election_id"),
+            timeout=max(600, self.profile.initial_set_valid + 300),
+            interval=self.long_poll_interval,
+            description="first PQ election opening",
+            predicate=lambda value: value > 0,
+        )
+        self.event("pq_first_election_open", election_id=self.first_election_id)
+        await self.assert_unwitnessed_wallet_stake_refused(self.first_election_id)
+        for index in range(VALIDATOR_COUNT):
+            await self.submit_pq_candidate(index, self.first_election_id)
+        participant_output = await self.runmethod("participant_list_extended")
+        (self.artifacts_dir / "pq-first-participants.txt").write_text(participant_output)
+        participant_ids = participant_ids_from_runmethod(participant_output)
+        expected_ids = {
+            int.from_bytes(controller.address.hash_part, "big")
+            for controller in self.controllers
+        }
+        if participant_ids != expected_ids:
+            raise AssertionError(
+                "PQ election participants differ from the four controllers: "
+                f"missing={sorted(expected_ids - participant_ids)} "
+                f"unexpected={sorted(participant_ids - expected_ids)}"
+            )
+        self.event("pq_first_election_participants", controllers=len(participant_ids))
+        await self.wait_until_chain_time(
+            self.first_election_id - 55, "first PQ election closed"
+        )
+        self.first_config34 = await self.retry(
+            self.get_config34,
+            timeout=180,
+            description="PQ elected ConfigParam 34 activation",
+            predicate=lambda value: value.utime_since == self.first_election_id,
+        )
+        actual_ids = {value.upper() for value in self.first_config34.validator_ids}
+        expected_ids_hex = {
+            controller.address.hash_part.hex().upper() for controller in self.controllers
+        }
+        if actual_ids != expected_ids_hex or self.first_config34.total != VALIDATOR_COUNT:
+            raise AssertionError(
+                "PQ elected ConfigParam 34 is not exactly the four controllers: "
+                f"missing={sorted(expected_ids_hex - actual_ids)} "
+                f"unexpected={sorted(actual_ids - expected_ids_hex)} "
+                f"total={self.first_config34.total}"
+            )
+        self.event(
+            "pq_first_election_activated", election_id=self.first_election_id,
+            controllers=VALIDATOR_COUNT, config34=asdict(self.first_config34),
+        )
+
+    async def assert_unwitnessed_wallet_stake_refused(self, election_id: int) -> None:
+        """A deliberately elector-layout negative request must reach admission reason 8.
+
+        A pool-layout body would underflow in the elector parser and bounce; it
+        cannot prove that the Genesis controller policy is enforced.
+        """
+        assert self.negative_wallet is not None and self.client is not None
+        wallet = self.negative_wallet
+        node = self.nodes[0]
+        query_id = 0xE1EC7
+        request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
+            election_date=election_id, max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id, stake_owner=wallet.address.hash_part,
+        )
+        auth = request.parse_result(await node.engine_console.request(request))
+        public_key = Builder().store_uint(1312, 32).store_ref(byte_chain(auth.public_key)).end_cell()
+        signature = Builder().store_uint(2420, 32).store_ref(byte_chain(auth.signature)).end_cell()
+        body = (
+            # Direct-to-elector negative control uses PQst, not the pool's
+            # NEW_STAKE opcode. This body is never a client staking path.
+            Builder().store_uint(0x50517374, 32).store_uint(query_id, 64)
+            .store_uint(auth.algorithm_id, 16).store_ref(public_key)
+            .store_uint(election_id, 32).store_uint(MAX_FACTOR, 32)
+            .store_bytes(node.validator_key.id).store_ref(signature)
+            .store_maybe_ref(None).store_bit(0).end_cell()
+        )
+        await self.send_from_wallet(
+            wallet, dest=ELECTOR, amount=PQ_STAKE_MESSAGE_VALUE,
+            body=body, label="negative-wallet-no-controller-birth-witness",
+        )
+
+        async def reason_reply() -> tuple[int, int] | None:
+            state = await self.client.raw_get_account_state(wallet.address)
+            if state.last_transaction_id is None:
+                return None
+            transactions = await self.client.raw_get_transactions(
+                wallet.address, state.last_transaction_id
+            )
+            return elector_reply(transactions.transactions, query_id)
+
+        opcode, reason = await self.retry(
+            reason_reply, timeout=60, description="negative wallet elector return reason",
+            predicate=lambda value: value is not None,
+        )
+        if opcode != 0xEE6F454C or reason != 8:
+            raise AssertionError(
+                f"negative wallet without controller birth witness was refused for "
+                f"opcode=0x{opcode:08x} reason={reason}, expected elector return reason 8"
+            )
+        self.event("pq_negative_wallet_refused", reason=reason, expected_reason=8)
+
     async def execute(self) -> None:
         self.ensure_experiment_rpc_ports_available()
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.network_dir.mkdir()
         self.artifacts_dir.mkdir()
+        if self.pq_election:
+            # Compile before the chain starts: the election window must not be
+            # spent building a diagnostic executable. Its only encoding call
+            # is the production nominator::new_stake_with_witness builder.
+            result = subprocess.run(
+                ["cargo", "build", "--manifest-path", "tosctl/src/Cargo.toml",
+                 "-p", "contracts", "--example", "pq_pool_stake_order", "--locked"],
+                cwd=REPO, text=True, capture_output=True, check=False,
+            )
+            if result.returncode:
+                raise RuntimeError(
+                    "cannot build production PQ pool order bridge: " + result.stderr[-4000:]
+                )
         self.prepare_artifact_snapshot()
-        if self.fixture_only:
+        if self.fixture_only or self.pq_election:
             self.install.toslibjson.client_set_verbosity_level(0)
             self.controller_code = compile_controller_code(
                 self.install, self.artifacts_dir / "compiled-controller"
@@ -2706,12 +2924,13 @@ class ValidatorElectionRehearsal:
             start_event,
             stage=self.profile.label,
             mode=("fixture-check" if self.fixture_only else
+                  "pq-election" if self.pq_election else
                   "experiment" if self.experiment is not None else "launch-gate"),
             accelerated=self.profile.accelerated,
             source_commit=self.provenance["source_commit"],
             artifact_snapshot=str(self.run_dir / "artifact-snapshot"),
             base_port=self.base_port,
-            production_defaults_unchanged=not self.fixture_only,
+            production_defaults_unchanged=not (self.fixture_only or self.pq_election),
         )
 
         network = Network(
@@ -2726,7 +2945,7 @@ class ValidatorElectionRehearsal:
             dht = network.create_dht_node()
             for validator_index in range(VALIDATOR_COUNT):
                 node = network.create_full_node()
-                if self.fixture_only:
+                if self.fixture_only or self.pq_election:
                     controller = self.controllers[validator_index]
                     make_deterministic_pq_initial_validator(
                         node, validator_index, validator_id=controller.address.hash_part
@@ -2751,7 +2970,7 @@ class ValidatorElectionRehearsal:
             self.lite_config.write_text(self.nodes[0]._liteserver_config.to_json())
             await asyncio.wait_for(network.wait_mc_block(seqno=3), timeout=120)
             self.client = await self.nodes[0].toslib_client()
-            if self.fixture_only:
+            if self.fixture_only or self.pq_election:
                 await self.verify_live_controller_policy()
             self.monitor_task = asyncio.create_task(self.metrics_monitor())
 
@@ -2787,7 +3006,7 @@ class ValidatorElectionRehearsal:
 
             await self.setup_wallets(faucet)
 
-            if self.fixture_only:
+            if self.fixture_only or self.pq_election:
                 await self.deploy_pq_fixture_accounts(faucet)
                 self.event(
                     "pq_election_fixture_ready",
@@ -2796,6 +3015,9 @@ class ValidatorElectionRehearsal:
                     live_policy_admitted=True,
                     rehearsal_election_executed=False,
                 )
+                if self.fixture_only:
+                    return
+                await self.run_pq_first_election()
                 return
 
             if self.experiment is not None:
@@ -2982,6 +3204,7 @@ class ValidatorElectionRehearsal:
             "generated_at": utc_now(),
             "run_dir": str(self.run_dir),
             "mode": ("fixture-check" if self.fixture_only else
+                     "pq-election" if self.pq_election else
                      "experiment" if self.experiment is not None else "launch-gate"),
             "source_commit": self.provenance["source_commit"],
             "source_commit_at_report": subprocess.run(
@@ -3058,13 +3281,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("launch-gate", "experiment", "transfer-soak", "fixture-check"),
+        choices=("launch-gate", "experiment", "transfer-soak", "fixture-check", "pq-election"),
         default="launch-gate",
         help=(
             "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
             "experiment runs stable Stage A for a requested observation window; "
             "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks; "
-            "fixture-check provisions four PQ controllers and pools without claiming an election"
+            "fixture-check provisions four PQ controllers and pools without claiming an election; "
+            "pq-election additionally submits a first PQ election"
         ),
     )
     parser.add_argument("--soak-duration", type=float, default=600.0,
@@ -3214,6 +3438,7 @@ async def async_main() -> int:
         soak_max_interval=args.soak_max_interval,
         soak_wallet_funding_tos=args.soak_wallet_funding_tos,
         fixture_only=(args.mode == "fixture-check"),
+        pq_election=(args.mode == "pq-election"),
     )
     try:
         await stage.execute()
