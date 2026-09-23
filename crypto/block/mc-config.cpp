@@ -322,10 +322,14 @@ td::Status Config::visit_validator_params() const {
     // A key-block proof is also used as the trusted PQ finality context. The
     // verifier reads these parameters through that virtualized proof; visiting
     // them here keeps their dictionary paths and value cells in the proof.
+    // The three consensus calls intentionally overlap: either selected-config
+    // call currently visits Param29 and both Param30 branches while unpacking.
+    // Keep the explicit general/MC/shard reads so a change in that traversal
+    // does not silently narrow what the proof retains.
     static_cast<void>(get_config_param(19));
     get_consensus_config();
     get_selected_new_consensus_config(tos::masterchainId);
-    get_selected_new_consensus_config(0);
+    get_selected_new_consensus_config(tos::basechainId);  // the shared shard branch for all non-MC workchains
     return td::Status::OK();
   } catch (vm::VmVirtError& error) {
     return error.as_status("key-block validator and PQ finality parameters are unavailable: ");

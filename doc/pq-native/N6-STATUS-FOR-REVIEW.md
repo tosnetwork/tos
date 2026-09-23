@@ -360,6 +360,11 @@ checked. Proof construction now retains those paths; legacy or incomplete
 proofs fail closed with a named error rather than terminating the process.
 `test-pq-lite-forward-proof` reads 19/29/30 back from a generated virtual
 proof with distinguishable values, and branch CI builds and executes it.
+Mutation evidence is narrower than an earlier commit message claimed:
+removing the Param19 visit alone fails; the Param29/30 visits are deliberately
+redundant, so removing any single one passes, while removing all three fails.
+The MC and shard Param30 branches are covered; `basechainId` selects the one
+shard branch shared by every non-masterchain workchain.
 
 The DNS governance E2E now asks the validator node for a complete PQ proposal
 vote body instead of signing the classical, set-unbound preimage in Python.
