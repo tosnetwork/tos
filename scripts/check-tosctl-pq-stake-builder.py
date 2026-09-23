@@ -59,10 +59,16 @@ def main() -> None:
     if runner.count("controller_birth_state_init_boc.as_deref().ok_or_else") != 1:
         fail("election daemon no longer refuses a missing controller birth artifact")
     wallet = collapsed(pool_callers["config-wallet pool command"][0])
-    path_read = wallet.find("let artifact_path = configured_birth_artifact_path(binding, &self.binding)?;")
+    roles_read = wallet.find(".get_roles() .await .context(\"read live single-nominator pool roles\")?")
+    roles_check = wallet.find("verify_live_pool_roles(pool_cfg, &wallet_address, &live_roles)?;")
+    verified_order = wallet.find("let payload = build_verified_manual_pool_stake(")
     message = wallet.find("let msg = wallet.message(")
-    if path_read < 0 or message < 0 or path_read >= message:
-        fail("config-wallet birth artifact refusal no longer precedes the fee-bearing wallet message")
+    if verified_order < 0 or message < 0 or verified_order >= message:
+        fail("config-wallet verified pool order no longer precedes the fee-bearing wallet message")
+    if not (0 <= roles_read < roles_check < verified_order):
+        fail("config-wallet live pool roles are not checked before the verified pool order")
+    if wallet.count("let artifact_path = configured_birth_artifact_path(binding, binding_name)?;") != 1:
+        fail("config-wallet verified pool order no longer requires the configured birth artifact")
 
     policy_provider = collapsed(
         root / "tosctl/src/node-control/elections/src/providers/default.rs"
@@ -114,7 +120,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization and the verified birth-artifact builder with live policy reads; the direct bid refuses; deployment transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; config-wallet checks live pool roles before the verified birth-artifact builder and wallet message; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 
