@@ -89,8 +89,10 @@ def main() -> int:
         "pq_stake_authorization_python_tl" not in snapshot_text
         or "test/tostester/src/tosapi/tos_api.py" not in snapshot_text
         or "tl/generate/scheme/tos_api.tl" not in snapshot_text
+        or "shutil.copy2(REPO / schema_relative, schema_target)" not in snapshot_text
+        or "'schema': self.file_provenance(schema_target)" not in snapshot_text
     ):
-        fail("artifact snapshot no longer records the PQ authorization TL schema and generated binding")
+        fail("artifact snapshot no longer retains and hashes the PQ authorization TL schema and generated binding")
     client = one_call(execute, "toslib_client")
     policy = one_call(execute, "verify_live_controller_policy")
     wallets = one_call(execute, "setup_wallets")

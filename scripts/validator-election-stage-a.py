@@ -1015,6 +1015,10 @@ class ValidatorElectionRehearsal:
             target = snapshot_source / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(REPO / relative, target)
+            schema_relative = Path("tl/generate/scheme/tos_api.tl")
+            schema_target = snapshot_source / schema_relative
+            schema_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(REPO / schema_relative, schema_target)
 
         source_commit = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -1049,7 +1053,7 @@ class ValidatorElectionRehearsal:
             "pq_stake_authorization_python_tl": (
                 {
                     "schema": self.file_provenance(
-                        REPO / "tl/generate/scheme/tos_api.tl"
+                        schema_target
                     ),
                     "generated_binding": self.file_provenance(
                         snapshot_source / "test/tostester/src/tosapi/tos_api.py"
