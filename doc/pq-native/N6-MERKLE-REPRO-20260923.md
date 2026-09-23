@@ -37,6 +37,44 @@ Restoring the production branch made it pass again; that log has SHA-256
 `8b7f067c41da2ffb4113951109505e77f8f1c6ff767db4b2ca409f43debb3e8b`.
 The mutation was removed from the investigation branch.
 
+## Real certificate arrival orders
+
+The unchanged 100-node PQ finality test passed in 6.95 seconds. A second
+60-second run with 50–200 ms randomized database-write delay also exited 0.
+`analyze-certificate-order.py` groups Pool's `Obtained certificate` lines by
+node, consensus instance, and slot. Those lines occur after `SaveCertificate`
+and Pool installation; the log order therefore describes the installed
+certificate order on that node.
+
+| Run | Nodes/slots with both certs | Skip installed first | Notar installed first | Merkle error |
+| --- | ---: | ---: | ---: | --- |
+| Existing e2e-100 CTest | 484 | 200 | 284 | None |
+| e2e-100, DB delay 50–200 ms | 744 | 419 | 325 | None |
+
+The retained baseline log has SHA-256
+`8304784c6a58e9abc53da3ddb37a541f3adb3ff39df9390819b3f886c75ae75b`;
+the delayed log has SHA-256
+`5c9150febe45b4e081f5a8457afc85b1df9960c65f6f2e3eb63f7382262dfd2a`.
+Reproduce the count with:
+
+```sh
+python3 test/validator/consensus/analyze-certificate-order.py \
+  merkle-repro-artifacts/e2e100-baseline.log \
+  merkle-repro-artifacts/e2e100-db-delay-50-200ms.log
+```
+
+The delayed run used:
+
+```sh
+build/test/validator/consensus/test-consensus --duration 60 --n-nodes 100 \
+  --target-rate-ms 100 --net-ping 0.005:0.02 --pq-finality-e2e-test \
+  --db-delay 0.05:0.2
+```
+
+Both certificate orders occur in a running network, but neither run showed
+that a descendant named the affected candidate while its NotarCert was absent
+locally. These green runs do not establish or refute the historical race.
+
 This is an executable counterexample to the local skip decision plus Merkle
 state transition. It does **not** run `StateResolverImpl`, prove that a
 descendant actually names this candidate under a particular certificate
