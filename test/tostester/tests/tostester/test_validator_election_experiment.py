@@ -95,6 +95,69 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
         asyncio.run(rehearsal.authorized_pq_pool_order(0, 1_700_000_000, 20))
     assert "fields" not in seen, "a mismatched authorization reached the pool builder"
 
+    authorization.key_id = key_id
+    asyncio.run(rehearsal.authorized_pq_pool_order(
+        0, 1_700_000_000, 21, corrupt_signature_for_negative=True
+    ))
+    assert seen["fields"]["signature"] == bytes([signature[0] ^ 1]) + signature[1:]
+    assert seen["fields"]["public_key"] == public_key
+
+
+def test_pq_first_round_negatives_pin_three_elector_reasons_and_unchanged_stake(
+    tmp_path, monkeypatch
+):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pq-negatives", base_port=26_000,
+        build_dir=REPO / "build", sample_interval=10,
+        profile=stage_a.PROFILES["a"], pq_election=True,
+    )
+    controller = stage_a.Address((-1, bytes([0x11]) * 32))
+    pool = stage_a.Address((-1, bytes([0x22]) * 32))
+    rehearsal.controllers = [SimpleNamespace(address=controller)]
+    rehearsal.pools = [SimpleNamespace(address=pool)]
+    rehearsal.wallets = [object()]
+    seen = []
+    reasons = {101: 5, 102: 3, 103: 1}
+
+    async def current_stake(method, controller_id):
+        assert method == "participates_in"
+        assert controller_id == "0x" + controller.hash_part.hex()
+        return 0
+
+    async def make_order(index, election_id, query_id, **options):
+        seen.append(("order", index, election_id, query_id, options))
+        return stage_a.Cell.empty(), bytes(32)
+
+    async def send(wallet, *, dest, amount, body, label):
+        seen.append(("send", dest, amount, label))
+
+    async def reply(index, query_id, *, description):
+        seen.append(("reply", index, query_id))
+        return 0xEE6F454C, reasons[query_id]
+
+    monkeypatch.setattr(rehearsal, "runmethod_int", current_stake)
+    monkeypatch.setattr(rehearsal, "authorized_pq_pool_order", make_order)
+    monkeypatch.setattr(rehearsal, "send_from_wallet", send)
+    monkeypatch.setattr(rehearsal, "wait_pq_pool_elector_reply", reply)
+    asyncio.run(rehearsal.assert_pq_first_round_negative_cases(1_700_000_000))
+    assert [call for call in seen if call[0] == "order"] == [
+        ("order", 0, 1_700_000_000, 101,
+         {"stake_amount": 1_001 * stage_a.NANO, "corrupt_signature_for_negative": False}),
+        ("order", 0, 1_700_000_001, 102,
+         {"stake_amount": stage_a.PQ_STAKE_MESSAGE_VALUE,
+          "corrupt_signature_for_negative": False}),
+        ("order", 0, 1_700_000_000, 103,
+         {"stake_amount": stage_a.PQ_STAKE_MESSAGE_VALUE,
+          "corrupt_signature_for_negative": True}),
+    ]
+    assert [call[1] for call in seen if call[0] == "send"] == [pool] * 3
+    assert [call[2] for call in seen if call[0] == "reply"] == [101, 102, 103]
+    assert [event["reason"] for event in rehearsal.events] == [5, 3, 1]
+
+    reasons[103] = 8
+    with pytest.raises(AssertionError, match="invalid-signature.*expected elector return reason 1"):
+        asyncio.run(rehearsal.assert_pq_first_round_negative_cases(1_700_000_000))
+
 
 def test_experiment_reserves_four_consecutive_loopback_rpc_ports():
     profile = stage_a.ExperimentProfile(

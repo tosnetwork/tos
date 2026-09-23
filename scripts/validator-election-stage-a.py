@@ -2722,7 +2722,9 @@ class ValidatorElectionRehearsal:
             )
 
     async def authorized_pq_pool_order(
-        self, index: int, election_id: int, query_id: int
+        self, index: int, election_id: int, query_id: int, *,
+        stake_amount: int = PQ_STAKE_MESSAGE_VALUE,
+        corrupt_signature_for_negative: bool = False,
     ) -> tuple[Cell, bytes]:
         """Obtain one node-bound authorization and encode the production pool body.
 
@@ -2746,16 +2748,21 @@ class ValidatorElectionRehearsal:
             raise AssertionError(f"validator {index + 1} node authorized the wrong consensus key")
         if auth.public_key != controller.consensus.public_key or auth.algorithm_id != 1:
             raise AssertionError(f"validator {index + 1} authorization differs from the bound key")
+        signature = auth.signature
+        if corrupt_signature_for_negative:
+            if not signature:
+                raise AssertionError("cannot corrupt an empty PQ stake signature")
+            signature = bytes([signature[0] ^ 1]) + signature[1:]
         body = build_production_pool_stake_order(
             self.install.build_dir / "tosctl/pq_pool_stake_order",
             query_id=query_id,
-            stake_amount=PQ_STAKE_MESSAGE_VALUE,
+            stake_amount=stake_amount,
             stake_at=election_id,
             max_factor=MAX_FACTOR,
             adnl_addr=node.validator_key.id,
             algorithm_id=auth.algorithm_id,
             public_key=auth.public_key,
-            signature=auth.signature,
+            signature=signature,
             witness=controller.birth_witness,
         )
         return body, auth.key_id
@@ -2764,27 +2771,16 @@ class ValidatorElectionRehearsal:
         wallet = self.wallets[index]
         pool = self.pools[index]
         controller = self.controllers[index]
+        query_id = index + 1
         body, authorization_key_id = await self.authorized_pq_pool_order(
-            index, election_id, index + 1
+            index, election_id, query_id
         )
         await self.send_from_wallet(
             wallet, dest=pool.address, amount=2 * NANO, body=body,
             label=f"pq-validator-{index + 1}-pool-stake-order",
         )
-        assert self.client is not None
-
-        async def pool_answer() -> tuple[int, int] | None:
-            state = await self.client.raw_get_account_state(pool.address)
-            if state.last_transaction_id is None:
-                return None
-            transactions = await self.client.raw_get_transactions(
-                pool.address, state.last_transaction_id
-            )
-            return elector_reply(transactions.transactions, index + 1)
-
-        opcode, detail = await self.retry(
-            pool_answer, timeout=60,
-            description=f"validator {index + 1} elector answer to pool",
+        opcode, detail = await self.wait_pq_pool_elector_reply(
+            index, query_id, description=f"validator {index + 1} elector answer to pool"
         )
         if opcode != 0xF374484C:
             raise AssertionError(
@@ -2806,6 +2802,72 @@ class ValidatorElectionRehearsal:
             stake_accepted=True, elector_reply_opcode=f"0x{opcode:08x}",
         )
 
+    async def wait_pq_pool_elector_reply(
+        self, index: int, query_id: int, *, description: str
+    ) -> tuple[int, int]:
+        """Read the elector reply received by this pool, not a successful send."""
+        assert self.client is not None
+        pool = self.pools[index]
+
+        async def pool_answer() -> tuple[int, int] | None:
+            state = await self.client.raw_get_account_state(pool.address)
+            if state.last_transaction_id is None:
+                return None
+            transactions = await self.client.raw_get_transactions(
+                pool.address, state.last_transaction_id
+            )
+            return elector_reply(transactions.transactions, query_id)
+
+        return await self.retry(
+            pool_answer, timeout=60, description=description,
+            predicate=lambda value: value is not None,
+        )
+
+    async def assert_pq_first_round_negative_cases(self, election_id: int) -> None:
+        """Exercise three distinct elector refusals through the real pool route.
+
+        These are not direct-wallet layout probes. The node supplies each
+        authorization; only the named negative property is changed before
+        the production builder encodes the pool order.
+        """
+        controller_id = "0x" + self.controllers[0].address.hash_part.hex()
+        cases = (
+            ("under-minimum", election_id, 1_001 * NANO, False, 5),
+            ("wrong-election", election_id + 1, PQ_STAKE_MESSAGE_VALUE, False, 3),
+            ("invalid-signature", election_id, PQ_STAKE_MESSAGE_VALUE, True, 1),
+        )
+        for offset, (label, signed_election_id, stake_amount, corrupt, expected_reason) in enumerate(cases):
+            query_id = 101 + offset
+            before = await self.runmethod_int("participates_in", controller_id)
+            body, _ = await self.authorized_pq_pool_order(
+                0, signed_election_id, query_id,
+                stake_amount=stake_amount,
+                corrupt_signature_for_negative=corrupt,
+            )
+            await self.send_from_wallet(
+                self.wallets[0], dest=self.pools[0].address, amount=2 * NANO,
+                body=body, label=f"pq-negative-{label}-pool-order",
+            )
+            opcode, reason = await self.wait_pq_pool_elector_reply(
+                0, query_id, description=f"PQ {label} elector refusal through pool"
+            )
+            if opcode != 0xEE6F454C or reason != expected_reason:
+                raise AssertionError(
+                    f"PQ {label} refusal was opcode=0x{opcode:08x} reason={reason}, "
+                    f"expected elector return reason {expected_reason}"
+                )
+            after = await self.runmethod_int("participates_in", controller_id)
+            if after != before:
+                raise AssertionError(
+                    f"PQ {label} refusal changed controller participation: {before} -> {after}"
+                )
+            self.event(
+                "pq_negative_pool_order_refused", case=label,
+                election_id=election_id, query_id=query_id,
+                reason=reason, expected_reason=expected_reason,
+                participation_before=before, participation_after=after,
+            )
+
     async def run_pq_first_election(self) -> None:
         if len(self.pools) != VALIDATOR_COUNT:
             raise AssertionError("PQ election has no four-pool fixture")
@@ -2818,8 +2880,29 @@ class ValidatorElectionRehearsal:
         )
         self.event("pq_first_election_open", election_id=self.first_election_id)
         await self.assert_unwitnessed_wallet_stake_refused(self.first_election_id)
-        for index in range(VALIDATOR_COUNT):
+        await self.assert_pq_first_round_negative_cases(self.first_election_id)
+        for index in range(VALIDATOR_COUNT - 1):
             await self.submit_pq_candidate(index, self.first_election_id)
+        three_output = await self.runmethod("participant_list_extended")
+        (self.artifacts_dir / "pq-first-three-participants.txt").write_text(three_output)
+        three_ids = participant_ids_from_runmethod(three_output)
+        expected_three = {
+            int.from_bytes(controller.address.hash_part, "big")
+            for controller in self.controllers[: VALIDATOR_COUNT - 1]
+        }
+        total_match = re.search(r"result:\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", three_output)
+        three_stake = int(total_match.group(4)) if total_match is not None else -1
+        if three_ids != expected_three or not 0 < three_stake < VALIDATOR_COUNT * EFFECTIVE_STAKE:
+            raise AssertionError(
+                "PQ three-participant state is not below the four-validator threshold: "
+                f"ids={sorted(three_ids)} total_stake={three_stake}"
+            )
+        self.event(
+            "pq_below_minimum_total_observed", controllers=3,
+            total_stake=three_stake, required_total=VALIDATOR_COUNT * EFFECTIVE_STAKE,
+        )
+        await self.restart_node(3, "open first PQ election")
+        await self.submit_pq_candidate(3, self.first_election_id)
         participant_output = await self.runmethod("participant_list_extended")
         (self.artifacts_dir / "pq-first-participants.txt").write_text(participant_output)
         participant_ids = participant_ids_from_runmethod(participant_output)
@@ -2834,6 +2917,7 @@ class ValidatorElectionRehearsal:
                 f"unexpected={sorted(participant_ids - expected_ids)}"
             )
         self.event("pq_first_election_participants", controllers=len(participant_ids))
+        await self.assert_duplicate_pq_key_refused(self.first_election_id)
         await self.wait_until_chain_time(
             self.first_election_id - 55, "first PQ election closed"
         )
@@ -2847,16 +2931,68 @@ class ValidatorElectionRehearsal:
         expected_ids_hex = {
             controller.address.hash_part.hex().upper() for controller in self.controllers
         }
-        if actual_ids != expected_ids_hex or self.first_config34.total != VALIDATOR_COUNT:
+        expected_adnl = {node.validator_key.id.hex().upper() for node in self.nodes}
+        actual_adnl = {value.upper() for value in self.first_config34.adnl_ids}
+        if (
+            actual_ids != expected_ids_hex
+            or actual_adnl != expected_adnl
+            or self.first_config34.total != VALIDATOR_COUNT
+            or self.first_config34.main != VALIDATOR_COUNT
+        ):
             raise AssertionError(
                 "PQ elected ConfigParam 34 is not exactly the four controllers: "
                 f"missing={sorted(expected_ids_hex - actual_ids)} "
                 f"unexpected={sorted(actual_ids - expected_ids_hex)} "
-                f"total={self.first_config34.total}"
+                f"adnl_missing={sorted(expected_adnl - actual_adnl)} "
+                f"adnl_unexpected={sorted(actual_adnl - expected_adnl)} "
+                f"total={self.first_config34.total} main={self.first_config34.main}"
             )
         self.event(
             "pq_first_election_activated", election_id=self.first_election_id,
             controllers=VALIDATOR_COUNT, config34=asdict(self.first_config34),
+        )
+        await self.verify_three_of_four_liveness()
+        await self.assert_pq_early_recovery_no_credit()
+
+    async def assert_pq_early_recovery_no_credit(self) -> None:
+        """The pool owns the credit; the validator wallet does not."""
+        pool = self.pools[0]
+        pool_id = "0x" + pool.address.hash_part.hex()
+        before_credit = await self.runmethod_int("compute_returned_stake", pool_id)
+        if before_credit != 0:
+            raise AssertionError(f"PQ pool stake recoverable before unfreeze: {before_credit}")
+        before_balance = await self.balance(pool.address)
+        body = await self.recovery_body("pq-early-recovery")
+        view = body.begin_parse()
+        if view.load_uint(32) != 0x47657424:
+            raise AssertionError("PQ pool early-recovery body has the wrong opcode")
+        query_id = view.load_uint(64)
+        if view.remaining_bits or view.remaining_refs:
+            raise AssertionError("PQ pool early-recovery body has trailing data")
+        await self.send_from_wallet(
+            self.wallets[0], dest=pool.address, amount=1 * NANO,
+            body=body, label="pq-early-pool-recovery",
+        )
+        opcode, detail = await self.wait_pq_pool_elector_reply(
+            0, query_id, description="PQ pool early-recovery elector refusal"
+        )
+        if opcode != 0xFFFFFFFE or detail != 0x47657424:
+            raise AssertionError(
+                "PQ pool early recovery did not receive elector no-credit reply: "
+                f"opcode=0x{opcode:08x} detail=0x{detail:08x}"
+            )
+        after_credit = await self.runmethod_int("compute_returned_stake", pool_id)
+        after_balance = await self.balance(pool.address)
+        if after_credit != 0 or after_balance >= before_balance + 2 * NANO:
+            raise AssertionError(
+                "PQ pool early recovery credited principal before unfreeze: "
+                f"credit={before_credit}->{after_credit} balance={before_balance}->{after_balance}"
+            )
+        self.event(
+            "pq_early_recovery_no_credit", pool=raw_address(pool.address),
+            query_id=query_id, elector_reply_opcode=f"0x{opcode:08x}",
+            credit_before=before_credit, credit_after=after_credit,
+            balance_before=before_balance, balance_after=after_balance,
         )
 
     async def assert_unwitnessed_wallet_stake_refused(self, election_id: int) -> None:
@@ -2909,6 +3045,67 @@ class ValidatorElectionRehearsal:
                 f"opcode=0x{opcode:08x} reason={reason}, expected elector return reason 8"
             )
         self.event("pq_negative_wallet_refused", reason=reason, expected_reason=8)
+
+    async def assert_duplicate_pq_key_refused(self, election_id: int) -> None:
+        """A second account cannot claim an already held PQ consensus key.
+
+        This deliberately sends an elector-layout test probe, never a client
+        stake. The elector checks key ownership before controller admission,
+        so the direct wallet must receive reason 4 rather than reason 8.
+        """
+        assert self.negative_wallet is not None and self.client is not None
+        wallet = self.negative_wallet
+        node = self.nodes[0]
+        controller_id = "0x" + self.controllers[0].address.hash_part.hex()
+        before = await self.runmethod_int("participates_in", controller_id)
+        query_id = 0xE1EC8
+        request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
+            election_date=election_id, max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id, stake_owner=wallet.address.hash_part,
+        )
+        auth = request.parse_result(await node.engine_console.request(request))
+        public_key = Builder().store_uint(1312, 32).store_ref(byte_chain(auth.public_key)).end_cell()
+        signature = Builder().store_uint(2420, 32).store_ref(byte_chain(auth.signature)).end_cell()
+        body = (
+            Builder().store_uint(0x50517374, 32).store_uint(query_id, 64)
+            .store_uint(auth.algorithm_id, 16).store_ref(public_key)
+            .store_uint(election_id, 32).store_uint(MAX_FACTOR, 32)
+            .store_bytes(node.validator_key.id).store_ref(signature)
+            .store_maybe_ref(None).store_bit(0).end_cell()
+        )
+        await self.send_from_wallet(
+            wallet, dest=ELECTOR, amount=PQ_STAKE_MESSAGE_VALUE,
+            body=body, label="pq-negative-duplicate-key",
+        )
+
+        async def duplicate_reply() -> tuple[int, int] | None:
+            state = await self.client.raw_get_account_state(wallet.address)
+            if state.last_transaction_id is None:
+                return None
+            transactions = await self.client.raw_get_transactions(
+                wallet.address, state.last_transaction_id
+            )
+            return elector_reply(transactions.transactions, query_id)
+
+        opcode, reason = await self.retry(
+            duplicate_reply, timeout=60,
+            description="PQ duplicate key elector return reason",
+            predicate=lambda value: value is not None,
+        )
+        if opcode != 0xEE6F454C or reason != 4:
+            raise AssertionError(
+                f"PQ duplicate held key returned opcode=0x{opcode:08x} reason={reason}, "
+                "expected elector reason 4"
+            )
+        after = await self.runmethod_int("participates_in", controller_id)
+        if after != before:
+            raise AssertionError(
+                f"PQ duplicate held key changed first controller's stake: {before} -> {after}"
+            )
+        self.event(
+            "pq_duplicate_key_refused", reason=reason, expected_reason=4,
+            participation_before=before, participation_after=after,
+        )
 
     async def execute(self) -> None:
         if self.pq_election:

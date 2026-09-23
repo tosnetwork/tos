@@ -159,7 +159,8 @@ def main() -> int:
     candidate_text = ast.unparse(candidate)
     for expression, property_name in (
         ("stake_owner=pool.address.hash_part", "pool-owned authorization"),
-        ("signature=auth.signature", "node-produced PQ signature"),
+        ("signature = auth.signature", "node-produced PQ signature source"),
+        ("signature=signature", "node-produced PQ signature in the pool body"),
     ):
         if expression not in order_text:
             fail(f"shared PQ pool order lost {property_name}: expected {expression}")
@@ -203,9 +204,38 @@ def main() -> int:
         fail("negative wallet no longer uses the elector PQst opcode")
     election = method(tree, "run_pq_first_election")
     negative_line = one_call(election, "assert_unwitnessed_wallet_stake_refused")
-    positive_line = one_call(election, "submit_pq_candidate")
-    if negative_line >= positive_line:
-        fail("negative wallet no-witness control no longer precedes positive stakes")
+    positive_lines = sorted(call_lines(election, "submit_pq_candidate"))
+    if len(positive_lines) != 2:
+        fail(f"PQ first election has {len(positive_lines)} positive stake call sites, expected three-then-four")
+    restart_line = one_call(election, "restart_node")
+    pool_negative_line = one_call(election, "assert_pq_first_round_negative_cases")
+    duplicate_line = one_call(election, "assert_duplicate_pq_key_refused")
+    activation_events = [
+        node.lineno for node in ast.walk(election)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute) and node.func.attr == "event"
+        and node.args and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "pq_first_election_activated"
+    ]
+    if len(activation_events) != 1:
+        fail("PQ first election has no single activation event after live ConfigParam 34 check")
+    activated_line = activation_events[0]
+    liveness_line = one_call(election, "verify_three_of_four_liveness")
+    recovery_line = one_call(election, "assert_pq_early_recovery_no_credit")
+    if not (
+        negative_line < pool_negative_line < positive_lines[0]
+        < restart_line < positive_lines[1] < duplicate_line
+        < activated_line < liveness_line < recovery_line
+    ):
+        fail("PQ first election no longer orders negative, three stakes, restart, fourth stake")
+    three_loops = [
+        node for node in ast.walk(election)
+        if isinstance(node, ast.For)
+        and ast.unparse(node.iter) == "range(VALIDATOR_COUNT - 1)"
+        and call_lines(ast.Module(body=node.body, type_ignores=[]), "submit_pq_candidate")
+    ]
+    if len(three_loops) != 1:
+        fail("PQ first election no longer submits exactly three candidates before restarting the fourth")
     election_text = ast.unparse(election)
     if "participant_ids != expected_ids" not in election_text:
         fail("PQ election no longer requires exactly the four controller participants")
@@ -213,6 +243,36 @@ def main() -> int:
         fail("PQ election no longer requires live ConfigParam 34 activation")
     if "actual_ids != expected_ids_hex" not in election_text or "self.first_config34.total != VALIDATOR_COUNT" not in election_text:
         fail("PQ election no longer requires exactly four controller IDs in live ConfigParam 34")
+    if "three_ids != expected_three" not in election_text or "three_stake < VALIDATOR_COUNT * EFFECTIVE_STAKE" not in election_text:
+        fail("PQ first election no longer checks the three-candidate state below the four-validator threshold")
+    for call, property_name in (
+        ("assert_pq_first_round_negative_cases", "three exact elector negative controls"),
+        ("restart_node", "fourth-node restart before its stake"),
+        ("assert_duplicate_pq_key_refused", "duplicate held-key negative control"),
+        ("verify_three_of_four_liveness", "three-of-four liveness"),
+        ("assert_pq_early_recovery_no_credit", "pool-owned early-recovery refusal"),
+    ):
+        if not call_lines(election, call):
+            fail(f"PQ first election lost {property_name}")
+    if "actual_adnl != expected_adnl" not in election_text or "self.first_config34.main != VALIDATOR_COUNT" not in election_text:
+        fail("PQ election no longer requires four matching ADNL identities and four main validators")
+    pq_negatives = method(tree, "assert_pq_first_round_negative_cases")
+    negative_text = ast.unparse(pq_negatives)
+    for expected in ("'under-minimum', election_id, 1001 * NANO, False, 5",
+                     "'wrong-election', election_id + 1, PQ_STAKE_MESSAGE_VALUE, False, 3",
+                     "'invalid-signature', election_id, PQ_STAKE_MESSAGE_VALUE, True, 1"):
+        if expected not in negative_text:
+            fail(f"PQ first-round elector negative is absent: {expected}")
+    if "after != before" not in negative_text:
+        fail("PQ first-round negatives no longer require unchanged participation")
+    duplicate = method(tree, "assert_duplicate_pq_key_refused")
+    duplicate_text = ast.unparse(duplicate)
+    if "reason != 4" not in duplicate_text or "after != before" not in duplicate_text:
+        fail("PQ duplicate held-key negative no longer pins reason 4 and unchanged stake")
+    recovery = method(tree, "assert_pq_early_recovery_no_credit")
+    recovery_text = ast.unparse(recovery)
+    if "compute_returned_stake" not in recovery_text or "after_credit != 0" not in recovery_text:
+        fail("PQ early recovery no longer checks the pool-owned elector credit")
     config_reader = method(tree, "get_config34")
     if "validator_id:x([0-9A-Fa-f]{64})" not in ast.unparse(config_reader):
         fail("live ConfigParam 34 reader no longer extracts PQ validator IDs")
