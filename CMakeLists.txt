@@ -1282,6 +1282,13 @@ add_test(NAME lite-query-error-response-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-lite-query-error-response.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(lite-query-error-response-source PROPERTIES LABELS "source-guard")
+add_test(NAME adnl-query-id-trace-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-adnl-query-id-trace.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(adnl-query-id-trace-source PROPERTIES LABELS "source-guard")
+add_test(NAME adnl-query-id-analysis
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/analyze-adnl-query-id-trace.py --self-test)
+set_tests_properties(adnl-query-id-analysis PROPERTIES LABELS "source-guard")
 add_test(NAME tosctl-pq-stake-builder-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-pq-stake-builder.py
           ${CMAKE_CURRENT_SOURCE_DIR})

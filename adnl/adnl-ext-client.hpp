@@ -33,6 +33,7 @@ namespace tos {
 namespace adnl {
 
 class AdnlExtClientImpl;
+td::int32 traced_lite_function_id(td::Slice data);
 
 class AdnlOutboundConnection : public AdnlExtConnection {
  private:
@@ -107,9 +108,15 @@ class AdnlExtClientImpl : public AdnlExtClient {
       td::actor::send_closure(SelfId, &AdnlExtClientImpl::destroy_query, id);
     };
     auto q_id = generate_next_query_id();
+    LOG(DEBUG) << "ADNL_EXT_QUERY client_create id=" << q_id.to_hex() << " server=" << dst_addr_
+               << " function_id=" << traced_lite_function_id(data.as_slice())
+               << " connection_present=" << !conn_.empty()
+               << " connection_alive=" << (!conn_.empty() && conn_.is_alive())
+               << " deadline_monotonic=" << timeout.at();
     out_queries_.emplace(q_id, AdnlQuery::create(std::move(promise), std::move(P), name, timeout, q_id));
     if (!conn_.empty()) {
       auto obj = create_tl_object<lite_api::adnl_message_query>(q_id, std::move(data));
+      LOG(DEBUG) << "ADNL_EXT_QUERY client_transmit id=" << q_id.to_hex() << " server=" << dst_addr_;
       td::actor::send_closure(conn_, &AdnlOutboundConnection::send, serialize_tl_object(obj, true));
     }
   }

@@ -29,6 +29,11 @@ def parse_args() -> argparse.Namespace:
     duration.add_argument("--sustain-seconds", type=float)
     parser.add_argument("--slow-interval-factor", type=float, default=3.0)
     parser.add_argument("--remote-command-inventory", type=Path)
+    parser.add_argument(
+        "--trace-adnl-queries",
+        action="store_true",
+        help="enable DEBUG client query-id logs for a diagnostic run",
+    )
     return parser.parse_args()
 
 
@@ -59,8 +64,11 @@ async def main() -> int:
                 "--scenario sustained-consensus"
             )
         sustained = None
+    install = Install(args.build_dir.resolve(), root)
+    if args.trace_adnl_queries:
+        install.toslibjson.client_set_verbosity_level(4)
     result = await run_cluster(
-        Install(args.build_dir.resolve(), root),
+        install,
         args.artifact_dir.resolve(),
         backend,
         args.validators,

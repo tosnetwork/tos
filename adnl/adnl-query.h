@@ -51,6 +51,9 @@ class AdnlQuery : public td::actor::Actor {
   void result(td::BufferSlice data);
   void set_error(td::Status error);
   void start_up() override {
+    if (td::log_options.get_level() >= VERBOSITY_NAME(DEBUG)) {
+      debug_started_at_ = td::Time::now();
+    }
     alarm_timestamp() = timeout_;
   }
   void tear_down() override {
@@ -64,6 +67,7 @@ class AdnlQuery : public td::actor::Actor {
   std::string name_;
   td::Timestamp timeout_;
   td::Promise<td::BufferSlice> promise_;
+  double debug_started_at_ = 0.0;
   std::function<void(AdnlQueryId)> destroy_;
   AdnlQueryId id_;
 };

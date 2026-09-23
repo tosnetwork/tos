@@ -29,12 +29,16 @@ namespace adnl {
 td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(f, fetch_tl_object<tos_api::adnl_message_query>(std::move(data), true));
   if (!query_limits_.try_acquire()) {
+    LOG(DEBUG) << "ADNL_EXT_QUERY server_ingress id=" << f->query_id_.to_hex() << " peer=" << peer_ip_
+               << " admission=drop reason=per-connection-limit";
     // Reject only this query. Returning an error from process_packet stops the
     // whole multiplexed TCP connection and discards unrelated in-flight work.
     log_dropped_query("per-connection admission limit exceeded");
     return td::Status::OK();
   }
   if (!server_query_limits_->try_acquire(peer_ip_)) {
+    LOG(DEBUG) << "ADNL_EXT_QUERY server_ingress id=" << f->query_id_.to_hex() << " peer=" << peer_ip_
+               << " admission=drop reason=server-or-per-ip-limit";
     query_limits_.release();
     log_dropped_query("server or per-IP in-flight limit exceeded");
     return td::Status::OK();
@@ -46,6 +50,8 @@ td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
         td::actor::send_closure(SelfId, &AdnlInboundConnection::query_finished, query_id, std::move(R));
       });
   auto source_id = remote_id_.is_zero() ? anonymous_remote_id_ : remote_id_;
+  LOG(DEBUG) << "ADNL_EXT_QUERY server_ingress id=" << f->query_id_.to_hex() << " peer=" << peer_ip_
+             << " admission=accepted";
   td::actor::send_closure(peer_table_, &AdnlPeerTable::deliver_query, source_id, local_id_, std::move(f->query_),
                           std::move(P));
   return td::Status::OK();
@@ -73,9 +79,12 @@ void AdnlInboundConnection::tear_down() {
 void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result) {
   query_limits_.release();
   if (result.is_error()) {
+    LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=error response_sent=false"
+               << " reason=" << result.error();
     LOG(INFO) << "failed ext query: " << result.error();
     return;
   }
+  LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=success response_sent=true";
   auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, result.move_as_ok());
   send(serialize_tl_object(answer, true));
 }

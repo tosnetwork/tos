@@ -11,6 +11,8 @@ from pathlib import Path
 
 REQUIRED_SOURCE_GUARDS = frozenset(
     {
+        "adnl-query-id-analysis",
+        "adnl-query-id-trace-source",
         "benchmark-exclusion-source",
         "branch-chain-python-ci-source",
         "consensus-no-fallback",

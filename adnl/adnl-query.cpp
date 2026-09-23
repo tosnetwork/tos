@@ -27,9 +27,13 @@ namespace tos {
 namespace adnl {
 
 void AdnlQuery::alarm() {
+  LOG(DEBUG) << "ADNL_EXT_QUERY client_timeout id=" << id_.to_hex()
+             << " elapsed_ms=" << (debug_started_at_ ? (td::Time::now() - debug_started_at_) * 1000.0 : -1.0);
   set_error(td::Status::Error(ErrorCode::timeout, PSTRING() << "timeout for adnl query " << name_));
 }
 void AdnlQuery::result(td::BufferSlice data) {
+  LOG(DEBUG) << "ADNL_EXT_QUERY client_complete id=" << id_.to_hex() << " outcome=answer elapsed_ms="
+             << (debug_started_at_ ? (td::Time::now() - debug_started_at_) * 1000.0 : -1.0);
   promise_.set_value(std::move(data));
   stop();
 }

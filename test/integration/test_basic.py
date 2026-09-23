@@ -15,7 +15,7 @@ from tostester.n6_cluster import (
     block_id_text,
     observe_sustained_consensus,
 )
-from tostester.network import FullNode, Network
+from tostester.network import FullNode, Network, StartOptions
 from tostester.pq_launch_limits import MAX_SHARD_COMMITTEE
 
 
@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--validators", type=int, default=4)
     parser.add_argument("--sustain-blocks", type=int, default=10)
+    parser.add_argument("--working-dir", type=Path)
+    parser.add_argument("--trace-adnl-queries", action="store_true")
     return parser.parse_args()
 
 
@@ -41,12 +43,16 @@ async def main(args: argparse.Namespace):
         raise ValueError("functional sustained observation must cover at least two blocks")
 
     repo_root = Path(__file__).resolve().parents[2]
-    working_dir = repo_root / "test/integration/.network"
-    shutil.rmtree(working_dir, ignore_errors=True)
-    working_dir.mkdir(exist_ok=True)
+    if args.working_dir is None:
+        working_dir = repo_root / "test/integration/.network"
+        shutil.rmtree(working_dir, ignore_errors=True)
+        working_dir.mkdir(exist_ok=True)
+    else:
+        working_dir = args.working_dir.resolve()
+        working_dir.mkdir(parents=True, exist_ok=False)
 
     install = Install(repo_root / "build", repo_root)
-    install.toslibjson.client_set_verbosity_level(3)
+    install.toslibjson.client_set_verbosity_level(4 if args.trace_adnl_queries else 3)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -78,7 +84,9 @@ async def main(args: argparse.Namespace):
         async with asyncio.TaskGroup() as start_group:
             _ = start_group.create_task(dht.run())
             for node in nodes:
-                _ = start_group.create_task(node.run())
+                _ = start_group.create_task(
+                    node.run(StartOptions(verbosity=4 if args.trace_adnl_queries else 3))
+                )
 
         await network.wait_mc_block(seqno=1)
 
