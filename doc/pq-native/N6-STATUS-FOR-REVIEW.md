@@ -542,9 +542,28 @@ still listed that second election; an open third election is not an activated
 third validator set. The corrected classifier uses current ConfigParam 34's
 cell hash and the Elector's `past_elections_list` real unfreeze time to
 distinguish active-retained, retired-but-frozen, and matured-unrecovered.
-Its corrected-tree live rerun is pending. It does not claim a second-round
-recovery from this experiment. The separate default three-election Stage A
-above remains the live second-round recovery proof.
+The corrected-tree live rerun below does not claim a second-round recovery
+from this experiment. The separate default three-election Stage A above
+remains the live second-round recovery proof.
+The corrected-tree 600+900-second rerun at exact source commit `98459da62`
+finished `pass` with no failures: report
+`test/integration/.pq-experiment-v4-active-retained/20260923T160259Z/report.json`
+(SHA-256 `e705ba47099b62c4daefa8b72292622cc6c7603174185e8fcbd01d0978a3c882`),
+v4 evidence SHA-256
+`564ad033f8f4946c98c2298dc4edbfad3e445a1c5f0b3c0b4f88921457adddc0`.
+The source commit at start and report matched, the tracked patch was empty,
+and 12 binaries plus 48 generated contract artifacts were snapshotted. All
+eight production PQ pool stakes were accepted across two elections and both
+sets activated in live ConfigParam 34 with four controller/ADNL pairs. Four
+first-round pool credits were recovered. At the terminal sampled masterchain
+creation time `1790180906`, ConfigParam 34 still named the second set `1790180280`; the
+Elector's `past_elections_list` gave that set `unfreeze_at=1790180760` and
+the same validator-set hash as ConfigParam 34. Despite the passed initial
+unfreeze estimate, all four successor stakes were `active-retained`, none
+were matured-unrecovered, and `outstanding_allocations=0`. **This experiment
+proves first-round recovery only.** The separate default three-election
+Stage A run is the second-round recovery evidence. Neither co-located run is
+release-scale evidence.
 The observed 600+600 run discharges the script-wide T2 classical-stake
 dependency and repeats the end-to-end accepted-stake/activated-election proof
 on a co-located diagnostic topology, **not** as release-scale evidence. The

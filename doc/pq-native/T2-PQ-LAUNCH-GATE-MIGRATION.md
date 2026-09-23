@@ -153,9 +153,19 @@ The corrected v4 classifier reads current ConfigParam 34 and its cell hash
 against Elector `past_elections_list` and distinguishes active-retained,
 retired-frozen and matured-unrecovered. The red run is preserved as the reason
 for the correction, not described as a pool-recovery failure; the corrected-tree
-live rerun is pending. Second-round
-recovery is shown by the separate three-election default launch-gate report,
-not by either experiment-mode run. The 600+600 observation completes the
+600+900-second rerun at `98459da62` passed (report SHA-256
+`e705ba47099b62c4daefa8b72292622cc6c7603174185e8fcbd01d0978a3c882`,
+v4 evidence SHA-256
+`564ad033f8f4946c98c2298dc4edbfad3e445a1c5f0b3c0b4f88921457adddc0`).
+It recorded eight accepted production PQ pool stakes, two activated
+four-controller ConfigParam 34 sets and four recovered first-round pool
+credits. At terminal sampled masterchain creation time `1790180906`, the second set `1790180280`
+was still current ConfigParam 34 and matched Elector's past-election set
+hash; its recorded `unfreeze_at=1790180760` had passed, but an active set
+cannot unfreeze. Its four stakes were `active-retained`, not outstanding,
+and the experiment recorded no second-round recovery. That recovery is shown
+by the separate three-election default launch-gate report, not by either
+experiment-mode run. The 600+600 observation completes the
 script-wide T2 classical-stake conversion on a co-located diagnostic topology;
 it is **not** release-scale evidence and does not retire other T3 Fift callers.
 
