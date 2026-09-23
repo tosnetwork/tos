@@ -380,21 +380,20 @@ source guard: it requires one shared PQ-initial-validator helper call in each
 of the fixture and legacy provisioning branches; there is no runtime-code
 change from the measured commit.
 
-This does **not** convert the script's older default `--mode launch-gate`.
-That route still calls the classical election Fift tools and retains its
-multi-round/recovery assertions; the new `pq-election` mode proves one
-complete PQ election, not those later rounds. The classical-stake surface
-entry therefore stays open, and T2 as the entire historical launch-gate
-rehearsal is not called closed merely because unit 2 and the live stake proof
-passed. One earlier run on `cbd22b019` was invalidated by overlapping two
+At that first-election checkpoint, this did **not** convert the script's
+older default `--mode launch-gate`. It still called the classical election
+Fift tools and retained multi-round/recovery assertions; `pq-election` proved
+only one complete PQ election. This is historical status, corrected below by
+the later exact-tree default run. The classical-stake surface entry remained
+open. One earlier run on `cbd22b019` was invalidated by overlapping two
 local networks with the same deterministic validator identities and stopped
 before election; its artifact is retained, not cited as a protocol failure.
 That commit's Python/Rust keyword mismatch was independently reproduced by
 restoring its helper signature; the dynamic call test and source guard both
 reject it on the corrected tree.
 The old-assertion-to-PQ mapping and serial migration units are recorded in
-`doc/pq-native/T2-PQ-LAUNCH-GATE-MIGRATION.md`; the default route is not to be
-switched until those retained checks have live PQ counterparts.
+`doc/pq-native/T2-PQ-LAUNCH-GATE-MIGRATION.md`; the default route was not to be
+switched until those retained checks had live PQ counterparts.
 An independent first rerun in a second worktree reached the election, then
 failed before the negative request because its **ignored generated Python TL
 binding** predated the five-field authorization response and lacked
@@ -467,14 +466,42 @@ eight height samples all remained at 3437; after restoration the chain reached
 stake because the ordinary 100,000-TOS test faucet could not fund its first
 11,040-TOS top-up. Its report and node databases are retained as a fixture
 funding diagnostic. `36ac27039` uses the existing Stage-A Genesis faucet
-override, only for explicit `pq-launch-gate`, to budget 185,440 TOS from
+override, at that checkpoint only for explicit `pq-launch-gate`, to budget 185,440 TOS from
 initial wallets/controller deployments, two later rounds of fresh capital and
 two distinct fee reserves. It reads back a minimum post-fixture balance of
 89,320 TOS before opening the first election; the passing run observed 90,320.
 Neither this diagnostic faucet nor the accelerated period changes production
-Genesis or release criteria. The historical default `--mode launch-gate` is
-still classical and has not been switched or rerun, so overall T2 remains
-open for the final default-entry migration despite this full opt-in pass.
+Genesis or release criteria. At that opt-in checkpoint the historical default
+`--mode launch-gate` was still classical. The following default run supersedes
+that route-status statement without changing the opt-in measurement above.
+
+The historical no-argument `launch-gate` is now bound to the complete PQ
+fixture and multi-round route at `60a299125`. The source guard killed both
+removal mutations: excluding the default from PQ provisioning, and excluding
+it from full follow-up elections. On that exact committed source tree the
+default command completed with `status=pass`, no failures, and report
+`test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json`
+(SHA-256 `a5f8491276fa2718e1898fdd2d8bbd533edba3cfb56c114fc920bf142eb871cf`).
+The report's source commit and source commit at report time both equal
+`60a299125`. Twelve production-builder wallet→pool→controller→elector
+orders received `STAKE_ACCEPTED`; first-round negative controls pinned
+elector reasons 8/5/3/1 and duplicate-key reason 4. **Independently of stake
+acceptance**, live ConfigParam 34 activated for three elections at
+1790173307, 1790173607 and 1790173907, each with `total=main=4` and the
+same four controller IDs paired with their ADNL IDs. Two sets of four matured
+pool credits were recovered with opcode `0xf96f7324`; duplicate recovery
+returned no-credit `0xfffffffe`. Eight two-of-four samples stayed at height
+3435, then the chain resumed to 3436. This is a co-located diagnostic, not
+release evidence.
+
+The default route is therefore proven, but **T2 overall remains open** under
+the original script-wide Fift-dependency condition: explicit `--mode
+experiment` still calls both classical election Fift tools, signs locally,
+matches ConfigParam 34 by Ed25519 public key and attributes elector recovery
+to validator wallets. PQ stake ownership is the pool, and PQ identity is the
+controller. Removing only the Fift calls would not convert those semantics.
+This route remains in the classical-stake caller inventory and needs a
+separate conversion or an express scope ruling before the script can leave it.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or

@@ -1,12 +1,13 @@
 # T2 launch-gate migration map
 
-The pushed `--mode pq-election` rehearsal has proved one complete PQ election
-on a running local chain. It is **not** a replacement for the script's default
-`--mode launch-gate`: the latter still calls
-`validator-elect-req.fif`/`validator-elect-signed.fif` and asserts multiple
-elections, recovery, restarts and quorum behaviour. Changing the default to
-the narrower mode would silently discard those assertions. The
-`classical-stake-surface` inventory must continue to count this caller.
+The no-argument `--mode launch-gate` now runs the complete PQ Stage-A route,
+including three elections, pool-owned recovery, restarts and quorum behavior.
+The narrower `pq-election` remains a one-round diagnostic. This is a default
+route conversion, **not** a script-wide classical caller retirement:
+`--mode experiment` still reaches `validator-elect-req.fif` and
+`validator-elect-signed.fif`, signs locally, and attributes stake recovery to
+validator wallets. The `classical-stake-surface` inventory must continue to
+count this script until that distinct route is converted or expressly retired.
 
 The shared PQ route is node `createPqStakeAuthorization` ->
 `nominator::new_stake_with_witness` -> validator wallet -> single-nominator
@@ -34,7 +35,7 @@ fixtures from being confused with an unconverted launch path.
 | `crypto/test/fift/validator-proposal-test.fif` | Calls `validator-elect-req>B`; migrate or explicitly preserve as a self-contained legacy vector before removing the library word. |
 | `crypto/test/fift/validator-proposal-legacy-parity.fif` | Same dependency, with an explicit classical parity vector. |
 | `scripts/nominator-pool-lifecycle-e2e.py` | Still invokes the two base Fift tools for its election route; convert through the admitted controller/pool. |
-| `scripts/validator-election-stage-a.py` | The new `pq-election` mode is clear, but its default `launch-gate` still invokes both base tools. **Do not remove this caller from T3's count.** |
+| `scripts/validator-election-stage-a.py` | Default `launch-gate`, `pq-election` and `pq-launch-gate` use the node-authorized PQ path. Explicit `experiment` still invokes both base tools and credits/reclaims validator wallets. **Do not remove this caller from T3's count.** |
 | `tosctl/src/node-control/elections/src/runner.rs` | Converted: node authorization and pool order; no-pool route refuses. |
 | `tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs` | Converted to a local refusal for its direct wallet-to-elector bid; no classical signature is sent. |
 | `tosctl/src/node-control/commands/src/commands/nodectl/config_wallet_cmd.rs` | Converted: node authorization and pool order. |
@@ -93,11 +94,28 @@ retained rather than silently replaced.
    **Implemented and passed** in explicit `pq-launch-gate` Stage A on
    `36ac27039`; this is not yet the default command.
 4. Only after every old assertion has a live PQ counterpart, make the full
-   route the default and remove this script's classical
-   `validator-elect-req.fif`/`validator-elect-signed.fif` calls and local
-   Ed25519 stake signing. Re-run the default invocation on the committed
-   tree. The two Fift files themselves remain until **all** retained callers
-   and `test-smartcont.cpp` migrate together under T3.
+   route the default and re-run that default invocation on the committed
+   tree. **Done for the default route** at `60a299125`, but the explicit
+   `experiment` route still calls the two classical election Fift tools and
+   signs locally. The original script-wide Fift-dependency condition remains
+   open and requires its own conversion; changing the default alone does not
+   discharge it. The two Fift files themselves remain until **all** retained
+   callers and `test-smartcont.cpp` migrate together under T3.
+
+The no-argument default run from exact source commit `60a299125` completed
+with report `test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json`
+(SHA-256 `a5f8491276fa2718e1898fdd2d8bbd533edba3cfb56c114fc920bf142eb871cf`).
+The source commit at report time is identical. The report has zero failures:
+12 production-builder pool/controller stakes received `STAKE_ACCEPTED`, while
+the first-round admission controls pinned reasons 8/5/3/1 and duplicate-key
+reason 4. Separately, live ConfigParam 34 activated at election IDs
+1790173307, 1790173607 and 1790173907, each with `total=main=4` and the
+same exact four controller/ADNL associations. Four first-round and four
+second-round pool credits matured and were recovered with success opcode
+`0xf96f7324`; a duplicate recovery returned `0xfffffffe`. The two-of-four
+halt kept eight samples at height 3435 and resumed to 3436. These are
+co-located diagnostic results, not release-scale evidence. Overall T2 stays
+open while the experiment-mode classical stake path remains reachable.
 
 No step changes election criteria, weakens a negative check, or treats the
 co-located diagnostic run as release-scale measurement.
