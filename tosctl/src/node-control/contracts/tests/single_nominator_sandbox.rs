@@ -163,7 +163,11 @@ fn launch(balance: u64) -> Pooled {
 }
 
 /// Exercise the production Rust builder against the compiled pool contract's
-/// `check_new_stake_msg`, not a second hand-built encoding of its fields.
+/// `check_new_stake_msg`, not a second hand-built encoding of its fields. This
+/// proves that the contract accepts the body; it cannot detect a transposition
+/// of adjacent fixed-width fields the contract parses but does not interpret.
+/// The builder's unit test round-trips field *values* in pool-parser order to
+/// guard that semantic property.
 fn stake_order(query_id: u64, amount: u64, election: u32) -> Cell {
     new_stake(&NewStakeParams {
         query_id,

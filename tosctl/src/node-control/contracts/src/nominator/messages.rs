@@ -282,8 +282,10 @@ mod tests {
         let coins = Coins::construct_from(&mut slice).unwrap();
         assert_eq!(coins.as_u128(), params.stake_amount as u128);
 
-        // Field order is the single-nominator pool parser's order, not the
-        // elector parser's algorithm/key-first layout.
+        // This value round trip is the ordering gate. The compiled pool contract
+        // accepts adjacent fixed-width fields even when transposed, because it
+        // parses but does not interpret their contents. Its sandbox test alone
+        // cannot detect that mistake. This is pool order, not elector order.
         let parsed_stake_at = slice.get_next_u32().unwrap();
         assert_eq!(parsed_stake_at, params.stake_at);
 
