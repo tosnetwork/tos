@@ -366,6 +366,7 @@ class ValidatorElectionRehearsal:
         soak_wallet_funding_tos: int = 2000,
         fixture_only: bool = False,
         pq_election: bool = False,
+        pq_full: bool = False,
     ):
         self.run_dir = run_dir
         self.network_dir = run_dir / "network"
@@ -387,6 +388,9 @@ class ValidatorElectionRehearsal:
         self.soak_wallet_funding = soak_wallet_funding_tos * NANO
         self.fixture_only = fixture_only
         self.pq_election = pq_election
+        self.pq_full = pq_full
+        if pq_full and not pq_election:
+            raise ValueError("the full PQ rehearsal requires the PQ election fixture")
         self.controller_code: Cell | None = None
         self.pool_code: Cell | None = None
         self.controllers: list[ControllerFixture] = []
@@ -2855,19 +2859,22 @@ class ValidatorElectionRehearsal:
         )
 
     async def submit_pq_candidate(
-        self, index: int, election_id: int, *, retry_restart_transients: bool = False
+        self, index: int, election_id: int, *, round_number: int = 1,
+        retry_restart_transients: bool = False
     ) -> None:
         wallet = self.wallets[index]
         pool = self.pools[index]
         controller = self.controllers[index]
-        query_id = index + 1
+        # Pool transaction history spans elections. Reusing a query id could
+        # let an old STAKE_ACCEPTED satisfy a new round's reply lookup.
+        query_id = (round_number - 1) * 1_000 + index + 1
         body, authorization_key_id = await self.authorized_pq_pool_order(
             index, election_id, query_id,
             retry_restart_transients=retry_restart_transients,
         )
         await self.send_from_wallet(
             wallet, dest=pool.address, amount=2 * NANO, body=body,
-            label=f"pq-validator-{index + 1}-pool-stake-order",
+            label=f"pq-round-{round_number}-validator-{index + 1}-pool-stake-order",
         )
         opcode, detail = await self.wait_pq_pool_elector_reply(
             index, query_id, description=f"validator {index + 1} elector answer to pool"
@@ -2886,6 +2893,7 @@ class ValidatorElectionRehearsal:
         )
         self.event(
             "pq_candidate_accepted", validator=index + 1,
+            round=round_number, query_id=query_id,
             controller=raw_address(controller.address),
             pool=raw_address(pool.address), election_id=election_id,
             effective_stake=actual, authorization_key_id=authorization_key_id.hex(),
@@ -3090,6 +3098,213 @@ class ValidatorElectionRehearsal:
             balance_before=before_balance, balance_after=after_balance,
         )
 
+    async def wait_pq_config_activation(self, election_id: int, label: str) -> Config34:
+        config = await self.retry(
+            self.get_config34, timeout=180, interval=1,
+            description=f"{label} PQ ConfigParam 34 activation",
+            predicate=lambda value: value.utime_since == election_id,
+        )
+        expected = {
+            controller.address.hash_part.hex().upper(): node.validator_key.id.hex().upper()
+            for controller, node in zip(self.controllers, self.nodes)
+        }
+        if config.total != VALIDATOR_COUNT or config.main != VALIDATOR_COUNT:
+            raise AssertionError(
+                f"{label} PQ elected set is not four main validators: {asdict(config)}"
+            )
+        require_pq_config34_associations(config, expected)
+        self.event(
+            "pq_config34_activated", label=label, election_id=election_id,
+            total=config.total, main=config.main,
+            validator_adnl_pairs=config.validator_adnl_pairs,
+        )
+        return config
+
+    async def fund_pq_pool_for_round(self, faucet: WalletV1, index: int, round_number: int) -> None:
+        """Fresh fixture capital is distinct from an election's returned stake."""
+        wallet = self.wallets[index]
+        pool = self.pools[index]
+        amount = PQ_STAKE_MESSAGE_VALUE + 20 * NANO
+        wallet_before = await self.balance(wallet.address)
+        await self.send_from_wallet(
+            faucet, dest=wallet.address, amount=amount + 20 * NANO,
+            body=Cell.empty(),
+            label=f"pq-round-{round_number}-validator-{index + 1}-wallet-capital",
+        )
+        await self.retry(
+            lambda: self.balance(wallet.address), timeout=60,
+            description=f"PQ round {round_number} wallet {index + 1} fresh capital",
+            predicate=lambda value: value >= wallet_before + amount,
+        )
+        before = await self.balance(pool.address)
+        await self.send_from_wallet(
+            wallet, dest=pool.address, amount=amount, body=Cell.empty(),
+            label=f"pq-round-{round_number}-validator-{index + 1}-pool-capital",
+        )
+        after = await self.retry(
+            lambda: self.balance(pool.address), timeout=60,
+            description=f"PQ round {round_number} pool {index + 1} fresh capital",
+            predicate=lambda value: value >= before + PQ_STAKE_MESSAGE_VALUE,
+        )
+        self.event(
+            "pq_pool_round_capital", round=round_number, validator=index + 1,
+            fresh_from_faucet=amount + 20 * NANO, fresh_to_pool=amount,
+            pool_balance_before=before, pool_balance_after=after,
+        )
+
+    async def recover_pq_round(self, round_number: int) -> list[int]:
+        election_id = self.first_election_id if round_number == 1 else self.second_election_id
+        unfreeze_at = election_id + self.profile.elected_for + self.profile.stakes_frozen_for
+        credit_timeout = max(240, unfreeze_at - int(time.time()) + 90)
+        credits: list[int] = []
+        for index, (wallet, pool) in enumerate(zip(self.wallets, self.pools)):
+            pool_id = "0x" + pool.address.hash_part.hex()
+            credit = await self.retry(
+                lambda pool_id=pool_id: self.runmethod_int("compute_returned_stake", pool_id),
+                timeout=credit_timeout, interval=max(2.0, self.long_poll_interval),
+                description=f"PQ round {round_number} pool {index + 1} mature credit",
+                predicate=lambda value: value > EFFECTIVE_STAKE,
+            )
+            before = await self.balance(pool.address)
+            body = await self.recovery_body(f"pq-round-{round_number}-pool-{index + 1}")
+            view = body.begin_parse()
+            if view.load_uint(32) != 0x47657424:
+                raise AssertionError("PQ pool recovery body has the wrong opcode")
+            query_id = view.load_uint(64)
+            if view.remaining_bits or view.remaining_refs:
+                raise AssertionError("PQ pool recovery body has trailing data")
+            await self.send_from_wallet(
+                wallet, dest=pool.address, amount=1 * NANO, body=body,
+                label=f"pq-round-{round_number}-pool-{index + 1}-recover",
+            )
+            opcode, detail = await self.wait_pq_pool_elector_reply(
+                index, query_id,
+                description=f"PQ round {round_number} pool {index + 1} mature elector recovery",
+            )
+            if opcode != 0xF96F7324 or detail != 0:
+                raise AssertionError(
+                    f"PQ round {round_number} pool {index + 1} did not receive mature "
+                    f"recovery opcode: 0x{opcode:08x} detail={detail}"
+                )
+            await self.retry(
+                lambda pool_id=pool_id: self.runmethod_int("compute_returned_stake", pool_id),
+                timeout=60,
+                description=f"PQ round {round_number} pool {index + 1} credit deletion",
+                predicate=lambda value: value == 0,
+            )
+            after = await self.retry(
+                lambda pool=pool: self.balance(pool.address), timeout=60,
+                description=f"PQ round {round_number} pool {index + 1} payout",
+                predicate=lambda value, before=before, credit=credit: value >= before + credit - 2 * NANO,
+            )
+            credits.append(credit)
+            self.event(
+                "pq_pool_stake_recovered", round=round_number, validator=index + 1,
+                pool=raw_address(pool.address), query_id=query_id, credit=credit,
+                pool_balance_before=before, pool_balance_after=after,
+                elector_reply_opcode=f"0x{opcode:08x}",
+            )
+        return credits
+
+    async def assert_duplicate_pq_recovery_no_credit(self) -> None:
+        pool = self.pools[0]
+        pool_id = "0x" + pool.address.hash_part.hex()
+        before_credit = await self.runmethod_int("compute_returned_stake", pool_id)
+        if before_credit != 0:
+            raise AssertionError(f"duplicate PQ recovery still has pool credit {before_credit}")
+        before_balance = await self.balance(pool.address)
+        body = await self.recovery_body("pq-duplicate-pool-recovery")
+        view = body.begin_parse()
+        if view.load_uint(32) != 0x47657424:
+            raise AssertionError("duplicate PQ recovery body has the wrong opcode")
+        query_id = view.load_uint(64)
+        await self.send_from_wallet(
+            self.wallets[0], dest=pool.address, amount=1 * NANO, body=body,
+            label="pq-duplicate-pool-recovery",
+        )
+        opcode, detail = await self.wait_pq_pool_elector_reply(
+            0, query_id, description="PQ duplicate pool recovery elector refusal",
+        )
+        after_credit = await self.runmethod_int("compute_returned_stake", pool_id)
+        after_balance = await self.balance(pool.address)
+        if opcode != 0xFFFFFFFE or detail != 0x47657424 or after_credit != 0:
+            raise AssertionError(
+                "PQ duplicate recovery did not receive the exact no-credit refusal: "
+                f"opcode=0x{opcode:08x} detail=0x{detail:08x} credit={after_credit}"
+            )
+        if after_balance >= before_balance + 2 * NANO:
+            raise AssertionError(
+                f"PQ duplicate recovery unexpectedly credited pool: {before_balance}->{after_balance}"
+            )
+        self.event(
+            "pq_duplicate_recovery_no_credit", query_id=query_id,
+            elector_reply_opcode=f"0x{opcode:08x}",
+            pool_balance_before=before_balance, pool_balance_after=after_balance,
+        )
+
+    async def run_pq_followup_elections(self, faucet: WalletV1) -> None:
+        """Preserve the legacy launch-gate's later elections and recovery checks."""
+        self.second_election_id = await self.retry(
+            lambda: self.runmethod_int("active_election_id"),
+            timeout=max(240, self.profile.elected_for), interval=self.long_poll_interval,
+            description="second PQ election opening",
+            predicate=lambda value: value > self.first_election_id,
+        )
+        self.event("pq_second_election_open", election_id=self.second_election_id)
+        for index in range(VALIDATOR_COUNT):
+            await self.fund_pq_pool_for_round(faucet, index, 2)
+            await self.submit_pq_candidate(
+                index, self.second_election_id, round_number=2,
+                retry_restart_transients=True,
+            )
+        second_output = await self.runmethod("participant_list_extended")
+        (self.artifacts_dir / "pq-round-2-participants.txt").write_text(second_output)
+        expected_ids = {int.from_bytes(c.address.hash_part, "big") for c in self.controllers}
+        if participant_ids_from_runmethod(second_output) != expected_ids:
+            raise AssertionError("second PQ election participants are not exactly four controllers")
+        await self.wait_until_chain_time(self.second_election_id - 55, "second PQ election closed")
+        await self.restart_node(2, "second PQ election before ConfigParam 34 activation")
+        self.second_config34 = await self.wait_pq_config_activation(
+            self.second_election_id, "second PQ set"
+        )
+        await self.restart_node(1, "PQ rewards before first pool recovery")
+
+        self.rollover_election_id = await self.retry(
+            lambda: self.runmethod_int("active_election_id"),
+            timeout=max(240, self.profile.elected_for), interval=self.long_poll_interval,
+            description="rollover PQ election opening",
+            predicate=lambda value: value > self.second_election_id,
+        )
+        self.event("pq_rollover_election_open", election_id=self.rollover_election_id)
+        past_first = await self.runmethod("past_elections")
+        (self.artifacts_dir / "pq-past-elections-before-first-recovery.txt").write_text(past_first)
+        self.first_credits = await self.recover_pq_round(1)
+        for index in range(VALIDATOR_COUNT):
+            await self.fund_pq_pool_for_round(faucet, index, 3)
+            await self.submit_pq_candidate(
+                index, self.rollover_election_id, round_number=3,
+                retry_restart_transients=True,
+            )
+        rollover_output = await self.runmethod("participant_list_extended")
+        (self.artifacts_dir / "pq-round-3-participants.txt").write_text(rollover_output)
+        if participant_ids_from_runmethod(rollover_output) != expected_ids:
+            raise AssertionError("rollover PQ election participants are not exactly four controllers")
+        await self.wait_until_chain_time(self.rollover_election_id - 55, "rollover PQ election closed")
+        self.rollover_config34 = await self.wait_pq_config_activation(
+            self.rollover_election_id, "rollover PQ set"
+        )
+        past_second = await self.runmethod("past_elections")
+        (self.artifacts_dir / "pq-past-elections-before-second-recovery.txt").write_text(past_second)
+        self.second_credits = await self.recover_pq_round(2)
+        await self.assert_duplicate_pq_recovery_no_credit()
+        await self.verify_two_of_four_safe_halt()
+        self.event(
+            "pq_full_launch_gate_passed", first_election_id=self.first_election_id,
+            second_election_id=self.second_election_id,
+            rollover_election_id=self.rollover_election_id,
+            first_credits=self.first_credits, second_credits=self.second_credits,
+        )
+
     async def assert_unwitnessed_wallet_stake_refused(self, election_id: int) -> None:
         """A deliberately elector-layout negative request must reach admission reason 8.
 
@@ -3252,6 +3467,7 @@ class ValidatorElectionRehearsal:
             start_event,
             stage=self.profile.label,
             mode=("fixture-check" if self.fixture_only else
+                  "pq-launch-gate" if self.pq_full else
                   "pq-election" if self.pq_election else
                   "experiment" if self.experiment is not None else "launch-gate"),
             accelerated=self.profile.accelerated,
@@ -3346,6 +3562,8 @@ class ValidatorElectionRehearsal:
                 if self.fixture_only:
                     return
                 await self.run_pq_first_election()
+                if self.pq_full:
+                    await self.run_pq_followup_elections(faucet)
                 return
 
             if self.experiment is not None:
@@ -3532,6 +3750,7 @@ class ValidatorElectionRehearsal:
             "generated_at": utc_now(),
             "run_dir": str(self.run_dir),
             "mode": ("fixture-check" if self.fixture_only else
+                     "pq-launch-gate" if self.pq_full else
                      "pq-election" if self.pq_election else
                      "experiment" if self.experiment is not None else "launch-gate"),
             "source_commit": self.provenance["source_commit"],
@@ -3609,14 +3828,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("launch-gate", "experiment", "transfer-soak", "fixture-check", "pq-election"),
+        choices=("launch-gate", "experiment", "transfer-soak", "fixture-check", "pq-election", "pq-launch-gate"),
         default="launch-gate",
         help=(
             "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
             "experiment runs stable Stage A for a requested observation window; "
             "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks; "
             "fixture-check provisions four PQ controllers and pools without claiming an election; "
-            "pq-election additionally submits a first PQ election"
+            "pq-election proves the first PQ election; pq-launch-gate continues through rollover and recovery"
         ),
     )
     parser.add_argument("--soak-duration", type=float, default=600.0,
@@ -3766,7 +3985,8 @@ async def async_main() -> int:
         soak_max_interval=args.soak_max_interval,
         soak_wallet_funding_tos=args.soak_wallet_funding_tos,
         fixture_only=(args.mode == "fixture-check"),
-        pq_election=(args.mode == "pq-election"),
+        pq_election=(args.mode in ("pq-election", "pq-launch-gate")),
+        pq_full=(args.mode == "pq-launch-gate"),
     )
     try:
         await stage.execute()

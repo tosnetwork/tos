@@ -191,3 +191,26 @@ def test_elector_reason_reader_skips_source_less_wallet_externals_and_pins_query
         msg_data=toslib_api.Msg_dataRaw(body=unknown_body),
     ))
     assert elector_reply([external, unknown], query_id) == (0xFFFFFFFF, 7)
+    recovered_body = (
+        Builder().store_uint(0xF96F7324, 32).store_uint(query_id, 64)
+        .end_cell().to_boc()
+    )
+    recovered = SimpleNamespace(in_msg=SimpleNamespace(
+        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+        msg_data=toslib_api.Msg_dataRaw(body=recovered_body),
+    ))
+    assert elector_reply([recovered], query_id) == (0xF96F7324, 0), (
+        "elector mature recovery has no trailing 32-bit detail"
+    )
+    assert elector_reply([recovered], query_id + 1) is None
+    unknown_short_body = (
+        Builder().store_uint(0xF96F7325, 32).store_uint(query_id, 64)
+        .end_cell().to_boc()
+    )
+    unknown_short = SimpleNamespace(in_msg=SimpleNamespace(
+        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+        msg_data=toslib_api.Msg_dataRaw(body=unknown_short_body),
+    ))
+    assert elector_reply([unknown_short], query_id) is None, (
+        "a source-matched 96-bit reply is not automatically mature recovery"
+    )

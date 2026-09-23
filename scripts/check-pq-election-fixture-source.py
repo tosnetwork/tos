@@ -46,6 +46,10 @@ def main() -> int:
     script = root / "scripts/validator-election-stage-a.py"
     tree = ast.parse(script.read_text(), filename=str(script))
     execute = method(tree, "execute")
+    cli_text = ast.unparse(method(tree, "parse_args"))
+    main_text = ast.unparse(method(tree, "async_main"))
+    if "pq-launch-gate" not in cli_text or "pq_full=args.mode == 'pq-launch-gate'" not in main_text:
+        fail("the opt-in full PQ launch-gate CLI no longer reaches the full rehearsal")
     fixture_branches = [
         node for node in ast.walk(execute) if isinstance(node, ast.If)
         and ast.unparse(node.test) == "self.fixture_only or self.pq_election"
@@ -309,6 +313,41 @@ def main() -> int:
         fail("live ConfigParam 34 reader no longer extracts PQ validator IDs")
     if len(call_lines(config_reader, "parse_pq_validator_adnl_pairs")) != 1:
         fail("live ConfigParam 34 reader no longer parses identity/ADNL from each PQ record")
+    execute = method(tree, "execute")
+    if len(call_lines(execute, "run_pq_followup_elections")) != 1:
+        fail("full PQ rehearsal is no longer invoked after its first election")
+    if one_call(execute, "run_pq_first_election") >= one_call(execute, "run_pq_followup_elections"):
+        fail("full PQ rehearsal no longer follows first-election acceptance")
+    if not any(
+        isinstance(node, ast.If)
+        and ast.unparse(node.test) == "self.pq_full"
+        and len(call_lines(ast.Module(body=node.body, type_ignores=[]), "run_pq_followup_elections")) == 1
+        for node in ast.walk(execute)
+    ):
+        fail("the multi-round PQ rehearsal is no longer opt-in behind pq_full")
+    followup = method(tree, "run_pq_followup_elections")
+    followup_text = ast.unparse(followup)
+    for marker in (
+        "round_number=2", "round_number=3",
+        "await self.fund_pq_pool_for_round(faucet, index, 2)",
+        "await self.fund_pq_pool_for_round(faucet, index, 3)",
+        "self.first_credits = await self.recover_pq_round(1)",
+        "self.second_credits = await self.recover_pq_round(2)",
+        "await self.assert_duplicate_pq_recovery_no_credit()",
+        "await self.verify_two_of_four_safe_halt()",
+        "pq_full_launch_gate_passed",
+    ):
+        if marker not in followup_text:
+            fail(f"full PQ rehearsal lost {marker!r}")
+    for name, marker in (
+        ("recover_pq_round", "compute_returned_stake"),
+        ("recover_pq_round", "pool_id = '0x' + pool.address.hash_part.hex()"),
+        ("recover_pq_round", str(0xF96F7324)),
+        ("assert_duplicate_pq_recovery_no_credit", str(0xFFFFFFFE)),
+        ("wait_pq_config_activation", "require_pq_config34_associations"),
+    ):
+        if marker not in ast.unparse(method(tree, name)):
+            fail(f"full PQ rehearsal {name} lost {marker!r}")
     print(
         "PQ_ELECTION_FIXTURE_SOURCE_OK: controller identity is asserted before boot; "
         "the live Param 47 read-back call precedes deployment; "
@@ -318,7 +357,8 @@ def main() -> int:
         "PQ candidates call the shared node-authorized, keyword-compatible Rust nominator::new_stake_with_witness pool-order path; "
         "the three exact pool-route refusals precede three accepted stakes, a restarted fourth stake with bounded pre-send authorization retry, and a duplicate-key refusal; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
-        "three-of-four liveness and pool-owned early recovery checks follow activation"
+        "three-of-four liveness and pool-owned early recovery checks follow activation; "
+        "an opt-in full PQ route retains second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt"
     )
     return 0
 

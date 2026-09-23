@@ -31,6 +31,60 @@ def test_default_cli_preserves_launch_gate_profile():
     assert args.stage == "a"
     assert args.base_port == 26_000
     assert args.output_root is None
+    assert stage_a.parse_args(["--mode", "pq-launch-gate"]).mode == "pq-launch-gate"
+
+
+def test_pq_followup_requires_the_pq_election_fixture(tmp_path):
+    with pytest.raises(ValueError, match="requires the PQ election fixture"):
+        stage_a.ValidatorElectionRehearsal(
+            run_dir=tmp_path / "no-pq-fixture", base_port=26_000,
+            build_dir=REPO / "build", sample_interval=10,
+            profile=stage_a.PROFILES["a"], pq_full=True,
+        )
+
+
+def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypatch):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pq-round-queries", base_port=26_000,
+        build_dir=REPO / "build", sample_interval=10,
+        profile=stage_a.PROFILES["a"], pq_election=True, pq_full=True,
+    )
+    address = stage_a.Address((-1, bytes([0x11]) * 32))
+    pool_address = stage_a.Address((-1, bytes([0x22]) * 32))
+    rehearsal.wallets = [object()]
+    rehearsal.pools = [SimpleNamespace(address=pool_address)]
+    rehearsal.controllers = [SimpleNamespace(address=address)]
+    calls = []
+
+    async def order(index, election_id, query_id, **kwargs):
+        calls.append(("order", election_id, query_id, kwargs))
+        return stage_a.Cell.empty(), bytes([0x33]) * 32
+
+    async def send(wallet, **kwargs):
+        calls.append(("send", kwargs["label"]))
+
+    async def reply(index, query_id, **kwargs):
+        calls.append(("reply", query_id))
+        return 0xF374484C, 0
+
+    async def method(name, controller_id):
+        return stage_a.EFFECTIVE_STAKE
+
+    async def retry(fn, **kwargs):
+        return await fn()
+
+    monkeypatch.setattr(rehearsal, "authorized_pq_pool_order", order)
+    monkeypatch.setattr(rehearsal, "send_from_wallet", send)
+    monkeypatch.setattr(rehearsal, "wait_pq_pool_elector_reply", reply)
+    monkeypatch.setattr(rehearsal, "runmethod_int", method)
+    monkeypatch.setattr(rehearsal, "retry", retry)
+    for round_number in (1, 2, 3):
+        asyncio.run(rehearsal.submit_pq_candidate(
+            0, 1_700_000_000 + round_number, round_number=round_number,
+        ))
+    assert [call[2] for call in calls if call[0] == "order"] == [1, 1001, 2001]
+    assert [call[1] for call in calls if call[0] == "reply"] == [1, 1001, 2001]
+    assert len({call[1] for call in calls if call[0] == "send"}) == 3
 
 
 def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(

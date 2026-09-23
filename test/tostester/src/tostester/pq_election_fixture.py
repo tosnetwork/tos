@@ -199,10 +199,16 @@ def elector_reply(transactions: list, query_id: int) -> tuple[int, int] | None:
         if not isinstance(message.msg_data, toslib_api.Msg_dataRaw):
             continue
         reply = Cell.one_from_boc(message.msg_data.body).begin_parse()
-        if reply.remaining_bits < 128:
+        if reply.remaining_bits < 96:
             continue
         opcode = reply.load_uint(32)
-        if reply.load_uint(64) == query_id:
+        if reply.load_uint(64) != query_id:
+            continue
+        # A successful mature-stake recovery has only opcode + query_id;
+        # refusals and stake acknowledgements additionally carry a reason.
+        if opcode == 0xF96F7324 and reply.remaining_bits == 0 and reply.remaining_refs == 0:
+            return opcode, 0
+        if reply.remaining_bits >= 32:
             return opcode, reply.load_uint(32)
     return None
 
