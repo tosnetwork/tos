@@ -19,7 +19,7 @@ EXPECTED_CALLS = {
     "scripts/proof-attestation-e2e.py": 1,
     "scripts/capability-registry-e2e.py": 1,
     "scripts/agent-economy-composed-e2e.py": 1,
-    "scripts/validator-election-stage-a.py": 1,
+    "scripts/validator-election-stage-a.py": 2,
     "scripts/dispute-e2e.py": 1,
     "scripts/service-actor-e2e.py": 1,
     "scripts/wc0-token-index-e2e.py": 1,
@@ -39,6 +39,42 @@ def imported_helper(tree: ast.AST) -> bool:
         and any(alias.name == HELPER_NAME and alias.asname is None for alias in node.names)
         for node in ast.walk(tree)
     )
+
+
+def helper_calls_in(node: ast.AST) -> int:
+    return sum(
+        isinstance(child, ast.Call)
+        and isinstance(child.func, ast.Name)
+        and child.func.id == HELPER_NAME
+        for child in ast.walk(node)
+    )
+
+
+def check_election_branches(tree: ast.AST) -> None:
+    """Both launch fixture and legacy network paths must use the shared helper."""
+    execute = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "execute"
+    ]
+    if len(execute) != 1:
+        fail("scripts/validator-election-stage-a.py: execute method is absent or ambiguous")
+    branches = [
+        node for node in ast.walk(execute[0])
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "self.fixture_only or self.pq_election"
+        and node.orelse
+        and any(helper_calls_in(child) for child in node.body + node.orelse)
+    ]
+    if len(branches) != 1:
+        fail("scripts/validator-election-stage-a.py: PQ/legacy validator provisioning split is absent")
+    branch = branches[0]
+    pq_calls = sum(helper_calls_in(child) for child in branch.body)
+    legacy_calls = sum(helper_calls_in(child) for child in branch.orelse)
+    if pq_calls != 1 or legacy_calls != 1:
+        fail(
+            "scripts/validator-election-stage-a.py: each PQ/legacy provisioning branch "
+            f"must call the shared helper once: pq={pq_calls} legacy={legacy_calls}"
+        )
 
 
 def main() -> int:
@@ -67,6 +103,8 @@ def main() -> int:
             failures.append(
                 f"{relative}: has {helper_calls} shared helper calls, expected {expected_count}"
             )
+        if relative == "scripts/validator-election-stage-a.py":
+            check_election_branches(tree)
         failures.extend(
             f"{relative}:{line}: bypasses the shared helper via {name}" for name, line in forbidden
         )
@@ -75,7 +113,8 @@ def main() -> int:
     print(
         "PQ_E2E_INITIAL_VALIDATOR_OK: "
         f"{len(EXPECTED_CALLS)} retained entry points use "
-        f"{sum(EXPECTED_CALLS.values())} shared deterministic PQ validator calls"
+        f"{sum(EXPECTED_CALLS.values())} shared deterministic PQ validator calls; "
+        "the election rehearsal has one call in each PQ and legacy provisioning branch"
     )
     return 0
 
