@@ -494,14 +494,42 @@ returned no-credit `0xfffffffe`. Eight two-of-four samples stayed at height
 3435, then the chain resumed to 3436. This is a co-located diagnostic, not
 release evidence.
 
-The default route is therefore proven, but **T2 overall remains open** under
-the original script-wide Fift-dependency condition: explicit `--mode
-experiment` still calls both classical election Fift tools, signs locally,
-matches ConfigParam 34 by Ed25519 public key and attributes elector recovery
-to validator wallets. PQ stake ownership is the pool, and PQ identity is the
-controller. Removing only the Fift calls would not convert those semantics.
-This route remains in the classical-stake caller inventory and needs a
-separate conversion or an express scope ruling before the script can leave it.
+The default route was therefore proven at `60a299125`, but **T2 overall was
+still open at that checkpoint**: explicit `--mode experiment` still called
+both classical election Fift tools, signed locally, matched ConfigParam 34 by
+Ed25519 public key and attributed elector recovery to validator wallets. PQ
+stake ownership is the pool, and PQ identity is the controller. Removing only
+the Fift calls would not have converted those semantics.
+
+The separate script-wide experiment conversion at exact commit `471e0a027`
+has now completed a live 600-second primary window plus 600-second settlement
+tail. Report:
+`test/integration/.pq-experiment-v4-live/20260923T145843Z/report.json`
+(SHA-256 `d04b4a111d004e5466838f25f85e568bf0dd2c84c5649de5f39402188b2199df`);
+v4 pool-owned allocation evidence SHA-256
+`c8c63932f760dfee3c801be34e8b2fff2eba242f449db7808e9fcbf549a10ac7`.
+The report records `status=pass`, zero failures, identical source commits at
+start and finish, an empty tracked patch, 12 binary snapshots and 48
+generated-contract snapshots. Two elections each accepted four node-authorized
+production pool stakes. **Separately from acceptance**, both activated live
+ConfigParam 34 with four controller IDs paired with their ADNL IDs and
+`total=main=4`. The pairing was independently rederived from the raw
+first/rollover ConfigParam 34 artifacts (SHA-256
+`1d88566aa0784259c94379e32fbe0c2aab2a90d1a3692a840add8d0dc8eb4eae` and
+`2b0878db5beffd71f6623cd5a9a193bd5d8cc87a18167c7e007b5f0db30a38d7`);
+the v4 summary itself lists ADNL IDs, not the pairs. Four matured first-round
+pool credits were recovered. Per pool, the exact credit was
+11,015,493,742,708 nanoTOS against 11,000,998,938,400 nanoTOS of
+elector-observed accepted principal; reward was positive. Four successor
+allocations remain explicitly retained as not-yet-mature settlement rollover.
+The final `outstanding_allocations=0` does not claim those successor stakes
+were recovered. The matured-retained and mixed-credit attribution branches
+have fake-client tests but have **not yet been exercised by a live rollover
+recovery**; a 600+900-second exact-tree run is queued for that boundary.
+The observed 600+600 run discharges the script-wide T2 classical-stake
+dependency and repeats the end-to-end accepted-stake/activated-election proof
+on a co-located diagnostic topology, **not** as release-scale evidence. The
+other classical Fift callers remain a separate T3 retirement task.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or

@@ -1,13 +1,14 @@
 # T2 launch-gate migration map
 
-The no-argument `--mode launch-gate` now runs the complete PQ Stage-A route,
+The no-argument `--mode launch-gate` runs the complete PQ Stage-A route,
 including three elections, pool-owned recovery, restarts and quorum behavior.
-The narrower `pq-election` remains a one-round diagnostic. This is a default
-route conversion, **not** a script-wide classical caller retirement:
-`--mode experiment` still reaches `validator-elect-req.fif` and
-`validator-elect-signed.fif`, signs locally, and attributes stake recovery to
-validator wallets. The `classical-stake-surface` inventory must continue to
-count this script until that distinct route is converted or expressly retired.
+The narrower `pq-election` remains a one-round diagnostic. The original
+default-route conversion did **not** retire the script-wide classical caller:
+`--mode experiment` still used both validator-election Fift tools, signed
+locally, and attributed stake recovery to validator wallets at `60a299125`.
+That distinct route was converted at `471e0a027`; both modes now obtain node
+authorization and use the same production pool stake builder. This does not
+retire the base Fift tools, which have other retained callers.
 
 The shared PQ route is node `createPqStakeAuthorization` ->
 `nominator::new_stake_with_witness` -> validator wallet -> single-nominator
@@ -19,8 +20,9 @@ IDs. Neither a sent message nor `STAKE_ACCEPTED` alone proves election.
 ## Classical stake caller inventory at `8fdc1c044`
 
 This is an exact-file inventory, not the shorthand globs in the open
-correctness entry. The first ten rows are the retained Fift/caller surface
-that prevents deleting the base election tools today. The remaining paths are
+correctness entry. The first nine rows are the retained Fift/caller surface
+that prevents deleting the base election tools today; the tenth is a now-cleared
+caller retained here as migration history. The remaining paths are
 recorded to keep already-converted tosctl callers and intentional legacy
 fixtures from being confused with an unconverted launch path.
 
@@ -35,7 +37,7 @@ fixtures from being confused with an unconverted launch path.
 | `crypto/test/fift/validator-proposal-test.fif` | Calls `validator-elect-req>B`; migrate or explicitly preserve as a self-contained legacy vector before removing the library word. |
 | `crypto/test/fift/validator-proposal-legacy-parity.fif` | Same dependency, with an explicit classical parity vector. |
 | `scripts/nominator-pool-lifecycle-e2e.py` | Still invokes the two base Fift tools for its election route; convert through the admitted controller/pool. |
-| `scripts/validator-election-stage-a.py` | Default `launch-gate`, `pq-election` and `pq-launch-gate` use the node-authorized PQ path. Explicit `experiment` still invokes both base tools and credits/reclaims validator wallets. **Do not remove this caller from T3's count.** |
+| `scripts/validator-election-stage-a.py` | Cleared at `471e0a027`: default, PQ diagnostic and explicit `experiment` all use node authorization and the production pool body. The experiment credits/reclaims pool-owned stake and joins selected controller/ADNL identities, not classical keys or validator wallets. Remove this script from the live Fift-caller count, but retain this row to explain the prior dependency. |
 | `tosctl/src/node-control/elections/src/runner.rs` | Converted: node authorization and pool order; no-pool route refuses. |
 | `tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs` | Converted to a local refusal for its direct wallet-to-elector bid; no classical signature is sent. |
 | `tosctl/src/node-control/commands/src/commands/nodectl/config_wallet_cmd.rs` | Converted: node authorization and pool order. |
@@ -96,11 +98,11 @@ retained rather than silently replaced.
 4. Only after every old assertion has a live PQ counterpart, make the full
    route the default and re-run that default invocation on the committed
    tree. **Done for the default route** at `60a299125`, but the explicit
-   `experiment` route still calls the two classical election Fift tools and
-   signs locally. The original script-wide Fift-dependency condition remains
-   open and requires its own conversion; changing the default alone does not
-   discharge it. The two Fift files themselves remain until **all** retained
-   callers and `test-smartcont.cpp` migrate together under T3.
+   `experiment` route still called the two classical election Fift tools and
+   signed locally at that checkpoint. The original script-wide dependency was
+   discharged separately at `471e0a027`, not by changing the default. The two
+   Fift files themselves remain until **all** other retained callers and
+   `test-smartcont.cpp` migrate together under T3.
 
 The no-argument default run from exact source commit `60a299125` completed
 with report `test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json`
@@ -115,7 +117,35 @@ second-round pool credits matured and were recovered with success opcode
 `0xf96f7324`; a duplicate recovery returned `0xfffffffe`. The two-of-four
 halt kept eight samples at height 3435 and resumed to 3436. These are
 co-located diagnostic results, not release-scale evidence. Overall T2 stays
-open while the experiment-mode classical stake path remains reachable.
+open at that checkpoint while the experiment-mode classical stake path remained
+reachable.
+
+On exact source commit `471e0a027`, the explicit `--mode experiment` live
+diagnostic ran 600 seconds plus a 600-second settlement tail and exited 0.
+Its report is
+`test/integration/.pq-experiment-v4-live/20260923T145843Z/report.json`
+(SHA-256 `d04b4a111d004e5466838f25f85e568bf0dd2c84c5649de5f39402188b2199df`);
+the v4 allocation evidence is in the same directory
+(SHA-256 `c8c63932f760dfee3c801be34e8b2fff2eba242f449db7808e9fcbf549a10ac7`).
+The report records the same source commit at start and finish, an empty tracked
+patch, 12 binary snapshots and 48 generated-contract snapshots. Two elections
+each accepted four node-authorized, production-builder wallet→pool→controller→
+elector stakes. Both activated live ConfigParam 34 with `total=main=4`.
+The original ConfigParam 34 artifacts, not just the v4 summary's ADNL list,
+independently reproduce the four expected controller/ADNL pairs: first-election
+SHA-256 `1d88566aa0784259c94379e32fbe0c2aab2a90d1a3692a840add8d0dc8eb4eae`,
+rollover SHA-256 `2b0878db5beffd71f6623cd5a9a193bd5d8cc87a18167c7e007b5f0db30a38d7`.
+Four matured first-election pool credits were recovered; each was
+11,015,493,742,708 nanoTOS against 11,000,998,938,400 nanoTOS of elector-observed
+accepted principal. The four successor stakes remain explicitly marked as
+not-yet-mature settlement rollover, not misattributed to the first election.
+`outstanding_allocations=0` counts matured and primary obligations, not a claim
+that those successor stakes have already recovered. The matured-retained and
+mixed-credit attribution branches are covered by fake-client tests, not by
+this live run; a 600+900-second exact-tree run is queued to cross the
+successor's unfreeze boundary. The 600+600 observation completes the
+script-wide T2 classical-stake conversion on a co-located diagnostic topology;
+it is **not** release-scale evidence and does not retire other T3 Fift callers.
 
 No step changes election criteria, weakens a negative check, or treats the
 co-located diagnostic run as release-scale measurement.
