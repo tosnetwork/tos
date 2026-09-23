@@ -5,12 +5,12 @@
 //! the tariff, and the refusal of anything that is not already a field element.
 
 use super::{
-    engine::{Engine, storage::fetch_stack},
+    engine::{storage::fetch_stack, Engine},
     gas::gas_state::Gas,
     types::Instruction,
 };
-use crate::stack::{StackItem, integer::IntegerData};
-use chain_block::{Cell, ExceptionCode, Result, Status, fail, poseidon2};
+use crate::stack::{integer::IntegerData, StackItem};
+use chain_block::{fail, poseidon2, Cell, ExceptionCode, Result, Status};
 
 pub(super) const MIN_VERSION: u32 = 17;
 /// Measured against instructions whose price is already fixed, and matching
@@ -110,13 +110,13 @@ fn path_depth(value: &IntegerData) -> Result<usize> {
         fail!(ExceptionCode::RangeCheckError, "Poseidon2 path depth is not a positive integer");
     }
     let bytes = value.as_u256()?;
-    let depth = if bytes[..31].iter().any(|byte| *byte != 0) {
-        usize::MAX
-    } else {
-        usize::from(bytes[31])
-    };
+    let depth =
+        if bytes[..31].iter().any(|byte| *byte != 0) { usize::MAX } else { usize::from(bytes[31]) };
     if depth < 1 || depth > PATH7_MAX_DEPTH {
-        fail!(ExceptionCode::RangeCheckError, "Poseidon2 path depth is outside the permitted range");
+        fail!(
+            ExceptionCode::RangeCheckError,
+            "Poseidon2 path depth is outside the permitted range"
+        );
     }
     Ok(depth)
 }

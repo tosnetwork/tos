@@ -420,9 +420,10 @@ fn a_state_without_a_frontier_is_refused() {
     // The same state with a real store parses, so the refusal below is about
     // the frontier and not about anything else in the cell.
     assert_eq!(
-        probe.exit("p_parse_exit", vec![StackItem::Cell(state(
-            shielded_pool_library::frontier_holder()
-        ))]),
+        probe.exit(
+            "p_parse_exit",
+            vec![StackItem::Cell(state(shielded_pool_library::frontier_holder()))]
+        ),
         0,
         "a state carrying the deployed frontier was refused"
     );

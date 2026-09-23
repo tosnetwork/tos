@@ -492,8 +492,8 @@ fn the_configured_fee_clears_the_price_this_chain_used_to_charge() {
         );
     }
 
-    let size = probe.call("p_body_size", vec![StackItem::cell(body.clone())])
-        .expect("the body's size");
+    let size =
+        probe.call("p_body_size", vec![StackItem::cell(body.clone())]).expect("the body's size");
     assert_eq!(size.len(), 2, "p_body_size returned {} values", size.len());
     let number = |item: &StackItem| -> i128 {
         item.as_integer().expect("an integer").to_string().parse().expect("a number")

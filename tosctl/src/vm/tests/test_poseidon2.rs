@@ -10,11 +10,11 @@
 //! the version it starts at, what it refuses, and what it costs.
 
 use chain_block::{
-    BuilderData, Cell, ExceptionCode, IBitstring,
     poseidon2_kat::{HASH7, PERM8},
     poseidon2_params::MODULUS_BE,
+    BuilderData, Cell, ExceptionCode, IBitstring,
 };
-use tos_vm::stack::{Stack, StackItem, integer::IntegerData};
+use tos_vm::stack::{integer::IntegerData, Stack, StackItem};
 
 mod common;
 use common::*;
@@ -249,7 +249,12 @@ fn path_cells(siblings: &[[[u8; 32]; 6]], short_level: Option<usize>, extra_ref:
 
 /// The same fold, done with HASH7 alone, so the instruction is checked against
 /// the primitive it is made of rather than against itself.
-fn fold_with_hash7(leaf: [u8; 32], domain: [u8; 32], siblings: &[[[u8; 32]; 6]], index: u64) -> [u8; 32] {
+fn fold_with_hash7(
+    leaf: [u8; 32],
+    domain: [u8; 32],
+    siblings: &[[[u8; 32]; 6]],
+    index: u64,
+) -> [u8; 32] {
     let mut carry = leaf;
     let mut remaining = index;
     for six in siblings {
@@ -299,7 +304,13 @@ fn a_path_is_the_same_fold_done_with_hash7() {
         let expected = fold_with_hash7(leaf, domain, &siblings, index);
         test_case("POSEIDON2_PATH7")
             .with_block_version(PATH7_VERSION)
-            .with_stack(path_stack(leaf, domain, path_cells(&siblings, None, false), index, DEPTH as u64))
+            .with_stack(path_stack(
+                leaf,
+                domain,
+                path_cells(&siblings, None, false),
+                index,
+                DEPTH as u64,
+            ))
             .expect_success_extended(Some(&format!("index {index}")))
             .expect_stack_extended(&stack_of(&[expected]), Some(&format!("index {index}")));
     }
@@ -388,7 +399,13 @@ fn a_path_costs_its_base_plus_a_level() {
     let siblings = sample(DEPTH);
     test_case("POSEIDON2_PATH7")
         .with_block_version(PATH7_VERSION)
-        .with_stack(path_stack(small(1), small(2), path_cells(&siblings, None, false), 5, DEPTH as u64))
+        .with_stack(path_stack(
+            small(1),
+            small(2),
+            path_cells(&siblings, None, false),
+            5,
+            DEPTH as u64,
+        ))
         .expect_success()
         .expect_gas_used(PATH7_EXPECTED_GAS);
 }
@@ -399,7 +416,13 @@ fn the_path_instruction_does_not_exist_before_its_version() {
     for version in 0..PATH7_VERSION {
         test_case("POSEIDON2_PATH7")
             .with_block_version(version)
-            .with_stack(path_stack(small(1), small(2), path_cells(&siblings, None, false), 5, DEPTH as u64))
+            .with_stack(path_stack(
+                small(1),
+                small(2),
+                path_cells(&siblings, None, false),
+                5,
+                DEPTH as u64,
+            ))
             .expect_failure_extended(
                 ExceptionCode::InvalidOpcode,
                 Some(&format!("POSEIDON2_PATH7 at version {version}")),
@@ -446,7 +469,11 @@ fn every_malformed_path_is_refused() {
         ExceptionCode::RangeCheckError,
         "a depth past the bound",
     );
-    run(path_stack(small(1), small(2), good(), 5, 0), ExceptionCode::RangeCheckError, "a zero depth");
+    run(
+        path_stack(small(1), small(2), good(), 5, 0),
+        ExceptionCode::RangeCheckError,
+        "a zero depth",
+    );
     // An index with a digit left over after the depth given.
     run(
         path_stack(small(1), small(2), good(), 13_841_287_201, DEPTH as u64),
@@ -455,7 +482,13 @@ fn every_malformed_path_is_refused() {
     );
     // A path shorter than the depth.
     run(
-        path_stack(small(1), small(2), path_cells(&sample(DEPTH - 1), None, false), 5, DEPTH as u64),
+        path_stack(
+            small(1),
+            small(2),
+            path_cells(&sample(DEPTH - 1), None, false),
+            5,
+            DEPTH as u64,
+        ),
         ExceptionCode::CellUnderflow,
         "a path shorter than its depth",
     );

@@ -1033,11 +1033,7 @@ fn the_witness_encoding_is_rejected_unless_it_is_canonical() {
     // A path field at or above the modulus.
     let mut over = witness.clone();
     over.low_path[5] = field_modulus();
-    assert_eq!(
-        case(encode_witness(&over)),
-        RANGE_CHECK,
-        "a non-canonical path field was accepted"
-    );
+    assert_eq!(case(encode_witness(&over)), RANGE_CHECK, "a non-canonical path field was accepted");
 
     // Trailing bits in a path cell, on the first cell and on the last.
     for cell_index in [0usize, PATH_CELLS - 1] {
@@ -1063,11 +1059,7 @@ fn the_witness_encoding_is_rejected_unless_it_is_canonical() {
         encode_path(&witness.append_path),
         WitnessTweak::default(),
     );
-    assert_eq!(
-        case(extra_middle),
-        CELL_UNDERFLOW,
-        "a path cell with two references was accepted"
-    );
+    assert_eq!(case(extra_middle), CELL_UNDERFLOW, "a path cell with two references was accepted");
     let extra_final = encode_witness_parts(
         &witness,
         encode_path_tweaked(
