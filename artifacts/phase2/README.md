@@ -1,8 +1,8 @@
 # Phase-2 ceremony — open participation
 
-**Status: four contributions are signed and verified, one of them from a
-party outside the operator; registration remains open until the announced
-close. Parameters are not finalised and must not be deployed.**
+**Status: five contributions are signed and verified, two of them registered
+as outside the operator; registration remains open until the announced close.
+Parameters are not finalised and must not be deployed.**
 
 `verify-attestations.py` refused this ceremony at its final gate for as long
 as every contribution came from the operator's own side. On 2026-09-23 that
@@ -18,9 +18,22 @@ declared and what the operator accepted, and no tool can do more than that.
 independently, what the participant disclosed against their own interest, and
 what still rests on their word.
 
-Registration stays open. A second independent contribution would widen the
-ground the ceremony stands on, and that is worth more than any number of
-further operator-run ones.
+Registration stays open. Each further contribution from a party the operator
+does not control widens the ground the ceremony stands on, and that is worth
+more than any number of further operator-run ones.
+
+Read the acceptance records rather than the count. Contribution 4 is what
+closed the gate and does so on its own; contribution 5's acceptance record
+sets out both the participant's declaration and what the operator observed
+about the machine it ran on, so that a reader can weigh the entry themselves
+instead of reading `true` off a register.
+
+[Contribution 5, from onemailweb3-design](CONTRIBUTION-5.md), and the
+[operator's acceptance record](ACCEPTANCE-5.md);
+[download the participant's bundle](https://github.com/onemailweb3-design/tos/releases/tag/shielded-pool-phase2-contribution-5-onemailweb3-design);
+submitted as [PR #116](https://github.com/tosnetwork/tos/pull/116). Its first
+four contributions were byte-identical to this chain and the mathematics
+audits five.
 
 [Contribution 4, from BmswapProtocol](CONTRIBUTION-4.md), and the
 [operator's acceptance record](ACCEPTANCE-4.md);
