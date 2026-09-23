@@ -85,8 +85,9 @@ open, RELEASE mode refuses it by name.
 
 The second open question records an execution-coverage gap uncovered while
 moving the wallet regression to the PQ path. The retained inventory is 15
-entry-point files containing 16 initial-validator call sites (DNS owns two
-independent networks). A direct two-validator reproduction showed the manager
+entry-point files containing 17 static initial-validator helper calls (DNS
+owns two independent networks; Stage A has two mutually exclusive provisioning
+branches). A direct two-validator reproduction showed the manager
 refusing their former classical descriptors, disabling validation and
 reporting `Validating 0 groups`; the chain never reached masterchain seqno 1.
 At discovery, `build-tos-linux-x86-64-shared.yml` ran only on pushes to main
@@ -217,7 +218,8 @@ the later classical-descriptor refusal at `075122183` on 2026-09-20 hid it by
 stopping old E2E scripts before their config contract could run.
 
 All fifteen retained entry points were rerun from the clean `7533ab5d9`
-fixture-repair commit (DNS owns two networks, for sixteen helper calls).
+fixture-repair commit (DNS owns two networks and Stage A has two mutually
+exclusive provisioning branches, for seventeen static helper calls).
 **Counts: eight routes pass; seven fail at named boundaries. Four failing
 routes are pre-existing on `main`; three failing routes remain on the PQ
 branch, all under one remaining theme: operator tooling still using classical
@@ -249,8 +251,9 @@ is attributed to a route.
 | `scripts/dns-e2e.py` | FAIL | proposal **registered**; ConfigParam 4 did not appear after the validator vote, so resolution after activation failed | **Moved:** registration fixed; PQ vote/activation boundary survives |
 | `scripts/nominator-pool-lifecycle-e2e.py` | FAIL | validator wallets funded, pool obligations passed and election opened; local refusal names missing PQ Validator Controller, pool-owned authorization and ConfigParam 47 admission | **Moved:** old “wallet 0 unfunded” boundary was a bricked-contract fixture artifact; PQ pool-stake boundary survives |
 
-The old nominator “validator wallet 0 unfunded” boundary was an artifact of
-the bricked harness config contract, not the route's current state. The clean
+The table above is the historical `7533ab5d9` baseline, not a current-head
+result. The old nominator “validator wallet 0 unfunded” boundary was an
+artifact of the bricked harness config contract, not the route's current state. The clean
 pool rerun exited through its explicit PQ-controller refusal; its report is
 diagnostic and does not claim the seventeen later lifecycle checks were run.
 DNS registration likewise now works, refuting the earlier proposal-hash
@@ -258,11 +261,11 @@ hypothesis, but the validator-vote/activation boundary remains open. The old
 observation that DNS advanced while the pool network crawled did not prove
 independent root causes: both networks used the same invalid config data.
 The four failures also seen on `main` remain classified as pre-existing; the
-three remaining PQ-side failing rows are DNS activation and the two staking
-routes, whose distinct stopping points are stated rather than merged. DNS's
-script still signs a classical config vote with an Ed25519 validator key at
-`scripts/dns-e2e.py:441`; the node's `createProposalVote` already produces the
-complete PQ vote body. This vote-tooling gap is registered separately from
+three PQ-side failing rows at this baseline were DNS activation and the two
+staking routes, whose distinct stopping points are stated rather than merged.
+At that commit DNS still signed a classical config vote with an Ed25519
+validator key at `scripts/dns-e2e.py:441`; the node's `createProposalVote`
+already produced the complete PQ vote body. This vote-tooling gap is registered separately from
 the stake producers, though both belong to the same operator-tooling theme.
 
 The earlier DNS poll sampled masterchain height every two seconds: height 24
@@ -621,11 +624,37 @@ shard branch shared by every non-masterchain workchain.
 
 The DNS governance E2E now asks the validator node for a complete PQ proposal
 vote body instead of signing the classical, set-unbound preimage in Python.
-Its ConfigParam 4 activation and post-activation DNS resolution checks pass
-on the final tree. This diagnostic fixture explicitly uses global version 16
-to exercise the PQ vote instruction; production Genesis remains at version 14
+The script retains assertions that ConfigParam 4 activates and DNS resolution
+works afterward. Commit `6a219ff85` reports a full passing diagnostic run,
+but the preserved `test/integration/.dns-e2e-proof-pass-20260923/` directory
+contains the governance node database and lite-client configuration, not a
+captured assertion result or machine-readable report tied to that source
+commit. Thus the conversion is source-verified, while the original live-effect
+closure condition remains independently unverified and the correctness item
+stays OPEN. This diagnostic fixture explicitly uses global version 16 to
+exercise the PQ vote instruction; production Genesis remains at version 14
 pending coordinated activation. A source guard pins node-origin vote assembly
 and the absence of the classical config-vote tag under `scripts/`.
+
+P0-3 re-audit at `62cc76139`: the retained entrypoint count is **15**, with
+**17 static shared-helper calls**, not the earlier 16. The `7533ab5d9`
+matrix above measured 8 PASS and 7 FAIL (4 also failed on `main`, 3 PQ-side)
+at that tree only. Later evidence is from different source trees and must not
+be added to those counts as a current-head 15-route pass:
+
+| Route | Later evidence | Remaining boundary |
+|---|---|---|
+| Stage A | Preserved default three-election report `test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json`, SHA-256 `a5f8491276fa2718e1898fdd2d8bbd533edba3cfb56c114fc920bf142eb871cf`, pins source commit `60a299125f877b9b18350324c764fe789e134e24` and records no failures | T2 script scope passed there; it does not rerun all other entrypoints or close T3 |
+| DNS governance | Node `createProposalVote` conversion at `6a219ff85`; passing full run reported, but no saved effect assertion result was found in the retained run directory | Live-effect closure evidence remains unverified; production Genesis is v14, whereas this diagnostic uses v16 |
+| Multi-nominator lifecycle | Preserved T3 report `test/integration/.pq-nominator-pool-t3/20260923T194602Z/report.json`, SHA-256 `cd0d167de01c24545fc2038426859062d66105618bc24849ba3475b5ad07fb58` | Timed out after 180 seconds waiting for Elector stake acceptance; 17 later checks not executed |
+
+The exact source inventory guard confirms all 15 retained entrypoints use the
+shared deterministic PQ initial-validator helper. The every-push
+`branch-chain-python.yml` job boots only the four-validator wallet/transfer
+regression, not each retained route. `tosctl-service.yml` still conditions its
+real-chain-explorer job on `workflow_dispatch`; therefore the TOSCAN consumer
+of `localnet-jsonrpc.py` is not an every-push branch check. Both P0-3
+correctness questions remain OPEN under their original closure conditions.
 
 Rust `BlockSignaturesSimplexPq` now names its check as structural signer
 membership and declared weight, and `construct_from_pq_boc` states that it
