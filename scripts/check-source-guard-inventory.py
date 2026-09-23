@@ -41,6 +41,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "pq-launch-cap-mutations",
         "pq-launch-cap-source",
         "quic-ctest-isolation-source",
+        "simplex-exact-ancestor-source-guard",
         "test-quorum-static-grep",
         "tosctl-pq-stake-builder-source",
         "validator-id-key-hash-source",

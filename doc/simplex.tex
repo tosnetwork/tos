@@ -164,7 +164,7 @@ The skip stage provides {\em liveness} when the leader fails. If a validator doe
 \item When skip votes accumulate to $W_{\text{thresh}}$, a {\em skip certificate\/} $\SkipCert$ is formed.
 \end{enumerate}
 
-The skip certificate proves that at least $2/3+1$ of validator weight has agreed that this slot should be empty. The protocol then advances to the next slot.
+The skip certificate proves that at least $2/3+1$ of validator weight has agreed to advance beyond this slot. It does not prove that no candidate for the slot exists: a notarization certificate may also exist before finality. The protocol then advances to the next slot.
 
 \nxsubpoint\emb{Timeout mechanism}
 The timeout for producing a skip vote is managed by {\tt ConsensusImpl}:
