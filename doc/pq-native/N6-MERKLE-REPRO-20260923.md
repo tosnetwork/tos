@@ -2,6 +2,36 @@
 
 Status: **component mechanism reproduced; historical actor ordering remains unproved**.
 
+## Post-fix validation on `00ded9cf6`
+
+The exact-ancestor production change is `bc379ec2c`; the tested branch head
+`00ded9cf6` also contains the later source-guard and evidence corrections.
+A full Release build completed with `TOS_WERROR_BUILD=OFF`. The separate
+warning-as-error build stopped in unchanged Merkle scope at
+`adnl/adnl-query.cpp:31,36`: an earlier ADNL logging change (`9c1353d4a`)
+converts a floating-point expression to `bool` under Clang's
+`-Wfloat-conversion`. This is a build-policy failure, not a Merkle runtime
+result. The ordinary Release build log is retained at
+`/home/tomi/tos-carrier/merkle-repro-artifacts/exact-ancestor-e238f31f3/release-full-build-no-werror-00ded.log`
+(SHA-256 `baf43a4e6243cb26f9513e22898ea3614dbba0fbe4744baf6bc59158535e3a77`).
+
+The Release `ctest -j48 --output-on-failure --timeout 600` run then passed all
+206 enabled tests in 395.00 seconds, with eight tests disabled by CTest. This
+includes the PQ e2e-100, state-resolver catch-up, empty-chain restart,
+finality fault tests, exact-parent height control and exact-ancestor source
+guard. `test-db` consumed 393.92 seconds and passed. The complete log is
+`/home/tomi/tos-carrier/merkle-repro-artifacts/exact-ancestor-e238f31f3/release-suite-j48-00ded.log`
+(SHA-256 `bf37928fa47f81a0b854a0ec254c46e37f360a679f7d0089418bfce194b42250`).
+The source-guard inventory independently reports 35/35 registered guards.
+
+Earlier on the exact production tree `e238f31f3`, 20 serial e2e-100 runs
+passed. Their retained log is
+`/home/tomi/tos-carrier/merkle-repro-artifacts/exact-ancestor-e238f31f3/e2e100-repeat20.log`
+(SHA-256 `e3a8defcc4f0176ec7447f67c0d8f04aef55b0aa54f08bba69db246d18dcc622`).
+These post-fix runs increase regression confidence but do not exercise the
+controlled actor ordering described below. They neither prove the historical
+root cause nor satisfy its deterministic old-RED/new-GREEN closure gate.
+
 ## Evidence versions
 
 The component RED/GREEN logs below belong to the **pre-fix** `bb3cdc788`
