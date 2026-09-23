@@ -391,8 +391,10 @@ fn the_fee_must_cover_the_message_and_not_the_recovery() {
         )
     };
 
-    // The fee on the wire is not the fee the configuration fixed.
-    assert_eq!(solvent(50_000_000, 50_000_001), Err(242), "a fee the config did not fix passed");
+    // The fee on the wire is not the fee the configuration fixed. The pair is
+    // synthetic and only has to differ; what it checks is that the contract
+    // compares them rather than trusting the wire.
+    assert_eq!(solvent(20_000_000, 20_000_001), Err(242), "a fee the config did not fix passed");
 
     // The smallest fee that covers the message, found rather than assumed: the
     // fee one nanotos below it must fail, which is what makes it the boundary
@@ -523,7 +525,7 @@ fn the_configured_fee_clears_the_price_this_chain_used_to_charge() {
     );
 
     let restoration = at(BEFORE_ALIGNMENT);
-    let configured: i128 = 50_000_000;
+    let configured = shielded_pool_library::configured_withdrawal_fee();
     eprintln!(
         "the payout body is {bits} bits in {cells} cells; it forwards for {live} today and \
          would for {restoration} at the prices this chain charged before {}",

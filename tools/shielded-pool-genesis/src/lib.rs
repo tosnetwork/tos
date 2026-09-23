@@ -429,11 +429,30 @@ pub const RESERVE_FLOOR: u128 = 50_000_000_000;
 ///      5,313,601   0.0053     6.0x                      1.00x   at the cliff
 /// ```
 ///
-/// The profile still makes the mainnet fee an activation decision, and
-/// activation is when the price policy will be known.
+/// **Weighed again and kept on 2026-09-23**, against the floor measured rather
+/// than recalled: `payout_forward_fee` of a real payout body is 885,601
+/// nanotos, and the contract's figure and what the action phase charged agree
+/// to the nanoton. The profile still frames the mainnet fee as an activation
+/// decision, which it remains for any other deployment; this one has chosen.
 pub const WITHDRAWAL_FEE: u128 = 20_000_000;
 
 /// Section 12.1's immutable list, sorted and positive.
+///
+/// **Weighed again and kept on 2026-09-23.** Powers of ten across four rungs
+/// is the shape the most-studied production pool settled on, which is the
+/// strongest argument for it, and the alternatives were priced rather than
+/// argued: the contract walks this list, so each extra rung costs about 432
+/// gas, and section 14.1's ceiling rounds to ten thousand -- **the gas cost
+/// does not reach a ceiling step even at the sixteen-rung maximum**, so
+/// length is not what constrains the choice.
+///
+/// What constrains it is that a coarse ladder forces many transactions, and a
+/// long series of them is itself a leak: moving 3,456 TOS takes 18 exits here
+/// against 7 on a 1/2/5 ladder, because an exit's `public_amount_out` must
+/// *be* a rung and consolidating inside the pool does not change that. The
+/// counterweight is that fewer rungs mean a larger set on each. Which way
+/// that trade falls depends on what a TOS is worth and on the sizes people
+/// actually move, neither of which this repository knows.
 pub const DENOMINATIONS: [u128; 4] =
     [1_000_000_000, 10_000_000_000, 100_000_000_000, 1_000_000_000_000];
 

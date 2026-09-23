@@ -8,6 +8,25 @@
 
 use std::path::PathBuf;
 
+/// The deployment's configured withdrawal fee, read out of the generated
+/// manifest.
+///
+/// A copy here is a number that reports headroom for a fee nobody deploys.
+/// This file carried 50,000,000 for a day after the fee was re-derived to
+/// 20,000,000, and printed a multiple of the wrong one.
+pub fn configured_withdrawal_fee() -> i128 {
+    let path = PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../doc/shielded-pool/genesis-manifest.json"
+    ));
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let needle = "\"withdrawal_fee\": \"";
+    let start = text.find(needle).expect("the manifest names a withdrawal fee") + needle.len();
+    let end = start + text[start..].find('"').expect("the fee is quoted");
+    text[start..end].parse().expect("the fee is a number")
+}
+
 /// The directory the pool's sources live in.
 fn smartcont() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont")

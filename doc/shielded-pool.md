@@ -133,6 +133,45 @@ named `build` — the `build-clang21` that `BUILD.md` suggests is not found.
   deployment must carry **at least the floor** or the pool is unbacked from its
   first block and refuses everything.
 
+**The three deployment parameters, decided**
+
+- Section 20 of the profile leaves three numbers to the deployment: the
+  denomination list, the reserve floor and the withdrawal fee. All three are in
+  the genesis config, which is in the state, which is half the address, so they
+  were weighed together on 2026-09-23 and settled in one pass.
+
+  | | value | what decided it |
+  |---|---|---|
+  | `reserve_floor` | **50 TOS** (was 5) | 19 years of storage rent at the steady state, derived above |
+  | `withdrawal_fee` | **20,000,000** (kept) | 22.6x the measured payout forward fee of 885,601 |
+  | denominations | **1 / 10 / 100 / 1000 TOS** (kept) | the shape the most-studied production pool settled on |
+
+  Only the floor moved, so the address moved once and is where the floor left
+  it.
+
+  The fee's floor is measured, not recalled: `payout_forward_fee` of a real
+  payout body is **885,601 nanotos**, and the contract's own figure and what
+  the action phase charged agree to the nanoton. At the prices this chain ran
+  before its cut the same body would forward for six times that, which is where
+  the 3.76x in the fee's own comment comes from. The fee is not revenue -- with
+  no admin and no upgrade path the surplus can never be paid to anyone, though
+  it does sit in the balance and so pays the rent.
+
+  `shielded_payout_sandbox.rs` reported that headroom against **50,000,000**
+  for a day after the fee became 20,000,000, because it kept its own copy. It
+  reads the generated manifest now.
+
+  For the denominations the gas was priced rather than assumed: the contract
+  walks the list, each extra rung costs about 432 gas, and section 14.1's
+  ceiling rounds to ten thousand -- **the sixteen-rung maximum would not reach
+  a ceiling step**. Length is not the constraint. The constraint is that a
+  coarse ladder forces many exits and a long series of them is itself a leak:
+  3,456 TOS takes 18 exits on this ladder against 7 on a 1/2/5 one, because an
+  exit's `public_amount_out` must *be* a rung and consolidating inside the pool
+  does not change that. Against it, fewer rungs mean a larger set on each.
+  That trade turns on what a TOS is worth and what sizes people move, which is
+  not something this repository can measure.
+
 **The Poseidon2 instructions**
 
 - `POSEIDON2_PERM8` (`0xF93200`) and `POSEIDON2_HASH7` (`0xF93201`), implemented
