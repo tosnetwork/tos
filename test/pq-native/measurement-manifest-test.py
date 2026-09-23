@@ -198,6 +198,14 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                 "schema_version": 1,
                 "required_question_ids": list(module.REQUIRED_CORRECTNESS_QUESTION_IDS),
                 "questions": {
+                    "classical-config-vote-tooling-incompatible-with-pq-contract": {
+                        "observation": "fixture classical config vote observation",
+                        "observed_commit": "7533ab5d9",
+                        "location": "fixture-vote.py:1",
+                        "closure_condition": "fixture PQ config vote closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "444444444",
+                    },
                     "classical-e2e-fixtures-incompatible-with-pq-consensus": {
                         "observation": "fixture classical E2E observation",
                         "observed_commit": "0d9452838",
@@ -337,6 +345,7 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
         except module.ManifestError as exc:
             expected = (
                 "release-grade measurement refuses open correctness questions: "
+                "classical-config-vote-tooling-incompatible-with-pq-contract, "
                 "classical-e2e-fixtures-incompatible-with-pq-consensus, "
                 "classical-stake-producers-incompatible-with-pq-elector, "
                 "merkle-base-state-mismatch"

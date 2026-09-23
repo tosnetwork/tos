@@ -23,6 +23,7 @@ from typing import Any
 SCHEMA_VERSION = 1
 REQUIRED_CORRECTNESS_QUESTION_IDS = (
     "classical-e2e-fixtures-incompatible-with-pq-consensus",
+    "classical-config-vote-tooling-incompatible-with-pq-contract",
     "classical-stake-producers-incompatible-with-pq-elector",
     "merkle-base-state-mismatch",
 )

@@ -220,8 +220,9 @@ All fifteen retained entry points were rerun from the clean `7533ab5d9`
 fixture-repair commit (DNS owns two networks, for sixteen helper calls).
 **Counts: eight routes pass; seven fail at named boundaries. Four failing
 routes are pre-existing on `main`; three failing routes remain on the PQ
-branch, representing two distinct PQ workstreams (DNS activation and staking).**
-The two staking routes stop at different points and are not interchangeable.
+branch, all under one remaining theme: operator tooling still using classical
+validator authority after the node and contracts moved to PQ.** The three
+routes have distinct stopping points and are not interchangeable.
 The first pass used an obsolete local build-directory default for several
 scripts; those routes were rerun with `TOS_BUILD_DIR` pointing to the freshly
 built tree and the setup failures are not counted. A concurrent disk-full
@@ -258,7 +259,11 @@ observation that DNS advanced while the pool network crawled did not prove
 independent root causes: both networks used the same invalid config data.
 The four failures also seen on `main` remain classified as pre-existing; the
 three remaining PQ-side failing rows are DNS activation and the two staking
-routes, whose distinct stopping points are stated rather than merged.
+routes, whose distinct stopping points are stated rather than merged. DNS's
+script still signs a classical config vote with an Ed25519 validator key at
+`scripts/dns-e2e.py:441`; the node's `createProposalVote` already produces the
+complete PQ vote body. This vote-tooling gap is registered separately from
+the stake producers, though both belong to the same operator-tooling theme.
 
 The earlier DNS poll sampled masterchain height every two seconds: height 24
 at its start and 244 at 88.259 seconds, with every sample advancing by five

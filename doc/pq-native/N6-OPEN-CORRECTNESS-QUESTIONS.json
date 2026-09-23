@@ -2,10 +2,18 @@
   "schema_version": 1,
   "required_question_ids": [
     "classical-e2e-fixtures-incompatible-with-pq-consensus",
+    "classical-config-vote-tooling-incompatible-with-pq-contract",
     "classical-stake-producers-incompatible-with-pq-elector",
     "merkle-base-state-mismatch"
   ],
   "questions": {
+    "classical-config-vote-tooling-incompatible-with-pq-contract": {
+      "closure_condition": "Replace dns-e2e.py's local Ed25519 config-vote signing and hand-built vote cell with engine.validator.createProposalVote from the validating node; prove the returned complete PQ vote body is submitted, ConfigParam 4 activates, and DNS resolution succeeds on the live PQ chain. The script must not hold or sign with a validator authority key.",
+      "location": "scripts/dns-e2e.py:441; validator-engine/validator-engine.cpp:1076",
+      "observation": "After the config-genesis fixture repair, DNS proposal registration succeeds but ConfigParam 4 does not activate following the script's validator vote. The script still signs the classical 0x566F7445 preimage locally with validator_key.key.sign and constructs a classical 0x566F7465 body. The node already exposes engine.validator.createProposalVote, which signs the PQ config_vote_preimage with the custodied ML-DSA authority and returns the serialized config_vote_body. This is the governance-vote counterpart to the classical stake tooling still awaiting conversion; the node and contract have converted, the operator script has not.",
+      "observed_commit": "7533ab5d9",
+      "status": "OPEN"
+    },
     "classical-e2e-fixtures-incompatible-with-pq-consensus": {
       "closure_condition": "Inventory the 15 affected E2E entry points (16 initial-validator call sites) as retained or retired. Every retained path must obtain deterministic PQ initial validators from one shared helper, boot a real PQ chain in branch CI, and exercise its advertised route; this includes localnet-jsonrpc.py and its TOSCAN consumer. Retired paths must be removed from release claims and entry-point inventories rather than left executable but dead.",
       "location": "test/integration/test_simplex2_release.py and 14 scripts under scripts/",
