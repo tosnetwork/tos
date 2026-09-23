@@ -1,0 +1,27 @@
+{
+  "purpose": "Privacy-only Git metadata and review-path sanitization; no new ceremony contribution.",
+  "scope": "The 16 commits after the review baseline through the first contribution publication receipt. Earlier repository history is outside this cleanup.",
+  "baseline_commit": "16f8d9aef6dc53a116d249dd244c076c08350f3c",
+  "commits": {
+    "0fb5a36c1325901a4815a3134f69ba2e822f4a80": "2d248524eb77953e4723e76e75165d6afcaf1a7c",
+    "7ec052e0035f1cac7f2ad0ffd16f5d1d2d1e2933": "08c2a548cfd8f91604e634933fdbdfc5e59db559",
+    "7ed85e8dc07ae5d57c62b56168df331b96c922a2": "704f4e5bd663a7026dbd97c93991f77fbe138069",
+    "9fedc658edaaaeb53f7063929ac7132b03b47222": "898d27483fd11b89889e6f948f04019abdd38a7e",
+    "ac914f02b02227b87405d6a83ec7db2226a518ca": "be77c8521fd760c5842dabbd25d8fad54f726e91",
+    "9666dde8505bd01a22b1a07be6048136f5a6399b": "4e3efad3d3b1f9ed0240e7b6d2d29f540da48902",
+    "cca64b7a2d01f91c502f27fff2a8d925d4a0b32f": "e5632c39ac27514de34ebcd489721c0a1a8dee9b",
+    "eb29e119f7f6ee19e74f9171dffcf17947a231a5": "e10dab647b77962018a6f40d5a9834161b921a3b",
+    "b985162ed213b91dc044417b7b259a573219766d": "59218b0b3af9380c1455cef39f74b6a6aea45476",
+    "f5a45898fa810f1bea5bbcaf4f0803be0b2bfb4b": "459ece45d15f956dcd48911bfd403389ac78c1f7",
+    "49ef58c0ab98f62b76ae3c61a510980dae131235": "f7f141589a788c8aa06bee32d7799c25cbfab356",
+    "f5f35988203002eed591925f306282c6f7d07cbf": "6cbb247a3c5a76ef1626efd8f97ca698cd4f5aef",
+    "3a8197df5beba8ed01ba3a27426730335c0dd472": "9e9dea254270ff8b48a82975f69592e54ba2a9fd",
+    "81a893e25051890f0ccd7171daaaf5250b96f4f4": "857a892cd5a7a1149331380391b780b64bc4293f",
+    "0ed59239c6a21205cc50135c98a5dfbcffe7b2d2": "2afff9a3324fc94a4a42a087451c1e90b6510bb8",
+    "13eaa3a0fc687eb49049fc4695ab26224111ca7d": "1022a126b3781d7deb02c42496b9eead577b1476"
+  },
+  "content_changes": "Only two review documents had local filesystem paths replaced. All other file payloads, including the announcement, register, signed attestation, cryptographic sources and ceremony binaries, are unchanged in each mapped commit.",
+  "signature_policy": "The original contribution attestation remains unchanged. Its original code and register revision identifiers resolve through this separately signed mapping.",
+  "archive_cleanup": "The contribution archive was repacked with normalized owner and timestamps and without extended attributes. Every one of its 16 file payloads is unchanged.",
+  "clean_archive_sha256": "1af43216e0231c36c94eb8bc037a68ec1218a7ab7568b49ea54dd491f51d981b"
+}

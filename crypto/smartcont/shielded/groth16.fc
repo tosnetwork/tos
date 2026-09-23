@@ -1,0 +1,120 @@
+;; On-chain Groth16 verification over BLS12-381, sections 10.1 and 17 of the V1
+;; implementation profile.
+;;
+;; The verifying key lives in persistent state as the canonical 1248-byte chain
+;; and is read from there, not from a second copy compiled into this code. The
+;; points are the blst/IETF compressed encoding ruled in A1, which is exactly
+;; what this chain's own BLS instructions consume, so nothing here converts
+;; anything: the bytes the prover emitted are the bytes the pairing reads.
+;;
+;; Exit codes 260-279.
+;;   260 the verifying-key chain ended before the key did
+;;   261 a verifying-key chain cell is not the canonical shape
+;;   262 the proof did not verify
+;;
+;; Requires transact.fc for the public-input accessors.
+
+slice bls_g1_add(slice a, slice b) asm "BLS_G1_ADD";
+slice bls_g1_neg(slice a) asm "BLS_G1_NEG";
+
+;; Eighteen pairs of (point, scalar), flattened onto the stack. The tuple form
+;; is the only way to hand thirty-six operands to one instruction, and the
+;; multiexponentiation costs a fraction of eighteen separate multiplications.
+slice bls_g1_multiexp_18(tuple pairs)
+  asm "36 PUSHINT UNTUPLEVAR 18 PUSHINT BLS_G1_MULTIEXP";
+
+int bls_pairing_4(slice a1, slice b1, slice a2, slice b2,
+                  slice a3, slice b3, slice a4, slice b4)
+  asm "4 PUSHINT BLS_PAIRING";
+
+int g1_bytes() asm "48 PUSHINT";
+int g2_bytes() asm "96 PUSHINT";
+int ic_count() asm "19 PUSHINT";
+int vk_chain_chunk_bytes() asm "127 PUSHINT";
+
+;; --- reading points out of the canonical chain ------------------------------
+;;
+;; A point is 48 or 96 bytes and the chain's cells are 127, so points straddle
+;; cell boundaries and have to be stitched. The alternative -- storing the key
+;; in a layout that happens to align -- would be a second encoding of a value
+;; whose bytes are already frozen.
+
+(slice, cell) vk_chain_open(cell node) impure inline {
+  throw_if(260, cell_null?(node));
+  slice s = node.begin_parse();
+  throw_unless(261, (s.slice_bits() % 8) == 0);
+  cell next = null();
+  if (s.slice_refs() == 1) {
+    next = s~load_ref();
+  } else {
+    throw_unless(261, s.slice_refs() == 0);
+  }
+  return (s, next);
+}
+
+;; Takes `bytes` bytes from the cursor, following references as needed, and
+;; returns them as one slice together with the advanced cursor.
+(slice, slice, cell) vk_take(slice cursor, cell next, int bytes) impure {
+  builder acc = begin_cell();
+  int remaining = bytes * 8;
+  while (remaining > 0) {
+    if (cursor.slice_bits() == 0) {
+      (cursor, next) = vk_chain_open(next);
+    }
+    int take = min(remaining, cursor.slice_bits());
+    acc = acc.store_slice(cursor~load_bits(take));
+    remaining = remaining - take;
+  }
+  return (acc.end_cell().begin_parse(), cursor, next);
+}
+
+;; Section 10.1's order: alpha, beta, gamma, delta, then IC[0..18].
+(slice, slice, slice, slice, tuple) vk_points(cell vk_store) impure {
+  (slice cursor, cell next) = vk_chain_open(vk_store);
+  (slice alpha, cursor, next) = vk_take(cursor, next, g1_bytes());
+  (slice beta, cursor, next) = vk_take(cursor, next, g2_bytes());
+  (slice gamma, cursor, next) = vk_take(cursor, next, g2_bytes());
+  (slice delta, cursor, next) = vk_take(cursor, next, g2_bytes());
+  tuple ic = empty_tuple();
+  int index = 0;
+  while (index < ic_count()) {
+    (slice point, cursor, next) = vk_take(cursor, next, g1_bytes());
+    ic = ic.tpush(point);
+    index = index + 1;
+  }
+  ;; The chain holds the key and nothing after it.
+  throw_unless(261, (cursor.slice_bits() == 0) & cell_null?(next));
+  return (alpha, beta, gamma, delta, ic);
+}
+
+slice vk_ic_at(tuple ic, int index) asm "INDEXVAR";
+
+;; --- the equation -----------------------------------------------------------
+
+;; vk_x = IC[0] + sum(input_i * IC[i+1]).
+slice groth16_vk_x(tuple ic, tuple inputs) impure {
+  tuple pairs = empty_tuple();
+  int index = 0;
+  while (index < public_input_count()) {
+    pairs = pairs.tpush(vk_ic_at(ic, index + 1));
+    pairs = pairs.tpush(public_input_at(inputs, index));
+    index = index + 1;
+  }
+  return bls_g1_add(vk_ic_at(ic, 0), bls_g1_multiexp_18(pairs));
+}
+
+;; e(-A, B) * e(alpha, beta) * e(vk_x, gamma) * e(C, delta) == 1.
+;;
+;; This is the form measured against a real prover rather than recalled: the
+;; circuit tool's fixture records which sign and order patterns hold and which
+;; do not, and this is one of the two that do.
+() groth16_require_valid(cell vk_store, slice proof_a, slice proof_b, slice proof_c,
+                         tuple inputs) impure {
+  (slice alpha, slice beta, slice gamma, slice delta, tuple ic) = vk_points(vk_store);
+  slice vk_x = groth16_vk_x(ic, inputs);
+  throw_unless(262,
+    bls_pairing_4(bls_g1_neg(proof_a), proof_b,
+                  alpha, beta,
+                  vk_x, gamma,
+                  proof_c, delta));
+}

@@ -1,0 +1,38 @@
+;; The 1233-byte output-data payload, section 3 of the V1 implementation
+;; profile.
+;;
+;; The contract hashes the actual bytes. A sender-supplied digest would let the
+;; payload the wallet can decrypt differ from the one the proof committed to,
+;; which is the whole point of hashing it here.
+;;
+;; Exit codes: none of its own. The chain shape is enforced by auth.fc's
+;; canonical byte-chain reader, which reports 130-135, because a payload chain
+;; and an ML-DSA operand chain are the same kind of object and there is no
+;; reason for them to disagree about what canonical means.
+;;
+;; Requires auth.fc and notes.fc.
+
+;; Section 13.3: nine full cells and a ninety-byte tail.
+int output_data_bytes() asm "1233 PUSHINT";
+int output_data_tail_bytes() asm "90 PUSHINT";
+
+int sha256_of_eleven(slice s0, slice s1, slice s2, slice s3, slice s4, slice s5,
+                     slice s6, slice s7, slice s8, slice s9, slice s10)
+  asm "11 PUSHINT HASHEXT_SHA256";
+
+int output_data_hash(cell output_data) impure {
+  int full = pq_chain_chunk_bytes();
+  (slice c0, cell rest) = pq_chain_chunk(output_data, full, 1);
+  (slice c1, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c2, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c3, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c4, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c5, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c6, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c7, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c8, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c9, rest) = pq_chain_chunk(rest, output_data_tail_bytes(), 0);
+  return reduce_to_field(
+    sha256_of_eleven("TOS-SHIELDED-OUTPUT-DATA-v1",
+                     c0, c1, c2, c3, c4, c5, c6, c7, c8, c9));
+}

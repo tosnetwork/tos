@@ -1,0 +1,13 @@
+{
+  "observed_at": "2026-09-23T06:51:06.028922+00:00",
+  "witnesses": {
+    "blockstream.info": {
+      "height": 968233,
+      "hash": "000000000000000000002eeafd3d765e87a9cc62ea0da9dbecba9e5a1c5101d1"
+    },
+    "mempool.space": {
+      "height": 968233,
+      "hash": "000000000000000000002eeafd3d765e87a9cc62ea0da9dbecba9e5a1c5101d1"
+    }
+  }
+}

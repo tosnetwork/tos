@@ -1,0 +1,23 @@
+=== verify-attestations.py at 0fbd5907d, which includes the identity-evidence report ===
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+  3  signed by tosdev3 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+
+3 contribution(s), 3 verified against the roster
+
+NO PUBLIC IDENTITY EVIDENCE for: tosdev2, tosdev3. The register carries no published_at for these keys, so a reader cannot trace the signature to anyone who can be asked afterwards, and being able to ask is the whole of what an attestation is worth. Their signatures still verify: what is missing is the person, not the cryptography.
+
+NOT YET SATISFIED: no verified contribution comes from a participant declared independent of the operator. The security argument is that one participant destroyed a scalar without the others being able to compel or observe them; with every contribution inside one party's control that reduces to 'trust us', which is what the ceremony existed to avoid.
+Reported rather than refused because --in-progress was passed. This is expected while the ceremony is still open, and it must be satisfied before the ceremony closes -- the final check is run without that flag.
+
+=== final gate, no --in-progress ===
+
+REFUSED: no verified contribution comes from a participant declared independent of the operator. The security argument is that one participant destroyed a scalar without the others being able to compel or observe them; with every contribution inside one party's control that reduces to 'trust us', which is what the ceremony existed to avoid
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+  3  signed by tosdev3 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+
+3 contribution(s), 3 verified against the roster
+
+NO PUBLIC IDENTITY EVIDENCE for: tosdev2, tosdev3. The register carries no published_at for these keys, so a reader cannot trace the signature to anyone who can be asked afterwards, and being able to ask is the whole of what an attestation is worth. Their signatures still verify: what is missing is the person, not the cryptography.
+exit status: 1

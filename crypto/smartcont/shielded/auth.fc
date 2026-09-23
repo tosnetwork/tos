@@ -1,0 +1,199 @@
+;; Transaction intent and ML-DSA-44 authorization, section 9 of the V1
+;; implementation profile, together with the pq_auth_key_hash rule of 4.1.
+;;
+;; Every input note is authorized by a one-time ML-DSA-44 key whose hash is
+;; bound into the note, and a transaction commits to everything it does through
+;; a single field element, the transaction intent digest. Both signatures are
+;; over that digest, so an attacker who holds a valid keypair of their own can
+;; still not authorize somebody else's transaction: the key hash they produce is
+;; not the one the note and the public input vector demand.
+;;
+;; A phantom input slot carries a full key and a full signature as well. The
+;; wire shape is therefore identical whether one input is real or two are, which
+;; is the property section 19 gate 8 asks for, so nothing here may take a
+;; shortcut for a slot that happens to be phantom.
+;;
+;; Throw codes used here:
+;; Exit codes live in 130-149. Each shielded module owns a disjoint range,
+;; because the pool contract will include several of them at once and an
+;; exit code that means two things cannot be diagnosed:
+;;    90-99   tree.fc     100-129  imt.fc
+;;   130-149  auth.fc     150-179  reserved for the state layer
+;;
+;;   130 the byte chain ended before the operand did
+;;   131 a byte chain cell is special
+;;   132 a byte chain cell is not at level zero
+;;   133 a byte chain chunk has the wrong bit length
+;;   134 a byte chain chunk has the wrong reference count
+;;   135 an operand length that is not a positive number of bytes
+;;   136 the intent digest is not a canonical field element
+;;   137 the signature in input slot 0 did not verify
+;;   138 the signature in input slot 1 did not verify
+;;   139 valid_until does not fit the public uint32 field
+;;   140 valid_until is already in the past
+;;   141 valid_until is beyond the one-hour window
+;;
+;; Requires domains.fc and notes.fc, and a VM at global version 17 or above:
+;; PQCHECKSIG_MLDSA44 arrives at version 16 and POSEIDON2_HASH7 at version 17.
+
+;; The operand order is the one crypto/vm/pqops.cpp pops: the public key is on
+;; top of the stack.
+int pq_verify_mldsa44(cell message, cell context, cell signature, cell public_key)
+  asm "PQCHECKSIG_MLDSA44";
+
+;; SHA256 of the concatenated data bits of twelve operands, in the order given.
+;; HASHEXT_SHA256 takes the operand count from the stack.
+int sha256_of_twelve(slice s0, slice s1, slice s2, slice s3, slice s4, slice s5,
+                     slice s6, slice s7, slice s8, slice s9, slice s10, slice s11)
+  asm "12 PUSHINT HASHEXT_SHA256";
+
+;; A cell's payload together with a flag saying the cell is not ordinary.
+(slice, int) parse_cell_special(cell c) asm "XCTOS";
+int cell_level(cell c) asm "CLEVEL";
+
+int mldsa44_public_key_bytes() asm "1312 PUSHINT";
+int mldsa44_signature_bytes() asm "2420 PUSHINT";
+
+;; A chunk that carries a reference must fill its cell, so the chain layout of a
+;; fixed-length operand is forced: 1312 = 10 x 127 + 42.
+int pq_chain_chunk_bytes() asm "127 PUSHINT";
+int mldsa44_public_key_full_chunks() asm "10 PUSHINT";
+
+int mldsa44_public_key_tail_bytes() inline {
+  return mldsa44_public_key_bytes()
+       - (mldsa44_public_key_full_chunks() * pq_chain_chunk_bytes());
+}
+
+;; Reads one cell of a canonical ML-DSA-44 operand byte chain and returns its
+;; payload and the next cell. The rules are the ones crypto/vm/pqops.cpp
+;; enforces: an ordinary cell at level zero, a whole number of payload bytes, at
+;; most one reference, a reference only on a chunk that fills the cell, and a
+;; non-empty final chunk. `payload_bytes` and `has_next` carry the position in
+;; the chain, so a chain that is laid out differently is refused here rather
+;; than hashed anyway.
+(slice, cell) pq_chain_chunk(cell chunk, int payload_bytes, int has_next) impure inline {
+  throw_if(130, cell_null?(chunk));
+  (slice body, int special) = parse_cell_special(chunk);
+  throw_if(131, special);
+  throw_unless(132, cell_level(chunk) == 0);
+  throw_unless(133, slice_bits(body) == payload_bytes * 8);
+  throw_unless(134, slice_refs(body) == has_next);
+  cell next = null();
+  if (has_next) {
+    next = body~load_ref();
+  }
+  return (body, next);
+}
+
+;; Walks a canonical operand byte chain of exactly `total_bytes` bytes and
+;; throws unless the layout is the canonical one. The verifier rejects a
+;; malformed chain too, but it does so with a VM exception after the base
+;; charge, so the chain is checked before the verifier is asked.
+() check_pq_byte_chain(cell chain, int total_bytes) impure {
+  throw_unless(135, total_bytes > 0);
+  int remaining = total_bytes;
+  while (remaining > pq_chain_chunk_bytes()) {
+    (slice body, cell next) = pq_chain_chunk(chain, pq_chain_chunk_bytes(), 1);
+    remaining = remaining - pq_chain_chunk_bytes();
+    chain = next;
+  }
+  var (_, _) = pq_chain_chunk(chain, remaining, 0);
+}
+
+;; 4.1. pq_auth_key_hash is computed from the actual canonical 1312-byte public
+;; key byte chain, never from a pre-hashed input:
+;;   uint256_be(SHA256("TOS-SHIELDED-MLDSA44-PK-v1" || pk_bytes)) mod r
+int pq_auth_key_hash(cell public_key) impure {
+  int full = pq_chain_chunk_bytes();
+  (slice c0, cell rest) = pq_chain_chunk(public_key, full, 1);
+  (slice c1, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c2, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c3, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c4, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c5, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c6, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c7, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c8, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c9, rest) = pq_chain_chunk(rest, full, 1);
+  (slice c10, rest) = pq_chain_chunk(rest, mldsa44_public_key_tail_bytes(), 0);
+  int digest = sha256_of_twelve("TOS-SHIELDED-MLDSA44-PK-v1",
+                                c0, c1, c2, c3, c4, c5, c6, c7, c8, c9, c10);
+  return reduce_to_field(digest);
+}
+
+;; 9.4. The message is the 32 raw big-endian bytes of the intent digest.
+cell intent_message(int digest) impure inline {
+  throw_unless(136, (digest >= 0) & (digest < field_modulus()));
+  return begin_cell().store_uint(digest, 256).end_cell();
+}
+
+;; 9.4. The context is exactly 28 ASCII bytes and never varies.
+cell intent_signature_context() inline {
+  return begin_cell().store_slice("TOS-SHIELDED-POOL-MLDSA44-v1").end_cell();
+}
+
+;; 9.4. FIPS 204 Pure ML-DSA-44 over the digest bytes under the fixed context.
+int verify_intent_signature(cell public_key, cell signature, int digest) impure inline {
+  check_pq_byte_chain(signature, mldsa44_signature_bytes());
+  return pq_verify_mldsa44(intent_message(digest),
+                           intent_signature_context(), signature, public_key);
+}
+
+;; 9.1 and 9.4. Both slots are verified and both public keys are hashed, in
+;; every transaction, and the two hashes go on to positions 9 and 10 of the
+;; public input vector of section 10. Hashing the key also proves its byte chain
+;; is the canonical 1312-byte one before the verifier is asked to read it.
+;; impure, and not as decoration: this function's whole job is to throw. A
+;; caller that only wants the two key hashes would otherwise leave its results
+;; unused, and FunC may drop a call to a pure function whose results nobody
+;; reads -- taking both signature checks with it.
+(int, int) authorize_intent(cell public_key_0, cell signature_0,
+                            cell public_key_1, cell signature_1, int digest) impure {
+  int key_hash_0 = pq_auth_key_hash(public_key_0);
+  int key_hash_1 = pq_auth_key_hash(public_key_1);
+  throw_unless(137, verify_intent_signature(public_key_0, signature_0, digest));
+  throw_unless(138, verify_intent_signature(public_key_1, signature_1, digest));
+  return (key_hash_0, key_hash_1);
+}
+
+;; 9.2. A withdrawal pre-authorizes the recovery secret material only; the
+;; amount is whatever a bounce actually credits back. Transfer requires zero.
+int recovery_template_hash(int recovery_owner_commitment, int recovery_data_hash) inline {
+  return h7(domain_recovery_template(),
+            recovery_owner_commitment, recovery_data_hash, 0, 0, 0, 0, 0);
+}
+
+;; 9.3. The core half of the digest: what the transaction consumes and pays out.
+int intent_core(int execution_domain, int nf0, int nf1, int public_amount_out,
+                int withdrawal_fee, int public_recipient_hash,
+                int recovery_template_hash) inline {
+  return h7(domain_intent_core(),
+            execution_domain, nf0, nf1, public_amount_out,
+            withdrawal_fee, public_recipient_hash, recovery_template_hash);
+}
+
+;; 9.3. The output half: what it creates, who may authorize it and until when.
+int intent_outputs(int note_body_0, int note_body_1, int note_body_2,
+                   int pq_auth_key_hash_0, int pq_auth_key_hash_1,
+                   int intent_nonce, int valid_until) inline {
+  return h7(domain_intent_outputs(),
+            note_body_0, note_body_1, note_body_2,
+            pq_auth_key_hash_0, pq_auth_key_hash_1, intent_nonce, valid_until);
+}
+
+;; 9.3. The single field element both signatures commit to, and public input 17.
+int transaction_intent_digest(int intent_core, int intent_outputs) inline {
+  return h7(domain_intent_final(), intent_core, intent_outputs, 0, 0, 0, 0, 0);
+}
+
+;; 9.3. valid_until is a public uint32 field and the contract requires
+;; now <= valid_until <= now + 3600. `now_seconds` is passed in rather than read
+;; here so that the rule stays a pure function of its inputs.
+int intent_validity_window() asm "3600 PUSHINT";
+int uint32_limit() asm "4294967296 PUSHINT";
+
+() check_intent_validity(int valid_until, int now_seconds) impure inline {
+  throw_unless(139, (valid_until >= 0) & (valid_until < uint32_limit()));
+  throw_unless(140, valid_until >= now_seconds);
+  throw_unless(141, valid_until <= now_seconds + intent_validity_window());
+}

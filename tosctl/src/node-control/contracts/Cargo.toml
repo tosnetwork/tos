@@ -24,6 +24,13 @@ errno = "0.3"
 [dev-dependencies]
 tokio = "1.48.0"
 tos_sandbox = { path = '../../sandbox' }
+# Test-only: raising the network gas limit to measure a path the default
+# configuration cannot run to completion.
+tos_executor = { path = '../../executor' }
 tos_vm = { path = '../../vm' }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 tempfile = "3"
+# Test-only ML-DSA-44 signer. The chain ships a verifier only, so the
+# section 9 suite needs a signer to produce signatures over digests the
+# contract itself computes. Pinned exactly; never used outside tests.
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }

@@ -1,0 +1,219 @@
+;; Persistent state, sections 13, 13.1 and 13.2 of the V1 implementation
+;; profile.
+;;
+;; The shape is checked on the way in and on the way out. A state cell that is
+;; not exactly this is not a state cell: there is no admin key and no upgrade
+;; path, so anything that gets written here is written for good.
+;;
+;; Exit codes 180-199.
+;;   180 the magic or the version is not this contract's
+;;   181 the state root is not the frozen field and reference shape
+;;   182 a next index is above the 2^32 sentinel
+;;   183 the config store is not the frozen shape
+;;   184 the withdrawal fee is not positive and below 2^120
+;;   185 the denomination count is zero or above sixteen
+;;   186 the denomination chain does not hold exactly denomination_count nodes
+;;   187 a denomination is not a positive amount
+;;   188 the denominations are not strictly increasing
+;;   189 the verifying key is not the canonical 1248-byte chain
+;;
+;; Requires anchors.fc for the genesis store.
+
+int state_magic() asm "1397773873 PUSHINT";   ;; 0x53505631, "SPV1"
+int state_version() asm "1 PUSHINT";
+
+;; Both counters are uint64 only so that the exhausted sentinel 2^32 can be
+;; represented. Every real leaf index is a uint32.
+int index_sentinel() asm "4294967296 PUSHINT";
+
+int max_denominations() asm "16 PUSHINT";
+
+int vk_stream_bytes() asm "1248 PUSHINT";
+int vk_chunk_bytes() asm "127 PUSHINT";
+int vk_full_chunks() asm "9 PUSHINT";
+int vk_final_bytes() asm "105 PUSHINT";
+
+;; --- the frontier store -----------------------------------------------------
+
+;; Section 13 asks for a reference to the frontier store. The store is the
+;; level chain built in tree.fc and a chain always has a root cell to point
+;; at, so the maybe-ref wrapper no longer carries the weight it did when this
+;; held a HashmapE that has no root cell while it is empty. It is kept because
+;; removing it would move the state hash without buying anything, and because
+;; an absent frontier then has an encoding -- which is what lets the parser
+;; refuse it explicitly rather than fail somewhere further in.
+cell frontier_store_build(cell frontier) inline {
+  return begin_cell().store_maybe_ref(frontier).end_cell();
+}
+
+cell frontier_store_parse(cell store) impure inline {
+  slice s = store.begin_parse();
+  cell frontier = s~load_maybe_ref();
+  throw_unless(181, s.slice_empty?());
+  ;; A chain always has a root cell, so an absent frontier is not a state
+  ;; this contract can have written. It is refused here rather than at the
+  ;; first append, so that a malformed state cannot be read at all.
+  throw_if(181, cell_null?(frontier));
+  return frontier;
+}
+
+;; --- the state root ---------------------------------------------------------
+
+(int, int, int, int, int, int, int, cell, cell, cell, cell) state_parse(cell state) impure inline_ref {
+  slice s = state.begin_parse();
+  throw_unless(181, s.slice_refs() == 4);
+  throw_unless(180, s~load_uint(32) == state_magic());
+  throw_unless(180, s~load_uint(16) == state_version());
+
+  int commitment_root = s~load_uint(256);
+  int commitment_next_index = s~load_uint(64);
+  int nullifier_root = s~load_uint(256);
+  int nullifier_next_index = s~load_uint(64);
+  int last_anchor_epoch = s~load_uint(32);
+  int native_liability = s~load_coins();
+  int reserve_floor = s~load_coins();
+
+  cell frontier = frontier_store_parse(s~load_ref());
+  cell anchors = s~load_ref();
+  cell config = s~load_ref();
+  cell vk = s~load_ref();
+  ;; No trailing bits and no fifth reference: a state cell carrying anything
+  ;; else is a different state cell with the same prefix.
+  throw_unless(181, s.slice_empty?());
+
+  throw_unless(182, commitment_next_index <= index_sentinel());
+  throw_unless(182, nullifier_next_index <= index_sentinel());
+
+  return (commitment_root, commitment_next_index, nullifier_root, nullifier_next_index,
+          last_anchor_epoch, native_liability, reserve_floor,
+          frontier, anchors, config, vk);
+}
+
+cell state_build(int commitment_root, int commitment_next_index,
+                 int nullifier_root, int nullifier_next_index,
+                 int last_anchor_epoch, int native_liability, int reserve_floor,
+                 cell frontier, cell anchors, cell config, cell vk) inline_ref {
+  throw_unless(182, commitment_next_index <= index_sentinel());
+  throw_unless(182, nullifier_next_index <= index_sentinel());
+  return begin_cell()
+    .store_uint(state_magic(), 32)
+    .store_uint(state_version(), 16)
+    .store_uint(commitment_root, 256)
+    .store_uint(commitment_next_index, 64)
+    .store_uint(nullifier_root, 256)
+    .store_uint(nullifier_next_index, 64)
+    .store_uint(last_anchor_epoch, 32)
+    .store_coins(native_liability)
+    .store_coins(reserve_floor)
+    .store_ref(frontier_store_build(frontier))
+    .store_ref(anchors)
+    .store_ref(config)
+    .store_ref(vk)
+    .end_cell();
+}
+
+;; --- the config store -------------------------------------------------------
+
+;; The denomination list is immutable for a deployment. It is validated on every
+;; parse rather than trusted from genesis, because a state cell can be handed to
+;; this code by anything that can produce a cell.
+() config_require_denominations(cell chain, int count) impure inline_ref {
+  throw_unless(185, (count > 0) & (count <= max_denominations()));
+  int previous = 0;
+  int remaining = count;
+  cell node = chain;
+  while (remaining > 0) {
+    slice s = node.begin_parse();
+    int amount = s~load_coins();
+    ;; As above: Coins cannot carry 2^120, so only positivity is checkable.
+    throw_unless(187, amount > 0);
+    throw_unless(188, amount > previous);
+    previous = amount;
+    remaining = remaining - 1;
+    if (remaining > 0) {
+      throw_unless(186, s.slice_refs() == 1);
+      node = s~load_ref();
+    }
+    ;; Nothing left, neither bits nor a successor. On the final node this is
+    ;; what makes a chain longer than its count a different list rather than
+    ;; one that happens to start the same way; a separate reference check here
+    ;; would be implied by this one and could never fire.
+    throw_unless(186, s.slice_empty?());
+  }
+}
+
+(int, int, int, int, int, cell) config_parse(cell config) impure inline_ref {
+  slice s = config.begin_parse();
+  throw_unless(183, s.slice_refs() == 1);
+  int profile_hash = s~load_uint(256);
+  int poseidon_manifest_hash = s~load_uint(256);
+  int groth16_vk_hash = s~load_uint(256);
+  int withdrawal_fee = s~load_coins();
+  int denomination_count = s~load_uint(8);
+  cell denominations = s~load_ref();
+  throw_unless(183, s.slice_empty?());
+
+  ;; Ruling A2 asks the deployment side to refuse a fee outside (0, 2^120).
+  ;; Only the lower half is a check: Coins is a VarUInteger 16, so it cannot
+  ;; encode 2^120 at all and a guard against it would be unreachable. The
+  ;; ceiling is enforced by the wire type, and the suite pins that rather than
+  ;; asserting a throw that cannot fire.
+  throw_unless(184, withdrawal_fee > 0);
+  config_require_denominations(denominations, denomination_count);
+
+  return (profile_hash, poseidon_manifest_hash, groth16_vk_hash,
+          withdrawal_fee, denomination_count, denominations);
+}
+
+int config_has_denomination(cell config, int amount) impure inline_ref {
+  (_, _, _, _, int count, cell node) = config_parse(config);
+  int remaining = count;
+  while (remaining > 0) {
+    slice s = node.begin_parse();
+    int value = s~load_coins();
+    if (value == amount) {
+      return -1;
+    }
+    remaining = remaining - 1;
+    if (remaining > 0) {
+      node = s~load_ref();
+    }
+  }
+  return 0;
+}
+
+;; --- the verifying key ------------------------------------------------------
+
+;; Nine full cells and a 105-byte tail, linked, ordinary, level zero. The same
+;; canonical-chain rule the ML-DSA operands use: a chunk that carries a
+;; reference must fill its cell, so the layout of a fixed-length stream is
+;; forced rather than chosen.
+() vk_require_canonical(cell vk) impure inline_ref {
+  cell node = vk;
+  int index = 0;
+  while (index < vk_full_chunks() + 1) {
+    slice s = node.begin_parse();
+    int final? = index == vk_full_chunks();
+    int expected_bits = (final? ? vk_final_bytes() : vk_chunk_bytes()) * 8;
+    throw_unless(189, s.slice_bits() == expected_bits);
+    throw_unless(189, s.slice_refs() == (final? ? 0 : 1));
+    if (~ final?) {
+      node = s~load_ref();
+    }
+    index = index + 1;
+  }
+}
+
+;; --- genesis, section 13.2 --------------------------------------------------
+
+cell state_genesis(int commitment_empty_root, int nullifier_genesis_root,
+                   int reserve_floor, cell config, cell vk) inline_ref {
+  throw_unless(184, reserve_floor > 0);
+  config_parse(config);
+  vk_require_canonical(vk);
+  return state_build(
+    commitment_empty_root, 0,
+    nullifier_genesis_root, 1,
+    anchor_epoch_none(), 0, reserve_floor,
+    frontier_genesis(), anchors_empty(), config, vk);
+}

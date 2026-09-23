@@ -1,0 +1,42 @@
+{
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "phase1_transcript": "zcash",
+  "phase1_slice_sha256": "1bfd7acdb3ecbfaaa695ab159a7a643a2eb58203a4d93361040c6bd4c2aa3d6e",
+  "constraints": 18107,
+  "instance_variables": 19,
+  "starting_key_sha256": "018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04",
+  "entries": [
+    {
+      "index": 1,
+      "kind": "participant",
+      "sha256": "65cbe4db248743a1cca1b49414f4d98a0b882529a7da3b4593df2951b8312198",
+      "transcript_after": "551ba6e7b91b32169f1f44c42aea1fbd7216da783e4543628ccb3cb3fcb9dbeb"
+    },
+    {
+      "index": 2,
+      "kind": "participant",
+      "sha256": "035ea5be0dd986d6cd4b3688e9e88edac22a1bd07937953d553a0ecfc0f7966c",
+      "transcript_after": "f4e542800d0484cabdf226bdaa7bbbe1239aea894e90ed59a9ed65b8ec06d54c"
+    },
+    {
+      "index": 3,
+      "kind": "participant",
+      "sha256": "5619a6e1aab154546061a8c65b35f98a973fc69f365b8665d702e0e82e96e468",
+      "transcript_after": "d05541b101c7c94a85bdcb3491a66d3448ec7e955b2e080825e75cdfbdfdf21f"
+    },
+    {
+      "index": 4,
+      "kind": "participant",
+      "sha256": "246b9d7406a6b349ba51a092aa69c111a429e8eab528142008b1d7f096f6413e",
+      "transcript_after": "46166e20210e3a2fb753158d480cb556cf7a3fb95376ca65b92bf661a92f3b5a"
+    },
+    {
+      "index": 5,
+      "kind": "participant",
+      "sha256": "ed4b9b45c179b3a5c7e1102dc47505ee81f726bcb077699564e18f022b26c5a4",
+      "transcript_after": "3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27"
+    }
+  ],
+  "key_sha256": "b0bc8de88dd92e0ae9efeec2c2ca72cb734004324df903e20507ab736a67189b",
+  "transcript": "3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27"
+}

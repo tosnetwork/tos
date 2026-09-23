@@ -27,6 +27,7 @@ pub mod gas;
 mod globals;
 mod math;
 mod null;
+mod poseidon2;
 mod pq;
 mod rand;
 mod serialization;

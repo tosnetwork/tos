@@ -366,6 +366,85 @@ attempt looked for `>= 16` and `> 15`, found nothing outside the opcode table, a
 missed the transaction change because it is spelled `< 16`. Every other threshold in
 the transaction engine is `>= 15` or lower and is satisfied at both versions.
 
+## Version 17
+
+Not yet activated on any TOS network.
+
+### New TVM instructions
+- `POSEIDON2_PERM8` (`a0 a1 a2 a3 a4 a5 a6 a7 - b0 b1 b2 b3 b4 b5 b6 b7`) - the
+  Poseidon2 permutation over the BLS12-381 scalar field, `t=8`, S-box `x^5`,
+  `RF=8`, `RP=57`. Every input must already be a canonical field element:
+  a negative value, a value that does not fit in 256 unsigned bits, and a value
+  at or above the modulus are all rejected with a range check (exit 5). Nothing
+  is reduced, because a silent reduction would let two different stack values
+  hash the same.
+- `POSEIDON2_HASH7` (`domain x0 x1 x2 x3 x4 x5 x6 - h`) - the same permutation
+  with the domain constant in lane 0, returning lane 0 of the result. There is
+  no capacity element and no padding convention beyond that sentence.
+
+Both cost 3,500 gas, frozen on 2026-09-20 by measuring the permutation against
+instructions whose price was already fixed, and are rejected as invalid (exit 6)
+at versions 0-16. `PQCHECKSIG_MLDSA44` keeps its own minimum of
+16 and is unaffected: the ceiling moves, the older gate does not.
+
+The parameters are frozen against a pinned upstream commit and are not loaded at
+runtime. Both VMs rebuild the same manifest byte stream from their own vendored
+tables and compare its SHA-256, so a constant that differs between them cannot
+pass unnoticed. See [../crypto/poseidon2/PROVENANCE.md](../crypto/poseidon2/PROVENANCE.md).
+
+Adding a permutation to the instruction set is a genesis-time decision in
+practice: doing it after a network starts is a hard fork, and the contracts that
+need it cannot be priced without it.
+
+### Transaction changes
+None. Version 17 adds instructions and changes nothing in the transaction engine.
+
+## Version 18
+
+Not yet activated on any TOS network.
+
+### New TVM instructions
+- `POSEIDON2_PATH7` (`leaf domain path index depth - root`) - folds a Merkle
+  authentication path of `depth` levels in an arity-seven tree, one
+  `POSEIDON2_HASH7` a level with `domain` in lane 0. At each level the running
+  value takes the position given by that level's base-seven digit of `index`
+  and the six siblings fill the rest in ascending child position, so a witness
+  whose siblings are reordered produces a different root.
+
+  It computes nothing `POSEIDON2_HASH7` cannot: it is that instruction in a
+  loop, and exists because the loop around it in FunC costs more than the
+  hashing inside it.
+
+  `path` is a chain of cells, two to a level, each exactly 768 bits holding
+  three canonical field elements and carrying one reference except the second
+  cell of the last level, which carries none. Everything it reads is supplied
+  by the sender and everything is checked:
+
+  - cells are loaded through the ordinary loader, so a pruned branch or a
+    library cell is refused rather than read -- a path forged out of pruned
+    branches would otherwise be accepted by every caller at once;
+  - a sibling at or above the modulus is rejected with a range check (exit 5),
+    never reduced;
+  - a cell of the wrong length or reference count is refused (exit 9);
+  - `depth` must be between 1 and 64, and an `index` with a digit left over
+    after `depth` divisions is refused rather than silently folded;
+  - gas is charged per level as the level is read, so an oversized path is
+    paid for on the way in.
+
+  It costs 500 gas plus 3,700 a level: one permutation at the frozen 3,500 plus
+  the two cell loads a level needs. **Neither figure is measured.** The 3,500
+  is; the rest is an assembly of prices. Before this reaches a network it wants
+  what `POSEIDON2_PERM8` got -- measured against instructions that already have
+  a price, on target hardware, quoted as a bracket.
+
+Rejected as invalid (exit 6) at versions 0-17. `POSEIDON2_PERM8` and
+`POSEIDON2_HASH7` keep their minimum of 17 and `PQCHECKSIG_MLDSA44` its 16: the
+ceiling moves, the older gates do not.
+
+### Transaction changes
+None. Version 18 adds one instruction and changes nothing in the transaction
+engine.
+
 ## Capability flags versus version bumps
 
 Both are set in `ConfigParam 8`, and neither is enforced by refusing to run. A node

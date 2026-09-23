@@ -1,0 +1,18 @@
+[package]
+name = "shielded-pool-genesis"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Builds the shielded pool's genesis state and the frozen manifest that pins it, to section 13.2 of the V1 implementation profile."
+
+[dependencies]
+shielded-pool-circuit = { path = "../shielded-pool-circuit" }
+chain_block = { path = "../../tosctl/src/block" }
+ark-ff = "=0.5.0"
+sha2 = "=0.10.9"
+hex = "=0.4.3"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

@@ -1,0 +1,48 @@
+{
+  "transcript": "filecoin",
+  "source_url": "https://trusted-setup.filecoin.io/phase1/challenge_19",
+  "source_bytes": 77309411488,
+  "source_power": 27,
+  "slice_power": 15,
+  "transcript_hash": "6e3f4b98e6c205d0efa5abc917dd03e28864016df380936fa4e9865595c5d69863eff93e8badf8e6b8c8cbfd5ab3a415ef7ba50b86e124bd9bfcd3f9aab67124",
+  "published_checksums": "the 64-byte BLAKE2b digest at offset 0, recorded per fetch",
+  "custody": "Filecoin's own 2019 ceremony; its contribution chain has not been re-verified here",
+  "ranges": [
+    {
+      "name": "tau_g1",
+      "offset": 64,
+      "length": 6291360,
+      "points": 65535,
+      "sha256": "5fe833e989076843642fc5da26126951d54245829725d1f83aade91a2d22e602"
+    },
+    {
+      "name": "tau_g2",
+      "offset": 25769803744,
+      "length": 6291456,
+      "points": 32768,
+      "sha256": "97f86b31a42c362421d1bdfee64ca71357dd78e0aa7ac95adc1fcb02ffbdb502"
+    },
+    {
+      "name": "alpha_tau_g1",
+      "offset": 51539607520,
+      "length": 3145728,
+      "points": 32768,
+      "sha256": "bb92e0d55af3219da27a6675d3d9bba18f0b42e2c66c27e196f9ad7771b71491"
+    },
+    {
+      "name": "beta_tau_g1",
+      "offset": 64424509408,
+      "length": 3145728,
+      "points": 32768,
+      "sha256": "fc3dae175498ce1c7027b4749a6a944ed92b230c05ebd20c1be321ff8e92c617"
+    },
+    {
+      "name": "beta_g2",
+      "offset": 77309411296,
+      "length": 192,
+      "points": 1,
+      "sha256": "605833ebc3b3227c2e4c8c35401eb5caca504ee68c54aaf4fd98571badf1d3ba"
+    }
+  ],
+  "slice_sha256": "d161614630b0504bd02075a9f57e7ca18d24f0c7c911c5cda5a686e91b8ced75"
+}

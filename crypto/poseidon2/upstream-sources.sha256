@@ -1,0 +1,7 @@
+# SHA-256 of the upstream files the Poseidon2 constants and permutation come from,
+# at the pinned commit 055bde3f4782731ba5f5ce5888a440a94327eaf3.
+# Verify with: git show <commit>:<path> | sha256sum
+648d7fbc7be21aac9fae3e30e79f547081daefbe1cd93930713ee31ea90adfcb  plain_implementations/src/poseidon2/poseidon2_instance_bls12.rs
+09e1e033ca02ca9c136510cb4ffc619d4dc869b7cc97b0c3ee06152b1793360c  plain_implementations/src/poseidon2/poseidon2.rs
+b804a9d026be54fbcf9d7004231acc87557555cecaf9b4b512563583bbab6ad4  plain_implementations/src/poseidon2/poseidon2_params.rs
+3367540894e590e33adae8494182b38e3b74852534b74a3b4541c5e3fba498a8  plain_implementations/src/fields/bls12.rs

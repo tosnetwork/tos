@@ -1,0 +1,152 @@
+;; Anchor policy, section 6 of the V1 implementation profile.
+;;
+;; A proof is made against a root that may already be stale by the time the
+;; transaction lands, so three kinds of anchor are accepted: the current root,
+;; a recent root kept in a 4096-slot ring keyed by leaf version, and a
+;; once-per-30-second checkpoint kept for a day. A pure epoch ring is not
+;; enough on its own -- under load a mid-epoch proof would be invalid the
+;; moment the next transaction moved the tree.
+;;
+;; Exit codes 150-169.
+;;   150 the anchor store root is not exactly two references and no data
+;;   151 an anchor kind that is not current, recent or epoch
+;;   152 ANCHOR_CURRENT with a non-zero id, or a root that is not the current one
+;;   153 the recent ring slot does not hold exactly this (version, root)
+;;   154 the epoch slot does not hold exactly this (epoch, root)
+;;   155 the epoch anchor is older than the ring retains
+;;   156 the commitment tree is exhausted, so no version can be preserved
+;;   157 a stored anchor entry is not the frozen 32 + 256 bit shape
+;;
+;; Requires nothing but the VM; the roots it stores are opaque here.
+
+int anchor_current() asm "0 PUSHINT";
+int anchor_recent() asm "1 PUSHINT";
+int anchor_epoch() asm "2 PUSHINT";
+
+int recent_root_slots() asm "4096 PUSHINT";
+int anchor_epoch_seconds() asm "30 PUSHINT";
+int anchor_epoch_slots() asm "2880 PUSHINT";
+int commitment_capacity_32() asm "4294967296 PUSHINT";
+
+;; Section 13.2 initialises last_anchor_epoch to 0xffffffff. That is a "no
+;; epoch has been checkpointed yet" sentinel, not a very late epoch: compared
+;; by ordering it would suppress every checkpoint until the year 6053.
+int anchor_epoch_none() asm "4294967295 PUSHINT";
+
+;; Both rings are HashmapE 12: 4096 and 2880 both fit in twelve bits.
+int anchor_key_bits() asm "12 PUSHINT";
+
+;; The anchor store root carries no data and exactly two references:
+;; ^recent_roots_dict then ^epoch_roots_dict.
+;;
+;; READING, not an invention, and worth confirming: section 13.1 requires the
+;; root to have zero data bits and exactly two refs, while 13.2 requires both
+;; dictionaries to be EMPTY at genesis. An empty HashmapE has no root cell, so
+;; it cannot be the target of a plain ref. The only shape that satisfies both
+;; sentences is a ref to a cell that holds the HashmapE in its own encoding --
+;; one maybe-bit and, when non-empty, the hashmap root. That is what is built
+;; and parsed here. If the intent was something else, this is a state-layout
+;; change and it moves the state manifest.
+(cell, cell) anchors_parse(cell anchors) inline {
+  slice s = anchors.begin_parse();
+  throw_unless(150, (s.slice_bits() == 0) & (s.slice_refs() == 2));
+  slice recent_holder = s~load_ref().begin_parse();
+  slice epoch_holder = s~load_ref().begin_parse();
+  cell recent = recent_holder~load_maybe_ref();
+  cell epoch = epoch_holder~load_maybe_ref();
+  throw_unless(150, recent_holder.slice_empty?() & epoch_holder.slice_empty?());
+  return (recent, epoch);
+}
+
+cell anchors_build(cell recent, cell epoch) inline {
+  return begin_cell()
+    .store_ref(begin_cell().store_maybe_ref(recent).end_cell())
+    .store_ref(begin_cell().store_maybe_ref(epoch).end_cell())
+    .end_cell();
+}
+
+;; The genesis store: both rings present and both empty.
+cell anchors_empty() inline {
+  return anchors_build(null(), null());
+}
+
+;; An entry is version:uint32 || root:Fr, and nothing else.
+(int, int) anchor_entry_parse(slice entry) inline {
+  throw_unless(157, (entry.slice_bits() == 288) & (entry.slice_refs() == 0));
+  int id = entry~load_uint(32);
+  int root = entry~load_uint(256);
+  return (id, root);
+}
+
+builder anchor_entry_build(int id, int root) inline {
+  return begin_cell().store_uint(id, 32).store_uint(root, 256);
+}
+
+;; 6.1 and 6.2 together: what a handler does once, before the appends it is
+;; about to make. The root preserved is the pre-transaction one, and the
+;; intermediate roots of a multi-leaf append are deliberately not preserved --
+;; they were never externally visible, so nobody can hold a proof against one.
+;;
+;; Returns the updated store and the epoch to record as last_anchor_epoch.
+(cell, int) anchors_preserve(cell anchors, int commitment_next_index,
+                             int commitment_root, int now_seconds,
+                             int last_anchor_epoch) inline_ref {
+  throw_unless(156, commitment_next_index < commitment_capacity_32());
+  (cell recent, cell epoch_dict) = anchors_parse(anchors);
+
+  int root_version = commitment_next_index;
+  recent = recent.udict_set_builder(anchor_key_bits(),
+                                    root_version % recent_root_slots(),
+                                    anchor_entry_build(root_version, commitment_root));
+
+  ;; The checkpoint is written only for the first mutation of a new epoch, so
+  ;; a busy epoch keeps the root that opened it rather than the latest one.
+  int epoch = now_seconds / anchor_epoch_seconds();
+  ;; Ordering everywhere except at the sentinel, so a checkpoint is never
+  ;; rewritten by a later transaction of the same epoch and never by an
+  ;; earlier one either.
+  if ((last_anchor_epoch == anchor_epoch_none()) | (epoch > last_anchor_epoch)) {
+    epoch_dict = epoch_dict.udict_set_builder(anchor_key_bits(),
+                                              epoch % anchor_epoch_slots(),
+                                              anchor_entry_build(epoch, commitment_root));
+    last_anchor_epoch = epoch;
+  }
+
+  return (anchors_build(recent, epoch_dict), last_anchor_epoch);
+}
+
+;; Acceptance. Slot occupancy alone never authenticates a root: the stored
+;; entry must equal the supplied pair exactly.
+() anchor_require_valid(cell anchors, int kind, int id, int root,
+                        int commitment_root, int now_seconds) impure inline_ref {
+  if (kind == anchor_current()) {
+    throw_unless(152, (id == 0) & (root == commitment_root));
+    return ();
+  }
+
+  (cell recent, cell epoch_dict) = anchors_parse(anchors);
+
+  if (kind == anchor_recent()) {
+    (slice entry, int found) = recent.udict_get?(anchor_key_bits(),
+                                                 id % recent_root_slots());
+    throw_unless(153, found);
+    (int stored_id, int stored_root) = anchor_entry_parse(entry);
+    throw_unless(153, (stored_id == id) & (stored_root == root));
+    return ();
+  }
+
+  if (kind == anchor_epoch()) {
+    (slice entry, int found) = epoch_dict.udict_get?(anchor_key_bits(),
+                                                     id % anchor_epoch_slots());
+    throw_unless(154, found);
+    (int stored_id, int stored_root) = anchor_entry_parse(entry);
+    throw_unless(154, (stored_id == id) & (stored_root == root));
+    ;; Retention is the ring's, not the slot's: an entry whose epoch is a full
+    ;; day behind is stale even though its slot still holds it.
+    int current_epoch = now_seconds / anchor_epoch_seconds();
+    throw_unless(155, current_epoch - id < anchor_epoch_slots());
+    return ();
+  }
+
+  throw(151);
+}

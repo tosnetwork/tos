@@ -1,0 +1,61 @@
+TOS shielded pool, phase 2 -- contribution 2
+
+Contributor: tosdev2
+Affiliation: community
+Execution: driven by an automated agent over an SSH session, on a host
+administered by the operator.
+Independent of the operator: false.
+
+I drew a scalar from the machine's random generator, applied it, and destroyed
+it. I did not record it, copy it, or transmit it, and I do not have it. The
+Rust contributor draws the scalar from /dev/urandom inside the process, uses
+it, and wipes it on drop; it is never returned, written to a file, or printed.
+This statement does not claim forensic proof that no copy of it ever existed
+in operating-system memory or in a hypervisor snapshot.
+
+Host swap was disabled for the whole contribution: swapoff ran before the
+contributor started and swap was restored after the chain verification
+finished, with the swapfile then reporting no used pages. That closes the swap
+path the participant guide asks contributors to think about. It says nothing
+about the provider's memory or snapshots, which the contributor does not
+control, and this host was not destroyed afterwards because it runs unrelated
+services.
+
+  built from     f7f141589a788c8aa06bee32d7799c25cbfab356
+  starting key   018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+  contribution   035ea5be0dd986d6cd4b3688e9e88edac22a1bd07937953d553a0ecfc0f7966c
+  transcript     f4e542800d0484cabdf226bdaa7bbbe1239aea894e90ed59a9ed65b8ec06d54c
+
+The announcement names code revision 49ef58c0ab98f62b76ae3c61a510980dae131235,
+which the privacy-only history rewrite replaced. The revision built here is its
+mapped replacement. Before building, tosman's signed commit mapping was
+verified against the key registered for tosman, and the checkout was confirmed
+to be at that revision with no uncommitted changes.
+
+Register revision: b4f706f9b84ba46266b8cb0b7e3563ad1904ce05
+Register SHA-256: 976a11c9e2e9b234c3e71f98e17620443010917467c335e938abd8daf4bd40d8
+Signing key fingerprint: SHA256:GE8lISvLgwgcPMCeXOOYyP2h6XWr8HK75+GY3bIiJYY
+The signing key was newly generated on the contribution host for this
+contribution, without a passphrase because the run was non-interactive, and it
+remains on that host. No public identity evidence is registered for it: a
+reader cannot trace this key to a person who can be asked, and no tool in this
+repository reports that absence.
+
+Bitcoin height, with both announced witnesses agreeing:
+  968136 at 2026-09-22T11:24:05Z, before contributing
+  968139 at 2026-09-22T11:50:16Z, after contributing and verifying
+Both are below the announced close at 970141, and block 970285 does not exist.
+These are this contributor's own observations, not independent publication
+evidence.
+
+The starting key says which ceremony this is: it is a function of the circuit
+and the phase-1 slice, so a contribution cannot be moved to a ceremony over a
+different circuit. The transcript names my position within it: every later
+contribution's challenge is derived from it, so this record cannot be
+reordered, shortened or substituted without invalidating what follows.
+
+This is the second contribution to an open ceremony, not final parameters.
+Both contributions so far are declared not independent of the operator, so the
+condition that some contribution come from a party outside the operator's
+control remains unsatisfied, and the security argument for these parameters
+still rests on nobody.

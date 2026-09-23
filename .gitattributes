@@ -41,3 +41,8 @@ third_party/** linguist-vendored
 *.h merge=clang-format-driver
 *.cpp merge=clang-format-driver
 *.hpp merge=clang-format-driver
+
+# The phase-1 slices. Curve points, where every byte matters and a corrupted
+# one would be caught only by a hash check -- so the handling is stated rather
+# than left to auto-detection.
+artifacts/phase1/*.bin binary

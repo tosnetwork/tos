@@ -493,3 +493,58 @@ mod pq_mldsa44_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod poseidon2_tests {
+    use crate::compile_code;
+    use crate::disasm::disasm;
+
+    // Both VMs execute raw F9 32 00 / F9 32 01 bytes, so nothing they check
+    // would notice a mnemonic registered at the wrong code or missing from the
+    // disassembler. This closes that gap from both directions.
+    #[test]
+    fn both_instructions_assemble_to_their_codes_and_disassemble_back() {
+        for (mnemonic, bytes) in
+            [("POSEIDON2_PERM8", [0xF9, 0x32, 0x00]), ("POSEIDON2_HASH7", [0xF9, 0x32, 0x01])]
+        {
+            let mut slice = compile_code(mnemonic).expect("assembles");
+            assert_eq!(slice.remaining_bits(), 24, "{mnemonic} is 24 bits wide");
+            assert_eq!(slice.get_bytestring(0), bytes.to_vec(), "{mnemonic}");
+            let text = disasm(&mut slice).expect("disassembles");
+            assert_eq!(text.trim(), mnemonic);
+        }
+    }
+
+    #[test]
+    fn the_pair_survives_a_round_trip_beside_other_instructions() {
+        let source = "NOP\nPOSEIDON2_PERM8\nPOSEIDON2_HASH7\nDROP\n";
+        let mut slice = compile_code(source).expect("assembles");
+        let text = disasm(&mut slice).expect("disassembles");
+        let mnemonics: Vec<&str> =
+            text.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+        assert_eq!(mnemonics.len(), 4, "{mnemonics:?}");
+        assert_eq!(mnemonics[1], "POSEIDON2_PERM8", "{mnemonics:?}");
+        assert_eq!(mnemonics[2], "POSEIDON2_HASH7", "{mnemonics:?}");
+    }
+
+    #[test]
+    fn the_two_codes_are_not_confused_with_each_other_or_with_a_neighbour() {
+        let mut perm = compile_code("POSEIDON2_PERM8").expect("assembles");
+        let perm_text = disasm(&mut perm).expect("disassembles");
+        let mut hash = compile_code("POSEIDON2_HASH7").expect("assembles");
+        let hash_text = disasm(&mut hash).expect("disassembles");
+        assert!(perm_text.contains("POSEIDON2_PERM8"), "{perm_text}");
+        assert!(hash_text.contains("POSEIDON2_HASH7"), "{hash_text}");
+        assert!(
+            !hash_text.contains("POSEIDON2_PERM8"),
+            "the two codes decode the same: {hash_text}"
+        );
+        // F9 32 02 is not allocated and must not report either instruction.
+        let mut unallocated = chain_block::SliceData::new(vec![0xF9, 0x32, 0x02, 0x80]);
+        let reported = disasm(&mut unallocated).unwrap_or_default();
+        assert!(
+            !reported.contains("POSEIDON2"),
+            "F93202 decoded as a Poseidon2 instruction: {reported}"
+        );
+    }
+}

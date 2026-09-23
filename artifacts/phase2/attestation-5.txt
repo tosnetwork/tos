@@ -1,0 +1,64 @@
+TOS shielded pool, phase 2 -- contribution 5
+
+Participant: onemailweb3-design
+Public identity: https://github.com/onemailweb3-design
+
+I declare that I am an independent external developer and not a member of
+TOS or its operating team. Independence is my declaration, not a finding
+established by this signature or by an external verifier.
+
+I authorized an automated agent to execute this contribution over SSH on my
+designated VPS. The contributor drew a scalar from the operating-system
+random source, applied it, and completed successfully. The inspected source
+wipes the scalar and intermediate entropy buffers. I did not request the
+scalar to be displayed, recorded, copied or transmitted, and I do not
+possess it. Neither the agent nor I received a scalar value.
+
+This states the observed execution and the implementation's wiping behavior,
+not forensic proof that operating-system memory or provider snapshots never
+contained a copy. The VPS provider and its hypervisor were outside the
+agent's control.
+
+Swap was disabled during the entire contribution process. The process had
+both soft and hard core-dump limits of zero, and the piped core-dump handler
+was temporarily disabled. Live process checks confirmed zero swap use and
+the zero core limits. The previous system settings were restored after the
+contributor exited successfully. The signing key is a separate identity key
+and is retained; it is not a contribution scalar.
+
+  built from     f7f141589a788c8aa06bee32d7799c25cbfab356
+  starting key   018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+  contribution   ed4b9b45c179b3a5c7e1102dc47505ee81f726bcb077699564e18f022b26c5a4
+  transcript     3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27
+
+The built revision is the signed privacy mapping of announced revision
+49ef58c0ab98f62b76ae3c61a510980dae131235. The mapping signature was verified
+against the operator public key in the published register.
+
+Input artifact revision: b6478c920d49e6268987ecde83219e94e8bbaada
+Input transcript: 46166e20210e3a2fb753158d480cb556cf7a3fb95376ca65b92bf661a92f3b5a
+Contribution process completed (UTC): 2026-09-23T06:49:27.835188+00:00
+
+Public signing key fingerprint: SHA256:hAb3DSwvEhUWl8vk9VIBO/Ocymb65TbZ7JmtbgE7pEo
+Public identity evidence:
+https://gist.github.com/onemailweb3-design/8c17f093726d46685eca68d89b5a7536
+https://api.github.com/users/onemailweb3-design/ssh_signing_keys
+
+Participant-published register revision: 387417d4667a98bcea08e3998cef979ba0ef8c64
+Participant-published register SHA-256: 67054a21d5b249e9c847dfd8b726464456bccdac659090c482d652e0828bab07
+The register appends my identity without changing any previous participant.
+Operator acceptance of this registration and contribution is pending.
+
+GitHub reported read-only upstream repository access for my account during
+registration: no upstream write, maintain or administrator permission.
+The contribution is submitted through my fork for operator review.
+
+The inherited signatures of tosdev2 and tosdev3 verify, but their register
+entries contain no public identity evidence. This contribution does not
+repair or conceal that limitation.
+
+This is a participant contribution, not final ceremony parameters. The
+announced close is Bitcoin height 970141 and the beacon is height 970285.
+The pre-contribution observations from both announced witnesses recorded
+height 968232, before the deadline. Beacon, final verification and deployment
+acceptance remain separate steps.

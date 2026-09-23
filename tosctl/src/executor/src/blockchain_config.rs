@@ -42,9 +42,11 @@ impl DefaultConfig for MsgForwardPrices {
             // crypto/smartcont/gen-zerostate.fif. Contracts use ConfigParam
             // 25 directly through GETFORWARDFEE, so an upstream-like default
             // here would invalidate production-contract fee/reserve tests.
-            lump_price: 400000,
-            bit_price: 26214400,
-            cell_price: 2621440000,
+            // TON mainnet's live basechain ConfigParam25, read on 2026-09-21.
+            // Each was six times these for the same reason the gas price was.
+            lump_price: 66667,
+            bit_price: 4369067,
+            cell_price: 436906667,
             ihr_price_factor: 98304,
             first_frac: 21845,
             next_frac: 21845,
@@ -116,13 +118,15 @@ impl AccStoragePrices {
 impl DefaultConfig for GasLimitsPrices {
     fn default_mc() -> Self {
         GasLimitsPrices {
+            // ConfigParam 20 from the same zero state, which keeps the
+            // masterchain aligned with production.
             gas_price: 655360000,
             flat_gas_limit: 100,
             flat_gas_price: 1000000,
             gas_limit: 1000000,
-            special_gas_limit: 10000000,
+            special_gas_limit: 70000000,
             gas_credit: 10000,
-            block_gas_limit: 10000000,
+            block_gas_limit: 2500000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
             max_gas_threshold: 10000000000,
@@ -131,16 +135,31 @@ impl DefaultConfig for GasLimitsPrices {
 
     fn default_wc() -> Self {
         GasLimitsPrices {
-            // ConfigParam 21 from the canonical basechain zero state. This
-            // yields 400 nanotomi/gas beyond the flat segment, not the
+            // ConfigParam 21 from the canonical basechain zero state
+            // (`crypto/smartcont/gen-zerostate.fif`). This yields 400
+            // nanotomi/gas beyond the flat segment, not the
             // masterchain-derived 1,000 nanotomi/gas sandbox value.
-            gas_price: 26214400,
+            //
+            // The three limits used to carry TON's basechain values -- a
+            // 1,000,000 gas transaction inside a 10,000,000 gas block -- while
+            // this chain's zero state grants thirty times that. A measurement
+            // taken against the old table said a path "does not fit the
+            // network" when it fits this network twenty-seven times over.
+            // `chain_gas_envelope_sandbox.rs` now generates the zero state and
+            // compares it against this table field by field, so the two cannot
+            // drift apart again without a named test going red.
+            //
+            // The prices are TON mainnet's live basechain values, read from
+            // ConfigParam21 on 2026-09-21. They used to be exactly six times
+            // these, which was what production charged before its fee cut.
+            // The limits above stay thirty times mainnet's on purpose.
+            gas_price: 436907,
             flat_gas_limit: 100,
-            flat_gas_price: 40000,
-            gas_limit: 1000000,
-            special_gas_limit: 1000000,
+            flat_gas_price: 667,
+            gas_limit: 30000000,
+            special_gas_limit: 30000000,
             gas_credit: 10000,
-            block_gas_limit: 10000000,
+            block_gas_limit: 60000000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
             max_gas_threshold: 1000000000,
@@ -307,6 +326,16 @@ impl BlockchainConfig {
     }
 
     /// Get `GasLimitsPrices` for account gas fee calculation
+    /// Lower what the base workchain grants one transaction.
+    ///
+    /// Only for tests that need a transaction to run out of gas part-way
+    /// through a path that would otherwise complete: raising the limit is not
+    /// what this is for, and the raw config is left alone so that anything
+    /// reading ConfigParam21 sees the value the chain was built with.
+    pub fn set_workchain_gas_limit_for_tests(&mut self, gas_limit: u64) {
+        self.gas_prices_wc.gas_limit = gas_limit;
+    }
+
     pub fn get_gas_config(&self, is_masterchain: bool) -> &GasLimitsPrices {
         if is_masterchain {
             &self.gas_prices_mc

@@ -1,0 +1,51 @@
+;; Note commitments and nullifiers, section 4 of the V1 implementation profile.
+;;
+;; Every function here is one H7 call with a fixed domain and a fixed argument
+;; order. The zero padding is part of the definition, not slack: dropping it
+;; would shorten the absorbed state and change the result.
+;;
+;; Requires domains.fc and a VM at global version 17 or above.
+
+int h7(int domain, int a0, int a1, int a2, int a3, int a4, int a5, int a6)
+  asm "POSEIDON2_HASH7";
+
+;; The BLS12-381 scalar field modulus, used only to bring a hash into the field.
+int field_modulus() asm
+  "52435875175126190479447740508185965837690552500527637822603658699938581184513 PUSHINT";
+
+;; A 256-bit digest reduced into the field. The profile uses this only for
+;; constant generation and for hashing a public key, never for user-supplied
+;; field elements: those are required to be canonical already and are rejected
+;; rather than reduced.
+int reduce_to_field(int digest) inline {
+  return digest % field_modulus();
+}
+
+;; 4.1. note_secret is a fresh non-zero field element per note.
+int owner_commitment(int owner_nf_key_hash, int pq_auth_key_hash, int note_secret) inline {
+  return h7(domain_owner_commitment(),
+            owner_nf_key_hash, pq_auth_key_hash, note_secret, 0, 0, 0, 0);
+}
+
+;; 4.2. V1 is native-TOS-only, so the body carries no asset field.
+int note_body_commitment(int owner_commitment, int amount, int output_data_hash) inline {
+  return h7(domain_note_body(), owner_commitment, amount, output_data_hash, 0, 0, 0, 0);
+}
+
+;; 4.3. leaf_index is assigned by the contract after the proof verifies.
+int note_commitment(int note_body_commitment, int leaf_index) inline {
+  return h7(domain_note_commitment(), note_body_commitment, leaf_index, 0, 0, 0, 0, 0);
+}
+
+;; 4.4. The nullifier binds the semantic body, not the leaf index, so a note
+;; that ends up at two indices is still spendable only once.
+int nullifier(int note_body_commitment, int owner_nf_key) inline {
+  return h7(domain_nullifier(), note_body_commitment, owner_nf_key, 0, 0, 0, 0, 0);
+}
+
+;; 4.5. A phantom input slot still produces a nullifier, so the wire shape does
+;; not reveal how many inputs were real. input_slot is 0 or 1.
+int phantom_nullifier(int intent_nonce, int input_slot, int pq_auth_key_hash) inline {
+  return h7(domain_phantom_nullifier(),
+            intent_nonce, input_slot, pq_auth_key_hash, 0, 0, 0, 0);
+}

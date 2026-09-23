@@ -1,0 +1,7 @@
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+  3  signed by tosdev3 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+  4  signed by BmswapProtocol -- independent of the operator
+
+REFUSED: attestation-5.txt attests to contribution 0000000000000000 and the record's entry 5 is ed4b9b45c179b3a5
+exit=1

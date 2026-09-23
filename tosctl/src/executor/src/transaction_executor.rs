@@ -1228,6 +1228,13 @@ fn outmsg_action_handler(
         if config.block_version() >= 11 {
             int_header.ihr_disabled = true;
         }
+        // Load-bearing outside this file: a contract must not be able to
+        // propose a message that arrives looking like a protocol bounce.
+        // `crypto/smartcont/shielded/recovery.fc` mints without a proof on
+        // that path and authenticates it by the sender address, which stops
+        // every address except the one the payout was sent to. This line is
+        // what stops that one. Removing it is exercised by
+        // `tools/shielded-pool-circuit/crosscheck/tests/forged_bounce.rs`.
         int_header.bounced = false;
     }
 

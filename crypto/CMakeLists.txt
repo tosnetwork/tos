@@ -100,9 +100,13 @@ set(TOS_CRYPTO_SOURCE
   vm/utils.cpp
   vm/vm.cpp
   vm/bls.cpp
+  vm/poseidon2ops.cpp
 
   vm/arithops.h
   vm/atom.h
+  vm/poseidon2ops.h
+  vm/poseidon2-params.h
+  vm/poseidon2-kat.h
   vm/boc.h
   vm/boc-compression.h
   vm/boc-writers.h
@@ -670,3 +674,12 @@ install(DIRECTORY fift/lib/ DESTINATION lib/fift)
 install(DIRECTORY smartcont DESTINATION share/tos)
 
 add_subdirectory(pq)
+
+if(TARGET tos_crypto)
+  add_executable(test-poseidon2 "${CMAKE_CURRENT_SOURCE_DIR}/../test/poseidon2/test.cpp")
+  target_link_libraries(test-poseidon2 PRIVATE tos_crypto)
+  # B1: the C++ half of the Poseidon2 gas measurement. It runs the same
+  # compiled probe the Rust benchmark runs, so the two are comparable.
+  add_executable(bench-poseidon2 "${CMAKE_CURRENT_SOURCE_DIR}/../test/poseidon2/bench.cpp")
+  target_link_libraries(bench-poseidon2 PRIVATE tos_crypto)
+endif()

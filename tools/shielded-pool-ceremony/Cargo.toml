@@ -1,0 +1,42 @@
+[package]
+name = "shielded-pool-ceremony"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Groundwork for the shielded pool's Groth16 ceremony: the phase-1 slice this circuit needs, its structural verification, and the gate a produced verifying key has to pass."
+
+[dependencies]
+# The circuit, for one number: the QAP domain it needs. Everything about the
+# phase-1 slice follows from it, so it is measured rather than configured.
+shielded-pool-circuit = { path = "../shielded-pool-circuit" }
+
+ark-bls12-381 = "=0.5.0"
+ark-ec = "=0.5.0"
+ark-ff = "=0.5.0"
+ark-groth16 = "=0.5.0"
+ark-snark = "=0.5.1"
+ark-poly = "=0.5.0"
+ark-r1cs-std = "=0.5.0"
+ark-relations = "=0.5.1"
+ark-serialize = "=0.5.0"
+ark-std = "=0.5.0"
+rand = "=0.8.5"
+rand_chacha = "=0.3.1"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+sha2 = "=0.10.9"
+hex = "=0.4.3"
+# Wiping contribution secrets. The compiler is free to elide a plain
+# overwrite of memory that is about to be dropped; this is the crate whose
+# whole job is to stop it doing that.
+zeroize = "=1.9.0"
+# The same pin the circuit crate uses. Ruling A1 makes this chain's own BLS
+# primitives the authority on what a point is, and a ceremony that read the
+# transcript with a second library would be checking a different string from
+# the one the chain would accept.
+blst = { version = "=0.3.16", features = ["portable"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

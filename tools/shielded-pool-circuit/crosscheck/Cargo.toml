@@ -1,0 +1,40 @@
+[package]
+name = "shielded-pool-circuit-crosscheck"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Runs the shielded FunC library in the VM and compares it against the circuit gadgets, value for value."
+
+[dependencies]
+shielded-pool-circuit = { path = ".." }
+shielded-pool-wallet = { path = "../../shielded-pool-wallet" }
+shielded-pool-genesis = { path = "../../shielded-pool-genesis" }
+chain_block = { path = "../../../tosctl/src/block" }
+tos_sandbox = { path = "../../../tosctl/src/sandbox" }
+tos_vm = { path = "../../../tosctl/src/vm" }
+serde_json = "=1.0.145"
+ark-ff = "=0.5.0"
+# Test-only ML-DSA-44 signer. The chain ships a verifier only, so an
+# end-to-end transaction needs a signer to produce signatures over a digest
+# the contract itself computes. Pinned exactly; never used outside tests.
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+# A private directory per probe compile. The pinned version is the one
+# the sandbox crate already locks, so this adds an edge, not a resolution.
+tempfile = "=3.27.0"
+
+[dev-dependencies]
+# The ceremony, for one test: run a real phase-2 over the committed phase-1
+# slice and put its output through the acceptance gate. A dev-dependency
+# because the gate itself must stay usable by anyone holding a key pair,
+# whatever produced it.
+shielded-pool-ceremony = { path = "../../shielded-pool-ceremony" }
+ark-bls12-381 = "=0.5.0"
+# A seeded generator, so the end-to-end test is reproducible. Test-only by
+# construction: the ceremony library offers no seeded entropy source at all.
+rand = "=0.8.5"
+rand_chacha = "=0.3.1"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

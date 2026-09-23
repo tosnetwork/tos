@@ -184,6 +184,16 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Lower the gas one transaction may burn in this workchain.
+    ///
+    /// A contract's own `SETGASLIMIT` can only lower the limit it was
+    /// granted, so this is the only way to make a path that would otherwise
+    /// complete run out of gas in the middle. It exists for tests that ask
+    /// what a half-finished transaction leaves behind.
+    pub fn set_workchain_gas_limit(&mut self, gas_limit: u64) {
+        self.config.set_workchain_gas_limit_for_tests(gas_limit);
+    }
+
     pub fn treasury(&mut self, name: &str, balance: u64) -> SandboxResult<Treasury> {
         let (treasury, mut account) = Treasury::create(name, self.workchain)?;
 

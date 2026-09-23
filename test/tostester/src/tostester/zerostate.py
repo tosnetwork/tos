@@ -54,6 +54,23 @@ class NetworkConfig:
     # otherwise their signatures cease to have an active ConfigParam 34
     # backing after that hour.  None preserves the historical genesis bytes.
     bootstrap_validator_set_valid_for: int | None = None
+    # TEST-ONLY by default: a cheap gas and forwarding schedule, so that a
+    # test's wallets never run out of play money. Two kinds of harness must
+    # not use it and must ask for the deployment schedule instead -- the one
+    # `crypto/smartcont/gen-zerostate.fif` writes:
+    #
+    #   * anything that measures what a transaction costs. The test schedule
+    #     prices gas at a round 10 nanotos and the deployment at 6.666, so a
+    #     fee measured here is a fee on a chain nobody runs -- and note which
+    #     way round that is: since the basechain price was cut tenfold on
+    #     2026-09-21 the test schedule is the *dearer* of the two per gas, so
+    #     a cost measured here is an overstatement rather than the flattering
+    #     understatement it used to be. Either way it is the wrong number;
+    #   * anything running a contract whose own gas ceiling is above the cheap
+    #     schedule's 1,000,000 per-transaction limit. SETGASLIMIT cannot raise
+    #     a transaction above the network's limit, so such a contract is not
+    #     slow here, it is refused.
+    deployment_fee_schedule: bool = False
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
     # TEST-ONLY: an accelerated validator-election application experiment may
@@ -273,13 +290,11 @@ elector_addr config.elector_smc!
 config.special!
 
 // gas_price gas_limit special_gas_limit gas_credit block_gas_limit freeze_due_limit delete_due_limit flat_gas_limit flat_gas_price
-// DEV-SPECIFIC: cheaper gas for tests (production: 26214400/655360000)
-10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!
-10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!
+{gas_prices}
+{mc_gas_prices}
 // lump_price bit_price cell_price ihr_factor first_frac next_frac
-// DEV-SPECIFIC: cheaper forwarding for tests (production: 400000/10000000)
-100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!
-100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!
+{fwd_prices}
+{mc_fwd_prices}
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
 {mc_valgroup_lifetime} {shard_valgroup_lifetime} {shard_validators_lifetime} {shard_validators_per_group} true config.catchain_params!
 
@@ -404,6 +419,44 @@ def _punishment_params(election_params: str) -> str:
             "the profile's validation round is too long to scale from"
         )
     return f"TM$62.5 16777216 640 1024 {unpunishable} {long} 4096 4096 {medium} 1024 1024"
+
+
+
+def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
+    """The four ConfigParam 20/21/24/25 lines the zerostate is rendered with.
+
+    The deployment's schedule is `crypto/smartcont/gen-zerostate.fif`'s, copied
+    rather than imported because that file is Fift meant for `create-state` and
+    this one is a template. The pair is compared by
+    `tests/tostester/test_zerostate_fee_schedule.py`, so a change to one that
+    is not made to the other fails rather than quietly producing a localnet
+    whose fees are nobody's.
+    """
+    if config.deployment_fee_schedule:
+        return {
+            "gas_prices":
+                "436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
+            "mc_gas_prices":
+                "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
+                " config.mc_gas_prices!",
+            "fwd_prices":
+                "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
+            "mc_fwd_prices":
+                "10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/"
+                " config.mc_fwd_prices!",
+        }
+    return {
+        "gas_prices":
+            "// DEV-SPECIFIC: cheaper gas for tests (deployment: 436907/655360000)\n"
+            "10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!",
+        "mc_gas_prices":
+            "10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!",
+        "fwd_prices":
+            "// DEV-SPECIFIC: cheaper forwarding for tests (deployment: 66667/10000000)\n"
+            "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
+        "mc_fwd_prices":
+            "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!",
+    }
 
 
 def create_zerostate(
@@ -557,6 +610,8 @@ def create_zerostate(
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
+    fee_schedule = fee_schedule_for(config)
+
     run_fift(
         install,
         _TEMPLATE.format(
@@ -570,6 +625,7 @@ def create_zerostate(
             new_consensus_config=new_consensus_config,
             dns_config_param=dns_config_param,
             voting_config_param=voting_config_param,
+            **fee_schedule,
             **profile,
         ),
         state_dir,

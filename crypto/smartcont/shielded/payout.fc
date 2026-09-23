@@ -1,0 +1,130 @@
+;; The withdrawal payout: section 15.2's outbound message, section 14.2's
+;; solvency rule, and the part of section 16.2 step 16 that is not state.
+;;
+;; The pool sends exactly one message per withdrawal and it is deliberately
+;; short. What the recipient gets is not the withdrawal's private material but
+;; the record the pool will need back if the payment fails: the intent it came
+;; from, the recovery template that was signed before the money left, the
+;; recipient hash the pool checked, and the pre-authorised recovery note. That
+;; record is carried by the protocol's rich bounce and is the only way a failed
+;; payout can be turned back into a note without the pool keeping a pending map.
+;;
+;; The fee is not a cushion. Section 14.2 requires the immutable configured fee
+;; to cover the forward fee of the exact message plus a whole bounded recovery
+;; execution, so the recovery a bounce triggers is paid for before the money
+;; leaves rather than out of somebody else's reserve.
+;;
+;; Exit codes 242-259.
+;;   242 the withdrawal fee is not the one the immutable config fixed
+;;   243 the fee does not cover this message plus a bounded recovery
+;;   244 the payout is larger than the liability it is meant to discharge
+;;   245 the recipient is not an address this pool can pay
+
+;; Section 15.2: the outbound operation is zero. A recipient that does not
+;; know this pool sees a plain transfer with a record attached.
+int payout_op() asm "0 PUSHINT";
+
+;; Section 15.3 step 4 ties the reply to its intent, and the bounce handler
+;; recomputes it rather than trusting it.
+int payout_query_id(int intent_digest) inline {
+  return intent_digest % 18446744073709551616;
+}
+
+;; Rich bounce: bit 0 asks for the new bounce format, bit 1 for the full
+;; original body. Without bit 1 the bounce carries the body's bits and drops
+;; its references, and the recovery record lives in those references.
+int payout_bounce_flags() asm "3 PUSHINT";
+
+;; Section 15.2. Four field elements do not fit one cell, so the record is
+;; split exactly where the profile splits it: three in the root and one in the
+;; tail, with the recovery payload hanging off the tail.
+cell payout_record(int intent_digest, int recovery_template_hash,
+                   int public_recipient_hash, int recovery_owner_commitment,
+                   cell recovery_data) inline_ref {
+  cell tail = begin_cell()
+    .store_uint(recovery_owner_commitment, 256)
+    .store_ref(recovery_data)
+    .end_cell();
+  return begin_cell()
+    .store_uint(intent_digest, 256)
+    .store_uint(recovery_template_hash, 256)
+    .store_uint(public_recipient_hash, 256)
+    .store_ref(tail)
+    .end_cell();
+}
+
+;; Section 15.2's message root.
+cell payout_body(int intent_digest, cell record) inline_ref {
+  return begin_cell()
+    .store_uint(payout_op(), 32)
+    .store_uint(payout_query_id(intent_digest), 64)
+    .store_ref(record)
+    .end_cell();
+}
+
+;; The whole outbound message, bouncable and carrying the rich bounce flags.
+;; `recipient` is the canonical address the caller already validated; this
+;; refuses addr_none rather than sending money nowhere.
+cell payout_message(slice recipient, int amount, cell body) impure inline_ref {
+  throw_if(245, recipient.preload_uint(2) == 0);
+  return begin_cell()
+    .store_uint(0x18, 6)                   ;; int_msg_info, ihr disabled, bounce
+    .store_slice(recipient)
+    .store_tomis(amount)
+    .store_uint(0, 1)                      ;; no extra currencies
+    .store_tomis(payout_bounce_flags())    ;; extra_flags
+    .store_tomis(0)                        ;; forward fee, filled in by the action phase
+    .store_uint(0, 64 + 32)                ;; created_lt and created_at
+    .store_uint(0, 1)                      ;; no state init
+    .store_uint(1, 1)                      ;; the body is in a reference
+    .store_ref(body)
+    .end_cell();
+}
+
+;; What the action phase will charge to forward this payout.
+;;
+;; The chain prices a message by the cells and bits of what hangs below the
+;; message root -- the state init and the body -- and not by the root's own
+;; header. The body is therefore what is measured, and it is measured rather
+;; than taken from a table because the recovery payload's cell count is fixed
+;; by section 3 and a table would drift from it. The suite compares the number
+;; this returns against the fee the action phase actually charged.
+int payout_forward_fee(cell body) impure inline_ref {
+  (int cells, int bits, _) = compute_data_size(body, 1024);
+  return get_forward_fee(0, bits, cells);
+}
+
+;; Section 14.2. The configured fee is immutable, so this is a check on the
+;; deployment rather than on the message: if the chain's prices have moved past
+;; what the pool charges, withdrawals fail closed and deposits and transfers
+;; carry on.
+;;
+;; The floor is the forward fee and nothing else. It used to include a whole
+;; bounded recovery's compute, and that term was the dangerous one: an
+;; immutable fee had to stay ahead of a *compute* price the chain can govern
+;; upwards, so a large enough rise would brick every withdrawal permanently
+;; while deposits and transfers carried on. What remains is what the pool
+;; spends before any bounce can exist -- sending the payout, as its sender --
+;; and it prices bytes rather than work.
+;;
+;; The recovery's compute is now charged to the money being recovered, at the
+;; prices live when the bounce arrives, so it cannot be underfunded by a price
+;; rise and cannot be paid for by withdrawals that never bounce. Section 15.4.
+;;
+;; RECOVERY_FEE_MARGIN is exactly zero in this profile. Production activation
+;; has to measure the real path and choose the configured fee with explicit
+;; headroom; the margin constant itself is not a knob to turn here.
+() payout_require_solvent(int withdrawal_fee, int config_withdrawal_fee,
+                          cell body) impure inline_ref {
+  throw_unless(242, withdrawal_fee == config_withdrawal_fee);
+  throw_unless(243, withdrawal_fee >= payout_forward_fee(body));
+}
+
+;; Section 16.2 step 16's arithmetic. A payout discharges liability; it can
+;; never discharge more than there is, and the fee leaves with it because the
+;; user already converted it to reserve.
+int payout_new_liability(int native_liability, int public_amount_out,
+                         int withdrawal_fee) impure inline {
+  throw_unless(244, native_liability >= public_amount_out + withdrawal_fee);
+  return native_liability - public_amount_out - withdrawal_fee;
+}

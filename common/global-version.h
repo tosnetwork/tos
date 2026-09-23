@@ -23,6 +23,6 @@ namespace tos {
 // anything. What a network runs comes from ConfigParam 8; a configured version
 // above this one is logged and then executed anyway, so raising this does not
 // activate v16 and leaving it low would not have prevented it.
-constexpr int SUPPORTED_VERSION = 16;
+constexpr int SUPPORTED_VERSION = 18;
 
 }  // namespace tos

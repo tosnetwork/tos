@@ -1,0 +1,34 @@
+TOS shielded pool, phase 2 -- contribution 1
+
+Contributor: tosman (https://github.com/gtosnetwork-dotcom)
+Execution: delegated to an automated agent on the operator's local machine.
+Independent of the operator: false.
+
+The Rust contributor drew a scalar from the operating-system random source,
+applied it to the announced starting parameters, and completed successfully.
+The implementation wipes its secret value on drop. The operator and agent did
+not request, receive, print, record or transmit the scalar. This statement does
+not claim forensic proof that memory copies, swap or snapshots never existed.
+The persistent signing key is separate from the contribution scalar.
+
+  built from     49ef58c0ab98f62b76ae3c61a510980dae131235
+  starting key   018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+  contribution   65cbe4db248743a1cca1b49414f4d98a0b882529a7da3b4593df2951b8312198
+  transcript     551ba6e7b91b32169f1f44c42aea1fbd7216da783e4543628ccb3cb3fcb9dbeb
+
+Register revision: 49ef58c0ab98f62b76ae3c61a510980dae131235
+Register SHA-256: abc6532e7aeaade754babd485d943f161093ed3921b4730a24cc69ea3190ebc7
+Signing key fingerprint: SHA256:vKF/wb8PUVfv4CorGJcKJl4sHgNygoenLQnP4OIFhJQ
+The signing key was newly generated and published before this contribution,
+as permitted by the open-participation announcement.
+
+Announcement: https://github.com/tosnetwork/tos/releases/tag/shielded-pool-phase2-announcement-v2
+Announcement server publication time: 2026-09-22T10:30:56Z
+Starting parameters were separately published in commit
+81a893e25 (see Git history for its full identifier).
+Statement prepared at 2026-09-22T10:33:57Z; this local timestamp is not
+independent publication evidence. The contribution publication record supplies
+its server timestamp separately.
+
+This is the first contribution in an open ceremony, not final parameters or
+an assertion that independent participation or final acceptance is complete.

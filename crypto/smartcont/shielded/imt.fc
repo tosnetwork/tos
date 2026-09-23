@@ -1,0 +1,199 @@
+;; The nullifier indexed Merkle tree, section 7 of the V1 implementation profile.
+;;
+;; Shape: arity 7, depth 12, leaf indices uint32, next index starting at 1 and
+;; leaf index 0 holding the head sentinel (value=0, next_index=0, next_value=0).
+;; Unallocated leaves hash to field zero, so section 7.0's empty-subtree ladder
+;; is built from IMT-NODE. That is a different ladder from the COMMIT-NODE one
+;; generated in empty-roots.fc: the domains differ, so the values differ, and
+;; the commitment ladder must never be reused here.
+;;
+;; The ladder is recomputed rather than read from a generated table because no
+;; generated IMT table exists; twelve permutations is the price of not writing
+;; a constant by hand.
+;;
+;; Requires domains.fc and notes.fc.
+
+int imt_depth() asm "12 PUSHINT";
+
+;; The first index that may not be allocated. The persistent counter is uint64
+;; only so that this exhausted sentinel is representable.
+int imt_capacity() asm "4294967296 PUSHINT";
+
+;; Section 7.0: an unallocated leaf is field zero, and an allocated leaf hash
+;; must never collide with it.
+int imt_unallocated_leaf() asm "0 PUSHINT";
+
+;; Section 7.2: the frozen witness shape. The root carries
+;; 32 + 256 + 32 + 256 data bits and two references. A path is twenty-four
+;; cells of three field elements each, read two cells per level.
+int imt_witness_bits() asm "576 PUSHINT";
+int imt_witness_refs() asm "2 PUSHINT";
+
+int imt_node(int c0, int c1, int c2, int c3, int c4, int c5, int c6) inline {
+  return h7(domain_imt_node(), c0, c1, c2, c3, c4, c5, c6);
+}
+
+;; Global version 18. One imt_node a level, over a path laid out as section 7.2
+;; describes it, with the carry placed by the base-seven digits of the index.
+int poseidon2_path7(int leaf, int domain, cell path, int index, int depth)
+  asm "POSEIDON2_PATH7";
+
+;; Section 7: the leaf tuple is (value, next_index, next_value); the four zero
+;; lanes are part of the definition, not slack.
+;; Section 7.0 states this as a MUST: an allocated leaf that hashed to field
+;; zero would be indistinguishable from an unallocated one, and the tree would
+;; stop being sound. Under the pinned permutation no caller input reaches it,
+;; but "unreachable" is not a reason to leave it untested, so the check is a
+;; function a test can call with zero rather than a line buried in a hash.
+;;
+;; It is also not a licence to skip work later: a new Poseidon profile still
+;; owes the full parameter, empty-root and sentinel vectors.
+int imt_require_allocated_leaf_hash(int leaf) inline {
+  throw_if(121, leaf == imt_unallocated_leaf());
+  return leaf;
+}
+
+int imt_leaf_hash(int value, int next_index, int next_value) inline {
+  return imt_require_allocated_leaf_hash(
+    h7(domain_imt_leaf(), value, next_index, next_value, 0, 0, 0, 0));
+}
+
+;; Section 7.0: IMT_EMPTY[0] = 0, IMT_EMPTY[level+1] = IMT-NODE of seven copies.
+int imt_empty_at(int level) inline_ref {
+  throw_unless(100, level >= 0);
+  throw_unless(101, level <= imt_depth());
+  int value = imt_unallocated_leaf();
+  int step = 0;
+  while (step < level) {
+    value = imt_node(value, value, value, value, value, value, value);
+    step = step + 1;
+  }
+  return value;
+}
+
+;; Section 7.0: the genesis root is the head sentinel inserted at leaf index 0
+;; of the otherwise empty tree. Index 0 has path digit 0 at every level, so
+;; every sibling is that level's empty root.
+int imt_genesis_root() inline_ref {
+  int carry = imt_leaf_hash(0, 0, 0);
+  int empty = imt_unallocated_leaf();
+  int level = 0;
+  while (level < imt_depth()) {
+    carry = imt_node(carry, empty, empty, empty, empty, empty, empty);
+    empty = imt_node(empty, empty, empty, empty, empty, empty, empty);
+    level = level + 1;
+  }
+  return carry;
+}
+
+;; Section 7.2's path layout, which POSEIDON2_PATH7 now enforces and this
+;; contract no longer reads: twenty-four cells, two to a level, each exactly
+;; 768 bits holding three canonical field elements, each carrying one
+;; reference except the second cell of the last level, which carries none.
+;; Arity seven and depth twelve are the instruction's, written into its name.
+;;
+;; The FunC reader that used to check all of this was deleted when the walk
+;; moved, rather than kept as documentation: a mutation aimed at an
+;; unreachable check survives, and a check nothing can reach looks tested
+;; without being tested. `test/shielded-pool/mutations-imt.py` aims at the VM
+;; now, which is where the refusals live.
+;;
+;; Section 7.2: fold a path into a root. Levels run leaf to root; at each level
+;; the six siblings are given in ascending child position with the path digit
+;; skipped, so the carry goes back into position d and nowhere else.
+;;
+;; A witness whose siblings are reordered, or taken for another index, produces
+;; a different root here; it is the caller's root comparison that rejects it.
+;;
+;; This is POSEIDON2_PATH7, which is the loop below moved into the VM. It
+;; refuses everything the loop refused and in the same places:
+;;
+;;   a pruned branch or a library cell   the ordinary cell loader, as
+;;                                       begin_parse did
+;;   a cell that is not 768 bits         exit 9, where this threw 102
+;;   the wrong reference count           exit 9, where this threw 104/105
+;;   a sibling at or above the modulus   exit 5, where this threw 103;
+;;                                       rejected, never reduced
+;;   an index past the depth             exit 5, where this threw 107
+;;
+;; What changes is the exit codes: the VM throws its own rather than this
+;; contract's 102 to 107. Nothing in the pool distinguishes them -- every
+;; caller compares the returned root and rejects on inequality -- but a test
+;; that asserted on 102 would now see 9, so section 7.2's codes are recorded
+;; here as history rather than as behaviour.
+int imt_root_from_path(cell path, int index, int leaf) impure inline_ref {
+  throw_unless(106, index >= 0);
+  throw_unless(107, index < imt_capacity());
+  return poseidon2_path7(leaf, domain_imt_node(), path, index, imt_depth());
+}
+
+;; Sections 7.1 and 7.2: insert one nullifier. Returns the new nullifier root
+;; and the new next index. The eight numbered steps of 7.1 are marked below.
+;;
+;; A zero nullifier needs no rule of its own: the head sentinel holds value 0 at
+;; leaf index 0 and step 2 requires low_value < nf, which no low leaf can
+;; satisfy for nf = 0. That is what reserves zero.
+;;
+;; Section 7.0's ordering invariants for an allocated low leaf are not asserted
+;; separately because steps 2 and 3 already imply them:
+;; low_next_index = 0 with a non-zero low_next_value fails step 3, and
+;; low_value < nf < low_next_value gives low_value < low_next_value.
+(int, int) imt_insert(int nullifier_root, int nullifier_next_index, int nf, cell witness) {
+  throw_unless(122, nullifier_next_index >= 0);
+  throw_unless(112, nf >= 0);
+  throw_unless(112, nf < field_modulus());
+
+  slice body = witness.begin_parse();
+  (int bits, int refs) = body.slice_bits_refs();
+  throw_unless(108, bits == imt_witness_bits());
+  throw_unless(109, refs == imt_witness_refs());
+  int low_index = body~load_uint(32);
+  int low_value = body~load_uint(256);
+  int low_next_index = body~load_uint(32);
+  int low_next_value = body~load_uint(256);
+  cell low_path = body~load_ref();
+  cell append_path = body~load_ref();
+
+  throw_unless(110, low_value < field_modulus());
+  throw_unless(111, low_next_value < field_modulus());
+  ;; Section 7.2: a witness may only name leaves that have been allocated.
+  throw_unless(113, low_index < nullifier_next_index);
+  if (low_next_index != 0) {
+    throw_unless(114, low_next_index < nullifier_next_index);
+  }
+
+  ;; 1. the low leaf is in the current nullifier root.
+  int low_leaf = imt_leaf_hash(low_value, low_next_index, low_next_value);
+  throw_unless(115, imt_root_from_path(low_path, low_index, low_leaf) == nullifier_root);
+
+  ;; 2. the low leaf precedes the nullifier.
+  throw_unless(116, low_value < nf);
+
+  ;; 3. and nothing sits between them, so the nullifier is not in the tree.
+  int bracketed = (low_next_index == 0) & (low_next_value == 0);
+  bracketed = bracketed | ((low_next_index != 0) & (nf < low_next_value));
+  throw_unless(117, bracketed);
+
+  ;; 4. the tree is not exhausted, and the new index is a uint32.
+  throw_unless(118, nullifier_next_index < imt_capacity());
+  ;; Step 4 states the bound twice. Nothing between the check above and here
+  ;; truncates or casts the counter, so the second statement is implied by the
+  ;; first rather than defending anything, and a guard no input can reach is
+  ;; decoration. Restoring it would need a change that does truncate.
+  int new_index = nullifier_next_index;
+
+  ;; 5. the low leaf now points at the new leaf.
+  int updated_low = imt_leaf_hash(low_value, new_index, nf);
+  int root1 = imt_root_from_path(low_path, low_index, updated_low);
+
+  ;; 6. the append slot is still unallocated under that intermediate root.
+  throw_unless(120,
+    imt_root_from_path(append_path, new_index, imt_unallocated_leaf()) == root1);
+
+  ;; 7. the new leaf takes over the link the low leaf used to hold.
+  int new_leaf = imt_leaf_hash(nf, low_next_index, low_next_value);
+  int root2 = imt_root_from_path(append_path, new_index, new_leaf);
+
+  ;; 8. commit the root and the counter together.
+  return (root2, nullifier_next_index + 1);
+}

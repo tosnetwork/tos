@@ -1,0 +1,175 @@
+;; The commitment tree, section 5 of the V1 implementation profile.
+;;
+;; Shape: arity 7, depth 12, leaf indices uint32. The empty leaf is field zero
+;; and the empty-subtree ladder is generated in empty-roots.fc rather than
+;; recomputed, because it never changes.
+;;
+;; Requires domains.fc, empty-roots.fc and notes.fc.
+
+;; The largest index that may be appended, exclusive. The persistent counter is
+;; uint64 only so that this exhausted sentinel is representable.
+int commitment_capacity() asm "4294967296 PUSHINT";
+int tree_depth() asm "12 PUSHINT";
+int tree_arity() asm "7 PUSHINT";
+
+int commit_node(int c0, int c1, int c2, int c3, int c4, int c5, int c6) inline {
+  return h7(domain_commit_node(), c0, c1, c2, c3, c4, c5, c6);
+}
+
+int empty_root_at(int level) inline_ref {
+  if (level == 0) { return empty_root_0(); }
+  if (level == 1) { return empty_root_1(); }
+  if (level == 2) { return empty_root_2(); }
+  if (level == 3) { return empty_root_3(); }
+  if (level == 4) { return empty_root_4(); }
+  if (level == 5) { return empty_root_5(); }
+  if (level == 6) { return empty_root_6(); }
+  if (level == 7) { return empty_root_7(); }
+  if (level == 8) { return empty_root_8(); }
+  if (level == 9) { return empty_root_9(); }
+  if (level == 10) { return empty_root_10(); }
+  if (level == 11) { return empty_root_11(); }
+  if (level == 12) { return empty_root_12(); }
+  throw(90);  ;; level outside the frozen depth
+  return 0;
+}
+
+;; --- the frontier store, section 5.3 -----------------------------------------
+;;
+;; Twelve levels in the order an append walks them, seven slots each, three
+;; field elements to a cell because a cell holds 1023 bits and a field element
+;; needs 256. That is section 7.2's shape, reused rather than reinvented:
+;;
+;;   level node   v0 v1 v2   ^second   ^next    (^next absent at the last level)
+;;   second       v3 v4 v5   ^third
+;;   third        v6
+;;
+;; This was a HashmapE keyed by `level * 7 + position` until 2026-09-21. The
+;; keys were dense and contiguous and the access is sequential, so nothing
+;; about it wanted a dictionary -- but that is not why it changed. A
+;; dictionary genuinely stores less than an array while the array is mostly
+;; holes, and near genesis it is: measured, the dictionary is 16,595 gas
+;; cheaper at leaf index two.
+;;
+;; It changed because the two have different shapes, not different constants.
+;; A dictionary append runs from 108,544 gas at genesis up to 172,192 at the
+;; worst index; this one runs from 127,412 down to 123,544, because a high
+;; digit takes a stored slot where a low one takes `empty_root_at`. A sender
+;; pre-pays the ceiling and a ceiling has to cover the worst age the pool can
+;; reach, so under a dictionary every sender paid for a maturity most of them
+;; will never see. Here the dearest append a pool can do is its first, which
+;; is the one a harness measures anyway.
+;;
+;; `tools/shielded-pool-circuit/crosscheck/tests/frontier_store_shape.rs`
+;; keeps both containers and fails if they stop differing that way;
+;; `frontier_cost_is_flat.rs` holds the property the ceiling rests on.
+
+int frontier_level_bits() asm "768 PUSHINT";
+int frontier_tail_bits() asm "256 PUSHINT";
+
+;; One level's seven slots. `last` says whether this is level eleven, which
+;; carries no reference onward.
+(int, int, int, int, int, int, int, cell) frontier_level_read(cell node, int last)
+    impure inline_ref {
+  slice a = node.begin_parse();
+  throw_unless(181, a.slice_bits() == frontier_level_bits());
+  throw_unless(181, a.slice_refs() == (last ? 1 : 2));
+  int v0 = a~load_uint(256);
+  int v1 = a~load_uint(256);
+  int v2 = a~load_uint(256);
+  cell second = a~load_ref();
+  cell next = last ? null() : a~load_ref();
+
+  slice b = second.begin_parse();
+  throw_unless(181, b.slice_bits() == frontier_level_bits());
+  throw_unless(181, b.slice_refs() == 1);
+  int v3 = b~load_uint(256);
+  int v4 = b~load_uint(256);
+  int v5 = b~load_uint(256);
+
+  slice c = b~load_ref().begin_parse();
+  throw_unless(181, c.slice_bits() == frontier_tail_bits());
+  throw_unless(181, c.slice_refs() == 0);
+  int v6 = c~load_uint(256);
+
+  return (v0, v1, v2, v3, v4, v5, v6, next);
+}
+
+cell frontier_level_build(tuple v, cell next, int last) inline_ref {
+  cell third = begin_cell().store_uint(v.at(6), 256).end_cell();
+  cell second = begin_cell()
+    .store_uint(v.at(3), 256).store_uint(v.at(4), 256).store_uint(v.at(5), 256)
+    .store_ref(third).end_cell();
+  builder node = begin_cell()
+    .store_uint(v.at(0), 256).store_uint(v.at(1), 256).store_uint(v.at(2), 256)
+    .store_ref(second);
+  ifnot (last) { node = node.store_ref(next); }
+  return node.end_cell();
+}
+
+;; Section 13.2: the store a pool is deployed with. Every slot is zero, and
+;; none of them is read before it is written: an append reads slots below its
+;; level's digit and takes the level's empty root for the rest, and at index
+;; zero every digit is zero.
+cell frontier_genesis() inline_ref {
+  tuple zeros = empty_tuple();
+  int slot = 0;
+  while (slot < tree_arity()) {
+    zeros = zeros.tpush(0);
+    slot = slot + 1;
+  }
+  cell chain = null();
+  int level = tree_depth() - 1;
+  while (level >= 0) {
+    chain = frontier_level_build(zeros, chain, level == (tree_depth() - 1));
+    level = level - 1;
+  }
+  return chain;
+}
+
+;; Appends one leaf at `index` and returns the updated frontier and the new root.
+;;
+;; Two passes, because a level holds a reference to the next: down to compute
+;; every level's new slots, then up to rebuild the chain from the deepest.
+;; Slots above a level's digit are stale by construction and are read as the
+;; level's empty root rather than from the store.
+(cell, int) frontier_append(cell frontier, int index, int leaf) {
+  throw_unless(91, index >= 0);
+  throw_unless(92, index < commitment_capacity());
+
+  tuple levels = empty_tuple();
+  int carry = leaf;
+  int stride = 1;
+  int level = 0;
+  cell node = frontier;
+  while (level < tree_depth()) {
+    int last = level == (tree_depth() - 1);
+    (int v0, int v1, int v2, int v3, int v4, int v5, int v6, cell next) =
+      frontier_level_read(node, last);
+    int digit = (index / stride) % tree_arity();
+    int empty = empty_root_at(level);
+    int c0 = digit == 0 ? carry : v0;
+    int c1 = digit == 1 ? carry : (digit > 1 ? v1 : empty);
+    int c2 = digit == 2 ? carry : (digit > 2 ? v2 : empty);
+    int c3 = digit == 3 ? carry : (digit > 3 ? v3 : empty);
+    int c4 = digit == 4 ? carry : (digit > 4 ? v4 : empty);
+    int c5 = digit == 5 ? carry : (digit > 5 ? v5 : empty);
+    int c6 = digit == 6 ? carry : empty;
+    tuple v = empty_tuple();
+    v = v.tpush(c0); v = v.tpush(c1); v = v.tpush(c2); v = v.tpush(c3);
+    v = v.tpush(c4); v = v.tpush(c5); v = v.tpush(c6);
+    levels = levels.tpush(v);
+    carry = commit_node(c0, c1, c2, c3, c4, c5, c6);
+    stride = stride * tree_arity();
+    node = next;
+    level = level + 1;
+  }
+
+  cell rebuilt = null();
+  level = tree_depth() - 1;
+  while (level >= 0) {
+    rebuilt = frontier_level_build(levels.at(level), rebuilt, level == (tree_depth() - 1));
+    level = level - 1;
+  }
+  return (rebuilt, carry);
+}

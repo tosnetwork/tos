@@ -1,0 +1,130 @@
+;; Section 15.3 and 16.3: turning a payout that failed back into a note.
+;;
+;; A withdrawal takes money out of the pool before it is known whether the
+;; recipient will take it. When it will not, the protocol returns the money
+;; with the message that carried it, and the pool has to put it back where it
+;; came from -- as a note, to the person who withdrew, without learning who
+;; that was and without keeping a list of withdrawals in flight.
+;;
+;; That is what the record in the outbound message is for. Everything needed to
+;; rebuild the note travelled out with the payment and comes back on the
+;; bounce, so the pool's state carries nothing per withdrawal and there is no
+;; pending map to grow, to bound, or to get wrong.
+;;
+;; Which makes authenticating the bounce the whole job. These checks all run
+;; before ACCEPT, because a message the pool has not yet authenticated must not
+;; be able to spend the pool's balance. They are also all cheap: parsing,
+;; comparing, and four hashes.
+;;
+;; Exit codes 263-279.
+;;   263 the message is not a bounce
+;;   264 the body is not the new bounce envelope
+;;   265 the original body is not the frozen payout shape
+;;   266 the query id does not name the intent the record carries
+;;   267 the bounce did not come from the address the payout was sent to
+;;   268 the recovery template hash is not the one the payload produces
+
+;; The protocol's rich bounce envelope, which the payout asked for by setting
+;; both extra flag bits:
+;;
+;;   new_bounce_body#fffffffe
+;;     original_body:^Cell
+;;     original_info:^[ value:CurrencyCollection created_lt created_at ]
+;;     bounced_by_phase:uint8 exit_code:int32
+;;     compute_phase:(Maybe [ gas_used:uint32 vm_steps:uint32 ])
+;;
+;; Only the first reference matters here. The rest is diagnosis, and a bounce
+;; is not made more authentic by why it happened.
+int recovery_envelope_tag() asm "4294967294 PUSHINT";   ;; 0xfffffffe
+
+;; Returns the original body the bounce carried.
+;;
+;; Without the full-body flag the protocol builds this reference from the
+;; original body's *bits* and drops its references. That form cannot hold the
+;; record, so requiring the section 15.2 shape below is what excludes it; there
+;; is no separate flag to read back, because the bounce does not carry one.
+cell recovery_original_body(slice body) impure inline_ref {
+  throw_unless(264, body.slice_bits() >= 32);
+  throw_unless(264, body.slice_refs() >= 1);
+  throw_unless(264, body~load_uint(32) == recovery_envelope_tag());
+  return body~load_ref();
+}
+
+;; Section 15.2, read back exactly as it was written. Anything else is not a
+;; payout of this pool's, whatever else it may be.
+(int, int, int, int, int, cell) recovery_parse_payout(cell original) impure inline_ref {
+  slice root = original.begin_parse();
+  throw_unless(265, root.slice_bits() == 96);
+  throw_unless(265, root.slice_refs() == 1);
+  throw_unless(265, root~load_uint(32) == 0);
+  int query_id = root~load_uint(64);
+
+  slice record = root~load_ref().begin_parse();
+  throw_unless(265, record.slice_bits() == 768);
+  throw_unless(265, record.slice_refs() == 1);
+  int intent_digest = record~load_uint(256);
+  int template_hash = record~load_uint(256);
+  int recipient_hash = record~load_uint(256);
+
+  slice tail = record~load_ref().begin_parse();
+  throw_unless(265, tail.slice_bits() == 256);
+  throw_unless(265, tail.slice_refs() == 1);
+  int owner_commitment = tail~load_uint(256);
+  cell recovery_data = tail~load_ref();
+
+  return (query_id, intent_digest, template_hash, recipient_hash, owner_commitment,
+          recovery_data);
+}
+
+;; Section 15.3, checks 4 through 7. The record is not trusted: every value in
+;; it is either recomputed from something outside it, or used to recompute
+;; something that is compared against it.
+;;
+;; Check 5 is the one that makes the record unusable by anyone else. The
+;; recipient hash inside it is recomputed from the address the bounce actually
+;; came from, so a record lifted from one payout cannot be replayed by another
+;; address -- and the address is the message header's, which a sender cannot
+;; forge.
+() recovery_require_authentic(slice sender, int query_id, int intent_digest,
+                              int template_hash, int recipient_hash,
+                              int owner_commitment, cell recovery_data) impure inline_ref {
+  throw_unless(266, query_id == (intent_digest % 18446744073709551616));
+  throw_unless(267, recipient_hash == public_recipient_hash(sender));
+  throw_unless(268,
+    template_hash == recovery_template_hash(owner_commitment, output_data_hash(recovery_data)));
+}
+
+;; Section 15.4. What the pool charges the bounce for putting it back.
+;;
+;; The recovery is work, and somebody pays for it. Until now that was the
+;; immutable `withdrawal_fee`, collected from *every* withdrawal including the
+;; overwhelming majority that never bounce -- and covering a compute price the
+;; chain can govern upwards, against a fee that can never be changed.
+;;
+;; It is the ceiling rather than what this transaction actually spends, and
+;; that is not laziness. The note commitment has to be built before the
+;; transaction's own cost is known, and building it costs gas, so an exact
+;; charge is circular. The ceiling is declared, derived by a stated rule, and
+;; computable by a wallet before it withdraws.
+;;
+;; Read at live prices, so a governed price rise raises the charge instead of
+;; quietly draining the reserve.
+;;
+;; The ceiling arrives as an argument because this file is compiled before the
+;; contract that declares it, next to the other gas ceilings where it belongs.
+int recovery_charge_at(int bounce_gas_ceiling) impure inline {
+  return get_compute_fee(0, bounce_gas_ceiling);
+}
+
+;; Section 15.4. The note is built for what actually came back **less what
+;; putting it back costs**, never for what went out.
+;;
+;; Everything the recipient's compute, the forwarding or the bounce transport
+;; consumed was already the withdrawing user's loss; the pool's own recovery
+;; compute now joins it. Minting more than that would pay for the recovery out
+;; of everyone else's reserve, which is the thing this pool must never do.
+int recovery_note_body(int owner_commitment, int recovered_amount,
+                       cell recovery_data) impure inline {
+  return note_body_commitment(owner_commitment, recovered_amount,
+                              output_data_hash(recovery_data));
+}

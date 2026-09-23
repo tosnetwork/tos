@@ -1,0 +1,69 @@
+{
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "ceremony": "ceremony-2",
+  "participants": [
+    {
+      "name": "tosman",
+      "affiliation": "operator",
+      "independent_of_operator": false,
+      "key": {
+        "type": "ssh",
+        "principal": "tosman",
+        "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIApCRsJsUd45qwDhqmolpkAYJRJGL949F1qdUZSPYy6q tosman TOS phase2 ceremony signing"
+      },
+      "published_at": [
+        "https://github.com/gtosnetwork-dotcom",
+        "https://github.com/tosnetwork/tos/blob/f5a45898fa810f1bea5bbcaf4f0803be0b2bfb4b/artifacts/phase2/keys/tosman.pub",
+        "https://api.github.com/users/gtosnetwork-dotcom/ssh_signing_keys"
+      ]
+    },
+    {
+      "name": "tosdev2",
+      "affiliation": "community",
+      "independent_of_operator": false,
+      "key": {
+        "type": "ssh",
+        "principal": "tosdev2",
+        "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINx6XqU3Sb5onu45b+zca46ExobrX/IpTA5ko01ciP4+ tosdev2"
+      }
+    },
+    {
+      "name": "tosdev3",
+      "affiliation": "community",
+      "independent_of_operator": false,
+      "key": {
+        "type": "ssh",
+        "principal": "tosdev3",
+        "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIGO+tG+3hWO0eGRtT3D8wR4TLMET35jRWpF8ZSXZiZT tosdev3"
+      }
+    },
+    {
+      "name": "BmswapProtocol",
+      "affiliation": "Not part of the TOS operating team (participant declaration)",
+      "independent_of_operator": true,
+      "key": {
+        "type": "ssh",
+        "principal": "BmswapProtocol",
+        "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHn0KYU+28Z6tiiCmr9++RLabZ6j+UfbqepL1910dSHy BmswapProtocol"
+      },
+      "published_at": [
+        "https://gist.github.com/BmswapProtocol/60bcbe525d52446fee3775790baa7903"
+      ],
+      "declaration_notes": "Participant states they are not part of the TOS operating team. Account has repository administrator access. Execution is delegated to an automated agent over SSH on the participant-designated VPS. Independence is self-declared, not externally verified."
+    },
+    {
+      "name": "onemailweb3-design",
+      "affiliation": "Independent external developer; not a TOS member or part of the operating team (participant declaration)",
+      "independent_of_operator": true,
+      "key": {
+        "type": "ssh",
+        "principal": "onemailweb3-design",
+        "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC+9WsukgT6pt633SQsmaNdMOgkoTkyuhMlijB+3ya7t onemailweb3-design TOS phase2 signing"
+      },
+      "published_at": [
+        "https://gist.github.com/onemailweb3-design/8c17f093726d46685eca68d89b5a7536"
+      ],
+      "declaration_notes": "Independence is self-declared, not externally verified. Execution is delegated to an automated agent over SSH on the participant-designated VPS. GitHub reports read-only upstream repository access, with no write or administrator permission at registration."
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+;; Execution domain and address hashing, section 8 of the V1 implementation
+;; profile.
+;;
+;; Both values are a SHA-256 brought into the field. That reduction is allowed
+;; here for the same reason it is allowed for the domain constants: the value
+;; is derived by the contract from data it already holds, never supplied by a
+;; caller. A field element that arrives on the wire is still required to be
+;; canonical and is refused rather than reduced.
+;;
+;; Exit codes 170-179.
+;;   170 the recipient address is not a non-anycast std address on workchain 0
+;;
+;; Requires notes.fc for reduce_to_field.
+
+;; SHA256 over the concatenated data bits of the operands, in the order given.
+int sha256_of_five(slice s0, slice s1, slice s2, slice s3, slice s4)
+  asm "5 PUSHINT HASHEXT_SHA256";
+int sha256_of_two(slice s0, slice s1) asm "2 PUSHINT HASHEXT_SHA256";
+
+int global_id() asm "GLOBALID";
+slice my_address() asm "MYADDR";
+
+;; V1 withdrawal recipients are non-anycast addr_std on workchain 0, so the
+;; account id is the only part that varies and the rest must be exactly that.
+;; addr_std is 10 bits of tag/anycast, 8 bits of workchain, then 256 of id.
+int std_account_id(slice address) inline {
+  int tag = address~load_uint(2);
+  int anycast = address~load_uint(1);
+  int workchain = address~load_int(8);
+  int account = address~load_uint(256);
+  throw_unless(170, (tag == 2) & (anycast == 0) & (workchain == 0)
+                    & address.slice_empty?());
+  return account;
+}
+
+int execution_domain() inline_ref {
+  int pool = std_account_id(my_address());
+  return reduce_to_field(
+    sha256_of_five(
+      "TOS-SHIELDED-EXEC-v1",
+      begin_cell().store_int(global_id(), 32).end_cell().begin_parse(),
+      begin_cell().store_uint(0, 8).end_cell().begin_parse(),
+      begin_cell().store_uint(pool, 256).end_cell().begin_parse(),
+      begin_cell().store_uint(1, 16).end_cell().begin_parse()));
+}
+
+;; Transfer mode uses addr_none and a recipient hash of zero; this is the
+;; withdrawal side, where the address must be a workchain-0 std address.
+int public_recipient_hash(slice recipient) inline {
+  int account = std_account_id(recipient);
+  return reduce_to_field(
+    sha256_of_two(
+      "TOS-SHIELDED-RECIPIENT-v1",
+      begin_cell().store_uint(account, 256).end_cell().begin_parse()));
+}

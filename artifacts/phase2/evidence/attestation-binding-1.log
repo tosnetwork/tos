@@ -1,0 +1,5 @@
+Signed attestation header and all four digest fields match contribution 1.
+Register contains tosman, the matching Ed25519 public key, and independence=false.
+Key binary SHA-256 matches ceremony.json.
+Attestation SHA-256: 5c009c39d5e6ac6986e8896ba00acad13f68507c6e0945578381b331f4b85888
+Register SHA-256: abc6532e7aeaade754babd485d943f161093ed3921b4730a24cc69ea3190ebc7

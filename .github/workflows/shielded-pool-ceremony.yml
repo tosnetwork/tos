@@ -1,0 +1,120 @@
+name: Shielded pool ceremony
+
+# The ceremony tooling had no workflow, and the half of it that matters most
+# had no tests until now.
+#
+# `shielded-pool-crosscheck.yml` covers the circuit and the contract. It does
+# not cover `tools/shielded-pool-ceremony/` -- the phase-2 contribution chain,
+# the secret-handling discipline, and the attestation verifier that decides
+# whether anybody actually stands behind a contribution.
+#
+# That last one is why this job is separate rather than a step in the
+# cross-check. The cross-check needs the C++ toolchain and runs for the better
+# part of an hour; these tests need python, ssh-keygen and gpg, and finish in
+# under a minute. A check that could have told you in forty seconds that a
+# signature no longer verifies should not be queued behind a ninety-minute
+# build.
+
+on:
+  pull_request:
+    paths:
+      - "tools/shielded-pool-ceremony/**"
+      - "tools/shielded-pool-circuit/src/groth16.rs"
+      - "test/shielded-pool/verify-attestations.py"
+      - "test/shielded-pool/verify-attestations-tests.py"
+      - "test/shielded-pool/ceremony-docs-tests.py"
+      - "scripts/shielded-pool-phase2-contribute.sh"
+      - "artifacts/phase2/**"
+      - ".github/workflows/shielded-pool-ceremony.yml"
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main, master, testnet]
+    paths:
+      - "tools/shielded-pool-ceremony/**"
+      - "tools/shielded-pool-circuit/src/groth16.rs"
+      - "test/shielded-pool/verify-attestations.py"
+      - "test/shielded-pool/verify-attestations-tests.py"
+      - "test/shielded-pool/ceremony-docs-tests.py"
+      - "scripts/shielded-pool-phase2-contribute.sh"
+      - "artifacts/phase2/**"
+      - ".github/workflows/shielded-pool-ceremony.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  attestations:
+    name: attestation verifier
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      # ssh-keygen and gpg are the verifiers, not conveniences: the tool shells
+      # out to them rather than parsing signatures itself, because a home-made
+      # parser that is wrong in the permissive direction is worse than no
+      # check at all. If they are missing the tests must fail, not skip.
+      - name: The signature verifiers exist
+        run: |
+          command -v ssh-keygen
+          command -v gpg
+          ssh-keygen -Y sign 2>&1 | head -1 || true
+          gpg --version | head -1
+
+      - name: Attestation verifier tests
+        run: python3 test/shielded-pool/verify-attestations-tests.py
+
+      # The participant guide is followed line by line on a machine nobody
+      # here controls, by someone with no way to tell whether a broken command
+      # is their mistake or ours. A dead link or a renamed path fails nothing
+      # and strands them.
+      - name: Ceremony documents point at things that exist
+        run: python3 test/shielded-pool/ceremony-docs-tests.py
+
+  ceremony:
+    name: ceremony crate
+    runs-on: ubuntu-24.04
+    # arkworks in release, for the reason the cross-check gives: a constraint
+    # system in debug is not worth waiting for.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Formatting
+        run: cargo fmt --all --check --manifest-path tools/shielded-pool-ceremony/Cargo.toml
+
+      # The same strict set the repository requires before a push. The secret
+      # discipline is the reason: an `unwrap` on a path that handles a scalar
+      # is a panic carrying a backtrace, and a backtrace is an output channel.
+      - name: Clippy
+        run: >
+          cargo clippy --locked --lib
+          --manifest-path tools/shielded-pool-ceremony/Cargo.toml
+          --
+          -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic
+          -D clippy::disallowed_methods -D warnings
+
+      # --no-fail-fast for the reason the other shielded-pool workflows give:
+      # cargo stops after the first failing target, so one red test would hide
+      # every suite after it.
+      - name: Ceremony suites
+        run: >
+          cargo test --release --locked --no-fail-fast
+          --manifest-path tools/shielded-pool-ceremony/Cargo.toml
+
+      # The mutation battery is deliberately not here, for the reason
+      # `shielded-pool-crosscheck.yml` gives about its own: 45 cases, each
+      # rebuilding and re-running the suite, over half an hour. Its cheap half
+      # is not -- checking that every anchor still matches the source costs
+      # well under a second, and a stale anchor is the failure that silently
+      # turns a mutation case into a no-op.
+      - name: Mutation anchors still match the source
+        run: python3 test/shielded-pool/mutations-ceremony.py --check-anchors

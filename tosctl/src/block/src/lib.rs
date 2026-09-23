@@ -29,6 +29,9 @@ pub use wrappers::*;
 
 pub mod bls;
 pub use bls::*;
+pub mod poseidon2;
+pub mod poseidon2_kat;
+pub mod poseidon2_params;
 
 pub mod error;
 pub use error::*;

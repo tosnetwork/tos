@@ -1,0 +1,36 @@
+[package]
+name = "shielded-pool-circuit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shielded pool V1 circuit: Poseidon2 t=8 gadgets, note/tree relations and the Groth16 development fixtures, built to the frozen implementation profile."
+
+[dependencies]
+ark-bls12-381 = "=0.5.0"
+ark-ec = "=0.5.0"
+ark-ff = "=0.5.0"
+ark-groth16 = "=0.5.0"
+ark-r1cs-std = "=0.5.0"
+ark-relations = "=0.5.1"
+ark-serialize = "=0.5.0"
+ark-snark = "=0.5.1"
+ark-std = "=0.5.0"
+sha2 = "=0.10.9"
+hex = "=0.4.3"
+rand_chacha = "=0.3.1"
+# The canonical wire encoder. Ruling A1 defines V1 proof/VK bytes as exactly
+# what this chain's own BLS primitives accept and produce, so the bytes are
+# produced by the same library the VM links rather than by a second one that
+# happens to agree.
+# Pinned to the exact version the chain's own workspace resolves, so that
+# "what this chain accepts" is literally the same code and not a
+# semver-compatible neighbour that happens to agree today.
+blst = { version = "=0.3.16", features = ["portable"] }
+rand = "=0.8.5"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

@@ -1,0 +1,105 @@
+=== memory and swap before ===
+               total        used        free      shared  buff/cache   available
+Mem:            3914         889        1060          39        2304        3024
+Swap:           2047          86        1961
+--- after swapoff -a ---
+               total        used        free      shared  buff/cache   available
+Mem:            3914         944        1005          74        2340        2969
+Swap:              0           0           0
+
+=== signing key for tosdev3 ===
+Generating public/private ed25519 key pair.
+Your identification has been saved in /root/.ssh/tos_signing_key
+Your public key has been saved in /root/.ssh/tos_signing_key.pub
+The key fingerprint is:
+SHA256:HQAHTRAKttx1Q9pCGsVpAOC6GX3Nxmrpivn0pxpc0gg tosdev3
+The key's randomart image is:
++--[ED25519 256]--+
+|..+.o+OXB        |
+|.o + *+=.o       |
+|E.o +.o . .      |
+|.o o + . . .     |
+|o + + = S .      |
+| = + +           |
+|o + +            |
+| + =  .          |
+|o.+o+o           |
++----[SHA256]-----+
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIGO+tG+3hWO0eGRtT3D8wR4TLMET35jRWpF8ZSXZiZT tosdev3
+256 SHA256:HQAHTRAKttx1Q9pCGsVpAOC6GX3Nxmrpivn0pxpc0gg tosdev3 (ED25519)
+
+=== contributing ===
+building from f7f141589a788c8aa06bee32d7799c25cbfab356
+    Finished `release` profile [optimized] target(s) in 0.08s
+
+rebuilding the starting key from the committed slice (a couple of minutes)
+starting key rebuilt and matches: 018853105392e4e0ef82ae59514f137b
+auditing 2 contribution(s) already in the chain
+the chain audits
+
+contribution 3 added.
+  contribution   5619a6e1aab154546061a8c65b35f98a973fc69f365b8665d702e0e82e96e468
+  transcript     d05541b101c7c94a85bdcb3491a66d3448ec7e955b2e080825e75cdfbdfdf21f
+
+Publish those two lines, signed, saying you drew a scalar and destroyed it.
+They name your position in a way nobody can move it afterwards.
+
+Nothing was written to this machine to shred: the scalar existed only in this
+process's memory and was wiped. Swap, if this host has any, is yours to think
+about.
+
+attestation written to /root/ceremony/../attestation-3.txt
+
+NOT SIGNED. Pass --sign-with gpg:<key-id> or ssh:<private-key-file>,
+or publish the text above from an account that is already publicly
+yours -- the identity has to come from somewhere, and this script
+will not invent one for you.
+
+Publish the attestation, then hand the ceremony directory to the next
+participant. It is about 6 MB and carries no secret, so any transport
+will do.
+
+Nothing on this machine holds your scalar. It existed only in the
+contributor's memory and was wiped; there is no file to shred. Swap, if
+this host has any, is yours to think about.
+
+=== verifying the whole chain ===
+ceremony   /root/ceremony
+steps      3
+
+rebuilding the starting key from the committed slice (a couple of minutes)
+starting key matches: 018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+phase 1    zcash (1bfd7acdb3ecbfaa)
+circuit    18107 constraints, 19 instance variables
+the chain audits: 3 contribution(s)
+
+verifying key
+  length     1248 bytes
+  IC points  19
+  sha256     cf6f16a551ac247f6f12659009c1d86c8ccbe71eac1924ba3bf6b95cdee7c66f
+
+NOT FINISHED. No beacon has closed this ceremony, so its delta is a product
+of participant scalars only -- sound if one of them was honest, but with
+nothing anchoring it to a value they could not all have known in advance.
+
+Still unchecked, by anything, ever:
+  * that any participant drew their scalar unpredictably and destroyed it;
+  * that the beacon was named before this ceremony opened.
+Both rest on what people published about themselves, not on these artifacts.
+
+Before deploying, put this key through the acceptance gate -- which deploys a
+pool carrying exactly these bytes and requires it to accept a real transfer:
+  TOS_ROOT=<a checkout with a built func/fift> cargo run --release \
+    --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml \
+    --example ceremony-gate -- /root/ceremony
+
+Then, for the state hash and the address these bytes imply:
+  cargo run --manifest-path tools/shielded-pool-genesis/Cargo.toml \
+    --bin genesis -- . out/manifest.json --verifying-key <the file above>
+
+=== restoring swap ===
+NAME                     TYPE SIZE USED PRIO
+/var/spool/swap/swapfile file   2G   0B   -2
+               total        used        free      shared  buff/cache   available
+Mem:            3914         961         969          74        2359        2952
+Swap:           2047           0        2047

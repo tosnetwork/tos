@@ -1,0 +1,132 @@
+name: Shielded pool cross-check
+
+# The strongest evidence this pool has is a second implementation disagreeing
+# with the first, and no workflow ran it.
+#
+# `contract-sandboxes.yml` covers `tosctl/src/node-control/contracts/**`, so
+# the FunC library and the pool contract are compiled and exercised on every
+# PR. What it does not cover is `tools/shielded-pool-circuit/`, which is a
+# separate workspace with its own lockfile: the circuit, the Groth16 proof,
+# and the cross-check crate that deploys the same FunC into a sandbox and
+# compares its get-methods against values the circuit computed independently.
+# Sixty section 4 values, thirteen empty roots, fifteen frontier appends, the
+# ceiling measurements at a pool's dearest age, and the only test anywhere
+# that puts a proof which actually verifies through the contract.
+#
+# All of it has only ever been run by hand. A cross-check nobody runs is two
+# implementations agreeing in principle.
+#
+# Deliberately no `branches:` filter on `pull_request`, for the reason
+# `contract-sandboxes.yml` gives: the build and hygiene workflows gate on
+# master/testnet/main, so a stacked PR based on another feature branch gets
+# none of them.
+
+on:
+  pull_request:
+    paths:
+      - "crypto/smartcont/shielded/**"
+      - "crypto/smartcont/tos-shielded-pool-v1.fc"
+      - "tools/shielded-pool-circuit/**"
+      - "tools/shielded-pool-genesis/**"
+      - "tools/shielded-pool-wallet/**"
+      - ".github/workflows/shielded-pool-crosscheck.yml"
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main, master, testnet]
+    paths:
+      - "crypto/smartcont/shielded/**"
+      - "crypto/smartcont/tos-shielded-pool-v1.fc"
+      - "tools/shielded-pool-circuit/**"
+      - "tools/shielded-pool-genesis/**"
+      - "tools/shielded-pool-wallet/**"
+      - ".github/workflows/shielded-pool-crosscheck.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  crosscheck:
+    name: shielded-pool-crosscheck
+    runs-on: ubuntu-24.04
+    # The circuit pulls in arkworks and builds in release, because a
+    # constraint system in debug is not worth waiting for either.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Configure compiler toolchain
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      # The cross-check compiles the shielded FunC in-process and needs the
+      # assembler that knows POSEIDON2_PERM8, HASH7 and PATH7 -- which is this
+      # tree's `crypto/fift/lib/Asm.fif` reached through the binary built here,
+      # not any Fift on the runner. Without it every suite fails at baseline
+      # with `POSEIDON2_HASH7:-?`, which looks like a broken contract and is a
+      # missing toolchain.
+      - name: Build FunC and Fift
+        run: cmake --build build --target func fift -j2
+
+      # TOS_ROOT locates that toolchain. The sources under test come from the
+      # checkout through each crate's manifest, so the two are the same
+      # directory here and are not when this is run from a git worktree.
+      - name: Cross-check suites
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        # --no-fail-fast for the reason contract-sandboxes.yml gives: cargo
+        # stops after the first failing target, so one red test would hide
+        # every suite after it.
+        run: >
+          cargo test --release --locked --no-fail-fast
+          --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml
+
+      # The three crates the step above does not reach.
+      #
+      # `cargo test` on the cross-check crate runs the cross-check crate. The
+      # circuit, the wallet and the genesis builder each have their own tests
+      # -- 48, 11 and 6 -- and no workflow had ever run one of them.
+      #
+      # This step used to say `shielded-pool-genesis` "has no tests of its
+      # own", and that nothing would therefore be measured by running it. It
+      # had six, and three of them were red: doc comments whose indented
+      # formula blocks rustdoc compiles as Rust. Nobody saw it because the
+      # comment explaining why not to look was believed instead of checked.
+      #
+      # All three finish in about three seconds together, so there is no
+      # argument from cost for leaving them out.
+      - name: The crates the cross-check does not reach
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          for crate in shielded-pool-circuit shielded-pool-wallet shielded-pool-genesis; do
+            echo "::group::$crate"
+            cargo test --release --locked --no-fail-fast \
+              --manifest-path "tools/$crate/Cargo.toml"
+            echo "::endgroup::"
+          done
+
+      # The mutation batteries are deliberately NOT here. They are the real
+      # evidence -- 297 deletions across thirteen batteries, each required to
+      # turn one named test red -- but each case rebuilds and re-runs a suite.
+      # Measured end to end on 2026-09-22: about 45 minutes, of which the
+      # ceremony battery alone is 25. Putting that on every PR would buy a
+      # slower gate and a strong temptation to skip it. Run them by hand before
+      # freezing anything, one at a time -- they edit source in place, so two
+      # at once mutate each other's tree:
+      #
+      #     python3 test/poseidon2/mutations.py --build build
+      #     for m in test/shielded-pool/mutations*.py; do python3 "$m"; done
+      #
+      # If that ever becomes cheap enough, it belongs in a scheduled job
+      # rather than this one.

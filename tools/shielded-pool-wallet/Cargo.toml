@@ -1,0 +1,23 @@
+[package]
+name = "shielded-pool-wallet"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shielded pool V1 wallet crypto: the section 2 key hierarchy, section 2.4 descriptors, section 3 note delivery and the section 3.1 post-decryption validation, built to the frozen implementation profile."
+
+[dependencies]
+shielded-pool-circuit = { path = "../shielded-pool-circuit" }
+# SHAKE256 for the whole section 2 hierarchy.
+sha3 = "=0.10.8"
+# FIPS 203 ML-KEM-768 and FIPS 204 ML-DSA-44, both used in their seed forms so
+# a wallet can store a mnemonic and an index and nothing else. Pinned exactly.
+fips203 = { version = "=0.4.3", default-features = false, features = ["ml-kem-768", "default-rng"] }
+fips204 = { version = "=0.4.6", default-features = false, features = ["ml-dsa-44", "default-rng"] }
+# Section 3's AEAD.
+chacha20poly1305 = { version = "=0.10.1", default-features = false, features = ["alloc"] }
+ark-ff = "=0.5.0"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

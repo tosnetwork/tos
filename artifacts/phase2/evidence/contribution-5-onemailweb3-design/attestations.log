@@ -1,0 +1,10 @@
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+  3  signed by tosdev3 -- NOT independent of the operator, NO PUBLIC IDENTITY EVIDENCE
+  4  signed by BmswapProtocol -- independent of the operator
+  5  signed by onemailweb3-design -- independent of the operator
+
+5 contribution(s), 5 verified against the roster
+
+NO PUBLIC IDENTITY EVIDENCE for: tosdev2, tosdev3. The register carries no published_at for these keys, so a reader cannot trace the signature to anyone who can be asked afterwards, and being able to ask is the whole of what an attestation is worth. Their signatures still verify: what is missing is the person, not the cryptography.
+independent participants: BmswapProtocol, onemailweb3-design

@@ -1,0 +1,14 @@
+rebuilding the starting key from the committed slice (a couple of minutes)
+starting key rebuilt and matches: 018853105392e4e0ef82ae59514f137b
+no contributions yet; this will be the first, on the starting key itself
+
+contribution 1 added.
+  contribution   65cbe4db248743a1cca1b49414f4d98a0b882529a7da3b4593df2951b8312198
+  transcript     551ba6e7b91b32169f1f44c42aea1fbd7216da783e4543628ccb3cb3fcb9dbeb
+
+Publish those two lines, signed, saying you drew a scalar and destroyed it.
+They name your position in a way nobody can move it afterwards.
+
+Nothing was written to this machine to shred: the scalar existed only in this
+process's memory and was wiped. Swap, if this host has any, is yours to think
+about.

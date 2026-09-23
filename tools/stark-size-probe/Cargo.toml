@@ -1,0 +1,12 @@
+[package]
+name = "stark-size-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "How large a post-quantum STARK proof is for the work the shielded pool circuit does. Measurement only; nothing here is part of V1."
+
+[dependencies]
+winterfell = "=0.13.1"
+
+[profile.release]
+opt-level = 3

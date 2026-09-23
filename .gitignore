@@ -61,3 +61,15 @@ test/integration/.toscan-*/
 # here by default and pins the expected hash itself, so the artifact is checked
 # rather than stored.
 crypto/smartcont/artifacts/
+
+# artifacts/phase1/ is deliberately NOT ignored.
+#
+# The default ceremony's slice is stored -- eighteen megabytes, smaller than
+# several files this repository already carries -- because a deployment's whole
+# custody argument rests on those bytes and they otherwise existed in one
+# remaining place we do not control. Zcash's original host is already gone.
+#
+# The alternative ceremony's slice is not stored, only its 1.6 KB record.
+# Carrying a second copy was a hedge against a host disappearing, and storing
+# the default's bytes is a better hedge than a second remote host; a fetch
+# answers the contingency in twenty-five minutes.

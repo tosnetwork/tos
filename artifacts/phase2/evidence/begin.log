@@ -1,0 +1,14 @@
+circuit: 18107 constraints, 19 instance variables -> QAP degree 18126 -> domain 2^15
+verifying the committed phase-1 slice, changing its basis and building the starting key (a few minutes)
+inheriting: 87 attested human contributions and a public random beacon, out of an 89-round chain; one round carries no published attestation and its position is undetermined
+
+ceremony opened in artifacts/phase2/ceremony
+  phase 1        zcash (1bfd7acdb3ecbfaa)
+  starting key   018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+  transcript     7dcfafe1626b5586d5713654c55cc0887590fd789c391ecf1e28bfaf93e66287
+
+Publish those two digests. Every participant rebuilds the starting key from
+the committed slice and must get the first of them, or they are contributing
+to something other than this circuit.
+
+Next: phase2-contribute artifacts/phase2/ceremony

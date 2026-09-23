@@ -20,3 +20,6 @@ export { wordlist } from "./mnemonic/wordlist.js";
 
 // HD key derivation
 export { deriveEd25519Path } from "./hd/derive.js";
+
+// Shielded pool wallet (V1 implementation profile, work package D)
+export * as shielded from "./shielded/index.js";

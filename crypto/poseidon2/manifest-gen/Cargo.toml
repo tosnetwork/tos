@@ -1,0 +1,11 @@
+[package]
+name = "poseidon2-manifest-gen"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Regenerates the frozen Poseidon2 t=8 parameters, manifest digest and known-answer vectors by executing the pinned upstream reference."
+
+[dependencies]
+zkhash = { git = "https://github.com/HorizenLabs/poseidon2", rev = "055bde3f4782731ba5f5ce5888a440a94327eaf3" }
+sha2 = "0.10"
+hex = "0.4"

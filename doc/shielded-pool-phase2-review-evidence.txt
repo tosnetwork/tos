@@ -1,0 +1,183 @@
+Phase-2 review evidence; implementation reviewed at 16f8d9aef6dc53a116d249dd244c076c08350f3c.
+Published artifact verification at 7ed85e8dc07ae5d57c62b56168df331b96c922a2.
+These are rehearsal/test logs, not ceremony artifacts or production acceptance.
+
+## Default release tests
+
+Running unittests src/lib.rs (tools/shielded-pool-ceremony/target/release/deps/shielded_pool_ceremony-441e69dfa3e9d916)
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+     Running unittests src/bin/phase1-ranges.rs (tools/shielded-pool-ceremony/target/release/deps/phase1_ranges-256f8a39f28238dc)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/phase2-begin.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_begin-936e58dbff22a928)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/phase2-contribute.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_contribute-f35e2e1343764b33)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/phase2-finalise.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_finalise-6d37c8fdf12ef643)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/phase2-verify.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_verify-e9b748a8754819df)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running unittests src/bin/verify-phase1-slice.rs (tools/shielded-pool-ceremony/target/release/deps/verify_phase1_slice-d98a92e63f2e8674)
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+     Running tests/crosscheck_agrees.rs (tools/shielded-pool-ceremony/target/release/deps/crosscheck_agrees-7020047a8ea967c6)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+     Running tests/degree.rs (tools/shielded-pool-ceremony/target/release/deps/degree-494b7b950013ffed)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+     Running tests/lagrange.rs (tools/shielded-pool-ceremony/target/release/deps/lagrange-13031780030e9667)
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+     Running tests/phase1_structure.rs (tools/shielded-pool-ceremony/target/release/deps/phase1_structure-3bb0dd6c458de275)
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+     Running tests/phase2_contribution.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_contribution-75a8cd64add47582)
+test result: ok. 36 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.63s
+     Running tests/phase2_initial.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_initial-ec4592eefd22800a)
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/slice_round_trip.rs (tools/shielded-pool-ceremony/target/release/deps/slice_round_trip-d9ccd3faae68a0b3)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+     Running tests/the_real_slice.rs (tools/shielded-pool-ceremony/target/release/deps/the_real_slice-0bb909c0019fcf44)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 115.24s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+## Full circuit initial key
+
+running 1 test
+test the_shielded_circuit_too has been running for over 60 seconds
+test the_shielded_circuit_too ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 197.00s
+
+## Full circuit contribution
+
+Finished `release` profile [optimized] target(s) in 0.05s
+     Running tests/phase2_contribution.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_contribution-75a8cd64add47582)
+
+running 1 test
+test the_shielded_circuit_takes_a_contribution has been running for over 60 seconds
+release build: constraints 18107, L 18215, H 32767 -- contributing 7.3s, auditing 0.3s
+test the_shielded_circuit_takes_a_contribution ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 124.77s
+
+## Original safe mutation subset
+
+baseline green
+h-not-divided              the H query is left undivided                                  killed
+l-not-divided              the L query is left undivided                                  killed
+pok-challenge-transcript   the challenge ignores the transcript                           killed
+pok-challenge-points       the challenge ignores the participant's own points             survives (recorded)
+transcript-absorb          the transcript does not absorb the contribution                killed
+transcript-chain           the transcript does not carry its own history                  killed
+step-queries               the step does not check how the queries were divided           killed
+step-untouched             the step does not check the sections a contribution may not move killed
+step-cross-group           the step does not compare delta across the groups              killed
+step-delta-moved           the step accepts a delta that did not move                     killed
+step-chain-link            the step does not tie the proof to the delta it moved          killed
+pok-pairing                the proof of knowledge is not checked                          killed
+batch-weights              the batching weights come from a constant                      killed
+batch-weights-are-one      the batching weights are all one                               killed
+chain-final-delta          the audit does not tie the final key to the chain's end        killed
+chain-advance              the audit does not advance to the next delta                   killed
+chain-transcript           the audit does not advance the transcript                      killed
+chain-anchor               the audit accepts an anchor that is not the start              killed
+chain-cross-group          the audit does not compare delta across the groups             killed
+chain-link                 the audit does not link one delta to the previous              killed
+beacon-ignored             the finalising scalar does not depend on the beacon            killed
+beacon-not-recomputed      the finalising step is trusted instead of recomputed           killed
+beacon-length              a beacon short enough to grind out in advance is accepted      killed
+bytes-delta-g2             the published bytes omit delta's G2 half                       killed
+secret-zero                a secret of zero is accepted                                   killed
+secret-one                 a secret of one is accepted                                    killed
+secret-narrow              the secret is reduced from 32 bytes instead of 64              killed
+blst-pairing-order         the second pairing takes its arguments the other way round     killed
+blst-pairing-trivial       the blst pairing always agrees                                 killed
+blst-scalar-dropped        the batching weights are not applied                           killed
+blst-skips-the-proof       the blst side does not check the proof of knowledge            killed
+blst-skips-the-queries     the blst side does not check the query division                killed
+blst-skips-the-chain-link  the blst side does not link one delta to the previous          killed
+blst-skips-the-cross-group the blst side does not compare delta across the groups         killed
+record-overwrite           a ceremony may be begun over an existing one                   killed
+record-key-digest          the key is not held to the digest the record states            killed
+record-ragged              a contributions file of any length is accepted                 killed
+record-protocol            another protocol's record is read as this one                  killed
+record-beacon-last         a beacon with contributions after it goes unnoticed            killed
+entropy-constant           a source returning one repeated byte is used                   killed
+stir-material              stirring ignores the participant's material                    killed
+stir-inner                 stirring ignores the system generator                          killed
+stir-one-block             a long draw expands one read instead of taking several         killed
+stir-empty                 stirring in nothing is offered as protection                   killed
+green again
+
+44 mutations, 43 killed by the test they were aimed at, 1 recorded as not test-backed
+
+## Isolated CLI rehearsal and record reproductions
+
+the ceremony as people would run it
+  phase2-begin: ok in 117s
+  phase2-contribute: ok in 78s
+  phase2-contribute: ok in 77s
+  phase2-finalise: ok in 78s
+  phase2-verify: ok in 66s
+
+what came out
+  steps            ['participant', 'participant', 'beacon']
+  contributions    2016 bytes
+
+refusals that must happen
+  phase2-contribute: refused in 0s
+  phase2-finalise: refused in 0s
+  phase2-begin: refused in 0s
+  phase2-verify: refused in 67s
+  phase2-verify: refused in 68s
+  phase2-verify: refused in 3s
+  phase2-verify: refused in 3s
+  phase2-contribute: refused in 66s
+  phase2-verify: refused in 3s
+  phase2-contribute: refused in 0s
+
+the ceremony ran and every refusal fired
+  phase2-verify: ok in 67s
+FINDING REPRODUCED: false-transcript was accepted
+  phase2-verify: ok in 70s
+FINDING REPRODUCED: false-provenance was accepted
+  phase2-verify: refused in 3s
+FINDING REPRODUCED: a short digest panics instead of naming a refusal
+All rehearsal artifacts removed; no signing key was generated.
+
+## New proof binding test
+
+Compiling shielded-pool-ceremony v0.1.0 (<review-checkout>/tools/shielded-pool-ceremony)
+    Finished `release` profile [optimized] target(s) in 6.49s
+     Running tests/phase2_contribution.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_contribution-75a8cd64add47582)
+
+running 1 test
+test publicly_rerandomizing_the_proof_points_is_rejected ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 0.47s
+
+## Independent mutation build
+
+KILLED: pok-challenge-points by publicly_rerandomizing_the_proof_points_is_rejected
+Mutated verifier accepted the public rerandomization; no scalar was recovered or displayed.
+Independent mutation source and build directory removed.
+
+## Updated named mutation harness
+
+baseline green
+pok-challenge-points       the challenge ignores the participant's own points             killed
+green again
+
+1 mutations, 1 killed by the test they were aimed at, 0 recorded as not test-backed
+
+## Final focused regression suites
+
+Running tests/crosscheck_agrees.rs (tools/shielded-pool-ceremony/target/release/deps/crosscheck_agrees-7020047a8ea967c6)
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+     Running tests/phase2_contribution.rs (tools/shielded-pool-ceremony/target/release/deps/phase2_contribution-75a8cd64add47582)
+test result: ok. 37 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+## Read-only published ceremony audit
+
+steps      1
+starting key matches: 018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+the chain audits: 1 contribution(s)
+  length     1248 bytes
+  IC points  19
+NOT FINISHED. No beacon has closed this ceremony, so its delta is a product

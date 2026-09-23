@@ -1,0 +1,511 @@
+;; The shielded pool, V1. Deposit path only so far.
+;;
+;; Sections 12.1, 14.1 and 16.1 of the V1 implementation profile. Everything
+;; this handler needs below the message itself lives in crypto/smartcont/
+;; shielded/ and is tested there; what is here is the message, the funding
+;; rule, the order, and the single write at the end.
+;;
+;; Two rules shape the whole handler and are worth stating before the code.
+;;
+;; It never calls ACCEPT. An inbound message pays for its own execution or it
+;; does not execute, so a message can never spend the pool's balance. That is
+;; not the same as the funding inequality: a large principal also buys a large
+;; gas limit, so the ceiling is set explicitly the moment funding is
+;; established, and the maximum compute loss stops depending on how much money
+;; the message carried.
+;;
+;; The depositor never supplies the final note commitment. It supplies an owner
+;; commitment and a payload; the contract computes the note from the amount it
+;; actually admitted and the leaf index it actually assigned. Otherwise
+;; depositing one buys a note worth a hundred.
+;;
+;; Exit codes 200-229.
+;;   200 the message body is not the frozen deposit shape
+;;   201 an operation this contract does not have
+;;   202 the amount is not one the configuration admits
+;;   203 the message does not fund its own execution and principal
+;;   204 the end state would not be backed
+;;   205 the anchor kind/id/root is not one this pool preserved
+;;
+;; Requires the shielded library, and a VM at global version 18. The library's
+;; own modules mostly say 17, which was true of them when they were written and
+;; still is: notes.fc and auth.fc need nothing past POSEIDON2_HASH7. imt.fc
+;; does -- it folds a nullifier path with POSEIDON2_PATH7 -- so the whole is
+;; 18 even though most of its parts are not.
+
+int op_deposit() asm "1397248001 PUSHINT";          ;; 0x53485001
+int op_transact() asm "1397248002 PUSHINT";         ;; 0x53485002
+int op_reserve_topup() asm "1397248003 PUSHINT";    ;; 0x53485003
+
+;; Section 14.1. A ceiling is the contract's own hard compute budget and the
+;; sender's cost cap at once: the funding rule makes a sender pay
+;; get_compute_fee(ceiling) rather than what the path costs, and what is not
+;; spent stays as the pool's unencumbered reserve. A ceiling far above what a
+;; legal path needs is therefore not spare safety, it is a charge on the
+;; sender unrelated to the compute they bought. A ceiling below what a legal
+;; path needs cuts that path off inside a contract whose code hash is its
+;; address, which is not a thing that can be patched afterwards.
+;;
+;; Production values come from one rule, so that nobody picks a margin:
+;;
+;;   B = an upper bound on the gas of the worst legal successful path, under
+;;       the final Poseidon2 tariff, on the exact candidate code and config
+;;   C = max(10000, round_up_10000(ceil(B * 5 / 4)))
+;;
+;; B is a BOUND and not a measurement, and the difference is the whole of it.
+;; A transact ranges over a leaf index with four billion values, two ring
+;; occupancies, three anchor kinds, four denominations and two nullifier
+;; orders; nothing built by hand visits enough of that product to establish a
+;; maximum over it, and every figure this comment carried before was the
+;; largest of a handful of reachable points with the word maximum attached.
+;; Three times that was wrong and cost something: a pool refused its
+;; thirty-fifth deposit, a withdrawal figure was 4,305 low because it was
+;; measured against a denomination list nobody deploys, and the dearest state
+;; a pool can be in turned out to be neither end of its life.
+;;
+;; The bound is derived instead, from the structure of the handlers rather
+;; than from a search. Each is a straight line whose variable calls read only
+;; their own arguments, so
+;;
+;;   cost(any legal path) <= cost(one measured transaction)
+;;                           + sum over calls of (that call's worst - its best)
+;;
+;; and every span on the right is one function over one domain small enough
+;; to walk end to end: four denominations, three anchor kinds, every slot of
+;; the 4,096-entry and 2,880-entry rings at every occupancy either passes
+;; through, twelve tree levels of seven digits each, both nullifier orders,
+;; and both ends of the Coins range the state cell stores. The corner that
+;; sum describes is reachable by nobody. That is what an upper bound is, and
+;; erring on that side is the whole argument.
+;;
+;;   path             measured      bound   ceiling   Poseidon2 operations
+;;   reserve top-up      2,480      2,480    10,000    0
+;;   deposit           155,679    176,694   230,000   14
+;;   recovery          167,272    186,991   240,000   15
+;;   withdrawal      1,171,516  1,205,003 1,510,000  142   -- the worst transact
+;;
+;; Derived and checked by `gas_ceiling_bound.rs` in the cross-check crate,
+;; which re-measures every span from this source and fails if a ceiling is
+;; not exactly what the rule above gives. Two of the bound's assumptions are
+;; instruments there rather than claims: the twelve-level append is composed
+;; from its levels and the composition is held against real appends at
+;; indices whose digits differ, and two whole withdrawals at opposite ends of
+;; a pool's life must not differ by more than the spans allow.
+;;
+;; A withdrawal is what sets the transact ceiling; a transfer is the same
+;; code without the bodies of two `if (public_amount_out > 0)` blocks, so it
+;; cannot cost more.
+;;
+;; What moves with a pool's history, and what does not:
+;;
+;;   * the 4,096-slot recent-root ring and the 2,880-slot epoch ring are
+;;     empty at genesis and stay full for the rest of the pool's life. Full
+;;     rings with the epoch turning over cost 15,396 gas more per mutation
+;;     than empty rings with it not;
+;;   * a proof against a recent or epoch root reads a ring, which a proof
+;;     against the current root does not: 3,226 gas between the two;
+;;   * the frontier does not. It did until 2026-09-21, when the store stopped
+;;     being a dictionary read `digit + 1` slots deep: a level chain reads and
+;;     rebuilds all seven slots of every level whatever the leaf index is, and
+;;     costs a little *less* as the index grows, because a high digit takes a
+;;     stored slot where a low one takes an empty root. The dearest append a
+;;     pool can do is its first, and that is now a measured fact about all
+;;     4.29 billion indices rather than about the ones somebody tried: the
+;;     cost is a sum of twelve independent per-digit terms and digit zero is
+;;     the dearest of the seven at every level.
+;;
+;; The withdrawal figure fell by 342,976 at global version 18, when the two
+;; nullifier inserts stopped walking their paths in FunC and started calling
+;; POSEIDON2_PATH7, by a further 99,950 when the Poseidon2 tariff came down
+;; from 3,500 to 2,800, and by 120,859 when the frontier changed container.
+;;
+;; Raising the recovery ceiling raises what a bounce is charged for putting
+;; the money back -- `recovery_charge_at` is `get_compute_fee(0, ceiling)` --
+;; and so raises the smallest bounce worth minting a note for. It no longer
+;; interacts with the withdrawal fee: the fee's floor is the payout's forward
+;; fee alone, and has been since a whole bounded recovery came out of it.
+int topup_gas_ceiling() asm "10000 PUSHINT";
+int deposit_gas_ceiling() asm "230000 PUSHINT";
+int transact_gas_ceiling() asm "1510000 PUSHINT";
+int bounce_gas_ceiling() asm "240000 PUSHINT";
+
+;; Section 16.1, in its order.
+() handle_deposit(int msg_value, slice body) impure {
+  ;; 1. the exact body shape. A body carrying anything else is a different
+  ;; message that happens to start the same way.
+  throw_unless(200, body.slice_refs() == 1);
+  int query_id = body~load_uint(64);
+  int deposit_amount = body~load_coins();
+  int owner_commitment = body~load_uint(256);
+  cell output_data = body~load_ref();
+  throw_unless(200, body.slice_empty?());
+
+  (int commitment_root, int commitment_next_index,
+   int nullifier_root, int nullifier_next_index,
+   int last_anchor_epoch, int native_liability, int reserve_floor,
+   cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
+
+  ;; 2. a standard denomination. The amount's upper bound is the wire type's:
+  ;; Coins is a VarUInteger 16 and cannot carry 2^120.
+  throw_unless(202, config_has_denomination(config, deposit_amount));
+
+  ;; 3. the message funds its own execution and its own principal. Pool surplus
+  ;; may not stand in for either.
+  throw_unless(203,
+    msg_value >= deposit_amount + get_compute_fee(0, deposit_gas_ceiling()));
+
+  ;; 4. and only now the ceiling, so the compute a bug can lose is independent
+  ;; of the principal. Still no ACCEPT.
+  set_gas_limit(deposit_gas_ceiling());
+
+  ;; 5, 6. the note the contract computes, from the amount it admitted.
+  int data_hash = output_data_hash(output_data);
+  int note_body = note_body_commitment(owner_commitment, deposit_amount, data_hash);
+
+  ;; 7. the end state has to be backed. my_balance already includes the inbound
+  ;; value, and the liability this deposit adds is exactly its principal.
+  ;;
+  ;; Against the balance this transaction will LEAVE, not the one it can see.
+  ;; The executor takes this transaction's compute fee after the last line of
+  ;; this function has run, so a balance read here is a number that is known
+  ;; to still change -- and checking a quantity at a moment when it is known
+  ;; to still change is not checking it. The funding rule already made the
+  ;; sender pay `get_compute_fee(ceiling)`, so subtracting the same term here
+  ;; is the conservative reading of what will be left.
+  [int balance, _] = get_balance();
+  int new_liability = native_liability + deposit_amount;
+  throw_unless(204,
+    balance - get_compute_fee(0, deposit_gas_ceiling()) >= new_liability + reserve_floor);
+
+  ;; 8. the pre-mutation root is preserved once, before the append.
+  (anchors, last_anchor_epoch) =
+    anchors_preserve(anchors, commitment_next_index, commitment_root, now(),
+                     last_anchor_epoch);
+
+  ;; 9. the leaf index is the contract's, not the sender's.
+  int leaf_index = commitment_next_index;
+  int leaf = note_commitment(note_body, leaf_index);
+  (frontier, commitment_root) = frontier_append(frontier, leaf_index, leaf);
+
+  ;; 10, 11. one write, at the end. No COMMIT and no outbound action.
+  set_data(state_build(commitment_root, leaf_index + 1,
+                       nullifier_root, nullifier_next_index,
+                       last_anchor_epoch, new_liability, reserve_floor,
+                       frontier, anchors, config, vk));
+}
+
+
+;; Section 16.2, in its order. A transfer moves value inside the pool: two
+;; notes are spent, three are created, and nothing crosses the boundary. The
+;; liability the pool carries is therefore unchanged, which is why a transfer
+;; needs no funding beyond its own compute.
+;;
+;; Every intermediate root, frontier and counter stays in locals until the one
+;; `set_data` at the end. There is no COMMIT anywhere: returning from the
+;; handler is the commit boundary, so a throw at any step leaves the state
+;; exactly as it was found.
+() handle_transact(int msg_value, slice body) impure {
+  ;; 1. the shapes, which are cheap.
+  (int query_id, int anchor_kind, int anchor_id, int valid_until,
+   int public_amount_out, int withdrawal_fee, slice recipient, int intent_digest,
+   cell proof_bundle, cell output_bundle, cell auth_bundle, cell witness_bundle) =
+    transact_parse(body);
+  (int anchor_root, int nullifier_0, int nullifier_1, cell note_bodies, cell groth16_proof) =
+    proof_bundle_parse(proof_bundle);
+  (int note_body_0, int note_body_1, int note_body_2) = note_bodies_parse(note_bodies);
+  (slice proof_ac, slice proof_b) = groth16_proof_parse(groth16_proof);
+  (int recovery_owner_commitment, cell data_0, cell data_1, cell data_2, cell recovery_data) =
+    output_bundle_parse(output_bundle);
+  (cell public_key_0, cell signature_0, cell public_key_1, cell signature_1) =
+    auth_bundle_parse(auth_bundle);
+  (cell witness_0, cell witness_1) = witness_bundle_parse(witness_bundle);
+
+  ;; 2. the message pays for its own compute, and only then does the ceiling go
+  ;; on. Still no ACCEPT. A transfer takes nothing from the pool, so unlike a
+  ;; deposit there is no principal in the inequality.
+  throw_unless(203, msg_value >= get_compute_fee(0, transact_gas_ceiling()));
+  set_gas_limit(transact_gas_ceiling());
+
+  (int commitment_root, int commitment_next_index,
+   int nullifier_root, int nullifier_next_index,
+   int last_anchor_epoch, int native_liability, int reserve_floor,
+   cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
+
+  ;; 5. the intent has to be inside its hour, and a withdrawal has to name an
+  ;; amount the pool is willing to pay in one piece. A transfer moves nothing
+  ;; across the boundary, so the denomination list does not apply to it.
+  check_intent_validity(valid_until, now());
+  if (public_amount_out > 0) {
+    throw_unless(202, config_has_denomination(config, public_amount_out));
+  }
+
+  ;; 3, 4, 6, 7, 8. The eighteen, with the eight derived ones computed from the
+  ;; bytes that arrived rather than read from the wire.
+  tuple inputs = public_inputs_of(anchor_root, nullifier_0, nullifier_1,
+                                  note_body_0, note_body_1, note_body_2,
+                                  data_0, data_1, data_2,
+                                  public_key_0, public_key_1,
+                                  public_amount_out, withdrawal_fee,
+                                  recipient, valid_until,
+                                  recovery_owner_commitment, recovery_data,
+                                  intent_digest);
+
+  ;; 9. the anchor is one this pool actually preserved.
+  anchor_require_valid(anchors, anchor_kind, anchor_id, anchor_root,
+                       commitment_root, now());
+
+  ;; 10. both nullifiers go in, against temporary roots. Sequential, because
+  ;; the second witness must be against the tree the first one left.
+  (int temp_nullifier_root, int temp_nullifier_next) =
+    imt_insert(nullifier_root, nullifier_next_index, nullifier_0, witness_0);
+  (temp_nullifier_root, temp_nullifier_next) =
+    imt_insert(temp_nullifier_root, temp_nullifier_next, nullifier_1, witness_1);
+
+  ;; 11. both signatures, over the digest the message carries.
+  (int key_hash_0, int key_hash_1) =
+    authorize_intent(public_key_0, signature_0, public_key_1, signature_1, intent_digest);
+
+  ;; 12. and the proof, over the exact vector. A and C are read into locals
+  ;; first: as two arguments of one call they would depend on the evaluation
+  ;; order of a side-effecting read, which is not a thing to rely on.
+  slice proof_a = proof_ac~load_bits(384);
+  slice proof_c = proof_ac~load_bits(384);
+  groth16_require_valid(vk, proof_a, proof_b, proof_c, inputs);
+
+  ;; 13. the pre-transaction root is preserved once, before any append.
+  (anchors, last_anchor_epoch) =
+    anchors_preserve(anchors, commitment_next_index, commitment_root, now(),
+                     last_anchor_epoch);
+
+  ;; 15. three outputs at three consecutive indices, each committed to the
+  ;; index the contract assigned.
+  int leaf_index = commitment_next_index;
+  (frontier, commitment_root) =
+    frontier_append(frontier, leaf_index, note_commitment(note_body_0, leaf_index));
+  (frontier, commitment_root) =
+    frontier_append(frontier, leaf_index + 1, note_commitment(note_body_1, leaf_index + 1));
+  (frontier, commitment_root) =
+    frontier_append(frontier, leaf_index + 2, note_commitment(note_body_2, leaf_index + 2));
+
+  ;; 16. a withdrawal, and only a withdrawal, pays out. Everything above this
+  ;; point is identical for both modes; what differs is that a withdrawal
+  ;; discharges liability and sends a message, and a transfer does neither.
+  ;;
+  ;; The order inside the step follows the profile: build the exact message,
+  ;; require the immutable fee to cover it, and only then move the liability.
+  ;; The reserve is set from the new liability before the message is enqueued,
+  ;; so the action phase cannot spend past what the pool still owes. Mode 17
+  ;; pays the forward fee separately and bounces this whole transaction if the
+  ;; action fails, which is what keeps a committed state from outliving a
+  ;; payout that never left.
+  if (public_amount_out > 0) {
+    cell record = payout_record(intent_digest, public_input_at(inputs, 16),
+                                public_input_at(inputs, 13),
+                                recovery_owner_commitment, recovery_data);
+    cell payout = payout_body(intent_digest, record);
+    (_, _, _, int config_withdrawal_fee, _, _) = config_parse(config);
+    payout_require_solvent(withdrawal_fee, config_withdrawal_fee, payout);
+    native_liability =
+      payout_new_liability(native_liability, public_amount_out, withdrawal_fee);
+    raw_reserve(native_liability + reserve_floor, 0);
+    send_raw_message(payout_message(recipient, public_amount_out, payout), 17);
+  }
+
+  ;; A transfer moves no value across the boundary, so its liability is
+  ;; unchanged; a withdrawal's has just gone down by what is leaving. Either
+  ;; way the end state has to be backed -- against the balance this
+  ;; transaction will leave, for the reason the deposit path gives.
+  [int balance, _] = get_balance();
+  throw_unless(204,
+    balance - get_compute_fee(0, transact_gas_ceiling()) >= native_liability + reserve_floor);
+
+
+  ;; 17. one write, at the end.
+  set_data(state_build(commitment_root, leaf_index + 3,
+                       temp_nullifier_root, temp_nullifier_next,
+                       last_anchor_epoch, native_liability, reserve_floor,
+                       frontier, anchors, config, vk));
+}
+
+;; Sections 12.3 and 16.4. Anyone may replenish operational reserve without
+;; minting a note. Nothing about the shielded state changes: the remaining
+;; inbound value after bounded compute is simply unencumbered balance, which is
+;; what makes it reserve rather than liability.
+() handle_reserve_topup(int msg_value, slice body) impure {
+  ;; Nothing after the query id, and nothing hanging off it. A separate
+  ;; reference-count check would be implied by this one: there is no "too few"
+  ;; direction to catch when the count is zero.
+  int query_id = body~load_uint(64);
+  throw_unless(200, body.slice_empty?());
+
+  throw_unless(203, msg_value >= get_compute_fee(0, topup_gas_ceiling()));
+  set_gas_limit(topup_gas_ceiling());
+  ;; No ACCEPT, no state write, no outbound message. The value that arrived is
+  ;; already in the balance; leaving liability alone is what makes it reserve.
+}
+
+
+;; Section 16.3. A payout that failed comes back with everything needed to put
+;; it right, so this handler keeps nothing between messages and has nothing to
+;; look up: it authenticates what arrived and mints from that.
+;;
+;; The order is the profile's, and the ACCEPT sits exactly where the profile
+;; puts it. Everything above it is parsing, comparing and four hashes, paid for
+;; by the message itself; only once the bounce is known to be this pool's own
+;; payout does the pool agree to pay for the rest. The recovery compute the
+;; ACCEPT buys was already paid for by the withdrawal fee, which the user
+;; converted to reserve before the money left.
+() handle_bounce(int msg_value, slice header, slice body) impure {
+  ;; A bounce of something that was not a payout -- a plain top-up returning,
+  ;; say -- carries no envelope. It is not an error and there is nothing to
+  ;; recover; the value stays as unencumbered reserve.
+  if (body.slice_bits() < 32) {
+    return ();
+  }
+  if (body.preload_uint(32) != recovery_envelope_tag()) {
+    return ();
+  }
+
+  ;; 1-3. The envelope, the frozen payout shape, and the record inside it.
+  cell original = recovery_original_body(body);
+  (int query_id, int intent_digest, int template_hash, int recipient_hash,
+   int owner_commitment, cell recovery_data) = recovery_parse_payout(original);
+
+  ;; The address the bounce came from, which the sender cannot choose.
+  slice sender = header~load_msg_addr();
+  recovery_require_authentic(sender, query_id, intent_digest, template_hash,
+                             recipient_hash, owner_commitment, recovery_data);
+
+  ;; 4, 5. Only now, and bounded immediately.
+  accept_message();
+  set_gas_limit(bounce_gas_ceiling());
+
+  ;; 6, 7. The note is for what came back, less what putting it back costs.
+  ;;
+  ;; A bounce that returns nothing -- or less than the recovery is worth --
+  ;; mints nothing. That is the same rule as before with the threshold moved
+  ;; off zero: minting below it would hand the user a note the rest of the
+  ;; pool had paid for. What is left stays in the balance as unencumbered
+  ;; reserve, which is where the gas this transaction is about to spend comes
+  ;; from.
+  int charge = recovery_charge_at(bounce_gas_ceiling());
+  if (msg_value <= charge) {
+    return ();
+  }
+  int recovered_amount = msg_value - charge;
+
+  (int commitment_root, int commitment_next_index,
+   int nullifier_root, int nullifier_next_index,
+   int last_anchor_epoch, int native_liability, int reserve_floor,
+   cell frontier, cell anchors, cell config, cell vk) = state_parse(get_data());
+
+  ;; 9. the pre-mutation root is preserved before the append, as on every other
+  ;; path that moves the tree.
+  (anchors, last_anchor_epoch) =
+    anchors_preserve(anchors, commitment_next_index, commitment_root, now(),
+                     last_anchor_epoch);
+
+  ;; 8, 10. one note, at the index the contract assigns.
+  int leaf_index = commitment_next_index;
+  int note_body = recovery_note_body(owner_commitment, recovered_amount, recovery_data);
+  (frontier, commitment_root) =
+    frontier_append(frontier, leaf_index, note_commitment(note_body, leaf_index));
+
+  ;; 11, 12. The money is back inside the pool, so the pool owes it again.
+  ;; Checked and reserved against what this transaction leaves, for the reason
+  ;; the deposit path gives.
+  native_liability = native_liability + recovered_amount;
+  [int balance, _] = get_balance();
+  throw_unless(204,
+    balance - get_compute_fee(0, bounce_gas_ceiling()) >= native_liability + reserve_floor);
+
+  set_data(state_build(commitment_root, leaf_index + 1,
+                       nullifier_root, nullifier_next_index,
+                       last_anchor_epoch, native_liability, reserve_floor,
+                       frontier, anchors, config, vk));
+}
+
+() recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice header = in_msg_full.begin_parse();
+  int flags = header~load_uint(4);
+  if (flags & 1) {
+    ;; A bounce. If it is one of this pool's payouts coming back it carries a
+    ;; record that says how to turn it into a note again; anything else is
+    ;; money arriving with no instructions, which is reserve.
+    handle_bounce(msg_value, header, in_msg_body);
+    return ();
+  }
+  if (in_msg_body.slice_bits() < 32) {
+    return ();
+  }
+
+  int op = in_msg_body~load_uint(32);
+  if (op == op_deposit()) {
+    handle_deposit(msg_value, in_msg_body);
+    return ();
+  }
+  if (op == op_transact()) {
+    handle_transact(msg_value, in_msg_body);
+    return ();
+  }
+  if (op == op_reserve_topup()) {
+    handle_reserve_topup(msg_value, in_msg_body);
+    return ();
+  }
+  throw(201);
+}
+
+() recv_external(slice in_msg) impure {
+  ;; V1 has no external entry point: every operation is a funded internal
+  ;; message, so there is nothing here that could be sent for free.
+  throw(201);
+}
+
+;; --- get methods -------------------------------------------------------------
+
+int commitment_root() method_id {
+  (int root, _, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  return root;
+}
+
+int commitment_next_index() method_id {
+  (_, int next, _, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  return next;
+}
+
+int native_liability() method_id {
+  (_, _, _, _, _, int liability, _, _, _, _, _) = state_parse(get_data());
+  return liability;
+}
+
+int reserve_floor() method_id {
+  (_, _, _, _, _, _, int reserve, _, _, _, _) = state_parse(get_data());
+  return reserve;
+}
+
+int nullifier_root() method_id {
+  (_, _, int root, _, _, _, _, _, _, _, _) = state_parse(get_data());
+  return root;
+}
+
+int nullifier_next_index() method_id {
+  (_, _, _, int next, _, _, _, _, _, _, _) = state_parse(get_data());
+  return next;
+}
+
+;; Section 15.4. What a bounce would be charged for putting the money back,
+;; at the prices live now.
+;;
+;; Exposed because a wallet has to quote it before it withdraws: it is what
+;; the user loses on top of the recipient's compute and the forwarding if the
+;; payout is refused, and it is also the threshold below which a bounce mints
+;; nothing at all. Both are the user's business before they decide, not after.
+int recovery_charge() method_id {
+  return recovery_charge_at(bounce_gas_ceiling());
+}
+
+int backed() method_id {
+  (_, _, _, _, _, int liability, int reserve, _, _, _, _) = state_parse(get_data());
+  [int balance, _] = get_balance();
+  return balance >= liability + reserve;
+}

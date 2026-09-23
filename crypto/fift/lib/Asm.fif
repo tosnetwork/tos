@@ -1440,6 +1440,18 @@ x{F93028} @Defop BLS_G2_ISZERO
 x{F93030} @Defop BLS_PAIRING
 x{F93031} @Defop BLS_PUSHR
 
+// FIPS 204 Pure ML-DSA-44 verification. Available from global version 16.
+// Defined here rather than only in PQ.fif so that anything assembling against
+// the base library can name it: the sandbox compiler includes Asm.fif alone,
+// and a contract that cannot name the instruction has to emit its opcode.
+x{F93100} @Defop PQCHECKSIG_MLDSA44
+
+// Poseidon2 over the BLS12-381 scalar field, t=8. Available from global
+// version 17; see crypto/poseidon2/PROVENANCE.md for the frozen parameters.
+x{F93200} @Defop POSEIDON2_PERM8
+x{F93201} @Defop POSEIDON2_HASH7
+x{F93202} @Defop POSEIDON2_PATH7
+
 x{F940} @Defop CDATASIZEQ
 x{F941} @Defop CDATASIZE
 x{F942} @Defop SDATASIZEQ

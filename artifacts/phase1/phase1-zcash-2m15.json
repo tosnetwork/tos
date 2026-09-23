@@ -1,0 +1,48 @@
+{
+  "transcript": "zcash",
+  "source_url": "https://archive.org/download/transcript_201804/transcript",
+  "source_bytes": 107508511200,
+  "source_power": 21,
+  "slice_power": 15,
+  "transcript_hash": null,
+  "published_checksums": "archive.org md5 7890b89f08397269f331ff34ed7a539d, sha1 da57abe02c34991b5dac659b53a9d77c61565d6d",
+  "custody": "87 attested human contributions and a public random beacon, out of an 89-round chain; one round carries no published attestation and its position is undetermined",
+  "ranges": [
+    {
+      "name": "tau_g1",
+      "offset": 106300550400,
+      "length": 6291360,
+      "points": 65535,
+      "sha256": "b228baf1d8d9b8877e24a3d63d4f2d11cb22b85999371bd3f49cd43b3b47d9d9"
+    },
+    {
+      "name": "tau_g2",
+      "offset": 106703203488,
+      "length": 6291456,
+      "points": 32768,
+      "sha256": "01aafa19890f54b32616b297ea4e51c65f8d390c77a46024e1e66732aa322585"
+    },
+    {
+      "name": "alpha_tau_g1",
+      "offset": 107105856672,
+      "length": 3145728,
+      "points": 32768,
+      "sha256": "0377104aa248af2bf5804c1fa6dcc4e9eff186162ec317e5a33f4782d691b832"
+    },
+    {
+      "name": "beta_tau_g1",
+      "offset": 107307183264,
+      "length": 3145728,
+      "points": 32768,
+      "sha256": "4e36cc73c8b082cf463748d720b24358b51f901ecfd8329c7187b463a1696ece"
+    },
+    {
+      "name": "beta_g2",
+      "offset": 107508509856,
+      "length": 192,
+      "points": 1,
+      "sha256": "7137a8237afec6fe0d3656a83abe3335e6409598e8abbd62bc87cbf39875ec73"
+    }
+  ],
+  "slice_sha256": "1bfd7acdb3ecbfaaa695ab159a7a643a2eb58203a4d93361040c6bd4c2aa3d6e"
+}

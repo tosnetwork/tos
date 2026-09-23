@@ -1,0 +1,239 @@
+;; The transact message and its public inputs, sections 12.2, 13.3 and 10 of
+;; the V1 implementation profile.
+;;
+;; Eight of the eighteen public inputs are not on the wire. The three payload
+;; hashes, the two public-key hashes, the recipient hash, the execution domain
+;; and the recovery template hash are all computed here from the bytes that
+;; actually arrived. A sender that could supply them could make the proof
+;; commit to one thing and the chain record another, which is the entire
+;; reason they are derived rather than read.
+;;
+;; Exit codes 230-259.
+;;   230 the transact root is not the frozen field and reference shape
+;;   231 the proof bundle is not the frozen shape
+;;   232 the note-bodies cell is not three field elements and nothing else
+;;   233 the output bundle is not the frozen shape
+;;   234 the auth bundle is not the frozen shape
+;;   235 the nullifier-witness bundle is not the frozen shape
+;;   236 a field element on the wire is not canonical
+;;   237 query_id is not the low 64 bits of the intent digest
+;;   238 the recipient is neither addr_none nor a workchain-0 std address
+;;   239 the mode is inconsistent: a transfer with a payout, or the reverse
+;;   240 a transfer carries recovery material
+;;   241 the Groth16 proof is not the frozen shape
+;;
+;; Requires notes.fc, auth.fc, payload.fc and domain.fc.
+
+int public_input_count() asm "18 PUSHINT";
+
+;; The built-in tuple accessor is typed as returning a tuple, which these are
+;; not: every public input is a field element.
+int public_input_at(tuple inputs, int index) asm "INDEXVAR";
+int public_input_length(tuple inputs) asm "TLEN";
+
+;; Section 12: a field element that arrives on the wire is canonical or it is
+;; refused. Nothing is reduced; only values this contract derives itself may be.
+int require_canonical(int value) inline {
+  throw_unless(236, (value >= 0) & (value < field_modulus()));
+  return value;
+}
+
+;; --- the bundles, section 13.3 ----------------------------------------------
+
+;; 768 bits and exactly two references.
+(int, int, int, cell, cell) proof_bundle_parse(cell bundle) impure inline_ref {
+  slice s = bundle.begin_parse();
+  throw_unless(231, (s.slice_bits() == 768) & (s.slice_refs() == 2));
+  int anchor_root = require_canonical(s~load_uint(256));
+  int nullifier_0 = require_canonical(s~load_uint(256));
+  int nullifier_1 = require_canonical(s~load_uint(256));
+  cell note_bodies = s~load_ref();
+  cell groth16_proof = s~load_ref();
+  return (anchor_root, nullifier_0, nullifier_1, note_bodies, groth16_proof);
+}
+
+;; 768 bits, no references: exactly three field elements.
+(int, int, int) note_bodies_parse(cell bodies) impure inline_ref {
+  slice s = bodies.begin_parse();
+  throw_unless(232, (s.slice_bits() == 768) & (s.slice_refs() == 0));
+  int body_0 = require_canonical(s~load_uint(256));
+  int body_1 = require_canonical(s~load_uint(256));
+  int body_2 = require_canonical(s~load_uint(256));
+  return (body_0, body_1, body_2);
+}
+
+;; 256 bits and exactly four references: the three output payloads and the
+;; recovery payload.
+(int, cell, cell, cell, cell) output_bundle_parse(cell bundle) impure inline_ref {
+  slice s = bundle.begin_parse();
+  throw_unless(233, (s.slice_bits() == 256) & (s.slice_refs() == 4));
+  int recovery_owner_commitment = require_canonical(s~load_uint(256));
+  cell data_0 = s~load_ref();
+  cell data_1 = s~load_ref();
+  cell data_2 = s~load_ref();
+  cell recovery_data = s~load_ref();
+  return (recovery_owner_commitment, data_0, data_1, data_2, recovery_data);
+}
+
+;; Section 13.3: 768 bits (A and C) and one reference to a 768-bit B cell.
+(slice, slice) groth16_proof_parse(cell proof) impure inline_ref {
+  slice s = proof.begin_parse();
+  throw_unless(241, (s.slice_bits() == 768) & (s.slice_refs() == 1));
+  slice b = s~load_ref().begin_parse();
+  throw_unless(241, (b.slice_bits() == 768) & (b.slice_refs() == 0));
+  return (s, b);
+}
+
+;; No data and exactly four references: two full public keys and two signatures.
+(cell, cell, cell, cell) auth_bundle_parse(cell bundle) impure inline_ref {
+  slice s = bundle.begin_parse();
+  throw_unless(234, (s.slice_bits() == 0) & (s.slice_refs() == 4));
+  cell public_key_0 = s~load_ref();
+  cell signature_0 = s~load_ref();
+  cell public_key_1 = s~load_ref();
+  cell signature_1 = s~load_ref();
+  return (public_key_0, signature_0, public_key_1, signature_1);
+}
+
+;; No data and exactly two references.
+(cell, cell) witness_bundle_parse(cell bundle) impure inline_ref {
+  slice s = bundle.begin_parse();
+  throw_unless(235, (s.slice_bits() == 0) & (s.slice_refs() == 2));
+  cell witness_0 = s~load_ref();
+  cell witness_1 = s~load_ref();
+  return (witness_0, witness_1);
+}
+
+;; --- the root, section 12.2 -------------------------------------------------
+
+;; Everything after the operation code. Exactly four references and nothing
+;; left over.
+(int, int, int, int, int, int, slice, int, cell, cell, cell, cell)
+transact_parse(slice body) impure inline_ref {
+  throw_unless(230, body.slice_refs() == 4);
+  int query_id = body~load_uint(64);
+  int anchor_kind = body~load_uint(8);
+  int anchor_id = body~load_uint(32);
+  int valid_until = body~load_uint(32);
+  int public_amount_out = body~load_coins();
+  int withdrawal_fee = body~load_coins();
+  slice recipient = body~load_msg_addr();
+  int intent_digest = require_canonical(body~load_uint(256));
+  cell proof_bundle = body~load_ref();
+  cell output_bundle = body~load_ref();
+  cell auth_bundle = body~load_ref();
+  cell witness_bundle = body~load_ref();
+  throw_unless(230, body.slice_empty?());
+
+  ;; Section 12.2: the query id is not free-form. Tying it to the digest means
+  ;; a relayer cannot label one transaction as another in its own bookkeeping.
+  throw_unless(237, query_id == (intent_digest % 18446744073709551616));
+
+  return (query_id, anchor_kind, anchor_id, valid_until,
+          public_amount_out, withdrawal_fee, recipient, intent_digest,
+          proof_bundle, output_bundle, auth_bundle, witness_bundle);
+}
+
+;; --- the mode, sections 8 and 11.3 ------------------------------------------
+
+;; addr_none is a two-bit tag of zero and nothing else. Section 8 gives
+;; transfers addr_none and a recipient hash of zero.
+int address_is_none(slice address) inline {
+  if (address.slice_bits() != 2) {
+    return 0;
+  }
+  return address~load_uint(2) == 0;
+}
+
+;; Returns the recipient hash the public-input vector carries. A transfer's is
+;; zero by definition rather than the hash of anything.
+int recipient_hash_for(slice recipient, int public_amount_out) impure inline {
+  if (public_amount_out == 0) {
+    throw_unless(239, address_is_none(recipient));
+    return 0;
+  }
+  throw_if(238, address_is_none(recipient));
+  return public_recipient_hash(recipient);
+}
+
+;; Section 9.2: a transfer requires recovery_template_hash = 0, and carries no
+;; recovery material to hash. A withdrawal pre-authorises the recovery secret
+;; material but not an amount.
+int recovery_hash_for(int public_amount_out, int recovery_owner_commitment,
+                      cell recovery_data) impure inline {
+  if (public_amount_out == 0) {
+    throw_unless(240, recovery_owner_commitment == 0);
+    ;; The canonical empty cell: no bits, no references.
+    slice s = recovery_data.begin_parse();
+    throw_unless(240, s.slice_empty?());
+    return 0;
+  }
+  return recovery_template_hash(recovery_owner_commitment,
+                                output_data_hash(recovery_data));
+}
+
+;; --- section 10: the eighteen, in the frozen order --------------------------
+
+;; Section 10's eighteen, built from pieces already parsed. Split out from the
+;; parse so that a handler can check funding and install its gas ceiling before
+;; paying for eleven SHA-256 runs over three kilobytes of payload.
+tuple public_inputs_of(int anchor_root, int nullifier_0, int nullifier_1,
+                       int note_body_0, int note_body_1, int note_body_2,
+                       cell data_0, cell data_1, cell data_2,
+                       cell public_key_0, cell public_key_1,
+                       int public_amount_out, int withdrawal_fee,
+                       slice recipient, int valid_until,
+                       int recovery_owner_commitment, cell recovery_data,
+                       int intent_digest) impure {
+  tuple inputs = empty_tuple();
+  inputs = inputs.tpush(anchor_root);                       ;;  0
+  inputs = inputs.tpush(nullifier_0);                       ;;  1
+  inputs = inputs.tpush(nullifier_1);                       ;;  2
+  inputs = inputs.tpush(note_body_0);                       ;;  3
+  inputs = inputs.tpush(note_body_1);                       ;;  4
+  inputs = inputs.tpush(note_body_2);                       ;;  5
+  inputs = inputs.tpush(output_data_hash(data_0));          ;;  6
+  inputs = inputs.tpush(output_data_hash(data_1));          ;;  7
+  inputs = inputs.tpush(output_data_hash(data_2));          ;;  8
+  inputs = inputs.tpush(pq_auth_key_hash(public_key_0));    ;;  9
+  inputs = inputs.tpush(pq_auth_key_hash(public_key_1));    ;; 10
+  inputs = inputs.tpush(public_amount_out);                 ;; 11
+  inputs = inputs.tpush(withdrawal_fee);                    ;; 12
+  inputs = inputs.tpush(recipient_hash_for(recipient, public_amount_out));  ;; 13
+  inputs = inputs.tpush(valid_until);                       ;; 14
+  inputs = inputs.tpush(execution_domain());                ;; 15
+  inputs = inputs.tpush(recovery_hash_for(public_amount_out, recovery_owner_commitment,
+                                          recovery_data));  ;; 16
+  inputs = inputs.tpush(intent_digest);                     ;; 17
+  return inputs;
+}
+
+tuple transact_public_inputs(slice body) impure {
+  (int query_id, int anchor_kind, int anchor_id, int valid_until,
+   int public_amount_out, int withdrawal_fee, slice recipient, int intent_digest,
+   cell proof_bundle, cell output_bundle, cell auth_bundle, cell witness_bundle) =
+    transact_parse(body);
+
+  ;; Section 13.3: every shape first, before anything expensive. A message
+  ;; that is not the frozen shape should cost a parse, not eleven SHA-256 runs
+  ;; over three kilobytes.
+  (int anchor_root, int nullifier_0, int nullifier_1, cell note_bodies, cell groth16_proof) =
+    proof_bundle_parse(proof_bundle);
+  (int note_body_0, int note_body_1, int note_body_2) = note_bodies_parse(note_bodies);
+  (_, _) = groth16_proof_parse(groth16_proof);
+  (int recovery_owner_commitment, cell data_0, cell data_1, cell data_2, cell recovery_data) =
+    output_bundle_parse(output_bundle);
+  (cell public_key_0, _, cell public_key_1, _) = auth_bundle_parse(auth_bundle);
+  ;; The witnesses are not public inputs, but their shape is part of the
+  ;; message and is checked here so that nothing downstream has to assume it.
+  (_, _) = witness_bundle_parse(witness_bundle);
+
+  return public_inputs_of(anchor_root, nullifier_0, nullifier_1,
+                          note_body_0, note_body_1, note_body_2,
+                          data_0, data_1, data_2,
+                          public_key_0, public_key_1,
+                          public_amount_out, withdrawal_fee,
+                          recipient, valid_until,
+                          recovery_owner_commitment, recovery_data,
+                          intent_digest);
+}
