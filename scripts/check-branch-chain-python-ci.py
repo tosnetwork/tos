@@ -52,6 +52,19 @@ def main() -> int:
         "uv run python test/integration/test_basic.py" in text,
         "four-validator PQ chain regression is absent",
     )
+    rust_job = re.search(
+        r"(?ms)^  rust-workspace-tests-compile:\s*\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)",
+        text,
+    )
+    require(rust_job is not None, "all-crate Rust test compilation job is absent")
+    require(
+        re.search(
+            r"(?m)^\s*run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked\s*$",
+            rust_job.group("body"),
+        )
+        is not None,
+        "all-crate Rust test compilation is absent or scoped to an allowlist",
+    )
     zero_stats = text.find("ccache --zero-stats")
     native_build = text.find("cmake --build build --parallel 4 --target")
     show_stats = text.find("ccache --show-stats")
@@ -79,8 +92,8 @@ def main() -> int:
         f"native fixture targets are missing: {sorted(REQUIRED_NATIVE_TARGETS - observed_targets)}",
     )
     print(
-        "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest "
-        "and boots the four-validator PQ chain"
+        "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
+        "boots the four-validator PQ chain, and compiles every Rust test target"
     )
     return 0
 

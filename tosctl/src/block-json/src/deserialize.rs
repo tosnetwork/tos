@@ -1188,7 +1188,19 @@ pub fn parse_block_proof(map: &Map<String, Value>, block_file_hash: UInt256) -> 
         block_file_hash,
     );
 
-    let signatures = if let Ok(signatures) = map_path.get_vec("signatures") {
+    // Validate the type before the payload. A PQ document must not become an
+    // unsigned proof merely because it has no classical `signatures` array.
+    let signature_type = if map_path.map.contains_key("signature_type") {
+        map_path.get_str("signature_type")?
+    } else {
+        "ordinary"
+    };
+    if !matches!(signature_type, "ordinary" | "simplex") {
+        fail!("unsupported block-proof JSON signature_type: {}", signature_type);
+    }
+
+    let signatures = if map_path.map.contains_key("signatures") {
+        let signatures = map_path.get_vec("signatures")?;
         // Parse common signature fields
         let mut pure_signatures = BlockSignaturesPure::new();
         pure_signatures.set_weight(map_path.get_num64("sig_weight")?);
@@ -1208,28 +1220,30 @@ pub fn parse_block_proof(map: &Map<String, Value>, block_file_hash: UInt256) -> 
             map_path.get_num32("catchain_seqno")?,
         );
 
-        // Check signature type - defaults to "ordinary" for backward compatibility
-        let signature_type = map_path.get_str("signature_type").unwrap_or("ordinary");
-        let variant = if signature_type == "simplex" {
-            // Parse Simplex-specific fields
-            let session_id = map_path.get_uint256("session_id")?;
-            let slot = map_path.get_num32("slot")?;
-            let candidate_data = read_single_root_boc(map_path.get_base64("candidate_data")?)?;
-            BlockSignaturesVariant::Simplex(BlockSignaturesSimplex::new_finalize(
-                validator_info,
-                pure_signatures,
-                session_id,
-                slot,
-                candidate_data,
-            ))
-        } else {
-            BlockSignaturesVariant::Ordinary(chain_block::BlockSignatures::with_params(
-                validator_info,
-                pure_signatures,
-            ))
+        // Only an absent field is legacy ordinary.
+        let variant = match signature_type {
+            "ordinary" => BlockSignaturesVariant::Ordinary(
+                chain_block::BlockSignatures::with_params(validator_info, pure_signatures),
+            ),
+            "simplex" => {
+                let session_id = map_path.get_uint256("session_id")?;
+                let slot = map_path.get_num32("slot")?;
+                let candidate_data = read_single_root_boc(map_path.get_base64("candidate_data")?)?;
+                BlockSignaturesVariant::Simplex(BlockSignaturesSimplex::new_finalize(
+                    validator_info,
+                    pure_signatures,
+                    session_id,
+                    slot,
+                    candidate_data,
+                ))
+            }
+            other => fail!("unsupported block-proof JSON signature_type: {}", other),
         };
         Some(variant)
     } else {
+        if map_path.map.contains_key("signature_type") {
+            fail!("block-proof JSON signature_type requires signatures");
+        }
         None
     };
 

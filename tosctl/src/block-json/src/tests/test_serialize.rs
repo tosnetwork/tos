@@ -870,7 +870,11 @@ fn get_validator_set() -> ValidatorSet {
     let keydat = base64_decode("7w3fX5jiuo8PyQoFaEL+K9pE/XvbKjH63i0JcraLlBM=").unwrap();
     let key = SigPubKey::from_bytes(&keydat).unwrap();
     let vd1 = ValidatorDescr::with_params(key, 1, None);
-    let key = SigPubKey::from_bytes(&keydat).unwrap();
+    // Validator identities must be distinct. The old fixture reused the
+    // same public key and was rejected by the stricter set constructor.
+    let mut second_keydat = keydat.clone();
+    second_keydat[0] ^= 1;
+    let key = SigPubKey::from_bytes(&second_keydat).unwrap();
     let vd2 = ValidatorDescr::with_params(key, 2, None);
     ValidatorSet::new(1234567, 39237233, 1, vec![vd1, vd2]).unwrap()
 }
@@ -1311,6 +1315,24 @@ fn test_db_serialize_block_proof_simplex() {
     assert!(map.contains_key("catchain_seqno"));
     assert_eq!(map.get("validator_list_hash_short").unwrap(), 12345);
     assert_eq!(map.get("catchain_seqno").unwrap(), 6789);
+}
+
+#[test]
+fn test_db_serialize_block_proof_refuses_simplex_pq() {
+    use chain_block::{BlockProof, BlockSignaturesSimplexPq, BlockSignaturesVariant};
+
+    let boc = read("src/tests/data/block_proof").expect("proof fixture");
+    let original = BlockProof::construct_from_bytes(&boc).expect("parse proof fixture");
+    let proof = BlockProof::with_params(
+        original.proof_for,
+        original.root,
+        Some(BlockSignaturesVariant::SimplexPq(BlockSignaturesSimplexPq::default())),
+    );
+    let error = db_serialize_block_proof("_id", &proof).unwrap_err();
+    assert!(
+        error.to_string().contains("post-quantum block-proof JSON serialization is not available"),
+        "unexpected PQ serialization refusal: {error}"
+    );
 }
 
 fn prepare_shard_state_json(name: &str, workchain_id: i32, mode: SerializationMode) -> String {

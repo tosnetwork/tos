@@ -77,3 +77,18 @@ jobs:
 
       - name: Boot a four-validator PQ chain and exercise a transfer
         run: uv run python test/integration/test_basic.py
+
+  # Package allowlists left chain_block_json's test target uncompilable for two
+  # days. Compile every workspace test target on every branch push, separately
+  # from the native chain fixture so neither job can silently stand in for the other.
+  rust-workspace-tests-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tosctl/src -> target
+      - name: Compile every Rust workspace test target
+        run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
