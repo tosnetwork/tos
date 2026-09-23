@@ -418,6 +418,39 @@ the supervisor independently checked its source snapshot and artifact hashes
 and made four report-property mutations fail. The first stale-binding failure
 remains recorded as a reproducibility defect, not an elector refusal.
 
+The serial T2 first-round migration then passed on exact source commit
+`af79222b9` in `--mode pq-election`. Its retained report is
+`test/integration/.pq-election-authority-retry/20260923T125649Z/report.json`
+(SHA-256 `9b6c369d4ffe2e4a6685e45b46c348a4f525a617530c36507460209517eacfb7`,
+`status=pass`). The production pool/controller route received four exact
+`STAKE_ACCEPTED` replies. The direct wallet and three pool-route negatives
+returned their distinct expected elector reasons 8, 5, 3 and 1; a duplicate
+key returned reason 4, with participant stake unchanged in each negative.
+Three accepted controller stakes totaled 33,002,996,815,200 nanotos, below
+the four-validator effective threshold of 40,000,000,000,000. The fourth
+node was restarted during the open election; its authorization initially
+met one closed control connection and three `not started` responses, then
+succeeded within the bounded pre-send retry. Its pool order was accepted.
+Live ConfigParam 34 activated at election id `1790168811`, `total=main=4`,
+with exactly the four controller IDs and each controller's expected ADNL ID
+paired in the same record. With node 4 stopped, the other three advanced
+masterchain seqno 1485 to 1515. A premature pool recovery left elector
+credit at zero and received the expected no-credit reply. These are local,
+accelerated diagnostic results, not release measurements.
+
+The previous first-round attempts at `459c8091b` and `0b91ad529` stopped
+after three accepted stakes at the fourth node's restart. The former met a
+first-use control-channel `Connection closed`; the latter's actor-stats
+probe succeeded before the PQ identity state was ready, and authorization
+returned `this node cannot authorise a stake: not started`. Neither failure
+was an elector refusal. `af79222b9` removes that weaker probe and retries
+only those exact pre-send authorization transients within one 30-second
+deadline. Unit tests cover recovery, unrelated-error refusal and deadline
+exhaustion; source/behavior mutations reject disabling the fourth-stake retry
+or broadening the error class. This successful run does **not** convert the
+historical default launch-gate's second/rollover elections or mature-stake
+recoveries; overall T2 remains open for those units.
+
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or
 cryptographic verification. Branch CI now compiles every Rust workspace test
