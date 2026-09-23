@@ -353,9 +353,10 @@ genesis parameters. The fixture reads the live Param47 back before deploying
 accounts and confirms exactly that code hash is admitted; it also checks the
 deployed code hashes. This diagnostic fixture uses global version 16 and
 deterministic test keys; it does **not** claim that a stake or election has
-occurred. Unit 2 must route actual authorizations through those accounts and
-prove elector acceptance before T2 can close. Canonical production genesis
-remains unchanged by the fixture.
+occurred. Unit 2 subsequently routed node authorizations through those
+accounts and proved a first election; the default launch-gate's multi-round
+assertions remain separate work. Canonical production genesis remains
+unchanged by the fixture.
 
 T2 unit 2's first-election acceptance has now been observed on a real local
 four-validator PQ chain, not inferred from elector ingress. The
@@ -405,9 +406,17 @@ and was generated from `tl/generate/scheme/tos_api.tl` with
 `test/tostester/generate_tl.py`. The rehearsal now checks the required
 generated response fields **before** taking a snapshot or booting a node,
 names the regeneration command on refusal, and records both schema and
-binding hashes in the artifact manifest. The second worktree is regenerating
-and rerunning serially; its first failed run is retained, not called an
-independent pass.
+binding hashes in the artifact manifest. The second worktree regenerated
+that binding and reran serially. Its run exited successfully: the direct-wallet
+negative returned reason 8, all four production-builder pool orders received
+`STAKE_ACCEPTED`, the elector listed exactly four controller participants,
+and live ConfigParam 34 activated at election id `1790165582` with exactly
+those four controller IDs. Its report is
+`/home/tomi/n6-supervision/live-first-election-regenerated/20260923T120300Z/report.json`
+(SHA-256 `c4905799333365f2755aede4e6b02744fb7f41a85122d0bd5d982e35b32fa933`);
+the supervisor independently checked its source snapshot and artifact hashes
+and made four report-property mutations fail. The first stale-binding failure
+remains recorded as a reproducibility defect, not an elector refusal.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or
