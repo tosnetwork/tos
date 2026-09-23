@@ -345,10 +345,10 @@ The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or
 cryptographic verification. Branch CI now compiles every Rust workspace test
 target, after `SimplexPq` left this crate's tests uncompilable. Its active suite
-is 46 tests, all passing after repairing a duplicate-validator fixture. There
-are also 15 uncollected `test_parser.rs`/`test_reducers.rs` test functions whose
-former `block_parser` module is absent; their source-file count is not executed
-coverage.
+is 46 tests, all passing after repairing a duplicate-validator fixture. Two
+unreferenced files (`test_parser.rs` and `test_reducers.rs`, 15 test functions)
+were removed: they referenced the absent `block_parser` API and had never been
+compiled as crate tests. They were not counted as recovered coverage.
 
 ## Open diagnostic observations
 
