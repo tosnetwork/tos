@@ -2,6 +2,7 @@
   "schema_version": 1,
   "required_observation_ids": [
     "colocated-lite-query-timeouts",
+    "colocated-launch-committee-finalcert-tail",
     "colocated-launch-committee-skip-runs"
   ],
   "observations": {
@@ -28,6 +29,24 @@
       },
       "diagnostic_question": "For each timed-out query, did the request reach the selected lite-server? Receipt without a client response localizes the loss to server processing or the response path; no receipt localizes it to ingress or request transport.",
       "closure_condition": "Capture the same query identity at the client send point, lite-server receipt point, response send point and client completion point in a reproducing run; identify the first missing transition and add a regression gate for the demonstrated cause. Changing the timeout or relying on retry success is not closure."
+    },
+    "colocated-launch-committee-finalcert-tail": {
+      "status": "OPEN",
+      "observation": "A 21-validator, 300-second co-located diagnostic at e586c9dc7 produced 726 agreed masterchain blocks with no lite transport retries. The all-node exposure interval at height 698->699 was 2826.8 ms, while the earliest locally observed Simplex FinalCert timestamps for the matching full block ids were 2751.8 ms apart. This tail is substantially in consensus finalization, unlike other slow exposure intervals that contain material successful-query or local application/exposure time. The run does not identify why this FinalCert interval was long, and co-location remains a caveat rather than a diagnosis. No Simplex, PQ, committee or timeout parameter is changed on this evidence.",
+      "observed_at": {
+        "exact_commit": "e586c9dc7",
+        "evidence_class": "COLOCATED_DIAGNOSTIC_ONLY",
+        "artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
+        "cluster_shape": "21 PQ validators plus one non-validating verifier and one DHT process on one host",
+        "from_height": 698,
+        "to_height": 699,
+        "observation_interval_ms": 2826.8,
+        "first_finalcert_interval_ms": 2751.8,
+        "lite_transport_retries": 0,
+        "all_nodes_agreed_full_block_id": true
+      },
+      "diagnostic_question": "What caused the 2751.8 ms interval between first locally observed FinalCert events for agreed blocks 698 and 699: delayed proposals, votes, certificate assembly or another consensus transition, and does that cause occur on one-validator-per-host topology?",
+      "closure_condition": "Join the full structured Simplex event timeline for this interval to a named consensus transition, reproduce or rule out the cause on a one-validator-per-host topology, and add a regression gate for the demonstrated defect. A long all-node exposure interval alone, preserved agreement or an assumption of co-location is not closure."
     },
     "colocated-launch-committee-skip-runs": {
       "status": "OPEN",

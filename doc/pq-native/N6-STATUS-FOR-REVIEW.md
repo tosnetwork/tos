@@ -840,6 +840,9 @@ The 393→394 interval has no single measured component near 1200 ms; polling,
 height catch-up and the all-node barrier remain possible contributors, so it
 would be false to assign it to consensus. These are co-located diagnostics,
 not a reason to tune Simplex, PQ or timeout parameters and not a release p99.
+The 698→699 consensus tail is separately registered as the open
+`colocated-launch-committee-finalcert-tail` observation, pinned to the result
+artifact hash; it is not buried inside the broader exposure/skip observation.
 
 ## Four-validator sustained functional regression
 

@@ -8,7 +8,11 @@ import sys
 from pathlib import Path
 
 REQUIRED_OBSERVATION_IDS = frozenset(
-    {"colocated-lite-query-timeouts", "colocated-launch-committee-skip-runs"}
+    {
+        "colocated-lite-query-timeouts",
+        "colocated-launch-committee-finalcert-tail",
+        "colocated-launch-committee-skip-runs",
+    }
 )
 REQUIRED_FIELDS = {
     "status",
@@ -58,6 +62,24 @@ def main() -> int:
                 fail(f"{observation_id}.{field} must be a non-empty string")
         if entry["status"] == "RESOLVED" and not entry.get("resolved_by"):
             fail(f"resolved observation {observation_id} does not name resolved_by evidence")
+
+    finalcert = observations["colocated-launch-committee-finalcert-tail"]["observed_at"]
+    expected_finalcert = {
+        "exact_commit": "e586c9dc7",
+        "artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
+        "from_height": 698,
+        "to_height": 699,
+        "observation_interval_ms": 2826.8,
+        "first_finalcert_interval_ms": 2751.8,
+        "lite_transport_retries": 0,
+        "all_nodes_agreed_full_block_id": True,
+    }
+    for field, expected in expected_finalcert.items():
+        if finalcert.get(field) != expected:
+            fail(
+                "colocated-launch-committee-finalcert-tail changed field "
+                f"{field}: expected={expected!r} actual={finalcert.get(field)!r}"
+            )
 
     skip_observation = observations["colocated-launch-committee-skip-runs"]
     observed_at = skip_observation.get("observed_at", {})
