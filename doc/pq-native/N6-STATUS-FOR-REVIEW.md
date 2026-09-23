@@ -357,6 +357,44 @@ occurred. Unit 2 must route actual authorizations through those accounts and
 prove elector acceptance before T2 can close. Canonical production genesis
 remains unchanged by the fixture.
 
+T2 unit 2's first-election acceptance has now been observed on a real local
+four-validator PQ chain, not inferred from elector ingress. The
+`--mode pq-election` run from pushed runtime commit `e9c5648be` used the
+node's `createPqStakeAuthorization` and the Rust production
+`nominator::new_stake_with_witness` builder. Its snapshot records that builder
+binary and an empty tracked working-tree patch. Four wallet -> single-nominator
+pool -> controller -> elector orders each received the exact
+`STAKE_ACCEPTED` opcode and appeared in the elector's four-controller
+participant set. A direct wallet negative reached elector admission and
+returned reason 8, specifically missing the controller birth witness. Most
+importantly, live ConfigParam 34 then changed to election id `1790164203`,
+`total=4`, with PQ validator IDs exactly equal to the four controller
+addresses. The diagnostic artifact is
+`test/integration/.pq-election-production-builder-fixed/20260923T114002Z/report.json`
+(SHA-256 `7a74eb3658497c577a0b690f2cecd8da87da8351c1dc9582b7523f74d59bad00`).
+Thus **unit 2's first-election acceptance and the live production-builder
+stake-path proof are both satisfied**. This is a co-located accelerated
+diagnostic, not release-scale evidence. Commit `8fdc1c044` changes only the
+source guard: it requires one shared PQ-initial-validator helper call in each
+of the fixture and legacy provisioning branches; there is no runtime-code
+change from the measured commit.
+
+This does **not** convert the script's older default `--mode launch-gate`.
+That route still calls the classical election Fift tools and retains its
+multi-round/recovery assertions; the new `pq-election` mode proves one
+complete PQ election, not those later rounds. The classical-stake surface
+entry therefore stays open, and T2 as the entire historical launch-gate
+rehearsal is not called closed merely because unit 2 and the live stake proof
+passed. One earlier run on `cbd22b019` was invalidated by overlapping two
+local networks with the same deterministic validator identities and stopped
+before election; its artifact is retained, not cited as a protocol failure.
+That commit's Python/Rust keyword mismatch was independently reproduced by
+restoring its helper signature; the dynamic call test and source guard both
+reject it on the corrected tree.
+The old-assertion-to-PQ mapping and serial migration units are recorded in
+`doc/pq-native/T2-PQ-LAUNCH-GATE-MIGRATION.md`; the default route is not to be
+switched until those retained checks have live PQ counterparts.
+
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or
 cryptographic verification. Branch CI now compiles every Rust workspace test
