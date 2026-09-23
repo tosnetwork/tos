@@ -91,6 +91,48 @@ named `build` — the `build-clang21` that `BUILD.md` suggests is not found.
   The hash here is a placeholder (`cell_hash`). Nothing in this file depends on
   which hash is used, and nothing in it says anything about gas per transfer.
 
+**The reserve floor, and why it is fifty TOS**
+
+- `tools/shielded-pool-circuit/crosscheck/tests/storage_rent.rs` — the floor is
+  the balance a pool must hold *above* what it owes note-holders, and its job
+  is the one cost that arrives whether or not anybody uses the pool: this
+  workchain charges storage rent per cell and per bit per second. It was 5 TOS
+  and nobody had derived that number.
+
+  Measured: a pool in its **steady state** — both anchor rings full, which is
+  where they are within an hour of traffic and where they stay for the rest of
+  its life — occupies **8,369 cells and 1,279,364 bits**. At the zerostate's
+  `1 / 500` basechain storage prices that is **2.631 TOS a year**. So the old
+  floor bought 1.9 years of silence and the current 50 TOS buys **19**.
+
+  A pool at genesis is much smaller — 151 cells, 72,055 bits, 0.071 TOS a year
+  — and quoting *that* figure is how a floor gets set thirty times too low. The
+  rings are what dominate, and they fill almost immediately.
+
+  The first version of this measurement reported the genesis figure for a
+  full-ring pool, because an account's `storage_info` is a cache the executor
+  writes when a transaction touches it, and the state had been substituted
+  underneath. The two lines agreed to the bit, which is what gave it away. The
+  test now recomputes the stat and asserts that a full-ring pool prices higher
+  than a genesis one, so a stale read cannot pass again.
+
+  Two things the floor does *not* have to cover, checked rather than assumed:
+  this transaction's own compute, which the backing checks subtract separately,
+  and a bounce's recovery compute, which section 15.4 charges to the money
+  being recovered.
+
+  **The horizon is the decision; the arithmetic is not.** A pool taking about
+  three transacts a day funds itself, because every message pays
+  `get_compute_fee(ceiling)` and whatever the path does not spend stays as
+  unencumbered reserve — a transact leaves about 0.00226 TOS behind, a deposit
+  0.00050. The floor is for the quiet. Production storage prices are an
+  activation decision of their own, and if they differ this has to be
+  re-derived rather than re-quoted.
+
+  One operational consequence, and the genesis suite now fails without it: a
+  deployment must carry **at least the floor** or the pool is unbacked from its
+  first block and refuses everything.
+
 **The Poseidon2 instructions**
 
 - `POSEIDON2_PERM8` (`0xF93200`) and `POSEIDON2_HASH7` (`0xF93201`), implemented

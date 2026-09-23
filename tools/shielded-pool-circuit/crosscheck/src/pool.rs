@@ -27,7 +27,6 @@ pub const OP_RESERVE_TOPUP: u32 = 0x5348_5003;
 const MAGIC: u32 = 0x5350_5631;
 const VERSION: u16 = 1;
 const EPOCH_NONE: u32 = 0xffff_ffff;
-const RESERVE_FLOOR: u64 = 5 * TOS;
 /// The one configured denomination, and the fee section 14.2 fixes.
 pub const DENOMINATION: u64 = TOS;
 /// Section 14.2's fee, from the crate that puts it in the genesis store

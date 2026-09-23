@@ -328,10 +328,32 @@ pub fn address(code: &Cell, state: &Cell) -> Result<[u8; 32]> {
 // a different state hash and a different address while still calling itself
 // the state the manifest freezes.
 
-/// Section 14.2's measured floor for a bounded recovery is well under this at
-/// the current fee schedule, so it clears it; production must choose with
-/// explicit headroom and its own measurement.
-pub const RESERVE_FLOOR: u128 = 5_000_000_000;
+/// The unencumbered balance a pool holds above what it owes note-holders.
+///
+/// Its job is what the chain takes whether or not anybody uses the pool: this
+/// workchain charges storage rent per cell and per bit per second, so a pool
+/// nobody touches is losing money the whole time, and the rent is collected in
+/// one go by whatever message finally arrives.
+///
+/// Derived rather than picked, on 2026-09-23. A pool in its steady state --
+/// both anchor rings full, which is where they are within an hour of traffic
+/// and stay for the rest of its life -- occupies 8,369 cells and 1,279,364
+/// bits, which at the zerostate's `1 / 500` basechain storage prices is
+/// 2.631 TOS a year. 50 TOS therefore pays for **19 years** of complete
+/// silence. `storage_rent.rs` measures both halves of that and fails if the
+/// account it prices is not this one.
+///
+/// It only has to cover the rent. This transaction's own compute is subtracted
+/// separately by the backing checks, and a bounce's recovery compute is
+/// charged to the money being recovered by section 15.4.
+///
+/// The horizon is the choice, not the arithmetic: a pool taking about three
+/// transacts a day funds itself, because every message pays
+/// `get_compute_fee(ceiling)` and what the path does not spend stays here.
+/// The floor is for the quiet, and how much quiet to survive unattended is a
+/// deployment decision. Production must re-derive it against production
+/// storage prices, which are an activation decision of their own.
+pub const RESERVE_FLOOR: u128 = 50_000_000_000;
 
 /// Section 14.2's fee, and the one constant here whose size is decided by a
 /// price nobody has chosen yet.

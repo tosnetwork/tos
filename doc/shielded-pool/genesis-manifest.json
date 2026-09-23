@@ -17,7 +17,7 @@
     "vk_sha256": "5b760517f330e3914d76fc5baf18cc9e46f6b03d8467eeafb4de10d9681c9251"
   },
   "configuration": {
-    "reserve_floor": "5000000000",
+    "reserve_floor": "50000000000",
     "withdrawal_fee": "20000000",
     "denominations": ["1000000000", "10000000000", "100000000000", "1000000000000"]
   },
@@ -30,6 +30,6 @@
     "native_liability": "0",
     "frontier": "twelve zero levels, seven slots each",
     "anchor_rings": "two empty dictionaries",
-    "hash": "bfa78332423a8a306816fac21dfa8ee232f9688789fbd6bc624453274b421a92"
+    "hash": "abbd27532b59c7995d6391aa03c9a1231b612ffa55f959a7fd7311a6b29f096c"
   }
 }

@@ -85,7 +85,10 @@ fn a_pool_just_under_its_floor_refuses_a_deposit_it_could_not_back() {
     // A pool that starts below its own floor. Storage does this without
     // anybody doing anything; here it is arranged directly so the case is
     // reachable in a test rather than after a simulated year.
-    let floor: u64 = 5 * TOS;
+    // Read from the deployment's own parameters, not written down here. A
+    // copy would keep saying five TOS after the floor was re-derived, and
+    // the case would then be built at a level that is no longer the floor.
+    let floor = u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits");
     let mut pool = Pool::deploy_with_balance(&[DENOMINATION], floor - fee / 2)
         .expect("deploy a pool at its floor");
 
@@ -124,7 +127,10 @@ fn a_pool_just_under_its_floor_refuses_a_deposit_it_could_not_back() {
 #[test]
 fn a_pool_above_its_floor_still_takes_deposits() {
     let fee = deposit_fee(DENOMINATION);
-    let floor: u64 = 5 * TOS;
+    // Read from the deployment's own parameters, not written down here. A
+    // copy would keep saying five TOS after the floor was re-derived, and
+    // the case would then be built at a level that is no longer the floor.
+    let floor = u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits");
     let mut pool = Pool::deploy_with_balance(&[DENOMINATION], floor + 2 * fee)
         .expect("deploy a pool above its floor");
 

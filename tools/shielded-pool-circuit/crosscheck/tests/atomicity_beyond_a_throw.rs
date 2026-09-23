@@ -165,7 +165,12 @@ fn a_transact_that_runs_out_of_gas_changes_nothing() {
 fn a_withdrawal_whose_payout_cannot_be_sent_changes_nothing() {
     // Two deposits of one denomination, one withdrawn, the fee kept: what the
     // pool still owes once the payout leaves, which is what it reserves.
-    let reserved = 2 * DENOMINATION - DENOMINATION - WITHDRAWAL_FEE + 5 * TOS;
+    // The floor comes from the deployment parameters rather than a literal:
+    // this line said `+ 5 * TOS` until the floor was re-derived, and the
+    // control run then held less than the reserve it was meant to prove
+    // sufficient.
+    let floor = u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits");
+    let reserved = 2 * DENOMINATION - DENOMINATION - WITHDRAWAL_FEE + floor;
     // The transact brings its own value, credited before compute reads the
     // balance, so the account is set to the difference.
     let sent = 1_000_000_000u64;

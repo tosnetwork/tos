@@ -67,7 +67,7 @@ fn parameters() -> Parameters {
         poseidon_manifest_bytes: std::fs::read(root.join("crypto/poseidon2/manifest.bin"))
             .expect("the Poseidon2 manifest"),
         verifying_key,
-        reserve_floor: 5_000_000_000,
+        reserve_floor: shielded_pool_genesis::RESERVE_FLOOR,
         withdrawal_fee: shielded_pool_genesis::WITHDRAWAL_FEE,
         denominations: vec![1_000_000_000, 10_000_000_000, 100_000_000_000, 1_000_000_000_000],
     }
@@ -253,7 +253,15 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
     let hash = si.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
     let addr = MsgAddressInt::with_params(0, hash).unwrap();
     bc.send_message(
-        MessageBuilder::internal(payer.address(), &addr, 20 * TOS)
+        MessageBuilder::internal(
+            payer.address(),
+            &addr,
+            // A deployment has to carry at least the reserve floor, or the
+            // pool is unbacked from its first block and refuses everything.
+            // Twenty TOS did until the floor was re-derived to fifty.
+            u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits")
+                + 20 * TOS,
+        )
             .bounce(false)
             .state_init(si)
             .body(Cell::default())
@@ -285,7 +293,11 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
         "the deployed reserve floor is not the one the manifest names"
     );
     // A pool with no deposits owes nothing, so it is backed by anything at all.
-    assert_eq!(get("backed"), "-1", "a pool holding twenty TOS and owing nothing is unbacked");
+    assert_eq!(
+        get("backed"),
+        "-1",
+        "a pool funded above its reserve floor and owing nothing is unbacked"
+    );
 }
 
 /// Every parameter section 13.2 constrains, refused before a state is built.
