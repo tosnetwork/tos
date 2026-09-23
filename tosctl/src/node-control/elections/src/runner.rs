@@ -120,6 +120,13 @@ impl Node {
     fn elections_addr(&self) -> MsgAddressInt {
         self.elections_address.clone()
     }
+    async fn elector_validator_id(&self) -> anyhow::Result<Option<Vec<u8>>> {
+        let Some(pool) = &self.pool else {
+            return Ok(None);
+        };
+        let roles = pool.get_roles().await?;
+        Ok(Some(roles.controller_address.address().get_bytestring(0)))
+    }
     fn reset_participation(&mut self) {
         self.participant = None;
         self.submission_time = None;
@@ -372,8 +379,11 @@ impl ElectionRunner {
                 // Reset previous state; only mark as accepted if present in current participants
                 node.stake_accepted = false;
                 node.accepted_stake_amount = None;
-                if let Some(p) =
-                    elections_info.participants.iter().find(|p| p.wallet_addr == node.wallet_addr())
+                let validator_id = node.elector_validator_id().await?;
+                if let Some(p) = elections_info
+                    .participants
+                    .iter()
+                    .find(|p| validator_id.as_deref() == Some(p.pub_key.as_slice()))
                 {
                     node.stake_accepted = true;
                     node.accepted_stake_amount = Some(p.stake);
@@ -507,13 +517,15 @@ impl ElectionRunner {
         let mut node = self.nodes.get_mut(node_id).expect("node not found");
         // Find validator key for current elections in the validator config
         let validator_key = node.find_election_key(election_id).await;
-        // Find participant in the elections info by validator public key
-        let participant = validator_key.as_ref().and_then(|entry| {
+        // A PQ participant is keyed by its controller/validator identity. The
+        // election key below is only an Ed25519 transport key for ADNL.
+        let validator_id = node.elector_validator_id().await?;
+        let participant = validator_key.as_ref().and_then(|_| {
             elections_info
                 .participants
                 .iter()
-                .find(|p| p.pub_key == entry.public_key)
-                .map(|p| p.clone())
+                .find(|p| validator_id.as_deref() == Some(p.pub_key.as_slice()))
+                .cloned()
         });
         let stake = Self::calc_stake(
             &mut node,
@@ -651,6 +663,11 @@ impl ElectionRunner {
     }
 
     async fn send_stake(node_id: &str, node: &mut Node, stake: u64) -> anyhow::Result<()> {
+        if node.pool.is_none() {
+            anyhow::bail!(
+                "node [{node_id}] cannot stake directly from a wallet to the PQ elector: an admitted validator controller and pool are required"
+            );
+        }
         tracing::info!("node [{}] build stake message", node_id);
         let payload = Self::build_new_stake_payload(node_id, node).await?;
         // For simplicity we always assume that the node has nominator pool.
@@ -672,9 +689,8 @@ impl ElectionRunner {
             );
         }
 
-        // if node has nominator pool, the wallet should send only gas fee,
-        // otherwise the wallet should send stake + gas fee
-        let send_value = node.pool.as_ref().map(|_| fee).unwrap_or(stake + fee);
+        // The pool holds the stake; the operator wallet sends only relay gas.
+        let send_value = fee;
         let msg_boc =
             write_boc(&node.wallet.message(node.elections_addr(), send_value, payload).await?)?;
         tracing::debug!("wallet external message: boc={}", hex::encode(&msg_boc));
@@ -713,26 +729,38 @@ impl ElectionRunner {
         if !(1.0..=3.0).contains(&(participant.max_factor as f32 / 65536.0)) {
             anyhow::bail!("<max-factor> must be a real number 1..3");
         }
-        // todo: move to ElectorWrapper
-        // validator-elect-req.fif
-        // TOS compatibility: magic 0x654C5074 is the elector "new_stake" op.
-        // TOS elector MUST accept the same message format for election participation.
-        // If TOS changes the elector ABI, this payload construction must be updated.
-        let mut data = 0x654C5074u32.to_be_bytes().to_vec();
-        data.extend_from_slice(&(participant.election_id as u32).to_be_bytes());
-        data.extend_from_slice(&participant.max_factor.to_be_bytes());
-        data.extend_from_slice(&participant.wallet_addr);
-        data.extend_from_slice(&participant.adnl_addr);
-        tracing::debug!("data to sign {}", hex::encode_upper(&data));
-        let signature = node.api.sign(node.key_id.clone(), data).await?;
+        let pool = node.pool.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("node [{node_id}] needs a PQ validator pool and controller to stake")
+        })?;
+        let stake_owner = pool.address().address().get_bytestring(0);
+        let authorization = node
+            .api
+            .create_pq_stake_authorization(
+                participant.election_id as u32,
+                participant.max_factor,
+                &participant.adnl_addr,
+                &stake_owner,
+            )
+            .await?;
+        anyhow::ensure!(
+            authorization.algorithm_id == 1,
+            "node returned unsupported PQ stake algorithm {}",
+            authorization.algorithm_id
+        );
+        let expected_validator_id =
+            pool.get_roles().await?.controller_address.address().get_bytestring(0);
+        anyhow::ensure!(
+            authorization.validator_id == expected_validator_id,
+            "node PQ stake identity does not match the pool's validator controller"
+        );
         let body = nominator::new_stake(&nominator::NewStakeParams {
             query_id: UnixTime::now(),
             stake_amount: participant.stake,
-            validator_pubkey: participant.pub_key.as_slice(),
+            validator_pubkey: authorization.public_key.as_slice(),
             stake_at: participant.election_id as u32,
             max_factor: participant.max_factor,
             adnl_addr: participant.adnl_addr.as_slice(),
-            signature: signature.as_slice(),
+            signature: authorization.signature.as_slice(),
         })?;
 
         tracing::debug!("message body {}", body);

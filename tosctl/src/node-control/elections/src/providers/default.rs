@@ -121,6 +121,17 @@ impl ElectionsProvider for DefaultElectionsProvider {
     async fn sign(&mut self, key_id: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         self.client.sign(&SignRq { key_hash: key_id, data }).await
     }
+    async fn create_pq_stake_authorization(
+        &mut self,
+        election_date: u32,
+        max_factor: u32,
+        adnl_addr: &[u8],
+        stake_owner: &[u8],
+    ) -> anyhow::Result<control_client::client_api::PqStakeAuthorization> {
+        self.client
+            .create_pq_stake_authorization(election_date, max_factor, adnl_addr, stake_owner)
+            .await
+    }
     async fn account(&mut self, address: &str) -> anyhow::Result<Account> {
         let account = self.client.get_account_state(address).await?;
         Ok(Account::new(account))

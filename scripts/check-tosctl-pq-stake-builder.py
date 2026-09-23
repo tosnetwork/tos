@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep every current tosctl stake producer behind the shared local PQ refusal."""
+"""Pin the two pool stake callers to node authorization and refuse direct bids."""
 
 from __future__ import annotations
 
@@ -18,27 +18,47 @@ def collapsed(path: Path) -> str:
 
 def main() -> None:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
-    callers = {
+    pool_callers = {
         "election daemon": (
             root / "tosctl/src/node-control/elections/src/runner.rs",
-            r"let body = nominator::new_stake\(&nominator::NewStakeParams \{.*?signature: signature\.as_slice\(\),.*?\}\)\?;",
-        ),
-        "interactive bid command": (
-            root / "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs",
-            r"let payload = nominator::new_stake\(&nominator::NewStakeParams \{.*?signature: signature\.as_slice\(\),.*?\}\)\?;",
+            "cannot stake directly from a wallet to the PQ elector",
         ),
         "config-wallet pool command": (
             root / "tosctl/src/node-control/commands/src/commands/nodectl/config_wallet_cmd.rs",
-            r"let payload = nominator::new_stake\(&nominator::NewStakeParams \{.*?signature: &signature,.*?\}\)\?;",
+            "let pool_address = resolve_pool_address(pool_cfg, &wallet_address)?;",
         ),
     }
 
-    for name, (path, pattern) in callers.items():
-        matches = re.findall(pattern, collapsed(path))
-        if len(matches) != 1:
-            fail(f"{name} reaches the shared new_stake refusal {len(matches)} times, expected 1")
+    for name, (path, route_marker) in pool_callers.items():
+        source = collapsed(path)
+        for marker in (
+            route_marker,
+            "create_pq_stake_authorization(",
+            "nominator::new_stake(&nominator::NewStakeParams {",
+            "validator_pubkey: authorization.public_key.as_slice()"
+            if name == "election daemon"
+            else "validator_pubkey: &authorization.public_key",
+            "signature: authorization.signature.as_slice()"
+            if name == "election daemon"
+            else "signature: &authorization.signature",
+        ):
+            if source.count(marker) != 1:
+                fail(f"{name} has {source.count(marker)} occurrences of {marker!r}, expected 1")
+        if "0x654C5074" in source or ".sign(" in source:
+            fail(f"{name} still contains the classical stake tag or a local signer call")
 
-    print("TOSCTL_PQ_STAKE_BUILDER_OK: all three tosctl stake producers propagate the shared refusal")
+    direct_path = collapsed(
+        root / "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs"
+    )
+    refusal = "a wallet cannot stake directly to the PQ elector"
+    if direct_path.count(refusal) != 1 or "nominator::new_stake(" in direct_path:
+        fail("interactive bid does not refuse direct-to-elector PQ staking")
+    if "0x654C5074" in direct_path or ".sign(" in direct_path or "Bid signed" in direct_path:
+        fail("interactive bid still exposes classical stake signing")
+
+    print(
+        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization and the direct bid refuses"
+    )
 
 
 if __name__ == "__main__":

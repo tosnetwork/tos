@@ -28,6 +28,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 // ---- Address helpers ----
 
 const POOL_ADDR: [u8; 32] = [0xBBu8; 32];
+const CONTROLLER_ADDR: [u8; 32] = [0x07u8; 32];
 
 fn wallet_address() -> MsgAddressInt {
     MsgAddressInt::standard(-1, [0xAAu8; 32])
@@ -63,6 +64,8 @@ const KEY_ID: [u8; 32] = [0x01u8; 32];
 const PUB_KEY: [u8; 32] = [0x02u8; 32];
 const ADNL_ADDR: [u8; 32] = [0x03u8; 32];
 const SIGNATURE: [u8; 64] = [0x04u8; 64];
+const PQ_PUBLIC_KEY: [u8; 1312] = [0x05u8; 1312];
+const PQ_SIGNATURE: [u8; 2420] = [0x06u8; 2420];
 
 const MIN_STAKE: u64 = 10_000_000_000_000; // 10 000 TOS
 const WALLET_BALANCE: u64 = 50_000_000_000_000; // 50 000 TOS
@@ -87,6 +90,13 @@ mock! {
         async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
         async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;
         async fn sign(&mut self, key_hash: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>>;
+        async fn create_pq_stake_authorization(
+            &mut self,
+            election_date: u32,
+            max_factor: u32,
+            adnl_addr: &[u8],
+            stake_owner: &[u8],
+        ) -> anyhow::Result<control_client::client_api::PqStakeAuthorization>;
         async fn account(&mut self, address: &str) -> anyhow::Result<crate::providers::Account>;
         async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>>;
         async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet>;
@@ -190,17 +200,16 @@ fn validate_message_parameters(
     payload: &Cell,
     expected_stake: u64,
 ) -> bool {
-    // 1) dest must be the elector address (no pool)
-    if *dest != elector_address() {
-        eprintln!("withf: dest mismatch: expected elector, got {}", dest);
+    // A PQ stake goes to the pool, never directly from the wallet to the elector.
+    if *dest != pool_address() {
+        eprintln!("withf: dest mismatch: expected pool, got {}", dest);
         return false;
     }
 
-    // 2) value = stake + fee (ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE)
+    // The pool holds the capital; the wallet sends relay gas only.
     let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
-    let expected_value = expected_stake + fee;
-    if *value != expected_value {
-        eprintln!("withf: value mismatch: expected={}, got={}", expected_value, value);
+    if *value != fee {
+        eprintln!("withf: value mismatch: expected={}, got={}", fee, value);
         return false;
     }
 
@@ -247,16 +256,6 @@ fn validate_message_parameters(
         return false;
     }
 
-    // validator_pubkey (256 bits)
-    let pubkey = match slice.get_next_bits(256) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    if pubkey != PUB_KEY.to_vec() {
-        eprintln!("withf: pubkey mismatch");
-        return false;
-    }
-
     // stake_at (u32) = election_id
     let stake_at = match slice.get_next_u32() {
         Ok(v) => v,
@@ -287,24 +286,29 @@ fn validate_message_parameters(
         return false;
     }
 
-    // signature reference cell (512 bits)
-    let sig_cell = match slice.checked_drain_reference() {
+    if slice.get_next_u16().ok() != Some(1) {
+        eprintln!("withf: algorithm mismatch");
+        return false;
+    }
+    let key_cell = match slice.checked_drain_reference() {
         Ok(c) => c,
         Err(_) => {
-            eprintln!("withf: missing signature reference");
+            eprintln!("withf: missing PQ public-key reference");
             return false;
         }
     };
-    let mut sig_slice = match SliceData::load_cell(sig_cell) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let sig = match sig_slice.get_next_bits(512) {
+    let sig_cell = match slice.checked_drain_reference() {
         Ok(v) => v,
         Err(_) => return false,
     };
-    if sig != SIGNATURE.to_vec() {
-        eprintln!("withf: signature mismatch");
+    if chain_block::pq_bytes::unpack_pq_bytes(&key_cell, 1312).ok() != Some(PQ_PUBLIC_KEY.to_vec())
+        || chain_block::pq_bytes::unpack_pq_bytes(&sig_cell, 2420).ok()
+            != Some(PQ_SIGNATURE.to_vec())
+        || slice.get_next_bit().ok() != Some(false)
+        || slice.remaining_bits() != 0
+        || slice.remaining_references() != 0
+    {
+        eprintln!("withf: PQ key, signature or trailing witness mismatch");
         return false;
     }
     return true;
@@ -378,7 +382,7 @@ impl TestHarness {
 // ---- Expectation helpers ----
 
 /// Sets up a provider for a fresh election (no existing key):
-/// generates new validator key, new adnl addr, signs, builds message, sends boc.
+/// generates transport keys, asks the node to authorize a PQ stake, and sends the pool body.
 fn setup_default_provider(
     provider: &mut MockElectionsProviderImpl,
     wallet_balance: u64,
@@ -406,6 +410,23 @@ fn setup_default_provider(
 
     // sign
     provider.expect_sign().returning(|_key, _data| Ok(SIGNATURE.to_vec()));
+    provider
+        .expect_create_pq_stake_authorization()
+        .withf(|election, max_factor, adnl, owner| {
+            *election == ELECTION_ID as u32
+                && *max_factor == 196608
+                && adnl == ADNL_ADDR
+                && owner == POOL_ADDR
+        })
+        .returning(|_, _, _, _| {
+            Ok(control_client::client_api::PqStakeAuthorization {
+                validator_id: vec![0x07; 32],
+                key_id: vec![0x08; 32],
+                algorithm_id: 1,
+                public_key: PQ_PUBLIC_KEY.to_vec(),
+                signature: PQ_SIGNATURE.to_vec(),
+            })
+        });
 
     // account (for stake_balance and wallet_balance)
     if pool_balance.is_some() {
@@ -473,6 +494,13 @@ fn setup_wallet(wallet: &mut MockWalletImpl) {
 
 fn setup_pool(pool: &mut MockNominatorWrapperImpl) {
     pool.expect_address().returning(|| pool_address());
+    pool.expect_get_roles().returning(|| {
+        Ok(NominatorRoles {
+            owner_address: wallet_address(),
+            validator_address: wallet_address(),
+            controller_address: MsgAddressInt::standard(-1, CONTROLLER_ADDR),
+        })
+    });
 }
 
 // =====================================================
@@ -480,23 +508,16 @@ fn setup_pool(pool: &mut MockNominatorWrapperImpl) {
 // =====================================================
 
 #[tokio::test]
-async fn test_participate_new_key_no_pool() {
+async fn test_participate_new_key_no_pool_refuses_before_sending() {
     let node_id = "node-1";
     let mut harness = TestHarness::new();
 
     setup_default_elector(&mut harness.elector_mock, ELECTION_ID, 0);
     setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, None);
-    setup_wallet(&mut harness.wallet_mock);
+    harness.wallet_mock.expect_address().returning(|| wallet_address());
+    harness.wallet_mock.expect_message().times(0);
     let expected_stake =
         (WALLET_BALANCE - (ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE) - MIN_NANOTOS_FOR_STORAGE) / 2;
-    // validate the election bid payload
-    harness
-        .wallet_mock
-        .expect_message()
-        .withf(move |dest, value, payload| {
-            validate_message_parameters(dest, value, payload, expected_stake)
-        })
-        .returning(|_dest, _value, _payload| Ok(dummy_cell()));
 
     let mut runner = harness.build(node_id);
 
@@ -512,7 +533,12 @@ async fn test_participate_new_key_no_pool() {
     assert_eq!(participant.max_factor, 196608);
     assert!(participant.stake > 0, "stake should be positive");
     assert_eq!(participant.stake, expected_stake);
-    assert!(participant.stake_message_boc.is_some(), "stake message boc should be set");
+    assert!(participant.stake_message_boc.is_none(), "a direct-elector stake was built");
+    assert!(
+        node.last_error.as_deref().unwrap_or("").contains("cannot stake directly from a wallet"),
+        "a missing pool did not produce the named PQ refusal: {:?}",
+        node.last_error
+    );
 }
 
 // =====================================================
@@ -601,7 +627,7 @@ async fn test_participate_existing_key_not_in_elector() {
 #[tokio::test]
 async fn test_stake_already_accepted() {
     let node_id = "node-1";
-    let mut harness = TestHarness::new();
+    let mut harness = TestHarness::new().with_pool();
 
     let wallet_addr = addr_bytes(&wallet_address());
 
@@ -618,7 +644,7 @@ async fn test_stake_already_accepted() {
             failed: false,
             finished: false,
             participants: vec![Participant {
-                pub_key: PUB_KEY.to_vec(),
+                pub_key: CONTROLLER_ADDR.to_vec(),
                 adnl_addr: ADNL_ADDR.to_vec(),
                 wallet_addr: wallet_addr_clone.clone(),
                 stake: MIN_STAKE,
@@ -632,6 +658,7 @@ async fn test_stake_already_accepted() {
     harness.elector_mock.expect_compute_returned_stake().returning(|_| Ok(0));
 
     setup_wallet(&mut harness.wallet_mock);
+    setup_pool(harness.pool_mock.as_mut().unwrap());
 
     let provider = &mut harness.provider_mock;
     provider.expect_election_parameters().returning(|| Ok(default_cfg15()));
@@ -826,7 +853,7 @@ async fn test_excluded_node_skips_elections() {
 #[tokio::test]
 async fn test_elections_finished_stake_accepted() {
     let node_id = "node-1";
-    let mut harness = TestHarness::new();
+    let mut harness = TestHarness::new().with_pool();
     harness.elections_config.policy = StakePolicy::Minimum;
 
     let wallet_addr_clone = addr_bytes(&wallet_address());
@@ -839,7 +866,7 @@ async fn test_elections_finished_stake_accepted() {
             failed: true,
             finished: true,
             participants: vec![Participant {
-                pub_key: PUB_KEY.to_vec(),
+                pub_key: CONTROLLER_ADDR.to_vec(),
                 adnl_addr: ADNL_ADDR.to_vec(),
                 wallet_addr: wallet_addr_clone.clone(),
                 stake: MIN_STAKE,
@@ -856,6 +883,7 @@ async fn test_elections_finished_stake_accepted() {
     setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, Some(POOL_BALANCE));
 
     setup_wallet(&mut harness.wallet_mock);
+    setup_pool(harness.pool_mock.as_mut().unwrap());
     let mut runner = harness.build(node_id);
     let result = runner.run().await;
     assert!(result.is_ok());
@@ -1392,10 +1420,11 @@ async fn test_new_validator_key_failure() {
 #[tokio::test]
 async fn test_send_boc_failure() {
     let node_id = "node-1";
-    let mut harness = TestHarness::new();
+    let mut harness = TestHarness::new().with_pool();
 
     setup_default_elector(&mut harness.elector_mock, ELECTION_ID, 0);
     setup_wallet(&mut harness.wallet_mock);
+    setup_pool(harness.pool_mock.as_mut().unwrap());
 
     let provider = &mut harness.provider_mock;
     provider.expect_election_parameters().returning(|| Ok(default_cfg15()));
@@ -1409,6 +1438,15 @@ async fn test_send_boc_failure() {
     provider.expect_send_boc().returning(|_| Err(anyhow::anyhow!("broadcast failed")));
     provider.expect_shutdown().returning(|| Ok(()));
     provider.expect_sign().returning(|_key, _data| Ok(SIGNATURE.to_vec()));
+    provider.expect_create_pq_stake_authorization().returning(|_, _, _, _| {
+        Ok(control_client::client_api::PqStakeAuthorization {
+            validator_id: vec![0x07; 32],
+            key_id: vec![0x08; 32],
+            algorithm_id: 1,
+            public_key: PQ_PUBLIC_KEY.to_vec(),
+            signature: PQ_SIGNATURE.to_vec(),
+        })
+    });
 
     let mut runner = harness.build(node_id);
     let result = runner.run().await;
@@ -1619,7 +1657,7 @@ async fn test_node_without_wallet_skipped() {
 #[tokio::test]
 async fn test_second_tick_stake_already_sent() {
     let node_id = "node-1";
-    let mut harness = TestHarness::new();
+    let mut harness = TestHarness::new().with_pool();
     let wallet_addr = addr_bytes(&wallet_address());
 
     // First call: no participants. Second call: node is in participants.
@@ -1647,7 +1685,7 @@ async fn test_second_tick_stake_already_sent() {
                 failed: false,
                 finished: false,
                 participants: vec![Participant {
-                    pub_key: PUB_KEY.to_vec(),
+                    pub_key: CONTROLLER_ADDR.to_vec(),
                     adnl_addr: ADNL_ADDR.to_vec(),
                     wallet_addr: wallet_addr_clone.clone(),
                     stake: MIN_STAKE,
@@ -1660,6 +1698,7 @@ async fn test_second_tick_stake_already_sent() {
     });
 
     setup_wallet(&mut harness.wallet_mock);
+    setup_pool(harness.pool_mock.as_mut().unwrap());
 
     // Provider: first validator_config call returns empty (new key path),
     // second returns the generated key (re-stake path).

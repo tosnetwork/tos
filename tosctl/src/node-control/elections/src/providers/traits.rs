@@ -8,6 +8,7 @@
  */
 use chain_block::{ValidatorSet, config_params::ConfigParam15};
 use control_client::client_api::Account as ControlClientAccount;
+use control_client::client_api::PqStakeAuthorization;
 use std::collections::HashMap;
 
 fn serialize_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
@@ -94,6 +95,13 @@ pub trait ElectionsProvider: Send + Sync {
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;
     async fn sign(&mut self, key_hash: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>>;
+    async fn create_pq_stake_authorization(
+        &mut self,
+        election_date: u32,
+        max_factor: u32,
+        adnl_addr: &[u8],
+        stake_owner: &[u8],
+    ) -> anyhow::Result<PqStakeAuthorization>;
     async fn account(&mut self, address: &str) -> anyhow::Result<Account>;
     async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>>;
     async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet>;

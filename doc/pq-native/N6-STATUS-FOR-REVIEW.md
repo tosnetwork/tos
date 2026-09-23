@@ -322,9 +322,24 @@ not launch-supported and must be absent from release claims and entry-point
 inventories until that contract-level conversion is complete. The converted
 single-nominator contract is the worked example for that future work. The
 registry's closure condition also pins the local tosctl signature-length
-refusal, both tosctl producer conversions, and the rule that common Fift tools
-cannot be removed until every retained caller and `test-smartcont.cpp` move in
-the same change.
+refusal and the rule that common Fift tools cannot be removed until every
+retained caller and `test-smartcont.cpp` move in the same change. The election
+daemon and config-wallet pool bid now take the node's complete PQ stake
+authorization; the daemon refuses its no-pool branch, and the interactive
+wallet-to-elector bid refuses before signing or sending. The source guard pins
+both pool callers to the node authorization and rejects the classical stake
+preimage tag in all three paths. The daemon's no-pool refusal is held by a
+behavioral test. Both pool callers now look for an accepted PQ participant by
+validator/controller identity, not by the unrelated Ed25519 ADNL transport
+key; the daemon also checks that the node authorization names the pool's
+controller before sending. The pooled-stake chain sandbox starts from the production
+builder and asserts an elector `STAKE_ACCEPTED` reply; changing the signed
+owner to the controller rather than the pool makes that gate red after both
+relays. These are enablement paths, not rollback repairs: the earlier generic
+keyring produced a 64-byte Ed25519 signature and the shared builder refused it
+locally. The registry remains open for the operator Fift tools and other
+retained callers. The multi-nominator pool's launch status has not been ruled
+in or out; this change does not alter its hand-built sandbox bodies.
 
 ## Open diagnostic observations
 

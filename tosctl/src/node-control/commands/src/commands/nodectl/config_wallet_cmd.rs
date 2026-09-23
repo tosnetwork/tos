@@ -504,7 +504,7 @@ impl WalletStakeCmd {
         let validator_config = provider.validator_config().await.context("validator_config")?;
         let existing_key = validator_config.find(election_id);
 
-        let (key_id, pub_key, adnl_addr) = match existing_key {
+        let (_key_id, _pub_key, adnl_addr) = match existing_key {
             Some(entry) => {
                 let pub_key =
                     provider.export_public_key(&entry.key_id).await.context("export_public_key")?;
@@ -547,8 +547,30 @@ impl WalletStakeCmd {
             }
         };
 
-        // Check if already participating
-        if let Some(p) = elections_info.participants.iter().find(|p| p.pub_key == pub_key) {
+        // The node's custodied PQ signer binds the pool owner, identity, key,
+        // algorithm and signature as one authorization. The operator never
+        // signs an election preimage through the generic Ed25519 keyring.
+
+        let max_factor_raw = (self.max_factor * 65536.0) as u32;
+        let authorization = provider
+            .create_pq_stake_authorization(
+                election_id as u32,
+                max_factor_raw,
+                &adnl_addr,
+                &pool_addr_bytes,
+            )
+            .await
+            .context("create PQ stake authorization")?;
+        anyhow::ensure!(
+            authorization.algorithm_id == 1,
+            "node returned unsupported PQ stake algorithm {}",
+            authorization.algorithm_id
+        );
+        // The PQ elector indexes participants by validator identity, not by
+        // the Ed25519 transport key generated above for ADNL.
+        if let Some(p) =
+            elections_info.participants.iter().find(|p| p.pub_key == authorization.validator_id)
+        {
             println!(
                 "\n{} Already participating with stake {:.4} TOS",
                 "Warning:".yellow().bold(),
@@ -556,27 +578,15 @@ impl WalletStakeCmd {
             );
         }
 
-        // Build election bid: sign data with validator key
-
-        let max_factor_raw = (self.max_factor * 65536.0) as u32;
-
-        let mut sign_data = 0x654C5074u32.to_be_bytes().to_vec();
-        sign_data.extend_from_slice(&(election_id as u32).to_be_bytes());
-        sign_data.extend_from_slice(&max_factor_raw.to_be_bytes());
-        sign_data.extend_from_slice(&pool_addr_bytes);
-        sign_data.extend_from_slice(&adnl_addr);
-
-        let signature = provider.sign(key_id, sign_data).await.context("sign election bid")?;
-
         // Build NEW_STAKE payload for nominator pool
         let payload = nominator::new_stake(&nominator::NewStakeParams {
             query_id: time_format::now(),
             stake_amount: stake_nanotos,
-            validator_pubkey: &pub_key,
+            validator_pubkey: &authorization.public_key,
             stake_at: election_id as u32,
             max_factor: max_factor_raw,
             adnl_addr: &adnl_addr,
-            signature: &signature,
+            signature: &authorization.signature,
         })?;
 
         // Build wallet message to nominator pool (wallet sends only gas, pool has the stake)
@@ -634,7 +644,7 @@ impl WalletStakeCmd {
         let previous_stake = elections_info
             .participants
             .iter()
-            .find(|p| p.pub_key == pub_key)
+            .find(|p| p.pub_key == authorization.validator_id)
             .map(|p| p.stake)
             .unwrap_or(0);
         let expected_stake = previous_stake + stake_nanotos;
@@ -642,7 +652,7 @@ impl WalletStakeCmd {
         let stake_timeout = tokio::time::Duration::from_secs(60);
         wait_for_stake_accepted(
             &elector,
-            &pub_key,
+            &authorization.validator_id,
             expected_stake,
             &cancellation_ctx,
             stake_timeout,
@@ -659,7 +669,7 @@ const STAKE_POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_s
 
 async fn wait_for_stake_accepted(
     elector: &ElectorWrapperImpl,
-    pub_key: &[u8],
+    validator_id: &[u8],
     expected_stake: u64,
     cancellation_ctx: &CancellationCtx,
     max_wait: tokio::time::Duration,
@@ -671,7 +681,7 @@ async fn wait_for_stake_accepted(
             }
             tokio::time::sleep(STAKE_POLL_INTERVAL).await;
             let info = elector.elections_info().await.context("elections_info")?;
-            if let Some(p) = info.participants.iter().find(|p| p.pub_key == pub_key) {
+            if let Some(p) = info.participants.iter().find(|p| p.pub_key == validator_id) {
                 if p.stake >= expected_stake {
                     return Ok(());
                 }
