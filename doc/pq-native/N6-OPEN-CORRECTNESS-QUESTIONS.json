@@ -31,7 +31,7 @@
     "merkle-base-state-mismatch": {
       "closure_condition": "A run-evidenced diagnosis identifies whether the mismatched candidate state_update and base state are selected by production consensus or by the test fixture, followed by a guard that fails when that demonstrated ordering is reintroduced.",
       "location": "validator/consensus/chain-state.cpp:123",
-      "observation": "A candidate state_update was applied to a base state root it was not produced against during test-consensus-simplex2-pq-finality-e2e-100 under whole-suite parallel load.",
+      "observation": "Two recovered error lines from test-consensus-simplex2-pq-finality-e2e-100 under whole-suite parallel load show the same one-height mismatch. At 68ea21db4 on 2026-09-22 07:02:35 UTC, StateResolver actors 87 and 77 reported the same invalid Merkle update 4 ms apart: the update expected synthetic fixture state seqno 5 but the resolver applied it to seqno 4. At efd22ce46 on 2026-09-22 12:46:23 UTC, StateResolver actor 83 reported expected seqno 23, applied to seqno 22. The four hashes were independently decoded against the fixture state encoding; original BOCs, candidate IDs and stacks were not retained. Source: memo/pq-native/N6-MERKLE-RECOVERED-EVIDENCE-20260923.md. This establishes a missing one-block state transition on the resolver's path, not which component omitted it; H2 (skipping a block-referencing empty candidate), a skip/anchor shortcut, and a stale fixture-manager state remain hypotheses, not diagnoses.",
       "observed_commit": "efd22ce46",
       "status": "OPEN"
     }
