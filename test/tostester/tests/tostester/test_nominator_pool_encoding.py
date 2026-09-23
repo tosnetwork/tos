@@ -9,6 +9,7 @@ without saying why. So the encodings are pinned on both sides against the same
 constants.
 """
 
+import asyncio
 import base64
 import copy
 import importlib.util
@@ -49,6 +50,34 @@ def _lifecycle_module():
 lifecycle = _lifecycle_module()
 
 
+@pytest.mark.asyncio
+async def test_lifecycle_shutdown_closes_the_whole_network(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="dht-shutdown-test")
+    stopped = []
+
+    class FakeNetwork:
+        async def aclose(self):
+            stopped.extend(["dht", "validator"])
+
+    runner.network = FakeNetwork()
+    await runner.shutdown()
+    assert stopped == ["dht", "validator"], "DHT and validator ownership must close together"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_shutdown_failure_is_reported(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="dht-shutdown-error")
+
+    class FailingNetwork:
+        async def aclose(self):
+            raise RuntimeError("DHT did not stop")
+
+    runner.network = FailingNetwork()
+    await runner.shutdown()
+    assert runner.failures == ["network shutdown failed: RuntimeError('DHT did not stop')"]
+    assert any(event["event"] == "network_shutdown_error" for event in runner.report.events)
+
+
 requires_code = pytest.mark.skipif(
     not POOL_CODE.exists(),
     reason="run scripts/build-nominator-pool-v1.sh to produce the pool artifact",
@@ -85,29 +114,115 @@ def test_a_withdrawal_request_uses_the_same_shape():
     assert body.load_uint(8) == ord("w")
 
 
-def test_stake_body_carries_the_amount_before_the_elector_fields():
-    # pool.fc reads the value it should forward, then hands the rest to the
-    # Elector untouched. Getting that field's position wrong would corrupt the
-    # signed payload rather than fail cleanly.
-    body = lifecycle.build_pool_stake_body(
-        query_id=7,
-        stake_value=10_001_000_000_000,
-        validator_pubkey=bytes(range(32)),
-        election_id=1234,
-        max_factor=1 << 16,
-        adnl_id=bytes(range(32, 64)),
-        signature=bytes(64),
-    ).begin_parse()
+def test_config34_pq_identity_and_adnl_stay_in_one_record():
+    controller_a = "11" * 32
+    controller_b = "22" * 32
+    adnl_a = "33" * 32
+    adnl_b = "44" * 32
+    text = (
+        f"validator_pq validator_id:x{controller_a} adnl_addr:x{adnl_a} weight:7\n"
+        f"validator_pq validator_id:x{controller_b} adnl_addr:x{adnl_b} weight:9"
+    )
+    assert lifecycle.parse_pq_validator_adnl_pairs(text) == [
+        (controller_a, adnl_a), (controller_b, adnl_b)
+    ]
+    with pytest.raises(ValueError, match="ADNL IDs"):
+        lifecycle.parse_pq_validator_adnl_pairs(
+            f"validator_pq validator_id:x{controller_a} weight:7"
+        )
 
-    assert body.load_uint(32) == 0x4E73744B
-    assert body.load_uint(64) == 7
-    length = body.load_uint(4)
-    assert body.load_uint(length * 8) == 10_001_000_000_000
-    assert body.load_bytes(32) == bytes(range(32))
-    assert body.load_uint(32) == 1234
-    assert body.load_uint(32) == 1 << 16
-    assert body.load_bytes(32) == bytes(range(32, 64))
-    assert body.refs
+
+def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_witness(monkeypatch):
+    controller_address = Address((-1, bytes([0x11]) * 32))
+    pool_address = Address((-1, bytes([0x22]) * 32))
+    adnl = bytes([0x33]) * 32
+    key_id = bytes([0x44]) * 32
+    public_key = bytes([0x55]) * 1312
+    signature = bytes([0x66]) * 2420
+    witness = Builder().store_uint(47, 16).end_cell()
+    authorization = SimpleNamespace(
+        validator_id=controller_address.hash_part,
+        key_id=key_id,
+        algorithm_id=1,
+        public_key=public_key,
+        signature=signature,
+    )
+    seen = {}
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            seen["request"] = kwargs
+
+        def parse_result(self, response):
+            assert response is authorization
+            return response
+
+    async def request(_request):
+        return authorization
+
+    def fake_builder(_executable, **kwargs):
+        seen["builder"] = kwargs
+        return Cell.empty()
+
+    monkeypatch.setattr(
+        lifecycle.tos_api, "Engine_validator_createPqStakeAuthorizationRequest", FakeRequest
+    )
+    monkeypatch.setattr(lifecycle, "build_production_pool_stake_order", fake_builder)
+    subject = object.__new__(lifecycle.PoolLifecycle)
+    subject.nodes = [SimpleNamespace(
+        validator_key=SimpleNamespace(id=adnl),
+        engine_console=SimpleNamespace(request=request),
+    )]
+    subject.controllers = [SimpleNamespace(
+        address=controller_address,
+        consensus=SimpleNamespace(key_id=key_id, public_key=public_key),
+        birth_witness=witness,
+    )]
+    assert asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address)) == Cell.empty()
+    assert seen["request"] == {
+        "election_date": 1_700_000_000,
+        "max_factor": lifecycle.MAX_FACTOR,
+        "adnl_addr": adnl,
+        "stake_owner": pool_address.hash_part,
+    }
+    assert seen["builder"]["public_key"] == public_key
+    assert seen["builder"]["signature"] == signature
+    assert seen["builder"]["witness"] == witness
+    assert seen["builder"]["adnl_addr"] == adnl
+
+    authorization.validator_id = bytes([0x77]) * 32
+    with pytest.raises(AssertionError, match="wrong controller"):
+        asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
+
+
+def test_lifecycle_budget_covers_genesis_and_two_support_principals(monkeypatch):
+    ordinary = lifecycle.require_lifecycle_funding_budget(
+        integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+    )
+    assert ordinary["faucet_nanotos"] == 100_000 * lifecycle.NANO
+    assert ordinary["committed_nanotos"] == 96_400 * lifecycle.NANO
+    assert ordinary["faucet_uncommitted_nanotos"] == 3_600 * lifecycle.NANO
+    assert ordinary["support_pool_capital_nanotos"] == (
+        2 * lifecycle.POOL_STAKE_VALUE + 20 * lifecycle.NANO
+    )
+    assert ordinary["support_wallet_nanotos"] >= ordinary["support_wallet_required_nanotos"]
+
+    integrated = lifecycle.require_lifecycle_funding_budget(
+        integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+    )
+    assert integrated["faucet_nanotos"] == 2_000_000 * lifecycle.NANO
+    assert integrated["committed_nanotos"] == 1_211_387 * lifecycle.NANO
+
+    monkeypatch.setattr(lifecycle, "DIRECT_VALIDATOR_FUNDING", 20_000 * lifecycle.NANO)
+    with pytest.raises(ValueError, match="support wallet cannot fund"):
+        lifecycle.require_lifecycle_funding_budget(
+            integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+        )
+    monkeypatch.setattr(lifecycle, "INTEGRATED_FAUCET_FUNDING", 1_000_000 * lifecycle.NANO)
+    with pytest.raises(ValueError, match="Genesis faucet cannot fund"):
+        lifecycle.require_lifecycle_funding_budget(
+            integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+        )
 
 
 @pytest.mark.parametrize(

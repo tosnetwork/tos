@@ -222,6 +222,14 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                         "status": "RESOLVED",
                         "resolved_by": "222222222",
                     },
+                    "pool-first-stake-birth-witness-missing": {
+                        "observation": "fixture pool witness observation",
+                        "observed_commit": "717e2879e",
+                        "location": "fixture-pool.rs:1",
+                        "closure_condition": "fixture first-stake witness closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "555555555",
+                    },
                     "merkle-base-state-mismatch": {
                         "observation": "fixture observation",
                         "observed_commit": "efd22ce46",
@@ -348,7 +356,8 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                 "classical-config-vote-tooling-incompatible-with-pq-contract, "
                 "classical-e2e-fixtures-incompatible-with-pq-consensus, "
                 "classical-stake-producers-incompatible-with-pq-elector, "
-                "merkle-base-state-mismatch"
+                "merkle-base-state-mismatch, "
+                "pool-first-stake-birth-witness-missing"
             )
             if expected not in str(exc):
                 fail(f"open correctness registry reported the wrong release refusal: {exc}")

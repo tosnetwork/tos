@@ -37,16 +37,17 @@ EXPECTED: dict[str, dict[str, int]] = {
     "crypto/test/fift/validator-proposal-legacy-parity.fif": {
         "validator-elect-req>B": 1,
     },
-    "scripts/nominator-pool-lifecycle-e2e.py": {
-        "validator-elect-req.fif": 1,
-        "validator-elect-signed.fif": 1,
-    },
-    "scripts/validator-election-stage-a.py": {
-        "validator-elect-req.fif": 1,
-        "validator-elect-signed.fif": 1,
-    },
 }
 SUFFIXES = {".py", ".fif", ".fc", ".cpp", ".rs"}
+# This source guard quotes the retired Fift filenames to forbid their use in
+# Stage A; it is not an executable Fift caller. Exclude only this known guard
+# so an unrelated new script containing the literal still fails the inventory.
+NON_CALLER_SOURCE_GUARDS = {
+    "scripts/check-pq-election-fixture-source.py",
+    # This guard quotes the retired names only to forbid them in the
+    # multi-nominator lifecycle route; it does not invoke either Fift tool.
+    "scripts/check-nominator-pool-pq-route.py",
+}
 
 
 def fail(message: str) -> None:
@@ -60,7 +61,7 @@ def discover(root: Path) -> dict[str, dict[str, int]]:
             if not path.is_file() or path.suffix not in SUFFIXES:
                 continue
             relative = path.relative_to(root).as_posix()
-            if relative == "scripts/check-classical-stake-callers.py":
+            if relative == "scripts/check-classical-stake-callers.py" or relative in NON_CALLER_SOURCE_GUARDS:
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
             matches = {marker: source.count(marker) for marker in MARKERS if marker in source}
@@ -86,7 +87,7 @@ def main() -> int:
     if undocumented:
         fail(f"retained literal Fift callers absent from migration map: {undocumented}")
     print(
-        "CLASSICAL_STAKE_CALLERS_OK: 10 exact executable files retain the inventoried "
+        f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact executable files retain the inventoried "
         "validator-elect Fift path/word literals; the migration map names each"
     )
     return 0

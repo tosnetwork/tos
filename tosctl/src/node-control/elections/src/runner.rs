@@ -89,6 +89,8 @@ struct Node {
     wallet: Arc<dyn Wallet>,
     /// Nominator pool instance. Optional.
     pool: Option<Arc<dyn NominatorWrapper>>,
+    /// Public original deployment StateInit BOC, supplied by the binding.
+    controller_birth_state_init_boc: Option<String>,
     /// Address to which to send commands: stake & recover.
     /// It can be an elector address or a nominator pool address.
     elections_address: MsgAddressInt,
@@ -252,6 +254,9 @@ impl ElectionRunner {
                                 .unwrap_or_else(|| elector.address()),
                             wallet,
                             pool,
+                            controller_birth_state_init_boc: binding.and_then(|binding| {
+                                binding.controller_birth_state_init_boc.clone()
+                            }),
                             excluded,
                             stake_policy,
                             key_id: vec![],
@@ -747,21 +752,40 @@ impl ElectionRunner {
             "node returned unsupported PQ stake algorithm {}",
             authorization.algorithm_id
         );
-        let expected_validator_id =
-            pool.get_roles().await?.controller_address.address().get_bytestring(0);
+        let controller_address = pool.get_roles().await?.controller_address;
         anyhow::ensure!(
-            authorization.validator_id == expected_validator_id,
-            "node PQ stake identity does not match the pool's validator controller"
+            controller_address.workchain_id() == -1,
+            "pool validator controller must be a masterchain account"
         );
-        let body = nominator::new_stake(&nominator::NewStakeParams {
-            query_id: UnixTime::now(),
-            stake_amount: participant.stake,
-            validator_pubkey: authorization.public_key.as_slice(),
-            stake_at: participant.election_id as u32,
-            max_factor: participant.max_factor,
-            adnl_addr: participant.adnl_addr.as_slice(),
-            signature: authorization.signature.as_slice(),
+        let expected_validator_id = controller_address.address().get_bytestring(0);
+        let artifact_path = node.controller_birth_state_init_boc.as_deref().ok_or_else(|| {
+            anyhow::anyhow!("node [{node_id}] has no controller birth StateInit BOC configured; first PQ stake refused locally")
         })?;
+        let node_id_bytes: [u8; 32] = authorization
+            .validator_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("node PQ stake validator_id is not 32 bytes"))?;
+        let pool_id_bytes: [u8; 32] = expected_validator_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("pool validator controller ID is not 32 bytes"))?;
+        let live_policy = node.api.live_controller_policy().await?;
+        let body = nominator::new_stake_from_birth_artifact(
+            &nominator::NewStakeParams {
+                query_id: UnixTime::now(),
+                stake_amount: participant.stake,
+                validator_pubkey: authorization.public_key.as_slice(),
+                stake_at: participant.election_id as u32,
+                max_factor: participant.max_factor,
+                adnl_addr: participant.adnl_addr.as_slice(),
+                signature: authorization.signature.as_slice(),
+            },
+            std::path::Path::new(artifact_path),
+            &node_id_bytes,
+            &pool_id_bytes,
+            &live_policy,
+        )?;
 
         tracing::debug!("message body {}", body);
         Ok(body)

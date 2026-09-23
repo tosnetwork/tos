@@ -93,6 +93,8 @@ pub trait ElectionsProvider: Send + Sync {
     async fn new_adnl_addr(&mut self, perm_key_id: Vec<u8>, until: u64) -> anyhow::Result<Vec<u8>>;
     async fn validator_config(&mut self) -> anyhow::Result<ValidatorConfig>;
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
+    /// Raw live ConfigParam 47 cell; JSON summaries are not admission evidence.
+    async fn live_controller_policy(&mut self) -> anyhow::Result<chain_block::Cell>;
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;
     async fn sign(&mut self, key_hash: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>>;
     async fn create_pq_stake_authorization(

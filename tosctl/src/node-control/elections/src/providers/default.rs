@@ -10,7 +10,8 @@ use super::traits::ElectionsProvider;
 use crate::providers::traits::{Account, ValidatorConfig, ValidatorEntry};
 use adnl::client::AdnlClientConfig;
 use anyhow::Context;
-use chain_block::{ConfigParam15, ValidatorSet, read_single_root_boc};
+use chain_block::{Cell, ConfigParam15, ConfigParamEnum, ValidatorSet, read_single_root_boc};
+use contracts::ChainProvider;
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{
@@ -20,17 +21,19 @@ use control_client::{
     config_params::{parse_config_param_15, parse_config_param_34, parse_config_param_36},
 };
 use std::collections::HashMap;
+use std::sync::Arc;
 
 // TOS compatibility: DefaultElectionsProvider communicates with the TOS node via ADNL.
 // Config params 15, 34, 36 are fetched using lite_server.getConfigParams which is
 // supported identically on TOS nodes.
 pub struct DefaultElectionsProvider {
     client: ControlClientAdnl,
+    chain_provider: Arc<dyn ChainProvider>,
 }
 
 impl DefaultElectionsProvider {
-    pub fn new(config: AdnlClientConfig) -> Self {
-        Self { client: ControlClientAdnl::new(config, 4) }
+    pub fn new(config: AdnlClientConfig, chain_provider: Arc<dyn ChainProvider>) -> Self {
+        Self { client: ControlClientAdnl::new(config, 4), chain_provider }
     }
 }
 
@@ -114,6 +117,12 @@ impl ElectionsProvider for DefaultElectionsProvider {
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15> {
         let bytes = self.client.get_config_param(15).await?;
         parse_config_param_15(&bytes)
+    }
+    async fn live_controller_policy(&mut self) -> anyhow::Result<Cell> {
+        match self.chain_provider.get_config_param(47).await? {
+            ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell),
+            other => anyhow::bail!("live ConfigParam 47 has unexpected representation: {other:?}"),
+        }
     }
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()> {
         self.client.send_boc(msg_boc).await

@@ -61,7 +61,7 @@ pub async fn run(
         .filter_map(|(node_id, config)| match config {
             Ok(config) => {
                 let provider: Box<dyn ElectionsProvider> =
-                    Box::new(DefaultElectionsProvider::new(config));
+                    Box::new(DefaultElectionsProvider::new(config, chain_provider.clone()));
                 tracing::info!("node [{}] elections provider created", node_id);
                 Some((node_id, provider))
             }

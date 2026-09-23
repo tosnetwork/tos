@@ -7,11 +7,11 @@ lifetime. Both preserve the production candidate's contracts,
 validator-count rules, stake limits, rewards, and message paths.
 
 The script starts one DHT node and four validator processes on loopback,
-deploys five real masterchain wallets (four validators plus one negative-test
-wallet), submits two overlapping target elections and the required rollover
-election with the repository's Fift tools, recovers both target rounds, injects
-restart/quorum faults, and writes JSONL metrics plus a final JSON report under
-the selected stage's test/integration output directory.
+deploys four admitted PQ controllers, four pools and five masterchain wallets,
+submits two target elections and a rollover through node-authorized pool
+orders, recovers both target rounds to their pools, injects restart/quorum
+faults, and writes JSONL metrics plus a final JSON report under the selected
+stage's test/integration output directory.
 
 The opt-in ``experiment`` mode keeps the same accelerated Stage-A protocol
 profile, but runs a stable four-validator network beside a longer application
@@ -65,7 +65,6 @@ from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
 from tosapi import tos_api  # noqa: E402
 from toslib.errors import LocalError, RemoteError  # noqa: E402
 from tostester.install import Install  # noqa: E402
-from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
@@ -87,17 +86,22 @@ NANO = 1_000_000_000
 VALIDATOR_COUNT = 4
 ELECTOR = Address((-1, bytes.fromhex("33" * 32)))
 EFFECTIVE_STAKE = 10_000 * NANO
-ELECTOR_CONFIRMATION_ALLOWANCE = 1 * NANO
-STAKE_MESSAGE_VALUE = EFFECTIVE_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE
 PQ_STAKE_MESSAGE_VALUE = 11_000 * NANO  # sandbox-tested margin above the 10,000 TOS floor
 VALIDATOR_WALLET_FUNDING = 20_020 * NANO
 EXPERIMENT_CONCURRENT_STAKE_CAPACITY = 3
-EXPERIMENT_VALIDATOR_WALLET_FUNDING = 30_030 * NANO
+PQ_EXPERIMENT_POOL_CAPITAL = (
+    EXPERIMENT_CONCURRENT_STAKE_CAPACITY * (PQ_STAKE_MESSAGE_VALUE + 20 * NANO)
+)
+EXPERIMENT_OPERATOR_FEE_RESERVE = 1_000 * NANO
+EXPERIMENT_VALIDATOR_WALLET_FUNDING = (
+    PQ_EXPERIMENT_POOL_CAPITAL + EXPERIMENT_OPERATOR_FEE_RESERVE
+)
 NEGATIVE_WALLET_FUNDING = 15_000 * NANO
 EXPERIMENT_FAUCET_FEE_RESERVE = 1_000 * NANO
 EXPERIMENT_GENESIS_FAUCET_FUNDING = (
     VALIDATOR_COUNT * EXPERIMENT_VALIDATOR_WALLET_FUNDING
     + NEGATIVE_WALLET_FUNDING
+    + VALIDATOR_COUNT * 10 * NANO  # admitted controller deployment
     + EXPERIMENT_FAUCET_FEE_RESERVE
 )
 PQ_FULL_FOLLOWUP_FAUCET_CAPITAL = (
@@ -244,6 +248,30 @@ def require_pq_config34_associations(
         )
 
 
+def parse_past_elections_list(output: str) -> dict[int, dict[str, int]]:
+    """Read the Elector's actual, possibly reset unfreeze times."""
+    result = re.search(r"\bresult:\s*\[(.*?)\]\s*remote result", output, re.S)
+    if result is None:
+        raise ValueError("Elector past_elections_list has no trusted result")
+    body = result.group(1)
+    entries = re.findall(r"\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]", body)
+    if len(entries) != len(re.findall(r"\[\s*\d+", body)):
+        raise ValueError("Elector past_elections_list has an unparsed record")
+    if not entries and not re.fullmatch(r"\s*\(\s*\)\s*", body):
+        raise ValueError("Elector past_elections_list has an unknown empty shape")
+    parsed = {
+        int(election_id): {
+            "unfreeze_at": int(unfreeze_at),
+            "vset_hash": int(vset_hash),
+            "stake_held": int(stake_held),
+        }
+        for election_id, unfreeze_at, vset_hash, stake_held in entries
+    }
+    if len(parsed) != len(entries):
+        raise ValueError("Elector past_elections_list repeats an election ID")
+    return parsed
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -264,12 +292,12 @@ def recovery_attribution(election_ids: list[int]) -> dict[str, str]:
     if len(election_ids) == 1:
         return {
             "attribution_status": "exact-single-election",
-            "wallet_aggregate_attribution_status": "EXACT",
+            "pool_aggregate_attribution_status": "EXACT",
             "per_election_reward_attribution_status": "EXACT",
         }
     return {
-        "attribution_status": "wallet-exact-multi-election-aggregate",
-        "wallet_aggregate_attribution_status": "EXACT",
+        "attribution_status": "pool-exact-multi-election-aggregate",
+        "pool_aggregate_attribution_status": "EXACT",
         "per_election_reward_attribution_status": "NOT_ATTRIBUTABLE",
     }
 
@@ -331,30 +359,6 @@ def internal_message(
     )
 
 
-def build_election_body(
-    *,
-    query_id: int,
-    validator_pubkey: bytes,
-    election_id: int,
-    max_factor: int,
-    adnl_id: bytes,
-    signature: bytes,
-) -> Cell:
-    if len(validator_pubkey) != 32 or len(adnl_id) != 32 or len(signature) != 64:
-        raise ValueError("invalid validator election field length")
-    return (
-        Builder()
-        .store_uint(0x4E73744B, 32)
-        .store_uint(query_id, 64)
-        .store_bytes(validator_pubkey)
-        .store_uint(election_id, 32)
-        .store_uint(max_factor, 32)
-        .store_bytes(adnl_id)
-        .store_ref(Builder().store_bytes(signature).end_cell())
-        .end_cell()
-    )
-
-
 class ValidatorElectionRehearsal:
     def __init__(
         self,
@@ -398,9 +402,12 @@ class ValidatorElectionRehearsal:
         self.soak_max_interval = soak_max_interval
         self.soak_wallet_funding = soak_wallet_funding_tos * NANO
         self.fixture_only = fixture_only
-        self.pq_election = pq_election
+        # The long-running election experiment also places real stakes. It
+        # must use the same PQ Genesis, controller identities and pool route
+        # as the finite launch gate; transfer-soak does not place stakes.
+        self.pq_election = pq_election or (experiment is not None and not soak_mode)
         self.pq_full = pq_full
-        if pq_full and not pq_election:
+        if pq_full and not self.pq_election:
             raise ValueError("the full PQ rehearsal requires the PQ election fixture")
         if pq_full and not profile.accelerated:
             raise ValueError("the full PQ diagnostic faucet is defined only for Stage A")
@@ -446,11 +453,15 @@ class ValidatorElectionRehearsal:
         self.wallet_balance_history: dict[str, list[dict[str, Any]]] = {}
         self.provenance: dict[str, Any] = {}
         self.readiness_path = run_dir / "readiness-manifest.json"
-        self.allocation_evidence_path = run_dir / "reward-election-allocation-evidence-v3.json"
+        self.allocation_evidence_path = run_dir / "reward-election-allocation-evidence-v4.json"
         self.experiment_started_at: str | None = None
         self.experiment_deadline_at: str | None = None
         self.settlement_deadline_at: str | None = None
         self.experiment_final_status: str | None = None
+        self.experiment_last_chain_timestamp: int | None = None
+        self.experiment_current_config34_since: int | None = None
+        self.experiment_current_config34_hash: int | None = None
+        self.experiment_past_elections: dict[int, dict[str, int]] | None = None
         self.election_allocations: dict[int, dict[str, Any]] = {}
         self.recovery_records: list[dict[str, Any]] = []
         self.rpc_readiness: list[dict[str, Any]] = []
@@ -584,14 +595,19 @@ class ValidatorElectionRehearsal:
     def validator_identity_evidence(self, index: int) -> dict[str, Any]:
         node = self.nodes[index]
         wallet = self.wallets[index]
+        controller = self.controllers[index]
+        pool = self.pools[index]
         rpc_address = self.experiment.rpc_addresses[index] if self.experiment is not None else None
         return {
             "validator_index": index + 1,
             "node_name": node.name,
-            "validator_public_key_hex": node.validator_key.public_key.key.hex(),
+            "controller_id_hex": controller.address.hash_part.hex(),
+            "consensus_key_id_hex": controller.consensus.key_id.hex(),
             "adnl_id_hex": node.validator_key.id.hex(),
-            "reward_wallet_raw": raw_address(wallet.address),
-            "reward_wallet_role": "election stake source and recovery destination",
+            "operator_wallet_raw": raw_address(wallet.address),
+            "operator_wallet_role": "funds pool capital and sends node-authorized pool orders",
+            "pool_stake_owner_raw": raw_address(pool.address),
+            "recovery_destination_raw": raw_address(pool.address),
             "rpc_address": rpc_address,
             "rpc_url": f"http://{rpc_address}/jsonRPC" if rpc_address else None,
         }
@@ -740,8 +756,8 @@ class ValidatorElectionRehearsal:
         if self.experiment is None:
             raise RuntimeError("readiness manifest is only defined in experiment mode")
         return {
-            "schema": "tos.validator-election-experiment-readiness.v1",
-            "schema_version": 1,
+            "schema": "tos.validator-election-experiment-readiness.v2",
+            "schema_version": 2,
             "status": "ready",
             "ready_at": utc_now(),
             "mode": "experiment",
@@ -751,6 +767,7 @@ class ValidatorElectionRehearsal:
                 "validator_count": VALIDATOR_COUNT,
                 "internal_base_port": self.base_port,
                 "genesis_faucet_funding_nanotos": EXPERIMENT_GENESIS_FAUCET_FUNDING,
+                "pool_capital_per_validator_nanotos": PQ_EXPERIMENT_POOL_CAPITAL,
                 "lite_client_config": str(self.lite_config),
                 "zero_state": self.zero_state_evidence(),
                 "initial_config34": self.config34_evidence(self.initial_config34),
@@ -766,15 +783,15 @@ class ValidatorElectionRehearsal:
             "election": {
                 "elector_raw": raw_address(ELECTOR),
                 "profile": asdict(self.profile),
-                "effective_stake_nanotos": EFFECTIVE_STAKE,
-                "stake_message_value_nanotos": STAKE_MESSAGE_VALUE,
-                "reward_wallet_funding_nanotos": self.validator_wallet_funding(),
+                "minimum_stake_nanotos": EFFECTIVE_STAKE,
+                "stake_message_value_nanotos": PQ_STAKE_MESSAGE_VALUE,
+                "operator_wallet_funding_nanotos": self.validator_wallet_funding(),
                 "supported_concurrent_unrecovered_stakes": (
                     EXPERIMENT_CONCURRENT_STAKE_CAPACITY
                 ),
                 "mapping_status": "declared-before-first-election",
                 "mapping_becomes_on_chain": (
-                    "when each reward wallet's signed candidate request is accepted"
+                    "when each node-authorized pool order is accepted and ConfigParam 34 activates"
                 ),
             },
             "window": {
@@ -794,6 +811,31 @@ class ValidatorElectionRehearsal:
             },
         }
 
+    def experiment_retention_state(self, election_id: int) -> str:
+        """Classify a retained stake from the live set and Elector's true clock.
+
+        The initial election schedule is not an unfreeze promise: when a set
+        retires, Elector resets its unfreeze time to now + stake_held, and it
+        never unfreezes the current active set.
+        """
+        current = self.experiment_current_config34_since
+        current_hash = self.experiment_current_config34_hash
+        past = self.experiment_past_elections
+        now = self.experiment_last_chain_timestamp
+        if current is None or current_hash is None or past is None or now is None:
+            return "unmeasured"
+        entry = past.get(election_id)
+        recorded_hash = self.election_allocations[election_id].get("config34_cell_hash")
+        if recorded_hash is None or (entry is not None and entry["vset_hash"] != recorded_hash):
+            return "unmeasured"
+        if election_id == current:
+            if entry is None or entry["vset_hash"] != current_hash:
+                return "unmeasured"
+            return "active-retained"
+        if entry is not None and now < entry["unfreeze_at"]:
+            return "retired-frozen"
+        return "matured-unrecovered"
+
     def allocation_evidence(self, status: str) -> dict[str, Any]:
         validators: list[dict[str, Any]] = []
         missing_primary_allocations: list[dict[str, Any]] = []
@@ -810,7 +852,8 @@ class ValidatorElectionRehearsal:
                             "election_id": election_id,
                             "purpose": "primary-window",
                             "validator_index": index + 1,
-                            "reward_wallet_raw": identity["reward_wallet_raw"],
+                            "operator_wallet_raw": identity["operator_wallet_raw"],
+                            "pool_stake_owner_raw": identity["pool_stake_owner_raw"],
                             "candidate_status": "NOT_RECORDED",
                             "selection_status": "NOT_ATTRIBUTABLE",
                             "recovery_status": "OUTSTANDING",
@@ -823,13 +866,16 @@ class ValidatorElectionRehearsal:
                         validator_missing_primary.append(missing)
                         missing_primary_allocations.append(missing)
                     continue
-                allocations.append(
-                    {
-                        "election_id": election_id,
-                        "purpose": allocation["purpose"],
-                        **candidate,
-                    }
-                )
+                rendered_candidate = {
+                    "election_id": election_id,
+                    "purpose": allocation["purpose"],
+                    **candidate,
+                }
+                if candidate.get("recovery_status") == "retained-settlement-rollover":
+                    rendered_candidate["retention_state"] = self.experiment_retention_state(
+                        election_id
+                    )
+                allocations.append(rendered_candidate)
             recovered = [
                 record for record in self.recovery_records if record["validator_index"] == index + 1
             ]
@@ -865,7 +911,24 @@ class ValidatorElectionRehearsal:
                 or allocation.get("recovery_status") not in recovered_statuses
             )
         )
-        outstanding = outstanding_recorded + len(missing_primary_allocations)
+        retained_by_state: dict[str, list[dict[str, int]]] = {
+            name: [] for name in (
+                "active-retained", "retired-frozen", "matured-unrecovered", "unmeasured"
+            )
+        }
+        for election_id, allocation in self.election_allocations.items():
+            for index in range(VALIDATOR_COUNT):
+                candidate = allocation.get("validators", {}).get(str(index + 1))
+                if candidate is None or candidate.get("recovery_status") != "retained-settlement-rollover":
+                    continue
+                retained_by_state[self.experiment_retention_state(election_id)].append(
+                    {"election_id": election_id, "validator_index": index + 1}
+                )
+        matured_retained_unrecovered = retained_by_state["matured-unrecovered"]
+        outstanding = (
+            outstanding_recorded + len(missing_primary_allocations)
+            + len(matured_retained_unrecovered) + len(retained_by_state["unmeasured"])
+        )
         retained_rollover = sum(
             1
             for validator in validators
@@ -876,6 +939,16 @@ class ValidatorElectionRehearsal:
         for election_id in sorted(self.election_allocations):
             allocation = self.election_allocations[election_id]
             rendered = dict(allocation)
+            on_chain = (self.experiment_past_elections or {}).get(election_id)
+            rendered["current_config34_active"] = (
+                election_id == self.experiment_current_config34_since
+            )
+            rendered["on_chain_unfreeze_at"] = (
+                on_chain["unfreeze_at"] if on_chain is not None else None
+            )
+            rendered["on_chain_vset_hash"] = (
+                on_chain["vset_hash"] if on_chain is not None else None
+            )
             if allocation.get("purpose") == "primary-window":
                 missing_indices = [
                     index
@@ -892,8 +965,8 @@ class ValidatorElectionRehearsal:
             "partial-settlement" if status == "complete" and outstanding != 0 else status
         )
         return {
-            "schema": "tos.validator-reward-election-allocation-evidence.v3",
-            "schema_version": 3,
+            "schema": "tos.validator-reward-election-allocation-evidence.v4",
+            "schema_version": 4,
             "status": evidence_status,
             "generated_at": utc_now(),
             "mode": "experiment",
@@ -917,14 +990,16 @@ class ValidatorElectionRehearsal:
             },
             "elector": {
                 "address_raw": raw_address(ELECTOR),
-                "effective_stake_nanotos": EFFECTIVE_STAKE,
-                "reward_wallet_funding_nanotos": self.validator_wallet_funding(),
+                "minimum_stake_nanotos": EFFECTIVE_STAKE,
+                "operator_wallet_funding_nanotos": self.validator_wallet_funding(),
+                "pool_capital_per_validator_nanotos": PQ_EXPERIMENT_POOL_CAPITAL,
                 "supported_concurrent_unrecovered_stakes": (
                     EXPERIMENT_CONCURRENT_STAKE_CAPACITY
                 ),
                 "allocation_basis": (
-                    "signed candidate wallet mapping plus exact reward-wallet-level Elector "
-                    "compute_returned_stake credit; per-election reward is exact only for a "
+                    "node-authorized controller/pool/ADNL mapping plus exact pool-level Elector "
+                    "compute_returned_stake credit and elector-observed accepted principal; "
+                    "per-election reward is exact only for a "
                     "single mapped election, multi-election reward remains NOT_ATTRIBUTABLE, "
                     "and equal-share inference is never used"
                 ),
@@ -942,6 +1017,13 @@ class ValidatorElectionRehearsal:
                 ),
                 "missing_primary_candidate_allocations": missing_primary_allocations,
                 "missing_primary_candidate_count": len(missing_primary_allocations),
+                "matured_retained_unrecovered_allocations": matured_retained_unrecovered,
+                "active_retained_allocations": retained_by_state["active-retained"],
+                "retired_frozen_retained_allocations": retained_by_state["retired-frozen"],
+                "unmeasured_retained_allocations": retained_by_state["unmeasured"],
+                "current_config34_since": self.experiment_current_config34_since,
+                "current_config34_cell_hash": self.experiment_current_config34_hash,
+                "past_elections_on_chain": self.experiment_past_elections,
                 "recovery_transactions": len(self.recovery_records),
                 "recovered_allocations": sum(
                     len(record["candidate_election_ids"])
@@ -1298,51 +1380,6 @@ class ValidatorElectionRehearsal:
 
         return await asyncio.to_thread(run)
 
-    async def election_body(
-        self,
-        *,
-        wallet: WalletV1,
-        validator_key: Key,
-        election_id: int,
-        label: str,
-    ) -> Cell:
-        request_file = self.artifacts_dir / f"{label}-to-sign.bin"
-        body_file = self.artifacts_dir / f"{label}-body.boc"
-        await self.run_fift(
-            self.install.source_dir / "crypto/smartcont/validator-elect-req.fif",
-            raw_address(wallet.address),
-            str(election_id),
-            "1",
-            validator_key.id.hex(),
-            str(request_file),
-        )
-        to_sign = request_file.read_bytes()
-        signature = validator_key.key.sign(to_sign).signature
-        public_key = base64.b64encode(PUB_ED25519_PREFIX + validator_key.public_key.key).decode()
-        signature_b64 = base64.b64encode(signature).decode()
-        await self.run_fift(
-            self.install.source_dir / "crypto/smartcont/validator-elect-signed.fif",
-            raw_address(wallet.address),
-            str(election_id),
-            "1",
-            validator_key.id.hex(),
-            public_key,
-            signature_b64,
-            str(body_file),
-        )
-        body = Cell.one_from_boc(body_file.read_bytes())
-        self.event(
-            "election_body_created",
-            label=label,
-            election_id=election_id,
-            wallet=raw_address(wallet.address),
-            validator_pubkey=validator_key.public_key.key.hex(),
-            adnl=validator_key.id.hex(),
-            to_sign_sha256=hashlib.sha256(to_sign).hexdigest(),
-            body_hash=body.hash.hex(),
-        )
-        return body
-
     async def recovery_body(self, label: str) -> Cell:
         body_file = self.artifacts_dir / f"{label}-recover.boc"
         await self.run_fift(
@@ -1350,128 +1387,6 @@ class ValidatorElectionRehearsal:
             str(body_file),
         )
         return Cell.one_from_boc(body_file.read_bytes())
-
-    async def wait_returned_negative_funds(self, before: int, *, description: str) -> int:
-        assert self.negative_wallet is not None
-        # Rejected Elector requests return the inbound value. Allow up to
-        # 20 TOS for all local transaction and forwarding fees.
-        return await self.retry(
-            lambda: self.balance(self.negative_wallet.address),
-            timeout=60,
-            description=description,
-            predicate=lambda value: value >= before - 20 * NANO,
-        )
-
-    async def submit_negative_cases(
-        self,
-        *,
-        election_id: int,
-        validator_key: Key,
-        accepted_stake: int,
-    ) -> None:
-        assert self.negative_wallet is not None
-        wallet = self.negative_wallet
-        public_param = "0x" + validator_key.public_key.key.hex()
-
-        before = await self.balance(wallet.address)
-        body = await self.election_body(
-            wallet=wallet,
-            validator_key=validator_key,
-            election_id=election_id,
-            label=f"negative-under-min-{election_id}",
-        )
-        await self.send_from_wallet(
-            wallet,
-            dest=ELECTOR,
-            amount=1_001 * NANO,
-            body=body,
-            label="negative-under-minimum-stake",
-        )
-        await self.wait_returned_negative_funds(before, description="under-minimum stake return")
-        if await self.runmethod_int("participates_in", public_param) != accepted_stake:
-            raise AssertionError("under-minimum stake changed participant state")
-
-        before = await self.balance(wallet.address)
-        body = await self.election_body(
-            wallet=wallet,
-            validator_key=validator_key,
-            election_id=election_id + 1,
-            label=f"negative-wrong-election-{election_id}",
-        )
-        await self.send_from_wallet(
-            wallet,
-            dest=ELECTOR,
-            amount=STAKE_MESSAGE_VALUE,
-            body=body,
-            label="negative-wrong-election-id",
-        )
-        await self.wait_returned_negative_funds(before, description="wrong-election stake return")
-        if await self.runmethod_int("participates_in", public_param) != accepted_stake:
-            raise AssertionError("wrong election id changed participant state")
-
-        before = await self.balance(wallet.address)
-        invalid_body = build_election_body(
-            query_id=int(time.time()),
-            validator_pubkey=validator_key.public_key.key,
-            election_id=election_id,
-            max_factor=MAX_FACTOR,
-            adnl_id=validator_key.id,
-            signature=bytes(64),
-        )
-        await self.send_from_wallet(
-            wallet,
-            dest=ELECTOR,
-            amount=STAKE_MESSAGE_VALUE,
-            body=invalid_body,
-            label="negative-invalid-validator-signature",
-        )
-        await self.wait_returned_negative_funds(
-            before, description="invalid-signature stake return"
-        )
-        if await self.runmethod_int("participates_in", public_param) != accepted_stake:
-            raise AssertionError("invalid signature changed participant state")
-
-        self.event("negative_cases_passed", election_id=election_id)
-
-    async def submit_candidate(
-        self,
-        index: int,
-        election_id: int,
-        round_number: int,
-    ) -> None:
-        node = self.nodes[index]
-        wallet = self.wallets[index]
-        body = await self.election_body(
-            wallet=wallet,
-            validator_key=node.validator_key,
-            election_id=election_id,
-            label=f"round-{round_number}-validator-{index + 1}",
-        )
-        await self.send_from_wallet(
-            wallet,
-            dest=ELECTOR,
-            amount=STAKE_MESSAGE_VALUE,
-            body=body,
-            label=f"round-{round_number}-validator-{index + 1}-stake",
-        )
-        public_param = "0x" + node.validator_key.public_key.key.hex()
-        actual = await self.retry(
-            lambda: self.runmethod_int("participates_in", public_param),
-            timeout=60,
-            description=f"validator {index + 1} accepted stake",
-            predicate=lambda value: value == EFFECTIVE_STAKE,
-        )
-        if actual != EFFECTIVE_STAKE:
-            raise AssertionError(
-                f"validator {index + 1} effective stake {actual}, expected {EFFECTIVE_STAKE}"
-            )
-        self.event(
-            "candidate_accepted",
-            round=round_number,
-            validator=index + 1,
-            election_id=election_id,
-            effective_stake=actual,
-        )
 
     async def restart_node(self, index: int, reason: str) -> None:
         self.event("node_restart_begin", node=index + 1, reason=reason)
@@ -1499,33 +1414,6 @@ class ValidatorElectionRehearsal:
             predicate=lambda value: value >= timestamp,
         )
         self.event("chain_time_reached", label=label, target=timestamp, actual=reached)
-
-    async def wait_config_activation(
-        self, election_id: int, label: str, timeout: float = 180
-    ) -> Config34:
-        config = await self.retry(
-            self.get_config34,
-            timeout=timeout,
-            interval=1,
-            description=f"{label} ConfigParam 34 activation",
-            predicate=lambda value: value.utime_since == election_id,
-        )
-        expected_keys = {node.validator_key.public_key.key.hex().upper() for node in self.nodes}
-        expected_adnl = {node.validator_key.id.hex().upper() for node in self.nodes}
-        if config.total != 4 or config.main != 4:
-            raise AssertionError(f"{label} elected set is not 4/4: {asdict(config)}")
-        if set(value.upper() for value in config.public_keys) != expected_keys:
-            raise AssertionError(f"{label} validator public keys do not match")
-        if set(value.upper() for value in config.adnl_ids) != expected_adnl:
-            raise AssertionError(f"{label} validator ADNL identities do not match")
-        self.event(
-            "config34_activated",
-            label=label,
-            utime_since=config.utime_since,
-            utime_until=config.utime_until,
-            total_weight=config.total_weight,
-        )
-        return config
 
     async def verify_three_of_four_liveness(self) -> None:
         before = await self.masterchain_seqno()
@@ -2018,105 +1906,6 @@ class ValidatorElectionRehearsal:
             resumed_to=resumed_to,
         )
 
-    async def recover_round(self, round_number: int) -> list[int]:
-        election_id = self.first_election_id if round_number == 1 else self.second_election_id
-        unfreeze_at = election_id + self.profile.elected_for + self.profile.stakes_frozen_for
-        credit_timeout = max(240, unfreeze_at - int(time.time()) + 90)
-        credits: list[int] = []
-        for index, wallet in enumerate(self.wallets):
-            wallet_hash = "0x" + wallet.address.hash_part.hex()
-            credit = await self.retry(
-                lambda wallet_hash=wallet_hash: self.runmethod_int(
-                    "compute_returned_stake", wallet_hash
-                ),
-                timeout=credit_timeout,
-                interval=max(2.0, self.long_poll_interval),
-                description=f"round {round_number} validator {index + 1} credit",
-                predicate=lambda value: value >= EFFECTIVE_STAKE,
-            )
-            before = await self.record_balance(
-                f"validator-{index + 1}-before-recover-{round_number}", wallet
-            )
-            body = await self.recovery_body(f"round-{round_number}-validator-{index + 1}")
-            await self.send_from_wallet(
-                wallet,
-                dest=ELECTOR,
-                amount=1 * NANO,
-                body=body,
-                label=f"round-{round_number}-validator-{index + 1}-recover",
-            )
-            await self.retry(
-                lambda wallet_hash=wallet_hash: self.runmethod_int(
-                    "compute_returned_stake", wallet_hash
-                ),
-                timeout=60,
-                description=f"round {round_number} validator {index + 1} credit removal",
-                predicate=lambda value: value == 0,
-            )
-            after = await self.retry(
-                lambda wallet=wallet: self.balance(wallet.address),
-                timeout=60,
-                description=f"round {round_number} validator {index + 1} balance credit",
-                predicate=lambda value, before=before, credit=credit: (
-                    value >= before + credit - 2 * NANO
-                ),
-            )
-            credits.append(credit)
-            self.event(
-                "stake_recovered",
-                round=round_number,
-                validator=index + 1,
-                credit=credit,
-                balance_before=before,
-                balance_after=after,
-            )
-        return credits
-
-    async def duplicate_recovery_must_not_pay(self) -> None:
-        wallet = self.wallets[0]
-        before = await self.balance(wallet.address)
-        body = await self.recovery_body("duplicate-recovery")
-        await self.send_from_wallet(
-            wallet,
-            dest=ELECTOR,
-            amount=1 * NANO,
-            body=body,
-            label="duplicate-recovery",
-        )
-        await asyncio.sleep(3)
-        after = await self.balance(wallet.address)
-        if after > before + NANO // 10:
-            raise AssertionError(f"duplicate recovery increased balance: {before} -> {after}")
-        self.event(
-            "duplicate_recovery_rejected",
-            balance_before=before,
-            balance_after=after,
-        )
-
-    async def early_recovery_must_not_pay(self) -> None:
-        wallet = self.wallets[0]
-        wallet_hash = "0x" + wallet.address.hash_part.hex()
-        if await self.runmethod_int("compute_returned_stake", wallet_hash) != 0:
-            raise AssertionError("stake unexpectedly recoverable before unfreeze")
-        before = await self.balance(wallet.address)
-        body = await self.recovery_body("early-recovery")
-        await self.send_from_wallet(
-            wallet,
-            dest=ELECTOR,
-            amount=1 * NANO,
-            body=body,
-            label="early-recovery",
-        )
-        await asyncio.sleep(3)
-        after = await self.balance(wallet.address)
-        if after > before + NANO // 10:
-            raise AssertionError("early recovery unexpectedly credited principal")
-        self.event(
-            "early_recovery_rejected",
-            balance_before=before,
-            balance_after=after,
-        )
-
     async def capture_elector_snapshot(self, label: str) -> dict[str, Any]:
         snapshot: dict[str, Any] = {
             "label": label,
@@ -2129,6 +1918,7 @@ class ValidatorElectionRehearsal:
             "participant_list_extended",
             "past_election_ids",
             "past_elections",
+            "past_elections_list",
         ):
             output = await self.runmethod(method)
             path = self.artifacts_dir / f"{safe_label}-{method}.txt"
@@ -2150,7 +1940,7 @@ class ValidatorElectionRehearsal:
                 "first_observed_at": utc_now(),
                 "target_set_since": election_id,
                 "target_set_until": election_id + self.profile.elected_for,
-                "stake_unfreeze_at": (
+                "initial_unfreeze_estimate": (
                     election_id + self.profile.elected_for + self.profile.stakes_frozen_for
                 ),
                 "submission_status": "submitting",
@@ -2174,26 +1964,27 @@ class ValidatorElectionRehearsal:
         if candidate_key in allocation["validators"]:
             return
         wallet_balance = await self.balance(self.wallets[index].address)
-        # Leave enough for inclusion and a later recovery request. A wallet
-        # commonly has two overlapping 10,000-TOS stakes in this profile.
-        if wallet_balance < STAKE_MESSAGE_VALUE + 2 * NANO:
+        pool_balance = await self.balance(self.pools[index].address)
+        # The pool, not the operator wallet, owns the three overlapping PQ
+        # stakes. Wait for an older credit if its capital is still frozen;
+        # the wallet only pays order and recovery-message fees.
+        if wallet_balance < 3 * NANO or pool_balance < PQ_STAKE_MESSAGE_VALUE + 2 * NANO:
             return
-        await self.submit_candidate(index, election_id, round_number)
-        artifact_prefix = f"round-{round_number}-validator-{index + 1}"
-        request_path = self.artifacts_dir / f"{artifact_prefix}-to-sign.bin"
-        body_path = self.artifacts_dir / f"{artifact_prefix}-body.boc"
+        order = await self.submit_pq_candidate(index, election_id, round_number=round_number)
+        controller = self.controllers[index]
+        pool = self.pools[index]
         allocation["validators"][candidate_key] = {
             "validator_index": index + 1,
-            "validator_public_key_hex": (self.nodes[index].validator_key.public_key.key.hex()),
+            "controller_id_hex": controller.address.hash_part.hex(),
+            "consensus_key_id_hex": controller.consensus.key_id.hex(),
             "adnl_id_hex": self.nodes[index].validator_key.id.hex(),
-            "reward_wallet_raw": raw_address(self.wallets[index].address),
-            "effective_stake_nanotos": EFFECTIVE_STAKE,
-            "stake_message_value_nanotos": STAKE_MESSAGE_VALUE,
+            "operator_wallet_raw": raw_address(self.wallets[index].address),
+            "pool_stake_owner_raw": raw_address(pool.address),
+            "recovery_destination_raw": raw_address(pool.address),
+            "effective_stake_nanotos": order["effective_stake_nanotos"],
+            "stake_message_value_nanotos": PQ_STAKE_MESSAGE_VALUE,
             "submitted_at": utc_now(),
-            "signed_request": {
-                "to_sign": self.file_provenance(request_path),
-                "body_boc": self.file_provenance(body_path),
-            },
+            "pq_authorized_order": order,
             "selection_status": "pending",
             "recovery_status": "pending",
         }
@@ -2214,6 +2005,13 @@ class ValidatorElectionRehearsal:
 
     async def observe_experiment_activation(self) -> bool:
         config = await self.get_config34()
+        self.experiment_current_config34_since = config.utime_since
+        self.experiment_current_config34_hash = int.from_bytes(
+            (await self.client.get_config_param(34)).hash, "big"
+        )
+        self.experiment_past_elections = parse_past_elections_list(
+            await self.runmethod("past_elections_list")
+        )
         allocation = self.election_allocations.get(config.utime_since)
         if allocation is None or allocation["selection_status"] == "selected":
             return False
@@ -2221,14 +2019,13 @@ class ValidatorElectionRehearsal:
             raise AssertionError(
                 f"election {config.utime_since} activated before four candidates were recorded"
             )
-        expected_keys = {node.validator_key.public_key.key.hex().upper() for node in self.nodes}
-        expected_adnl = {node.validator_key.id.hex().upper() for node in self.nodes}
+        expected = {
+            controller.address.hash_part.hex().upper(): node.validator_key.id.hex().upper()
+            for controller, node in zip(self.controllers, self.nodes)
+        }
         if config.total != VALIDATOR_COUNT or config.main != VALIDATOR_COUNT:
             raise AssertionError(f"experiment elected set is not four-of-four: {asdict(config)}")
-        if {key.upper() for key in config.public_keys} != expected_keys:
-            raise AssertionError("experiment elected validator public keys do not match")
-        if {adnl.upper() for adnl in config.adnl_ids} != expected_adnl:
-            raise AssertionError("experiment elected validator ADNL IDs do not match")
+        require_pq_config34_associations(config, expected)
 
         config_path = self.artifacts_dir / f"election-{config.utime_since}-config34.txt"
         config_path.write_text(config.raw)
@@ -2236,11 +2033,17 @@ class ValidatorElectionRehearsal:
         rpc_validator_set = rpc_consensus["observations"][0]["validator_set"]
         if int(rpc_validator_set["utime_since"]) != config.utime_since:
             raise AssertionError("lite-client and JSON-RPC ConfigParam 34 IDs disagree")
-        rpc_validators_by_key = {
-            base64.b64decode(item["public_key"]).hex(): item
+        # JSON-RPC's legacy public_key is an empty Ed25519 placeholder for a
+        # PQ descriptor. Join its weights by the unique ADNL ID only after
+        # the lite ConfigParam 34 has checked controller/ADNL associations.
+        rpc_validators_by_adnl = {
+            base64.b64decode(item["adnl_address"]).hex(): item
             for item in rpc_validator_set["validators"]
         }
+        if len(rpc_validators_by_adnl) != VALIDATOR_COUNT:
+            raise AssertionError("JSON-RPC PQ ConfigParam 34 ADNL IDs are not unique")
         allocation["selection_status"] = "selected"
+        allocation["config34_cell_hash"] = self.experiment_current_config34_hash
         allocation["selected_at"] = utc_now()
         allocation["config34"] = self.config34_evidence(config)
         allocation["config34_artifact"] = self.file_provenance(config_path)
@@ -2249,9 +2052,11 @@ class ValidatorElectionRehearsal:
             await self.capture_elector_snapshot(f"election-{config.utime_since}-activated")
         )
         for candidate in allocation["validators"].values():
-            rpc_validator = rpc_validators_by_key.get(candidate["validator_public_key_hex"])
+            rpc_validator = rpc_validators_by_adnl.get(candidate["adnl_id_hex"])
             if rpc_validator is None:
-                raise AssertionError("JSON-RPC ConfigParam 34 omitted an elected validator")
+                raise AssertionError(
+                    "JSON-RPC ConfigParam 34 omitted the elected controller's ADNL ID"
+                )
             candidate["selection_status"] = "selected"
             candidate["selected_set_since"] = config.utime_since
             candidate["selected_set_until"] = config.utime_until
@@ -2269,60 +2074,82 @@ class ValidatorElectionRehearsal:
 
     async def recover_experiment_stakes(self, chain_timestamp: int) -> int:
         recovered_count = 0
-        for index, wallet in enumerate(self.wallets):
-            wallet_hash = "0x" + wallet.address.hash_part.hex()
-            credit = await self.runmethod_int("compute_returned_stake", wallet_hash)
+        for index, (wallet, pool) in enumerate(zip(self.wallets, self.pools)):
+            pool_id = "0x" + pool.address.hash_part.hex()
+            credit = await self.runmethod_int("compute_returned_stake", pool_id)
             if credit < EFFECTIVE_STAKE:
                 continue
             eligible: list[tuple[int, dict[str, Any]]] = []
             for election_id in sorted(self.election_allocations):
                 allocation = self.election_allocations[election_id]
                 candidate = allocation["validators"].get(str(index + 1))
-                if candidate is None or candidate["recovery_status"] != "pending":
+                if candidate is None or candidate["recovery_status"] not in (
+                    "pending", "retained-settlement-rollover"
+                ):
                     continue
-                if allocation["stake_unfreeze_at"] <= chain_timestamp:
+                if (
+                    candidate.get("selection_status") == "selected"
+                    and self.experiment_retention_state(election_id) == "matured-unrecovered"
+                ):
                     eligible.append((election_id, candidate))
             if not eligible:
                 raise AssertionError(
-                    f"validator {index + 1} has an unmapped Elector credit {credit}"
+                    f"pool {index + 1} has an unmapped Elector credit {credit}"
                 )
 
-            principal = len(eligible) * EFFECTIVE_STAKE
-            if credit < principal:
-                # Polling normally yields exactly one matured election. If the
-                # contract exposes fewer credits than our eligible candidates,
-                # map only the oldest complete principals and fail closed on
-                # any remainder instead of inventing a per-round allocation.
-                complete = credit // EFFECTIVE_STAKE
-                if complete <= 0:
-                    raise AssertionError(f"validator {index + 1} credit cannot cover one principal")
-                eligible = eligible[:complete]
-                principal = len(eligible) * EFFECTIVE_STAKE
-
-            before = await self.record_balance(
-                f"validator-{index + 1}-before-experiment-recover", wallet
+            # The Elector exposes only the pool's aggregate credit, not the
+            # contributing election IDs. Never greedily choose a subset:
+            # include every matured candidate, even a settlement rollover,
+            # and wait until the credit covers their full observed principals.
+            principal = sum(
+                candidate["effective_stake_nanotos"] for _, candidate in eligible
             )
-            recovery_label = f"experiment-validator-{index + 1}-recover-{chain_timestamp}"
+            if credit < principal:
+                self.event(
+                    "experiment_pool_credit_below_matured_principal",
+                    pool=raw_address(pool.address), credit=credit,
+                    matured_election_ids=[election_id for election_id, _ in eligible],
+                    required_principal=principal,
+                )
+                continue
+
+            before = await self.balance(pool.address)
+            recovery_label = f"experiment-pool-{index + 1}-recover-{chain_timestamp}"
             body = await self.recovery_body(recovery_label)
+            view = body.begin_parse()
+            if view.load_uint(32) != 0x47657424:
+                raise AssertionError("PQ experiment pool recovery has the wrong opcode")
+            query_id = view.load_uint(64)
+            if view.remaining_bits or view.remaining_refs:
+                raise AssertionError("PQ experiment pool recovery has trailing data")
             await self.send_from_wallet(
                 wallet,
-                dest=ELECTOR,
+                dest=pool.address,
                 amount=NANO,
                 body=body,
                 label=recovery_label,
             )
+            opcode, detail = await self.wait_pq_pool_elector_reply(
+                index, query_id,
+                description=f"experiment pool {index + 1} mature elector recovery",
+            )
+            if opcode != 0xF96F7324 or detail != 0:
+                raise AssertionError(
+                    f"experiment pool {index + 1} did not receive mature recovery: "
+                    f"opcode=0x{opcode:08x} detail={detail}"
+                )
             await self.retry(
-                lambda wallet_hash=wallet_hash: self.runmethod_int(
-                    "compute_returned_stake", wallet_hash
+                lambda pool_id=pool_id: self.runmethod_int(
+                    "compute_returned_stake", pool_id
                 ),
                 timeout=60,
-                description=f"validator {index + 1} experiment credit removal",
+                description=f"pool {index + 1} experiment credit removal",
                 predicate=lambda value: value == 0,
             )
             after = await self.retry(
-                lambda wallet=wallet: self.balance(wallet.address),
+                lambda pool=pool: self.balance(pool.address),
                 timeout=60,
-                description=f"validator {index + 1} experiment recovery balance",
+                description=f"pool {index + 1} experiment recovery balance",
                 predicate=lambda value, before=before, credit=credit: (
                     value >= before + credit - 2 * NANO
                 ),
@@ -2333,16 +2160,21 @@ class ValidatorElectionRehearsal:
                 "recovered_at": utc_now(),
                 "chain_timestamp": chain_timestamp,
                 "validator_index": index + 1,
-                "validator_public_key_hex": (self.nodes[index].validator_key.public_key.key.hex()),
-                "reward_wallet_raw": raw_address(wallet.address),
+                "controller_id_hex": self.controllers[index].address.hash_part.hex(),
+                "adnl_id_hex": self.nodes[index].validator_key.id.hex(),
+                "operator_wallet_raw": raw_address(wallet.address),
+                "pool_stake_owner_raw": raw_address(pool.address),
+                "recovery_destination_raw": raw_address(pool.address),
+                "recovery_query_id": query_id,
+                "elector_reply_opcode": f"0x{opcode:08x}",
                 "candidate_election_ids": election_ids,
                 **attribution,
                 "principal_nanotos": principal,
                 "credit_nanotos": credit,
                 "reward_nanotos": credit - principal,
-                "wallet_balance_before_nanotos": before,
-                "wallet_balance_after_nanotos": after,
-                "wallet_balance_delta_nanotos": after - before,
+                "pool_balance_before_nanotos": before,
+                "pool_balance_after_nanotos": after,
+                "pool_balance_delta_nanotos": after - before,
                 "recovery_message_value_nanotos": NANO,
                 "reward_derivation": "credit_nanotos - principal_nanotos",
                 "balance_delta_used_for_reward": False,
@@ -2350,15 +2182,19 @@ class ValidatorElectionRehearsal:
             self.recovery_records.append(record)
             if len(eligible) == 1:
                 candidate = eligible[0][1]
+                was_retained = candidate["recovery_status"] == "retained-settlement-rollover"
                 candidate["recovery_status"] = "recovered"
+                candidate["recovered_despite_retained_rollover"] = was_retained
                 candidate["recovered_at"] = record["recovered_at"]
                 candidate["credit_nanotos"] = credit
-                candidate["reward_nanotos"] = credit - EFFECTIVE_STAKE
+                candidate["reward_nanotos"] = credit - candidate["effective_stake_nanotos"]
                 candidate["recovery_attribution"] = attribution["attribution_status"]
                 candidate["reward_attribution_status"] = "EXACT"
             else:
                 for _, candidate in eligible:
+                    was_retained = candidate["recovery_status"] == "retained-settlement-rollover"
                     candidate["recovery_status"] = "recovered-in-aggregate"
+                    candidate["recovered_despite_retained_rollover"] = was_retained
                     candidate["recovered_at"] = record["recovered_at"]
                     candidate["recovery_attribution"] = attribution["attribution_status"]
                     candidate["reward_attribution_status"] = "NOT_ATTRIBUTABLE"
@@ -2418,6 +2254,7 @@ class ValidatorElectionRehearsal:
         last_heartbeat = 0.0
         while time.monotonic() < settlement_deadline_monotonic:
             chain_timestamp = await self.chain_time()
+            self.experiment_last_chain_timestamp = chain_timestamp
             await self.observe_experiment_activation()
             await self.recover_experiment_stakes(chain_timestamp)
 
@@ -2494,6 +2331,7 @@ class ValidatorElectionRehearsal:
                 await asyncio.sleep(min(loop_interval, remaining))
 
         chain_timestamp = await self.chain_time()
+        self.experiment_last_chain_timestamp = chain_timestamp
         await self.observe_experiment_activation()
         await self.recover_experiment_stakes(chain_timestamp)
         final_snapshot = await self.capture_elector_snapshot("experiment-final")
@@ -2765,12 +2603,16 @@ class ValidatorElectionRehearsal:
                         f"expected={code.hash.hex()} actual={observed.hex()}"
                     )
             if self.pq_election:
+                capital_amount = (
+                    PQ_EXPERIMENT_POOL_CAPITAL if self.experiment is not None
+                    else PQ_STAKE_MESSAGE_VALUE + 20 * NANO
+                )
                 await self.send_from_wallet(
-                    wallet, dest=pool.address, amount=PQ_STAKE_MESSAGE_VALUE + 20 * NANO,
+                    wallet, dest=pool.address, amount=capital_amount,
                     body=Cell.empty(), label=f"validator-{index + 1}-pool-capital",
                 )
                 capital = await self.balance(pool.address)
-                if capital < PQ_STAKE_MESSAGE_VALUE + 20 * NANO:
+                if capital < capital_amount:
                     raise AssertionError(
                         f"validator {index + 1} pool capital {capital} is below its stake order"
                     )
@@ -2878,7 +2720,7 @@ class ValidatorElectionRehearsal:
     async def submit_pq_candidate(
         self, index: int, election_id: int, *, round_number: int = 1,
         retry_restart_transients: bool = False
-    ) -> None:
+    ) -> dict[str, Any]:
         wallet = self.wallets[index]
         pool = self.pools[index]
         controller = self.controllers[index]
@@ -2889,6 +2731,9 @@ class ValidatorElectionRehearsal:
             index, election_id, query_id,
             retry_restart_transients=retry_restart_transients,
         )
+        body_path = self.artifacts_dir / f"pq-round-{round_number}-validator-{index + 1}-pool-order.boc"
+        body_path.parent.mkdir(parents=True, exist_ok=True)
+        body_path.write_bytes(body.to_boc())
         await self.send_from_wallet(
             wallet, dest=pool.address, amount=2 * NANO, body=body,
             label=f"pq-round-{round_number}-validator-{index + 1}-pool-stake-order",
@@ -2916,6 +2761,15 @@ class ValidatorElectionRehearsal:
             effective_stake=actual, authorization_key_id=authorization_key_id.hex(),
             stake_accepted=True, elector_reply_opcode=f"0x{opcode:08x}",
         )
+        return {
+            "query_id": query_id,
+            "authorization_key_id_hex": authorization_key_id.hex(),
+            "controller_id_hex": controller.address.hash_part.hex(),
+            "stake_owner_pool_raw": raw_address(pool.address),
+            "body_boc": self.file_provenance(body_path),
+            "elector_reply_opcode": f"0x{opcode:08x}",
+            "effective_stake_nanotos": actual,
+        }
 
     async def wait_pq_pool_elector_reply(
         self, index: int, query_id: int, *, description: str
@@ -3497,9 +3351,10 @@ class ValidatorElectionRehearsal:
             start_event,
             stage=self.profile.label,
             mode=("fixture-check" if self.fixture_only else
+                  "experiment" if self.experiment is not None and not self.soak_mode else
                   "pq-launch-gate" if self.pq_full else
                   "pq-election" if self.pq_election else
-                  "experiment" if self.experiment is not None else "launch-gate"),
+                  "transfer-soak" if self.soak_mode else "launch-gate"),
             accelerated=self.profile.accelerated,
             source_commit=self.provenance["source_commit"],
             artifact_snapshot=str(self.run_dir / "artifact-snapshot"),
@@ -3591,6 +3446,9 @@ class ValidatorElectionRehearsal:
                 )
                 if self.fixture_only:
                     return
+                if self.experiment is not None:
+                    await self.run_experiment()
+                    return
                 if self.pq_full:
                     await self.require_pq_full_faucet_capacity(faucet)
                 await self.run_pq_first_election()
@@ -3598,163 +3456,6 @@ class ValidatorElectionRehearsal:
                     await self.run_pq_followup_elections(faucet)
                 return
 
-            if self.experiment is not None:
-                await self.run_experiment()
-                return
-
-            self.first_election_id = await self.retry(
-                lambda: self.runmethod_int("active_election_id"),
-                timeout=max(600, self.profile.initial_set_valid + 300),
-                interval=self.long_poll_interval,
-                description="first election opening",
-                predicate=lambda value: value > 0,
-            )
-            self.event("first_election_open", election_id=self.first_election_id)
-
-            await self.submit_negative_cases(
-                election_id=self.first_election_id,
-                validator_key=self.nodes[0].validator_key,
-                accepted_stake=0,
-            )
-
-            for index in range(3):
-                await self.submit_candidate(index, self.first_election_id, 1)
-            participant_output = await self.runmethod("participant_list_extended")
-            (self.artifacts_dir / "round-1-three-participants.txt").write_text(participant_output)
-            result_numbers = re.search(
-                r"result:\s*\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)",
-                participant_output,
-            )
-            if result_numbers is None or int(result_numbers.group(4)) != 3 * EFFECTIVE_STAKE:
-                raise AssertionError("three-participant total stake was not 30,000 TOS")
-            self.event(
-                "below_minimum_total_observed",
-                total_stake=3 * EFFECTIVE_STAKE,
-                required_total=4 * EFFECTIVE_STAKE,
-            )
-
-            await self.restart_node(3, "open first election")
-            await self.submit_candidate(3, self.first_election_id, 1)
-
-            assert self.negative_wallet is not None
-            duplicate_before = await self.balance(self.negative_wallet.address)
-            duplicate_body = await self.election_body(
-                wallet=self.negative_wallet,
-                validator_key=self.nodes[0].validator_key,
-                election_id=self.first_election_id,
-                label="negative-duplicate-validator-key",
-            )
-            await self.send_from_wallet(
-                self.negative_wallet,
-                dest=ELECTOR,
-                amount=STAKE_MESSAGE_VALUE,
-                body=duplicate_body,
-                label="negative-duplicate-validator-key",
-            )
-            await self.wait_returned_negative_funds(
-                duplicate_before, description="duplicate validator stake return"
-            )
-            node0_stake = await self.runmethod_int(
-                "participates_in",
-                "0x" + self.nodes[0].validator_key.public_key.key.hex(),
-            )
-            if node0_stake != EFFECTIVE_STAKE:
-                raise AssertionError("duplicate request changed validator stake")
-            self.event("duplicate_validator_key_rejected")
-
-            round1_participants = await self.runmethod("participant_list_extended")
-            (self.artifacts_dir / "round-1-participants.txt").write_text(round1_participants)
-
-            await self.wait_until_chain_time(
-                self.first_election_id - 55,
-                "first election closed",
-            )
-            await self.restart_node(3, "first election completed before ConfigParam 34 activation")
-            self.first_config34 = await self.wait_config_activation(
-                self.first_election_id, "first ordinary set"
-            )
-            await self.verify_three_of_four_liveness()
-            await self.early_recovery_must_not_pay()
-
-            self.second_election_id = await self.retry(
-                lambda: self.runmethod_int("active_election_id"),
-                timeout=max(240, self.profile.elected_for),
-                interval=self.long_poll_interval,
-                description="second election opening",
-                predicate=lambda value: value > self.first_election_id,
-            )
-            self.event("second_election_open", election_id=self.second_election_id)
-            for index in range(4):
-                await self.submit_candidate(index, self.second_election_id, 2)
-            round2_participants = await self.runmethod("participant_list_extended")
-            (self.artifacts_dir / "round-2-participants.txt").write_text(round2_participants)
-
-            await self.wait_until_chain_time(
-                self.second_election_id - 55,
-                "second election closed",
-            )
-            await self.restart_node(2, "second election completed before ConfigParam 34 activation")
-            self.second_config34 = await self.wait_config_activation(
-                self.second_election_id, "second ordinary set"
-            )
-            await self.restart_node(1, "rewards received before stake recovery")
-
-            self.rollover_election_id = await self.retry(
-                lambda: self.runmethod_int("active_election_id"),
-                timeout=max(240, self.profile.elected_for),
-                interval=self.long_poll_interval,
-                description="rollover election opening",
-                predicate=lambda value: value > self.second_election_id,
-            )
-            self.event(
-                "rollover_election_open",
-                election_id=self.rollover_election_id,
-                purpose="retire the second ordinary validator set",
-            )
-
-            past_before_first_recovery = await self.runmethod("past_elections")
-            (self.artifacts_dir / "past-elections-before-first-recovery.txt").write_text(
-                past_before_first_recovery
-            )
-            self.first_credits = await self.recover_round(1)
-            if not all(value > EFFECTIVE_STAKE for value in self.first_credits):
-                raise AssertionError(f"first-round validator bonus missing: {self.first_credits}")
-
-            for index in range(4):
-                await self.submit_candidate(index, self.rollover_election_id, 3)
-            rollover_participants = await self.runmethod("participant_list_extended")
-            (self.artifacts_dir / "round-3-rollover-participants.txt").write_text(
-                rollover_participants
-            )
-            await self.wait_until_chain_time(
-                self.rollover_election_id - 55,
-                "rollover election closed",
-            )
-            self.rollover_config34 = await self.wait_config_activation(
-                self.rollover_election_id, "rollover set"
-            )
-
-            past_before_second_recovery = await self.runmethod("past_elections")
-            (self.artifacts_dir / "past-elections-before-second-recovery.txt").write_text(
-                past_before_second_recovery
-            )
-            self.second_credits = await self.recover_round(2)
-            if not all(value > EFFECTIVE_STAKE for value in self.second_credits):
-                raise AssertionError(f"second-round validator bonus missing: {self.second_credits}")
-
-            await self.duplicate_recovery_must_not_pay()
-            await self.verify_two_of_four_safe_halt()
-
-            final_seqno = await self.masterchain_seqno()
-            elector_balance = await self.balance(ELECTOR)
-            self.event(
-                f"stage_{self.profile.stage}_passed",
-                stage=self.profile.label,
-                final_masterchain_seqno=final_seqno,
-                elector_balance=elector_balance,
-                first_credits=self.first_credits,
-                second_credits=self.second_credits,
-            )
         except Exception as error:
             self.fail(f"{type(error).__name__}: {error}")
             if (
@@ -3782,9 +3483,10 @@ class ValidatorElectionRehearsal:
             "generated_at": utc_now(),
             "run_dir": str(self.run_dir),
             "mode": ("fixture-check" if self.fixture_only else
+                     "experiment" if self.experiment is not None and not self.soak_mode else
                      "pq-launch-gate" if self.pq_full else
                      "pq-election" if self.pq_election else
-                     "experiment" if self.experiment is not None else "launch-gate"),
+                     "transfer-soak" if self.soak_mode else "launch-gate"),
             "source_commit": self.provenance["source_commit"],
             "source_commit_at_report": subprocess.run(
                 ["git", "rev-parse", "HEAD"],
@@ -3810,7 +3512,7 @@ class ValidatorElectionRehearsal:
                 "stakes_frozen_for": self.profile.stakes_frozen_for,
                 "initial_set_valid": self.profile.initial_set_valid,
                 "effective_stake": EFFECTIVE_STAKE,
-                "stake_message_value": STAKE_MESSAGE_VALUE,
+                "stake_message_value": PQ_STAKE_MESSAGE_VALUE if self.pq_election else None,
                 "validator_wallet_funding": self.validator_wallet_funding(),
             },
             "experiment": (
@@ -3863,7 +3565,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("launch-gate", "experiment", "transfer-soak", "fixture-check", "pq-election", "pq-launch-gate"),
         default="launch-gate",
         help=(
-            "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
+            "launch-gate runs the complete PQ Stage-A/Stage-B rehearsal; "
             "experiment runs stable Stage A for a requested observation window; "
             "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks; "
             "fixture-check provisions four PQ controllers and pools without claiming an election; "
@@ -4017,8 +3719,8 @@ async def async_main() -> int:
         soak_max_interval=args.soak_max_interval,
         soak_wallet_funding_tos=args.soak_wallet_funding_tos,
         fixture_only=(args.mode == "fixture-check"),
-        pq_election=(args.mode in ("pq-election", "pq-launch-gate")),
-        pq_full=(args.mode == "pq-launch-gate"),
+        pq_election=(args.mode in ("launch-gate", "pq-election", "pq-launch-gate")),
+        pq_full=(args.mode in ("launch-gate", "pq-launch-gate")),
     )
     try:
         await stage.execute()

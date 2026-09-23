@@ -572,6 +572,16 @@ class FullNode(Network.Node):
         self._is_initial_validator = True
 
     def make_initial_pq_validator(self, validator_id: bytes, seed: bytes):
+        self._provision_pq_validator(validator_id, seed)
+        self._is_initial_validator = True
+
+    def make_noninitial_pq_validator(self, validator_id: bytes, seed: bytes):
+        """Custody a future candidate without putting it in the Genesis set."""
+        if self._is_initial_validator:
+            raise ValueError("an initial validator cannot become a noninitial PQ candidate")
+        self._provision_pq_validator(validator_id, seed)
+
+    def _provision_pq_validator(self, validator_id: bytes, seed: bytes):
         self._ensure_no_zerostate_yet()
         if len(validator_id) != 32 or len(seed) != 32:
             raise ValueError("post-quantum validator id and seed must each be 32 bytes")
@@ -608,7 +618,6 @@ class FullNode(Network.Node):
                 consensus_key_file=str(key_file),
             ),
         )
-        self._is_initial_validator = True
 
     @property
     def is_initial_validator(self):
