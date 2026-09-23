@@ -381,6 +381,14 @@ documentation no longer promises uniform `check_signatures()` dispatch for a
 PQ variant with no such method. The classical signature-weight sum also uses
 checked addition instead of relying on an unstated overflow bound.
 
+The multi-nominator pool sandbox's valid stake order now uses the same
+production PQ builder as the single-nominator pool. All six multi-pool tests
+pass. Its intentionally truncated negative order remains hand-built: making
+that malformed fixture valid would remove the refusal test. Liquid-staking's
+classical sandbox remains untouched because liquid staking is not in the
+launch set; treating its obsolete direct-elector path as maintained would be
+misleading.
+
 ## Open diagnostic observations
 
 `N6-OPEN-DIAGNOSTIC-OBSERVATIONS.json` records operational findings that need

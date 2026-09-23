@@ -56,8 +56,18 @@ def main() -> None:
     if "0x654C5074" in direct_path or ".sign(" in direct_path or "Bid signed" in direct_path:
         fail("interactive bid still exposes classical stake signing")
 
+    multi_pool_test = collapsed(
+        root / "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs"
+    )
+    marker = "new_stake(&NewStakeParams {"
+    if multi_pool_test.count(marker) != 1:
+        fail(
+            "multi-nominator pool harness reaches the production PQ stake builder "
+            f"{multi_pool_test.count(marker)} times, expected 1"
+        )
+
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization and the direct bid refuses"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: two pool callers use node authorization, the direct bid refuses, and the multi-pool harness uses the production builder"
     )
 
 
