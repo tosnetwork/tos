@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "adnl/adnl-ext-client.h"
+#include "adnl/adnl-ext-client.hpp"
 #include "adnl/adnl-ext-limits.h"
 #include "adnl/adnl.h"
 #include "block/block-auto.h"
@@ -366,6 +367,43 @@ class ExtClientCallback final : public adnl::AdnlExtClient::Callback {
   std::atomic<bool>& ready_;
 };
 
+void adnl_ext_disconnected_query_refuses() {
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<adnl::AdnlExtClientImpl> client;
+  std::atomic<bool> completed{false};
+  td::Result<td::BufferSlice> answer{td::Status::Error("query did not complete")};
+  std::atomic<bool> ready{false};
+  auto server_id = adnl::AdnlNodeIdFull{PrivateKey{privkeys::Ed25519::random()}.compute_public_key()};
+  scheduler.run_in_context([&] {
+    // Name resolution fails, leaving the inner connection empty. Sending
+    // directly models the outer client's stale-alive race at this boundary.
+    client = td::actor::create_actor<adnl::AdnlExtClientImpl>(
+        "disconnected-ext-client", server_id, std::string{"invalid-host-name!"},
+        std::make_unique<ExtClientCallback>(ready));
+    td::actor::send_closure(client, &adnl::AdnlExtClientImpl::send_query, "disconnected-race",
+                            td::BufferSlice{"proof"}, td::Timestamp::in(10.0),
+                            td::PromiseCreator::lambda([&](td::Result<td::BufferSlice> result) {
+                              answer = std::move(result);
+                              completed.store(true, std::memory_order_release);
+                            }));
+  });
+  auto deadline = td::Timestamp::in(2.0);
+  while (!completed.load(std::memory_order_acquire)) {
+    scheduler.run(0.01);
+    if (deadline.is_in_past()) {
+      fail("disconnected ADNL query retained an unsent timed query");
+    }
+  }
+  if (!answer.is_error() || answer.error().code() != ErrorCode::cancelled ||
+      answer.error().message() != "conn not ready" || ready.load(std::memory_order_acquire)) {
+    fail("disconnected ADNL query did not fail fast with cancelled/no connection");
+  }
+  scheduler.run_in_context([&] { client.reset(); });
+  scheduler.run(0.1);
+  scheduler.stop();
+  std::printf("PQ_LITE_ADNL_EXT_DISCONNECTED_QUERY_OK outcome=cancelled no_timed_query=true\n");
+}
+
 td::BufferSlice adnl_ext_round_trip(const td::BufferSlice& proof) {
   const auto port = allocate_tcp_port();
   const auto db_root = "/tmp/tos-pq-lite-forward-" + std::to_string(::getpid());
@@ -669,6 +707,7 @@ int main() {
     fail("lite answer limit refusal reached cryptography");
   }
   std::printf("PQ_LITE_TRANSPORT_NEGATIVE case=limit-below-required reason=packet_limit crypto_calls=0\n");
+  adnl_ext_disconnected_query_refuses();
   auto transported_wire = adnl_ext_round_trip(wire);
 
   auto object = require_ok(fetch_tl_object<lite_api::liteServer_partialBlockProof>(std::move(transported_wire), true),

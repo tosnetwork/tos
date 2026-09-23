@@ -44,7 +44,8 @@
         "classification": "CLIENT_RECONNECT_NO_TRANSMIT",
         "scope": "This exact-commit run identifies one client-side no-transmit timeout. It does not attribute the earlier unjoined timeouts, or rule out admission drops in other runs. One additional query lacked a terminal event when logging ended and was not counted as answered or timed out."
       },
-      "closure_condition": "Capture the same query identity at the client send point, lite-server receipt point, response send point and client completion point in a reproducing run; identify the first missing transition and add a regression gate for the demonstrated cause. Changing the timeout or relying on retry success is not closure."
+      "no_connection_fail_fast_follow_up": "The identified client-side no-transmit branch now returns cancelled/conn not ready before AdnlQuery creation and logs client_refuse with the query id and pending-query count. A disconnected-client behavior test gets the refusal before the transport deadline; the same compiled test then transmits and receives a query on a live connection. The source guard requires the refusal to precede out_queries_.emplace. This fixes the demonstrated branch, but earlier unjoined timeout samples are not attributed by it.",
+      "closure_condition": "The identified no-transmit branch has a fail-fast regression gate. To close the broader observation, join any remaining unanswered query by id through client send, server receipt, server completion and client completion; identify and gate each demonstrated cause. Changing the timeout or relying on retry success is not closure."
     },
     "colocated-launch-committee-finalcert-tail": {
       "status": "OPEN",

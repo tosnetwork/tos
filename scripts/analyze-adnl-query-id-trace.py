@@ -26,6 +26,12 @@ def events(path: Path, *, outer_client: bool) -> dict[str, list[str]]:
 
 def classify(lines: list[str]) -> str:
     joined = "\n".join(lines)
+    if "client_refuse" in joined:
+        if any(marker in joined for marker in ("client_transmit", "server_ingress", "client_timeout")):
+            return "invalid_refused_query_progressed"
+        if "reason=no-live-connection pending_queries=0" not in joined:
+            return "invalid_refusal_without_empty_query_map"
+        return "client_no_connection_fail_fast"
     if "client_timeout" not in joined:
         return "answered" if "client_answer" in joined else "incomplete_without_timeout"
     if "admission=drop reason=per-connection-limit" in joined:
@@ -58,6 +64,15 @@ def analyze(client_log: Path, node_logs: list[Path]) -> dict[str, object]:
 
 def self_test() -> None:
     cases = {
+        "client_no_connection_fail_fast": [
+            "client_create connection_present=false",
+            "client_refuse reason=no-live-connection pending_queries=0",
+        ],
+        "invalid_refused_query_progressed": [
+            "client_create connection_present=false",
+            "client_refuse reason=no-live-connection pending_queries=0",
+            "client_transmit",
+        ],
         "client_not_transmitted": ["client_create", "client_timeout"],
         "server_per_connection_admission_drop": [
             "client_create",

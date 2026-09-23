@@ -842,7 +842,14 @@ as success or timeout. The join is produced by
 `scripts/analyze-adnl-query-id-trace.py`; its source and decision branches
 have source-guard coverage. The run does **not** attribute earlier unjoined
 timeouts or prove that every timeout has this cause. The diagnostic registry
-remains open until the demonstrated no-transmit path has a regression gate.
+remains open for the earlier unjoined timeouts. The identified no-transmit
+branch now refuses with `cancelled` and `conn not ready` before creating a
+timed query; an id-tagged `client_refuse` trace records the disposition.
+The disconnected-query test returns that refusal without waiting ten seconds,
+and the live-connection case still transmits and receives. Source-guard
+ordering makes the no-query-created property load-bearing. The outer lite
+client already treats `cancelled` beside timeout and can retry; no second
+reconnect queue was added.
 
 After the observation window, the harness waits for the production
 `TraceCollector`'s five-second structured-log flush and reads every node's

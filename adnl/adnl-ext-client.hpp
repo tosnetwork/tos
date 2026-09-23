@@ -113,12 +113,19 @@ class AdnlExtClientImpl : public AdnlExtClient {
                << " connection_present=" << !conn_.empty()
                << " connection_alive=" << (!conn_.empty() && conn_.is_alive())
                << " deadline_monotonic=" << timeout.at();
-    out_queries_.emplace(q_id, AdnlQuery::create(std::move(promise), std::move(P), name, timeout, q_id));
-    if (!conn_.empty()) {
-      auto obj = create_tl_object<lite_api::adnl_message_query>(q_id, std::move(data));
-      LOG(DEBUG) << "ADNL_EXT_QUERY client_transmit id=" << q_id.to_hex() << " server=" << dst_addr_;
-      td::actor::send_closure(conn_, &AdnlOutboundConnection::send, serialize_tl_object(obj, true));
+    // The outer lite client may still consider this server alive after this
+    // inner connection has stopped. It already retries cancelled queries on
+    // another server; retaining an unsent timed query here only loses ten seconds.
+    if (conn_.empty() || !conn_.is_alive()) {
+      LOG(DEBUG) << "ADNL_EXT_QUERY client_refuse id=" << q_id.to_hex()
+                 << " reason=no-live-connection pending_queries=" << out_queries_.size();
+      promise.set_error(td::Status::Error(ErrorCode::cancelled, "conn not ready"));
+      return;
     }
+    out_queries_.emplace(q_id, AdnlQuery::create(std::move(promise), std::move(P), name, timeout, q_id));
+    auto obj = create_tl_object<lite_api::adnl_message_query>(q_id, std::move(data));
+    LOG(DEBUG) << "ADNL_EXT_QUERY client_transmit id=" << q_id.to_hex() << " server=" << dst_addr_;
+    td::actor::send_closure(conn_, &AdnlOutboundConnection::send, serialize_tl_object(obj, true));
   }
   void destroy_query(AdnlQueryId id) {
     out_queries_.erase(id);

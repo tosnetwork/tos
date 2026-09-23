@@ -39,6 +39,16 @@ def main(root: Path) -> None:
         "deadline_monotonic=",
     )
     require("client transmit", client, "ADNL_EXT_QUERY client_transmit id=", "AdnlOutboundConnection::send")
+    require(
+        "client disconnected refusal",
+        client,
+        "conn_.empty() || !conn_.is_alive()",
+        "ADNL_EXT_QUERY client_refuse id=",
+        "ErrorCode::cancelled, \"conn not ready\"",
+        "pending_queries=",
+    )
+    if client.index("conn_.empty() || !conn_.is_alive()") > client.index("out_queries_.emplace("):
+        fail("disconnected refusal no longer precedes timed-query creation")
     server = segment(
         root,
         "adnl/adnl-ext-server.cpp",
@@ -73,7 +83,7 @@ def main(root: Path) -> None:
         "elapsed_ms=",
         "id_.to_hex()",
     )
-    print("ADNL_QUERY_ID_TRACE_OK: client create/transmit, server ingress/completion, and client answer/timeout retain id-tagged debug events")
+    print("ADNL_QUERY_ID_TRACE_OK: client create/refuse/transmit, server ingress/completion, and client answer/timeout retain id-tagged debug events")
 
 
 if __name__ == "__main__":
