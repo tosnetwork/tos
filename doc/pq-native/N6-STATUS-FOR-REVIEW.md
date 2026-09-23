@@ -860,7 +860,12 @@ The disconnected-query test returns that refusal without waiting ten seconds,
 and the live-connection case still transmits and receives. Source-guard
 ordering makes the no-query-created property load-bearing. The outer lite
 client already treats `cancelled` beside timeout and can retry; no second
-reconnect queue was added.
+reconnect queue was added. The compiled disconnected test exercises the
+`conn_.empty()` branch, not a present-but-dead connection: that state exists
+only in the actor's close-callback race and is not deterministically
+constructible through the public client API. The source guard pins the
+`!conn_.is_alive()` half (removing it fails by name); this is defensive
+structural coverage, not a behavioral claim about that race.
 
 After the observation window, the harness waits for the production
 `TraceCollector`'s five-second structured-log flush and reads every node's
