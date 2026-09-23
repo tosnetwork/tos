@@ -88,6 +88,7 @@ from tostester.pq_election_fixture import (  # noqa: E402
     participant_ids_from_runmethod,
     require_pq_stake_authorization_binding,
 )
+from tostester.zerostate import VALIDATOR_ECONOMICS_FAUCET_TOS  # noqa: E402
 from tosapi import tos_api  # noqa: E402
 
 T = TypeVar("T")
@@ -179,6 +180,7 @@ POOL_DEPLOY_VALUE = 20 * NANO
 # pool.fc requires at least one TOS of message value to process a stake; the
 # rest of what it forwards comes from its own balance.
 POOL_STAKE_GAS = 2 * NANO
+SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE + 20 * NANO
 MAX_FACTOR = 1 << 16
 POOL_STATE_IDLE = 0
 POOL_STATE_SENT = 1
@@ -650,6 +652,59 @@ class Config34Selection:
     total_weight: int
     validator_adnl_pairs: list[tuple[str, str]]
     weights: list[int]
+
+
+def require_lifecycle_funding_budget(*, integrated: bool, agent_count: int) -> dict[str, int]:
+    """Refuse a fixture whose known Genesis transfers or pool principals cannot fit."""
+    if agent_count != OPENFOX_AGENT_COUNT:
+        raise ValueError(f"lifecycle needs {OPENFOX_AGENT_COUNT} agent nominators")
+    faucet = (
+        INTEGRATED_FAUCET_FUNDING
+        if integrated else VALIDATOR_ECONOMICS_FAUCET_TOS * NANO
+    )
+    primary_wallet = INTEGRATED_POOL_VALIDATOR_FUNDING if integrated else POOL_VALIDATOR_FUNDING
+    support_wallet = INTEGRATED_DIRECT_VALIDATOR_FUNDING if integrated else DIRECT_VALIDATOR_FUNDING
+    nominators = (
+        agent_count * INTEGRATED_OWNER_FUNDING
+        + CONTROL_NOMINATOR_COUNT * (INTEGRATED_NOMINATOR_DEPOSIT + 2 * NANO)
+        if integrated else (agent_count + CONTROL_NOMINATOR_COUNT) * NOMINATOR_FUNDING
+    )
+    controller_deployments = 5 * 10 * NANO
+    committed = (
+        primary_wallet + 4 * support_wallet + nominators
+        + RESCUER_FUNDING + controller_deployments
+    )
+    faucet_fee_reserve = 100 * NANO
+    if committed + faucet_fee_reserve > faucet:
+        raise ValueError(
+            "Genesis faucet cannot fund the lifecycle fixture: "
+            f"committed={committed} reserve={faucet_fee_reserve} faucet={faucet}"
+        )
+    support_need = 10 * NANO + SUPPORT_POOL_CAPITAL + 2 * POOL_STAKE_GAS
+    if support_wallet < support_need:
+        raise ValueError(
+            "support wallet cannot fund deployment plus two pool stakes: "
+            f"required={support_need} funded={support_wallet}"
+        )
+    primary_own_deposit = (
+        INTEGRATED_VALIDATOR_OWN_DEPOSIT if integrated else VALIDATOR_OWN_DEPOSIT
+    )
+    primary_need = POOL_DEPLOY_VALUE + primary_own_deposit + 2 * POOL_STAKE_GAS
+    if primary_wallet < primary_need:
+        raise ValueError(
+            "primary validator wallet cannot fund deployment, own deposit and stake gas: "
+            f"required={primary_need} funded={primary_wallet}"
+        )
+    return {
+        "faucet_nanotos": faucet,
+        "committed_nanotos": committed,
+        "faucet_uncommitted_nanotos": faucet - committed,
+        "support_wallet_nanotos": support_wallet,
+        "support_wallet_required_nanotos": support_need,
+        "primary_wallet_nanotos": primary_wallet,
+        "primary_wallet_required_nanotos": primary_need,
+        "support_pool_capital_nanotos": SUPPORT_POOL_CAPITAL,
+    }
 
 
 def parse_pq_validator_adnl_pairs(output: str) -> list[tuple[str, str]]:
@@ -2838,7 +2893,7 @@ class PoolLifecycle:
                 )
             # Two concurrent election principals are required to keep the
             # network rotating while the primary pool waits to recover.
-            capital = 2 * POOL_STAKE_VALUE + 20 * NANO
+            capital = SUPPORT_POOL_CAPITAL
             await self.send(
                 wallet, dest=pool.address, amount=capital,
                 body=Cell.empty(), label=f"support-pool-{index + 1}-capital",
@@ -3349,6 +3404,17 @@ class PoolLifecycle:
             state=data.state_name,
             stake_amount_sent=data.stake_amount_sent,
         )
+        remaining_credit = await self.retry(
+            self.elector_returned_stake,
+            timeout=60,
+            description="Elector consumed the primary pool's recovered credit",
+            predicate=lambda value: value == 0,
+        )
+        self.check(
+            "the Elector no longer holds a recoverable primary-pool credit",
+            remaining_credit == 0,
+            remaining_credit_nanotos=remaining_credit,
+        )
 
         after = {n.index: await self.nominator_amount(n) for n in self.nominators}
         for nominator in self.nominators:
@@ -3647,6 +3713,12 @@ class PoolLifecycle:
         upkeep: asyncio.Task | None = None
         try:
             self.prepare_integrated_mode()
+            self.event(
+                "prelaunch_funding_budget",
+                **require_lifecycle_funding_budget(
+                    integrated=self.integrated_mode, agent_count=len(self.agent_bindings)
+                ),
+            )
             self.prepare_pq_election_fixture()
             await self.bring_up_network()
             await self.fund_wallets()
@@ -3678,9 +3750,12 @@ class PoolLifecycle:
             )
             self.check(
                 "the pool is a participant in the election",
-                data.state == POOL_STATE_STAKED,
+                data.state == POOL_STATE_STAKED
+                and data.stake_at == election_id
+                and data.stake_amount_sent >= NETWORK_MIN_STAKE,
                 stake_amount_sent=data.stake_amount_sent,
                 stake_at=data.stake_at,
+                expected_election_id=election_id,
             )
 
             await self.deposit_control_while_staked()

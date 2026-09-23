@@ -167,6 +167,36 @@ def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_wit
         asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
 
 
+def test_lifecycle_budget_covers_genesis_and_two_support_principals(monkeypatch):
+    ordinary = lifecycle.require_lifecycle_funding_budget(
+        integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+    )
+    assert ordinary["faucet_nanotos"] == 100_000 * lifecycle.NANO
+    assert ordinary["committed_nanotos"] == 96_400 * lifecycle.NANO
+    assert ordinary["faucet_uncommitted_nanotos"] == 3_600 * lifecycle.NANO
+    assert ordinary["support_pool_capital_nanotos"] == (
+        2 * lifecycle.POOL_STAKE_VALUE + 20 * lifecycle.NANO
+    )
+    assert ordinary["support_wallet_nanotos"] >= ordinary["support_wallet_required_nanotos"]
+
+    integrated = lifecycle.require_lifecycle_funding_budget(
+        integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+    )
+    assert integrated["faucet_nanotos"] == 2_000_000 * lifecycle.NANO
+    assert integrated["committed_nanotos"] == 1_211_387 * lifecycle.NANO
+
+    monkeypatch.setattr(lifecycle, "DIRECT_VALIDATOR_FUNDING", 20_000 * lifecycle.NANO)
+    with pytest.raises(ValueError, match="support wallet cannot fund"):
+        lifecycle.require_lifecycle_funding_budget(
+            integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+        )
+    monkeypatch.setattr(lifecycle, "INTEGRATED_FAUCET_FUNDING", 1_000_000 * lifecycle.NANO)
+    with pytest.raises(ValueError, match="Genesis faucet cannot fund"):
+        lifecycle.require_lifecycle_funding_budget(
+            integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+        )
+
+
 @pytest.mark.parametrize(
     ("amount", "length"),
     [(0, 0), (1, 1), (255, 1), (256, 2), (10_001_000_000_000, 6)],

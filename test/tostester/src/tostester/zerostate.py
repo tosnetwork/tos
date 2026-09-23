@@ -15,6 +15,7 @@ from .pq_launch_limits import (
 )
 
 NANOTOS_PER_TOS = 1_000_000_000
+VALIDATOR_ECONOMICS_FAUCET_TOS = 100_000
 
 
 def _launch_validator_counts(validator_count: int, minimum: int) -> dict[str, int]:
@@ -555,7 +556,7 @@ def create_zerostate(
             "smc3_genesis_balance": "0",
             "elector_genesis_balance": "TM$500",
             "config_genesis_balance": "TM$500",
-            "main_wallet_genesis_balance": "TM$100000",
+            "main_wallet_genesis_balance": f"TM${VALIDATOR_ECONOMICS_FAUCET_TOS}",
             "expected_genesis_supply": "TM$101000",
             **validator_counts,
             "min_stake": "TM$10000",

@@ -56,6 +56,7 @@ def validate(source: str) -> None:
     primary = method(tree, "stake_through_pool")
     upkeep = method(tree, "keep_elections_alive")
     selection = method(tree, "record_pool_validator_selection")
+    recover = method(tree, "recover")
     execute = method(tree, "execute")
 
     require(bool(calls(prepare, "require_pq_stake_authorization_binding")),
@@ -116,6 +117,21 @@ def validate(source: str) -> None:
     selection_text = ast.unparse(selection)
     require("self.config34_selection" in selection_text and "validator_adnl_pairs" in selection_text,
             "live ConfigParam 34 no longer checks controller/ADNL pairing")
+    require("SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE + 20 * NANO" in source,
+            "supporting pool capital no longer reserves two stake principals")
+    require("capital = SUPPORT_POOL_CAPITAL" in ast.unparse(deploy),
+            "supporting pool funding bypasses the preflighted two-principal budget")
+    budget = one_call(execute, "require_lifecycle_funding_budget")
+    require(budget.lineno < one_call(execute, "prepare_pq_election_fixture").lineno,
+            "fixture budget is not checked before Genesis preparation")
+    execute_text = ast.unparse(execute)
+    require("data.stake_at == election_id" in execute_text
+            and "data.stake_amount_sent >= NETWORK_MIN_STAKE" in execute_text,
+            "first pool stake acceptance is no longer bound to the target election and minimum")
+    recover_text = ast.unparse(recover)
+    require("predicate=lambda value: value == 0" in recover_text
+            and "the Elector no longer holds a recoverable primary-pool credit" in recover_text,
+            "recovery no longer confirms the Elector consumed the primary pool credit")
     require(one_call(execute, "prepare_pq_election_fixture").lineno < one_call(execute, "bring_up_network").lineno,
             "controller policy is not prepared before Genesis")
 
@@ -130,6 +146,10 @@ def self_test(source: str) -> None:
                                  "# validator-elect-req.fif\n        return build_production_pool_stake_order("),
         "five Genesis validators": ("validator_index < 4", "validator_index < 5"),
         "spare made initial": ("make_deterministic_pq_spare_validator(\n", "make_deterministic_pq_initial_validator(\n"),
+        "budget bypassed": ("**require_lifecycle_funding_budget(", "**dict("),
+        "one support principal": ("SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE", "SUPPORT_POOL_CAPITAL = 1 * POOL_STAKE_VALUE"),
+        "wrong election accepted": ("data.stake_at == election_id", "data.stake_at >= 0"),
+        "credit not consumed": ("predicate=lambda value: value == 0", "predicate=lambda value: value >= 0"),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")

@@ -57,6 +57,21 @@ pool stake for a later election. A unit test drives the actual network Genesis
 filter with four initial identities and one noninitial spare. No live run has
 yet confirmed the fifth candidate's election.
 
+Before any network starts, the lifecycle preflight now accounts for known
+Genesis faucet transfers and each pool's first two stake principals. The
+ordinary profile commits 96,400 of the Genesis faucet's 100,000 TOS (3,600
+TOS uncommitted); integrated mode commits 1,211,387 of 2,000,000 TOS. It
+also refuses a support-wallet allocation below deployment plus two pool
+principals and gas, or a primary wallet below deployment plus its own deposit
+and stake gas. These are deterministic budget checks, not observations of
+actual fees or chain balances. First-round acceptance remains tied to the
+pool's Elector-acknowledged staked state, the target election ID and minimum
+stake, then to a matching controller/ADNL pair in live ConfigParam 34.
+Recovery requires a positive matured Elector credit before sending the
+request, the pool returning idle with zero stake sent, and the Elector's
+credit for that pool falling to zero afterward. No new live lifecycle run
+has yet exercised those assertions.
+
 The exact classical Fift dependency inventory is maintained by
 `scripts/check-classical-stake-callers.py`. It currently contains nine
 executable files, including the base tools and legacy fixtures. The count is
