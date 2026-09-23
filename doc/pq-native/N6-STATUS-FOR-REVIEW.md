@@ -1004,7 +1004,10 @@ These process samples do not measure host scheduling latency. The join names
 where the timeline expands; it does **not** establish whether scheduling,
 candidate availability, vote delivery, persistence or another resource caused
 it. No Simplex/PQ tuning follows from it, and it remains co-located diagnostic
-evidence rather than a release p99.
+evidence rather than a release p99. The open observation now carries
+`cause_identified=false` and `recommended_parameter_changes=[]`, both checked
+by the diagnostic registry guard; the analysis command and script are pinned
+alongside the source-artifact hash.
 
 ## Four-validator sustained functional regression
 

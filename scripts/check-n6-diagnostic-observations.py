@@ -89,6 +89,22 @@ def main() -> int:
     }.items():
         if tail_join.get(field) != expected:
             fail(f"FinalCert stage/resource join changed {field}: expected={expected!r} actual={tail_join.get(field)!r}")
+    if observations["colocated-launch-committee-finalcert-tail"]["status"] == "OPEN":
+        if tail_join.get("cause_identified") is not False:
+            fail("open FinalCert tail cannot claim a cause before a run-evidenced diagnosis")
+    if tail_join.get("cause_identified") is False and tail_join.get("recommended_parameter_changes") != []:
+        fail("FinalCert tail cannot recommend parameter changes without an identified cause")
+    expected_command = (
+        "python3 scripts/analyze-n6-finalcert-tail.py "
+        "/tmp/n6-timing-split-e586c9dc7-21-300s --height 699"
+    )
+    if tail_join.get("analysis_command") != expected_command:
+        fail(
+            "FinalCert stage/resource analysis command changed: "
+            f"expected={expected_command!r} actual={tail_join.get('analysis_command')!r}"
+        )
+    if not (root / "scripts/analyze-n6-finalcert-tail.py").is_file():
+        fail("FinalCert stage/resource analysis script is missing")
 
     query_trace = observations["colocated-lite-query-timeouts"].get("query_id_trace_follow_up", {})
     expected_query_trace = {

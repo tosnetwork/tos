@@ -65,6 +65,8 @@
       "stage_resource_join": {
         "source_artifact_sha256": "6ccb0fd0c9e4b5f3f6c4d652c7fb6ea42033d23df165e4164d735f4310182cf6",
         "analysis_command": "python3 scripts/analyze-n6-finalcert-tail.py /tmp/n6-timing-split-e586c9dc7-21-300s --height 699",
+        "cause_identified": false,
+        "recommended_parameter_changes": [],
         "candidate_slot": 713,
         "finalizing_candidate_slot": 716,
         "skip_certificate_slots_observed_by_all_21_validators": [713, 714, 715],
