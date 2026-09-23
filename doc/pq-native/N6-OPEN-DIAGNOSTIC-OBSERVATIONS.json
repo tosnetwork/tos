@@ -28,6 +28,7 @@
         ]
       },
       "diagnostic_question": "For each timed-out query, did the request reach the selected lite-server? Receipt without a client response localizes the loss to server processing or the response path; no receipt localizes it to ingress or request transport.",
+      "contract_error_response_fix": "run_ext_query now wraps its promise before the first early refusal, serializing any liteServer-contract error as liteServer_error and sending it as an ADNL answer. The generic ADNL query_finished error branch remains silent for non-lite failures; this change does not attribute the previously observed timeouts to the manager path. The source-guard gate checks wrapper ordering and error serialization, including mutations that remove the wrapper or restore set_error. Five-point query-id tracing remains required to identify the observed path.",
       "closure_condition": "Capture the same query identity at the client send point, lite-server receipt point, response send point and client completion point in a reproducing run; identify the first missing transition and add a regression gate for the demonstrated cause. Changing the timeout or relying on retry success is not closure."
     },
     "colocated-launch-committee-finalcert-tail": {

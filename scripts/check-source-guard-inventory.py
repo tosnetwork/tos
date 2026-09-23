@@ -19,6 +19,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "finality-evidence-admission-source",
         "frozen-boc-toolchain-resolution",
         "jsonrpc-route-gating",
+        "lite-query-error-response-source",
         "n6-acceptance-criteria",
         "n6-cluster-runner",
         "n6-diagnostic-observations",

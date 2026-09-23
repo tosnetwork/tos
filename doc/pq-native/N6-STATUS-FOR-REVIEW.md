@@ -774,6 +774,17 @@ made this distinction observable: one node retried once after roughly ten
 seconds, while the chain advanced 26 heights and the observer later replayed
 the backlog at millisecond-scale observation intervals.
 
+An independent production defect in that query path is now fixed:
+`ValidatorManagerImpl::run_ext_query` installs a reply wrapper before its
+first refusal, so an error already inside the `liteServer_query` contract is
+serialized as `liteServer_error` and sent as an ADNL answer rather than
+escaping through `AdnlInboundConnection::query_finished()` as silence until
+the client's ten-second deadline. This does **not** attribute the observed
+timeouts to that path; admission drops and reconnect gaps remain possible.
+The `lite-query-error-response-source` guard fails if the wrapper is removed
+or if its error branch reverts to `set_error`. The five-point ADNL query-id
+trace is the next diagnostic unit.
+
 After the observation window, the harness waits for the production
 `TraceCollector`'s five-second structured-log flush and reads every node's
 `consensus.stats.events`. It retains per-node skip-vote counts rather than an

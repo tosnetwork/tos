@@ -1202,6 +1202,17 @@ void ValidatorManagerImpl::created_ext_server(td::actor::ActorOwn<adnl::AdnlExtS
 
 void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data,
                                          td::Promise<td::BufferSlice> promise) {
+  // This is already inside the liteServer_query contract. An early failure
+  // must be an answer, not a failed ADNL promise that leaves the client
+  // waiting for its ten-second transport deadline.
+  promise = td::PromiseCreator::lambda([reply = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
+    if (result.is_error()) {
+      auto status = result.move_as_error();
+      reply.set_value(create_serialize_tl_object<lite_api::liteServer_error>(status.code(), status.message().c_str()));
+    } else {
+      reply.set_value(result.move_as_ok());
+    }
+  });
   if (!started_ && !opts_->get_unsynced_liteserver()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not synced"));
     return;
