@@ -159,7 +159,7 @@ def test_pq_first_round_negatives_pin_three_elector_reasons_and_unchanged_stake(
         asyncio.run(rehearsal.assert_pq_first_round_negative_cases(1_700_000_000))
 
 
-def test_restarted_pq_node_waits_on_read_only_console_probe(tmp_path):
+def test_restarted_pq_node_retries_only_pre_send_authorization_transients(tmp_path):
     rehearsal = stage_a.ValidatorElectionRehearsal(
         run_dir=tmp_path / "pq-restart", base_port=26_000,
         build_dir=REPO / "build", sample_interval=10,
@@ -168,24 +168,52 @@ def test_restarted_pq_node_waits_on_read_only_console_probe(tmp_path):
     calls = []
 
     class FakeConsole:
-        async def get_actor_stats(self):
-            calls.append("get_actor_stats")
+        async def request(self, request):
+            calls.append("authorization")
             if len(calls) == 1:
                 raise stage_a.LocalError(0, "Connection closed")
+            if len(calls) == 2:
+                raise stage_a.RemoteError(651, "this node cannot authorise a stake: not started")
             return "ready"
 
     rehearsal.nodes = [SimpleNamespace(engine_console=FakeConsole())]
-    asyncio.run(rehearsal.wait_pq_console_ready_after_restart(0))
-    assert calls == ["get_actor_stats", "get_actor_stats"]
+    result = asyncio.run(rehearsal.request_pq_authorization(
+        0, object(), retry_restart_transients=True, timeout=2.0
+    ))
+    assert result == "ready"
+    assert calls == ["authorization"] * 3
     assert rehearsal.events[-1]["transient_connection_closures"] == 1
+    assert rehearsal.events[-1]["transient_not_started"] == 1
 
     class WrongFailure:
-        async def get_actor_stats(self):
-            raise stage_a.LocalError(500, "not authorized")
+        async def request(self, request):
+            raise stage_a.RemoteError(651, "invalid consensus key")
 
     rehearsal.nodes = [SimpleNamespace(engine_console=WrongFailure())]
-    with pytest.raises(stage_a.LocalError, match="not authorized"):
-        asyncio.run(rehearsal.wait_pq_console_ready_after_restart(0))
+    with pytest.raises(stage_a.RemoteError, match="invalid consensus key"):
+        asyncio.run(rehearsal.request_pq_authorization(
+            0, object(), retry_restart_transients=True, timeout=0.01
+        ))
+
+    class NeverReturns:
+        async def request(self, request):
+            await asyncio.Event().wait()
+
+    rehearsal.nodes = [SimpleNamespace(engine_console=NeverReturns())]
+    with pytest.raises(TimeoutError, match="validator 1 PQ authorization did not become ready"):
+        asyncio.run(rehearsal.request_pq_authorization(
+            0, object(), retry_restart_transients=True, timeout=0.01
+        ))
+
+    class AlwaysTransient:
+        async def request(self, request):
+            raise stage_a.RemoteError(651, "not started")
+
+    rehearsal.nodes = [SimpleNamespace(engine_console=AlwaysTransient())]
+    with pytest.raises(TimeoutError, match="not started=1"):
+        asyncio.run(rehearsal.request_pq_authorization(
+            0, object(), retry_restart_transients=True, timeout=0.01
+        ))
 
 
 def test_pq_config34_requires_identity_adnl_pairs_not_just_two_sets():

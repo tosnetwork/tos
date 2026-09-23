@@ -63,7 +63,7 @@ from pytosiq_core import (  # noqa: E402
 )
 from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
 from tosapi import tos_api  # noqa: E402
-from toslib.errors import LocalError  # noqa: E402
+from toslib.errors import LocalError, RemoteError  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.key import PUB_ED25519_PREFIX, Key  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
@@ -2766,6 +2766,7 @@ class ValidatorElectionRehearsal:
         self, index: int, election_id: int, query_id: int, *,
         stake_amount: int = PQ_STAKE_MESSAGE_VALUE,
         corrupt_signature_for_negative: bool = False,
+        retry_restart_transients: bool = False,
     ) -> tuple[Cell, bytes]:
         """Obtain one node-bound authorization and encode the production pool body.
 
@@ -2782,7 +2783,9 @@ class ValidatorElectionRehearsal:
             adnl_addr=node.validator_key.id,
             stake_owner=pool.address.hash_part,
         )
-        auth = request.parse_result(await node.engine_console.request(request))
+        auth = request.parse_result(await self.request_pq_authorization(
+            index, request, retry_restart_transients=retry_restart_transients,
+        ))
         if auth.validator_id != controller.address.hash_part:
             raise AssertionError(f"validator {index + 1} node authorized the wrong controller")
         if auth.key_id != controller.consensus.key_id:
@@ -2808,13 +2811,59 @@ class ValidatorElectionRehearsal:
         )
         return body, auth.key_id
 
-    async def submit_pq_candidate(self, index: int, election_id: int) -> None:
+    async def request_pq_authorization(
+        self, index: int, request: Any, *, retry_restart_transients: bool,
+        timeout: float = 30.0,
+    ) -> Any:
+        """Retry only a restarted node's pre-send connection/state race.
+
+        No wallet transaction has been sent at this point. Other authorization
+        errors are not readiness signals and must remain immediate failures.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        connection_closures = 0
+        not_started = 0
+        while (remaining := deadline - loop.time()) > 0:
+            try:
+                async with asyncio.timeout(remaining):
+                    response = await self.nodes[index].engine_console.request(request)
+                if retry_restart_transients:
+                    self.event(
+                        "pq_authority_ready_after_restart", node=index + 1,
+                        transient_connection_closures=connection_closures,
+                        transient_not_started=not_started,
+                    )
+                return response
+            except LocalError as error:
+                if not retry_restart_transients or error.code != 0 or error.message != "Connection closed":
+                    raise
+                connection_closures += 1
+            except RemoteError as error:
+                if not retry_restart_transients or error.code != 651 or error.message not in (
+                    "not started", "this node cannot authorise a stake: not started"
+                ):
+                    raise
+                not_started += 1
+            except TimeoutError:
+                break
+            await asyncio.sleep(min(0.5, max(0.0, deadline - loop.time())))
+        raise TimeoutError(
+            f"validator {index + 1} PQ authorization did not become ready within "
+            f"{timeout:.1f}s after restart; Connection closed={connection_closures} "
+            f"not started={not_started}"
+        )
+
+    async def submit_pq_candidate(
+        self, index: int, election_id: int, *, retry_restart_transients: bool = False
+    ) -> None:
         wallet = self.wallets[index]
         pool = self.pools[index]
         controller = self.controllers[index]
         query_id = index + 1
         body, authorization_key_id = await self.authorized_pq_pool_order(
-            index, election_id, query_id
+            index, election_id, query_id,
+            retry_restart_transients=retry_restart_transients,
         )
         await self.send_from_wallet(
             wallet, dest=pool.address, amount=2 * NANO, body=body,
@@ -2943,8 +2992,7 @@ class ValidatorElectionRehearsal:
             total_stake=three_stake, required_total=VALIDATOR_COUNT * EFFECTIVE_STAKE,
         )
         await self.restart_node(3, "open first PQ election")
-        await self.wait_pq_console_ready_after_restart(3)
-        await self.submit_pq_candidate(3, self.first_election_id)
+        await self.submit_pq_candidate(3, self.first_election_id, retry_restart_transients=True)
         participant_output = await self.runmethod("participant_list_extended")
         (self.artifacts_dir / "pq-first-participants.txt").write_text(participant_output)
         participant_ids = participant_ids_from_runmethod(participant_output)
@@ -3000,30 +3048,6 @@ class ValidatorElectionRehearsal:
         )
         await self.verify_three_of_four_liveness()
         await self.assert_pq_early_recovery_no_credit()
-
-    async def wait_pq_console_ready_after_restart(
-        self, index: int, *, timeout: float = 30.0
-    ) -> None:
-        """Probe the restarted node without risking a stake in a reconnect window."""
-        deadline = time.monotonic() + timeout
-        retries = 0
-        while time.monotonic() < deadline:
-            try:
-                await self.nodes[index].engine_console.get_actor_stats()
-                self.event(
-                    "pq_console_ready_after_restart", node=index + 1,
-                    transient_connection_closures=retries,
-                )
-                return
-            except LocalError as error:
-                if error.code != 0 or error.message != "Connection closed":
-                    raise
-                retries += 1
-                await asyncio.sleep(0.5)
-        raise TimeoutError(
-            f"validator {index + 1} engine console stayed disconnected for "
-            f"{timeout:.1f}s after restart; transient Connection closed count={retries}"
-        )
 
     async def assert_pq_early_recovery_no_credit(self) -> None:
         """The pool owns the credit; the validator wallet does not."""

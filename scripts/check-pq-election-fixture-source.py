@@ -208,7 +208,6 @@ def main() -> int:
     if len(positive_lines) != 2:
         fail(f"PQ first election has {len(positive_lines)} positive stake call sites, expected three-then-four")
     restart_line = one_call(election, "restart_node")
-    console_ready_line = one_call(election, "wait_pq_console_ready_after_restart")
     pool_negative_line = one_call(election, "assert_pq_first_round_negative_cases")
     duplicate_line = one_call(election, "assert_duplicate_pq_key_refused")
     activation_events = [
@@ -225,7 +224,7 @@ def main() -> int:
     recovery_line = one_call(election, "assert_pq_early_recovery_no_credit")
     if not (
         negative_line < pool_negative_line < positive_lines[0]
-        < restart_line < console_ready_line < positive_lines[1] < duplicate_line
+        < restart_line < positive_lines[1] < duplicate_line
         < activated_line < liveness_line < recovery_line
     ):
         fail("PQ first election no longer orders negative, three stakes, restart, fourth stake")
@@ -279,10 +278,32 @@ def main() -> int:
     recovery_text = ast.unparse(recovery)
     if "compute_returned_stake" not in recovery_text or "after_credit != 0" not in recovery_text:
         fail("PQ early recovery no longer checks the pool-owned elector credit")
-    readiness = method(tree, "wait_pq_console_ready_after_restart")
+    restart_stake_calls = [
+        node for node in ast.walk(election)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "submit_pq_candidate"
+        and any(
+            keyword.arg == "retry_restart_transients"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+    ]
+    if len(restart_stake_calls) != 1 or restart_stake_calls[0].lineno != positive_lines[1]:
+        fail("fourth PQ stake no longer uses the bounded post-restart authorization retry")
+    readiness = method(tree, "request_pq_authorization")
     readiness_text = ast.unparse(readiness)
-    if "get_actor_stats" not in readiness_text or "error.message != 'Connection closed'" not in readiness_text:
-        fail("PQ node restart no longer uses a bounded, read-only console readiness probe")
+    for marker in (
+        "asyncio.timeout(remaining)",
+        "error.code != 0", "error.message != 'Connection closed'",
+        "error.code != 651", "this node cannot authorise a stake: not started",
+        "deadline - loop.time()", "await self.nodes[index].engine_console.request(request)",
+    ):
+        if marker not in readiness_text:
+            fail(f"post-restart authorization retry lost {marker!r}")
+    if "retry_restart_transients=retry_restart_transients" not in ast.unparse(method(tree, "authorized_pq_pool_order")):
+        fail("PQ pool order no longer threads the scoped post-restart retry to node authorization")
     config_reader = method(tree, "get_config34")
     if "validator_id:x([0-9A-Fa-f]{64})" not in ast.unparse(config_reader):
         fail("live ConfigParam 34 reader no longer extracts PQ validator IDs")
@@ -295,7 +316,7 @@ def main() -> int:
         "Python engine-console transport admits the PQ authorization query; "
         "generated TL response fields are checked before snapshot/node boot and hashed in the snapshot; "
         "PQ candidates call the shared node-authorized, keyword-compatible Rust nominator::new_stake_with_witness pool-order path; "
-        "the three exact pool-route refusals precede three accepted stakes, a restarted and console-ready fourth stake, and a duplicate-key refusal; "
+        "the three exact pool-route refusals precede three accepted stakes, a restarted fourth stake with bounded pre-send authorization retry, and a duplicate-key refusal; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
         "three-of-four liveness and pool-owned early recovery checks follow activation"
     )
