@@ -1666,6 +1666,70 @@ fn deploy_single_nominator(
     address
 }
 
+/// The multi-nominator contract used by the lifecycle script, with its real
+/// storage layout and the same 5,100 TOS validator contribution. No controller
+/// or Elector is stubbed: the caller supplies the deployed controller.
+fn deploy_multi_nominator(
+    chain: &mut Chain,
+    operator: &MsgAddressInt,
+    controller: &MsgAddressInt,
+) -> MsgAddressInt {
+    use chain_block::{Coins, IBitstring, Serializable};
+    let root = std::env::var("TOS_ROOT").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .expect("repository root")
+            .to_path_buf()
+    });
+    let dir = root.join("crypto/smartcont/nominator-pool");
+    let code = tos_sandbox::compile_func(&[dir.join("stdlib.fc"), dir.join("pool.fc")])
+        .expect("the multi-nominator pool compiles");
+
+    let mut config = chain_block::BuilderData::new();
+    config.append_raw(&operator.address().get_bytestring(0), 256).expect("operator");
+    config.append_raw(&controller.address().get_bytestring(0), 256).expect("controller");
+    config.append_u16(4_000).expect("reward share");
+    config.append_u16(40).expect("maximum nominators");
+    Coins::new(5_000 * TOS).write_to(&mut config).expect("minimum validator stake");
+    Coins::new(100 * TOS).write_to(&mut config).expect("minimum nominator stake");
+
+    let mut data = chain_block::BuilderData::new();
+    data.append_u8(0).expect("idle");
+    data.append_u16(0).expect("no nominators");
+    Coins::new(0).write_to(&mut data).expect("no sent stake");
+    Coins::new(5_100 * TOS).write_to(&mut data).expect("validator contribution");
+    data.checked_append_reference(config.into_cell().expect("pool config")).expect("config");
+    data.append_bit_zero().expect("no nominators dictionary");
+    data.append_bit_zero().expect("no withdraw requests");
+    data.append_u32(0).expect("no stake election");
+    data.append_raw(&[0; 32], 256).expect("no saved set hash");
+    data.append_u8(0).expect("no set changes");
+    data.append_u32(0).expect("no set change time");
+    data.append_u32(0).expect("no stake hold period");
+    data.append_bit_zero().expect("no proposal votes");
+
+    let state =
+        chain_block::StateInit::with_code_and_data(code, data.into_cell().expect("pool data"));
+    let address = MsgAddressInt::with_params(
+        -1,
+        state.write_to_new_cell().expect("state").into_cell().expect("state cell").hash(0),
+    )
+    .expect("multi-nominator address");
+    let funder = chain.blockchain.treasury("multi-pool-funder", 100_000 * TOS).expect("funder");
+    let deployment =
+        tos_sandbox::MessageBuilder::internal(funder.address(), &address, 13_120 * TOS)
+            .bounce(false)
+            .state_init(state)
+            .body(chain_block::Cell::default())
+            .build();
+    chain.blockchain.set_account(
+        address.clone(),
+        Account::from_message(&deployment).expect("the pool deployment account"),
+    );
+    address
+}
+
 fn deploy_rooted_validator(chain: &mut Chain, index: u8) -> RootedValidator {
     deploy_controller_with(
         chain,
@@ -2413,12 +2477,7 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
 
     let result = chain
         .blockchain
-        .send_message(operator.build_message(
-            &pool,
-            2 * TOS,
-            true,
-            Some(order),
-        ))
+        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
         .expect("the order is delivered");
     result.expect_success();
 
@@ -2499,6 +2558,180 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
         0,
         "the controller was repaid money it never put up"
     );
+}
+
+/// The pool's idle state alone cannot say whether its relay bounced or the
+/// Elector returned the stake. Keep the two transfers, both compute outcomes,
+/// and the exact reply in the result of a real three-contract cascade.
+struct MultiNominatorStakeProbe {
+    pool_to_controller: Option<u128>,
+    controller_to_elector: Option<u128>,
+    controller_aborted: Option<bool>,
+    controller_bounced_to_pool: bool,
+    elector_aborted: Option<bool>,
+    elector_reply: Option<(u32, u32)>,
+    pool_state: u8,
+    controller_registered: bool,
+}
+
+fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakeProbe {
+    use contracts::nominator::{NewStakeParams, new_stake_with_witness};
+
+    fn amount_sent(
+        result: &tos_sandbox::SendResult,
+        from: &MsgAddressInt,
+        to: &MsgAddressInt,
+    ) -> Option<u128> {
+        let mut values = Vec::new();
+        for transaction in result.transactions_for(from) {
+            transaction
+                .iterate_out_msgs(|message| {
+                    if message.dst() == Some(to.clone()) {
+                        values.push(
+                            message.get_value().expect("internal transfer value").coins.as_u128(),
+                        );
+                    }
+                    Ok(true)
+                })
+                .expect("out messages");
+        }
+        assert!(values.len() <= 1, "more than one transfer from {from} to {to}: {values:?}");
+        values.pop()
+    }
+
+    let (mut chain, _treasury, election) = open_election("multi-pool-first-stake", 200_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let validator = deploy_rooted_validator(&mut chain, 0x31);
+    admit_code_of(&mut chain, &validator.address);
+    let operator = chain.blockchain.treasury("multi-pool-operator", 100_000 * TOS).expect("wallet");
+    let controller = validator.address.clone();
+    let pool = deploy_multi_nominator(&mut chain, operator.address(), &controller);
+
+    let pool_id = chain_block::UInt256::from_slice(&pool.address().get_bytestring(0));
+    let preimage = pq_stake_preimage_for(
+        global_id(&chain),
+        election,
+        0x10000,
+        &validator.id(),
+        &pool_id,
+        1,
+        &validator.consensus.key_id(),
+        &validator.consensus.adnl,
+    );
+    let signature = validator.consensus.sign(&preimage);
+    let witness = birth_witness(&chain, &controller);
+    let order = new_stake_with_witness(
+        &NewStakeParams {
+            query_id: 1,
+            stake_amount,
+            validator_pubkey: &validator.consensus.public_key,
+            stake_at: election,
+            max_factor: 0x10000,
+            adnl_addr: &validator.consensus.adnl,
+            signature: &signature,
+        },
+        Some(&witness),
+    )
+    .expect("production multi-pool stake order");
+    let result = chain
+        .blockchain
+        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
+        .expect("order delivered");
+    result.expect_success();
+
+    let pool_to_controller = amount_sent(&result, &pool, &controller);
+    let controller_to_elector = amount_sent(&result, &controller, &chain.elector);
+    let controller_aborted = result.transactions_for(&controller).first().map(|transaction| {
+        transaction.read_description().expect("controller description").is_aborted()
+    });
+    let elector_aborted = result.transactions_for(&chain.elector).first().map(|transaction| {
+        transaction.read_description().expect("Elector description").is_aborted()
+    });
+    let controller_bounced_to_pool = result.transactions_for(&pool).iter().any(|transaction| {
+        transaction.read_in_msg().expect("pool inbound message").is_some_and(|message| {
+            message.is_bounced() && message.src() == Some(controller.clone())
+        })
+    });
+    let mut elector_reply = None;
+    for transaction in result.transactions_for(&chain.elector) {
+        transaction
+            .iterate_out_msgs(|message| {
+                if message.dst() == Some(pool.clone()) {
+                    let mut body = message.body().expect("Elector reply body").clone();
+                    let tag = body.get_next_u32().expect("reply opcode");
+                    body.get_next_u64().expect("reply query id");
+                    elector_reply = Some((tag, body.get_next_u32().expect("reply reason")));
+                }
+                Ok(true)
+            })
+            .expect("Elector out messages");
+    }
+    let state =
+        chain.blockchain.run_get_method(&pool, "get_pool_data", vec![]).expect("the pool answers");
+    assert_eq!(state.exit_code, 0, "get_pool_data failed");
+    let pool_state: u8 = state.stack[0]
+        .as_integer()
+        .expect("pool state")
+        .to_string()
+        .parse()
+        .expect("numeric pool state");
+    let (members, _) = pq_book(&chain);
+    let controller_registered =
+        members.get(controller.address().clone()).expect("member lookup").is_some();
+    eprintln!(
+        "multi-pool stake order={stake_amount}: pool_to_controller={pool_to_controller:?} \
+         controller_to_elector={controller_to_elector:?} controller_aborted={controller_aborted:?} \
+         controller_bounced_to_pool={controller_bounced_to_pool} elector_aborted={elector_aborted:?} \
+         elector_reply={elector_reply:?} pool_state={pool_state} controller_registered={controller_registered}"
+    );
+
+    MultiNominatorStakeProbe {
+        pool_to_controller,
+        controller_to_elector,
+        controller_aborted,
+        controller_bounced_to_pool,
+        elector_aborted,
+        elector_reply,
+        pool_state,
+        controller_registered,
+    }
+}
+
+/// The old 10,001 TOS order reaches the Elector, but its mode-64 forwarding
+/// fee leaves less than 10,001 TOS there. After the Elector's one-TOS reply
+/// reserve it is below the 10,000 TOS minimum: reason 5, not a relay bounce.
+#[test]
+fn a_multi_nominator_first_stake_exposes_the_exact_refusal() {
+    let probe = multi_nominator_first_stake_probe(10_001 * TOS);
+    assert_eq!(probe.pool_to_controller, Some(u128::from(10_001 * TOS)));
+    assert!(probe.controller_to_elector.is_some_and(|value| value < u128::from(10_001 * TOS)));
+    assert_eq!(probe.controller_aborted, Some(false));
+    assert!(!probe.controller_bounced_to_pool);
+    assert_eq!(probe.elector_aborted, Some(false));
+    assert_eq!(probe.elector_reply, Some((STAKE_RETURNED, REASON_BELOW_MINIMUM)));
+    assert_eq!(probe.pool_state, 0);
+    assert!(!probe.controller_registered);
+}
+
+/// One additional TOS is an explicit forwarding-fee allowance, rather than
+/// pretending the Elector's one-TOS confirmation reserve also covers relay
+/// fees. The same production builder and three compiled contracts must now
+/// reach the acceptance reply and pool state 2.
+#[test]
+fn a_multi_nominator_first_stake_with_forwarding_allowance_is_accepted() {
+    let probe = multi_nominator_first_stake_probe(10_002 * TOS);
+    assert_eq!(
+        probe.elector_reply,
+        Some((STAKE_ACCEPTED, 0)),
+        "Elector must accept the forwarded amount"
+    );
+    assert_eq!(probe.pool_state, 2, "the pool must receive and record acceptance");
+    assert_eq!(probe.pool_to_controller, Some(u128::from(10_002 * TOS)));
+    assert!(probe.controller_to_elector.is_some_and(|value| value >= u128::from(10_001 * TOS)));
+    assert_eq!(probe.controller_aborted, Some(false));
+    assert!(!probe.controller_bounced_to_pool);
+    assert_eq!(probe.elector_aborted, Some(false));
+    assert!(probe.controller_registered);
 }
 
 #[test]
