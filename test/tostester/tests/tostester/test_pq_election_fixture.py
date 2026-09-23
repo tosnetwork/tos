@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from pytosiq_core import Address, Cell
 from pytosiq_core import Builder
-from tosapi import toslib_api
+from tosapi import tos_api, toslib_api
 
 from tostester.install import Install
 from tostester.pq_election_fixture import (
@@ -19,9 +19,23 @@ from tostester.pq_election_fixture import (
     make_controller_fixture,
     make_pool_fixture,
     participant_ids_from_runmethod,
+    require_pq_stake_authorization_binding,
 )
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+def test_pq_stake_authorization_generated_binding_is_complete():
+    require_pq_stake_authorization_binding(
+        tos_api.Engine_validator_pqStakeAuthorization
+    )
+
+    class StaleResponse:
+        def __init__(self, validator_id, key_id, signature):
+            pass
+
+    with pytest.raises(RuntimeError, match="missing=\\['algorithm_id', 'public_key'\\]"):
+        require_pq_stake_authorization_binding(StaleResponse)
 
 
 def test_participant_ids_use_decimal_outer_ids_not_hex_text():

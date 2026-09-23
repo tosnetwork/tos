@@ -80,6 +80,17 @@ def main() -> int:
     ]
     if not node_boots or not provision < identity < min(node_boots):
         fail("controller address equality is not asserted after provisioning and before node boot")
+    binding_preflight = one_call(execute, "require_pq_stake_authorization_binding")
+    if not binding_preflight < one_call(execute, "prepare_artifact_snapshot") < min(node_boots):
+        fail("generated Python TL binding is not checked before snapshot and PQ node boot")
+    snapshot = method(tree, "prepare_artifact_snapshot")
+    snapshot_text = ast.unparse(snapshot)
+    if (
+        "pq_stake_authorization_python_tl" not in snapshot_text
+        or "test/tostester/src/tosapi/tos_api.py" not in snapshot_text
+        or "tl/generate/scheme/tos_api.tl" not in snapshot_text
+    ):
+        fail("artifact snapshot no longer records the PQ authorization TL schema and generated binding")
     client = one_call(execute, "toslib_client")
     policy = one_call(execute, "verify_live_controller_policy")
     wallets = one_call(execute, "setup_wallets")
@@ -200,6 +211,7 @@ def main() -> int:
         "the live Param 47 read-back call precedes deployment; "
         "the Genesis helper contains 47 config!; "
         "Python engine-console transport admits the PQ authorization query; "
+        "generated TL response fields are checked before snapshot/node boot and hashed in the snapshot; "
         "PQ candidates use node signatures and a keyword-compatible Rust nominator::new_stake_with_witness bridge for pool orders; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with exact PQ IDs are required; "
         "reason-8 negative control precedes positive stakes"

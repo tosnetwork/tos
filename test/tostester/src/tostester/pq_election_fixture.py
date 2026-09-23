@@ -7,6 +7,7 @@ ConfigParam 47; that must be done through the chain's configuration contract.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -24,6 +25,20 @@ from .pq_initial_validator import deterministic_pq_initial_validator_seed
 _ROOT_DOMAIN = b"tos-test-pq-election-controller-root-v1\x00"
 _KEY_ID = re.compile(r"^key_id\s+([0-9a-f]{64})$", re.MULTILINE)
 _PUBLIC = re.compile(r"^public\s+([0-9a-f]{2624})$", re.MULTILINE)
+_AUTHORIZATION_FIELDS = {
+    "validator_id", "key_id", "algorithm_id", "public_key", "signature",
+}
+
+
+def require_pq_stake_authorization_binding(response_type: type) -> None:
+    """Fail before node boot when ignored generated Python TL is stale."""
+    actual = set(inspect.signature(response_type).parameters)
+    missing = _AUTHORIZATION_FIELDS - actual
+    if missing:
+        raise RuntimeError(
+            "generated Python TL stake authorization is stale: "
+            f"missing={sorted(missing)}; run uv run python test/tostester/generate_tl.py"
+        )
 
 
 @dataclass(frozen=True)

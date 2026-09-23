@@ -394,6 +394,20 @@ reject it on the corrected tree.
 The old-assertion-to-PQ mapping and serial migration units are recorded in
 `doc/pq-native/T2-PQ-LAUNCH-GATE-MIGRATION.md`; the default route is not to be
 switched until those retained checks have live PQ counterparts.
+An independent first rerun in a second worktree reached the election, then
+failed before the negative request because its **ignored generated Python TL
+binding** predated the five-field authorization response and lacked
+`algorithm_id`/`public_key`. That is a reproducibility failure, not an
+elector refusal. The successful run's snapshotted
+`test/tostester/src/tosapi/tos_api.py` has SHA-256
+`83ec12104beee1798cf467f92d87080a166456c3e9018ab83994a06760c3ae5b`
+and was generated from `tl/generate/scheme/tos_api.tl` with
+`test/tostester/generate_tl.py`. The rehearsal now checks the required
+generated response fields **before** taking a snapshot or booting a node,
+names the regeneration command on refusal, and records both schema and
+binding hashes in the artifact manifest. The second worktree is regenerating
+and rerunning serially; its first failed run is retained, not called an
+independent pass.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or

@@ -79,6 +79,7 @@ from tostester.pq_election_fixture import (  # noqa: E402
     make_controller_fixture,
     make_pool_fixture,
     participant_ids_from_runmethod,
+    require_pq_stake_authorization_binding,
 )
 
 NANO = 1_000_000_000
@@ -1045,6 +1046,17 @@ class ValidatorElectionRehearsal:
             "harness": self.file_provenance(script_target),
             "binaries": binaries,
             "generated_contracts": generated_contracts,
+            "pq_stake_authorization_python_tl": (
+                {
+                    "schema": self.file_provenance(
+                        REPO / "tl/generate/scheme/tos_api.tl"
+                    ),
+                    "generated_binding": self.file_provenance(
+                        snapshot_source / "test/tostester/src/tosapi/tos_api.py"
+                    ),
+                }
+                if self.pq_election else None
+            ),
         }
         (snapshot_dir / "manifest.json").write_text(
             json.dumps(self.provenance, indent=2, sort_keys=True)
@@ -2879,6 +2891,10 @@ class ValidatorElectionRehearsal:
         self.event("pq_negative_wallet_refused", reason=reason, expected_reason=8)
 
     async def execute(self) -> None:
+        if self.pq_election:
+            require_pq_stake_authorization_binding(
+                tos_api.Engine_validator_pqStakeAuthorization
+            )
         self.ensure_experiment_rpc_ports_available()
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.network_dir.mkdir()
