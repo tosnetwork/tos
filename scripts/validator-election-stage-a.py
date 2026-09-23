@@ -3863,7 +3863,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("launch-gate", "experiment", "transfer-soak", "fixture-check", "pq-election", "pq-launch-gate"),
         default="launch-gate",
         help=(
-            "launch-gate preserves the finite Stage-A/Stage-B rehearsal; "
+            "launch-gate runs the complete PQ Stage-A/Stage-B rehearsal; "
             "experiment runs stable Stage A for a requested observation window; "
             "transfer-soak runs randomized A/B/C transfers with cross-node 到账 checks; "
             "fixture-check provisions four PQ controllers and pools without claiming an election; "
@@ -4017,8 +4017,8 @@ async def async_main() -> int:
         soak_max_interval=args.soak_max_interval,
         soak_wallet_funding_tos=args.soak_wallet_funding_tos,
         fixture_only=(args.mode == "fixture-check"),
-        pq_election=(args.mode in ("pq-election", "pq-launch-gate")),
-        pq_full=(args.mode == "pq-launch-gate"),
+        pq_election=(args.mode in ("launch-gate", "pq-election", "pq-launch-gate")),
+        pq_full=(args.mode in ("launch-gate", "pq-launch-gate")),
     )
     try:
         await stage.execute()

@@ -24,7 +24,7 @@ def _load_script():
 stage_a = _load_script()
 
 
-def test_default_cli_preserves_launch_gate_profile():
+def test_default_cli_selects_complete_pq_launch_gate_profile():
     args = stage_a.parse_args([])
 
     assert args.mode == "launch-gate"

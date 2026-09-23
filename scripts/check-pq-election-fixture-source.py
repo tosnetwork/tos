@@ -48,8 +48,12 @@ def main() -> int:
     execute = method(tree, "execute")
     cli_text = ast.unparse(method(tree, "parse_args"))
     main_text = ast.unparse(method(tree, "async_main"))
-    if "pq-launch-gate" not in cli_text or "pq_full=args.mode == 'pq-launch-gate'" not in main_text:
-        fail("the opt-in full PQ launch-gate CLI no longer reaches the full rehearsal")
+    if "default='launch-gate'" not in cli_text:
+        fail("the historical launch-gate is no longer the default CLI route")
+    if "pq_election=args.mode in ('launch-gate', 'pq-election', 'pq-launch-gate')" not in main_text:
+        fail("the default launch-gate no longer provisions PQ controller/pool fixtures")
+    if "pq_full=args.mode in ('launch-gate', 'pq-launch-gate')" not in main_text:
+        fail("the default launch-gate no longer runs the complete multi-round PQ rehearsal")
     genesis_profile = method(tree, "configure_network_profile")
     if "if self.pq_full:\n" not in ast.unparse(genesis_profile) or "PQ_FULL_GENESIS_FAUCET_FUNDING" not in ast.unparse(genesis_profile):
         fail("full PQ mode no longer sets its three-round faucet budget in Genesis")
@@ -364,7 +368,7 @@ def main() -> int:
         "the three exact pool-route refusals precede three accepted stakes, a restarted fourth stake with bounded pre-send authorization retry, and a duplicate-key refusal; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
         "three-of-four liveness and pool-owned early recovery checks follow activation; "
-        "an opt-in full PQ route budgets its faucet in Genesis before the first election and retains "
+        "the default and explicit full PQ routes budget their faucet in Genesis before the first election and retain "
         "second/rollover activation, pool-owned recovery, duplicate refusal and two-of-four halt"
     )
     return 0
