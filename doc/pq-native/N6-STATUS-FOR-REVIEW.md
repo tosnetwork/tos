@@ -568,6 +568,17 @@ The observed 600+600 run discharges the script-wide T2 classical-stake
 dependency and repeats the end-to-end accepted-stake/activated-election proof
 on a co-located diagnostic topology, **not** as release-scale evidence. The
 other classical Fift callers remain a separate T3 retirement task.
+Supervisor acceptance at `c15d9f852` marks **T2 COMPLETE within
+`validator-election-stage-a.py`**: both the default launch gate and explicit
+experiment now use the node-authorized production builder, pool, controller,
+Elector and live ConfigParam 34 path. Independent review checked the raw
+controller/ADNL pairs and the two report hashes. On that exact head, CI
+`Source guards` (35889197137), `Branch PQ chain and Python tests`
+(35889197085), and `N6 microbench smoke` (35889196956) all finished with
+`success`; the tracked tree was clean. This is a script-scope and diagnostic
+end-to-end acceptance, not release-scale acceptance. The remaining nine
+classical Fift callers are T3 and remain OPEN; Merkle #120 and release-scale
+acceptance are likewise unchanged. No additional T2 network run is required.
 
 The Rust `chain_block_json` proof boundary now refuses PQ and unknown JSON
 signature types in both directions; it does not implement PQ proof JSON or

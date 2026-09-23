@@ -171,3 +171,15 @@ it is **not** release-scale evidence and does not retire other T3 Fift callers.
 
 No step changes election criteria, weakens a negative check, or treats the
 co-located diagnostic run as release-scale measurement.
+
+At `c15d9f852`, independent supervision accepted T2 as **COMPLETE for the
+entire `validator-election-stage-a.py` script**, including its default and
+explicit experiment modes. The production builder's stake was accepted through
+pool/controller/Elector and four controller identities activated in live
+ConfigParam 34; the negative controls assert their exact refusal outcomes.
+The experiment proves first-round pool recovery only; the separate default
+three-election report proves second-round recovery. All three head CI jobs
+finished successfully (Source guards 35889197137, branch PQ chain/Python
+35889197085, N6 microbench smoke 35889196956). This co-located diagnostic
+acceptance neither closes T3's nine other classical Fift callers nor Merkle
+#120 or release-scale measurement.
