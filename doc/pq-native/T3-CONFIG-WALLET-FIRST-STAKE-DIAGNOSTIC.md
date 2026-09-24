@@ -59,3 +59,17 @@ it does not identify the tail of the post-order nonempty list that made the
 CLI fail. The next probe saves the full raw stack immediately after the CLI
 returns, including on error, before changing the parser further. No
 post-order encoding or cause is asserted from the pre-order sample.
+
+The `0db8eaba3` follow-up report at
+`test/integration/.pq-tosctl-config-wallet-product/20260924T061507Z/report.json`
+(SHA-256 `5b0020c4473a131a899f5a4cb3b870ad8c974288efe1cee9e77b85ecc3e1866d`)
+again records exact `STAKE_ACCEPTED`, reason 0, this time for query ID
+`1790230929`. It also records that the immediate *post-CLI* JSON-RPC query
+returned numeric zero at index 4 (raw SHA-256
+`3b11c994d95ead584ddbecdbeacba4f80456195cf3f7329e61838270d65572b3`).
+Because the CLI itself had just failed while walking a nonempty cons list,
+that second query did not sample the same chain state. It cannot identify the
+tail that caused the failure. The next diagnostic must report the tail from
+the exact StackEntry being parsed, not from a later RPC call. This is a
+measurement-timing limit, not evidence that the parser should accept all
+tail types.

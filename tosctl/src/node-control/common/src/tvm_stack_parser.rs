@@ -190,7 +190,9 @@ impl TvmStackParser {
                         {
                             return Ok(Self::new(elements));
                         }
-                        _ => anyhow::bail!("stack cons list has a non-null tail: index={index}"),
+                        _ => anyhow::bail!(
+                            "stack cons list has a non-null tail: index={index}, tail={current:?}"
+                        ),
                     }
                 }
             }
@@ -604,6 +606,7 @@ mod tests {
             create_tuple_entry(vec![create_number_entry("11"), create_number_entry("1")]);
         let error = TvmStackParser::new(vec![wrong_tail]).list_or_empty(0).unwrap_err().to_string();
         assert!(error.contains("non-null tail"), "wrong refusal: {error}");
+        assert!(error.contains("Tvm_StackEntryNumber"), "tail type was lost: {error}");
         let wrong_arity = create_tuple_entry(vec![create_number_entry("11")]);
         let error =
             TvmStackParser::new(vec![wrong_arity]).list_or_empty(0).unwrap_err().to_string();
