@@ -1311,3 +1311,16 @@ and left all four nodes at the same final height with full block-id agreement
 at every height checked. This is `COLOCATED_DIAGNOSTIC_ONLY` functional
 coverage and is explicitly ineligible for release evidence; it neither closes
 the open Merkle question nor substitutes for independent-host measurements.
+
+## Mac Release merge blockers
+
+The independent clean Mac Release build of exact tree `463f44bea` configured
+but failed on three distinct source-level build defects: Linux-only affinity
+calls in `n6-microbench`, Apple `mallctl` weak-import linkage with jemalloc
+disabled, and the consensus-key tool's missing explicit OpenSSL dependency.
+All three are **OPEN pre-merge repair items** in
+`doc/pq-native/N6-MAC-RELEASE-BUILD-BLOCKERS.md`, with original logs and hashes
+archived at memo commit `fde096ce`. The subsequent already-built CTest subset
+is diagnostic partial evidence; it is not a complete Mac Release build or
+acceptance result. Mac fixes and a clean fixed-tree build are owned separately
+from the T3 pool lifecycle investigation.
