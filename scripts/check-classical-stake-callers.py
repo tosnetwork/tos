@@ -8,6 +8,7 @@ executable source files. Rust legacy vectors and prose are not callers.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -45,9 +46,6 @@ EXPECTED: dict[str, dict[str, int]] = {
         "single-nominator-legacy-elect-signed.fif": 1,
         "liquid-controller-legacy-elect-signed.fif": 1,
     },
-    "crypto/test/fift/validator-proposal-legacy-parity.fif": {
-        "validator-elect-req>B": 1,
-    },
 }
 SUFFIXES = {".py", ".fif", ".fc", ".cpp", ".rs"}
 # This source guard quotes the retired Fift filenames to forbid their use in
@@ -75,7 +73,17 @@ def discover(root: Path) -> dict[str, dict[str, int]]:
             if relative == "scripts/check-classical-stake-callers.py" or relative in NON_CALLER_SOURCE_GUARDS:
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
-            matches = {marker: source.count(marker) for marker in MARKERS if marker in source}
+            matches = {}
+            for marker in MARKERS:
+                # A test-local `legacy-validator-elect-req>B` is not a call to
+                # the product `validator-elect-req>B` word.
+                count = (
+                    len(re.findall(r"(?<![A-Za-z0-9_-])validator-elect-req>B", source))
+                    if marker == "validator-elect-req>B"
+                    else source.count(marker)
+                )
+                if count:
+                    matches[marker] = count
             if matches:
                 found[relative] = matches
     return found
@@ -109,6 +117,18 @@ def main() -> int:
         for marker in ("validator-elect-req>B", "validator-elect-body", "parse-val-pubkey", "parse-val-signature")
     ):
         fail("proposal smoke has regained a classical validator-stake dependency")
+    parity = (root / "crypto/test/fift/validator-proposal-legacy-parity.fif").read_text(encoding="utf-8")
+    if '"Validator.fif" include' in parity or re.search(r"(?<![A-Za-z0-9_-])validator-elect-req>B", parity):
+        fail("legacy parity has regained the product Validator.fif stake codec")
+    for word in (
+        "legacy-parse-val-signature",
+        "legacy-validator-elect-req>B",
+        "legacy-validator-elect-body",
+        "legacy-validator-elect-body+stake",
+    ):
+        uses = re.findall(rf"(?<![A-Za-z0-9_-]){re.escape(word)}(?![A-Za-z0-9_+])", parity)
+        if sum(line.strip() == f"}} : {word}" for line in parity.splitlines()) != 1 or len(uses) < 2:
+            fail(f"legacy parity no longer defines and exercises its test-local {word} codec")
     actual = discover(root)
     missing = sorted(set(EXPECTED) - set(actual))
     unexpected = sorted(set(actual) - set(EXPECTED))
@@ -127,7 +147,8 @@ def main() -> int:
         f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact executable files retain the inventoried "
         "validator-elect Fift path/word literals; the single-nominator operator path is absent, "
         "both retired pool operator paths are absent, the base Fift byte tests load test-only "
-        "fixtures, and the migration map names each"
+        "fixtures, proposal smoke has no classical stake dependency, the parity codec is test-local, "
+        "and the migration map names each"
     )
     return 0
 

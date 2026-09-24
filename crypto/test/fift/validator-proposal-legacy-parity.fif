@@ -1,12 +1,39 @@
 "Test.fif" include
-"Validator.fif" include
+"Addr.fif" include
+"Currency.fif" include
+"Key.fif" include
+"Msg.fif" include
 "Proposal.fif" include
+
+// Test-only frozen Ed25519 codec, copied from Validator.fif before retirement.
+// These words intentionally cannot be reached by an operator script or an
+// installed Fift library. The values below assert the historical bytes.
+{ base64>B dup Blen 64 <> abort"validator Ed25519 signature must be exactly 64 bytes long"
+} : legacy-parse-val-signature
+
+{ 4 0 reverse B{654c5074} swap 32 u>B B+ swap 32 u>B B+ swap 256 u>B B+ swap 256 u>B B+
+} : legacy-validator-elect-req>B
+
+{ 4 pick Blen 32 <> abort"validator Ed25519 pubkey must be exactly 32 bytes long"
+  <b x{4e73744b} s, 6 roll 64 u, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
+  swap <b swap B, b> ref, b>
+} : legacy-validator-elect-body
+
+{ 4 pick Blen 32 <> abort"validator Ed25519 pubkey must be exactly 32 bytes long"
+  <b x{4e73744b} s, 7 roll 64 u, 6 roll Tomi, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
+  swap <b swap B, b> ref, b>
+} : legacy-validator-elect-body+stake
 
 ."validator/proposal legacy parity" cr
 test-reset
 
 "xrQTSAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f" parse-val-pubkey constant val-pubkey
-"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==" parse-val-signature constant val-signature
+"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==" legacy-parse-val-signature constant val-signature
+
+val-pubkey B{000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F}
+  "parse validator pubkey" test-bytes-eq
+val-signature B{000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F202122232425262728292A2B2C2D2E2F303132333435363738393A3B3C3D3E3F}
+  "parse validator signature" test-bytes-eq
 
 0x11223344 constant elect-time
 0x55667788 constant max-factor
@@ -23,16 +50,16 @@ test-reset
 <b 0xCAFE 16 u, b> constant param-value
 <b 0xbc 8 u, 0x1234 16 u, b> constant complaint
 
-elect-time max-factor addr256 adnl-addr validator-elect-req>B
+elect-time max-factor addr256 adnl-addr legacy-validator-elect-req>B
   B{654c5074} elect-time 32 u>B B+ max-factor 32 u>B B+ addr256 256 u>B B+ adnl-addr 256 u>B B+
   "validator elect request matches pre-extraction inline bytes" test-bytes-eq
 
-query-id val-pubkey elect-time max-factor adnl-addr val-signature validator-elect-body
+query-id val-pubkey elect-time max-factor adnl-addr val-signature legacy-validator-elect-body
   <b x{4e73744b} s, query-id 64 u, val-pubkey B, elect-time 32 u, max-factor 32 u, adnl-addr 256 u,
     <b val-signature B, b> ref, b>
   "validator elect body matches pre-extraction inline cell" test-cell-eq
 
-query-id amount val-pubkey elect-time max-factor adnl-addr val-signature validator-elect-body+stake
+query-id amount val-pubkey elect-time max-factor adnl-addr val-signature legacy-validator-elect-body+stake
   <b x{4e73744b} s, query-id 64 u, amount Tomi, val-pubkey B, elect-time 32 u, max-factor 32 u, adnl-addr 256 u,
     <b val-signature B, b> ref, b>
   "validator elect body with stake matches pre-extraction inline cell" test-cell-eq

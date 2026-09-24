@@ -1,0 +1,23 @@
+# T09: keep classical bytes as a test-local parity vector
+
+`crypto/test/fift/validator-proposal-legacy-parity.fif` is run only by `test-fift` (`crypto/test/fift.cpp::test_validator_proposal_legacy_parity`). It used to include the product `Validator.fif` and exercise that library's Ed25519 signature parser, `0x654c5074` preimage, and `0x4e73744b` body encoders. T09 preserves those exact historical assertions but defines the four used words locally with `legacy-` names. The local definitions copy the old implementation operations; generic `Addr.fif`, `Currency.fif`, `Key.fif`, `Msg.fif`, and `Proposal.fif` remain ordinary dependencies, and none transitively includes `Validator.fif`.
+
+The first self-contained version passed the **same** recorded answer, `b7c8dd7479a355f69372df386e916e185a2d08291e832057d37df10ad4d01be4`. A subsequent coverage check found that T08's removed smoke had the only explicit byte assertions for parsed Ed25519 public key and signature; the body assertions alone used the same parsed value on both sides and could not replace them. Those two exact byte assertions now live here, so this test's final recorded answer intentionally changes to `Test_Fift_test_validator_proposal_legacy_parity_default e7043312f91fb036d91237f826b5894c1ab651fa5fb338c8a01f06544becbe99`. The old-answer run failed with that precise expected/got pair before the answer was updated. The preimage, plain body and body-with-stake assertions remain unchanged. This is historical codec parity, not an elector acceptance or PQ-authority test. T07's test-only script fixtures still include `Validator.fif`, while the two distributed base Fift tools and `crypto/fift/lib/Validator.fif` remain installed. T10–T12 are therefore still open.
+
+Local evidence under `test/integration/.t09-validator-parity-20260924/`:
+
+| Check | Result | Raw SHA-256 |
+| --- | --- | --- |
+| Exact-answer T09 before migration | exit 0, 1/1 | `890dd199eb5ed8908428a88955dd1af4753417b476a718bf9e7d493cb76689fb` |
+| Exact-answer T09 with test-local words, before parser assertions moved | exit 0, 1/1, original answer | `1cfab357068b1249dfc935c59c0a08aec036d60fc3fb20da00923f567143f39c` |
+| Add explicit parser bytes but keep old answer | exit 1, exact expected/got digest mismatch | `f663e68c36f67e37aafb08c528810c796aaecc123cff5630e6ccf65439d9e12b` |
+| Add the new answer | exit 0, 1/1 | `732de10fef3c7fedf6f8d8d619f0cf093adbc9918aedd9088daee59e75bda737` |
+| Restore product `"Validator.fif" include` on final source | caller guard exit 1, names regained product codec | `553b9e7f44cc75ad394e814ebdb563c0322616baa39d827696c517ce3718a3fe` |
+| Change only the final local preimage tag `0x654c5074`→`0x654c5075` | `test-fift` exit 1 at `validator elect request matches pre-extraction inline bytes` | `9fc7fe6bd98d189771908416b12d2ee6dc0c842ce7ad019c70af483204ddca70` |
+| Restore final source and run exact-answer T09 | exit 0, 1/1 | `146d559e78609cfa68ec3171e9e4fe5b9e6eaca43161111f3a68ac343c4898c7` |
+| Full `./scripts/check-regression-db.sh . build` on final source | exit 0; every recorded answer still has a test | `f60b3989882cc335518146ff13fb7f0e5e9489dbf1380b8d20af4e3b67b3441a` |
+| Clean classical-caller inventory on final source | exit 0; eight product path/word files remain | `8cd0a10f0159b4cf4dd247063fcca73e66bf570566d705af064b9b68db24dfc7` |
+
+Each reverse control has a unique patch accepted by `git apply --check` against the **final** source: `product-include-mutant.patch` SHA-256 `a82c3bb9096b490ad96182d658d1b9e9271e978f03a880584e535cb212593e11`, `preimage-tag-mutant.patch` SHA-256 `ff3fac1751c4d5da672cd7f182e5c99ca125f174f62e6fb68ea1d785a5dc14d1`. The `script -e` raw logs include exact command exit codes. Clean T09 source SHA-256 `3c431230208bab35d6495fe4789366b3289aa6459c9910c666f45df05b8a577f`; product-include mutant source `3ca3621a16cd21c0713de1d9facd75d5d341c7f2853222e83e840f4fbbed8056`; one-bit preimage mutant source `d08e2c08d105cfbec5a43e9a6388f4e4a2f283c74f4b5dc7201fc48288a6e8c7`. Caller guard `414d06f76d4ed71acedeaadc78ba3880d5b3d207f20ebb6dbf1cf17bfeb05f6a`; frozen answer file `9653b4411d3c7213f6b6845b6cec231a5b97e8fdf2101244cdbab41c69125e20`; `build/test-fift` `2a5b914d75460bee87c2d81c61a2069a02686203df96643442dea3e0e2297984`.
+
+A local staged `cmake --install build --prefix /datax/t09-install-stage-20260924` exited 0. Its installed `smartcont` + `lib/fift` file list is retained as `install-source-list.raw.log`, SHA-256 `f0d651357e7bbb2e40164a0e512d108abf51ee8cf321bbd16492e9a3a4d0f3aa`: T09's test file is absent; the two base scripts and `Validator.fif` are present. This is an install-list boundary, not a published release ZIP. T09 remains pending committed-tree CI and independent review.
