@@ -13,6 +13,11 @@ mutations = [
     ("crypto/smartcont/config-code.fc", "param_id == 16", "param_id == 160"),
     ("crypto/smartcont/config-code.fc", "param_id == 28", "param_id == 280"),
     ("crypto/smartcont/config-code.fc", "param_id >= 34", "param_id >= 340"),
+    (
+        "crypto/smartcont/config-code.fc",
+        "ifnot (valid_live_validator_set_limits?(cfg_dict, param_val))",
+        "ifnot (true)",
+    ),
     ("crypto/smartcont/config-code.fc", "total > min(max_validators", "total > min(uncapped_max_validators"),
     ("crypto/smartcont/config-code.fc", "main > min(max_main_validators", "main > min(uncapped_max_main_validators"),
     (

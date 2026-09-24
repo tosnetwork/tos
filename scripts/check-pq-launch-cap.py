@@ -73,7 +73,7 @@ markers = {
     ),
     "governance-installed live validator sets are capped": (
         "crypto/smartcont/config-code.fc",
-        "param_id >= 34) & (param_id <= 37) & (~ valid_live_validator_set_limits?(cfg_dict, param_val))",
+        "if ((param_id >= 34) & (param_id <= 37)) { ifnot (valid_live_validator_set_limits?(cfg_dict, param_val))",
     ),
     "elector-installed set total is capped": (
         "crypto/smartcont/config-code.fc",
