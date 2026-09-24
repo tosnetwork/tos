@@ -1649,6 +1649,23 @@ int main(int argc, char **argv) {
       result.reset();
       return true;
     };
+    auto cancel_cut3_gate = [&] {
+      if (!n5_cut3 || !cut3_gate->load(std::memory_order_acquire)) {
+        return true;
+      }
+      std::optional<td::Result<td::Unit>> cancelled;
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(facade, &N5AcceptFacade::cancel_cut3,
+                                td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                  cancelled.emplace(std::move(outcome));
+                                }));
+      });
+      const auto deadline = td::Timestamp::in(5.0);
+      while (!cancelled.has_value() && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      return cancelled.has_value() && cancelled->is_ok();
+    };
     if (!wait_result("seed")) {
       return 1;
     }
@@ -1685,6 +1702,20 @@ int main(int argc, char **argv) {
                               }));
     });
     if (!wait_result(n5_cut3 ? "BlockProof-before-finalized-marker" : "Pool-to-finalized-marker")) {
+      if (n5_cut3) {
+        cancel_cut3_gate();
+        scheduler.run_in_context([&] {
+          publisher.reset();
+          bus.publish<consensus::StopRequested>();
+          bus = {};
+        });
+        const auto deadline = td::Timestamp::in(10.0);
+        while (!bus_stopped && !deadline.is_in_past()) {
+          scheduler.run(0.01);
+        }
+        scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
+        scheduler.stop();
+      }
       return 1;
     }
     if (n5_cut1 || n5_cut2 || n5_cut3) {
@@ -1709,22 +1740,9 @@ int main(int argc, char **argv) {
           return 1;
         }
       }
-      if (n5_cut3) {
-        std::optional<td::Result<td::Unit>> cancelled;
-        scheduler.run_in_context([&] {
-          td::actor::send_closure(facade, &N5AcceptFacade::cancel_cut3,
-                                  td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
-                                    cancelled.emplace(std::move(outcome));
-                                  }));
-        });
-        const auto deadline = td::Timestamp::in(5.0);
-        while (!cancelled.has_value() && !deadline.is_in_past()) {
-          scheduler.run(0.01);
-        }
-        if (!cancelled.has_value() || cancelled->is_error()) {
-          std::cerr << "N5_CUT3_FAILED: controlled facade cancellation did not complete\n";
-          return 1;
-        }
+      if (!cancel_cut3_gate()) {
+        std::cerr << "N5_CUT3_FAILED: controlled facade cancellation did not complete\n";
+        return 1;
       }
       scheduler.run_in_context([&] {
         publisher.reset();
