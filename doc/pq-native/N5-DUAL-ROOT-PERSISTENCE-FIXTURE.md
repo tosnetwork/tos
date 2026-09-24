@@ -1,5 +1,10 @@
 # N01: dual-root Manager/consensus DB restart fixture
 
+This document records the `e03f8d971`/`a33d36ec6` foundation and its former
+fixture-only marker. The current `439efb4ee` test replaces that marker with a
+verified FinalCert through production `SaveCertificate`; see
+`N5-FINALCERT-JOURNAL-FIXTURE.md`. Neither stage closes N01.
+
 Status: `e03f8d971` established the N01 **foundation**, not the complete N01
 write-after-cut fixture. N01 and N5 restart cuts N02–N07 remain OPEN. This is
 one test executable using a writer child and separate reader children, not a

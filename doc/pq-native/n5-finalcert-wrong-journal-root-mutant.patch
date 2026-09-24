@@ -1,0 +1,12 @@
+diff --git a/test/pq-native/n5-manager-db-fixture-test.cpp b/test/pq-native/n5-manager-db-fixture-test.cpp
+--- a/test/pq-native/n5-manager-db-fixture-test.cpp
++++ b/test/pq-native/n5-manager-db-fixture-test.cpp
+@@ -377,7 +377,7 @@ int main(int argc, char **argv) {
+     if (!run_actor(id, state, std::move(boc), argv[3], false, present)) {
+       return 1;
+     }
+-    if (!read_finalcert_journal(consensus_path(argv[3], session_id), session_id, expected_tl, present)) {
++    if (!read_finalcert_journal(consensus_path(std::string(argv[3]) + ".wrong", session_id), session_id, expected_tl, present)) {
+       return 1;
+     }
+     std::cout << (present ? "N5_MANAGER_DB_COLD_READ_OK" : "N5_MANAGER_DB_EMPTY_ROOT_OK")
