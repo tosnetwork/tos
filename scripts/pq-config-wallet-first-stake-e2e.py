@@ -177,7 +177,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         config.write_text(json.dumps(document, indent=2) + "\n")
         config.chmod(0o600)
         await cli(binary, config, env, "wallet", "create", "--name", "operator",
-                  "--version", "V1R3", "--workchain", "-1")
+                  "--version", "V1R3", "--workchain=-1")
         listed = json.loads(await cli(binary, config, env, "wallet", "ls", "--format", "json"))
         wallet_text = next(item["address"] for item in listed if item["name"] == "operator")
         wallet = Address(wallet_text)
