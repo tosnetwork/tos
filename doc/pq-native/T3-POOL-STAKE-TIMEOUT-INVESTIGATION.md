@@ -170,6 +170,32 @@ reused before the third window closes; do not extend the wait, alter Elector
 or consensus parameters, or report a second accepted stake until a new live
 run supplies it. T3 remains OPEN.
 
+### Support-capital recovery gate (implementation pending live evidence)
+
+The script now records each keeper poll's raw `getconfig 34`,
+`participant_list_extended` (including `elect_at`/`elect_close`), Elector
+`past_elections_list`, and all four supporting pools' raw `get_pool_data`,
+account balance and `compute_returned_stake`. The per-poll paths and parsed
+values enter the run report. `get_pool_data` on the single-nominator support
+pool has compatibility state/counters, so those fields are **recorded, not
+used as proof of maturity**.
+
+The keeper retains the actual `unfreeze_at` and validator-set hash while a
+*retired* election remains in Elector's past list. `check_unfreeze()` then
+deletes that record when it creates owner credit. Consequently a positive
+credit and a still-present, mature past record are not the intended joint
+test. Reuse requires the prior live Config34 hash to match the observed
+retired record, a different current Config34 set, chain time past that
+record's actual `unfreeze_at`, its subsequent absence from the live past
+list, and sufficient credit on that **pool owner**. Only then does the pool's
+operator send `RECOVER_STAKE` through the pool. The script pages the pool's
+history to a pre-send LT+hash baseline and requires the matching Elector
+`0xf96f7324` reply and consumed credit plus increased pool balance. A
+fee-bearing recovery with an error or missing reply is not sent again on the
+next keeper tick. These checks are local tests and source guards until a new
+fixed-tree live run produces the corresponding chain artifacts. The 463f
+run remains failed; its unsent second order is not an Elector rejection.
+
 ## Contract-level falsification and bounded fixture correction
 
 The original section below deliberately preserves the hypothesis and its

@@ -86,11 +86,12 @@ from tostester.pq_election_fixture import (  # noqa: E402
     elector_reply,
     make_controller_fixture,
     make_pool_fixture,
+    parse_past_elections_list,
     participant_ids_from_runmethod,
     require_pq_stake_authorization_binding,
 )
 from tostester.zerostate import VALIDATOR_ECONOMICS_FAUCET_TOS  # noqa: E402
-from tosapi import tos_api  # noqa: E402
+from tosapi import tos_api, toslib_api  # noqa: E402
 
 T = TypeVar("T")
 
@@ -305,6 +306,62 @@ def stakeable_election_id_from_live_status(
     if elect_at == 0 or failed != 0 or finished != 0:
         return 0
     return elect_at if elect_close - chain_utime > minimum_window_seconds else 0
+
+
+def recoverable_support_election_ids(
+    *, submitted: set[int], recovered: set[int], current_set_id: int,
+    current_set_hash: int, known_set_hashes: dict[int, int],
+    retired_past: dict[int, dict[str, int]], live_past: dict[int, dict[str, int]],
+    chain_utime: int, credit: int,
+) -> list[int]:
+    """Require a retired set's observed *reset* unfreeze time and actual credit.
+
+    Elector removes a past-election record when it creates the pool credit.
+    An absent record alone is not maturity: we must have seen that record
+    after the set retired, then see it disappear and see the owner credit.
+    """
+    eligible: list[int] = []
+    for election_id in sorted(submitted - recovered):
+        observed = retired_past.get(election_id)
+        set_hash = known_set_hashes.get(election_id)
+        if (
+            election_id == current_set_id or set_hash is None or observed is None
+            or observed["vset_hash"] != set_hash or current_set_hash == set_hash
+            or election_id in live_past or chain_utime < observed["unfreeze_at"]
+        ):
+            continue
+        eligible.append(election_id)
+    return eligible if credit >= len(eligible) * NETWORK_MIN_STAKE else []
+
+
+def elector_credit_from_output(output: str) -> int:
+    match = re.search(r"result:\s*\[\s*(\d+)", output)
+    if match is None:
+        raise ValueError(f"cannot parse compute_returned_stake: {output[-800:]}")
+    return int(match.group(1))
+
+
+def support_election_retention_state(
+    election_id: int, *, current_set_id: int, known_set_hashes: dict[int, int],
+    live_past: dict[int, dict[str, int]], retired_past: dict[int, dict[str, int]],
+    chain_utime: int, credit: int,
+) -> str:
+    set_hash = known_set_hashes.get(election_id)
+    if set_hash is None:
+        return "set-hash-unobserved"
+    if election_id == current_set_id:
+        return "active-retained"
+    record = live_past.get(election_id)
+    if record is not None:
+        if record["vset_hash"] != set_hash:
+            return "past-hash-mismatch"
+        return "retired-frozen" if chain_utime < record["unfreeze_at"] else "retired-awaiting-unfreeze"
+    observed = retired_past.get(election_id)
+    if observed is None or observed["vset_hash"] != set_hash:
+        return "retired-reset-unobserved"
+    if chain_utime < observed["unfreeze_at"]:
+        return "retired-record-absent-before-unfreeze"
+    return "matured-owner-credit" if credit > 0 else "retired-record-absent-no-credit"
 
 
 def pool_controller_bounce(
@@ -1754,6 +1811,14 @@ class PoolLifecycle:
         self.single_pool_code: Cell | None = None
         self.controllers: list[ControllerFixture] = []
         self.support_pools: dict[int, PoolFixture] = {}
+        self.support_submitted: dict[int, set[int]] = {index: set() for index in range(1, 5)}
+        self.support_recovered: dict[int, set[int]] = {index: set() for index in range(1, 5)}
+        self.support_recovery_attempted: dict[int, set[int]] = {
+            index: set() for index in range(1, 5)
+        }
+        self.support_set_hashes: dict[int, int] = {}
+        self.support_retired_past: dict[int, dict[str, int]] = {}
+        self.support_snapshot_number = 0
         self.stake_feedback_baselines: dict[int, tuple[Any, Any]] = {}
         self.pool_reward_evidence: dict[str, Any] = {}
         self.pool_validator_selection: dict[str, Any] = {}
@@ -2176,15 +2241,16 @@ class PoolLifecycle:
     async def elector_returned_stake(self) -> int:
         """Return the Elector's exact credit for the pool before recovery."""
         assert self.pool_address is not None
+        return await self.elector_returned_stake_for(self.pool_address)
+
+    async def elector_returned_stake_for(self, pool_address: Address) -> int:
+        """Read matured credit by its owner account, never by validator ID."""
         output = await self.runmethod(
             raw_address(ELECTOR),
             "compute_returned_stake",
-            "0x" + self.pool_address.hash_part.hex(),
+            "0x" + pool_address.hash_part.hex(),
         )
-        match = re.search(r"result:\s*\[\s*(\d+)", output)
-        if match is None:
-            raise RuntimeError(f"cannot parse compute_returned_stake: {output[-800:]}")
-        return int(match.group(1))
+        return elector_credit_from_output(output)
 
     async def wallet_seqno(self, wallet: WalletV1) -> int:
         return (await wallet.current).seqno
@@ -3383,28 +3449,221 @@ class PoolLifecycle:
             not await self.has_withdraw_requests(),
         )
 
-    async def keep_elections_alive(self) -> None:
-        """Stake the other validators into every election that opens.
+    async def support_chain_snapshot(self, label: str) -> dict[str, Any]:
+        """Keep raw chain reads for every support owner and election window."""
+        assert self.client is not None
+        self.support_snapshot_number += 1
+        prefix = f"support-{self.support_snapshot_number:04d}"
 
-        Without this the network stops rotating the moment the pool sits a
-        round out, and everything downstream of a rotation stops with it.
-        """
-        entered: set[tuple[int, int]] = set()
+        def preserve(name: str, output: str) -> str:
+            path = self.artifacts_dir / f"{prefix}-{name}.txt"
+            path.write_text(output)
+            return str(path)
+
+        config_raw = await self.lite("time", "getconfig 34")
+        past_raw = await self.runmethod(raw_address(ELECTOR), "past_elections_list")
+        participant_raw = await self.runmethod(raw_address(ELECTOR), "participant_list_extended")
+        elector_state = await self.client.raw_get_account_state(ELECTOR)
+        current = re.search(r"utime_since:(\d+)", config_raw)
+        if current is None:
+            raise RuntimeError("support snapshot cannot identify live ConfigParam 34")
+        current_id = int(current.group(1))
+        current_hash = int.from_bytes((await self.client.get_config_param(34)).hash, "big")
+        past = parse_past_elections_list(past_raw)
+        prior_hash = self.support_set_hashes.get(current_id)
+        if prior_hash is not None and prior_hash != current_hash:
+            raise RuntimeError(f"support election {current_id} ConfigParam 34 hash changed")
+        self.support_set_hashes[current_id] = current_hash
+        for election_id, record in past.items():
+            known_hash = self.support_set_hashes.get(election_id)
+            if known_hash is not None and record["vset_hash"] != known_hash:
+                raise RuntimeError(f"support election {election_id} past vset hash changed")
+            if (
+                election_id != current_id and known_hash is not None
+                and record["unfreeze_at"] > elector_state.sync_utime
+            ):
+                # This is the actual time reset by update_active_vset_id,
+                # not election_id + elected_for + frozen_for.
+                previous = self.support_retired_past.get(election_id)
+                if previous is not None and record["unfreeze_at"] < previous["unfreeze_at"]:
+                    raise RuntimeError(
+                        f"support election {election_id} unfreeze time moved backwards"
+                    )
+                self.support_retired_past[election_id] = dict(record)
+        pools: dict[int, dict[str, Any]] = {}
+        for index, pool in sorted(self.support_pools.items()):
+            account = await self.client.raw_get_account_state(pool.address)
+            pool_raw = await self.runmethod(raw_address(pool.address), "get_pool_data")
+            credit_raw = await self.runmethod(
+                raw_address(ELECTOR), "compute_returned_stake",
+                "0x" + pool.address.hash_part.hex(),
+            )
+            pools[index] = {
+                "address": raw_address(pool.address),
+                "balance_nanotos": account.balance,
+                "account_sync_utime": account.sync_utime,
+                "pool_data_raw": preserve(f"pool-{index}-get_pool_data", pool_raw),
+                "credit_raw": preserve(f"pool-{index}-compute_returned_stake", credit_raw),
+                "elector_credit_nanotos": elector_credit_from_output(credit_raw),
+                "submitted_election_ids": sorted(self.support_submitted[index]),
+                "recovered_election_ids": sorted(self.support_recovered[index]),
+            }
+            pools[index]["election_retention"] = {
+                election_id: support_election_retention_state(
+                    election_id, current_set_id=current_id,
+                    known_set_hashes=self.support_set_hashes,
+                    live_past=past, retired_past=self.support_retired_past,
+                    chain_utime=elector_state.sync_utime,
+                    credit=pools[index]["elector_credit_nanotos"],
+                )
+                for election_id in self.support_submitted[index]
+            }
+        snapshot = {
+            "label": label,
+            "chain_utime": elector_state.sync_utime,
+            "current_config34_since": current_id,
+            "current_config34_hash": current_hash,
+            "past_elections": past,
+            "retired_past_observed": dict(self.support_retired_past),
+            "stakeable_election_id": stakeable_election_id_from_live_status(
+                participant_raw, elector_state.sync_utime
+            ),
+            "config34_raw": preserve("getconfig-34", config_raw),
+            "past_elections_raw": preserve("past_elections_list", past_raw),
+            "participant_list_raw": preserve("participant_list_extended", participant_raw),
+            "pool_data_semantics": (
+                "single-nominator get_pool_data reports compatibility state/counters; "
+                "neither is used to prove Elector credit maturity"
+            ),
+            "pools": pools,
+        }
+        self.event("support_chain_snapshot", **snapshot)
+        return snapshot
+
+    async def recover_support_pool(
+        self, index: int, election_ids: list[int], before: dict[str, Any]
+    ) -> None:
+        """Recover only chain-matured owner credit via that pool's own opcode."""
+        assert self.client is not None
+        pool = self.support_pools[index]
+        owner = before["pools"][index]
+        credit = owner["elector_credit_nanotos"]
+        baseline = (await self.client.raw_get_account_state(pool.address)).last_transaction_id
+        if baseline is None:
+            raise RuntimeError(f"support pool {index} has no pre-recovery transaction cursor")
+        query_id = time.time_ns()
+        # A refused or unobserved fee-bearing recovery must not be sent again
+        # by the next keeper tick merely because its credit remains visible.
+        self.support_recovery_attempted[index].update(election_ids)
+        self.event(
+            "support_recovery_order", index=index, election_ids=election_ids,
+            query_id=query_id, credit_nanotos=credit,
+            balance_before_nanotos=owner["balance_nanotos"],
+            baseline_lt=str(baseline.lt), baseline_hash=baseline.hash.hex(),
+        )
+        await self.send(
+            self.wallets[index], dest=pool.address, amount=NANO,
+            body=pool_message(0x47657424, query_id),
+            label=f"support-pool-{index}-recover-stake",
+        )
+        deadline = time.monotonic() + 60
+        last_scan: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            transactions, pages, complete, latest = await _transactions_since(
+                self.client, pool.address, baseline
+            )
+            last_scan = {
+                "transactions_scanned": len(transactions), "pages_scanned": pages,
+                "baseline_covered": complete, "latest_lt": str(latest.lt),
+            }
+            if not complete:
+                raise RuntimeError(f"support pool {index} recovery history is incomplete: {last_scan}")
+            reply = elector_reply(transactions, query_id)
+            if reply is not None:
+                opcode, detail = reply
+                reply_boc = None
+                for transaction in transactions:
+                    message = transaction.in_msg
+                    if (
+                        message is None or message.source is None
+                        or Address(message.source.account_address) != ELECTOR
+                        or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)
+                    ):
+                        continue
+                    body = Cell.one_from_boc(message.msg_data.body).begin_parse()
+                    if body.remaining_bits >= 96 and body.load_uint(32) == opcode \
+                            and body.load_uint(64) == query_id:
+                        reply_boc = message.msg_data.body.hex()
+                        break
+                self.event(
+                    "support_recovery_reply", index=index, query_id=query_id,
+                    opcode=f"0x{opcode:08x}", detail=detail,
+                    reply_boc_hex=reply_boc, **last_scan,
+                )
+                if opcode != 0xF96F7324 or detail != 0 or reply_boc is None:
+                    raise AssertionError(
+                        f"support pool {index} recovery refused: opcode=0x{opcode:08x} "
+                        f"detail={detail}, query_id={query_id}"
+                    )
+                await self.retry(
+                    lambda: self.elector_returned_stake_for(pool.address),
+                    timeout=60, description=f"support pool {index} credit consumed",
+                    predicate=lambda value: value == 0,
+                )
+                balance_after = await self.retry(
+                    lambda: self.balance(pool.address), timeout=60,
+                    description=f"support pool {index} credit returned to owner",
+                    predicate=lambda value: value >= owner["balance_nanotos"] + credit - 2 * NANO,
+                )
+                self.support_recovered[index].update(election_ids)
+                self.event(
+                    "support_pool_recovered", index=index, election_ids=election_ids,
+                    query_id=query_id, balance_before_nanotos=owner["balance_nanotos"],
+                    balance_after_nanotos=balance_after, credit_nanotos=credit,
+                )
+                await self.support_chain_snapshot(f"support-{index}-recovered")
+                return
+            await asyncio.sleep(2)
+        raise TimeoutError(
+            f"support pool {index} recovery reply for query {query_id} not observed: {last_scan}"
+        )
+
+    async def keep_elections_alive(self) -> None:
+        """Rotate support validators, reusing only chain-proven matured capital."""
         while True:
             try:
-                election_id = await self.active_election_id()
-                if election_id:
-                    for index in range(1, len(self.nodes)):
-                        if (index, election_id) in entered:
-                            continue
-                        balance = await self.balance(self.support_pools[index].address)
-                        if balance < POOL_STAKE_VALUE + MIN_TOS_FOR_STORAGE:
-                            continue
-                        await self.stake_support_pool(index, election_id)
-                        entered.add((index, election_id))
+                snapshot = await self.support_chain_snapshot("keeper-poll")
+                election_id = snapshot["stakeable_election_id"]
+                for index in range(1, len(self.nodes)):
+                    pool = snapshot["pools"][index]
+                    eligible = recoverable_support_election_ids(
+                        submitted=self.support_submitted[index],
+                        recovered=self.support_recovered[index],
+                        current_set_id=snapshot["current_config34_since"],
+                        current_set_hash=snapshot["current_config34_hash"],
+                        known_set_hashes=self.support_set_hashes,
+                        retired_past=self.support_retired_past,
+                        live_past=snapshot["past_elections"],
+                        chain_utime=snapshot["chain_utime"],
+                        credit=pool["elector_credit_nanotos"],
+                    )
+                    if eligible and not any(
+                        election in self.support_recovery_attempted[index]
+                        for election in eligible
+                    ):
+                        await self.recover_support_pool(index, eligible, snapshot)
+                        pool["balance_nanotos"] = await self.balance(self.support_pools[index].address)
+                    if not election_id or election_id in self.support_submitted[index]:
+                        continue
+                    if pool["balance_nanotos"] < POOL_STAKE_VALUE + MIN_TOS_FOR_STORAGE:
+                        continue
+                    if await self.stakeable_election_id() != election_id:
+                        break
+                    await self.stake_support_pool(index, election_id)
+                    self.support_submitted[index].add(election_id)
             except asyncio.CancelledError:
                 raise
-            except Exception as error:  # noqa: BLE001 - a missed round is not fatal
+            except Exception as error:  # noqa: BLE001 - report the missed rotation
                 self.event("keep_elections_alive_error", error=repr(error))
             await asyncio.sleep(20)
 

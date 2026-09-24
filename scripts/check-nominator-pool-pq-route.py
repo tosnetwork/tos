@@ -69,6 +69,9 @@ def validate(source: str) -> None:
     window = method(tree, "stakeable_election_id")
     window_parser = method(tree, "stakeable_election_id_from_live_status")
     upkeep = method(tree, "keep_elections_alive")
+    support_snapshot = method(tree, "support_chain_snapshot")
+    support_eligibility = method(tree, "recoverable_support_election_ids")
+    support_recovery = method(tree, "recover_support_pool")
     selection = method(tree, "record_pool_validator_selection")
     recover = method(tree, "recover")
     execute = method(tree, "execute")
@@ -178,6 +181,35 @@ def validate(source: str) -> None:
             "final pool order is not preceded by a same-election live-window recheck")
     require(bool(calls(upkeep, "stake_support_pool")) and not calls(upkeep, "stake_directly"),
             "election upkeep bypasses controller-backed support pools")
+    snapshot_text = ast.unparse(support_snapshot)
+    require(all(token in snapshot_text for token in (
+        "'getconfig 34'", "'past_elections_list'", "'participant_list_extended'",
+        "'get_pool_data'", "'compute_returned_stake'", "elector_state.sync_utime",
+        "self.support_retired_past[election_id] = dict(record)",
+        "support_election_retention_state", "'election_retention'",
+    )), "support snapshot lost a live set, true unfreeze, pool state, owner credit or window read")
+    eligibility_text = ast.unparse(support_eligibility)
+    require(all(token in eligibility_text for token in (
+        "election_id == current_set_id", "current_set_hash == set_hash",
+        "observed['vset_hash'] != set_hash", "election_id in live_past",
+        "chain_utime < observed['unfreeze_at']",
+        "credit >= len(eligible) * NETWORK_MIN_STAKE",
+    )), "support credit reuse is no longer gated by retired Config34, actual unfreeze, deleted past record and owner credit")
+    recovery_text = ast.unparse(support_recovery)
+    require(all(token in recovery_text for token in (
+        "pool_message(1197831204, query_id)", "_transactions_since", "elector_reply",
+        "opcode != 4184830756", "detail != 0", "reply_boc is None",
+        "self.support_recovered[index].update(election_ids)",
+    )), "support recovery no longer requires a pool-owned order and exact Elector reply")
+    upkeep_text = ast.unparse(upkeep)
+    require(all(token in upkeep_text for token in (
+        "self.support_chain_snapshot('keeper-poll')", "recoverable_support_election_ids",
+        "self.recover_support_pool(index, eligible, snapshot)",
+        "await self.stakeable_election_id() != election_id",
+        "self.support_submitted[index].add(election_id)",
+    )), "support keeper no longer proves recovery and open window before reusing capital")
+    require(one_call(upkeep, "recover_support_pool").lineno < one_call(upkeep, "stake_support_pool").lineno,
+            "support keeper spends another principal before attempting mature pool credit recovery")
     selection_text = ast.unparse(selection)
     require("self.config34_selection" in selection_text and "validator_adnl_pairs" in selection_text,
             "live ConfigParam 34 no longer checks controller/ADNL pairing")
@@ -213,7 +245,10 @@ def self_test(source: str) -> None:
         "budget bypassed": ("**require_lifecycle_funding_budget(", "**dict("),
         "one support principal": ("SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE", "SUPPORT_POOL_CAPITAL = 1 * POOL_STAKE_VALUE"),
         "wrong election accepted": ("data.stake_at == election_id", "data.stake_at >= 0"),
-        "credit not consumed": ("predicate=lambda value: value == 0", "predicate=lambda value: value >= 0"),
+        "credit not consumed": (
+            "description=\"Elector consumed the primary pool's recovered credit\",\n            predicate=lambda value: value == 0",
+            "description=\"Elector consumed the primary pool's recovered credit\",\n            predicate=lambda value: value >= 0",
+        ),
         "controller allowance omitted":
             (" + CONTROLLER_FORWARDING_ALLOWANCE\n", "\n"),
         "controller allowance zeroed":
@@ -237,6 +272,30 @@ def self_test(source: str) -> None:
         "final election recheck removed":
             ("if await self.stakeable_election_id() != final_election:",
              "if False and await self.stakeable_election_id() != final_election:"),
+        "support past record ignored": (
+            "or election_id in live_past or chain_utime < observed[\"unfreeze_at\"]",
+            "or False or chain_utime < observed[\"unfreeze_at\"]",
+        ),
+        "support owner credit ignored": (
+            "credit >= len(eligible) * NETWORK_MIN_STAKE",
+            "credit >= 0",
+        ),
+        "support active set reused": (
+            "election_id == current_set_id or set_hash is None",
+            "False or set_hash is None",
+        ),
+        "support true unfreeze ignored": (
+            "or election_id in live_past or chain_utime < observed[\"unfreeze_at\"]",
+            "or election_id in live_past or False",
+        ),
+        "support exact reply ignored": (
+            "if opcode != 0xF96F7324 or detail != 0 or reply_boc is None:",
+            "if reply_boc is None:",
+        ),
+        "support recovery bypassed": (
+            "await self.recover_support_pool(index, eligible, snapshot)",
+            "await self.balance(self.support_pools[index].address)",
+        ),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
@@ -252,7 +311,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and Config34 lookup are wired; final stake selection uses Elector close/finished and chain time with a same-ID recheck; the second-stake timeout pages to pre-order cursors and records the exact order, Elector reply, controller bounce and relay result; no live second stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: fixture identity and PQ pool-order wiring checked; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; final stake selection requires an open window and same-ID recheck; no live second stake is claimed")
 
 
 if __name__ == "__main__":

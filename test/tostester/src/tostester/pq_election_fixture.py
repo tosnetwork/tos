@@ -229,6 +229,30 @@ def participant_ids_from_runmethod(output: str) -> set[int]:
     return ids
 
 
+def parse_past_elections_list(output: str) -> dict[int, dict[str, int]]:
+    """Read the Elector's actual, possibly reset unfreeze times."""
+    result = re.search(r"\bresult:\s*\[(.*?)\]\s*remote result", output, re.S)
+    if result is None:
+        raise ValueError("Elector past_elections_list has no trusted result")
+    body = result.group(1)
+    entries = re.findall(r"\[\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*\]", body)
+    if len(entries) != len(re.findall(r"\[\s*\d+", body)):
+        raise ValueError("Elector past_elections_list has an unparsed record")
+    if not entries and not re.fullmatch(r"\s*\(\s*\)\s*", body):
+        raise ValueError("Elector past_elections_list has an unknown empty shape")
+    parsed = {
+        int(election_id): {
+            "unfreeze_at": int(unfreeze_at),
+            "vset_hash": int(vset_hash),
+            "stake_held": int(stake_held),
+        }
+        for election_id, unfreeze_at, vset_hash, stake_held in entries
+    }
+    if len(parsed) != len(entries):
+        raise ValueError("Elector past_elections_list repeats an election ID")
+    return parsed
+
+
 def _birth_witness(code: Cell, data: Cell) -> Cell:
     """The exact four-number controller_birth_witness_v1 sent to the elector."""
     return (

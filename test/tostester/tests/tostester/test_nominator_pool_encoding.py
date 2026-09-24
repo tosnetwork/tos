@@ -218,6 +218,193 @@ def test_retained_e48_elector_reply_boc_names_the_second_order_and_reason():
     assert body.remaining_bits == 0 and body.remaining_refs == 0
 
 
+def test_support_credit_reuse_requires_retired_chain_record_and_exact_owner_credit():
+    election_id = 1790215703
+    set_hash = 0x1234
+    recorded = {"unfreeze_at": 1790216500, "vset_hash": set_hash, "stake_held": 180}
+    common = dict(
+        submitted={election_id}, recovered=set(), current_set_id=election_id,
+        current_set_hash=set_hash, known_set_hashes={election_id: set_hash},
+        retired_past={election_id: recorded}, live_past={election_id: recorded},
+        chain_utime=1790216800, credit=lifecycle.NETWORK_MIN_STAKE,
+    )
+    eligible = lifecycle.recoverable_support_election_ids
+    assert eligible(**common) == [], "an active set remains retained past an estimated expiry"
+    retired = {**common, "current_set_id": election_id + 300, "current_set_hash": 0x5678}
+    assert eligible(**{**retired, "chain_utime": recorded["unfreeze_at"] - 1}) == [], (
+        "actual unfreeze time, not the election schedule, controls maturity"
+    )
+    assert eligible(retired_past={}, **{k: v for k, v in retired.items() if k != "retired_past"}) == [], (
+        "a never-observed retired record cannot be inferred from absence"
+    )
+    assert eligible(**retired) == [], "a still-listed past election has not created credit"
+    mature = {**retired, "live_past": {}}
+    assert eligible(**{**mature, "current_set_id": election_id}) == [], (
+        "the live Config34 ID alone keeps an active rollover retained"
+    )
+    assert eligible(**{**mature, "current_set_hash": set_hash}) == [], (
+        "a reused active Config34 hash also prevents an inconsistent maturity claim"
+    )
+    assert eligible(**{**mature, "credit": 0}) == [], "absence without owner credit is not recovery"
+    assert eligible(**{**mature, "known_set_hashes": {election_id: 0x9999}}) == [], (
+        "a credit cannot be attributed to a mismatched validator-set hash"
+    )
+    assert eligible(**mature) == [election_id]
+    assert eligible(**{**mature, "recovered": {election_id}}) == [], (
+        "one matured credit is never recovered twice"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_opcode", [0xF96F7324, 0xFFFFFFFE])
+async def test_support_recovery_requires_exact_elector_reply_and_pool_balance(
+    tmp_path, monkeypatch, reply_opcode
+):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="support-recovery")
+    pool = Address((-1, bytes([0x71]) * 32))
+    runner.support_pools[1] = SimpleNamespace(address=pool)
+    runner.wallets = [None, object()]
+    baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x10]) * 32)
+    before_balance = 20 * lifecycle.NANO
+    credit = lifecycle.NETWORK_MIN_STAKE
+    state = {"sent": False, "query_id": None}
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            assert address == pool
+            return SimpleNamespace(last_transaction_id=baseline)
+
+    runner.client = FakeClient()
+
+    async def send(wallet, *, dest, amount, body, label):
+        assert wallet is runner.wallets[1] and dest == pool
+        assert amount == lifecycle.NANO and label == "support-pool-1-recover-stake"
+        view = body.begin_parse()
+        assert view.load_uint(32) == 0x47657424
+        state["query_id"] = view.load_uint(64)
+        assert view.remaining_bits == 0 and view.remaining_refs == 0
+        state["sent"] = True
+
+    async def transactions_since(client, address, cursor):
+        assert state["sent"] and client is runner.client and address == pool and cursor == baseline
+        body = Builder().store_uint(reply_opcode, 32).store_uint(state["query_id"], 64)
+        if reply_opcode != 0xF96F7324:
+            body.store_uint(2, 32)
+        message = SimpleNamespace(
+            source=toslib_api.AccountAddress(lifecycle.ELECTOR.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=body.end_cell().to_boc()),
+        )
+        return [SimpleNamespace(in_msg=message)], 1, True, baseline
+
+    async def credit_after(address):
+        assert address == pool and state["sent"]
+        return 0
+
+    async def balance_after(address):
+        assert address == pool and state["sent"]
+        return before_balance + credit
+
+    async def after_snapshot(label):
+        assert label == "support-1-recovered"
+        return {}
+
+    monkeypatch.setattr(runner, "send", send)
+    monkeypatch.setattr(lifecycle, "_transactions_since", transactions_since)
+    monkeypatch.setattr(runner, "elector_returned_stake_for", credit_after)
+    monkeypatch.setattr(runner, "balance", balance_after)
+    monkeypatch.setattr(runner, "support_chain_snapshot", after_snapshot)
+    snapshot = {"pools": {1: {
+        "balance_nanotos": before_balance, "elector_credit_nanotos": credit,
+    }}}
+    if reply_opcode != 0xF96F7324:
+        with pytest.raises(AssertionError, match="recovery refused: opcode=0xfffffffe"):
+            await runner.recover_support_pool(1, [123], snapshot)
+        assert runner.support_recovered[1] == set()
+        assert runner.support_recovery_attempted[1] == {123}, (
+            "a fee-bearing refusal must not be sent again on the next keeper tick"
+        )
+    else:
+        await runner.recover_support_pool(1, [123], snapshot)
+        assert runner.support_recovered[1] == {123}
+        replies = [event for event in runner.report.events if event["event"] == "support_recovery_reply"]
+        assert replies[0]["query_id"] == state["query_id"]
+        assert replies[0]["opcode"] == "0xf96f7324"
+        assert replies[0]["reply_boc_hex"] is not None
+        assert replies[0]["baseline_covered"] is True
+
+
+@pytest.mark.asyncio
+async def test_support_snapshot_preserves_reset_unfreeze_before_elector_deletes_record(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="support-snapshot")
+    runner.artifacts_dir.mkdir()
+    pool = Address((-1, bytes([0x72]) * 32))
+    runner.support_pools[1] = SimpleNamespace(address=pool)
+    runner.support_submitted[1].add(100)
+    phase = {"set_id": 100, "hash": 0x1234, "utime": 190, "credit": 0}
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            assert address in (lifecycle.ELECTOR, pool)
+            return SimpleNamespace(sync_utime=phase["utime"], balance=20 * lifecycle.NANO)
+
+        async def get_config_param(self, number):
+            assert number == 34
+            return SimpleNamespace(hash=phase["hash"].to_bytes(32, "big"))
+
+    async def lite(*commands):
+        assert commands == ("time", "getconfig 34")
+        return f"config: (utime_since:{phase['set_id']} utime_until:700)\n"
+
+    async def runmethod(address, method, *args):
+        if method == "past_elections_list":
+            if phase["credit"]:
+                return "result: [ () ] remote result: []"
+            unfreeze = 250 if phase["set_id"] == 100 else 500
+            return f"result: [ ( [ 100 {unfreeze} 4660 180 ] ) ] remote result: []"
+        if method == "participant_list_extended":
+            return "result: [ 600 590 ( [ 9 [ 1 2 ] ] ) 0 0 ] remote result: []"
+        if method == "get_pool_data":
+            assert address == lifecycle.raw_address(pool)
+            return "result: [ 2 0 0 ] remote result: []"
+        if method == "compute_returned_stake":
+            assert address == lifecycle.raw_address(lifecycle.ELECTOR)
+            assert args == ("0x" + pool.hash_part.hex(),)
+            return f"result: [ {phase['credit']} ] remote result: []"
+        raise AssertionError(method)
+
+    runner.client = FakeClient()
+    runner.lite = lite
+    runner.runmethod = runmethod
+    active = await runner.support_chain_snapshot("active")
+    assert active["current_config34_since"] == 100
+    assert active["pools"][1]["election_retention"][100] == "active-retained"
+    assert runner.support_retired_past == {}, "the active record is not a mature-time witness"
+    phase.update(set_id=300, hash=0x5678, utime=400)
+    retired = await runner.support_chain_snapshot("retired")
+    assert retired["past_elections"][100]["unfreeze_at"] == 500
+    assert retired["pools"][1]["election_retention"][100] == "retired-frozen"
+    assert runner.support_retired_past[100]["unfreeze_at"] == 500
+    assert runner.support_set_hashes[100] == 0x1234
+    phase.update(utime=501, credit=lifecycle.NETWORK_MIN_STAKE)
+    credited = await runner.support_chain_snapshot("credited")
+    assert credited["past_elections"] == {}
+    assert credited["pools"][1]["election_retention"][100] == "matured-owner-credit"
+    assert lifecycle.recoverable_support_election_ids(
+        submitted=runner.support_submitted[1], recovered=set(),
+        current_set_id=credited["current_config34_since"],
+        current_set_hash=credited["current_config34_hash"],
+        known_set_hashes=runner.support_set_hashes,
+        retired_past=runner.support_retired_past,
+        live_past=credited["past_elections"], chain_utime=credited["chain_utime"],
+        credit=credited["pools"][1]["elector_credit_nanotos"],
+    ) == [100]
+    for snapshot in (active, retired, credited):
+        for key in ("config34_raw", "past_elections_raw", "participant_list_raw"):
+            assert Path(snapshot[key]).read_text(), key
+        for key in ("pool_data_raw", "credit_raw"):
+            assert Path(snapshot["pools"][1][key]).read_text(), key
+
+
 def test_stakeable_election_uses_retained_nested_lite_result_and_chain_time():
     # The result line is from the retained Stage A
     # pq-first-three-participants.txt lite-client artifact. In particular the
