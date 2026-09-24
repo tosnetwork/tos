@@ -76,6 +76,10 @@ def main() -> None:
     for marker in ("chain_provider.get_config_param(47).await?", "ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell)"):
         if policy_provider.count(marker) != 1:
             fail(f"shared live controller policy reader no longer uses the raw ConfigParam 47 cell: {marker}")
+    if policy_provider.count("chain_provider.get_config_param(15).await?") != 1:
+        fail("election parameters no longer come from the live chain provider")
+    if "client.get_config_param(15)" in policy_provider:
+        fail("election parameters are routed to validator control instead of chain JSON-RPC")
 
     direct_path = collapsed(
         root / "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs"
@@ -120,7 +124,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; config-wallet checks live pool roles before the verified birth-artifact builder and wallet message; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters use chain JSON-RPC; config-wallet checks live pool roles before the verified birth-artifact builder and wallet message; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 

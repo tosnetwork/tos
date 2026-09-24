@@ -18,14 +18,13 @@ use control_client::{
         AddAdnlAddressRq, AddValidatorAdnlAddrRq, AddValidatorPermKeyRq, AddValidatorTempKeyRq,
         ClientAPI, SignRq,
     },
-    config_params::{parse_config_param_15, parse_config_param_34, parse_config_param_36},
+    config_params::{parse_config_param_34, parse_config_param_36},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// TOS compatibility: DefaultElectionsProvider communicates with the TOS node via ADNL.
-// Config params 15, 34, 36 are fetched using lite_server.getConfigParams which is
-// supported identically on TOS nodes.
+// Validator control and chain JSON-RPC are distinct protocols. Election
+// parameters are read through the chain provider, not the control socket.
 pub struct DefaultElectionsProvider {
     client: ControlClientAdnl,
     chain_provider: Arc<dyn ChainProvider>,
@@ -115,8 +114,7 @@ impl ElectionsProvider for DefaultElectionsProvider {
         Ok(ValidatorConfig { keys })
     }
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15> {
-        let bytes = self.client.get_config_param(15).await?;
-        parse_config_param_15(&bytes)
+        election_parameters_from_live_config(self.chain_provider.get_config_param(15).await?)
     }
     async fn live_controller_policy(&mut self) -> anyhow::Result<Cell> {
         match self.chain_provider.get_config_param(47).await? {
@@ -166,5 +164,39 @@ impl ElectionsProvider for DefaultElectionsProvider {
                 Ok(None)
             }
         }
+    }
+}
+
+fn election_parameters_from_live_config(param: ConfigParamEnum) -> anyhow::Result<ConfigParam15> {
+    match param {
+        ConfigParamEnum::ConfigParam15(value) => Ok(value),
+        other => anyhow::bail!("live ConfigParam 15 has unexpected representation: {other:?}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn election_parameters_accept_only_live_param_15() {
+        let expected = ConfigParam15 {
+            validators_elected_for: 300,
+            elections_start_before: 180,
+            elections_end_before: 60,
+            stake_held_for: 180,
+        };
+        assert_eq!(
+            election_parameters_from_live_config(ConfigParamEnum::ConfigParam15(expected.clone()))
+                .unwrap(),
+            expected
+        );
+        let wrong = ConfigParamEnum::ConfigParamAny(47, Cell::default());
+        assert!(
+            election_parameters_from_live_config(wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("live ConfigParam 15 has unexpected representation")
+        );
     }
 }
