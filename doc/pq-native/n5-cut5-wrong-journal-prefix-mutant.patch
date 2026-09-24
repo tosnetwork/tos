@@ -1,6 +1,6 @@
 diff --git a/test/pq-native/c04-real-state-proof-test.cpp b/test/pq-native/c04-real-state-proof-test.cpp
 --- a/test/pq-native/c04-real-state-proof-test.cpp
 +++ b/test/pq-native/c04-real-state-proof-test.cpp
-@@ -1281 +1281 @@
+@@ -1286 +1286 @@
 -      for (auto &[key, value] : bus->db->get_by_prefix(tos_api::consensus_simplex_db_key_vote::ID)) {
 +      for (auto &[key, value] : bus->db->get_by_prefix(tos_api::consensus_simplex_db_key_finalizedBlock::ID)) {
