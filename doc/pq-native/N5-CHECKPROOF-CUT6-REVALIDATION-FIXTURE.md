@@ -6,7 +6,7 @@ The writer drives the existing production Pool → StateResolver → BlockAccept
 
 The valid proof produces a target handle with `inited_proof`, and its bytes can then be read back through the consumer RootDb. The negative changes one byte of the first ML-DSA signature while retaining the exact candidate, set, session, slot and claimed weight; `CheckProof` returns `pq signatures: invalid signature`, and the consumer RootDb has no target proof. The test neither boots a full node nor asserts power-loss durability, transport authentication, or cross-node convergence. Consumer genesis is seeded and read back in one process, so this is a RootDb API check, not a separate cold-reopen claim for the consumer state.
 
-On committed `c53885d5fe8efaf4d8e991978f7f708a5852ca15`, `test-n5-cut6-check-proof` passed 1/1 in 0.63 s, and the direct run exited 0. Raw artifacts are retained under `test/integration/.n5-cut6-checkproof-20260924/`:
+On committed `c53885d5fe8efaf4d8e991978f7f708a5852ca15`, `test-n5-cut6-check-proof` passed 1/1 in 0.63 s, and the direct run exited 0. On documentation HEAD `9652f79b1`, the nine named N5 CTests passed 9/9 in 5.68 s (`9652-n5-suite.log`, SHA-256 `ca1126c762c822465d8a523e65ccb00b62b38b6783692067e2fb687e13bbb3d3`). Raw artifacts are retained under `test/integration/.n5-cut6-checkproof-20260924/`:
 
 | Artifact | SHA-256 |
 | --- | --- |
