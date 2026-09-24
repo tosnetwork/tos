@@ -46,6 +46,23 @@ Two single-change production mutations were built and run from committed
 
 Both zero-context patch files pass `git apply --check --unidiff-zero` on
 the restored production source.
+
+## Retained mutant rebuilds from pushed `a4a4d472d`
+
+Mac's independent review of the earlier red cases reproduced the mutant
+source hashes but noted that their compiled binaries and build logs had not
+been retained. From pushed `a4a4d472d`, with only the corresponding one-line
+Pool mutation applied each time, the build logs and executable binaries were
+retained in the same artifact directory; the original Pool source was
+restored and the clean binary rebuilt before the final run. These files are
+not added to Git, but the exact paths and hashes are:
+
+| Control | Build log SHA-256 | Retained binary SHA-256 | Raw run SHA-256 / exit |
+| --- | --- | --- | --- |
+| No bootstrap | [build](../../test/integration/.n5-manager-db-fixture-20260924/a4-no-bootstrap-build.log) `d2026dc80d6ffe1206fc984d9fef31856f09785899d1406b79e6ebaa92532e6e` | [binary](../../test/integration/.n5-manager-db-fixture-20260924/a4-no-bootstrap-mutant) `fd6f3e8de24dfb94cae4f66217b2b0ae66ff83d350be368e26d129e184dc3da4` | [red](../../test/integration/.n5-manager-db-fixture-20260924/a4-no-bootstrap-red.raw.log) `1f65b855be5700345d547f878a84ffd06cb74fb747136abe9de49f68f103950e`, exit 1 at bootstrap replay; first cold absence controls pass |
+| No SaveCertificate | [build](../../test/integration/.n5-manager-db-fixture-20260924/a4-no-save-build.log) `425ff584905cc763346572d76dfb317403bdca11d1748650e33b19adce43db88` | [binary](../../test/integration/.n5-manager-db-fixture-20260924/a4-no-save-mutant) `1373caf0d77c4d0a4cd8379d6746f999053b8d26480c4be76fb0df4411bd140f` | [red](../../test/integration/.n5-manager-db-fixture-20260924/a4-no-save-red.raw.log) `9f5f6eed20fd19fcf6545126e545b1557f8fc54dc0bb319c4217f30d6d89d086`, exit 1 waiting for journal |
+| Restored production source | [build](../../test/integration/.n5-manager-db-fixture-20260924/a4-clean-rebuild.log) `425ff584905cc763346572d76dfb317403bdca11d1748650e33b19adce43db88` | [binary](../../test/integration/.n5-manager-db-fixture-20260924/a4-clean-binary) `2558c9421296b4e60c4d887ede5dac559b554b17fdfec4ad21fac530afacca76` | [green](../../test/integration/.n5-manager-db-fixture-20260924/a4-cut1-restored-green.raw.log) `aaccda9e78c4e81a7f8f8f8369ee0880d7a52b20428a01e288316740fbae5409`, exit 0 with cold marker/proof/signature comparison |
+
 The CI source guard was mutated in both directions: removing the CMake CTest
 registration returned exit 1 with `N5 write-after recovery CTest is absent`,
 and removing the workflow run returned exit 1 with `N5 FinalCert write-after
