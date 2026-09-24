@@ -1,4 +1,12 @@
-# N02 FinalCert write-after recovery slice (N01 remains OPEN)
+# N02 FinalCert write-after recovery slice — scoped RESOLVED (N01 remains OPEN)
+
+The controlled Cut 1 condition is satisfied on pushed `a4a4d472d`: Source
+guards run `36046064427` succeeded, and Branch PQ/Python run `36046064592`
+succeeded with `test-n5-cut1-finalcert-recovery` 1/1 passed on that exact SHA.
+The independent review accepted the exact-source mutation provenance and
+retained red/green build artifacts. This signs off only the deliberately
+gated FinalCert-journal→cold Pool-bootstrap recovery cut, not an arbitrary
+hard-crash window, the complete N01 fixture, or later cutpoints.
 
 Committed test source `b1e6c2bb9` extends the local actor/DB fixture with a
 controlled cut immediately after Pool's production `SaveCertificate`. The
@@ -69,5 +77,5 @@ and removing the workflow run returned exit 1 with `N5 FinalCert write-after
 bootstrap recovery behavior gate is absent`. Restored guard exit 0.
 This is a same-session write-after FinalCert recovery control, not evidence
 for N03's #13-only cut, N04's proof-before-marker cut, N05's post-marker
-idempotence, or N06's independent full-root rebuild. N01 and N02–N06 remain
+idempotence, or N06's independent full-root rebuild. N01 and N03–N06 remain
 OPEN pending their own cutpoint controls and fixed pushed-tree CI.
