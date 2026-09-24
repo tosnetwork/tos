@@ -177,10 +177,19 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
 
     runner.authorized_pool_order = build
     runner.send = send
+    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
+    baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            return SimpleNamespace(last_transaction_id=baseline)
+
+    runner.client = FakeClient()
     query_id = await runner.stake_through_pool(123, label="pool-stake-after-drain")
     assert query_id == seen["built"]
     assert seen["sent"] == "pool-stake-after-drain"
     assert runner.report.events[-1]["query_id"] == query_id
+    assert runner.stake_feedback_baselines[query_id] == (baseline, baseline)
 
 
 @pytest.mark.asyncio
@@ -199,28 +208,64 @@ async def test_second_stake_feedback_records_exact_elector_reason_and_relay_resu
     )
     elector_transaction = SimpleNamespace(
         data=b"recorded", decoded=SimpleNamespace(lt=90, in_msg=None),
+        transaction_id=toslib_api.Internal_transactionId(lt=90, hash=bytes([0x90]) * 32),
         in_msg=SimpleNamespace(
             source=toslib_api.AccountAddress(lifecycle.ELECTOR.to_str()),
             msg_data=toslib_api.Msg_dataRaw(body=elector_body),
         ),
     )
+    wallet = Address((-1, bytes([0x53]) * 32))
+    order_body = Builder().store_uint(0x4E73744B, 32).store_uint(query_id, 64).end_cell()
+    order_transaction = SimpleNamespace(
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=70,
+            in_msg=MessageAny(
+                info=InternalMsgInfo(
+                    ihr_disabled=True, bounce=True, bounced=False,
+                    src=wallet, dest=pool, value=CurrencyCollection(tomis=1),
+                    ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+                ), init=None, body=order_body,
+            ),
+        ),
+        transaction_id=toslib_api.Internal_transactionId(lt=70, hash=bytes([0x70]) * 32),
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(wallet.to_str())),
+    )
     relay_transaction = SimpleNamespace(
+        transaction_id=toslib_api.Internal_transactionId(lt=80, hash=bytes([0x80]) * 32),
         data=b"recorded", decoded=SimpleNamespace(
             lt=80, in_msg=_relay_message(pool, controller, query_id, bounced=False),
             description=SimpleNamespace(aborted=False),
         ),
         in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
     )
-    cursors = {pool: object(), controller: object()}
-    transactions = {pool: [elector_transaction], controller: [relay_transaction]}
+    baseline = toslib_api.Internal_transactionId(lt=40, hash=bytes([0x40]) * 32)
+    cursors = {
+        pool: toslib_api.Internal_transactionId(lt=90, hash=bytes([0x90]) * 32),
+        controller: toslib_api.Internal_transactionId(lt=80, hash=bytes([0x80]) * 32),
+    }
+    pool_second_page = toslib_api.Internal_transactionId(lt=75, hash=bytes([0x75]) * 32)
+    transactions = {controller: [relay_transaction]}
+    runner.stake_feedback_baselines[query_id] = (baseline, baseline)
 
     class FakeClient:
         async def raw_get_account_state(self, address):
             return SimpleNamespace(last_transaction_id=cursors[address])
 
         async def raw_get_transactions(self, address, cursor):
-            assert cursor is cursors[address]
-            return SimpleNamespace(transactions=transactions[address])
+            if address == pool:
+                if cursor is cursors[pool]:
+                    return SimpleNamespace(
+                        transactions=[elector_transaction],
+                        previous_transaction_id=pool_second_page,
+                    )
+                assert cursor is pool_second_page
+                return SimpleNamespace(
+                    transactions=[order_transaction], previous_transaction_id=baseline
+                )
+            assert cursor is cursors[controller]
+            return SimpleNamespace(
+                transactions=transactions[address], previous_transaction_id=baseline
+            )
 
     runner.client = FakeClient()
     monkeypatch.setattr(lifecycle, "_decoded_transaction", lambda raw: raw.decoded)
@@ -231,7 +276,25 @@ async def test_second_stake_feedback_records_exact_elector_reason_and_relay_resu
     assert event["elector_reply"] == (0xEE6F454C, 5)
     assert event["controller_bounce"] is None
     assert event["controller_relay"] == {"transaction_lt": "80", "aborted": False}
-    assert event["pool_transactions_scanned"] == 1
+    assert event["pool_transactions_scanned"] == 2
+    assert event["pool_pages_scanned"] == 2
+    assert event["pool_window_complete"] is True
+    assert event["controller_window_complete"] is True
+    assert event["pool_order_transaction_lt"] == "70"
+    assert event["classification"] == "ELECTOR_REPLY_OBSERVED"
+
+    class MissingOrder(FakeClient):
+        async def raw_get_transactions(self, address, cursor):
+            if address == pool and cursor is pool_second_page:
+                return SimpleNamespace(transactions=[], previous_transaction_id=baseline)
+            return await super().raw_get_transactions(address, cursor)
+
+    runner.client = MissingOrder()
+    await runner.record_pool_stake_feedback(query_id, label="pool-stake-after-drain")
+    uncovered = runner.report.events[-1]
+    assert uncovered["elector_reply"] == (0xEE6F454C, 5)
+    assert uncovered["pool_order_transaction_lt"] is None
+    assert uncovered["classification"] == "INCONCLUSIVE"
 
     class PoolQueryFails(FakeClient):
         async def raw_get_transactions(self, address, cursor):

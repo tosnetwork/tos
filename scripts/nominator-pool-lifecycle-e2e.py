@@ -217,6 +217,50 @@ def _relay_query_id(message: MessageAny, *, bounced: bool) -> int | None:
     return body.load_uint(64)
 
 
+def _pool_order_transaction_lt(transactions: list[Any], query_id: int) -> str | None:
+    for raw_transaction in transactions:
+        transaction = _decoded_transaction(raw_transaction)
+        message = transaction.in_msg
+        if message is None or not isinstance(message.info, InternalMsgInfo):
+            continue
+        body = message.body.begin_parse()
+        if body.remaining_bits >= 96 and body.load_uint(32) == 0x4E73744B:
+            if body.load_uint(64) == query_id:
+                return str(transaction.lt)
+    return None
+
+
+async def _transactions_since(
+    client: Any, address: Address, baseline: Any, *, max_pages: int = 64
+) -> tuple[list[Any], int, bool, Any]:
+    """Page backwards until the pre-order cursor is reached, not just one 10-tx page."""
+    state = await client.raw_get_account_state(address)
+    cursor = state.last_transaction_id
+    if cursor is None:
+        raise RuntimeError("account has no transaction cursor after stake order")
+    latest_cursor = cursor
+    transactions: list[Any] = []
+    pages = 0
+    while pages < max_pages:
+        if cursor.lt < baseline.lt:
+            raise RuntimeError("transaction cursor crossed the pre-order baseline")
+        if cursor.lt == baseline.lt:
+            if cursor.hash != baseline.hash:
+                raise RuntimeError("pre-order transaction hash changed")
+            return transactions, pages, True, latest_cursor
+        response = await client.raw_get_transactions(address, cursor)
+        pages += 1
+        transactions.extend(
+            item for item in response.transactions
+            if item.transaction_id is not None and item.transaction_id.lt > baseline.lt
+        )
+        previous = response.previous_transaction_id
+        if previous is None or previous.lt >= cursor.lt:
+            raise RuntimeError("transaction history did not advance toward the pre-order cursor")
+        cursor = previous
+    return transactions, pages, False, latest_cursor
+
+
 def pool_controller_bounce(
     transactions: list[Any], controller: Address, query_id: int
 ) -> dict[str, Any] | None:
@@ -1664,6 +1708,7 @@ class PoolLifecycle:
         self.single_pool_code: Cell | None = None
         self.controllers: list[ControllerFixture] = []
         self.support_pools: dict[int, PoolFixture] = {}
+        self.stake_feedback_baselines: dict[int, tuple[Any, Any]] = {}
         self.pool_reward_evidence: dict[str, Any] = {}
         self.pool_validator_selection: dict[str, Any] = {}
         self.integrated_profiles: list[IntegratedAgentProfile] = []
@@ -3365,7 +3410,28 @@ class PoolLifecycle:
         body = await self.authorized_pool_order(
             0, election_id, self.pool_address, query_id=query_id
         )
-        self.event("pool_stake_order", label=label, election_id=election_id, query_id=query_id)
+        cursor_evidence: dict[str, Any] = {}
+        if label == "pool-stake-after-drain":
+            assert self.client is not None
+            pool_cursor = (await self.client.raw_get_account_state(
+                self.pool_address
+            )).last_transaction_id
+            controller_cursor = (await self.client.raw_get_account_state(
+                self.controllers[0].address
+            )).last_transaction_id
+            if pool_cursor is None or controller_cursor is None:
+                raise RuntimeError("cannot establish pre-order pool/controller transaction cursors")
+            self.stake_feedback_baselines[query_id] = (pool_cursor, controller_cursor)
+            cursor_evidence = {
+                "pool_pre_order_cursor_lt": str(pool_cursor.lt),
+                "pool_pre_order_cursor_hash": pool_cursor.hash.hex(),
+                "controller_pre_order_cursor_lt": str(controller_cursor.lt),
+                "controller_pre_order_cursor_hash": controller_cursor.hash.hex(),
+            }
+        self.event(
+            "pool_stake_order", label=label, election_id=election_id,
+            query_id=query_id, **cursor_evidence,
+        )
         await self.send(
             self.wallets[0], dest=self.pool_address, amount=POOL_STAKE_GAS,
             body=body, label=label,
@@ -3376,21 +3442,33 @@ class PoolLifecycle:
         """Record exact on-chain feedback without treating an absent reply as a refusal."""
         assert self.client is not None and self.pool_address is not None
         controller_address = self.controllers[0].address
+        pool_baseline, controller_baseline = self.stake_feedback_baselines[query_id]
         details: dict[str, Any] = {
             "label": label, "query_id": query_id,
             "elector_reply": None, "controller_bounce": None,
             "controller_relay": None,
+            "pool_order_transaction_lt": None,
             "pool_transactions_scanned": 0, "controller_transactions_scanned": 0,
+            "pool_pages_scanned": 0, "controller_pages_scanned": 0,
+            "pool_window_complete": False, "controller_window_complete": False,
+            "pool_pre_order_cursor_lt": str(pool_baseline.lt),
+            "pool_pre_order_cursor_hash": pool_baseline.hash.hex(),
+            "controller_pre_order_cursor_lt": str(controller_baseline.lt),
+            "controller_pre_order_cursor_hash": controller_baseline.hash.hex(),
+            "pool_latest_cursor_lt": None, "controller_latest_cursor_lt": None,
             "collection_errors": {},
         }
         try:
-            pool_state = await self.client.raw_get_account_state(self.pool_address)
-            if pool_state.last_transaction_id is None:
-                raise RuntimeError("pool has no transaction cursor")
-            pool_transactions = (await self.client.raw_get_transactions(
-                self.pool_address, pool_state.last_transaction_id
-            )).transactions
+            pool_transactions, pages, complete, latest = await _transactions_since(
+                self.client, self.pool_address, pool_baseline
+            )
             details["pool_transactions_scanned"] = len(pool_transactions)
+            details["pool_pages_scanned"] = pages
+            details["pool_window_complete"] = complete
+            details["pool_latest_cursor_lt"] = str(latest.lt)
+            details["pool_order_transaction_lt"] = _pool_order_transaction_lt(
+                pool_transactions, query_id
+            )
             details["elector_reply"] = elector_reply(pool_transactions, query_id)
             details["controller_bounce"] = pool_controller_bounce(
                 pool_transactions, controller_address, query_id
@@ -3398,18 +3476,25 @@ class PoolLifecycle:
         except Exception as error:  # noqa: BLE001 - preserve the original stake timeout
             details["collection_errors"]["pool"] = repr(error)
         try:
-            controller_state = await self.client.raw_get_account_state(controller_address)
-            if controller_state.last_transaction_id is None:
-                raise RuntimeError("controller has no transaction cursor")
-            controller_transactions = (await self.client.raw_get_transactions(
-                controller_address, controller_state.last_transaction_id
-            )).transactions
+            controller_transactions, pages, complete, latest = await _transactions_since(
+                self.client, controller_address, controller_baseline
+            )
             details["controller_transactions_scanned"] = len(controller_transactions)
+            details["controller_pages_scanned"] = pages
+            details["controller_window_complete"] = complete
+            details["controller_latest_cursor_lt"] = str(latest.lt)
             details["controller_relay"] = controller_relay_result(
                 controller_transactions, self.pool_address, query_id
             )
         except Exception as error:  # noqa: BLE001 - preserve the original stake timeout
             details["collection_errors"]["controller"] = repr(error)
+        details["classification"] = (
+            "INCONCLUSIVE" if not details["pool_window_complete"]
+            or details["pool_order_transaction_lt"] is None
+            else "ELECTOR_REPLY_OBSERVED" if details["elector_reply"] is not None
+            else "CONTROLLER_BOUNCE_OBSERVED" if details["controller_bounce"] is not None
+            else "INCONCLUSIVE"
+        )
         self.event("pool_stake_feedback", **details)
 
     async def nominator_components(self, nominator: Nominator) -> tuple[int, int]:

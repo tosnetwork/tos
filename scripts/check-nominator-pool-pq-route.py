@@ -65,6 +65,7 @@ def validate(source: str) -> None:
     support = method(tree, "stake_support_pool")
     primary = method(tree, "stake_through_pool")
     feedback = method(tree, "record_pool_stake_feedback")
+    history = method(tree, "_transactions_since")
     upkeep = method(tree, "keep_elections_alive")
     selection = method(tree, "record_pool_validator_selection")
     recover = method(tree, "recover")
@@ -129,9 +130,18 @@ def validate(source: str) -> None:
             and "return query_id" in ast.unparse(primary),
             "primary pool order no longer binds a recorded query ID to its body")
     feedback_text = ast.unparse(feedback)
+    require(bool(calls(history, "raw_get_transactions")) and bool(calls(feedback, "_transactions_since"))
+            and "previous_transaction_id" in ast.unparse(history)
+            and "cursor = previous" in ast.unparse(history),
+            "second-stake feedback no longer pages raw transactions to the pre-order cursor")
     require(all(calls(feedback, name) for name in (
-        "raw_get_transactions", "elector_reply", "pool_controller_bounce", "controller_relay_result"
+        "elector_reply", "pool_controller_bounce", "controller_relay_result",
+        "_pool_order_transaction_lt",
     )), "second-stake feedback no longer reads Elector reply, controller bounce and relay")
+    require("INCONCLUSIVE" in ast.unparse(feedback)
+            and "pool_order_transaction_lt" in ast.unparse(feedback)
+            and "pool_window_complete" in ast.unparse(feedback),
+            "an uncovered second-stake order can be reported as a conclusive reply")
     require("except TimeoutError:" in source
             and "await self.record_pool_stake_feedback(final_query_id, label='pool-stake-after-drain')"
             in ast.unparse(execute),
@@ -190,6 +200,8 @@ def self_test(source: str) -> None:
             ("pool_controller_bounce(\n                pool_transactions", "ignored_bounce(\n                pool_transactions"),
         "controller relay ignored":
             ("controller_relay_result(\n                controller_transactions", "ignored_relay(\n                controller_transactions"),
+        "history stops after one page":
+            ("cursor = previous\n", "return transactions, pages, False, latest_cursor\n"),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
@@ -205,7 +217,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and Config34 lookup are wired; the second-stake timeout records its exact query ID, Elector reply, controller bounce and relay result; no live second stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and Config34 lookup are wired; the second-stake timeout pages to pre-order cursors and records the exact order, Elector reply, controller bounce and relay result; no live second stake is claimed")
 
 
 if __name__ == "__main__":

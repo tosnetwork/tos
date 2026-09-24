@@ -36,10 +36,13 @@ must not be assumed to diagnose the second round.
 The minimum next observation is an exact-query-ID read of the pool's inbound
 Elector opcode/reason and bounced controller relay, plus the matching
 controller transaction's abort bit. The lifecycle script now records that
-query ID at order construction and collects these chain transactions on the
-same 180-second failure path; null fields mean **not found in the queried
-transaction window or unavailable with a recorded collection error**, not
-“no bounce” or “no refusal”. A fresh fixed-tree
+query ID and both account cursors **before** wallet send. On the unchanged
+180-second failure path it pages `raw_getTransactions` (ten transactions per
+call) back to those cursor IDs, records pages/transactions scanned, and
+requires the exact pool order transaction to appear. If a cursor cannot be
+reached or the order is absent, the classification is `INCONCLUSIVE`; null
+reply/bounce fields mean **not found in the covered window or unavailable with
+a recorded collection error**, not “no bounce” or “no refusal”. A fresh fixed-tree
 diagnostic run is needed for that evidence. No wait extension or causal claim
 follows from this section. T3 remains OPEN.
 
