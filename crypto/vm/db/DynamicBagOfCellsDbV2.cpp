@@ -17,13 +17,37 @@ extern "C" int malloc_trim(size_t) __attribute__((weak));
 // whether jemalloc actually replaced malloc/free: the symbol resolves to
 // jemalloc's real implementation when the final link pulls in libjemalloc,
 // and to a null function pointer when it doesn't.
+//
+// Apple's linker cannot do this: it rejects an undefined weak_import symbol
+// that no linked library exports, even though the code checks it for null.
+// There tos_db instead records at build time whether it links jemalloc
+// (TOS_DB_LINKS_JEMALLOC, set in crypto/CMakeLists.txt from the same
+// JEMALLOC_LIBRARIES it links publicly), and mallctl is only referenced then.
 #if defined(__APPLE__)
-extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen)
-    __attribute__((weak_import));
+#if defined(TOS_DB_LINKS_JEMALLOC)
+#include <jemalloc/jemalloc.h>
+#endif
 #else
 extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen)
     __attribute__((weak));
 #endif
+
+namespace {
+using MallctlFn = int (*)(const char *, void *, size_t *, void *, size_t);
+
+// jemalloc's mallctl when this binary links it, otherwise null.
+MallctlFn linked_mallctl() {
+#if defined(__APPLE__)
+#if defined(TOS_DB_LINKS_JEMALLOC)
+  return &mallctl;
+#else
+  return nullptr;
+#endif
+#else
+  return mallctl;
+#endif
+}
+}  // namespace
 
 #include "td/utils/ThreadSafeCounter.h"
 #include "td/utils/base64.h"
@@ -102,7 +126,7 @@ std::string format_bytes_opt(std::optional<td::uint64> value) {
 void trim_allocator_after_cache_drop(std::optional<td::uint64> rss_before_drop) {
   const char *method = "unavailable";
   std::string result_desc = "unavailable";
-  if (mallctl != nullptr) {
+  if (const MallctlFn purge = linked_mallctl(); purge != nullptr) {
     method = "jemalloc_arena.4096.purge";
     // "arena.4096.purge" -- 4096 is jemalloc's MALLCTL_ARENAS_ALL constant
     // (see MALLCTL_ARENAS_ALL in <jemalloc/jemalloc.h>), which addresses all
@@ -111,7 +135,7 @@ void trim_allocator_after_cache_drop(std::optional<td::uint64> rss_before_drop) 
     // the linked libjemalloc 5.2.1 here. We don't include jemalloc.h just
     // for this constant since this file is compiled into tos_db for targets
     // that don't necessarily have jemalloc-dev headers available.
-    int err = mallctl("arena.4096.purge", nullptr, nullptr, nullptr, 0);
+    int err = purge("arena.4096.purge", nullptr, nullptr, nullptr, 0);
     result_desc = (err == 0) ? "ok" : (PSTRING() << "error(" << err << ")");
   }
 #if defined(__GLIBC__)

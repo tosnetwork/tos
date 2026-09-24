@@ -370,6 +370,12 @@ add_library(tos_db STATIC ${TOS_DB_SOURCE})
 target_include_directories(tos_db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto ${JEMALLOC_LIBRARIES})
+if (JEMALLOC_FOUND)
+  # Every tos_db consumer links jemalloc when it is found, so the allocator trim can
+  # reference mallctl directly on platforms whose linker has no usable weak symbols.
+  target_include_directories(tos_db PRIVATE ${JEMALLOC_INCLUDE_DIR})
+  target_compile_definitions(tos_db PRIVATE TOS_DB_LINKS_JEMALLOC=1)
+endif()
 
 add_library(fift-lib STATIC ${FIFT_SOURCE})
 target_include_directories(fift-lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
