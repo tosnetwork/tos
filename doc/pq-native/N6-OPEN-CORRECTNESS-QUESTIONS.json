@@ -6,6 +6,7 @@
     "classical-stake-producers-incompatible-with-pq-elector",
     "pool-first-stake-birth-witness-missing",
     "merkle-base-state-mismatch",
+    "simplex-restart-origin-state-replay",
     "pq-validator-set-installation-parity",
     "pq-unsafe-session-rotation"
   ],
@@ -39,6 +40,13 @@
       "location": "validator/consensus/chain-state.cpp:123",
       "observation": "Two recovered test-consensus-simplex2-pq-finality-e2e-100 errors under whole-suite parallel load show the same one-height mismatch. At 68ea21db4 on 2026-09-22 07:02:35 UTC, StateResolver actors 87 and 77 reported expected fixture state seqno 5 but applied to seqno 4; at efd22ce46 on 2026-09-22 12:46:23 UTC, actor 83 reported expected seqno 23 but applied to seqno 22. The four hashes were independently decoded, but original candidate IDs, BOCs and stacks were not retained. Production defect mechanism: StateResolver's QuerySlotSkipped shortcut could replace a signed candidate's exact parent with available_base. At bc379ec2c the resolver was changed to resolve the exact CandidateId. The actor regression at 1a2f33940 reproduces both original hash pairs under delayed local NotarCert(P) persistence; 528f0864e additionally reproduces them when only a peer holds NotarCert(P) and real Consensus::start_generation triggers resolution. Pre-fix red and fixed green each passed 40/40 for each ordering, with controls, bounded notready and cross-checks recorded in N6-MERKLE-REPRO-20260923.md. On 1e192efce the three branch CI jobs passed and the fixed actor tests passed independently in ordinary Release. This proves a production path can cause and the patch prevents the observed mismatch shape; it does not uniquely attribute either September failure to that path. Keep the incident OPEN for explicit historical attribution and integration-tree disposition.",
       "observed_commit": "efd22ce46",
+      "status": "OPEN"
+    },
+    "simplex-restart-origin-state-replay": {
+      "closure_condition": "On one fixed source tree, preserve an actor-level old-red/new-green regression in which a non-zerostate restart Start points at the latest accepted block, a finalized anchor is temporarily not ready, and the resolver replays the persisted candidate chain from its exact predecessor rather than the restart tip. Include a zerostate control and a transient origin-read recovery test, retain source/binary/log hashes, and pass the registered tests and branch CI on the fixed repair commit. A permanently unavailable exact origin must fail closed after bounded retries; it must never fall back to a different block state.",
+      "location": "validator/consensus/simplex/state-resolver.cpp:resolve_state_inner; test/validator/consensus/test-consensus.cpp:run_empty_chain_restart_test",
+      "observation": "C03/SR1 is a distinct restart-state defect found by deterministic actor testing, not a diagnosis of the September merkle-base-state-mismatch incident. The old resolver used the non-zerostate restart Start tip after a temporarily unavailable finalized anchor and applied an older candidate's Merkle update to that newer base (expected seqno 0, actual seqno 8). The historical incident was a base one block behind, whereas this reproduction makes the base ahead. A local repair derives the replay base from the oldest full candidate's block-header predecessor, preserves exact empty-candidate references, and bounds transient manager reads. Local red/green and fixed-head CI evidence are recorded separately in N6-C03-SIMPLEX-RESTART-ORIGIN.md; this question remains OPEN until the final fixed tree and CI are verified.",
+      "observed_commit": "d0861e5f2",
       "status": "OPEN"
     },
     "pq-validator-set-installation-parity": {

@@ -1009,6 +1009,16 @@ remain project-local. It also does not answer the open
 `merkle-base-state-mismatch` correctness question, which remains registered and
 release-blocking.
 
+C03/SR1 is tracked separately as `simplex-restart-origin-state-replay`. A
+deterministic actor test found that a non-zerostate restart Start could be used
+as the replay base after a transient manager-anchor failure, applying a
+seqno-1 update to a seqno-8 tip. The same final fixture is old-red/new-green
+with the exact predecessor repair; see `N6-C03-SIMPLEX-RESTART-ORIGIN.md` for
+source, binary and log hashes. This base-ahead failure is **not** evidence that
+the older 5/4 and 23/22 base-behind incidents followed this path. C03 remains
+OPEN pending fixed-head CI, and permanent exact-origin unavailability has a
+bounded fail-closed response but no claimed eventual-liveness proof.
+
 The separately named 4-validator tier is minimum BFT (`n = 3f + 1`, `f = 1`).
 It can establish protocol path, message flow and carrier transport at the
 minimum fault-tolerant configuration. It cannot characterize launch sizing or

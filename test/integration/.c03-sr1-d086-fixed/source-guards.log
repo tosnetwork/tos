@@ -1,0 +1,87 @@
+Internal ctest changing into directory: /home/tomi/tos-n6/build
+Test project /home/tomi/tos-n6/build
+      Start   1: test-quorum-static-grep
+ 1/39 Test   #1: test-quorum-static-grep ........................   Passed    0.05 sec
+      Start  47: n6-manifest-completeness
+ 2/39 Test  #47: n6-manifest-completeness .......................   Passed    4.35 sec
+      Start  48: n6-acceptance-criteria
+ 3/39 Test  #48: n6-acceptance-criteria .........................   Passed    0.06 sec
+      Start  49: n6-threshold-proposal
+ 4/39 Test  #49: n6-threshold-proposal ..........................   Passed    0.07 sec
+      Start  50: pq-launch-cap-source
+ 5/39 Test  #50: pq-launch-cap-source ...........................   Passed    0.08 sec
+      Start  51: pq-launch-cap-mutations
+ 6/39 Test  #51: pq-launch-cap-mutations ........................   Passed    0.89 sec
+      Start  52: n6-microbench-results
+ 7/39 Test  #52: n6-microbench-results ..........................   Passed    0.05 sec
+      Start  54: n6-cluster-runner
+ 8/39 Test  #54: n6-cluster-runner ..............................   Passed    0.51 sec
+      Start  55: branch-chain-python-ci-source
+ 9/39 Test  #55: branch-chain-python-ci-source ..................   Passed    0.03 sec
+      Start  56: n6-diagnostic-observations
+10/39 Test  #56: n6-diagnostic-observations .....................   Passed    0.03 sec
+      Start  57: n6-skip-vote-semantics
+11/39 Test  #57: n6-skip-vote-semantics .........................   Passed    0.04 sec
+      Start  58: lite-query-error-response-source
+12/39 Test  #58: lite-query-error-response-source ...............   Passed    0.03 sec
+      Start  59: adnl-query-id-trace-source
+13/39 Test  #59: adnl-query-id-trace-source .....................   Passed    0.02 sec
+      Start  60: adnl-query-id-analysis
+14/39 Test  #60: adnl-query-id-analysis .........................   Passed    0.06 sec
+      Start  61: pq-stake-auth-response-source
+15/39 Test  #61: pq-stake-auth-response-source ..................   Passed    0.03 sec
+      Start  62: tosctl-pq-stake-builder-source
+16/39 Test  #62: tosctl-pq-stake-builder-source .................   Passed    0.03 sec
+      Start  63: tosctl-election-chain-reads-source
+17/39 Test  #63: tosctl-election-chain-reads-source .............   Passed    0.04 sec
+      Start  64: dns-pq-vote-source
+18/39 Test  #64: dns-pq-vote-source .............................   Passed    0.02 sec
+      Start  65: pq-e2e-initial-validators-source
+19/39 Test  #65: pq-e2e-initial-validators-source ...............   Passed    0.27 sec
+      Start  66: pq-election-fixture-source
+20/39 Test  #66: pq-election-fixture-source .....................   Passed    0.37 sec
+      Start  67: classical-stake-callers-source
+21/39 Test  #67: classical-stake-callers-source .................   Passed    0.41 sec
+      Start  68: nominator-pool-pq-route-source
+22/39 Test  #68: nominator-pool-pq-route-source .................   Passed    8.05 sec
+      Start  69: config-genesis-data-layout-source
+23/39 Test  #69: config-genesis-data-layout-source ..............   Passed    0.03 sec
+      Start  70: config-validator-set-parity-source
+24/39 Test  #70: config-validator-set-parity-source .............   Passed    0.04 sec
+      Start  71: validator-id-key-hash-source
+25/39 Test  #71: validator-id-key-hash-source ...................   Passed    0.49 sec
+      Start  72: n6-scale-sweep-cardinality
+26/39 Test  #72: n6-scale-sweep-cardinality .....................   Passed    0.06 sec
+      Start  76: finality-evidence-admission-source
+27/39 Test  #76: finality-evidence-admission-source .............   Passed    0.23 sec
+      Start  77: finality-evidence-admission-marker-mutations
+28/39 Test  #77: finality-evidence-admission-marker-mutations ...   Passed    4.21 sec
+      Start  78: pending-finality-retry-policy-source
+29/39 Test  #78: pending-finality-retry-policy-source ...........   Passed    0.04 sec
+      Start  97: jsonrpc-route-gating
+30/39 Test  #97: jsonrpc-route-gating ...........................   Passed    0.04 sec
+      Start 120: benchmark-exclusion-source
+31/39 Test #120: benchmark-exclusion-source .....................   Passed    0.43 sec
+      Start 121: frozen-boc-toolchain-resolution
+32/39 Test #121: frozen-boc-toolchain-resolution ................   Passed    0.07 sec
+      Start 122: quic-ctest-isolation-source
+33/39 Test #122: quic-ctest-isolation-source ....................   Passed    0.04 sec
+      Start 123: validator-session-assembly-source
+34/39 Test #123: validator-session-assembly-source ..............   Passed    0.05 sec
+      Start 124: pq-unsafe-rotation-source
+35/39 Test #124: pq-unsafe-rotation-source ......................   Passed    0.03 sec
+      Start 125: pq-unsafe-rotation-source-mutations
+36/39 Test #125: pq-unsafe-rotation-source-mutations ............   Passed    0.32 sec
+      Start 161: pq-finality-boundary-source
+37/39 Test #161: pq-finality-boundary-source ....................   Passed    0.08 sec
+      Start 217: simplex-exact-ancestor-source-guard
+38/39 Test #217: simplex-exact-ancestor-source-guard ............   Passed    0.03 sec
+      Start 218: consensus-no-fallback
+39/39 Test #218: consensus-no-fallback ..........................   Passed    0.06 sec
+
+100% tests passed, 0 tests failed out of 39
+
+Label Time Summary:
+source-guard    =  21.77 sec*proc (39 tests)
+
+Total Test time (real) =  21.81 sec

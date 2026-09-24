@@ -27,6 +27,7 @@ REQUIRED_CORRECTNESS_QUESTION_IDS = (
     "classical-stake-producers-incompatible-with-pq-elector",
     "pool-first-stake-birth-witness-missing",
     "merkle-base-state-mismatch",
+    "simplex-restart-origin-state-replay",
     "pq-validator-set-installation-parity",
     "pq-unsafe-session-rotation",
 )

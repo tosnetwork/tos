@@ -1,0 +1,26 @@
+[1;33m[ 2][t 0][2026-09-24 10:52:24.428514183][candidate-codec.cpp:41][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000935 compression=none original_size=46 compressed_size=46[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.428916484][candidate-codec.cpp:69][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000021 compression=none compressed_size=46[0m
+[0m[ 4][t 0][2026-09-24 10:52:24.428970687][candidate-codec.cpp:126]	Compressing block candidate: 46 -> 33[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.428975604][candidate-codec.cpp:127][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000030 compression=compressed original_size=46 compressed_size=33[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.428991596][candidate-codec.cpp:153][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000010 compression=compressed compressed_size=33[0m
+[0m[ 4][t 0][2026-09-24 10:52:24.428999743][candidate-codec.cpp:172]	Decompressing block candidate :33 -> 46[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.429060392][candidate-codec.cpp:160][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000015 compression=compressedV2_ImprovedStructureLZ4 compressed_size=32[0m
+[0m[ 4][t 0][2026-09-24 10:52:24.429067651][candidate-codec.cpp:172]	Decompressing block candidate V2:32 -> 46[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.429078527][candidate-codec.cpp:160][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000003 compression=compressedV2_BaselineLZ4 compressed_size=38[0m
+[0m[ 4][t 0][2026-09-24 10:52:24.429088474][candidate-codec.cpp:172]	Decompressing block candidate V2:38 -> 46[0m
+[0m[ 4][t 0][2026-09-24 10:52:24.439731275][candidate-codec.cpp:126]	Compressing block candidate: 526339 -> 36979[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.439754393][candidate-codec.cpp:127][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=5A69DD6E083571F2CD24AE8E40B2D2CCB70ECF33A21089CDB1E8FA3D9C4A0A32 called_from=compression-ratio-test time_sec=0.002908 compression=compressed original_size=526339 compressed_size=36979[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.442546741][candidate-codec.cpp:153][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=5A69DD6E083571F2CD24AE8E40B2D2CCB70ECF33A21089CDB1E8FA3D9C4A0A32 called_from=consensus time_sec=0.002483 compression=compressed compressed_size=36979[0m
+[0m[ 4][t 0][2026-09-24 10:52:24.444664470][candidate-codec.cpp:172]	Decompressing block candidate :36979 -> 526339[0m
+[1;33m[ 2][t 0][2026-09-24 10:52:24.445355597][test-consensus.cpp:3634]	C03 harness switches: restart_from_last_accepted_block=true anchor_transient_failures=2 origin_transient_failures=0[0m
+[1;31m[ 1][t 1][2026-09-24 10:52:24.451171848][test-consensus.cpp:1101][!test-consensus]	Starting node #0.0[0m
+[1;31m[ 1][t 7][2026-09-24 10:52:30.459819438][test-consensus.cpp:1115][!test-consensus]	Stopping node #0.0[0m
+[1;31m[ 1][t 1][2026-09-24 10:52:30.460171526][pool.cpp:891][!consensus.0.0.SimplexPool]	consensus: the signed vote for FinalizeVote{id={4532, 1MxRzxCkvgkj3IRPKkcQ8DFxf59GBC/3LvmR19eCEYo=, ?}} was not committed ([Error : 653 : Actor destroyed]); not applying or broadcasting it[0m
+[1;31m[ 1][t 7][2026-09-24 10:52:30.483084825][test-consensus.cpp:1124][!test-consensus]	Stopped node #0.0[0m
+[1;31m[ 1][t 7][2026-09-24 10:52:31.920611765][test-consensus.cpp:1101][!test-consensus]	Starting node #0.0[0m
+[1;31m[ 1][t 4][2026-09-24 10:52:31.931378246][pool.cpp:878][!consensus.0.0.SimplexPool]	consensus: the vote intent for SkipVote{slot=4533} was not committed ([Error : 653 : Vote was already casted]); not signing it[0m
+[1;31m[ 1][t 4][2026-09-24 10:52:31.931600913][pool.cpp:878][!consensus.0.0.SimplexPool]	consensus: the vote intent for SkipVote{slot=4534} was not committed ([Error : 653 : Vote was already casted]); not signing it[0m
+[1;31m[ 1][t 2][2026-09-24 10:52:31.932617952][pool.cpp:878][!consensus.0.0.SimplexPool]	consensus: the vote intent for SkipVote{slot=4535} was not committed ([Error : 653 : Vote was already casted]); not signing it[0m
+[1;31m[ 1][t 3][2026-09-24 10:52:32.937729340][test-consensus.cpp:1115][!test-consensus]	Stopping node #0.0[0m
+[1;31m[ 1][t 2][2026-09-24 10:52:32.937844075][pool.cpp:891][!consensus.0.0.SimplexPool]	consensus: the signed vote for FinalizeVote{id={4995, 0QAR325k+sQTTSEUxtMAWmi8umHs6goYGUlEAXUZVgA=, ?}} was not committed ([Error : 653 : Actor destroyed]); not applying or broadcasting it[0m
+[1;31m[ 1][t 3][2026-09-24 10:52:32.953668660][test-consensus.cpp:1124][!test-consensus]	Stopped node #0.0[0m

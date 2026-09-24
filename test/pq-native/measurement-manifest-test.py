@@ -254,6 +254,14 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                         "status": "RESOLVED",
                         "resolved_by": "333333333",
                     },
+                    "simplex-restart-origin-state-replay": {
+                        "observation": "fixture restart-origin observation",
+                        "observed_commit": "d0861e5f2",
+                        "location": "fixture-resolver.cpp:1",
+                        "closure_condition": "fixture restart-origin closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "888888888",
+                    },
                 },
             }
         ),

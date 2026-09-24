@@ -1,0 +1,26 @@
+Internal ctest changing into directory: /home/tomi/tos-n6/build
+Test project /home/tomi/tos-n6/build
+      Start 194: test-consensus-simplex2-pq-state-resolver-catch-up
+ 1/10 Test #194: test-consensus-simplex2-pq-state-resolver-catch-up ......................   Passed    4.15 sec
+      Start 195: test-consensus-simplex2-pq-finality-e2e-single
+ 2/10 Test #195: test-consensus-simplex2-pq-finality-e2e-single ..........................   Passed    0.34 sec
+      Start 196: test-consensus-simplex2-pq-finality-e2e-multi
+ 3/10 Test #196: test-consensus-simplex2-pq-finality-e2e-multi ...........................   Passed    0.34 sec
+      Start 197: test-consensus-simplex2-pq-finality-e2e-21
+ 4/10 Test #197: test-consensus-simplex2-pq-finality-e2e-21 ..............................   Passed    0.55 sec
+      Start 198: test-consensus-simplex2-pq-finality-e2e-100
+ 5/10 Test #198: test-consensus-simplex2-pq-finality-e2e-100 .............................   Passed    7.21 sec
+      Start 212: test-consensus-simplex2-merkle-prospective-notar-exact-ancestor
+ 6/10 Test #212: test-consensus-simplex2-merkle-prospective-notar-exact-ancestor .........   Passed    0.93 sec
+      Start 220: test-consensus-simplex2-pq-empty-chain-restart
+ 7/10 Test #220: test-consensus-simplex2-pq-empty-chain-restart ..........................   Passed    7.41 sec
+      Start 221: test-consensus-simplex2-pq-restart-transient-anchor
+ 8/10 Test #221: test-consensus-simplex2-pq-restart-transient-anchor .....................   Passed    8.45 sec
+      Start 222: test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control
+ 9/10 Test #222: test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control ...   Passed    9.23 sec
+      Start 223: test-consensus-simplex2-pq-restart-transient-origin
+10/10 Test #223: test-consensus-simplex2-pq-restart-transient-origin .....................   Passed   10.05 sec
+
+100% tests passed, 0 tests failed out of 10
+
+Total Test time (real) =  48.68 sec
