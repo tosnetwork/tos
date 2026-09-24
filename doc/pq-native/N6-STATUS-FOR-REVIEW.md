@@ -1017,9 +1017,12 @@ as the replay base after a transient manager-anchor failure, applying a
 seqno-1 update to a seqno-8 tip. The same final fixture is old-red/new-green
 with the exact predecessor repair; see `N6-C03-SIMPLEX-RESTART-ORIGIN.md` for
 source, binary and log hashes. This base-ahead failure is **not** evidence that
-the older 5/4 and 23/22 base-behind incidents followed this path. C03 remains
-OPEN pending fixed-head CI, and permanent exact-origin unavailability has a
-bounded fail-closed response but no claimed eventual-liveness proof.
+the older 5/4 and 23/22 base-behind incidents followed this path. On pushed
+`507c039dc`, the workflow's five named actor controls passed locally and in
+Branch PQ/Python run `36026270609`; Source guards run `36026270421` also
+succeeded. C03's bounded replay/fail-closed safety question is RESOLVED.
+Permanent exact-origin unavailability still has no claimed eventual-liveness
+proof, and the separate historical Merkle attribution remains OPEN.
 
 The separately named 4-validator tier is minimum BFT (`n = 3f + 1`, `f = 1`).
 It can establish protocol path, message flow and carrier transport at the

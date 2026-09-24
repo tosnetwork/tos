@@ -1,6 +1,6 @@
 # C03 / SR1: restart origin replay
 
-Status: local actor RED/GREEN; fixed-head CI pending. This is a separate
+Status: RESOLVED for the bounded restart-origin replay safety defect. This is a separate
 restart-state defect, **not** an attribution of the September Merkle incident.
 The old actor failure applied a seqno-1 update made from seqno 0 to a restart
 tip at seqno 8 (base ahead). The September 5/4 and 23/22 observations had the
@@ -127,7 +127,13 @@ the workflow's `empty-chain-restart`; its summary SHA-256 is
 `c714e01742fdb0719662893cb6d9431b5f671bb34fe8b9abfc89595771f3e215`.
 It is supporting coverage, **not** the claimed CI-equivalent matrix; the
 exact-name run above replaces it. Branch PQ job `36026270609` on `507c039dc`
-was still running when this paragraph was recorded. C03 remains OPEN until
-its named step and the fixed-head job reach success. Neither run proves
+was still running when this paragraph was recorded. It subsequently completed
+successfully: the fixed-head Branch PQ/Python run `36026270609` passed all
+five named controls, including permanent origin (CTest #235), and the
+Source guards run `36026270421` passed. The retained full Branch log is
+`test/integration/.c03-permanent-origin-20260924/507c039dc-branch-ci-full.log`
+(SHA-256 `c26e24728248e8dd194ec287434e87a39b8dcb238319bf42d1cdc8a02d422d12`).
+Together with the exact-tree local raw run and old RED/new GREEN controls,
+this closes C03's stated bounded safety condition. Neither run proves
 eventual recovery from permanent origin loss or attributes the distinct
 September base-behind mismatch.
