@@ -21,7 +21,12 @@ seq0→seq1 `next`. It compares every PQ signature byte in the cold BlockProof
 against that one recovered FinalCert, not merely two independently valid
 signature sets. Its wrong-signature control alters one *expected* byte after
 journal verification and requires the named proof-comparison refusal. A
-comparison-bypass source mutation made the CTest fail on that control.
+comparison-bypass source mutation made the CTest fail on that control, but the
+original red artifact was produced against a pre-commit source version. Mac's
+independent review found that its recorded mutant source SHA-256 cannot be
+reconstructed from fixed `974636495` plus the stated one-line change. It is
+therefore **not** fixed-tree mutation evidence; the red result remains a
+diagnostic observation pending a clean rerun from the committed source.
 
 This is a local actor/DB boundary, not a real node network. Test-supplied
 `StoreCandidate` and transport metadata do not prove candidate transport
@@ -42,13 +47,16 @@ tracked patch):
 | `cmake --build build --target test-c04-real-state-proof -j4` | exit 0 |
 | `ctest --test-dir build -V -R '^test-n5-joined-finalcert$'` | exit 0; [raw log](../../test/integration/.n5-manager-db-fixture-20260924/n5-joined-final-green.log), SHA-256 `1740c72ea6a205541a7cd884ccc4041eec276b0e8a44c4c7421903c1769965de` |
 | Final test source / binary | SHA-256 `1ae99a9f07b9a1ff4eae225bf202db00facb847f142b4af95ba3f84729355b1e` / `75c28b84ca6212b39cbbec3506f130cecad44c8e495b31b45d911bf4b3db1b4b` |
-| Comparison bypass `if (false && !expected_cert_signatures.empty())` | CTest exit 8; named failure `wrong-signature control missed exact proof comparison`; [raw red log](../../test/integration/.n5-manager-db-fixture-20260924/n5-joined-compare-bypass-red.log), SHA-256 `07bd0d5437c55d6fdc21b308a34099968984202b569dc6de2516effc250ce61a`; mutant source / binary SHA-256 `c491964f7e60fa0116d74af2ba078f49f951ad61c36ff373e98f1aa8b31d9854` / `5a207b65adad0dacaa47e212650d3ac1d4c1e76eead28140e90c1bac7b6770df` |
+| Pre-commit comparison bypass `if (false && !expected_cert_signatures.empty())` | CTest exit 8; named failure `wrong-signature control missed exact proof comparison`; [raw red log](../../test/integration/.n5-manager-db-fixture-20260924/n5-joined-compare-bypass-red.log), SHA-256 `07bd0d5437c55d6fdc21b308a34099968984202b569dc6de2516effc250ce61a`. The recorded mutant source / binary hashes `c491964f...` / `5a207b65...` identify that run but do not bind it to a unique mutation of fixed `974636495`. Do not use it for fixed-tree acceptance. |
 | CI source guard: remove joined CTest run / change its CMake mode to `--n5-accept` | both exit 1 with their own named failure; restored guard exit 0 |
 
 The `N5_JOINED_DB_ROOT` and retained `.finalcert.tl` paths in each raw log are
 preserved for independent inspection. The individual roots are not added to
-Git. This artifact is **not fixed-commit CI evidence** until a commit including
-this test is pushed and the branch job reaches success.
+Git. The fixture was committed and pushed as `974636495`; its fixed-SHA
+Branch PQ/Python and Source guards jobs succeeded. The microbench job was
+still running at this document update and is not counted as a success here.
+The pre-commit comparison-bypass red artifact remains explicitly unqualified
+as a mutation of that fixed SHA.
 
 N01 remains OPEN. The next cutpoint controls, in task order, are:
 

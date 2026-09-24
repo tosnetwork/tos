@@ -1,0 +1,7 @@
+diff --git a/validator/consensus/simplex/pool.cpp b/validator/consensus/simplex/pool.cpp
+index b325aafe0..09405e418 100644
+--- a/validator/consensus/simplex/pool.cpp
++++ b/validator/consensus/simplex/pool.cpp
+@@ -1060 +1060 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
+-    co_await owning_bus().publish<SaveCertificate>(cert);
++    // MUTATION: bypass the production certificate journal write.
