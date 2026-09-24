@@ -65,7 +65,8 @@ jobs:
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
-            test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof test-consensus \
+            test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
+            test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve
           ccache --show-stats
 
@@ -80,10 +81,19 @@ jobs:
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
 
-      # C04's real PQ predecessor/Merkle/proof fixture supplies valid inputs
-      # for downstream actor work; this component gate does not prove DB apply.
+      # C04 exercises the real Manager proof/apply path and cold RootDb
+      # readback, including stale-context recovery and expiry controls.
       - name: Check real PQ predecessor and BlockProof fixture
         run: ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'
+
+      # N01's two short cuts are still narrower than the full persistence
+      # chain: one cold-reads the production FinalCert journal; the other
+      # cold-reads AcceptBlock's proof/state/bytes/next through RootDb.
+      - name: Check N5 FinalCert journal cold read
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-manager-db-fixture$'
+
+      - name: Check N5 PQ AcceptBlock cold read
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-accept-block$'
 
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote
