@@ -53,10 +53,37 @@ tracked patch):
 The `N5_JOINED_DB_ROOT` and retained `.finalcert.tl` paths in each raw log are
 preserved for independent inspection. The individual roots are not added to
 Git. The fixture was committed and pushed as `974636495`; its fixed-SHA
-Branch PQ/Python and Source guards jobs succeeded. The microbench job was
-still running at this document update and is not counted as a success here.
-The pre-commit comparison-bypass red artifact remains explicitly unqualified
-as a mutation of that fixed SHA.
+Branch PQ/Python, Source guards, and microbench jobs all succeeded. The
+pre-commit comparison-bypass red artifact remains unqualified as a mutation
+of that fixed SHA. A separate exact-source rerun below replaces it.
+
+## Exact `974636495` comparison-bypass rerun
+
+A detached, now-clean worktree at `974636495` supplied the test source. The
+production source and shared test header used by this test have no tracked
+changes between `974636495` and the later local `b1e6c2bb9`; its object was
+compiled with `CCACHE_DISABLE=1` using the recorded Ninja compile command and
+linked against those unchanged production libraries. This is an exact-source
+test rebuild, not a claim that a separate full `974636495` build directory was
+configured. The only source mutation is the retained
+[one-line patch](n5-974-comparison-mutant.patch), SHA-256
+`a8d0c65fb20eff8db41996a248bf7b97919aec8705cde1ca96efedae5377f709`;
+`git apply --check --unidiff-zero` succeeds against the clean historical
+worktree. The mutated source SHA-256 is
+`f5f08bb9fe62a368b05e4029ba26f2d9fc57e44f598d8333cb43ad3ff729c89c`,
+which independently confirms that the earlier recorded `c491964f…`
+source hash was not this mutation.
+
+| Exact-source control | Exit and SHA-256 |
+| --- | --- |
+| Clean source | `1ae99a9f07b9a1ff4eae225bf202db00facb847f142b4af95ba3f84729355b1e` |
+| Clean build log / binary | [log](../../test/integration/.n5-manager-db-fixture-20260924/974-exact-baseline-build.log) `62b2be2b8928966ac5d6f64073fa876e60783bdca3a9d15aab41de83b6e14b94`; binary `af8e0f65ad0e94987b9a2f14cccd954e5123f8982ed57590afd7649459c6d8f8` |
+| Clean restored run | exit 0; [raw log](../../test/integration/.n5-manager-db-fixture-20260924/974-exact-restored-final.raw.log) `cc34cb3843d44c56b99640caee727069bf5ac7a6da236857b8d7f7cd0774e0d3` |
+| Mutant build log / binary | [log](../../test/integration/.n5-manager-db-fixture-20260924/974-exact-compare-mutant-build.log) `6a851fc3ecc372cf6818daf5fc46d2d5918bd9d456f9ed9d0bbba5db010caa7b`; binary `78d8e9be21640942f1b3a34a2e81868f8bb8e6418e4cdeced4b93835e2099f36` |
+| Mutant run | exit 1 at `wrong-signature control missed exact proof comparison`; [raw log](../../test/integration/.n5-manager-db-fixture-20260924/974-exact-compare-mutant-final.raw.log) `7eb45c553b98334de5921453a0a725c6c9a13cefc208aa1a05b6390a5aa822c5` |
+
+The detached historical worktree has no tracked diff after restoration. All
+compiled binaries and raw logs remain outside Git in the N5 artifact directory.
 
 N01 remains OPEN. The next cutpoint controls, in task order, are:
 
