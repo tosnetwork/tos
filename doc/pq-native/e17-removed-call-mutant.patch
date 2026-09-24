@@ -2,11 +2,9 @@ diff --git a/scripts/agent-wallet-account-e2e.py b/scripts/agent-wallet-account-
 index bdec84561..e2b8fcec4 100644
 --- a/scripts/agent-wallet-account-e2e.py
 +++ b/scripts/agent-wallet-account-e2e.py
-@@ -468,7 +468,6 @@ async def main() -> int:
+@@ -468,5 +468,4 @@ async def main() -> int:
      async with Network(install, WORKDIR / "net", base_port=24000) as network:
          dht = network.create_dht_node()
          node = network.create_full_node()
 -        make_deterministic_pq_initial_validator(node, 0)
          node.announce_to(dht)
- 
-         dht_task = asyncio.create_task(dht.run())

@@ -2,9 +2,7 @@ diff --git a/scripts/agent-wallet-account-e2e.py b/scripts/agent-wallet-account-
 index bdec84561..bb19e94fe 100644
 --- a/scripts/agent-wallet-account-e2e.py
 +++ b/scripts/agent-wallet-account-e2e.py
-@@ -49,6 +49,7 @@ import urllib.request
- from pathlib import Path
- 
+@@ -51,4 +51,5 @@ import urllib.request
  from tostester.install import Install
 +from tostester import n6_cluster
  from tostester.network import Network, StartOptions
