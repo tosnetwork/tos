@@ -1,0 +1,10 @@
+diff --git a/validator/consensus/simplex/state-resolver.cpp b/validator/consensus/simplex/state-resolver.cpp
+--- a/validator/consensus/simplex/state-resolver.cpp
++++ b/validator/consensus/simplex/state-resolver.cpp
+@@ -837,0 +838,3 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
++    auto key = create_serialize_tl_object<tl::db_key_finalizedBlock>(id.to_tl());
++    co_await bus.db->set(std::move(key), td::BufferSlice());  // MUTATION: marker precedes BlockProof.
++
+@@ -858,2 +860,0 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
+-    auto key = create_serialize_tl_object<tl::db_key_finalizedBlock>(id.to_tl());
+-    co_await bus.db->set(std::move(key), td::BufferSlice());
