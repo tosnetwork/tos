@@ -410,6 +410,24 @@ The retained cold-read DB roots from that run are `/tmp/c04-manager-TcXZY3`
 (528 KiB), `/tmp/c04-manager-recovery-KhAPhA` (528 KiB), and
 `/tmp/c04-manager-expiry-7kiBdX` (444 KiB). No DB root was deleted.
 
+For immutable binary provenance, the clean executable was copied before
+mutation to `6e66c54f8-clean-test-c04-real-state-proof` in the artifact
+directory (SHA-256 `f8eeba1dc6d9f9720917f36c7d43771fc17408ad360a6273ba4e4dd3f92cda63`).
+The one-line production mutant was rebuilt, copied to
+`6e66c54f8-mutant-test-c04-real-state-proof` (SHA-256
+`0fa6755ff5f3d821e088eb5c188fc82599087fb6fae01e8121ff9c2c68a7e965`),
+and run directly against the same test source. That independent repeat exited
+**1** on the same named assertion with `pending_entries=1`; raw
+`6e66c54f8-retained-mutant-red.log` SHA-256 is
+`4c1c9a5f1d18a5924bfae1e8bdee08c5cd6ea0df237e7904d0f2c641a075d4c8`.
+Its build log SHA-256 is
+`c988b46b8758916ed75e5af05d52381730e5b17b3f602ea2b92c66d2cf1a70b9`.
+After restoring production `manager.cpp`, a clean rebuild exited 0 and
+reproduced the copied clean binary SHA-256 exactly; the clean rebuild log
+SHA-256 is `d952d6684cc598fd152370d212eefe8a203a831ef03654024ead05e9b0bc7a4b`.
+The earlier direct clean run exited **0**. These retained binaries are local
+diagnostic artifacts, not Git-tracked release binaries.
+
 This is a Manager ingress/timer actor control, not an ADNL authentication
 test. The bad-front/good-back and stale-context recovery controls remain
 separate real Manager/RootDb tests. The registry's closure condition does
