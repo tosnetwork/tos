@@ -39,33 +39,15 @@ REQUIRED_MEASUREMENT_GAP_IDS = (
     "sustained-finality-distribution-unmeasured",
 )
 
-INHERITED_SIMPLEX_DEPENDENCIES = {
-    "ton_current_consensus": "Simplex",
-    "ton_production_committee_approx": 400,
-    "tos_enforced_launch_cap": 21,
-}
-INHERITED_SIMPLEX_FORK_POINT = {
-    "commit": "628506c9e",
-    "validator_consensus_simplex_files": 16,
-}
-INHERITED_SIMPLEX_GAP_EVIDENCE = {
-    "release-scale-matrix-unmeasured": {
-        "upstream_validators_approx": 400,
-        "capped_validators": 21,
-        "relative_scale": "21/400 (about one nineteenth)",
-    },
-    "carrier-scale-transport-unmeasured": {
-        "pq_21_signature_bytes": 50820,
-        "ed25519_400_signature_bytes": 25600,
-        "relative_bytes": "1.99x",
-        "unreachable_structural_carrier_ceiling_bytes": 984260,
-    },
-    "sustained-finality-distribution-unmeasured": {
-        "pq_21_verify_us_at_67_6_each": 1419.6,
-        "ed25519_400_verify_us_at_30_each": 12000,
-        "relative_verify_cost": "0.12x (about one eighth)",
-    },
-}
+# A gap the owner deferred to the testnet does not block diagnostic runs or the
+# development ledger, and always blocks a release-grade run. Upstream operating
+# experience may be recorded next to such a gap as a prior, but it is never a
+# resolution. Measured results need a future independent verifier below.
+DEFERRED_GAP_STATUS = "DEFERRED_TO_TESTNET"
+MEASURED_RESOLUTION_KIND = "MEASURED_RELEASE_RESULT"
+# Fields that describe a resolution. A gap that is still open or deferred must
+# carry none of them, so a half-edited entry cannot look closed to a reader.
+RESOLUTION_FIELDS = ("resolved_by", "resolution_kind", "evidence_results")
 
 REQUIRED_SCALES = (21,)
 REQUIRED_NETWORK_PROFILES = ("baseline", "launch-wan", "degraded")
@@ -387,6 +369,7 @@ def validate_open_measurement_gaps(path: Path, *, release: bool) -> None:
         raise ManifestError("measurement-gap registry required ids and entries differ")
 
     open_gaps: list[str] = []
+    deferred_gaps: list[str] = []
     for gap_id, gap in gaps.items():
         if not isinstance(gap, dict):
             raise ManifestError(f"measurement gap {gap_id} is not an object")
@@ -394,84 +377,59 @@ def validate_open_measurement_gaps(path: Path, *, release: bool) -> None:
             if not isinstance(gap.get(field), str) or not gap[field]:
                 raise ManifestError(f"measurement gap {gap_id} lacks {field}")
         status = gap["status"]
-        if status == "OPEN":
-            if gap.get("resolved_by") not in (None, ""):
-                raise ManifestError(f"open measurement gap {gap_id} already names resolved_by")
-            open_gaps.append(gap_id)
+        if status in ("OPEN", DEFERRED_GAP_STATUS):
+            for field in RESOLUTION_FIELDS:
+                if gap.get(field) not in (None, ""):
+                    state = "open" if status == "OPEN" else "deferred"
+                    raise ManifestError(f"{state} measurement gap {gap_id} already names {field}")
+            if status == "OPEN":
+                open_gaps.append(gap_id)
+            else:
+                ruling = gap.get("deferral_ruling")
+                if not isinstance(ruling, str) or not ruling:
+                    raise ManifestError(
+                        f"deferred measurement gap {gap_id} does not name its deferral_ruling"
+                    )
+                deferred_gaps.append(gap_id)
         elif status == "RESOLVED":
-            if not isinstance(gap.get("resolved_by"), str) or not gap["resolved_by"]:
-                raise ManifestError(f"resolved measurement gap {gap_id} lacks resolved_by evidence")
-            resolution_kind = gap.get("resolution_kind")
-            if resolution_kind == "INHERITED_SIMPLEX_WITH_ENFORCED_CAP":
-                if gap.get("depends_on") != INHERITED_SIMPLEX_DEPENDENCIES:
-                    raise ManifestError(
-                        f"resolved measurement gap {gap_id} does not pin the inherited Simplex dependencies"
-                    )
-                if gap.get("fork_point_evidence") != INHERITED_SIMPLEX_FORK_POINT:
-                    raise ManifestError(
-                        f"resolved measurement gap {gap_id} does not pin the Simplex fork-point evidence"
-                    )
-                evidence = gap.get("evidence")
-                if evidence != INHERITED_SIMPLEX_GAP_EVIDENCE[gap_id]:
-                    raise ManifestError(
-                        f"resolved measurement gap {gap_id} has stale inherited-production evidence"
-                    )
-            elif resolution_kind not in (None, "MEASURED_RELEASE_RESULT"):
-                raise ManifestError(
-                    f"measurement gap {gap_id} has unknown resolution_kind {resolution_kind}"
-                )
-            elif gap_id == "release-scale-matrix-unmeasured":
-                evidence_results = gap.get("evidence_results")
-                if (
-                    not isinstance(evidence_results, list)
-                    or not evidence_results
-                    or not all(isinstance(item, str) and item for item in evidence_results)
-                ):
-                    raise ManifestError(
-                        "resolved measurement gap release-scale-matrix-unmeasured lacks evidence_results"
-                    )
-                measured_scales: set[int] = set()
-                for raw_result in evidence_results:
-                    result_path = Path(raw_result)
-                    if not result_path.is_absolute():
-                        result_path = path.parent / result_path
-                    try:
-                        result = json.loads(result_path.read_text(encoding="utf-8"))
-                    except (OSError, json.JSONDecodeError) as exc:
-                        raise ManifestError(
-                            f"release-scale evidence result {raw_result} is unreadable: {exc}"
-                        ) from exc
-                    if result.get("local_colocation_diagnostic_override") is True:
-                        raise ManifestError(
-                            "release-scale-matrix-unmeasured cannot be resolved by "
-                            "local_colocation_diagnostic_override evidence"
-                        )
-                    if result.get("local_colocation_diagnostic_override") is not False:
-                        raise ManifestError(
-                            "release-scale evidence does not state local_colocation_diagnostic_override=false"
-                        )
-                    if result.get("release_evidence_eligible") is not True:
-                        raise ManifestError(
-                            "release-scale-matrix-unmeasured evidence is not release_evidence_eligible"
-                        )
-                    scales = result.get("required_release_scales_measured")
-                    if not isinstance(scales, list) or any(
-                        isinstance(scale, bool) or not isinstance(scale, int) for scale in scales
-                    ):
-                        raise ManifestError("release-scale evidence has invalid measured scales")
-                    measured_scales.update(scales)
-                if measured_scales != set(REQUIRED_SCALES):
-                    raise ManifestError(
-                        "release-scale evidence does not cover required scales "
-                        + "/".join(str(scale) for scale in REQUIRED_SCALES)
-                    )
+            _validate_measured_gap_resolution(gap_id, gap, path)
         else:
             raise ManifestError(f"measurement gap {gap_id} has unknown status {status}")
-    if release and open_gaps:
+    if release and (open_gaps or deferred_gaps):
+        refusals = []
+        if open_gaps:
+            refusals.append("open measurement gaps: " + ", ".join(sorted(open_gaps)))
+        if deferred_gaps:
+            refusals.append(
+                "measurement gaps deferred to testnet: " + ", ".join(sorted(deferred_gaps))
+            )
+        raise ManifestError("release-grade measurement refuses " + "; ".join(refusals))
+
+
+def _validate_measured_gap_resolution(gap_id: str, gap: dict[str, Any], _registry_path: Path) -> None:
+    if not isinstance(gap.get("resolved_by"), str) or not gap["resolved_by"]:
+        raise ManifestError(f"resolved measurement gap {gap_id} lacks resolved_by evidence")
+    resolution_kind = gap.get("resolution_kind")
+    if resolution_kind != MEASURED_RESOLUTION_KIND:
         raise ManifestError(
-            "release-grade measurement refuses open measurement gaps: "
-            + ", ".join(sorted(open_gaps))
+            f"resolved measurement gap {gap_id} has resolution_kind {resolution_kind}; "
+            f"only {MEASURED_RESOLUTION_KIND} closes a measurement gap, and inherited "
+            "upstream experience is a prior, not a resolution"
         )
+    evidence_results = gap.get("evidence_results")
+    if (
+        not isinstance(evidence_results, list)
+        or not evidence_results
+        or not all(isinstance(item, str) and item for item in evidence_results)
+    ):
+        raise ManifestError(f"resolved measurement gap {gap_id} lacks evidence_results")
+    # The cited result fields are self-claims. A verifier for the independent
+    # 21-host run, its topology, provenance, profiles and measurements must be
+    # implemented here before any RESOLVED measurement gap can be accepted.
+    raise ManifestError(
+        f"resolved measurement gap {gap_id} cannot use {MEASURED_RESOLUTION_KIND}: "
+        "independent 21-host release evidence verification is not implemented"
+    )
 
 
 def _lookup(manifest: dict[str, Any], path: tuple[str, ...]) -> Any:

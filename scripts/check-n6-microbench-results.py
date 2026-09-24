@@ -153,7 +153,7 @@ if (
     actor.get("launch_proof_signers") != 100
     or actor.get("single_thread_actor_callback_stall_us", 0) <= 0
 ):
-    fail("actor callback stall was not measured at the candidate launch maximum")
+    fail("actor callback stall was not measured at the historical 100-signer diagnostic point")
 if (
     actor.get("decision") != "OPEN_UNTIL_OWNER_ACCEPTS_NONZERO_CRITERIA"
     or actor.get("worker_pool_changed") is not False

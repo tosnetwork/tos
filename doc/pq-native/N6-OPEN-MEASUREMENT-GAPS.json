@@ -7,71 +7,44 @@
   ],
   "gaps": {
     "release-scale-matrix-unmeasured": {
-      "observation": "The local N6 harness has not produced a release-grade 21-host scale run, but the production-reachable scale is now bounded to 21 by the four launch-cap enforcement points.",
-      "reason": "The scale question is inherited rather than a new PQ consensus regime: Simplex and its transport stack predate this fork and operate upstream at approximately 400 real validators, while the enforced TOS launch scale is 21, about one nineteenth as large.",
-      "closure_condition": "Outcome B is satisfied while all three pinned facts remain true: TON production consensus is Simplex, its production committee is approximately 400, and every TOS committee-forming path rejects more than 21 validators. Any change to one of those facts reopens this entry.",
-      "status": "RESOLVED",
-      "resolution_kind": "INHERITED_SIMPLEX_WITH_ENFORCED_CAP",
-      "depends_on": {
-        "ton_current_consensus": "Simplex",
-        "ton_production_committee_approx": 400,
-        "tos_enforced_launch_cap": 21
-      },
-      "fork_point_evidence": {
-        "commit": "628506c9e",
-        "validator_consensus_simplex_files": 16
-      },
-      "evidence": {
+      "observation": "The local N6 harness has not produced a release-grade 21-host scale run. The production-reachable scale is bounded to 21 by the four launch-cap enforcement points, so 21 is the only scale that needs measuring.",
+      "reason": "Upstream Simplex operation at roughly 400 Ed25519 validators is a prior, not a measurement of this chain: it covers neither the PQ signature payload, the pending-finality cache and admission, the new network and storage load, nor the persisted-finality tail. The owner deferred this measurement to the testnet.",
+      "closure_condition": "A release-grade run on 21 independent testnet hosts, under the named hardware profile and the thresholds committed before the first release measurement, measures the 21-validator launch committee across the required network profiles and workloads. Its result is release_evidence_eligible, is not a co-located diagnostic, and states that it covers this gap.",
+      "status": "DEFERRED_TO_TESTNET",
+      "deferral_ruling": "Owner ruling O-2 (2026-09-24): deferred to testnet; does not block merging the code, blocks Genesis and the mainnet release decision.",
+      "inherited_prior": {
+        "upstream_consensus": "Simplex",
         "upstream_validators_approx": 400,
-        "capped_validators": 21,
-        "relative_scale": "21/400 (about one nineteenth)"
-      },
-      "resolved_by": "Inherited Simplex production evidence plus the enforced 21-validator cap; no co-located diagnostic result is cited as release evidence."
+        "tos_enforced_launch_cap": 21,
+        "relative_scale": "21/400 (about one nineteenth)",
+        "fork_point_commit": "628506c9e",
+        "fork_point_validator_consensus_simplex_files": 16
+      }
     },
     "carrier-scale-transport-unmeasured": {
-      "observation": "The old 984260-byte 400-signer structural carrier ceiling is unreachable at the enforced 21-validator production cap; 21 ML-DSA-44 signatures occupy 50820 bytes.",
-      "reason": "The reachable PQ signature payload is 1.99 times the 25600 bytes of 400 Ed25519 signatures carried by the same inherited ADNL/DHT/overlay/RLDP transport in upstream production, so it is not a new transport-size regime.",
-      "closure_condition": "The inherited-transport closure remains valid only while TON production consensus is Simplex at approximately 400 validators and TOS enforces 21. A larger TOS cap or a transport change reopens carrier-scale measurement.",
-      "status": "RESOLVED",
-      "resolution_kind": "INHERITED_SIMPLEX_WITH_ENFORCED_CAP",
-      "depends_on": {
-        "ton_current_consensus": "Simplex",
-        "ton_production_committee_approx": 400,
-        "tos_enforced_launch_cap": 21
-      },
-      "fork_point_evidence": {
-        "commit": "628506c9e",
-        "validator_consensus_simplex_files": 16
-      },
-      "evidence": {
+      "observation": "The old 984260-byte 400-signer structural carrier ceiling is unreachable at the enforced 21-validator production cap; 21 ML-DSA-44 signatures occupy 50820 bytes. No carrier or transport measurement has been taken on independent hosts.",
+      "reason": "The reachable PQ signature payload is 1.99 times the 25600 bytes of 400 Ed25519 signatures carried upstream by the same inherited ADNL/DHT/overlay/RLDP transport. That comparison is a prior about payload size, not a measurement of delivery on this chain's network and storage load. The owner deferred this measurement to the testnet.",
+      "closure_condition": "A release-grade run on 21 independent testnet hosts measures certificate and candidate carrier sizes and their delivery through the transport under the required network profiles, against thresholds committed before the first release measurement. Its result is release_evidence_eligible, is not a co-located diagnostic, and states that it covers this gap. A larger cap or a transport change requires a new measurement.",
+      "status": "DEFERRED_TO_TESTNET",
+      "deferral_ruling": "Owner ruling O-2 (2026-09-24): deferred to testnet; does not block merging the code, blocks Genesis and the mainnet release decision.",
+      "inherited_prior": {
         "pq_21_signature_bytes": 50820,
         "ed25519_400_signature_bytes": 25600,
         "relative_bytes": "1.99x",
         "unreachable_structural_carrier_ceiling_bytes": 984260
-      },
-      "resolved_by": "The enforced cap makes the 984260-byte structural maximum unreachable, and the reachable signature payload is within the inherited transport's demonstrated production regime."
+      }
     },
     "sustained-finality-distribution-unmeasured": {
-      "observation": "The N6 cold-start sweep does not itself yield a steady-state persisted-finality distribution, but sustained Simplex is the inherited upstream production operating condition.",
-      "reason": "At the enforced cap, aggregate PQ verification is approximately 1419.6 microseconds per round (21 times 67.6 microseconds), about 0.12 times the approximately 12000 microseconds for 400 Ed25519 verifications upstream. The inherited consensus therefore sees lower aggregate verification work at the reachable scale.",
-      "closure_condition": "The inherited steady-state closure remains valid only while TON production consensus is Simplex at approximately 400 validators, TOS enforces 21, and the cited per-signature costs remain the reviewed comparison. A change to those facts reopens sustained measurement.",
-      "status": "RESOLVED",
-      "resolution_kind": "INHERITED_SIMPLEX_WITH_ENFORCED_CAP",
-      "depends_on": {
-        "ton_current_consensus": "Simplex",
-        "ton_production_committee_approx": 400,
-        "tos_enforced_launch_cap": 21
-      },
-      "fork_point_evidence": {
-        "commit": "628506c9e",
-        "validator_consensus_simplex_files": 16
-      },
-      "evidence": {
+      "observation": "The N6 cold-start sweep does not yield a steady-state persisted-finality distribution, and the co-located sustained observations are diagnostics only.",
+      "reason": "At the enforced cap, aggregate PQ verification is approximately 1419.6 microseconds per round (21 times 67.6 microseconds), about 0.12 times the approximately 12000 microseconds for 400 Ed25519 verifications upstream. Lower verification work is a prior; it says nothing about the persisted-finality tail on independent hosts. The owner deferred this measurement to the testnet.",
+      "closure_condition": "A release-grade run on 21 independent testnet hosts measures the steady-state persisted-finality distribution, including its tail, over the pre-registered observation window and against thresholds committed before the first release measurement. Its result is release_evidence_eligible, is not a co-located diagnostic, and states that it covers this gap.",
+      "status": "DEFERRED_TO_TESTNET",
+      "deferral_ruling": "Owner ruling O-2 (2026-09-24): deferred to testnet; does not block merging the code, blocks Genesis and the mainnet release decision.",
+      "inherited_prior": {
         "pq_21_verify_us_at_67_6_each": 1419.6,
         "ed25519_400_verify_us_at_30_each": 12000,
         "relative_verify_cost": "0.12x (about one eighth)"
-      },
-      "resolved_by": "Inherited upstream steady-state Simplex operation plus lower reachable aggregate PQ verification cost at the enforced cap."
+      }
     }
   }
 }

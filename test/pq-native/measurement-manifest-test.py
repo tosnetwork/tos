@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 def fail(message: str) -> None:
@@ -69,11 +70,11 @@ def complete_config() -> dict[str, object]:
             "shard_committee_count": 4,
             "validator_pool_count": 4,
             "config_param_16": {
-                "max_validators": 400,
-                "max_main_validators": 100,
+                "max_validators": 21,
+                "max_main_validators": 21,
                 "min_validators": 4,
             },
-            "config_param_28": {"shard_validators_num": 100},
+            "config_param_28": {"shard_validators_num": 21},
             "config_param_30": {"protocol_version": 2},
             "block_limits": {"bytes": 1},
             "gas_limits": {"gas": 1},
@@ -332,55 +333,60 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
         encoding="utf-8",
     )
 
-    def write_scale_result(*, local_override: bool, release_eligible: bool, scales: list[int]) -> None:
+    def write_scale_result(
+        *,
+        local_override: bool,
+        release_eligible: bool,
+        scales: list[int],
+        covered: list[str] | None = None,
+    ) -> None:
         scale_result.write_text(
             json.dumps(
                 {
                     "local_colocation_diagnostic_override": local_override,
                     "release_evidence_eligible": release_eligible,
                     "required_release_scales_measured": scales,
+                    "measurement_gaps_covered": (
+                        list(module.REQUIRED_MEASUREMENT_GAP_IDS) if covered is None else covered
+                    ),
                 }
             ),
             encoding="utf-8",
         )
 
+    def measured_gap() -> dict[str, object]:
+        return {
+            "observation": "fixture observation",
+            "reason": "fixture reason",
+            "closure_condition": "fixture closure condition",
+            "status": "RESOLVED",
+            "resolved_by": "fixture run evidence",
+            "resolution_kind": "MEASURED_RELEASE_RESULT",
+            "evidence_results": [str(scale_result)],
+        }
+
     resolved_gaps.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "required_gap_ids": [
-                    "release-scale-matrix-unmeasured",
-                    "carrier-scale-transport-unmeasured",
-                    "sustained-finality-distribution-unmeasured",
-                ],
-                "gaps": {
-                    "release-scale-matrix-unmeasured": {
-                        "observation": "fixture observation",
-                        "reason": "fixture reason",
-                        "closure_condition": "fixture closure condition",
-                        "status": "RESOLVED",
-                        "resolved_by": "fixture run evidence",
-                        "evidence_results": [str(scale_result)],
-                    },
-                    "carrier-scale-transport-unmeasured": {
-                        "observation": "fixture observation",
-                        "reason": "fixture reason",
-                        "closure_condition": "fixture closure condition",
-                        "status": "RESOLVED",
-                        "resolved_by": "fixture run evidence",
-                    },
-                    "sustained-finality-distribution-unmeasured": {
-                        "observation": "fixture observation",
-                        "reason": "fixture reason",
-                        "closure_condition": "fixture closure condition",
-                        "status": "RESOLVED",
-                        "resolved_by": "fixture run evidence",
-                    },
-                },
+                "required_gap_ids": list(module.REQUIRED_MEASUREMENT_GAP_IDS),
+                "gaps": {gap_id: measured_gap() for gap_id in module.REQUIRED_MEASUREMENT_GAP_IDS},
             }
         ),
         encoding="utf-8",
     )
+
+    def expect_gap_refusal(registry: dict[str, object], expected: str, *, release: bool, label: str) -> None:
+        variant = Path(raw).parent / f"gap-variant-{Path(raw).name}.json"
+        variant.write_text(json.dumps(registry), encoding="utf-8")
+        try:
+            module.validate_open_measurement_gaps(variant, release=release)
+            fail(f"{label} was accepted")
+        except module.ManifestError as exc:
+            if expected not in str(exc):
+                fail(f"{label} reported the wrong refusal: {exc}")
+        finally:
+            variant.unlink(missing_ok=True)
     try:
         # This branch has a live correctness question.  Check it before every
         # other release precondition so neither a missing N5 artifact nor a dirty
@@ -433,97 +439,59 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
             if expected not in str(exc):
                 fail(f"open measurement gaps reported the wrong release refusal: {exc}")
 
-        # A human cannot close the release scale gap by citing the explicit
-        # co-located diagnostic escape hatch.
+        # A forged result can set every previous release flag while describing
+        # no measured topology, host provenance, profiles or finality samples.
+        # Neither release nor diagnostic validation may promote it to closure.
         write_scale_result(local_override=True, release_eligible=False, scales=[4, 7])
-        try:
-            module.create_manifest(
-                repo=repo_root,
-                config=complete_config(),
-                criteria_path=criteria,
-                matrix_path=matrix,
-                mode="release",
-                n5_closure_path=None,
-                correctness_questions_path=resolved_questions,
-                measurement_gaps_path=resolved_gaps,
-            )
-            fail("co-located diagnostic evidence closed the release scale gap")
-        except module.ManifestError as exc:
-            expected = (
-                "release-scale-matrix-unmeasured cannot be resolved by "
-                "local_colocation_diagnostic_override evidence"
-            )
-            if expected not in str(exc):
-                fail(f"co-located release-scale evidence reported the wrong refusal: {exc}")
-
-        # Removing the override marker is not sufficient: the result must also
-        # be independently eligible for release evidence.
-        write_scale_result(local_override=False, release_eligible=False, scales=[21])
-        try:
-            module.create_manifest(
-                repo=repo_root,
-                config=complete_config(),
-                criteria_path=criteria,
-                matrix_path=matrix,
-                mode="release",
-                n5_closure_path=None,
-                correctness_questions_path=resolved_questions,
-                measurement_gaps_path=resolved_gaps,
-            )
-            fail("diagnostic evidence without the override closed the release scale gap")
-        except module.ManifestError as exc:
-            expected = "release-scale-matrix-unmeasured evidence is not release_evidence_eligible"
-            if expected not in str(exc):
-                fail(f"diagnostic release-scale evidence reported the wrong refusal: {exc}")
-
-        # Resolving all registered measurement gaps with eligible evidence
-        # exposes the next independent refusal, the exact-commit N5 closure.
         write_scale_result(local_override=False, release_eligible=True, scales=[21])
-        try:
-            module.create_manifest(
-                repo=repo_root,
-                config=complete_config(),
-                criteria_path=criteria,
-                matrix_path=matrix,
-                mode="release",
-                n5_closure_path=None,
-                correctness_questions_path=resolved_questions,
-                measurement_gaps_path=resolved_gaps,
+        for release in (False, True):
+            expect_gap_refusal(
+                json.loads(resolved_gaps.read_text(encoding="utf-8")),
+                "resolved measurement gap release-scale-matrix-unmeasured cannot use "
+                "MEASURED_RELEASE_RESULT: independent 21-host release evidence verification "
+                "is not implemented",
+                release=release,
+                label=f"a self-claimed 21-host result (release={release})",
             )
-            fail("current branch without an N5 closure artifact was release eligible")
-        except module.ManifestError as exc:
-            expected = "no N5 closure artifact was supplied for that exact commit"
-            if expected not in str(exc):
-                fail(f"current N5-open branch reported the wrong release refusal: {exc}")
 
-        stale_inherited_gaps = Path(raw).parent / f"stale-inherited-gaps-{Path(raw).name}.json"
-        stale_registry = json.loads(live_gaps.read_text(encoding="utf-8"))
-        stale_registry["gaps"]["carrier-scale-transport-unmeasured"]["depends_on"][
-            "tos_enforced_launch_cap"
-        ] = 22
-        stale_inherited_gaps.write_text(json.dumps(stale_registry), encoding="utf-8")
-        try:
-            module.create_manifest(
-                repo=repo_root,
-                config=complete_config(),
-                criteria_path=criteria,
-                matrix_path=matrix,
-                mode="release",
-                n5_closure_path=None,
-                correctness_questions_path=resolved_questions,
-                measurement_gaps_path=stale_inherited_gaps,
-            )
-            fail("stale inherited-consensus facts closed a measurement gap")
-        except module.ManifestError as exc:
-            expected = (
-                "carrier-scale-transport-unmeasured does not pin the inherited Simplex dependencies"
-            )
-            if expected not in str(exc):
-                fail(f"stale inherited gap evidence reported the wrong refusal: {exc}")
+        # Isolate the independent N5 gate by bypassing only the gap validator
+        # in this fixture. This does not claim the synthetic result is eligible.
+        with patch.object(module, "validate_open_measurement_gaps"):
+            try:
+                module.create_manifest(
+                    repo=repo_root,
+                    config=complete_config(),
+                    criteria_path=criteria,
+                    matrix_path=matrix,
+                    mode="release",
+                    n5_closure_path=None,
+                    correctness_questions_path=resolved_questions,
+                    measurement_gaps_path=resolved_gaps,
+                )
+                fail("current branch without an N5 closure artifact was release eligible")
+            except module.ManifestError as exc:
+                expected = "no N5 closure artifact was supplied for that exact commit"
+                if expected not in str(exc):
+                    fail(f"current N5-open branch reported the wrong release refusal: {exc}")
 
-        # The live registry uses the separately reviewed inherited-Simplex
-        # closure. It must likewise expose the independent N5 refusal rather
-        # than retaining a decorative measurement-gap block.
+        # The owner deferred all three release measurements to the testnet. The
+        # live registry must say so for each of them, and the deferral must be a
+        # release refusal of its own, naming every deferred gap.
+        # Deferral must not block diagnostic runs or the development ledger.
+        try:
+            module.validate_open_measurement_gaps(live_gaps, release=False)
+        except module.ManifestError as exc:
+            fail(f"the live deferred registry was refused on the diagnostic path: {exc}")
+        live_registry = json.loads(live_gaps.read_text(encoding="utf-8"))
+        for gap_id in module.REQUIRED_MEASUREMENT_GAP_IDS:
+            status = live_registry["gaps"][gap_id]["status"]
+            if status != "DEFERRED_TO_TESTNET":
+                fail(f"live measurement gap {gap_id} is {status}, not DEFERRED_TO_TESTNET")
+        deferred_refusal = (
+            "release-grade measurement refuses measurement gaps deferred to testnet: "
+            "carrier-scale-transport-unmeasured, release-scale-matrix-unmeasured, "
+            "sustained-finality-distribution-unmeasured"
+        )
         try:
             module.create_manifest(
                 repo=repo_root,
@@ -535,11 +503,120 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                 correctness_questions_path=resolved_questions,
                 measurement_gaps_path=live_gaps,
             )
-            fail("live inherited evidence bypassed the exact-commit N5 closure")
+            fail("the live deferred measurement gaps were release eligible")
         except module.ManifestError as exc:
-            expected = "no N5 closure artifact was supplied for that exact commit"
-            if expected not in str(exc):
-                fail(f"live inherited gap closure reported the wrong next refusal: {exc}")
+            if deferred_refusal not in str(exc):
+                fail(f"live deferred gaps reported the wrong release refusal: {exc}")
+
+        # Formal closure everywhere else does not lift the deferral: resolved
+        # correctness questions, an exact-commit N5 closure and a clean tree still
+        # leave the deferred gaps refusing a release-grade run.
+        try:
+            module.create_manifest(
+                repo=root,
+                config=complete_config(),
+                criteria_path=criteria,
+                matrix_path=matrix,
+                mode="release",
+                n5_closure_path=closure_external,
+                correctness_questions_path=resolved_questions,
+                measurement_gaps_path=live_gaps,
+            )
+            fail("formal N5 and correctness closure bypassed the testnet deferral")
+        except module.ManifestError as exc:
+            if deferred_refusal not in str(exc):
+                fail(f"deferral under formal closure reported the wrong refusal: {exc}")
+
+        # A deferred gap alongside an open one: both are named, separately.
+        mixed = json.loads(live_gaps.read_text(encoding="utf-8"))
+        mixed["gaps"]["carrier-scale-transport-unmeasured"]["status"] = "OPEN"
+        mixed["gaps"]["carrier-scale-transport-unmeasured"].pop("deferral_ruling")
+        expect_gap_refusal(
+            mixed,
+            "release-grade measurement refuses open measurement gaps: carrier-scale-transport-unmeasured; "
+            "measurement gaps deferred to testnet: release-scale-matrix-unmeasured, "
+            "sustained-finality-distribution-unmeasured",
+            release=True,
+            label="an open and a deferred gap together",
+        )
+
+        # Reverting a deferral to the old inherited-upstream closure is refused
+        # on every path: upstream experience is a prior, not a resolution.
+        inherited_revert = json.loads(live_gaps.read_text(encoding="utf-8"))
+        reverted = inherited_revert["gaps"]["sustained-finality-distribution-unmeasured"]
+        reverted.pop("deferral_ruling")
+        reverted["status"] = "RESOLVED"
+        reverted["resolution_kind"] = "INHERITED_SIMPLEX_WITH_ENFORCED_CAP"
+        reverted["resolved_by"] = "Inherited upstream steady-state Simplex operation."
+        for release in (False, True):
+            expect_gap_refusal(
+                inherited_revert,
+                "resolved measurement gap sustained-finality-distribution-unmeasured has resolution_kind "
+                "INHERITED_SIMPLEX_WITH_ENFORCED_CAP; only MEASURED_RELEASE_RESULT closes a measurement gap",
+                release=release,
+                label=f"an inherited-upstream resolution (release={release})",
+            )
+
+        # Nor may a resolution leave out its kind or its measured evidence.
+        kindless = json.loads(resolved_gaps.read_text(encoding="utf-8"))
+        kindless["gaps"]["release-scale-matrix-unmeasured"].pop("resolution_kind")
+        expect_gap_refusal(
+            kindless,
+            "resolved measurement gap release-scale-matrix-unmeasured has resolution_kind None",
+            release=False,
+            label="a resolution without a resolution_kind",
+        )
+        evidenceless = json.loads(resolved_gaps.read_text(encoding="utf-8"))
+        evidenceless["gaps"]["release-scale-matrix-unmeasured"].pop("evidence_results")
+        expect_gap_refusal(
+            evidenceless,
+            "resolved measurement gap release-scale-matrix-unmeasured lacks evidence_results",
+            release=False,
+            label="a measured resolution without evidence results",
+        )
+        # Dropping a gap is refused whether it leaves the required list or only
+        # the entries.
+        dropped = json.loads(live_gaps.read_text(encoding="utf-8"))
+        dropped["required_gap_ids"].remove("carrier-scale-transport-unmeasured")
+        del dropped["gaps"]["carrier-scale-transport-unmeasured"]
+        expect_gap_refusal(
+            dropped,
+            "measurement-gap registry dropped required entry carrier-scale-transport-unmeasured",
+            release=False,
+            label="a registry without the carrier gap",
+        )
+        entry_dropped = json.loads(live_gaps.read_text(encoding="utf-8"))
+        del entry_dropped["gaps"]["release-scale-matrix-unmeasured"]
+        expect_gap_refusal(
+            entry_dropped,
+            "measurement-gap registry required ids and entries differ",
+            release=False,
+            label="a registry missing a required entry",
+        )
+
+        # A deferred gap must name the ruling that deferred it, and must not
+        # carry any field that describes a resolution.
+        unruled = json.loads(live_gaps.read_text(encoding="utf-8"))
+        unruled["gaps"]["release-scale-matrix-unmeasured"].pop("deferral_ruling")
+        expect_gap_refusal(
+            unruled,
+            "deferred measurement gap release-scale-matrix-unmeasured does not name its deferral_ruling",
+            release=False,
+            label="a deferral without a ruling",
+        )
+        for field, value in (
+            ("resolved_by", "inherited evidence"),
+            ("resolution_kind", "MEASURED_RELEASE_RESULT"),
+            ("evidence_results", [str(scale_result)]),
+        ):
+            half_closed = json.loads(live_gaps.read_text(encoding="utf-8"))
+            half_closed["gaps"]["release-scale-matrix-unmeasured"][field] = value
+            expect_gap_refusal(
+                half_closed,
+                f"deferred measurement gap release-scale-matrix-unmeasured already names {field}",
+                release=False,
+                label=f"a deferred gap carrying {field}",
+            )
 
         diagnostic = module.create_manifest(
             repo=repo_root,
@@ -554,16 +631,19 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
         if diagnostic["release_evidence_eligible"]:
             fail("diagnostic scaffolding claimed release eligibility")
 
-        manifest = module.create_manifest(
-            repo=root,
-            config=complete_config(),
-            criteria_path=criteria,
-            matrix_path=matrix,
-            mode="release",
-            n5_closure_path=closure_external,
-            correctness_questions_path=resolved_questions,
-            measurement_gaps_path=resolved_gaps,
-        )
+        # Exercise manifest shape and dirty-tree guards independently of the
+        # deliberately closed measurement-resolution implementation.
+        with patch.object(module, "validate_open_measurement_gaps"):
+            manifest = module.create_manifest(
+                repo=root,
+                config=complete_config(),
+                criteria_path=criteria,
+                matrix_path=matrix,
+                mode="release",
+                n5_closure_path=closure_external,
+                correctness_questions_path=resolved_questions,
+                measurement_gaps_path=resolved_gaps,
+            )
         module.validate_manifest(manifest)
 
         missing_commit = dict(manifest)
@@ -585,25 +665,29 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                 fail(f"missing criteria hash reported the wrong reason: {exc}")
 
         (root / "dirty-untracked").write_text("dirty\n", encoding="utf-8")
-        try:
-            module.create_manifest(
-                repo=root,
-                config=complete_config(),
-                criteria_path=criteria,
-                matrix_path=matrix,
-                mode="release",
-                n5_closure_path=closure_external,
-                correctness_questions_path=resolved_questions,
-                measurement_gaps_path=resolved_gaps,
-            )
-            fail("release-grade run accepted a dirty tree")
-        except module.ManifestError as exc:
-            if "dirty git tree" not in str(exc):
-                fail(f"dirty tree reported the wrong reason: {exc}")
+        with patch.object(module, "validate_open_measurement_gaps"):
+            try:
+                module.create_manifest(
+                    repo=root,
+                    config=complete_config(),
+                    criteria_path=criteria,
+                    matrix_path=matrix,
+                    mode="release",
+                    n5_closure_path=closure_external,
+                    correctness_questions_path=resolved_questions,
+                    measurement_gaps_path=resolved_gaps,
+                )
+                fail("release-grade run accepted a dirty tree")
+            except module.ManifestError as exc:
+                if "dirty git tree" not in str(exc):
+                    fail(f"dirty tree reported the wrong reason: {exc}")
     finally:
         closure_external.unlink(missing_ok=True)
         resolved_questions.unlink(missing_ok=True)
         resolved_gaps.unlink(missing_ok=True)
         scale_result.unlink(missing_ok=True)
 
-print("N6_MANIFEST_OK: complete manifest and independent correctness, measurement-gap, N5 closure, hash, and dirty-tree refusals")
+print(
+    "N6_MANIFEST_OK: complete manifest and independent correctness, measurement-gap, testnet-deferral, "
+    "N5 closure, hash, and dirty-tree refusals"
+)
