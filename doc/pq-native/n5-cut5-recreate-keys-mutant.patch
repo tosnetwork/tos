@@ -1,0 +1,6 @@
+diff --git a/test/pq-native/c04-real-state-proof-test.cpp b/test/pq-native/c04-real-state-proof-test.cpp
+--- a/test/pq-native/c04-real-state-proof-test.cpp
++++ b/test/pq-native/c04-real-state-proof-test.cpp
+@@ -1108 +1108 @@
+-  if (!n5_cut5_rebuild && !n5_cut5_absent && !n5_cut5_no_archive) {
++  if (true) {  // N06 MUTANT: reconstruct private-key custody in the cold reader.
