@@ -664,9 +664,10 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
  public:
   N5AcceptFacade(td::actor::ActorId<ValidatorManager> manager, td::Ref<block::ValidatorSet> set,
                  std::shared_ptr<std::atomic<bool>> cut3_gate = {},
-                 std::optional<BlockIdExt> cut3_target = std::nullopt)
+                 std::optional<BlockIdExt> cut3_target = std::nullopt,
+                 std::shared_ptr<std::atomic<unsigned>> accept_calls = {})
       : manager_(manager), set_(std::move(set)), cut3_gate_(std::move(cut3_gate)),
-        cut3_target_(std::move(cut3_target)) {
+        cut3_target_(std::move(cut3_target)), accept_calls_(std::move(accept_calls)) {
   }
 
   td::actor::Task<GeneratedCandidate> collate_block(
@@ -683,6 +684,9 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
                                   td::Ref<block::BlockSignatureSet> signatures,
                                   ValidatorSessionId session, int block_mode, int finality_mode,
                                   bool send_desc, bool apply) override {
+    if (accept_calls_) {
+      accept_calls_->fetch_add(1, std::memory_order_relaxed);
+    }
     auto [task, promise] = td::actor::StartedTask<>::make_bridge();
     run_accept_block_query(id, data, {}, set_, signatures, session, block_mode,
                            finality_mode, send_desc, apply, manager_, std::move(promise));
@@ -730,6 +734,7 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
   std::optional<BlockIdExt> cut3_target_;
   std::optional<td::Promise<td::Unit>> cut3_promise_;
   bool cut3_cancelled_ = false;
+  std::shared_ptr<std::atomic<unsigned>> accept_calls_;
 };
 
 }  // namespace tos::validator
@@ -737,6 +742,41 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
 namespace {
 
 namespace sx = tos::validator::consensus::simplex;
+
+struct N5ReplayState {
+  consensus::CandidateId expected_id;
+  td::Bits256 expected_cert_hash;
+  std::atomic<unsigned> observed{0};
+  std::atomic<bool> mismatch{false};
+};
+
+// Runtime creates event subscribers with a default constructor. This pointer
+// is confined to one short-lived cold child process and one scheduler.
+std::shared_ptr<N5ReplayState> n5_replay_state;
+
+class N5ReplayObserver final : public td::actor::SpawnsWith<sx::Bus>, public td::actor::ConnectsTo<sx::Bus> {
+ public:
+  TOS_RUNTIME_DEFINE_EVENT_HANDLER();
+
+  template <>
+  void handle(sx::BusHandle, std::shared_ptr<const consensus::StopRequested>) {
+    stop();
+  }
+
+  template <>
+  void handle(sx::BusHandle, std::shared_ptr<const sx::FinalizationObserved> event) {
+    if (!n5_replay_state) {
+      return;
+    }
+    auto cert_tl = serialize_tl_object(event->certificate->to_tl(), true);
+    if (event->id != n5_replay_state->expected_id ||
+        event->certificate->vote.id != n5_replay_state->expected_id ||
+        sha256_bits256(cert_tl.as_slice()) != n5_replay_state->expected_cert_hash) {
+      n5_replay_state->mismatch.store(true, std::memory_order_release);
+    }
+    n5_replay_state->observed.fetch_add(1, std::memory_order_release);
+  }
+};
 
 std::shared_ptr<sx::Bus> n5_joined_bus(td::Ref<block::ValidatorSet> set,
                                         ValidatorSessionId session,
@@ -1018,6 +1058,7 @@ int main(int argc, char **argv) {
   const bool n5_cut1 = argc == 3 && std::string_view(argv[1]) == "--n5-cut1";
   const bool n5_cut2 = argc == 3 && std::string_view(argv[1]) == "--n5-cut2";
   const bool n5_cut3 = argc == 3 && std::string_view(argv[1]) == "--n5-cut3";
+  const bool n5_cut4 = argc == 3 && std::string_view(argv[1]) == "--n5-cut4";
   const bool n5_joined_reopen = argc == 6 &&
       (std::string_view(argv[1]) == "--n5-joined-reopen" ||
        std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature");
@@ -1027,21 +1068,22 @@ int main(int argc, char **argv) {
   const bool n5_cut1_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut1-resume";
   const bool n5_cut2_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut2-resume";
   const bool n5_cut3_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut3-resume";
+  const bool n5_cut4_resume = argc == 6 && std::string_view(argv[1]) == "--n5-cut4-resume";
   const bool n5_reopen = argc == 5 && (std::string_view(argv[1]) == "--n5-reopen" ||
                                            std::string_view(argv[1]) == "--n5-reopen-bad-hash" ||
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 ||
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 ||
         n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
-        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume ||
+        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume ||
         n5_reopen || n5_joined_reopen)) {
-    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1|--n5-cut2|--n5-cut3 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
+    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1|--n5-cut2|--n5-cut3|--n5-cut4 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 ||
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 ||
                        n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
-                       n5_cut1_resume || n5_cut2_resume || n5_cut3_resume ||
+                       n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume ||
                        n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
@@ -1347,6 +1389,118 @@ int main(int argc, char **argv) {
     scheduler.stop();
     return 0;
   }
+  if (n5_cut4_resume) {
+    std::ifstream final_file(argv[5], std::ios::binary);
+    std::ostringstream final_bytes;
+    final_bytes << final_file.rdbuf();
+    if (!final_file || final_bytes.str().empty()) {
+      std::cerr << "N5_CUT4_FAILED: retained FinalCert TL absent\n";
+      return 1;
+    }
+    BlockCandidate replay_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                                block_boc.clone(), td::BufferSlice{}};
+    const auto candidate_id = consensus::CandidateHashData::create_full(replay_block, std::nullopt)
+                                  .build_id_with(0);
+    const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                         context.expected_session_id, "") + "/db/";
+    const auto original = final_bytes.str();
+    const auto exact_cert_hash = sha256_bits256(td::Slice(original));
+    std::vector<block::PQBlockSignature> exact_signatures;
+    if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate_id, td::Slice(original), true, exact_signatures)) {
+      return 1;
+    }
+    n5_replay_state = std::make_shared<N5ReplayState>();
+    n5_replay_state->expected_id = candidate_id;
+    n5_replay_state->expected_cert_hash = exact_cert_hash;
+    auto accept_calls = std::make_shared<std::atomic<unsigned>>(0);
+    td::actor::Scheduler scheduler({1});
+    td::actor::Runtime runtime;
+    sx::DefaultCollatorSchedule::provide_for(runtime);
+    runtime.register_actor<N5ReplayObserver>("N5ReplayObserver");
+    consensus::BlockAccepter::register_in(runtime);
+    sx::StateResolver::register_in(runtime);
+    sx::CandidateResolver::register_in(runtime);
+    sx::Pool::register_in(runtime);
+    sx::Db::register_in(runtime);
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    td::actor::ActorOwn<N5AcceptFacade> facade;
+    sx::BusHandle bus;
+    std::optional<td::Result<td::Unit>> restored;
+    bool bus_stopped = false;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cut4-manager", id0, argv[3]);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::restore_zero_context,
+                              id0, id0.root_hash,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                restored.emplace(std::move(outcome));
+                              }));
+    });
+    const auto context_deadline = td::Timestamp::in(10.0);
+    while (!restored.has_value() && !context_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (!restored.has_value() || restored->is_error()) {
+      std::cerr << "N5_CUT4_FAILED: genesis Manager context could not be cold-restored\n";
+      return 1;
+    }
+    scheduler.run_in_context([&] {
+      facade = td::actor::create_actor<N5AcceptFacade>("n5-cut4-facade", manager.get(), vset,
+                                                        std::shared_ptr<std::atomic<bool>>{},
+                                                        std::nullopt, accept_calls);
+      auto trusted = n5_joined_bus(vset, context.expected_session_id, facade.get(), journal_path);
+      trusted->stop_promise = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+        bus_stopped = outcome.is_ok();
+      });
+      bus = runtime.start(std::move(trusted), "n5-cut4-simplex");
+      bus.publish<consensus::Start>(td::make_ref<consensus::ChainState>(
+          consensus::ChainState::ZerostateTip{id0, root0}, id0));
+    });
+    const auto replay_deadline = td::Timestamp::in(10.0);
+    while (n5_replay_state->observed.load(std::memory_order_acquire) == 0 && !replay_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (n5_replay_state->observed.load(std::memory_order_acquire) != 1 ||
+        n5_replay_state->mismatch.load(std::memory_order_acquire)) {
+      std::cerr << "N5_CUT4_FAILED: exact saved FinalCert was not replayed once\n";
+      return 1;
+    }
+    // Give the StateResolver's local RocksDB marker lookup time to settle.
+    // A marker-bypass mutant must call the facade during this same interval.
+    const auto settled = td::Timestamp::in(1.0);
+    while (!settled.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    const auto duplicate = accept_calls->load(std::memory_order_acquire);
+    scheduler.run_in_context([&] {
+      bus.publish<consensus::StopRequested>();
+      bus = {};
+    });
+    const auto stop_deadline = td::Timestamp::in(10.0);
+    while (!bus_stopped && !stop_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
+    scheduler.stop();
+    n5_replay_state.reset();
+    if (!bus_stopped || duplicate != 0) {
+      std::cerr << "N5_CUT4_FAILED: duplicate AcceptBlock after exact FinalCert replay count=" << duplicate << '\n';
+      return 1;
+    }
+    std::string mode = "--n5-joined-reopen";
+    char *child_argv[] = {argv[0], mode.data(), argv[2], argv[3], argv[4], argv[5], nullptr};
+    pid_t child = -1;
+    const int spawned = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+    int status = 0;
+    if (spawned != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      std::cerr << "N5_CUT4_FAILED: second cold proof/state read status=" << status << " spawn=" << spawned << '\n';
+      return 1;
+    }
+    std::cout << "N5_CUT4_EXACT_REPLAY_NO_REAPPLY_OK cert=" << exact_cert_hash.to_hex()
+              << " block=" << id1.to_str() << " proof_hash=" << argv[4] << '\n';
+    return 0;
+  }
   if (n5_cut1_resume || n5_cut2_resume || n5_cut3_resume) {
     std::ifstream final_file(argv[4], std::ios::binary);
     std::ostringstream final_bytes;
@@ -1567,7 +1721,7 @@ int main(int argc, char **argv) {
     std::cout << "N5_CUT1_COLD_NO_TARGET_HANDLE_OK block=" << id1.to_str() << '\n';
     return 0;
   }
-  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3) {
+  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4) {
     auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
     std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
     std::filesystem::create_directories(db_root + "/static");
@@ -1849,6 +2003,18 @@ int main(int argc, char **argv) {
       std::cerr << "N5_JOINED_COLD_FAILED: wrong-signature child status=" << status
                 << " spawn=" << negative_spawned << '\n';
       return 1;
+    }
+    if (n5_cut4) {
+      mode = "--n5-cut4-resume";
+      child_argv[1] = mode.data();
+      child = -1;
+      const int replayed = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+      status = 0;
+      if (replayed != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        std::cerr << "N5_CUT4_FAILED: cold replay child status=" << status << " spawn=" << replayed << '\n';
+        return 1;
+      }
+      std::cout << "N5_CUT4_WRITER_EXIT_OK root=" << db_root << " finalcert_tl=" << finalcert_path << '\n';
     }
     return 0;
   }

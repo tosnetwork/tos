@@ -87,6 +87,7 @@ def main() -> int:
         ("test-n5-cut1-finalcert-recovery", "FinalCert write-after bootstrap recovery"),
         ("test-n5-cut2-signatures-recovery", "#13 signature write-after bootstrap recovery"),
         ("test-n5-cut3-proof-recovery", "BlockProof write-after bootstrap recovery"),
+        ("test-n5-cut4-finalized-replay", "finalized marker cold replay without duplicate acceptance"),
     ):
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -141,6 +142,14 @@ def main() -> int:
             cmake,
         ) is not None,
         "N5 BlockProof write-after recovery CTest is absent or no longer invokes its cut3 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut4-finalized-replay COMMAND test-c04-real-state-proof "
+            r"--n5-cut4\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        ) is not None,
+        "N5 finalized marker replay CTest is absent or no longer invokes its cut4 mode",
     )
     c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
     require(
@@ -210,7 +219,7 @@ def main() -> int:
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
-        "N5 FinalCert-journal, AcceptBlock, same-FinalCert, and three write-after recovery CTests, "
+        "N5 FinalCert-journal, AcceptBlock, same-FinalCert, and four named recovery CTests including finalized-marker replay, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
         "and five named restart-origin controls, "
