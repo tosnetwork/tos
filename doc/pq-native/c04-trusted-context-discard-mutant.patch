@@ -1,0 +1,12 @@
+diff --git a/validator/finality-cache-policy.h b/validator/finality-cache-policy.h
+--- a/validator/finality-cache-policy.h
++++ b/validator/finality-cache-policy.h
+@@ -80,7 +80,7 @@
+ constexpr PendingBlockProofFailureAction pending_block_proof_failure_action(PendingBlockProofFailureSource source,
+                                                                            int error_code) {
+   if (source == PendingBlockProofFailureSource::TrustedContext) {
+-    return PendingBlockProofFailureAction::Retry;
++    return PendingBlockProofFailureAction::DiscardBlockBytes;
+   }
+   if (error_code == ErrorCode::notready || error_code == ErrorCode::timeout) {
+     return PendingBlockProofFailureAction::Retry;

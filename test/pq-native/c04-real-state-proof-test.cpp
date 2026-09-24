@@ -172,26 +172,47 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   void start_stale_context_case(BlockIdExt id, td::BufferSlice data, td::Ref<block::BlockSignatureSet> good,
                                 td::Ref<block::ValidatorSet> stale_set, td::Ref<MasterchainStateQ> real_state,
                                 bool expire, td::Promise<td::Unit> promise) {
+    auto expected_data = data.clone();
     cached_masterchain_block_candidates_.put(id, std::move(data));
     last_masterchain_state_ = td::make_ref<C04StaleState>(id, std::move(stale_set));
+    // The exact candidate/certificate/context triple must fail at the
+    // trusted-context boundary, before any evidence-validity verdict.
+    auto block = create_block(id, expected_data.clone());
+    if (block.is_error()) {
+      return promise.set_error(block.move_as_error());
+    }
+    PendingBlockProofFailureSource failure_source = PendingBlockProofFailureSource::BlockBytes;
+    auto stale_proof = WaitBlockData::generate_proof(id, block.ok()->root_cell(), good,
+                                                    last_masterchain_state_, failure_source);
+    if (stale_proof.is_ok() || failure_source != PendingBlockProofFailureSource::TrustedContext) {
+      return promise.set_error(td::Status::Error("C04 stale proof did not identify TrustedContext"));
+    }
+    std::cout << "C04_MANAGER_TRUSTED_CONTEXT_SOURCE_OK\n";
+    const double expires_at = td::Time::now() + (expire ? 0.2 : 10.0);
     auto admitted = pending_block_finality_.admit(
         id, PendingBlockFinalitySender::local_source(),
         PendingBlockFinalityCandidate{std::move(good), BroadcastSource::consensus_overlay}, 4096,
-        PendingFinalityCapacity::Shared, false, true, td::Time::now() + (expire ? 0.2 : 10.0));
+        PendingFinalityCapacity::Shared, false, true, expires_at);
     if (!admitted.admitted()) {
       return promise.set_error(td::Status::Error("C04 trusted-context evidence was not admitted"));
     }
     try_process_pending_block_finality(id);
     auto *pending = pending_block_finality_.get_if_exists(id);
+    auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
     if (!pending || pending->size() != 1 || pending->processing() ||
-        !cached_masterchain_block_candidates_.contains(id)) {
+        !cached || cached->as_slice() != expected_data.as_slice()) {
       return promise.set_error(td::Status::Error("C04 stale context did not retain evidence and block bytes"));
     }
     std::cout << "C04_MANAGER_STALE_RETAINED evidence=1 candidate=1\n";
     if (expire) {
-      delay_action([self = actor_id(this), id, promise = std::move(promise)]() mutable {
+      // Match ingress's delayed closure, not a direct call from the observer.
+      delay_action([self = actor_id(this), id]() {
+        td::actor::send_closure(self, &ValidatorManagerImpl::expire_pending_block_finality, id);
+      }, td::Timestamp::at(expires_at));
+      delay_action([self = actor_id(this), id, expected_data = std::move(expected_data),
+                    promise = std::move(promise)]() mutable {
         td::actor::send_closure(self, &PendingFinalityManagerActorProbe::finish_stale_expiry, id,
-                                std::move(promise));
+                                std::move(expected_data), std::move(promise));
       }, td::Timestamp::in(0.35));
       return;
     }
@@ -202,13 +223,14 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   }
 
   void resume_stale_case(BlockIdExt id, td::Promise<td::Unit> promise) {
-    try_process_pending_block_finality(id);
+    // Do not retry manually: only the production scheduled retry can drain it.
     await_queue_drained(id, td::Timestamp::in(5.0), std::move(promise));
   }
 
-  void finish_stale_expiry(BlockIdExt id, td::Promise<td::Unit> promise) {
-    expire_pending_block_finality(id);
-    if (pending_block_finality_.get_if_exists(id) || !cached_masterchain_block_candidates_.contains(id) ||
+  void finish_stale_expiry(BlockIdExt id, td::BufferSlice expected_data, td::Promise<td::Unit> promise) {
+    auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
+    if (pending_block_finality_.get_if_exists(id) || !cached ||
+        cached->as_slice() != expected_data.as_slice() ||
         (last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id)) {
       return promise.set_error(td::Status::Error("C04 expiry changed block bytes or accepted target"));
     }
