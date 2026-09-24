@@ -13,6 +13,7 @@ use chain_block::{
     BuilderData, Deserializable, MsgAddressInt, Serializable, SliceData, StateInit,
     read_single_root_boc,
 };
+use common::tvm_stack_parser::TvmStackParser;
 use std::sync::Arc;
 
 /// Code for single-nominator contract v1.1
@@ -33,6 +34,23 @@ pub struct NominatorWrapperImpl {
 }
 
 impl NominatorWrapperImpl {
+    /// FunC `get_roles()` returns three TVM slices, not cell references.
+    /// A cell-only decoder refuses a live pool before any stake is submitted.
+    fn decode_roles(stack: &TvmStackParser) -> anyhow::Result<NominatorRoles> {
+        anyhow::ensure!(stack.stack.len() == 3, "get_roles returned an unexpected role count");
+        let mut owner = stack.slice(0)?;
+        let mut validator = stack.slice(1)?;
+        let mut controller = stack.slice(2)?;
+        Ok(NominatorRoles {
+            owner_address: MsgAddressInt::construct_from(&mut owner)
+                .context("parse owner address")?,
+            validator_address: MsgAddressInt::construct_from(&mut validator)
+                .context("parse validator address")?,
+            controller_address: MsgAddressInt::construct_from(&mut controller)
+                .context("parse controller address")?,
+        })
+    }
+
     pub fn new(provider: Arc<dyn ContractProvider>, nominator_addr: MsgAddressInt) -> Self {
         Self { provider, nominator_addr, state_init: None }
     }
@@ -109,17 +127,7 @@ impl NominatorWrapper for NominatorWrapperImpl {
     async fn get_roles(&self) -> anyhow::Result<NominatorRoles> {
         let stack =
             self.provider.get_method(self.nominator_addr.to_string(), "get_roles", vec![]).await?;
-        let owner_address =
-            MsgAddressInt::construct_from(&mut SliceData::load_cell(stack.cell(0)?)?)
-                .map_err(|e| anyhow::anyhow!("parse owner address error: {}", e))?;
-        let validator_address =
-            MsgAddressInt::construct_from(&mut SliceData::load_cell(stack.cell(1)?)?)
-                .map_err(|e| anyhow::anyhow!("parse validator address error: {}", e))?;
-        let controller_address =
-            MsgAddressInt::construct_from(&mut SliceData::load_cell(stack.cell(2)?)?)
-                .map_err(|e| anyhow::anyhow!("parse controller address error: {}", e))?;
-
-        Ok(NominatorRoles { owner_address, validator_address, controller_address })
+        Self::decode_roles(&stack)
     }
 
     async fn get_pool_data(&self) -> anyhow::Result<PoolData> {
@@ -184,6 +192,39 @@ mod tests {
     use chain_block::MsgAddressInt;
     use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
     use std::str::FromStr;
+    use tl_api::tos::tvm::{StackEntry, slice, stackentry::StackEntrySlice};
+
+    fn role_slice(address: &MsgAddressInt) -> StackEntry {
+        let cell = address.write_to_new_cell().unwrap().into_cell().unwrap();
+        let bytes = SliceData::load_cell(cell).unwrap().get_bytestring(0);
+        StackEntry::Tvm_StackEntrySlice(StackEntrySlice { slice: slice::Slice { bytes } })
+    }
+
+    #[test]
+    fn get_roles_decodes_three_ordered_slices_and_refuses_a_cell() {
+        let owner = MsgAddressInt::standard(-1, [0x11; 32]);
+        let operator = MsgAddressInt::standard(-1, [0x22; 32]);
+        let controller = MsgAddressInt::standard(-1, [0x33; 32]);
+        let entries = vec![role_slice(&owner), role_slice(&operator), role_slice(&controller)];
+        let roles = NominatorWrapperImpl::decode_roles(&TvmStackParser::new(entries.clone()))
+            .expect("the live getter's three slice entries must decode");
+        assert_eq!(roles.owner_address, owner);
+        assert_eq!(roles.validator_address, operator);
+        assert_eq!(roles.controller_address, controller);
+
+        let mut wrong_type = entries;
+        let cell = owner.write_to_new_cell().unwrap().into_cell().unwrap();
+        wrong_type[0] =
+            StackEntry::Tvm_StackEntryCell(tl_api::tos::tvm::stackentry::StackEntryCell {
+                cell: tl_api::tos::tvm::cell::Cell {
+                    bytes: chain_block::write_boc(&cell).unwrap(),
+                },
+            });
+        let error = NominatorWrapperImpl::decode_roles(&TvmStackParser::new(wrong_type))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not a slice: index=0"), "wrong refusal: {error}");
+    }
 
     fn open_nominator() -> Option<NominatorWrapperImpl> {
         let nominator_addr =
