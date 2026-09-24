@@ -69,6 +69,31 @@ network, while retaining the bad-front/good, stale-context recovery, and
 expiry controls. Until then, "broadcast callback succeeded" is the precise
 boundary, not "block accepted."
 
+An attempted independent `CheckProof` probe exposed a more specific fixture
+precondition before any signature or DB decision. The synthetic manager test
+passed its target-height (43) `PendingFinalityProbeState` as the proof's
+starting masterchain state. Production `CheckProof::process_masterchain_state`
+rejected it with `cannot check masterchain block proof ... starting from newer
+masterchain state`: that routine requires a state strictly earlier than the
+target block. Merely changing the synthetic state's ID to height 42 would not
+make it a valid predecessor: its root is an empty test cell, whereas the
+block's Merkle update expects a different old root, and
+`MasterchainStateQ::get_validator_set(shard,time,catchain_seqno)` reads the
+parsed state configuration, not the probe's `get_config_holder()` override.
+This was a diagnostic fixture failure, not evidence that the valid finality
+proof is rejected. The failing probe was removed; the existing test was rebuilt
+and passed again.
+
+The next executable fixture must start with a real predecessor state at N-1
+whose root matches the block's Merkle update and whose ConfigParam 34 yields
+the fixture's validator set. It must initialize a real block handle and DB,
+deliver bad then good finality for that same block, and observe the good entry
+through `ValidateBroadcast`, `CheckProof`, `ApplyBlock` and a persisted/applied
+handle. Repeating with temporarily unavailable trusted context and then with
+retention expiry gives the two remaining controls. The current synthetic
+block/state pair is sufficient for `WaitBlockData::generate_proof` and the
+manager queue, but is not a replacement for that predecessor-state fixture.
+
 The old-behavior mutation changed only the proof-error branch of
 `try_process_pending_block_finality` back to candidate-byte erasure. The
 `test-pending-finality-cache` CTest exited 8 and named
