@@ -1,0 +1,27 @@
+diff --git a/tosctl/src/node-control/contracts/tests/liquid_staking_sandbox.rs b/tosctl/src/node-control/contracts/tests/liquid_staking_sandbox.rs
+index 673a67c33..fa051cc9c 100644
+--- a/tosctl/src/node-control/contracts/tests/liquid_staking_sandbox.rs
++++ b/tosctl/src/node-control/contracts/tests/liquid_staking_sandbox.rs
+@@ -639,12 +639,1 @@ fn classical_liquid_controller_order_is_refused_before_controller_relay() {
+-    let mut body = BuilderData::new();
+-    body.append_u32(NEW_STAKE).expect("operation");
+-    body.append_u64(7).expect("query id");
+-    Coins::new(60_000 * TOS).write_to(&mut body).expect("stake amount");
+-    body.append_raw(&[0x11; 32], 256).expect("classical public key");
+-    body.append_u32(election).expect("election");
+-    body.append_u32(0x10000).expect("max factor");
+-    body.append_raw(&[0xa5; 32], 256).expect("adnl address");
+-    let mut signature = BuilderData::new();
+-    signature.append_raw(&[0x33; 64], 512).expect("Ed25519 signature");
+-    body.checked_append_reference(signature.into_cell().expect("signature cell"))
+-        .expect("classical signature reference");
++    let body = stake_order(7, 60_000 * TOS, election);
+@@ -655,7 +644,7 @@ fn classical_liquid_controller_order_is_refused_before_controller_relay() {
+         .chain
+         .send_message(
+             MessageBuilder::internal(&sender, &target, 2 * TOS)
+-                .body(body.into_cell().expect("complete classical stake order"))
++                .body(body)
+                 .build(),
+         )
+         .expect("delivered");
