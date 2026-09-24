@@ -19,9 +19,17 @@ for name in ("bus.h", "bus.cpp", "pool.cpp", "state-resolver.cpp"):
             fail(f"{name} retains unsafe {forbidden}")
 
 resolver = (root / "validator/consensus/simplex/state-resolver.cpp").read_text()
-start = re.search(r"td::actor::Task<ResolvedState>\s+resolve_state_inner\(ParentId id\)\s*\{", resolver)
+# The optional requester was added for physical-read diagnostics. It must not
+# replace the signed ParentId as the authority for this exact-ancestor walk.
+start = re.search(
+    r"td::actor::Task<ResolvedState>\s+resolve_state_inner\(\s*ParentId\s+id\s*,\s*"
+    r"std::optional<CandidateId>\s+requesting_candidate\s*\)\s*\{",
+    resolver,
+)
 if start is None:
     fail("resolve_state_inner not found")
+if not re.search(r"resolve_state_inner\(id,\s*requesting_candidate\)", resolver):
+    fail("diagnostic requester is not forwarded to exact-ancestor resolution")
 end = resolver.find("// ===== Block finalization =====", start.end())
 if end < 0:
     fail("resolve_state_inner boundary not found")
