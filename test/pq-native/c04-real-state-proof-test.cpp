@@ -274,9 +274,12 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
 
   void finish_stale_expiry(BlockIdExt id, td::BufferSlice expected_data, td::Promise<td::Unit> promise) {
     auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
-    if (pending_block_finality_.get_if_exists(id) || !cached ||
-        cached->as_slice() != expected_data.as_slice() ||
-        (last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id)) {
+    auto *pending = pending_block_finality_.get_if_exists(id);
+    const bool candidate_equal = cached && cached->as_slice() == expected_data.as_slice();
+    const bool target_live = last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id;
+    if (pending || !candidate_equal || target_live) {
+      std::cerr << "C04_MANAGER_EXPIRY_FLAGS pending_entries=" << (pending ? pending->size() : 0)
+                << " candidate_equal=" << candidate_equal << " target_live=" << target_live << '\n';
       return promise.set_error(td::Status::Error("C04 expiry changed block bytes or accepted target"));
     }
     std::cout << "C04_MANAGER_INGRESS_TIMER_EXPIRED\n";
