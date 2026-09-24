@@ -1,0 +1,18 @@
+# E17: retained E2E initial-validator source guard
+
+Status: local fixed-source change and mutation evidence on `65f2dfe341f914eaf0242d7141920b1cb9259c58`; **E17 remains OPEN pending pushed-head Source guards CI and independent review**. This unit changes the guard, not any E2E route or validator seed.
+
+The guard still requires one unaliased shared helper import and the same 17 direct calls in 15 retained entry points, including one call in each Stage A provisioning branch. It now rejects references to any of the three low-level methods (`make_initial_validator`, `make_initial_pq_validator`, `make_noninitial_pq_validator`) whether called immediately or bound for later. It also rejects a literal `getattr(..., "method")` for any of those names. A built-in positive control checks those three shapes on every guard run; a benign `getattr(os, "O_CLOEXEC", 0)` is a negative control. The success message states this AST-visible scope, not a universal ban on every dynamically constructed method name or transitive library call.
+
+On the committed guard source (SHA-256 `09af5ae54198e1873c90ce7786bbd0d8249daf4db5c0598f82809ca6d6d81b81`), the clean entry source was restored byte-for-byte (SHA-256 `c6cb322ece387aa557963edeadb5d8de96eb0bdd54668592b0f8bb19a0fed47b`). The clean guard reported 15 entry points / 17 calls and exited 0; all 39 source-guard CTests passed. The raw clean logs are retained under `test/integration/.e17-initial-validator-guard-20260924/`: `65f-clean.log` SHA-256 `c69e5b520e44bb6903207cebb8bb6cf4de32d39c0a87a42768f048b192614159`, `65f-all-source-guards.log` SHA-256 `0293f656bfa9d31583c6606b364efd9969d12655c02fc1bae4b57c4868b3ceda`.
+
+Four independent one-file patches against the same clean `agent-wallet-account-e2e.py` were applied one at a time and removed after observing the guard's own exit code 1. Each red named the target file and bypass (or the missing helper call); none relied on a syntax error. The tracked patch files are byte-identical to the retained raw patches.
+
+| Mutation | Patch SHA-256 | Raw red log SHA-256 | Guard finding |
+| --- | --- | --- | --- |
+| literal `getattr` low-level call | `6d7674e183bf01cc4913eadf8b2fb0e2a6777e81a3f18ec7b0dcb6df6df55cf3` | `cabe859eaa03f65f8b5f13b3577def34d1e00594c29ae19d14179b886972461e` | line 472, `getattr(..., 'make_initial_pq_validator')` |
+| bound method then call | `f8153d65c98a81163d63cec4270cbb222e082459fe79008360a48eaa606975d9` | `9c3f0fb7569dc0da89efb070e9093bf06eaa9ade5e3d9bd20bc2f40e840dd241` | line 472, `make_initial_pq_validator` |
+| direct spare provisioning | `65491258f14a7b5071df7cb95c1f7c0822435a99a2ee1cf28235ec8a5a26f240` | `297cfc39ed7f1a29648b210af6d681e95da0171ea31d3df119cf72ecff4f418e` | line 472, `make_noninitial_pq_validator` |
+| shared helper call removed | `42a221c73c86f6d1fbb5badaecf7ddc33bc85150b5b21c779b76b5d6a1ebf4ea` | `86f65a41d32cb4b68e49a8adde2258ec05f9866ceda7187375bb9f253bf58685` | zero calls, expected one |
+
+The direct `node.make_initial_pq_validator` in `test/tostester/src/tostester/n6_cluster.py` is outside these 15 retained E2E entry points. None of the 15 imports `tostester.n6_cluster`; its separate N6 soak identity policy is not converted or covered by this guard. Dynamic method-name construction and transitive imports likewise remain outside this specific E17 claim.

@@ -1,0 +1,13 @@
+diff --git a/scripts/agent-wallet-account-e2e.py b/scripts/agent-wallet-account-e2e.py
+index bdec84561..c11233013 100644
+--- a/scripts/agent-wallet-account-e2e.py
++++ b/scripts/agent-wallet-account-e2e.py
+@@ -469,6 +469,8 @@ async def main() -> int:
+         dht = network.create_dht_node()
+         node = network.create_full_node()
+         make_deterministic_pq_initial_validator(node, 0)
++        provision_directly = node.make_initial_pq_validator
++        provision_directly(b"0" * 32, b"1" * 32)
+         node.announce_to(dht)
+ 
+         dht_task = asyncio.create_task(dht.run())
