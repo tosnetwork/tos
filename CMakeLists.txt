@@ -1246,6 +1246,11 @@ tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)
 tos_test(test-pending-finality-cache)
 tos_test(test-c04-real-state-proof ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N01's short production AcceptBlock/#13/RootDb cut uses C04's exact PQ
+# seq0→seq1 fixture, but runs as a separate CTest from C04's 60-second
+# finality-retention control.
+add_test(NAME test-n5-accept-block COMMAND test-c04-real-state-proof --n5-accept
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)

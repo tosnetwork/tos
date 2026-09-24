@@ -381,18 +381,136 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
       }));
     }));
   }
+
+  void verify_n5_accept_cold(BlockIdExt zero_id, BlockIdExt target_id, RootHash expected_root,
+                             td::Ref<block::ValidatorSet> vset, ValidatorSessionId session,
+                             std::string expected_proof_hash,
+                             td::Promise<td::Unit> promise) {
+    auto db = db_.get();
+    td::actor::send_closure(db, &Db::get_block_handle, target_id,
+                            td::PromiseCreator::lambda(
+        [db, zero_id, target_id, expected_root, vset, session,
+         expected_proof_hash = std::move(expected_proof_hash), promise = std::move(promise)]
+        (td::Result<BlockHandle> result) mutable {
+      if (result.is_error()) {
+        return promise.set_error(result.move_as_error_prefix("N5 cold handle: "));
+      }
+      auto handle = result.move_as_ok();
+      if (handle->id() != target_id || !handle->received() || !handle->inited_signatures() ||
+          !handle->inited_proof() || !handle->received_state() || !handle->is_applied() ||
+          handle->state() != expected_root) {
+        return promise.set_error(td::Status::Error("N5 cold handle lacks accepted signature/proof/state flags"));
+      }
+      // A completed AcceptBlock may move the short-lived signature file into
+      // an archive, where RootDb::get_block_signatures deliberately refuses it.
+      // The durable BlockProof carries the same PQ finality set; verify that
+      // envelope from the cold process instead of treating its transient copy
+      // as the persistence contract.
+      td::actor::send_closure(db, &Db::get_block_proof, ConstBlockHandle{handle},
+                                td::PromiseCreator::lambda(
+            [db, handle, zero_id, target_id, expected_root, vset, session,
+             expected_proof_hash = std::move(expected_proof_hash), promise = std::move(promise)]
+            (td::Result<td::Ref<Proof>> result) mutable {
+          if (result.is_error()) {
+            return promise.set_error(result.move_as_error_prefix("N5 cold BlockProof: "));
+          }
+          if (block::compute_file_hash(result.ok()->data().as_slice()).to_hex() != expected_proof_hash) {
+            return promise.set_error(td::Status::Error("N5 cold BlockProof bytes differ from writer"));
+          }
+          auto root = result.ok()->get_root_cell();
+          if (root.is_error()) {
+            return promise.set_error(root.move_as_error_prefix("N5 cold BlockProof root: "));
+          }
+          auto envelope = parse_block_proof_signature_envelope(root.move_as_ok());
+          if (envelope.is_error() || envelope.ok().block_id != target_id ||
+              envelope.ok().signatures.is_null() || !envelope.ok().signatures->is_pq()) {
+            return promise.set_error(td::Status::Error("N5 cold BlockProof PQ envelope differs"));
+          }
+          auto proof_session = envelope.ok().signatures->pq_session_id();
+          if (proof_session.is_error() || proof_session.ok() != session) {
+            return promise.set_error(td::Status::Error("N5 cold BlockProof session differs"));
+          }
+          block::PQFinalityVerificationContext context{vset, target_id, session};
+          auto verified = verify_pq_proof_signatures(context, *envelope.ok().signatures,
+                                                     envelope.ok().claimed_weight);
+          if (verified.is_error()) {
+            return promise.set_error(verified.move_as_error_prefix("N5 cold BlockProof signatures: "));
+          }
+          td::actor::send_closure(db, &Db::get_block_state, ConstBlockHandle{handle},
+                                  td::PromiseCreator::lambda(
+              [db, handle, zero_id, target_id, expected_root, promise = std::move(promise)]
+              (td::Result<td::Ref<ShardState>> result) mutable {
+            if (result.is_error()) {
+              return promise.set_error(result.move_as_error_prefix("N5 cold state: "));
+            }
+            if (result.ok()->root_hash() != expected_root) {
+              return promise.set_error(td::Status::Error("N5 cold state root differs"));
+            }
+            td::actor::send_closure(db, &Db::get_block_data, ConstBlockHandle{handle},
+                                    td::PromiseCreator::lambda(
+                [db, zero_id, target_id, promise = std::move(promise)]
+                (td::Result<td::Ref<BlockData>> result) mutable {
+              if (result.is_error()) {
+                return promise.set_error(result.move_as_error_prefix("N5 cold block data: "));
+              }
+              if (result.ok()->block_id() != target_id || result.ok()->file_hash() != target_id.file_hash) {
+                return promise.set_error(td::Status::Error("N5 cold block bytes differ"));
+              }
+              td::actor::send_closure(db, &Db::get_block_handle, zero_id,
+                                      td::PromiseCreator::lambda(
+                  [target_id, promise = std::move(promise)](td::Result<BlockHandle> result) mutable {
+                if (result.is_error()) {
+                  return promise.set_error(result.move_as_error_prefix("N5 cold predecessor: "));
+                }
+                if (!result.ok()->inited_next() || result.ok()->one_next(true) != target_id) {
+                  return promise.set_error(td::Status::Error("N5 cold predecessor next differs"));
+                }
+                promise.set_value(td::Unit());
+              }));
+            }));
+          }));
+        }));
+    }));
+  }
+
+  void n5_written_proof_hash(BlockIdExt id, td::Promise<std::string> promise) {
+    auto db = db_.get();
+    td::actor::send_closure(db, &Db::get_block_handle, id,
+                            td::PromiseCreator::lambda(
+        [db, promise = std::move(promise)](td::Result<BlockHandle> result) mutable {
+      if (result.is_error()) {
+        return promise.set_error(result.move_as_error_prefix("N5 writer handle: "));
+      }
+      auto handle = result.move_as_ok();
+      if (!handle->inited_proof() || !handle->inited_signatures()) {
+        return promise.set_error(td::Status::Error("N5 writer proof/signatures not initialized"));
+      }
+      td::actor::send_closure(db, &Db::get_block_proof, ConstBlockHandle{handle},
+                              td::PromiseCreator::lambda(
+          [promise = std::move(promise)](td::Result<td::Ref<Proof>> result) mutable {
+        if (result.is_error()) {
+          return promise.set_error(result.move_as_error_prefix("N5 writer BlockProof: "));
+        }
+        promise.set_value(block::compute_file_hash(result.ok()->data().as_slice()).to_hex());
+      }));
+    }));
+  }
 };
 
 }  // namespace tos::validator
 
 int main(int argc, char **argv) {
+  const bool n5_accept = argc == 3 && std::string_view(argv[1]) == "--n5-accept";
+  const bool n5_reopen = argc == 5 && (std::string_view(argv[1]) == "--n5-reopen" ||
+                                           std::string_view(argv[1]) == "--n5-reopen-bad-hash" ||
+                                           std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen)) {
-    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
+  if (!(argc == 2 || reopen || n5_accept || n5_reopen)) {
+    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input(reopen ? argv[2] : argv[1], std::ios::binary);
+  std::ifstream input((reopen || n5_accept || n5_reopen) ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
   if (!input) {
@@ -607,6 +725,135 @@ int main(int argc, char **argv) {
   if (bad_proof.is_ok() || source != PendingBlockProofFailureSource::FinalityEvidence) {
     std::cerr << "C04_REAL_PROOF_FAILED: wrong hash certificate was not attributed to finality evidence\n";
     return 1;
+  }
+  if (n5_reopen) {
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    std::optional<td::Result<td::Unit>> result;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cold-manager", id0, argv[3]);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_n5_accept_cold, id0, id1,
+                              expected_state_root, vset, context.expected_session_id, std::string(argv[4]),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    auto deadline = td::Timestamp::in(30.0);
+    while (!result.has_value() && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    const auto mode = std::string_view(argv[1]);
+    if (mode != "--n5-reopen" && result.has_value() && result->is_error()) {
+      const auto detail = result->error().to_string();
+      const auto expected = mode == "--n5-reopen-bad-hash"
+                                ? "N5 cold BlockProof bytes differ from writer"
+                                : "N5 cold handle: block handle not in db";
+      if (detail.find(expected) != std::string::npos) {
+        std::cout << "N5_ACCEPT_BLOCK_COLD_NEGATIVE_OK mode=" << mode << " error=" << detail << '\n';
+        scheduler.run_in_context([&] { manager.reset(); });
+        scheduler.stop();
+        return 0;
+      }
+    }
+    if (!result.has_value() || result->is_error() || mode != "--n5-reopen") {
+      std::cerr << "N5_ACCEPT_BLOCK_COLD_FAILED: "
+                << (result.has_value() ? (result->is_error() ? result->error().to_string() : "negative unexpectedly passed")
+                                       : "actor timeout") << '\n';
+      return 1;
+    }
+    std::cout << "N5_ACCEPT_BLOCK_COLD_OK block=" << id1.to_str() << " root=" << expected_state_root.to_hex() << '\n';
+    scheduler.run_in_context([&] { manager.reset(); });
+    scheduler.stop();
+    return 0;
+  }
+  if (n5_accept) {
+    auto db_root = require_ok(td::mkdtemp("", "n5-accept-block-"), "N5 AcceptBlock DB directory");
+    std::cout << "N5_ACCEPT_BLOCK_DB_ROOT=" << db_root << '\n';
+    std::filesystem::create_directories(db_root + "/static");
+    {
+      std::ofstream static_zero(db_root + "/static/" + id0.file_hash.to_hex(), std::ios::binary);
+      static_zero.write(boc.as_slice().data(), static_cast<std::streamsize>(boc.size()));
+      if (!static_zero) {
+        std::cerr << "N5_ACCEPT_BLOCK_FAILED: genesis StaticFilesDb provision\n";
+        return 1;
+      }
+    }
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    std::optional<td::Result<td::Unit>> result;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-accept-manager", id0, db_root);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::seed_zerostate, id0, state0, boc.clone(),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    auto wait_result = [&]() {
+      auto deadline = td::Timestamp::in(30.0);
+      while (!result.has_value() && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      if (!result.has_value() || result->is_error()) {
+        std::cerr << "N5_ACCEPT_BLOCK_FAILED: "
+                  << (result.has_value() ? result->error().to_string() : "actor timeout") << '\n';
+        return false;
+      }
+      return true;
+    };
+    if (!wait_result()) {
+      return 1;
+    }
+    result.reset();
+    scheduler.run_in_context([&] {
+      run_accept_block_query(id1, parsed_block, {id0}, vset, good, context.expected_session_id,
+                             0, 0, false, true, manager.get(),
+                             td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                               result.emplace(std::move(outcome));
+                             }));
+    });
+    if (!wait_result()) {
+      return 1;
+    }
+    std::cout << "N5_ACCEPT_BLOCK_QUERY_OK block=" << id1.to_str() << '\n';
+    std::optional<td::Result<std::string>> proof_result;
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::n5_written_proof_hash, id1,
+                              td::PromiseCreator::lambda([&](td::Result<std::string> outcome) {
+                                proof_result.emplace(std::move(outcome));
+                              }));
+    });
+    auto proof_deadline = td::Timestamp::in(30.0);
+    while (!proof_result.has_value() && !proof_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (!proof_result.has_value() || proof_result->is_error()) {
+      std::cerr << "N5_ACCEPT_BLOCK_FAILED: writer proof hash "
+                << (proof_result.has_value() ? proof_result->error().to_string() : "timeout") << '\n';
+      return 1;
+    }
+    auto proof_hash = proof_result->move_as_ok();
+    std::cout << "N5_ACCEPT_BLOCK_WRITTEN_PROOF_HASH=" << proof_hash << '\n';
+    scheduler.run_in_context([&] { manager.reset(); });
+    scheduler.stop();
+    auto cold_child = [&](std::string mode, std::string root, std::string hash) {
+      char *child_argv[] = {argv[0], mode.data(), argv[2], root.data(), hash.data(), nullptr};
+      pid_t pid = -1;
+      const int spawn_error = posix_spawn(&pid, argv[0], nullptr, nullptr, child_argv, environ);
+      int status = 0;
+      if (spawn_error != 0 || waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        std::cerr << "N5_ACCEPT_BLOCK_FAILED: cold child mode=" << mode << " status=" << status
+                  << " spawn=" << spawn_error << '\n';
+        return false;
+      }
+      return true;
+    };
+    auto empty_root = require_ok(td::mkdtemp("", "n5-accept-absent-"), "N5 absent DB directory");
+    if (!cold_child("--n5-reopen", db_root, proof_hash) ||
+        !cold_child("--n5-reopen-bad-hash", db_root, std::string(64, '0')) ||
+        !cold_child("--n5-reopen-absent", empty_root, proof_hash)) {
+      return 1;
+    }
+    return 0;
   }
   // Signing may randomize the proof in another process. Bind cold readback to
   // the exact proof stored by this parent, not a newly generated equivalent.
