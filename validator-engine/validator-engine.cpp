@@ -100,7 +100,7 @@
 #include "git.h"
 
 #if TOS_USE_JEMALLOC
-#include <jemalloc/jemalloc.h>
+#include TOS_JEMALLOC_HEADER
 #endif
 
 static constexpr size_t k_ed25519_signature_size = 64;

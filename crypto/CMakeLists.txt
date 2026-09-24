@@ -464,7 +464,8 @@ add_executable(mintless-proof-generator util/mintless-proof-generator.cpp)
 target_link_libraries(mintless-proof-generator PRIVATE tos_crypto git ${JEMALLOC_LIBRARIES})
 
 if (JEMALLOC_FOUND)
-  target_include_directories(mintless-proof-generator PRIVATE ${JEMALLOC_INCLUDE_DIR})
+  # The source includes no jemalloc header, so the shared jemalloc prefix is kept off
+  # the search path where it could shadow vendored headers.
   target_compile_definitions(mintless-proof-generator PRIVATE -DTOS_USE_JEMALLOC=1)
 endif()
 
