@@ -359,3 +359,59 @@ Both source files were restored afterward. C04 remains OPEN for fixed-head
 CI and independent review of this extension; the queue's per-attempt token
 association and full ingress timer remain explicitly narrower than a direct
 production-ingress assertion.
+
+## Production ingress timer, isolated from retry cleanup (6e66c54f8)
+
+The preceding timer controls have a narrower interpretation than first
+recorded. In the `59d31ab45` timer-bypass run, Manager's retry path had
+already removed the expired evidence from its queue: the failure printed
+`pending_present=1 pending_entries=0 candidate_equal=1 target_live=0`.
+That red result proves that the ingress timer removes the now-empty map entry;
+it does **not** prove that the timer uniquely removed evidence. This
+correction is retained rather than replacing the old result silently.
+
+The committed `6e66c54f8` test isolates the timer. It admits one finality
+carrier via the real `new_block_finality_broadcast` Manager ingress, retains
+the candidate's exact BOC, and preflights the same inputs through production
+`WaitBlockData::generate_proof` to identify `TrustedContext`. It deliberately
+does not start proof processing or a retry in this expiry case. With only the
+production 60-second scheduled ingress timer able to remove evidence, the
+clean run records `C04_MANAGER_INGRESS_TIMER_ONLY evidence=1
+candidate_equal=1`, then `C04_MANAGER_INGRESS_TIMER_EXPIRED`. The candidate
+BOC remains byte-identical, the target was not accepted, and a fresh RootDb
+process finds no target handle. The separate recovery case *does* exercise a
+Manager proof attempt and scheduled retry; the two cases must not be conflated.
+
+The single-change timer-bypass mutation on that same test source exits 1 at
+`C04 expiry changed block bytes or accepted target`, with
+`pending_present=1 pending_entries=1 candidate_equal=1 target_live=0`.
+Thus this red control proves evidence itself survives without the scheduled
+timer when no retry can lazily expire it. Its raw log is
+`test/integration/.c04-manager-actor-20260924/6e66c54f8-ingress-timer-disabled-red.log`
+(SHA-256 `ae1643b33698fac2ac88b3fc2eb0aa55f37f2095b85757d27bd6c458f4bd12c8`).
+The unique mutation patch is `c04-ingress-expiry-schedule-mutant.patch`
+(SHA-256 `6ac4cb3d8855da914646403872ecd474dd65862d63a859d1c0fdc2f3a547ec37`);
+the mutant Manager source and binary SHA-256 values are respectively
+`342e15560c9cbdb5e80c700be03f4b62f43990240f3a65d2fbe06dfff82a3580`
+and `0fa6755ff5f3d821e088eb5c188fc82599087fb6fae01e8121ff9c2c68a7e965`.
+
+The restored, committed-tree raw green log is
+`test/integration/.c04-manager-actor-20260924/6e66c54f8-committed-ingress-green.log`
+(SHA-256 `69c6eea9b36bc1ec1c90e8810b1afc0218c1a6de6faf11b390aeedce2c7eda4c`).
+The same committed tree passed the three applicable CTests (pending-finality
+cache, real-state-proof, and retry-policy source) 3/3; the complete CTest log
+is `6e66c54f8-committed-3-ctest.log` in that artifact directory (SHA-256
+`2ae4d385d7d3efcca5914683b259b7adce914562e410b7c9409af5535dbc4611`).
+The clean test source, Manager source and binary SHA-256 values are
+`02619ea47d73470152edabbae132922adf712d93dd1607667615fef455999b49`,
+`43ffd95fb6c6ab8d3a4fd5e36ffdf6b06ab91a0c32c4cdbcd526da08446ee79c`,
+and `f8eeba1dc6d9f9720917f36c7d43771fc17408ad360a6273ba4e4dd3f92cda63`.
+The retained cold-read DB roots from that run are `/tmp/c04-manager-TcXZY3`
+(528 KiB), `/tmp/c04-manager-recovery-KhAPhA` (528 KiB), and
+`/tmp/c04-manager-expiry-7kiBdX` (444 KiB). No DB root was deleted.
+
+This is a Manager ingress/timer actor control, not an ADNL authentication
+test. The bad-front/good-back and stale-context recovery controls remain
+separate real Manager/RootDb tests. The registry's closure condition does
+not require a production attempt-token hook or real ADNL ingress. C04 stays
+OPEN until the complete fixed-tree gate and independent review are recorded.
