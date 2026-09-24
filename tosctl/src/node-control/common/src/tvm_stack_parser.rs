@@ -159,6 +159,29 @@ impl TvmStackParser {
         match entry {
             StackEntry::Tvm_StackEntryList(list) => Ok(Self::new(list.list.elements().clone())),
             StackEntry::Tvm_StackEntryUnsupported => Ok(Self::new(Vec::new())),
+            // The node's JSON-RPC renderer currently checks is_tuple before
+            // is_list. A non-empty TVM cons list satisfies both predicates,
+            // so it arrives as nested two-element tuples. Flatten only a
+            // proper cons chain ending in nil; reject any other tuple shape.
+            StackEntry::Tvm_StackEntryTuple(_) => {
+                let mut elements = Vec::new();
+                let mut current = entry;
+                loop {
+                    match current {
+                        StackEntry::Tvm_StackEntryTuple(pair) => {
+                            let slots = pair.tuple.elements();
+                            anyhow::ensure!(
+                                slots.len() == 2,
+                                "stack cons list has a non-pair tuple: index={index}"
+                            );
+                            elements.push(slots[0].clone());
+                            current = &slots[1];
+                        }
+                        StackEntry::Tvm_StackEntryUnsupported => return Ok(Self::new(elements)),
+                        _ => anyhow::bail!("stack cons list has a non-null tail: index={index}"),
+                    }
+                }
+            }
             _ => Err(anyhow::anyhow!("stack entry is not a list: index={}", index)),
         }
     }
@@ -538,6 +561,27 @@ mod tests {
 
         let result = parser.list_or_empty(0).unwrap();
         assert_eq!(result.stack.len(), 0);
+    }
+
+    #[test]
+    fn list_or_empty_decodes_only_proper_json_rpc_cons_pairs() {
+        let proper = create_tuple_entry(vec![
+            create_number_entry("11"),
+            create_tuple_entry(vec![create_number_entry("22"), create_unsupported_entry()]),
+        ]);
+        let parsed = TvmStackParser::new(vec![proper]).list_or_empty(0).unwrap();
+        assert_eq!(parsed.stack.len(), 2);
+        assert_eq!(parsed.i64(0).unwrap(), 11);
+        assert_eq!(parsed.i64(1).unwrap(), 22);
+
+        let wrong_tail =
+            create_tuple_entry(vec![create_number_entry("11"), create_number_entry("0")]);
+        let error = TvmStackParser::new(vec![wrong_tail]).list_or_empty(0).unwrap_err().to_string();
+        assert!(error.contains("non-null tail"), "wrong refusal: {error}");
+        let wrong_arity = create_tuple_entry(vec![create_number_entry("11")]);
+        let error =
+            TvmStackParser::new(vec![wrong_arity]).list_or_empty(0).unwrap_err().to_string();
+        assert!(error.contains("non-pair tuple"), "wrong refusal: {error}");
     }
 
     #[test]

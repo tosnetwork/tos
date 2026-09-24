@@ -82,6 +82,11 @@ def main() -> None:
     account_model = collapsed(root / "validator-engine/json-rpc-account-model.cpp")
     if v1r3_hash not in wallet_code or v1r3_hash.upper() not in account_model:
         fail("tosctl V1R3 code hash is not pinned in both the wallet test and chain RPC recognizer")
+    parser = collapsed(root / "tosctl/src/node-control/common/src/tvm_stack_parser.rs")
+    list_parser = parser.split("pub fn list_or_empty", 1)[1].split("pub fn tuple", 1)[0]
+    for marker in ("StackEntry::Tvm_StackEntryTuple(_) =>", "slots.len() == 2", "stack cons list has a non-null tail"):
+        if marker not in list_parser:
+            fail(f"JSON-RPC TVM cons-list parser lost its strict {marker!r} check")
 
     policy_provider = collapsed(
         root / "tosctl/src/node-control/elections/src/providers/default.rs"
@@ -141,7 +146,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and a null tail; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 
