@@ -1,8 +1,8 @@
 library Validator  // Validator request, vote, and signed body codecs
 "Addr.fif" include
 "Currency.fif" include
-"Key.fif" include   // Transitive: not used here, re-exported for callers
-                    // (validator-elect-signed.fif etc.) that need PK' / parse-val-pubkey.
+"Key.fif" include   // Transitive: not used here, re-exported for historical
+                    // test-only fixtures that need PK' / parse-val-pubkey.
 "Msg.fif" include
 
 // ( S -- B )
