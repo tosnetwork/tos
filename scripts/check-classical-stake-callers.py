@@ -14,6 +14,8 @@ from pathlib import Path
 MARKERS = (
     "validator-elect-req.fif",
     "validator-elect-signed.fif",
+    "validator-legacy-elect-req.fif",
+    "validator-legacy-elect-signed.fif",
     "validator-elect-req>B",
     "single-nominator-legacy-elect-signed.fif",
     "liquid-controller-legacy-elect-signed.fif",
@@ -31,9 +33,15 @@ EXPECTED: dict[str, dict[str, int]] = {
     "crypto/test/fift/fixtures/liquid-controller-legacy-elect-signed.fif": {
         "validator-elect-req>B": 1,
     },
+    "crypto/test/fift/fixtures/validator-legacy-elect-req.fif": {
+        "validator-elect-req>B": 1,
+    },
+    "crypto/test/fift/fixtures/validator-legacy-elect-signed.fif": {
+        "validator-elect-req>B": 1,
+    },
     "crypto/test/test-smartcont.cpp": {
-        "validator-elect-req.fif": 1,
-        "validator-elect-signed.fif": 1,
+        "validator-legacy-elect-req.fif": 1,
+        "validator-legacy-elect-signed.fif": 1,
         "single-nominator-legacy-elect-signed.fif": 1,
         "liquid-controller-legacy-elect-signed.fif": 1,
     },
@@ -82,8 +90,13 @@ def main() -> int:
     retired_liquid_operator = root / "crypto/smartcont/liquid-staking/controller-elect-signed.fif"
     if retired_liquid_operator.exists():
         fail("retired liquid-staking Ed25519 operator script is still packaged")
-    legacy_fixture = "test/fift/fixtures/single-nominator-legacy-elect-signed.fif"
     smartcont_test = (root / "crypto/test/test-smartcont.cpp").read_text(encoding="utf-8")
+    base_request_fixture = "test/fift/fixtures/validator-legacy-elect-req.fif"
+    base_signed_fixture = "test/fift/fixtures/validator-legacy-elect-signed.fif"
+    for fixture in (base_request_fixture, base_signed_fixture):
+        if smartcont_test.count(fixture) != 1:
+            fail(f"test-smartcont no longer loads exactly one test-only {fixture}")
+    legacy_fixture = "test/fift/fixtures/single-nominator-legacy-elect-signed.fif"
     if smartcont_test.count(legacy_fixture) != 1:
         fail("test-smartcont no longer loads exactly one test-only single-nominator legacy fixture")
     liquid_fixture = "test/fift/fixtures/liquid-controller-legacy-elect-signed.fif"
@@ -106,8 +119,8 @@ def main() -> int:
     print(
         f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact executable files retain the inventoried "
         "validator-elect Fift path/word literals; the single-nominator operator path is absent, "
-        "both retired pool operator paths are absent, their legacy bytes are loaded only by "
-        "test-smartcont, and the migration map names each"
+        "both retired pool operator paths are absent, the base Fift byte tests load test-only "
+        "fixtures, and the migration map names each"
     )
     return 0
 

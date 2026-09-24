@@ -316,7 +316,7 @@ std::string run_zerostate_regression(td::Slice script_name) {
   return summary;
 }
 
-std::string run_validator_fift_script_regression() {
+std::string run_legacy_validator_fift_script_regression() {
   auto private_key = td::Ed25519::PrivateKey(td::SecureString(hex_bytes(kValidatorPrivKeyHex)));
   auto public_key = private_key.get_public_key().move_as_ok();
   auto pubkey_b64 = make_validator_pubkey_b64(public_key);
@@ -326,7 +326,10 @@ std::string run_validator_fift_script_regression() {
   auto request_expected = build_validator_elect_request(kValidatorElectTime, kValidatorMaxFactor,
                                                         hex_bytes(kScriptWalletAddrHex), hex_bytes(kScriptAdnlAddrHex));
 
-  auto request_lookup = fift::create_mem_source_lookup(load_source("smartcont/validator-elect-req.fif")).move_as_ok();
+  // Historical Ed25519 byte parity only. Neither fixture is an operator
+  // command or evidence that a PQ stake was accepted.
+  auto request_lookup =
+      fift::create_mem_source_lookup(load_source("test/fift/fixtures/validator-legacy-elect-req.fif")).move_as_ok();
   request_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(request_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto request_run =
@@ -336,7 +339,8 @@ std::string run_validator_fift_script_regression() {
   auto signature_b64 = sign_b64(private_key, request);
   check_signature_b64(public_key, request, signature_b64);
 
-  auto signed_lookup = fift::create_mem_source_lookup(load_source("smartcont/validator-elect-signed.fif")).move_as_ok();
+  auto signed_lookup =
+      fift::create_mem_source_lookup(load_source("test/fift/fixtures/validator-legacy-elect-signed.fif")).move_as_ok();
   signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(signed_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto signed_run = fift::mem_run_fift(std::move(signed_lookup),
@@ -937,7 +941,7 @@ TEST(Toslib, ManualDnsFiftScript) {
 }
 
 TEST(Toslib, ValidatorFiftScriptRegression) {
-  REGRESSION_VERIFY(run_validator_fift_script_regression());
+  REGRESSION_VERIFY(run_legacy_validator_fift_script_regression());
 }
 
 TEST(Toslib, GovernanceProposalFiftScriptRegression) {
