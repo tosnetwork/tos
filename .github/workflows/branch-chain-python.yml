@@ -65,7 +65,7 @@ jobs:
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
-            test-pq-lite-forward-proof test-pending-finality-cache
+            test-pq-lite-forward-proof test-pending-finality-cache test-consensus
           ccache --show-stats
 
       # A virtualized key-block proof must retain every PQ finality context
@@ -78,6 +78,17 @@ jobs:
       # not substitute for downstream AcceptBlock integration evidence.
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # C03's restart-origin failure only appeared when an anchor read first
+      # failed and the exact predecessor was then needed. Keep both positive
+      # and fail-closed controls in the fixed-tree native gate.
+      - name: Check Simplex restart origin replay
+        run: |
+          set -e
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-empty-chain-restart$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-origin$'
 
       - name: Prepare generated Python API and dependencies
         run: |

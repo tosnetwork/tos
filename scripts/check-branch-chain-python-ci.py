@@ -18,7 +18,15 @@ REQUIRED_NATIVE_TARGETS = {
     "validator-engine",
     "test-pq-lite-forward-proof",
     "test-pending-finality-cache",
+    "test-consensus",
 }
+
+RESTART_ORIGIN_TESTS = (
+    "test-consensus-simplex2-pq-empty-chain-restart",
+    "test-consensus-simplex2-pq-restart-transient-anchor",
+    "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
+    "test-consensus-simplex2-pq-restart-transient-origin",
+)
 
 
 def require(condition: bool, message: str) -> None:
@@ -63,6 +71,12 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
         "pending PQ finality manager actor behavior gate is absent",
     )
+    for test_name in RESTART_ORIGIN_TESTS:
+        command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
+        require(
+            re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,
+            f"Simplex restart-origin behavior gate is absent: {test_name}",
+        )
     rust_job = re.search(
         r"(?ms)^  rust-workspace-tests-compile:\s*\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)",
         text,
@@ -105,7 +119,7 @@ def main() -> int:
     print(
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context "
-        "and the pending-finality manager actor, "
+        "and the pending-finality manager actor and four restart-origin controls, "
         "and compiles every Rust test target"
     )
     return 0
