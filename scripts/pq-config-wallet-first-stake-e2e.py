@@ -284,6 +284,21 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             cli_error = error
             report["stake_cli_error"] = repr(error)
 
+        participant_after = await asyncio.to_thread(
+            lifecycle_module.json_rpc_call,
+            f"127.0.0.1:{args.rpc_port}", "runGetMethodStd",
+            {"address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
+             "method": "participant_list_extended", "stack": []},
+        )
+        participant_after_path = run_dir / "participant-list-extended-raw-after-cli.json"
+        participant_after_path.write_text(json.dumps(participant_after, indent=2) + "\n")
+        report["participant_list_after_cli_raw"] = {
+            "path": str(participant_after_path),
+            "sha256": sha256(participant_after_path),
+            "exit_code": participant_after["result"]["exit_code"],
+            "index4_type": participant_after["result"]["stack"][4]["@type"],
+        }
+
         pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
             life.client, pool.address, pool_baseline
         )

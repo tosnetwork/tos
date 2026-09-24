@@ -97,6 +97,7 @@ def main() -> None:
         fail("product first-stake probe no longer reads the Elector reply from the stake-owner pool")
     if any(marker not in product_probe for marker in (
         "participant-list-extended-raw-open.json", "participant_path.write_text(",
+        "participant-list-extended-raw-after-cli.json", "participant_after_path.write_text(",
         '"index4_type": raw_stack[4]["@type"]',
     )):
         fail("product first-stake probe no longer saves the raw live participant-list stack")

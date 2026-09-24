@@ -39,3 +39,23 @@ No live ConfigParam 34 controller/ADNL pair was captured after this accepted
 stake. The product path remains OPEN until a fixed-tree run records that pair
 as well as the exact `STAKE_ACCEPTED` response. The separate election-daemon
 caller remains OPEN independently.
+
+## Follow-up at `8099fca98` (still diagnostic)
+
+The exact-tree report
+`test/integration/.pq-tosctl-config-wallet-product/20260924T060612Z/report.json`
+has SHA-256 `7c093e044d4c0e71237502979511b2d37aee299f9678d783bd7613052faf25e3`.
+Its bounded histories are complete (pool 2 transactions, controller 1; one
+page each). The corrected pool lookup recorded `STAKE_ACCEPTED` with reason 0
+for query ID `1790230397`. The CLI nevertheless exited at
+`stack cons list has a non-null tail: index=4` after broadcasting the wallet
+message. The run did not reach ConfigParam 34 selection.
+
+The saved raw stack at the *pre-order* open election had index 4 encoded as
+`tvm.stackEntryNumber(0)`, SHA-256
+`415d0f1c89fe96f802043d980f0c42066d5390f432c83780d1caf7a323971c80`.
+That observation only confirms the empty participant list before the order;
+it does not identify the tail of the post-order nonempty list that made the
+CLI fail. The next probe saves the full raw stack immediately after the CLI
+returns, including on error, before changing the parser further. No
+post-order encoding or cause is asserted from the pre-order sample.
