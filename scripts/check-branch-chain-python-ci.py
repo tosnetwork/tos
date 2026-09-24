@@ -19,6 +19,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-pq-lite-forward-proof",
     "test-pending-finality-cache",
     "test-consensus",
+    "test-notarize-after-transient-resolve",
 }
 
 RESTART_ORIGIN_TESTS = (
@@ -71,6 +72,11 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
         "pending PQ finality manager actor behavior gate is absent",
     )
+    c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(c05_ctest)}\s*$", text) is not None,
+        "Simplex parent-state retry voting behavior gate is absent",
+    )
     for test_name in RESTART_ORIGIN_TESTS:
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -118,8 +124,9 @@ def main() -> int:
     )
     print(
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
-        "boots the four-validator PQ chain, checks PQ key-block proof context "
-        "and the pending-finality manager actor and four restart-origin controls, "
+        "boots the four-validator PQ chain, checks PQ key-block proof context, "
+        "the pending-finality manager actor and the C05 parent-state retry CTest selector, "
+        "and four restart-origin controls, "
         "and compiles every Rust test target"
     )
     return 0

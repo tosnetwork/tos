@@ -65,7 +65,8 @@ jobs:
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
-            test-pq-lite-forward-proof test-pending-finality-cache test-consensus
+            test-pq-lite-forward-proof test-pending-finality-cache test-consensus \
+            test-notarize-after-transient-resolve
           ccache --show-stats
 
       # A virtualized key-block proof must retain every PQ finality context
@@ -78,6 +79,12 @@ jobs:
       # not substitute for downstream AcceptBlock integration evidence.
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # C05: one transient parent-state miss must not cost a slot its local
+      # notarize vote; permanent/cancelled errors and an already cast SkipVote
+      # must never be retried into an unsafe late vote.
+      - name: Check Simplex parent-state retry voting
+        run: ctest --test-dir build --output-on-failure -R '^c05-notarize-'
 
       # C03's restart-origin failure only appeared when an anchor read first
       # failed and the exact predecessor was then needed. Keep both positive

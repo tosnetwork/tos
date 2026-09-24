@@ -85,6 +85,29 @@ target_link_libraries(test-merkle-prospective-notar PRIVATE
     tdutils
 )
 
+# A controlled transient ResolveState failure inside the production Consensus actor.
+add_executable(test-notarize-after-transient-resolve test-notarize-after-transient-resolve.cpp)
+target_link_libraries(test-notarize-after-transient-resolve PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode control genesis-notready genesis-timeout ancestor-notready permanent cancelled skip-before-recovery
+             conflict-during-retry conflicting-cert-during-retry)
+    add_test(NAME c05-notarize-${mode} COMMAND test-notarize-after-transient-resolve ${mode})
+endforeach()
+
 add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
 target_link_libraries(test-validator-manager-resource-policy PRIVATE
     adnl
