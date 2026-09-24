@@ -222,6 +222,14 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                         "status": "RESOLVED",
                         "resolved_by": "222222222",
                     },
+                    "pq-validator-set-installation-parity": {
+                        "observation": "fixture validator-set admission mismatch",
+                        "observed_commit": "a500f88b0",
+                        "location": "fixture-config.fc:1",
+                        "closure_condition": "fixture PQ set installation parity closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "666666666",
+                    },
                     "pool-first-stake-birth-witness-missing": {
                         "observation": "fixture pool witness observation",
                         "observed_commit": "717e2879e",

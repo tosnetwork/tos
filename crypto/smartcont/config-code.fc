@@ -165,6 +165,9 @@ _ get_vote_config(int critical?) inline {
   cell list = cs~load_dict();
   cs.end_parse();
   throw_if(9, total_weight == 0);
+  ;; The node applies checked_add_validator_weight() with UINT64_MAX/3. Do not
+  ;; install a set as ConfigParam 36 that the node will then refuse to load.
+  throw_if(9, total_weight > 6148914691236517205);
 
   ;; The count the header states must be the count the list holds, and both must be
   ;; within what the configuration allows a set to be.
@@ -177,11 +180,11 @@ _ get_vote_config(int critical?) inline {
   throw_if(9, main > min(max_main_validators, pq_launch::max_masterchain_committee));
   throw_if(9, total < max(min_validators, 1));
 
-  ;; Walk every descriptor. Two identities must each be unique across the set: the
-  ;; validator, because two entries for one account would be counted twice, and the
-  ;; consensus key, because the node cannot tell two holders of one key apart.
+  ;; Walk every descriptor. Validator, consensus-key and ADNL transport identities
+  ;; must each be unique, as in Config::unpack_validator_set().
   cell seen_validators = new_dict();
   cell seen_keys = new_dict();
+  cell seen_adnl = new_dict();
   int weight_sum = 0;
   int index = -1;
   int counted = 0;
@@ -189,13 +192,16 @@ _ get_vote_config(int critical?) inline {
     (index, slice descr, int found) = list.udict_get_next?(16, index);
     if (found) {
       throw_if(9, index >= total);
-      (int validator_id, _, int key_id, _, int weight, _) = pq::parse_descriptor(descr);
+      (int validator_id, _, int key_id, _, int weight, int adnl_addr) = pq::parse_descriptor(descr);
       (_, int duplicate_validator) = seen_validators.udict_get?(256, validator_id);
       throw_if(9, duplicate_validator);
       (_, int duplicate_key) = seen_keys.udict_get?(256, key_id);
       throw_if(9, duplicate_key);
+      (_, int duplicate_adnl) = seen_adnl.udict_get?(256, adnl_addr);
+      throw_if(9, duplicate_adnl);
       seen_validators~udict_set_builder(256, validator_id, begin_cell());
       seen_keys~udict_set_builder(256, key_id, begin_cell());
+      seen_adnl~udict_set_builder(256, adnl_addr, begin_cell());
       weight_sum += weight;
       counted += 1;
     }

@@ -18,6 +18,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "classical-stake-callers-source",
         "consensus-no-fallback",
         "config-genesis-data-layout-source",
+        "config-validator-set-parity-source",
         "dns-pq-vote-source",
         "finality-evidence-admission-marker-mutations",
         "finality-evidence-admission-source",

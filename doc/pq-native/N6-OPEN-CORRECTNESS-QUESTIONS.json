@@ -5,7 +5,8 @@
     "classical-config-vote-tooling-incompatible-with-pq-contract",
     "classical-stake-producers-incompatible-with-pq-elector",
     "pool-first-stake-birth-witness-missing",
-    "merkle-base-state-mismatch"
+    "merkle-base-state-mismatch",
+    "pq-validator-set-installation-parity"
   ],
   "questions": {
     "classical-config-vote-tooling-incompatible-with-pq-contract": {
@@ -37,6 +38,13 @@
       "location": "validator/consensus/chain-state.cpp:123",
       "observation": "Two recovered test-consensus-simplex2-pq-finality-e2e-100 errors under whole-suite parallel load show the same one-height mismatch. At 68ea21db4 on 2026-09-22 07:02:35 UTC, StateResolver actors 87 and 77 reported expected fixture state seqno 5 but applied to seqno 4; at efd22ce46 on 2026-09-22 12:46:23 UTC, actor 83 reported expected seqno 23 but applied to seqno 22. The four hashes were independently decoded, but original candidate IDs, BOCs and stacks were not retained. Production defect mechanism: StateResolver's QuerySlotSkipped shortcut could replace a signed candidate's exact parent with available_base. At bc379ec2c the resolver was changed to resolve the exact CandidateId. The actor regression at 1a2f33940 reproduces both original hash pairs under delayed local NotarCert(P) persistence; 528f0864e additionally reproduces them when only a peer holds NotarCert(P) and real Consensus::start_generation triggers resolution. Pre-fix red and fixed green each passed 40/40 for each ordering, with controls, bounded notready and cross-checks recorded in N6-MERKLE-REPRO-20260923.md. On 1e192efce the three branch CI jobs passed and the fixed actor tests passed independently in ordinary Release. This proves a production path can cause and the patch prevents the observed mismatch shape; it does not uniquely attribute either September failure to that path. Keep the incident OPEN for explicit historical attribution and integration-tree disposition.",
       "observed_commit": "efd22ce46",
+      "status": "OPEN"
+    },
+    "pq-validator-set-installation-parity": {
+      "closure_condition": "Every live ConfigParam 34-37 installation route, including Elector set_next_validators and validator-governed install_param, refuses PQ validator sets that the node's Config::unpack_validator_set rejects. Retain a compiled-contract honest control and independent negative cases for duplicate ADNL and weight above UINT64_MAX/3; prove each defect kills the test when reintroduced. Do not require a deliberately halted live network as proof of the decoder mismatch.",
+      "location": "crypto/smartcont/config-code.fc:check_validator_set,valid_live_validator_set_limits?,install_param; crypto/block/mc-config.cpp:Config::unpack_validator_set",
+      "observation": "C01 identified a source-level ADNL uniqueness mismatch. C07 independently ran the old config contract against a duplicate-ADNL set: the contract returned VALIDATOR_SET_INSTALLED while the node decoder rejected the same BOC; no live chain was halted. On the local repair tree, a compiled-contract sandbox also showed that a set above the node's UINT64_MAX/3 total-weight cap was installed. check_validator_set now refuses both, with old-red/new-green tests and an Elector-produced duplicate-ADNL set negative. The separate validator-governed install_param route still calls valid_live_validator_set_limits?, which checks counts but not complete descriptor identity and weight rules before writing ConfigParam 34-37. Therefore the whole installation-parity question remains OPEN; neither C01 nor the Elector-route repair is an observed masterchain halt.",
+      "observed_commit": "a500f88b0",
       "status": "OPEN"
     },
     "pool-first-stake-birth-witness-missing": {

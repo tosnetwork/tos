@@ -18,7 +18,7 @@
 //! messages, so it is driven the way the chain drives it.
 
 use chain_block::{Account, ConfigParams, MsgAddressInt, ShardStateUnsplit, TransactionTickTock};
-use tos_sandbox::{Blockchain, generate_zerostate_state};
+use tos_sandbox::{generate_zerostate_state, Blockchain};
 
 /// The zerostate is generated rather than fixtured, so these tests run against the
 /// contracts and the configuration the chain would actually launch with.
@@ -456,6 +456,53 @@ fn a_closed_election_sends_its_set_to_the_configuration_contract() {
     );
     let next = installed.next_validator_set().expect("the stored set parses");
     assert_eq!(next.list().len(), validators.len(), "every staking validator should be elected");
+}
+
+/// The Elector itself can produce a set with two distinct signing identities but one
+/// transport identity: a stake signature binds the claimed ADNL, not ownership of it.
+/// The config contract must reject that elected set before it becomes ConfigParam 36.
+#[test]
+fn an_elected_set_with_duplicate_adnl_is_refused_before_installation() {
+    let (mut chain, _treasury, election) = open_election("duplicate-adnl-election", 200_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let mut first_adnl = None;
+    for index in 0..4u8 {
+        let mut validator = PqValidator::new(0x60 + index);
+        if index == 0 {
+            first_adnl = Some(validator.adnl);
+        } else if index == 1 {
+            validator.adnl = first_adnl.expect("the first validator has an ADNL");
+        }
+        let account = chain
+            .blockchain
+            .treasury(&format!("duplicate-adnl-validator-{index}"), 40_000 * TOS)
+            .expect("a funded account");
+        let result =
+            pq_stake(&mut chain, &account, &validator, election, 30 + index as u64, 11_000 * TOS);
+        assert_eq!(
+            reply(&result),
+            (STAKE_ACCEPTED, 0),
+            "the Elector refused stake {index} before set construction"
+        );
+    }
+
+    chain.blockchain.set_now(election - chain.elect_end_before);
+    let result =
+        chain.blockchain.tick_tock(&chain.elector, TransactionTickTock::Tick).expect("tick runs");
+    result.expect_success();
+    let tags = replies(&result);
+    assert!(
+        tags.contains(&VALIDATOR_SET_REFUSED),
+        "the Elector's duplicate-ADNL set was not refused: {tags:02x?}"
+    );
+    assert!(
+        !tags.contains(&VALIDATOR_SET_INSTALLED),
+        "the Elector's duplicate-ADNL set was installed: {tags:02x?}"
+    );
+    assert!(
+        !parameter_present(&configuration_from_contract(&chain), 36),
+        "a duplicate-ADNL ConfigParam 36 was stored"
+    );
 }
 
 #[test]
@@ -1362,11 +1409,22 @@ fn a_set_the_node_would_refuse_is_refused_before_it_is_installed() {
         "the fixture's own set was refused: {tags:02x?}"
     );
 
+    // Equality is allowed by the node. This control catches an off-by-one
+    // rejection while the over-cap negative below catches a missing bound.
+    let at_cap = validator_set_cell(&chain, &validators, Flaw::WeightAtProtocolCap);
+    let tags = offer(&mut chain, at_cap, 8);
+    assert!(
+        tags.contains(&VALIDATOR_SET_INSTALLED),
+        "a set at UINT64_MAX/3 was refused: {tags:02x?}"
+    );
+
     for (query, flaw, what) in [
         (2, Flaw::DuplicateValidator, "naming one validator twice"),
         (3, Flaw::DuplicateKey, "holding one consensus key twice"),
         (4, Flaw::WeightSumDisagrees, "stating a total weight its descriptors do not sum to"),
         (5, Flaw::CountDisagrees, "stating a count its list does not hold"),
+        (6, Flaw::WeightOverProtocolCap, "exceeding the validator-weight protocol cap"),
+        (7, Flaw::DuplicateAdnl, "assigning one ADNL identity to two validators"),
     ] {
         let set = validator_set_cell(&chain, &validators, flaw);
         let tags = offer(&mut chain, set, query);
@@ -1399,6 +1457,12 @@ enum Flaw {
     DuplicateValidator,
     /// Two accounts holding one consensus key, which the node cannot tell apart.
     DuplicateKey,
+    /// Two distinct validators with distinct keys but the same transport identity.
+    DuplicateAdnl,
+    /// The largest total weight the node accepts; an accepted boundary control.
+    WeightAtProtocolCap,
+    /// The node caps total weight at UINT64_MAX/3 to keep quorum arithmetic safe.
+    WeightOverProtocolCap,
     /// The header's total weight is not the weight the descriptors carry.
     WeightSumDisagrees,
     /// The header states a count the list does not hold.
@@ -1412,7 +1476,17 @@ fn validator_set_cell(chain: &Chain, validators: &[PqValidator], flaw: Flaw) -> 
     let mut list = chain_block::HashmapE::with_bit_len(16);
     let mut total_weight = 0u64;
     for (index, validator) in validators.iter().enumerate() {
-        let weight = 1u64 << 40;
+        let weight = match flaw {
+            Flaw::WeightAtProtocolCap => {
+                if index == 0 {
+                    u64::MAX / 3 - (validators.len() as u64 - 1)
+                } else {
+                    1
+                }
+            }
+            Flaw::WeightOverProtocolCap => 1u64 << 61,
+            _ => 1u64 << 40,
+        };
 
         // The account this descriptor names, and the key it holds. Only the stated flaw
         // makes either of them repeat.
@@ -1436,7 +1510,12 @@ fn validator_set_cell(chain: &Chain, validators: &[PqValidator], flaw: Flaw) -> 
             .expect("key identity");
         descr.checked_append_reference(stored_bytes(key)).expect("the key");
         descr.append_u64(weight).expect("weight");
-        descr.append_raw(&validator.adnl, 256).expect("transport identity");
+        let adnl = if flaw == Flaw::DuplicateAdnl && index == 1 {
+            &validators[0].adnl
+        } else {
+            &validator.adnl
+        };
+        descr.append_raw(adnl, 256).expect("transport identity");
 
         let mut key_bits = chain_block::BuilderData::new();
         key_bits.append_u16(index as u16).expect("the index");
@@ -2422,7 +2501,7 @@ fn complaint_voters(chain: &Chain, election: u32, complaint: &[u8; 32]) -> Vec<u
 #[test]
 fn a_pools_money_reaches_an_election_through_a_real_controller() {
     use chain_block::IBitstring;
-    use contracts::nominator::{NewStakeParams, new_stake_with_witness};
+    use contracts::nominator::{new_stake_with_witness, NewStakeParams};
 
     let (mut chain, _treasury, election) = open_election("pool-e2e", 200_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
@@ -2575,7 +2654,7 @@ struct MultiNominatorStakeProbe {
 }
 
 fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakeProbe {
-    use contracts::nominator::{NewStakeParams, new_stake_with_witness};
+    use contracts::nominator::{new_stake_with_witness, NewStakeParams};
 
     fn amount_sent(
         result: &tos_sandbox::SendResult,

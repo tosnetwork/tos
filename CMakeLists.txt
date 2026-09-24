@@ -1325,6 +1325,10 @@ add_test(NAME config-genesis-data-layout-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-config-genesis-data-layout.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(config-genesis-data-layout-source PROPERTIES LABELS "source-guard")
+add_test(NAME config-validator-set-parity-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-config-validator-set-parity.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(config-validator-set-parity-source PROPERTIES LABELS "source-guard")
 add_test(NAME validator-id-key-hash-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-id-key-hash.py
           ${CMAKE_CURRENT_SOURCE_DIR})
