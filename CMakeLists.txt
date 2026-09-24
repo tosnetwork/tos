@@ -1280,6 +1280,10 @@ add_test(NAME test-n5-cut5-full-root-rebuild COMMAND test-c04-real-state-proof -
 # consumer RootDb and exercises real CheckProof for valid/tampered signatures.
 add_test(NAME test-n5-cut6-check-proof COMMAND test-c04-real-state-proof --n5-cut6
          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N01 continuation: a cold-restored seq1 session accepts a new seq2 FinalCert,
+# then a third process reads both DB roots and the monotonic Pool anchor.
+add_test(NAME test-n5-cold-continuation COMMAND test-c04-real-state-proof --n5-continue
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)

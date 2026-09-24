@@ -204,6 +204,58 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     promise.set_value(td::Unit());
   }
 
+  // Continue a cold-opened session from its already persisted seq1 tip. The
+  // existing zerostate context supplies the last key block; this method reads
+  // both the seq1 handle and state from RootDb and never seeds either one.
+  void restore_n5_tip_context(BlockIdExt tip, RootHash expected_root, td::Promise<td::Unit> promise) {
+    if (!last_masterchain_block_handle_ || last_masterchain_block_handle_->id().seqno() != 0) {
+      return promise.set_error(td::Status::Error("N5 continuation genesis context was not cold-restored"));
+    }
+    td::actor::send_closure(db_, &Db::get_block_handle, tip,
+                            td::PromiseCreator::lambda(
+        [self = actor_id(this), tip, expected_root, promise = std::move(promise)]
+        (td::Result<BlockHandle> result) mutable {
+      if (result.is_error()) {
+        return promise.set_error(result.move_as_error_prefix("N5 continuation tip handle: "));
+      }
+      td::actor::send_closure(self, &PendingFinalityManagerActorProbe::restore_n5_tip_state,
+                              tip, expected_root, result.move_as_ok(), std::move(promise));
+    }));
+  }
+
+  void restore_n5_tip_state(BlockIdExt tip, RootHash expected_root, BlockHandle handle,
+                            td::Promise<td::Unit> promise) {
+    if (handle->id() != tip || !handle->received() || !handle->inited_proof() ||
+        !handle->received_state() || !handle->is_applied() || handle->state() != expected_root) {
+      return promise.set_error(td::Status::Error("N5 continuation tip handle lacks persisted proof/state"));
+    }
+    td::actor::send_closure(db_, &Db::get_block_state, ConstBlockHandle{handle},
+                            td::PromiseCreator::lambda(
+        [self = actor_id(this), tip, expected_root, handle, promise = std::move(promise)]
+        (td::Result<td::Ref<ShardState>> result) mutable {
+      if (result.is_error()) {
+        return promise.set_error(result.move_as_error_prefix("N5 continuation tip state: "));
+      }
+      td::actor::send_closure(self, &PendingFinalityManagerActorProbe::installed_n5_tip_context,
+                              tip, expected_root, handle, result.move_as_ok(), std::move(promise));
+    }));
+  }
+
+  void installed_n5_tip_context(BlockIdExt tip, RootHash expected_root, BlockHandle handle,
+                                 td::Ref<ShardState> state, td::Promise<td::Unit> promise) {
+    if (state->root_hash() != expected_root) {
+      return promise.set_error(td::Status::Error("N5 continuation tip state differs from DB handle"));
+    }
+    last_masterchain_state_ = td::Ref<MasterchainState>{state};
+    last_masterchain_block_id_ = tip;
+    last_masterchain_block_handle_ = handle;
+    last_masterchain_seqno_ = tip.seqno();
+    last_masterchain_block_handle_->set_processed();
+    std::cout << "N5_CONTINUE_ROOTDB_TIP_RESTORED block=" << tip.to_str()
+              << " state=" << expected_root.to_hex() << '\n';
+    promise.set_value(td::Unit());
+  }
+
   // The governing state is reloaded through RootDb before this call. The
   // consumer target handle has no proof, so CheckProof cannot take its
   // already-inited proof shortcut.
@@ -758,7 +810,10 @@ namespace sx = tos::validator::consensus::simplex;
 struct N5ReplayState {
   consensus::CandidateId expected_id;
   td::Bits256 expected_cert_hash;
+  std::optional<consensus::CandidateId> successor_id;
+  td::Bits256 successor_cert_hash;
   std::atomic<unsigned> observed{0};
+  std::atomic<unsigned> successor_observed{0};
   std::atomic<bool> mismatch{false};
 };
 
@@ -781,6 +836,14 @@ class N5ReplayObserver final : public td::actor::SpawnsWith<sx::Bus>, public td:
       return;
     }
     auto cert_tl = serialize_tl_object(event->certificate->to_tl(), true);
+    if (n5_replay_state->successor_id && event->id == *n5_replay_state->successor_id) {
+      if (event->certificate->vote.id != *n5_replay_state->successor_id ||
+          sha256_bits256(cert_tl.as_slice()) != n5_replay_state->successor_cert_hash) {
+        n5_replay_state->mismatch.store(true, std::memory_order_release);
+      }
+      n5_replay_state->successor_observed.fetch_add(1, std::memory_order_release);
+      return;
+    }
     if (event->id != n5_replay_state->expected_id ||
         event->certificate->vote.id != n5_replay_state->expected_id ||
         sha256_bits256(cert_tl.as_slice()) != n5_replay_state->expected_cert_hash) {
@@ -1007,6 +1070,27 @@ class N5RestartMarkerWaiter final : public td::actor::Actor {
   }
 };
 
+class N5FinalizedAnchorProbe final : public td::actor::Actor {
+ public:
+  void query(sx::BusHandle bus, consensus::CandidateId expected, td::Promise<td::Unit> promise) {
+    query_inner(std::move(bus), expected, std::move(promise)).start().detach();
+  }
+
+ private:
+  td::actor::Task<> query_inner(sx::BusHandle bus, consensus::CandidateId expected,
+                                td::Promise<td::Unit> promise) {
+    auto snapshot = co_await bus.publish<sx::QueryValidatorGroupInfo>().wrap();
+    if (snapshot.is_error() || snapshot.ok().last_finalized_block != expected) {
+      promise.set_error(td::Status::Error("N5 continuation Pool latest finalized anchor is not seq2"));
+      co_return td::Unit{};
+    }
+    std::cout << "N5_CONTINUE_POOL_ANCHOR_OK slot=" << expected.slot
+              << " candidate=" << expected.hash.to_hex() << '\n';
+    promise.set_value(td::Unit());
+    co_return td::Unit{};
+  }
+};
+
 bool n5_cold_joined_journal(const std::string &path, ValidatorSessionId session,
                              td::Ref<block::ValidatorSet> set, consensus::CandidateId id,
                              td::Slice expected_cert, bool expect_marker,
@@ -1073,6 +1157,9 @@ int main(int argc, char **argv) {
   const bool n5_cut4 = argc == 3 && std::string_view(argv[1]) == "--n5-cut4";
   const bool n5_cut5 = argc == 3 && std::string_view(argv[1]) == "--n5-cut5";
   const bool n5_cut6 = argc == 3 && std::string_view(argv[1]) == "--n5-cut6";
+  const bool n5_continue = argc == 3 && std::string_view(argv[1]) == "--n5-continue";
+  const bool n5_continue_resume = argc == 6 && std::string_view(argv[1]) == "--n5-continue-resume";
+  const bool n5_continue_reopen = argc == 8 && std::string_view(argv[1]) == "--n5-continue-reopen";
   const bool n5_cut6_check = argc == 6 && std::string_view(argv[1]) == "--n5-cut6-check";
   const bool n5_cut5_rebuild = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild";
   const bool n5_cut5_absent = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild-absent";
@@ -1092,14 +1179,14 @@ int main(int argc, char **argv) {
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_cut6_check ||
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_cut6_check || n5_continue || n5_continue_resume || n5_continue_reopen ||
         n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
         n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume || n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive ||
         n5_reopen || n5_joined_reopen)) {
     std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1|--n5-cut2|--n5-cut3|--n5-cut4 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_cut6_check ||
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_cut6_check || n5_continue || n5_continue_resume || n5_continue_reopen ||
                        n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
                        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume || n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive ||
                        n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
@@ -1120,7 +1207,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::optional<pq_block_signature_test::Fixture> keys;
-  if (!n5_cut5_rebuild && !n5_cut5_absent && !n5_cut5_no_archive && !n5_cut6_check) {
+  if (!n5_cut5_rebuild && !n5_cut5_absent && !n5_cut5_no_archive && !n5_cut6_check && !n5_continue_reopen) {
     keys.emplace();
   }
   auto target_time = record.gen_utime + 1;
@@ -1259,8 +1346,9 @@ int main(int argc, char **argv) {
     std::cerr << "C04_REAL_PROOF_FAILED: ValueFlow pack\n";
     return 1;
   }
+  auto flow_cell = flow_builder.finalize();
   auto block_root = vm::CellBuilder{}.store_long(0x11ef55aa, 32).store_long(0, 32).store_ref(info_cell)
-                        .store_ref(flow_builder.finalize()).store_ref(update).store_ref(extra_cell).finalize_novm();
+                        .store_ref(flow_cell).store_ref(update).store_ref(extra_cell).finalize_novm();
   auto block_boc = require_ok(vm::std_boc_serialize(block_root, 31), "block BOC");
   auto id1 = BlockIdExt{masterchainId, shardIdAll, 1, td::Bits256(block_root->get_hash().bits()),
                         block::compute_file_hash(block_boc)};
@@ -1282,6 +1370,467 @@ int main(int argc, char **argv) {
   }
   std::cout << "C04_REAL_APPLY_OK root=" << replay_state->root_hash().to_hex() << '\n';
   auto context = require_ok(derive_pq_finality_context(*state0, vset, id1, 0, 0), "PQ session");
+  td::Ref<vm::Cell> root2;
+  td::BufferSlice block2_boc;
+  BlockIdExt id2;
+  RootHash expected_state2_root;
+  if (n5_continue || n5_continue_resume || n5_continue_reopen) {
+    // A distinct successor, not a second certificate over seq1. Build the
+    // state transition from the already applicable seq1 root and require the
+    // production state application to agree before any actor is started.
+    auto record2 = record;
+    auto mc_extra2 = mc_state_extra;
+    vm::AugmentedDictionary old_blocks2(mc_extra2.r1.prev_blocks, 32, block::tlb::aug_OldMcBlocksInfo);
+    vm::CellBuilder previous;
+    previous.store_bool_bool(true);
+    previous.store_long(record.gen_lt, 64).store_long(1, 32).store_bits(id1.root_hash.cbits(), 256)
+        .store_bits(id1.file_hash.cbits(), 256);
+    if (!old_blocks2.set_builder(td::BitArray<32>{1}, previous)) {
+      std::cerr << "N5_CONTINUE_FAILED: OldMcBlocks seq1 insert\n";
+      return 1;
+    }
+    mc_extra2.r1.prev_blocks = old_blocks2.get_root();
+    td::Ref<vm::Cell> custom2_root;
+    if (!block::gen::t_McStateExtra.cell_pack(custom2_root, mc_extra2)) {
+      std::cerr << "N5_CONTINUE_FAILED: seq2 McStateExtra pack\n";
+      return 1;
+    }
+    vm::CellBuilder custom2;
+    custom2.store_bool_bool(true);
+    custom2.store_ref_bool(custom2_root);
+    record2.custom = custom2.as_cellslice_ref();
+    record2.seq_no = 2;
+    record2.gen_utime = target_time + 1;
+    record2.gen_lt += 1000;
+    if (!block::gen::t_ShardStateUnsplit.cell_pack(root2, record2)) {
+      std::cerr << "N5_CONTINUE_FAILED: seq2 state pack\n";
+      return 1;
+    }
+    auto update2 = vm::CellBuilder::create_merkle_update(root1, root2);
+    auto info2 = info;
+    info2.seq_no = 2;
+    info2.gen_utime = target_time + 1;
+    info2.start_lt = record2.gen_lt - 1;
+    info2.end_lt = record2.gen_lt;
+    vm::CellBuilder prev2;
+    prev2.store_long(record.gen_lt, 64).store_long(1, 32).store_bits(id1.root_hash.cbits(), 256)
+        .store_bits(id1.file_hash.cbits(), 256);
+    info2.prev_ref = prev2.finalize_novm();
+    td::Ref<vm::Cell> info2_cell;
+    if (!block::gen::t_BlockInfo.cell_pack(info2_cell, info2)) {
+      std::cerr << "N5_CONTINUE_FAILED: seq2 BlockInfo pack\n";
+      return 1;
+    }
+    auto block2_root = vm::CellBuilder{}.store_long(0x11ef55aa, 32).store_long(0, 32)
+                           .store_ref(info2_cell).store_ref(flow_cell)
+                           .store_ref(update2).store_ref(extra_cell).finalize_novm();
+    block2_boc = require_ok(vm::std_boc_serialize(block2_root, 31), "N5 seq2 block BOC");
+    id2 = BlockIdExt{masterchainId, shardIdAll, 2, td::Bits256(block2_root->get_hash().bits()),
+                     block::compute_file_hash(block2_boc)};
+    std::vector<BlockIdExt> parsed_predecessors;
+    BlockIdExt parsed_mc;
+    bool parsed_after_split = false;
+    auto header = block::unpack_block_prev_blk_try(block2_root, id2, parsed_predecessors,
+                                                    parsed_mc, parsed_after_split);
+    if (header.is_error() || parsed_predecessors.size() != 1 || parsed_predecessors.front() != id1 ||
+        parsed_mc != id1 || parsed_after_split) {
+      std::cerr << "N5_CONTINUE_FAILED: seq2 header does not name exact seq1 predecessor "
+                << header.to_string() << '\n';
+      return 1;
+    }
+    auto parsed2 = require_ok(create_block(id2, block2_boc.clone()), "N5 seq2 apply preflight block");
+    auto from1 = require_ok(MasterchainStateQ::fetch(id1_state, state1_boc.clone(), root1),
+                            "N5 seq2 apply preflight state");
+    auto applied2 = from1.write().apply_block(id2, parsed2, nullptr);
+    expected_state2_root = RootHash{root2->get_hash().bits()};
+    if (applied2.is_error() || from1->root_hash() != expected_state2_root) {
+      std::cerr << "N5_CONTINUE_FAILED: seq1-to-seq2 production Merkle apply " << applied2.to_string() << '\n';
+      return 1;
+    }
+    std::cout << "N5_CONTINUE_SEQ2_APPLICABLE block=" << id2.to_str()
+              << " state=" << expected_state2_root.to_hex() << '\n';
+  }
+  if (n5_continue_reopen) {
+    if (keys.has_value()) {
+      std::cerr << "N5_CONTINUE_FAILED: third cold process constructed signing-key custody\n";
+      return 1;
+    }
+    auto cert_bytes = [](const char *path) -> std::optional<std::string> {
+      std::ifstream file(path, std::ios::binary);
+      std::ostringstream bytes;
+      bytes << file.rdbuf();
+      if (!file || bytes.str().empty()) {
+        return std::nullopt;
+      }
+      return bytes.str();
+    };
+    auto cert1 = cert_bytes(argv[5]);
+    auto cert2 = cert_bytes(argv[7]);
+    if (!cert1 || !cert2) {
+      std::cerr << "N5_CONTINUE_FAILED: retained FinalCert witnesses missing\n";
+      return 1;
+    }
+    BlockCandidate first_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                               block_boc.clone(), td::BufferSlice{}};
+    auto candidate1 = consensus::CandidateHashData::create_full(first_block, std::nullopt).build_id_with(0);
+    BlockCandidate second_block{nodes.front().validator_id, id2, sha256_bits256(td::Slice{}),
+                                block2_boc.clone(), td::BufferSlice{}};
+    auto candidate2 = consensus::CandidateHashData::create_full(second_block, candidate1).build_id_with(1);
+    const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                         context.expected_session_id, "") + "/db/";
+    std::vector<block::PQBlockSignature> signatures1;
+    std::vector<block::PQBlockSignature> signatures2;
+    if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate1, td::Slice(*cert1), true, signatures1) ||
+        !n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate2, td::Slice(*cert2), true, signatures2)) {
+      std::cerr << "N5_CONTINUE_FAILED: third process lacks either exact journal/marker pair\n";
+      return 1;
+    }
+    unsigned first_finalcerts = 0;
+    unsigned second_finalcerts = 0;
+    unsigned other_finalcerts = 0;
+    td::actor::Scheduler journal_scheduler({1});
+    journal_scheduler.run_in_context([&] {
+      auto cold_bus = n5_joined_bus(vset, context.expected_session_id, {}, journal_path);
+      for (auto &[key, value] : cold_bus->db->get_by_prefix(tos_api::consensus_simplex_db_key_vote::ID)) {
+        auto wrapper = fetch_tl_object<tos_api::consensus_simplex_db_cert>(value, true);
+        if (wrapper.is_error() || !wrapper.ok()->cert_) {
+          continue;  // Own-vote intent/signature entries share the vote prefix.
+        }
+        auto cert = sx::Certificate<sx::Vote>::from_tl(std::move(*wrapper.ok()->cert_), *cold_bus);
+        if (cert.is_error() || !std::holds_alternative<sx::FinalizeVote>(cert.ok()->vote.vote)) {
+          continue;
+        }
+        const auto &id = std::get<sx::FinalizeVote>(cert.ok()->vote.vote).id;
+        if (id == candidate1) {
+          ++first_finalcerts;
+        } else if (id == candidate2) {
+          ++second_finalcerts;
+        } else {
+          ++other_finalcerts;
+        }
+      }
+    });
+    journal_scheduler.run(0.01);
+    journal_scheduler.stop();
+    if (first_finalcerts != 1 || second_finalcerts != 1 || other_finalcerts != 0) {
+      std::cerr << "N5_CONTINUE_FAILED: third cold journal FinalCert cardinality first=" << first_finalcerts
+                << " second=" << second_finalcerts << " other=" << other_finalcerts << '\n';
+      return 1;
+    }
+    std::cout << "N5_CONTINUE_TWO_FINALCERTS_ONLY first=" << first_finalcerts
+              << " second=" << second_finalcerts << '\n';
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    std::optional<td::Result<td::Unit>> verified;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>(
+          "n5-continue-cold-manager", id0, argv[3]);
+    });
+    auto verify = [&](BlockIdExt predecessor, BlockIdExt target, RootHash state,
+                      const char *proof_hash, std::vector<block::PQBlockSignature> signatures) {
+      verified.reset();
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_n5_accept_cold,
+                                predecessor, target, state, vset, context.expected_session_id,
+                                std::string(proof_hash), std::move(signatures),
+                                td::PromiseCreator::lambda([&](td::Result<td::Unit> result) {
+                                  verified.emplace(std::move(result));
+                                }));
+      });
+      const auto deadline = td::Timestamp::in(30.0);
+      while (!verified && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      return verified && verified->is_ok();
+    };
+    const bool both = verify(id0, id1, expected_state_root, argv[4], std::move(signatures1)) &&
+                      verify(id1, id2, expected_state2_root, argv[6], std::move(signatures2));
+    scheduler.run_in_context([&] { manager.reset(); });
+    scheduler.stop();
+    if (!both) {
+      std::cerr << "N5_CONTINUE_FAILED: third cold RootDb proof/state/next check "
+                << (verified && verified->is_error() ? verified->error().to_string() : "timeout") << '\n';
+      return 1;
+    }
+    // The two exact markers are durable facts. A fresh Pool must also replay
+    // them in order and expose seq2, rather than seq1, as its finalized anchor.
+    td::actor::Scheduler anchor_scheduler({1});
+    td::actor::Runtime anchor_runtime;
+    sx::Db::register_in(anchor_runtime);
+    sx::Pool::register_in(anchor_runtime);
+    td::actor::ActorOwn<N5FinalizedAnchorProbe> anchor_probe;
+    sx::BusHandle anchor_bus;
+    std::optional<td::Result<td::Unit>> anchor_result;
+    bool anchor_stopped = false;
+    auto cold_second_block = require_ok(create_block(id2, block2_boc.clone()),
+                                        "N5 third cold seq2 anchor block");
+    anchor_scheduler.run_in_context([&] {
+      auto cold_bus = n5_joined_bus(vset, context.expected_session_id, {}, journal_path);
+      cold_bus->stop_promise = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+        anchor_stopped = outcome.is_ok();
+      });
+      anchor_bus = anchor_runtime.start(std::move(cold_bus), "n5-continue-third-cold-anchor");
+      anchor_probe = td::actor::create_actor<N5FinalizedAnchorProbe>("n5-continue-anchor-probe");
+      anchor_bus.publish<consensus::Start>(td::make_ref<consensus::ChainState>(
+          consensus::ChainState::NormalTip{cold_second_block, root2}, id2));
+      td::actor::send_closure(anchor_probe, &N5FinalizedAnchorProbe::query, anchor_bus, candidate2,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                anchor_result.emplace(std::move(outcome));
+                              }));
+    });
+    const auto anchor_deadline = td::Timestamp::in(10.0);
+    while (!anchor_result && !anchor_deadline.is_in_past()) {
+      anchor_scheduler.run(0.01);
+    }
+    if (!anchor_result || anchor_result->is_error()) {
+      std::cerr << "N5_CONTINUE_FAILED: third cold latest finalized anchor "
+                << (anchor_result ? anchor_result->error().to_string() : "timeout") << '\n';
+      return 1;
+    }
+    anchor_scheduler.run_in_context([&] {
+      anchor_probe.reset();
+      anchor_bus.publish<consensus::StopRequested>();
+      anchor_bus = {};
+    });
+    const auto anchor_stop_deadline = td::Timestamp::in(10.0);
+    while (!anchor_stopped && !anchor_stop_deadline.is_in_past()) {
+      anchor_scheduler.run(0.01);
+    }
+    anchor_scheduler.stop();
+    if (!anchor_stopped) {
+      std::cerr << "N5_CONTINUE_FAILED: third cold Pool did not stop\n";
+      return 1;
+    }
+    std::cout << "N5_CONTINUE_THIRD_COLD_CHAIN_OK first=" << id1.to_str()
+              << " second=" << id2.to_str() << " proof1=" << argv[4]
+              << " proof2=" << argv[6] << '\n';
+    return 0;
+  }
+  if (n5_continue_resume) {
+    std::ifstream first_file(argv[5], std::ios::binary);
+    std::ostringstream first_bytes;
+    first_bytes << first_file.rdbuf();
+    if (!first_file || first_bytes.str().empty()) {
+      std::cerr << "N5_CONTINUE_FAILED: first FinalCert witness absent on cold resume\n";
+      return 1;
+    }
+    BlockCandidate first_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                               block_boc.clone(), td::BufferSlice{}};
+    auto candidate1 = consensus::CandidateHashData::create_full(first_block, std::nullopt).build_id_with(0);
+    const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                         context.expected_session_id, "") + "/db/";
+    const auto original = first_bytes.str();
+    const auto cert1_hash = sha256_bits256(td::Slice(original));
+    std::vector<block::PQBlockSignature> signatures1;
+    if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate1, td::Slice(original), true, signatures1)) {
+      std::cerr << "N5_CONTINUE_FAILED: first FinalCert/marker did not survive cold restart\n";
+      return 1;
+    }
+    BlockCandidate second_block{nodes.front().validator_id, id2, sha256_bits256(td::Slice{}),
+                                block2_boc.clone(), td::BufferSlice{}};
+    auto candidate2 = consensus::CandidateHashData::create_full(second_block, candidate1).build_id_with(1);
+    auto leader_it = std::find(keys->validator_ids.begin(), keys->validator_ids.end(), nodes.front().validator_id);
+    if (leader_it == keys->validator_ids.end()) {
+      std::cerr << "N5_CONTINUE_FAILED: successor leader not in Config34 fixture\n";
+      return 1;
+    }
+    auto candidate_bytes = serialize_tl_object(candidate2.to_tl(), true);
+    auto candidate_envelope = create_serialize_tl_object<tos_api::consensus_dataToSign>(
+        context.expected_session_id, candidate_bytes.clone());
+    auto candidate_signature = keys->stores[static_cast<size_t>(leader_it - keys->validator_ids.begin())]
+                                   .sign_consensus(std::string_view(candidate_envelope.data(), candidate_envelope.size()));
+    if (!candidate_signature) {
+      std::cerr << "N5_CONTINUE_FAILED: successor leader signature unavailable\n";
+      return 1;
+    }
+    auto candidate_ref = td::make_ref<consensus::Candidate>(
+        candidate2, candidate1, consensus::PeerValidatorId{0},
+        std::variant<BlockIdExt, BlockCandidate>{std::move(second_block)},
+        td::BufferSlice(candidate_signature->signature));
+    auto accept_calls = std::make_shared<std::atomic<unsigned>>(0);
+    td::actor::Scheduler scheduler({1});
+    td::actor::Runtime runtime;
+    sx::DefaultCollatorSchedule::provide_for(runtime);
+    runtime.register_actor<N5ReplayObserver>("N5ReplayObserver");
+    consensus::BlockAccepter::register_in(runtime);
+    sx::StateResolver::register_in(runtime);
+    sx::CandidateResolver::register_in(runtime);
+    sx::Pool::register_in(runtime);
+    sx::Db::register_in(runtime);
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    td::actor::ActorOwn<N5AcceptFacade> facade;
+    td::actor::ActorOwn<N5JoinedPublisher> publisher;
+    sx::NotarCertRef staged_notar2;
+    sx::FinalCertRef staged_final2;
+    sx::BusHandle bus;
+    std::optional<td::Result<td::Unit>> result;
+    bool bus_stopped = false;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-continue-manager", id0, argv[3]);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_n5_accept_cold,
+                              id0, id1, expected_state_root, vset, context.expected_session_id,
+                              std::string(argv[4]), std::move(signatures1),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    auto await_result = [&](const char *stage) {
+      const auto deadline = td::Timestamp::in(30.0);
+      while (!result && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      if (!result || result->is_error()) {
+        std::cerr << "N5_CONTINUE_FAILED stage=" << stage << " error="
+                  << (result ? result->error().to_string() : "timeout") << '\n';
+        return false;
+      }
+      result.reset();
+      return true;
+    };
+    if (!await_result("first cold proof/state")) {
+      return 1;
+    }
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::restore_zero_context,
+                              id0, id0.root_hash,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    if (!await_result("genesis RootDb context")) {
+      return 1;
+    }
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::restore_n5_tip_context,
+                              id1, expected_state_root,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    if (!await_result("seq1 RootDb tip")) {
+      return 1;
+    }
+    n5_replay_state = std::make_shared<N5ReplayState>();
+    n5_replay_state->expected_id = candidate1;
+    n5_replay_state->expected_cert_hash = cert1_hash;
+    n5_replay_state->successor_id = candidate2;
+    scheduler.run_in_context([&] {
+      facade = td::actor::create_actor<N5AcceptFacade>("n5-continue-facade", manager.get(), vset,
+                                                        std::shared_ptr<std::atomic<bool>>{},
+                                                        std::nullopt, accept_calls);
+      auto trusted = n5_joined_bus(vset, context.expected_session_id, facade.get(), journal_path);
+      auto notar2 = n5_joined_cert(sx::NotarizeVote{candidate2}, *trusted, *keys);
+      auto final2 = n5_joined_cert(sx::FinalizeVote{candidate2}, *trusted, *keys);
+      if (notar2.is_error() || final2.is_error()) {
+        result.emplace(td::Status::Error("N5 continuation successor certificates failed verification"));
+        return;
+      }
+      auto final2_tl = serialize_tl_object(final2.ok()->to_tl(), true);
+      n5_replay_state->successor_cert_hash = sha256_bits256(final2_tl.as_slice());
+      const auto second_cert_path = std::string(argv[3]) + ".seq2.finalcert.tl";
+      std::ofstream second_cert(second_cert_path, std::ios::binary);
+      second_cert.write(final2_tl.data(), static_cast<std::streamsize>(final2_tl.size()));
+      second_cert.close();
+      if (!second_cert) {
+        result.emplace(td::Status::Error("N5 continuation successor FinalCert witness write failed"));
+        return;
+      }
+      trusted->stop_promise = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+        bus_stopped = outcome.is_ok();
+      });
+      bus = runtime.start(std::move(trusted), "n5-continue-simplex");
+      bus.publish<consensus::Start>(td::make_ref<consensus::ChainState>(
+          consensus::ChainState::NormalTip{parsed_block, root1}, id1));
+      // Stage the new certs until the old bootstrap replay has settled.
+      publisher = td::actor::create_actor<N5JoinedPublisher>("n5-continue-publisher");
+      staged_notar2 = notar2.move_as_ok();
+      staged_final2 = final2.move_as_ok();
+    });
+    if (result.has_value()) {
+      std::cerr << "N5_CONTINUE_FAILED: successor setup " << result->error().to_string() << '\n';
+      return 1;
+    }
+    const auto replay_deadline = td::Timestamp::in(10.0);
+    while (n5_replay_state->observed.load(std::memory_order_acquire) == 0 && !replay_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    const auto settled = td::Timestamp::in(1.0);
+    while (!settled.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (n5_replay_state->observed.load(std::memory_order_acquire) != 1 ||
+        n5_replay_state->mismatch.load(std::memory_order_acquire) ||
+        accept_calls->load(std::memory_order_acquire) != 0) {
+      std::cerr << "N5_CONTINUE_FAILED: seq1 replay duplicated FinalCert or AcceptBlock\n";
+      return 1;
+    }
+    std::cout << "N5_CONTINUE_SEQ1_REPLAY_ONCE_NO_REAPPLY_OK\n";
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(publisher, &N5JoinedPublisher::publish, bus, candidate_ref,
+                              staged_notar2, staged_final2, false,
+                              std::shared_ptr<std::atomic<bool>>{}, std::shared_ptr<std::atomic<bool>>{},
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    if (!await_result("seq2 finalized marker")) {
+      return 1;
+    }
+    std::optional<td::Result<std::string>> proof2;
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::n5_written_proof_hash,
+                              id2, td::PromiseCreator::lambda([&](td::Result<std::string> outcome) {
+                                proof2.emplace(std::move(outcome));
+                              }));
+    });
+    const auto proof_deadline = td::Timestamp::in(30.0);
+    while (!proof2 && !proof_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (!proof2 || proof2->is_error() || accept_calls->load(std::memory_order_acquire) != 1 ||
+        n5_replay_state->observed.load(std::memory_order_acquire) != 1 ||
+        n5_replay_state->successor_observed.load(std::memory_order_acquire) != 1 ||
+        n5_replay_state->mismatch.load(std::memory_order_acquire)) {
+      std::cerr << "N5_CONTINUE_FAILED: successor proof, replay count or AcceptBlock count differs\n";
+      return 1;
+    }
+    scheduler.run_in_context([&] {
+      publisher.reset();
+      bus.publish<consensus::StopRequested>();
+      bus = {};
+    });
+    const auto stop_deadline = td::Timestamp::in(10.0);
+    while (!bus_stopped && !stop_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
+    scheduler.stop();
+    n5_replay_state.reset();
+    if (!bus_stopped) {
+      std::cerr << "N5_CONTINUE_FAILED: successor bus did not stop before third cold process\n";
+      return 1;
+    }
+    std::string mode = "--n5-continue-reopen";
+    auto proof2_hash = proof2->ok();
+    auto second_cert_path = std::string(argv[3]) + ".seq2.finalcert.tl";
+    char *child_argv[] = {argv[0], mode.data(), argv[2], argv[3], argv[4], argv[5],
+                          proof2_hash.data(), second_cert_path.data(), nullptr};
+    pid_t child = -1;
+    const int spawned = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+    int status = 0;
+    if (spawned != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      std::cerr << "N5_CONTINUE_FAILED: third cold process status=" << status << " spawn=" << spawned << '\n';
+      return 1;
+    }
+    std::cout << "N5_CONTINUE_COLD_SUCCESSOR_OK first=" << id1.to_str()
+              << " second=" << id2.to_str() << " proof2=" << proof2_hash << '\n';
+    return 0;
+  }
   if (n5_cut6_check) {
     // The source RootDb has an already accepted handle. Running CheckProof
     // against that handle would take its inited_proof shortcut and never
@@ -2041,7 +2590,7 @@ int main(int argc, char **argv) {
     std::cout << "N5_CUT1_COLD_NO_TARGET_HANDLE_OK block=" << id1.to_str() << '\n';
     return 0;
   }
-  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6) {
+  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_continue) {
     auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
     std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
     std::filesystem::create_directories(db_root + "/static");
@@ -2323,6 +2872,21 @@ int main(int argc, char **argv) {
       std::cerr << "N5_JOINED_COLD_FAILED: wrong-signature child status=" << status
                 << " spawn=" << negative_spawned << '\n';
       return 1;
+    }
+    if (n5_continue) {
+      mode = "--n5-continue-resume";
+      child_argv[1] = mode.data();
+      child = -1;
+      const int resumed = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+      status = 0;
+      if (resumed != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        std::cerr << "N5_CONTINUE_FAILED: cold successor child status=" << status
+                  << " spawn=" << resumed << '\n';
+        return 1;
+      }
+      std::cout << "N5_CONTINUE_FIRST_WRITER_EXIT_OK root=" << db_root
+                << " first_finalcert=" << finalcert_path << '\n';
+      return 0;
     }
     if (n5_cut4) {
       mode = "--n5-cut4-resume";

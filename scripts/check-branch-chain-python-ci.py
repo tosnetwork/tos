@@ -90,6 +90,7 @@ def main() -> int:
         ("test-n5-cut4-finalized-replay", "finalized marker cold replay without duplicate acceptance"),
         ("test-n5-cut5-full-root-rebuild", "DB/archive-only full-root rebuild"),
         ("test-n5-cut6-check-proof", "cold persisted PQ CheckProof acceptance and tamper refusal"),
+        ("test-n5-cold-continuation", "cold continuation through a second FinalCert"),
     ):
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -169,6 +170,14 @@ def main() -> int:
         ) is not None,
         "N5 CheckProof CTest is absent or no longer invokes its cut6 mode",
     )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cold-continuation COMMAND test-c04-real-state-proof "
+            r"--n5-continue\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        ) is not None,
+        "N5 cold continuation CTest is absent or no longer invokes its seq2 mode",
+    )
     c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
     require(
         re.search(rf"(?m)^\s*run: {re.escape(c05_ctest)}\s*$", text) is not None,
@@ -237,7 +246,7 @@ def main() -> int:
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
-        "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests and the cold CheckProof CTest, "
+        "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
         "and five named restart-origin controls, "

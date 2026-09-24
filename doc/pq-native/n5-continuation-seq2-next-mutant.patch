@@ -1,0 +1,20 @@
+diff --git a/validator/manager.cpp b/validator/manager.cpp
+index 05ea91148..cebe22572 100644
+--- a/validator/manager.cpp
++++ b/validator/manager.cpp
+@@ -1995,11 +1995,13 @@ void ValidatorManagerImpl::set_block_signatures(BlockHandle handle, td::Ref<bloc
+ void ValidatorManagerImpl::set_next_block(BlockIdExt block_id, BlockIdExt next, td::Promise<td::Unit> promise) {
+   auto P = td::PromiseCreator::lambda(
+-      [SelfId = actor_id(this), next, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
++      [SelfId = actor_id(this), block_id, next, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
+         if (R.is_error()) {
+           promise.set_error(R.move_as_error());
+         } else {
+           auto handle = R.move_as_ok();
+-          handle->set_next(next);
++          if (block_id.seqno() == 0) {
++            handle->set_next(next);
++          }
+           if (handle->need_flush()) {
+             handle->flush(SelfId, handle, std::move(promise));
+           } else {

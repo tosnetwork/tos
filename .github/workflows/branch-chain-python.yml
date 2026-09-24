@@ -118,6 +118,10 @@ jobs:
       - name: Check N5 cold persisted PQ CheckProof acceptance and tamper refusal
         run: ctest --test-dir build --output-on-failure -R '^test-n5-cut6-check-proof$'
 
+      - name: Check N5 cold continuation through a second FinalCert
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cold-continuation$'
+
+
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote
       # must never be retried into an unsafe late vote.
