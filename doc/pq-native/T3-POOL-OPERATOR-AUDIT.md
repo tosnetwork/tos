@@ -36,6 +36,16 @@ The two product callers need separate, inspectable witness handoffs:
 | `elections/src/runner.rs` | Resolve the configured controller's deployment artifact before the daemon builds its pool order; check that its derived address is the node-bound `validator_id` and its code hash is admitted by live ConfigParam 47; pass that artifact's birth witness to `new_stake_with_witness`. An absent or mismatched artifact must refuse locally. | The daemon's first real pool stake receives `STAKE_ACCEPTED`, followed by a live ConfigParam 34 pairing that controller ID with its ADNL. |
 | `commands/src/commands/nodectl/config_wallet_cmd.rs` | Obtain the same verified deployment artifact for the interactive pool bid, rather than treating the node's authorization response as a witness; bind the witness to the configured controller and the destination pool, then pass it to `new_stake_with_witness`. An absent or mismatched artifact must refuse before sending. | The command's first real pool stake receives `STAKE_ACCEPTED`, and the controller appears in live ConfigParam 34. |
 
+At exact source commit `ca842b0f1`, the interactive config-wallet caller met
+its row's outcome on a co-located PQ chain: the command exited 0, the
+stake-owner pool received exact `STAKE_ACCEPTED` for query ID `1790232216`,
+and live ConfigParam 34 paired the configured controller with the ADNL from
+the actual controller relay. The report SHA-256 is
+`b5a448040fd75f5f55e206751f86831cf68b3c2de5d3f84fdca236e2447a693d`;
+the raw and earlier failed-run evidence is in
+`T3-CONFIG-WALLET-FIRST-STAKE-DIAGNOSTIC.md`. The daemon row is not satisfied
+by this CLI run and remains the product witness/first-stake acceptance gap.
+
 The multi-nominator lifecycle script is a different diagnostic consumer of
 the production pool body. Its fixture can supply a witness, but neither its
 static conversion nor Stage A's accepted stakes supplies the missing product

@@ -572,17 +572,23 @@ dependency and repeats the end-to-end accepted-stake/activated-election proof
 on a co-located diagnostic topology, **not** as release-scale evidence. The
 other classical Fift callers remain a separate T3 retirement task.
 
-T3's multi-nominator lifecycle preflight and first-round assertions remain
-static/unit evidence only; no new real chain has been started for that route.
+The multi-nominator lifecycle has since passed an exact `1af9df5f1`
+co-located run (27/27 checks); its precise limits appear in the table below.
 The launch-facing `runner.rs` and `config_wallet_cmd.rs` now read a configured
 original controller StateInit BOC, match it against node authorization and the
 pool controller, and require its code hash in the live ConfigParam 47
 dictionary before building a witnessed pool order. Missing or mismatched
 inputs refuse locally; legacy config remains readable but has no locator and
-therefore refuses a first stake. This is testable local assembly, not first-stake
-acceptance evidence. The deployment commands do not yet produce or retain this
-public artifact, and no real product-path stake has been observed. T3 and
-`pool-first-stake-birth-witness-missing` stay OPEN;
+therefore refuses a first stake. At exact `ca842b0f1`, the interactive
+`config wallet stake` product command exited 0, its stake-owner pool received
+Elector `STAKE_ACCEPTED` for query ID `1790232216`, and live ConfigParam 34
+paired the configured controller with the ADNL read from that controller's
+relay. The diagnostic report SHA-256 is
+`b5a448040fd75f5f55e206751f86831cf68b3c2de5d3f84fdca236e2447a693d`.
+The election-daemon caller has not supplied its own first-stake and live
+ConfigParam 34 evidence. Deployment commands still do not create or retain
+the public controller-birth artifact. T3 and
+`pool-first-stake-birth-witness-missing` therefore stay OPEN;
 the source/binding plan and remaining handoffs are in
 `T3-POOL-OPERATOR-AUDIT.md`.
 Supervisor acceptance at `c15d9f852` marks **T2 COMPLETE within

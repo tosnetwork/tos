@@ -91,3 +91,37 @@ malformed tails. The unit test asserts both values and the two-element cons
 ordering; removing the terminator arm or negating its emptiness check makes
 it red. A new fixed-tree product run is still required for a successful CLI
 exit and live ConfigParam 34 controller/ADNL pairing.
+
+## Product outcome at `ca842b0f1`
+
+The fixed-tree run
+`test/integration/.pq-tosctl-config-wallet-product/20260924T063630Z/report.json`
+has SHA-256 `b5a448040fd75f5f55e206751f86831cf68b3c2de5d3f84fdca236e2447a693d`:
+`passed=true`, `failures=[]`, and the actual `tosctl config wallet stake`
+command exited 0 after printing `Stake accepted by elector`. This is the
+interactive config-wallet product caller, not the election daemon.
+
+The pool's bounded history (2 transactions, 1 page, complete; SHA-256
+`cb7ff3455740eea4b891af5eef3818d6a3ca29779b79331bcca64a0bf0ce919c`)
+contains an Elector inbound body with opcode `0xf374484c`, exact query ID
+`1790232216`, and reason 0. The controller history (1 transaction, 1 page,
+complete; SHA-256
+`2606351734e86e6899d4b425a8be35357313316abbdcbda5b2bf4f5dcf1a0f0f`)
+has the matching `0x5051726c` relay and ADNL
+`d2b806d6ea1a30dbdd09c75c633cc409cd8c25493ff7b808a3e4edfb718d3e03`.
+Live ConfigParam 34, raw SHA-256
+`f1ec118c1c388c01b72fb51f39985a2c0f1511599d3767d75a6d50b7f2fbf8ac`,
+activated at `utime_since=1790232395` and lists four PQ validators. Its
+controller record pairs
+`dae8de3bc465a977f3c2c40efa33f89d463b46a1c9498e17a19a0603101c57d8`
+with that same ADNL. The source of the ADNL is the actual controller relay,
+not a fixture key assumption. The ConfigParam 47 read-back, imported original
+StateInit, and binary hashes are retained in the same report. The compiled
+test's numeric-nil and strict two-cons/empty-List controls cover the parser
+condition that previously prevented the CLI from completing.
+
+This closes the interactive config-wallet caller's first-stake acceptance and
+live selection evidence on a co-located diagnostic chain. It does not prove
+the election daemon's independent caller, a production controller-deployment
+command, or release-scale operation. T3 and the two-caller correctness
+question remain OPEN.
