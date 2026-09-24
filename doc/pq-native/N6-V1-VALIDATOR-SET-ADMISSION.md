@@ -85,6 +85,43 @@ indices, weight sum and the cap. Counts and launch limits are also checked.
 The source guard names only the newly added ADNL/cap rules and both call paths;
 it does not claim to prove this entire audit.
 
+## Shared node-vector behaviour on both contract paths
+
+C02's independent first attempt showed why the old node vector file could not
+be fed directly to a launch config contract: its one- and two-member sets
+violated launch Param16's four-member minimum, and its `100..200` interval was
+already past the Elector's clock. All fourteen rows were refused, including
+`valid`; those refusals proved nothing about descriptor parity. The original
+file and raw verdicts remain in C02's hashed interim artifact. The old row
+named `declared-total-mismatch` actually changed *weight*, not validator count.
+
+The generator now emits four distinct PQ members and a future interval for
+every row, keeping each original defect in its descriptor. It names the weight
+case correctly and adds independent zero-total-weight, missing-count,
+index-gap, zero-main, main-greater-than-total, malformed-key-encoding,
+wrong-descriptor-tag and trailing-descriptor-bit rows. The result is **one
+22-BOC table** read unchanged by the production C++
+`Config::unpack_validator_set` test and by two compiled-contract sandboxes:
+Elector `set_next_validators` and validator-governed `install_param(36)`.
+Neither sandbox lowers Param16 nor rewrites a BOC. Each Elector row starts with
+an empty ConfigParam 36; each governance row starts from a fresh current PQ
+set. The `valid` row is accepted and stored on both paths before the twenty-one
+rejection verdicts are counted.
+
+The exact local commands `build/crypto/pq/test-validator-identity
+test/pq-native/validator-set-cases.txt` and `cargo test --manifest-path
+tosctl/src/Cargo.toml -p contracts --test elector_sandbox
+node_validator_set_vectors_match --locked` pass. The generator consistency
+check also passes. Removing only the contract's duplicate-ADNL refusal makes
+both new sandbox tests fail at `duplicate-adnl` with installation replies;
+forcing governance to refuse every set fails its test at `valid` with
+`decided=true, installed=false`. Restored contract Fift SHA-256 is
+`95bbfa11e05dfc49d7a89bfbdd7055e03f920785f7d0c8c688899c6b35fa47b2`.
+The branch source guard pins the presence of both shared-vector test entries
+and the named 22-row table; it does not run either sandbox in branch CI. The
+regenerated table SHA-256 is
+`5bdebc0253b59172387cc634627601fa38b3ce3174c68865be47ca88c394f9a6`.
+
 The `pq-validator-set-installation-parity` question remains OPEN until the
 fixed-head CI result and the independent rule-parity review are recorded. No
 deliberately malformed set has been installed on a real network, so chain-halt

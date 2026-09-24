@@ -1466,6 +1466,88 @@ fn a_governed_next_set_obeys_the_node_descriptor_rules() {
     }
 }
 
+/// The C++ node decoder reads this same BOC table. Keep both contract entry points
+/// on those exact bytes, rather than building a second set of near-identical flaws.
+/// Each BOC carries four members and a future interval, so the honest row reaches
+/// both installation paths under the unchanged launch ConfigParam 16. Without that
+/// positive control every malformed row could be refused for an unrelated fixture rule.
+fn node_validator_set_cases() -> Vec<(&'static str, bool, chain_block::Cell)> {
+    let source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../test/pq-native/validator-set-cases.txt"
+    ));
+    source
+        .lines()
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next().expect("case name");
+            let expected = match fields.next().expect("node verdict") {
+                "accept" => true,
+                "reject" => false,
+                other => panic!("unknown node verdict for {name}: {other}"),
+            };
+            let boc = fields.next().expect("validator-set BOC");
+            assert!(fields.next().is_none(), "extra fields in node vector {name}");
+            let cell = chain_block::read_single_root_boc(hex::decode(boc).expect("hex BOC"))
+                .unwrap_or_else(|error| panic!("invalid node vector {name}: {error}"));
+            (name, expected, cell)
+        })
+        .collect()
+}
+
+#[test]
+fn node_validator_set_vectors_match_the_elector_install_path() {
+    let cases = node_validator_set_cases();
+    assert_eq!(cases.len(), 22, "the node's validator-set vector inventory changed");
+    assert!(cases.iter().any(|(name, accepts, _)| *name == "valid" && *accepts));
+    for (index, (name, node_accepts, set)) in cases.into_iter().enumerate() {
+        // Each verdict starts without ConfigParam 36, so a rejection cannot be
+        // attributed to a previous row having installed a next set.
+        let mut chain = launch();
+        let result = chain
+            .blockchain
+            .send_message(
+                tos_sandbox::MessageBuilder::internal(
+                    &chain.elector.clone(),
+                    &chain.config_contract.clone(),
+                    10 * TOS,
+                )
+                .body(set_next_validators_body(1000 + index as u64, set))
+                .build(),
+            )
+            .expect("the Elector's set-next message is delivered");
+        let tags = replies(&result);
+        let expected = if node_accepts { VALIDATOR_SET_INSTALLED } else { VALIDATOR_SET_REFUSED };
+        assert!(tags.contains(&expected), "Elector install of node vector {name}: {tags:02x?}");
+        assert_eq!(
+            tags.contains(&VALIDATOR_SET_INSTALLED),
+            node_accepts,
+            "Elector install disagrees with node decoder for {name}: {tags:02x?}"
+        );
+        assert_eq!(
+            parameter_present(&configuration_from_contract(&chain), 36),
+            node_accepts,
+            "Elector storage disagrees with node decoder for {name}"
+        );
+    }
+}
+
+#[test]
+fn node_validator_set_vectors_match_the_governance_install_path() {
+    let cases = node_validator_set_cases();
+    assert_eq!(cases.len(), 22, "the node's validator-set vector inventory changed");
+    for (index, (name, node_accepts, set)) in cases.into_iter().enumerate() {
+        let (mut chain, validators, _election) = elect_install_and_rotate();
+        require_one_winning_round(&mut chain);
+        let result = govern_install(&mut chain, &validators, 36, set, 2000 + index as u64 * 10);
+        assert!(result.decided, "governance did not decide node vector {name}");
+        assert_eq!(
+            result.installed, node_accepts,
+            "governance install disagrees with node decoder for {name}: {result:?}"
+        );
+    }
+}
+
 /// `0x4e565354`: the elector asking the configuration contract to install a set.
 fn set_next_validators_body(query_id: u64, vset: chain_block::Cell) -> chain_block::Cell {
     use chain_block::IBitstring;

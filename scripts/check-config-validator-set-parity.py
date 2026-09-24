@@ -20,6 +20,8 @@ root = Path(sys.argv[1])
 contract = (root / "crypto/smartcont/config-code.fc").read_text()
 node = (root / "crypto/block/mc-config.cpp").read_text()
 quorum = (root / "tos/quorum.h").read_text()
+sandbox = (root / "tosctl/src/node-control/contracts/tests/elector_sandbox.rs").read_text()
+vector_file = root / "test/pq-native/validator-set-cases.txt"
 
 match = re.search(r"\(int, int\) check_validator_set\(cell vset\) \{(.*?)\n\}", contract, re.S)
 if not match:
@@ -56,4 +58,52 @@ for label, pattern in governance_checks.items():
     if not re.search(pattern, install_body, re.S):
         fail(f"governance install_param no longer records {label}")
 
-print("CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance PQ set installation record ADNL deduplication and the node's weight cap")
+vector_tests = (
+    "node_validator_set_vectors_match_the_elector_install_path",
+    "node_validator_set_vectors_match_the_governance_install_path",
+)
+for name in vector_tests:
+    if not re.search(rf"#\[test\]\s*fn {name}\s*\(", sandbox):
+        fail(f"shared node-vector sandbox test {name} is absent")
+if "validator-set-cases.txt" not in sandbox or "read_single_root_boc" not in sandbox:
+    fail("sandbox no longer decodes the shared node validator-set BOCs")
+if not vector_file.exists():
+    fail("shared node validator-set BOC table is absent")
+rows = [line.split(maxsplit=2) for line in vector_file.read_text().splitlines()]
+if len(rows) != 22 or any(len(row) != 3 for row in rows):
+    fail(f"shared node validator-set BOC table has {len(rows)} rows, expected 22 complete rows")
+required_cases = {
+    "valid",
+    "duplicate-validator-id",
+    "duplicate-key-id",
+    "duplicate-public-key",
+    "duplicate-adnl",
+    "key-id-mismatch",
+    "unknown-algorithm",
+    "short-key",
+    "long-key",
+    "malformed-key-encoding",
+    "wrong-descriptor-tag",
+    "descriptor-trailing-bit",
+    "zero-validator-id",
+    "zero-adnl",
+    "zero-weight",
+    "weight-over-protocol-cap",
+    "declared-weight-mismatch",
+    "zero-total-weight",
+    "declared-count-mismatch",
+    "index-gap",
+    "zero-main-count",
+    "main-exceeds-total",
+}
+actual_cases = {row[0] for row in rows}
+if len(actual_cases) != len(rows) or actual_cases != required_cases:
+    fail(
+        "shared node validator-set case inventory changed: "
+        f"missing={sorted(required_cases - actual_cases)} unexpected={sorted(actual_cases - required_cases)}"
+    )
+valid = [(name, verdict) for name, verdict, _ in rows if verdict == "accept"]
+if valid != [("valid", "accept")]:
+    fail(f"shared node validator-set BOC positive control changed: {valid}")
+
+print("CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance record ADNL/weight rules; both sandbox tests decode the 22 shared node vectors")
