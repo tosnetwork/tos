@@ -4,7 +4,8 @@ Status: **local write-after slice proven; N01 OPEN**. Fixed test source:
 `edf3b3a14a700406f8a1e55636067c05d6693bcf`. This is not yet a
 Pool-produced FinalCert, StateResolver `FinalizeBlock`, or production
 finalized-marker sequence. It reuses C04's independently applicable PQ
-seq0→seq1 block, Config34 set and verified FinalCert as inputs to the real
+seq0→seq1 block, Config34 set and locally signed/verified PQ finality signature
+set as inputs to the real
 `run_accept_block_query`, `ValidatorManagerImpl`, `RootDb`, and `ApplyBlock`.
 No overlay or ADNL network is started.
 
