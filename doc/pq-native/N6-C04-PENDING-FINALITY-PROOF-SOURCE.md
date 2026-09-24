@@ -56,6 +56,19 @@ verification, not actual block acceptance. C04 remains OPEN pending that
 downstream actor proof and fixed-commit CI. The historical network impact
 is still not established from the component or actor fixtures alone.
 
+The missing downstream proof is not a naming issue: production
+`new_block_broadcast` creates `ValidateBroadcast`. That actor reads the
+reference key-block or zero state and the target block handle, writes block
+data, runs `CheckProof`, then may create `ApplyBlock`. `ApplyBlock` waits for
+the actual shard state, persists parent links, and marks the handle applied.
+The no-startup probe has none of those DB/state prerequisites. Pre-marking a
+handle as received/proven/applied would bypass the operation C04 needs to
+observe, so it is not an acceptable shortcut. A closing fixture must supply
+a valid predecessor state and observable DB writes, or use a real manager
+network, while retaining the bad-front/good, stale-context recovery, and
+expiry controls. Until then, "broadcast callback succeeded" is the precise
+boundary, not "block accepted."
+
 The old-behavior mutation changed only the proof-error branch of
 `try_process_pending_block_finality` back to candidate-byte erasure. The
 `test-pending-finality-cache` CTest exited 8 and named
