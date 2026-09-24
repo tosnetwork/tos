@@ -44,6 +44,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "simplex-exact-ancestor-source-guard",
         "test-quorum-static-grep",
         "tosctl-pq-stake-builder-source",
+        "tosctl-election-chain-reads-source",
         "validator-id-key-hash-source",
         "validator-session-assembly-source",
     }

@@ -70,6 +70,14 @@ impl Account {
     pub fn new(account: ControlClientAccount) -> Self {
         Self { account }
     }
+    pub fn from_balance(balance: u64) -> Self {
+        Self::new(ControlClientAccount::ShardAccountState(
+            control_client::client_api::ShardAccountState {
+                balance: balance.into(),
+                ..Default::default()
+            },
+        ))
+    }
     pub fn balance(&self) -> u64 {
         match &self.account {
             ControlClientAccount::ShardAccountState(state) => state.balance as u64,

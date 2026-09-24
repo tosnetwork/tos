@@ -1297,6 +1297,10 @@ add_test(NAME tosctl-pq-stake-builder-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-pq-stake-builder.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(tosctl-pq-stake-builder-source PROPERTIES LABELS "source-guard")
+add_test(NAME tosctl-election-chain-reads-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-election-chain-reads.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(tosctl-election-chain-reads-source PROPERTIES LABELS "source-guard")
 add_test(NAME dns-pq-vote-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
           ${CMAKE_CURRENT_SOURCE_DIR})

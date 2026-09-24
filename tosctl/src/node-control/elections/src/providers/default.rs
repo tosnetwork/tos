@@ -10,7 +10,7 @@ use super::traits::ElectionsProvider;
 use crate::providers::traits::{Account, ValidatorConfig, ValidatorEntry};
 use adnl::client::AdnlClientConfig;
 use anyhow::Context;
-use chain_block::{Cell, ConfigParam15, ConfigParamEnum, ValidatorSet, read_single_root_boc};
+use chain_block::{Cell, ConfigParam15, ConfigParamEnum, MsgAddressInt, ValidatorSet};
 use contracts::ChainProvider;
 use control_client::{
     client_adnl::ControlClientAdnl,
@@ -18,7 +18,6 @@ use control_client::{
         AddAdnlAddressRq, AddValidatorAdnlAddrRq, AddValidatorPermKeyRq, AddValidatorTempKeyRq,
         ClientAPI, SignRq,
     },
-    config_params::{parse_config_param_34, parse_config_param_36},
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -140,30 +139,40 @@ impl ElectionsProvider for DefaultElectionsProvider {
             .await
     }
     async fn account(&mut self, address: &str) -> anyhow::Result<Account> {
-        let account = self.client.get_account_state(address).await?;
-        Ok(Account::new(account))
+        let address: MsgAddressInt = address.parse().context("parse election account address")?;
+        Ok(Account::from_balance(self.chain_provider.get_balance(&address).await?))
     }
     async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>> {
         self.client.export_key_pub(key_id).await
     }
     async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet> {
-        let bytes = self.client.get_config_param(34).await?;
-        parse_config_param_34(&bytes)
+        current_vset_from_live_config(self.chain_provider.get_config_param(34).await?)
     }
     async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
-        let bytes = self.client.get_config_param(34).await?;
-        let cell = read_single_root_boc(bytes)?;
+        let cell = self.chain_provider.get_config_param_cell(34).await?;
         Ok(Some(cell.repr_hash().inner()))
     }
 
     async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>> {
-        match self.client.get_config_param(36).await {
-            Ok(bytes) => Ok(Some(parse_config_param_36(&bytes)?)),
-            Err(e) => {
-                tracing::trace!("get_next_vset: config param 36 not available: {e:?}");
-                Ok(None)
-            }
-        }
+        self.chain_provider
+            .get_optional_config_param(36)
+            .await?
+            .map(next_vset_from_live_config)
+            .transpose()
+    }
+}
+
+fn current_vset_from_live_config(param: ConfigParamEnum) -> anyhow::Result<ValidatorSet> {
+    match param {
+        ConfigParamEnum::ConfigParam34(value) => Ok(value.cur_validators),
+        other => anyhow::bail!("live ConfigParam 34 has unexpected representation: {other:?}"),
+    }
+}
+
+fn next_vset_from_live_config(param: ConfigParamEnum) -> anyhow::Result<ValidatorSet> {
+    match param {
+        ConfigParamEnum::ConfigParam36(value) => Ok(value.next_validators),
+        other => anyhow::bail!("live ConfigParam 36 has unexpected representation: {other:?}"),
     }
 }
 
@@ -177,6 +186,46 @@ fn election_parameters_from_live_config(param: ConfigParamEnum) -> anyhow::Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_validator_sets_use_the_matching_config_parameter() {
+        let set = ValidatorSet::default();
+        assert_eq!(
+            current_vset_from_live_config(ConfigParamEnum::ConfigParam34(
+                chain_block::ConfigParam34 { cur_validators: set.clone() }
+            ))
+            .unwrap(),
+            set
+        );
+        assert_eq!(
+            next_vset_from_live_config(ConfigParamEnum::ConfigParam36(
+                chain_block::ConfigParam36 { next_validators: set.clone() }
+            ))
+            .unwrap(),
+            set
+        );
+        assert!(
+            current_vset_from_live_config(ConfigParamEnum::ConfigParam36(
+                chain_block::ConfigParam36 { next_validators: set.clone() }
+            ))
+            .unwrap_err()
+            .to_string()
+            .contains("live ConfigParam 34")
+        );
+        assert!(
+            next_vset_from_live_config(ConfigParamEnum::ConfigParam34(
+                chain_block::ConfigParam34 { cur_validators: set }
+            ))
+            .unwrap_err()
+            .to_string()
+            .contains("live ConfigParam 36")
+        );
+    }
+
+    #[test]
+    fn chain_balance_preserves_nanotos_for_stake_budget() {
+        assert_eq!(Account::from_balance(10_001_000_000_000).balance(), 10_001_000_000_000);
+    }
 
     #[test]
     fn election_parameters_accept_only_live_param_15() {

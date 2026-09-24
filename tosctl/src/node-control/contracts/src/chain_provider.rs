@@ -66,7 +66,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use chain_block::{ConfigParamEnum, MsgAddressInt};
+use chain_block::{Cell, ConfigParamEnum, MsgAddressInt};
 use chain_rpc_client::v2::{
     RPCStackEntry,
     client_json_rpc::ClientJsonRpc,
@@ -162,6 +162,19 @@ pub trait ChainProvider: Send + Sync {
 
     /// Retrieve a blockchain configuration parameter by its numeric ID.
     async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum>;
+
+    /// Exact on-chain parameter cell for consumers that compare its hash.
+    async fn get_config_param_cell(&self, _param_id: u32) -> anyhow::Result<Cell> {
+        anyhow::bail!("exact config parameter cell is unsupported by this provider")
+    }
+
+    /// Missing is distinct from a transport or protocol error.
+    async fn get_optional_config_param(
+        &self,
+        _param_id: u32,
+    ) -> anyhow::Result<Option<ConfigParamEnum>> {
+        anyhow::bail!("optional config parameter read is unsupported by this provider")
+    }
 
     /// Get basic address information (balance, state, code, data).
     async fn get_address_info(&self, address: &MsgAddressInt) -> anyhow::Result<AddressInfo>;
@@ -328,6 +341,17 @@ impl ChainProvider for DefaultChainProvider {
 
     async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {
         self.client.get_config_param(param_id).await
+    }
+
+    async fn get_config_param_cell(&self, param_id: u32) -> anyhow::Result<Cell> {
+        self.client.get_config_param_cell(param_id).await
+    }
+
+    async fn get_optional_config_param(
+        &self,
+        param_id: u32,
+    ) -> anyhow::Result<Option<ConfigParamEnum>> {
+        self.client.get_optional_config_param(param_id).await
     }
 
     async fn get_address_info(&self, address: &MsgAddressInt) -> anyhow::Result<AddressInfo> {
