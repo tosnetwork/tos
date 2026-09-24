@@ -184,8 +184,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         wallet = Address(wallet_text)
         report["product_wallet"] = lifecycle_module.raw_address(wallet)
         faucet = life.network.zerostate.main_wallet(life.client)
-        await life.send(faucet, dest=wallet,
-                        amount=lifecycle_module.SUPPORT_POOL_CAPITAL + 100 * NANO,
+        await life.send(faucet, dest=wallet, amount=100 * NANO,
                         body=Cell.empty(), label="product-wallet-fund")
         await cli(binary, config, env, "wallet", "activate", "--name", "operator")
         active = await life.retry(
@@ -203,15 +202,16 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             description="product single-nominator pool active",
             predicate=lambda value: bool(value.code),
         )
-        report["product_pool_funding_output"] = await cli(
-            binary, config, env, "wallet", "send", "--from", "operator",
-            f"--to={lifecycle_module.raw_address(pool.address)}", "--amount-nanotos",
-            str(lifecycle_module.SUPPORT_POOL_CAPITAL), "--yes",
-        )
-        await life.retry(
+        # Capital provisioning is fixture work, not the product stake path.
+        # The real operator wallet must still authorize and send the stake.
+        await life.send(faucet, dest=pool.address,
+                        amount=lifecycle_module.SUPPORT_POOL_CAPITAL,
+                        body=Cell.empty(), label="product-single-pool-capital")
+        pool_capital = await life.retry(
             lambda: life.balance(pool.address), timeout=60,
             description="product pool capital", predicate=lambda value: value >= STAKE,
         )
+        report["product_pool_capital_nanotos"] = pool_capital
 
         document = json.loads(config.read_text())
         document["pools"]["product-pool"] = {
