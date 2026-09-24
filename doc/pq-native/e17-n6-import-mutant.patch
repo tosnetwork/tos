@@ -1,0 +1,12 @@
+diff --git a/scripts/agent-wallet-account-e2e.py b/scripts/agent-wallet-account-e2e.py
+index bdec84561..bb19e94fe 100644
+--- a/scripts/agent-wallet-account-e2e.py
++++ b/scripts/agent-wallet-account-e2e.py
+@@ -49,6 +49,7 @@ import urllib.request
+ from pathlib import Path
+ 
+ from tostester.install import Install
++from tostester import n6_cluster
+ from tostester.network import Network, StartOptions
+ from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
+ from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage

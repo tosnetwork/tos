@@ -74,6 +74,23 @@ def forbidden_bypasses(tree: ast.AST) -> list[tuple[str, int]]:
     return bypasses
 
 
+def n6_cluster_imports(tree: ast.AST) -> list[int]:
+    """The N6 soak helper provisions keys directly and is not a retained E2E route."""
+    lines: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+            alias.name == "tostester.n6_cluster" for alias in node.names
+        ):
+            lines.append(node.lineno)
+        if isinstance(node, ast.ImportFrom) and (
+            node.module == "tostester.n6_cluster"
+            or (node.module == "tostester"
+                and any(alias.name == "n6_cluster" for alias in node.names))
+        ):
+            lines.append(node.lineno)
+    return lines
+
+
 def check_detector_controls() -> None:
     """A clean scan is credible only while each known bypass remains detectable."""
     controls = {
@@ -86,6 +103,13 @@ def check_detector_controls() -> None:
             fail(f"detector control missed {name}")
     if forbidden_bypasses(ast.parse("getattr(os, 'O_CLOEXEC', 0)")):
         fail("detector control marked an unrelated getattr as validator provisioning")
+    for source in (
+        "import tostester.n6_cluster",
+        "from tostester import n6_cluster",
+        "from tostester.n6_cluster import run_cluster",
+    ):
+        if len(n6_cluster_imports(ast.parse(source))) != 1:
+            fail("detector control missed a direct N6 soak helper import")
 
 
 def check_election_branches(tree: ast.AST) -> None:
@@ -128,6 +152,10 @@ def main() -> int:
             failures.append(f"{relative}: does not import {HELPER_MODULE}.{HELPER_NAME}")
         helper_calls = 0
         forbidden = forbidden_bypasses(tree)
+        failures.extend(
+            f"{relative}:{line}: imports the N6 soak helper with direct validator provisioning"
+            for line in n6_cluster_imports(tree)
+        )
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -149,7 +177,8 @@ def main() -> int:
         f"{len(EXPECTED_CALLS)} retained entry points use "
         f"{sum(EXPECTED_CALLS.values())} shared deterministic PQ validator calls; "
         "the election rehearsal has one call in each PQ and legacy provisioning branch; "
-        "no low-level validator method attribute reference or literal getattr of those methods appears"
+        "no low-level validator method attribute reference, literal getattr of those methods, "
+        "or direct N6 soak-helper import appears"
     )
     return 0
 
