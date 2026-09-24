@@ -145,7 +145,13 @@ and red log SHA-256 `3ea4745e51fad4922eb7450935201fef9016038838729ec5743700f44f7
 Both mutations were restored; the production source and binary hashes above
 were rechecked after rebuilding.
 
-Remaining for C05 closure: the every-push Branch PQ-chain/Python and source
-guards must complete successfully on the **same fixed commit containing both
-four-node controls**. The current local result does not substitute for that
-CI result, and the co-located actor timing is not release evidence.
+The fixed `054ad9ee7` tree completed the three required CI jobs: Branch PQ
+chain/Python `36020099728` success (including C05 selector 12/12), Source
+guards `36020099772` success, and N6 microbench `36020099802` success. With
+the previously retained same-tree actor, mutation, and hash evidence, C05's
+bounded state-retry liveness question is RESOLVED. This result is a co-located
+four-actor control, not release-scale finality evidence. The fault budget was
+24, but only 12 physical requester-bound reads per node occurred in the
+over-budget run; the originating CandidateId tags the first coalesced
+StateResolver request for a ParentId, not every logical waiter. Closing C05
+does not close P0-5, C04, or any launch-scale acceptance gate.
