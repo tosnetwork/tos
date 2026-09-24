@@ -106,6 +106,9 @@ jobs:
       - name: Check N5 #13 signature write-after recovery
         run: ctest --test-dir build --output-on-failure -R '^test-n5-cut2-signatures-recovery$'
 
+      - name: Check N5 BlockProof write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut3-proof-recovery$'
+
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote
       # must never be retried into an unsafe late vote.

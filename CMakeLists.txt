@@ -1264,6 +1264,10 @@ add_test(NAME test-n5-cut1-finalcert-recovery COMMAND test-c04-real-state-proof 
 # separately gated BlockProof write, then resumes from the same FinalCert.
 add_test(NAME test-n5-cut2-signatures-recovery COMMAND test-c04-real-state-proof --n5-cut2
          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N04 holds the test facade's response after production AcceptBlock has
+# written BlockProof, before StateResolver can write its finalized marker.
+add_test(NAME test-n5-cut3-proof-recovery COMMAND test-c04-real-state-proof --n5-cut3
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)

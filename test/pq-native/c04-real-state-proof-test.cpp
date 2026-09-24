@@ -662,8 +662,11 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
 // Manager/RootDb. It does not simulate a successful acceptance.
 class N5AcceptFacade final : public consensus::ManagerFacade {
  public:
-  N5AcceptFacade(td::actor::ActorId<ValidatorManager> manager, td::Ref<block::ValidatorSet> set)
-      : manager_(manager), set_(std::move(set)) {
+  N5AcceptFacade(td::actor::ActorId<ValidatorManager> manager, td::Ref<block::ValidatorSet> set,
+                 std::shared_ptr<std::atomic<bool>> cut3_gate = {},
+                 std::optional<BlockIdExt> cut3_target = std::nullopt)
+      : manager_(manager), set_(std::move(set)), cut3_gate_(std::move(cut3_gate)),
+        cut3_target_(std::move(cut3_target)) {
   }
 
   td::actor::Task<GeneratedCandidate> collate_block(
@@ -683,7 +686,26 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
     auto [task, promise] = td::actor::StartedTask<>::make_bridge();
     run_accept_block_query(id, data, {}, set_, signatures, session, block_mode,
                            finality_mode, send_desc, apply, manager_, std::move(promise));
-    co_return co_await std::move(task);
+    co_await std::move(task);
+    if (cut3_gate_ && cut3_target_ && id == *cut3_target_) {
+      // StateResolver cannot write its marker until FinalizeBlock returns.
+      // Hold only this test facade's response after production AcceptBlock.
+      auto [held, held_promise] = td::actor::StartedTask<>::make_bridge();
+      cut3_promise_.emplace(std::move(held_promise));
+      cut3_gate_->store(true, std::memory_order_release);
+      std::cout << "N5_CUT3_ACCEPT_BLOCK_RETURN_HELD block=" << id.to_str() << '\n';
+      co_await std::move(held);
+    }
+    co_return td::Unit{};
+  }
+
+  void cancel_cut3(td::Promise<td::Unit> acknowledged) {
+    if (!cut3_promise_) {
+      return acknowledged.set_error(td::Status::Error("N5 cut3 held response was not reached"));
+    }
+    cut3_promise_->set_error(td::Status::Error(ErrorCode::cancelled, "N5 cut3 controlled stop"));
+    cut3_promise_.reset();
+    acknowledged.set_value(td::Unit());
   }
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
@@ -701,6 +723,9 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
  private:
   td::actor::ActorId<ValidatorManager> manager_;
   td::Ref<block::ValidatorSet> set_;
+  std::shared_ptr<std::atomic<bool>> cut3_gate_;
+  std::optional<BlockIdExt> cut3_target_;
+  std::optional<td::Promise<td::Unit>> cut3_promise_;
 };
 
 }  // namespace tos::validator
@@ -775,9 +800,11 @@ class N5JoinedPublisher final : public td::actor::Actor {
   void publish(sx::BusHandle bus, consensus::CandidateRef candidate, sx::NotarCertRef notar,
                sx::FinalCertRef final, bool cut_after_journal,
                std::shared_ptr<std::atomic<bool>> cut_after_signatures,
+               std::shared_ptr<std::atomic<bool>> cut_after_proof,
                td::Promise<td::Unit> promise) {
     publish_inner(std::move(bus), std::move(candidate), std::move(notar), std::move(final),
-                  cut_after_journal, std::move(cut_after_signatures), std::move(promise)).start().detach();
+                  cut_after_journal, std::move(cut_after_signatures), std::move(cut_after_proof),
+                  std::move(promise)).start().detach();
   }
 
  private:
@@ -785,6 +812,7 @@ class N5JoinedPublisher final : public td::actor::Actor {
                                    sx::NotarCertRef notar, sx::FinalCertRef final,
                                    bool cut_after_journal,
                                    std::shared_ptr<std::atomic<bool>> cut_after_signatures,
+                                   std::shared_ptr<std::atomic<bool>> cut_after_proof,
                                    td::Promise<td::Unit> promise) {
     const auto id = candidate->id;
     auto stored = co_await bus.publish<sx::StoreCandidate>(candidate).wrap();
@@ -805,6 +833,23 @@ class N5JoinedPublisher final : public td::actor::Actor {
     auto cert_key = create_serialize_tl_object<tos_api::consensus_simplex_db_key_vote>(final_hash);
     const auto deadline = td::Timestamp::in(30.0);
     while (!deadline.is_in_past()) {
+      if (cut_after_proof && cut_after_proof->load(std::memory_order_acquire)) {
+        auto saved = co_await bus->db->get_latest(cert_key.clone()).wrap();
+        auto finalized = co_await bus->db->get_latest(marker.clone()).wrap();
+        if (saved.is_error() || !saved.ok().has_value() || finalized.is_error() ||
+            finalized.ok().has_value()) {
+          promise.set_error(td::Status::Error("N5 cut3 proof gate lacks cert journal or already has marker"));
+          co_return td::Unit{};
+        }
+        auto closed = co_await bus->db->close().wrap();
+        if (closed.is_error()) {
+          promise.set_error(closed.move_as_error_prefix("N5 cut3 journal close: "));
+          co_return td::Unit{};
+        }
+        std::cout << "N5_CUT3_PROOF_WRITTEN_BEFORE_MARKER cert=" << final_hash.to_hex() << '\n';
+        promise.set_value(td::Unit());
+        co_return td::Unit{};
+      }
       if (cut_after_signatures && cut_after_signatures->load(std::memory_order_acquire)) {
         auto saved = co_await bus->db->get_latest(cert_key.clone()).wrap();
         auto finalized = co_await bus->db->get_latest(marker.clone()).wrap();
@@ -850,6 +895,10 @@ class N5JoinedPublisher final : public td::actor::Actor {
         co_return td::Unit{};
       }
       if (present.ok().has_value()) {
+        if (cut_after_proof) {
+          promise.set_error(td::Status::Error("N5 cut3 marker preceded the post-AcceptBlock proof gate"));
+          co_return td::Unit{};
+        }
         auto closed = co_await bus->db->close().wrap();
         if (closed.is_error()) {
           promise.set_error(closed.move_as_error_prefix("N5 consensus journal close: "));
@@ -964,27 +1013,32 @@ int main(int argc, char **argv) {
   const bool n5_joined = argc == 3 && std::string_view(argv[1]) == "--n5-joined";
   const bool n5_cut1 = argc == 3 && std::string_view(argv[1]) == "--n5-cut1";
   const bool n5_cut2 = argc == 3 && std::string_view(argv[1]) == "--n5-cut2";
+  const bool n5_cut3 = argc == 3 && std::string_view(argv[1]) == "--n5-cut3";
   const bool n5_joined_reopen = argc == 6 &&
       (std::string_view(argv[1]) == "--n5-joined-reopen" ||
        std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature");
   const bool n5_cut1_reopen = argc == 5 && std::string_view(argv[1]) == "--n5-cut1-reopen";
   const bool n5_cut2_reopen = argc == 5 && std::string_view(argv[1]) == "--n5-cut2-reopen";
+  const bool n5_cut3_reopen = argc == 6 && std::string_view(argv[1]) == "--n5-cut3-reopen";
   const bool n5_cut1_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut1-resume";
   const bool n5_cut2_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut2-resume";
+  const bool n5_cut3_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut3-resume";
   const bool n5_reopen = argc == 5 && (std::string_view(argv[1]) == "--n5-reopen" ||
                                            std::string_view(argv[1]) == "--n5-reopen-bad-hash" ||
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 ||
-        n5_cut1_reopen || n5_cut2_reopen || n5_cut1_resume || n5_cut2_resume ||
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 ||
+        n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
+        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume ||
         n5_reopen || n5_joined_reopen)) {
-    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
+    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1|--n5-cut2|--n5-cut3 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 ||
-                       n5_cut1_reopen || n5_cut2_reopen || n5_cut1_resume ||
-                       n5_cut2_resume || n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 ||
+                       n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
+                       n5_cut1_resume || n5_cut2_resume || n5_cut3_resume ||
+                       n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
   if (!input) {
@@ -1200,9 +1254,9 @@ int main(int argc, char **argv) {
     std::cerr << "C04_REAL_PROOF_FAILED: wrong hash certificate was not attributed to finality evidence\n";
     return 1;
   }
-  if (n5_reopen || n5_joined_reopen) {
+  if (n5_reopen || n5_joined_reopen || n5_cut3_reopen) {
     std::vector<block::PQBlockSignature> exact_cert_signatures;
-    if (n5_joined_reopen) {
+    if (n5_joined_reopen || n5_cut3_reopen) {
       std::ifstream final_file(argv[5], std::ios::binary);
       std::ostringstream final_bytes;
       final_bytes << final_file.rdbuf();
@@ -1219,7 +1273,8 @@ int main(int argc, char **argv) {
                                             context.expected_session_id, "") + "/db/";
       const auto original = final_bytes.str();
       if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
-                                  joined_id, td::Slice(original), true, exact_cert_signatures)) {
+                                  joined_id, td::Slice(original), !n5_cut3_reopen,
+                                  exact_cert_signatures)) {
         return 1;
       }
       if (std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature") {
@@ -1263,7 +1318,8 @@ int main(int argc, char **argv) {
       std::cerr << "N5_JOINED_COLD_FAILED: wrong-signature control missed exact proof comparison\n";
       return 1;
     }
-    if (mode != "--n5-reopen" && mode != "--n5-joined-reopen" && result.has_value() && result->is_error()) {
+    if (mode != "--n5-reopen" && mode != "--n5-joined-reopen" && mode != "--n5-cut3-reopen" &&
+        result.has_value() && result->is_error()) {
       const auto detail = result->error().to_string();
       const auto expected = mode == "--n5-reopen-bad-hash"
                                 ? "N5 cold BlockProof bytes differ from writer"
@@ -1276,7 +1332,7 @@ int main(int argc, char **argv) {
       }
     }
     if (!result.has_value() || result->is_error() ||
-        (mode != "--n5-reopen" && mode != "--n5-joined-reopen")) {
+        (mode != "--n5-reopen" && mode != "--n5-joined-reopen" && mode != "--n5-cut3-reopen")) {
       std::cerr << "N5_ACCEPT_BLOCK_COLD_FAILED: "
                 << (result.has_value() ? (result->is_error() ? result->error().to_string() : "negative unexpectedly passed")
                                        : "actor timeout") << '\n';
@@ -1287,7 +1343,7 @@ int main(int argc, char **argv) {
     scheduler.stop();
     return 0;
   }
-  if (n5_cut1_resume || n5_cut2_resume) {
+  if (n5_cut1_resume || n5_cut2_resume || n5_cut3_resume) {
     std::ifstream final_file(argv[4], std::ios::binary);
     std::ostringstream final_bytes;
     final_bytes << final_file.rdbuf();
@@ -1410,7 +1466,8 @@ int main(int argc, char **argv) {
       std::cerr << "N5_CUT1_RESUME_FAILED: cold proof child status=" << status << " spawn=" << spawned << '\n';
       return 1;
     }
-    std::cout << (n5_cut2_resume ? "N5_CUT2_RECOVERY_OK block=" : "N5_CUT1_RECOVERY_OK block=")
+    std::cout << (n5_cut3_resume ? "N5_CUT3_RECOVERY_OK block=" :
+                  n5_cut2_resume ? "N5_CUT2_RECOVERY_OK block=" : "N5_CUT1_RECOVERY_OK block=")
               << id1.to_str() << " proof_hash=" << proof << '\n';
     return 0;
   }
@@ -1506,7 +1563,7 @@ int main(int argc, char **argv) {
     std::cout << "N5_CUT1_COLD_NO_TARGET_HANDLE_OK block=" << id1.to_str() << '\n';
     return 0;
   }
-  if (n5_joined || n5_cut1 || n5_cut2) {
+  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3) {
     auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
     std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
     std::filesystem::create_directories(db_root + "/static");
@@ -1566,6 +1623,8 @@ int main(int argc, char **argv) {
     bool bus_stopped = false;
     auto cut2_gate = n5_cut2 ? std::make_shared<std::atomic<bool>>(false)
                              : std::shared_ptr<std::atomic<bool>>{};
+    auto cut3_gate = n5_cut3 ? std::make_shared<std::atomic<bool>>(false)
+                             : std::shared_ptr<std::atomic<bool>>{};
     const auto finalcert_path = db_root + ".finalcert.tl";
     scheduler.run_in_context([&] {
       manager = td::actor::create_actor<PendingFinalityManagerActorProbe>(
@@ -1594,7 +1653,9 @@ int main(int argc, char **argv) {
       return 1;
     }
     scheduler.run_in_context([&] {
-      facade = td::actor::create_actor<N5AcceptFacade>("n5-joined-facade", manager.get(), vset);
+      facade = td::actor::create_actor<N5AcceptFacade>(
+          "n5-joined-facade", manager.get(), vset, cut3_gate,
+          n5_cut3 ? std::optional<BlockIdExt>{id1} : std::nullopt);
       auto trusted = n5_joined_bus(vset, context.expected_session_id, facade.get(), journal_path);
       trusted->stop_promise = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
         bus_stopped = outcome.is_ok();
@@ -1618,18 +1679,53 @@ int main(int argc, char **argv) {
       }
       publisher = td::actor::create_actor<N5JoinedPublisher>("n5-joined-publisher");
       td::actor::send_closure(publisher, &N5JoinedPublisher::publish, bus, candidate_ref,
-                              notar.move_as_ok(), final.move_as_ok(), n5_cut1, cut2_gate,
+                              notar.move_as_ok(), final.move_as_ok(), n5_cut1, cut2_gate, cut3_gate,
                               td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
                                 result.emplace(std::move(outcome));
                               }));
     });
-    if (!wait_result("Pool-to-finalized-marker")) {
+    if (!wait_result(n5_cut3 ? "BlockProof-before-finalized-marker" : "Pool-to-finalized-marker")) {
       return 1;
     }
-    if (n5_cut1 || n5_cut2) {
+    if (n5_cut1 || n5_cut2 || n5_cut3) {
       // Cut1 has no StateResolver/BlockAccepter, so only the FinalCert journal
       // can complete. Cut2 has both actors, but holds the proof promise after
-      // production #13 storage and before BlockProof storage.
+      // production #13 storage and before BlockProof storage. Cut3 holds the
+      // facade response after AcceptBlock and before StateResolver's marker.
+      std::optional<td::Result<std::string>> cut3_proof_hash;
+      if (n5_cut3) {
+        scheduler.run_in_context([&] {
+          td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::n5_written_proof_hash,
+                                  id1, td::PromiseCreator::lambda([&](td::Result<std::string> outcome) {
+                                    cut3_proof_hash.emplace(std::move(outcome));
+                                  }));
+        });
+        const auto deadline = td::Timestamp::in(10.0);
+        while (!cut3_proof_hash.has_value() && !deadline.is_in_past()) {
+          scheduler.run(0.01);
+        }
+        if (!cut3_proof_hash.has_value() || cut3_proof_hash->is_error()) {
+          std::cerr << "N5_CUT3_FAILED: production BlockProof absent at write-after gate\n";
+          return 1;
+        }
+      }
+      if (n5_cut3) {
+        std::optional<td::Result<td::Unit>> cancelled;
+        scheduler.run_in_context([&] {
+          td::actor::send_closure(facade, &N5AcceptFacade::cancel_cut3,
+                                  td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                    cancelled.emplace(std::move(outcome));
+                                  }));
+        });
+        const auto deadline = td::Timestamp::in(5.0);
+        while (!cancelled.has_value() && !deadline.is_in_past()) {
+          scheduler.run(0.01);
+        }
+        if (!cancelled.has_value() || cancelled->is_error()) {
+          std::cerr << "N5_CUT3_FAILED: controlled facade cancellation did not complete\n";
+          return 1;
+        }
+      }
       scheduler.run_in_context([&] {
         publisher.reset();
         if (n5_cut2) {
@@ -1650,9 +1746,11 @@ int main(int argc, char **argv) {
       }
       scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
       scheduler.stop();
-      std::string mode = n5_cut2 ? "--n5-cut2-reopen" : "--n5-cut1-reopen";
+      std::string mode = n5_cut3 ? "--n5-cut3-reopen" : n5_cut2 ? "--n5-cut2-reopen" : "--n5-cut1-reopen";
+      std::string proof = n5_cut3 ? cut3_proof_hash->ok() : std::string{};
       char *child_argv[] = {argv[0], mode.data(), argv[2], db_root.data(),
-                            const_cast<char *>(finalcert_path.c_str()), nullptr};
+                            n5_cut3 ? proof.data() : const_cast<char *>(finalcert_path.c_str()),
+                            n5_cut3 ? const_cast<char *>(finalcert_path.c_str()) : nullptr, nullptr};
       pid_t child = -1;
       const int spawned = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
       int status = 0;
@@ -1660,8 +1758,10 @@ int main(int argc, char **argv) {
         std::cerr << "N5_CUT1_COLD_FAILED: child status=" << status << " spawn=" << spawned << '\n';
         return 1;
       }
-      mode = n5_cut2 ? "--n5-cut2-resume" : "--n5-cut1-resume";
+      mode = n5_cut3 ? "--n5-cut3-resume" : n5_cut2 ? "--n5-cut2-resume" : "--n5-cut1-resume";
       child_argv[1] = mode.data();
+      child_argv[4] = const_cast<char *>(finalcert_path.c_str());
+      child_argv[5] = nullptr;
       child = -1;
       const int resumed = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
       status = 0;
@@ -1669,7 +1769,8 @@ int main(int argc, char **argv) {
         std::cerr << "N5_CUT1_FAILED: resume child status=" << status << " spawn=" << resumed << '\n';
         return 1;
       }
-      std::cout << (n5_cut2 ? "N5_CUT2_WRITER_EXIT_OK root=" : "N5_CUT1_WRITER_EXIT_OK root=") << db_root
+      std::cout << (n5_cut3 ? "N5_CUT3_WRITER_EXIT_OK root=" :
+                    n5_cut2 ? "N5_CUT2_WRITER_EXIT_OK root=" : "N5_CUT1_WRITER_EXIT_OK root=") << db_root
                 << " finalcert_tl=" << finalcert_path << '\n';
       return 0;
     }
