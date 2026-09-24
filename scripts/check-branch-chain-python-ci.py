@@ -17,6 +17,7 @@ REQUIRED_NATIVE_TARGETS = {
     "validator-engine-console",
     "validator-engine",
     "test-pq-lite-forward-proof",
+    "test-pending-finality-cache",
 }
 
 
@@ -56,6 +57,11 @@ def main() -> int:
     require(
         "ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'" in text,
         "PQ key-block proof context behavior gate is absent",
+    )
+    manager_ctest = "ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
+        "pending PQ finality manager actor behavior gate is absent",
     )
     rust_job = re.search(
         r"(?ms)^  rust-workspace-tests-compile:\s*\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)",
@@ -98,7 +104,8 @@ def main() -> int:
     )
     print(
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
-        "boots the four-validator PQ chain, checks PQ key-block proof context, "
+        "boots the four-validator PQ chain, checks PQ key-block proof context "
+        "and the pending-finality manager actor, "
         "and compiles every Rust test target"
     )
     return 0

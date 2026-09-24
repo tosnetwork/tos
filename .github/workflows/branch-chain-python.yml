@@ -65,13 +65,19 @@ jobs:
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
-            test-pq-lite-forward-proof
+            test-pq-lite-forward-proof test-pending-finality-cache
           ccache --show-stats
 
       # A virtualized key-block proof must retain every PQ finality context
       # field. This is a compiled behavior test, not a source-only guard.
       - name: Check PQ key-block proof context
         run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
+
+      # This manager actor test exercises the real proof producer and pending
+      # finality queue with bad evidence ahead of a valid certificate. It does
+      # not substitute for downstream AcceptBlock integration evidence.
+      - name: Check pending PQ finality proof queue
+        run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
 
       - name: Prepare generated Python API and dependencies
         run: |
