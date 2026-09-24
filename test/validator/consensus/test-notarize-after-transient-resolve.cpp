@@ -118,6 +118,7 @@ enum class Mode {
   SkipBeforeRecovery,
   ConflictDuringRetry,
   ConflictingCertDuringRetry,
+  ExhaustedNotready,
 };
 
 // ===== What the test observes =====
@@ -634,6 +635,8 @@ class Driver : public td::actor::Actor {
       case Mode::ConflictDuringRetry:
       case Mode::ConflictingCertDuringRetry:
         co_return co_await run_genesis_fault(X, Y, X_alt);
+      case Mode::ExhaustedNotready:
+        co_return co_await run_exhausted_notready(X);
       case Mode::AncestorNotready:
         co_return co_await run_ancestor_fault(X, Y, Z);
     }
@@ -765,6 +768,34 @@ class Driver : public td::actor::Actor {
     finish(0, "C09_VOTE_RECOVERED");
   }
 
+  td::actor::Task<> run_exhausted_notready(CandidateRef X) {
+    fault_code.store(ErrorCode::notready);
+    faults_remaining.store(1000);
+    deliver_candidate(X, "persistent-notready");
+    constexpr size_t expected_manager_reads = 16 * 3;
+    if (!co_await wait_until([&] { return manager_faults() >= expected_manager_reads; }, 25.0)) {
+      finish(1, "C05_PRECONDITION_FAILED: bounded parent-state retry did not exhaust 16 attempts");
+    }
+    co_await settle(1.5);
+    report_counts("after-exhaustion");
+    if (manager_state_reads() != expected_manager_reads || notarize_votes_for(X->id) != 0 ||
+        emitted_notarize_votes_for(X->id) != 0 || validations_of(X) != 0 || skip_votes_for(X->id.slot) != 0) {
+      finish(4, "C05_EXHAUSTION_FAILED: retry continued or cast a vote after its bound");
+    }
+
+    faults_remaining.store(0);
+    auto resolved = co_await bus_.publish<simplex::ResolveState>(ParentId{}).wrap();
+    if (resolved.is_error()) {
+      finish(1, "C05_PRECONDITION_FAILED: origin did not recover after retry exhaustion");
+    }
+    deliver_candidate(X, "redelivery-after-exhaustion");
+    co_await settle(1.0);
+    report_counts("after-late-recovery");
+    bool bounded = manager_state_reads() == expected_manager_reads + 1 && notarize_votes_for(X->id) == 0 &&
+                   emitted_notarize_votes_for(X->id) == 0 && validations_of(X) == 0;
+    finish(bounded ? 0 : 4, bounded ? "C05_EXHAUSTION_BOUNDARY_OK" : "C05_EXHAUSTION_FAILED");
+  }
+
   td::actor::Task<> run_ancestor_fault(CandidateRef X, CandidateRef Y, CandidateRef Z) {
     // Before the fault: X is voted normally.
     deliver_candidate(X, "pre-fault");
@@ -818,7 +849,7 @@ class Driver : public td::actor::Actor {
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   if (argc != 2) {
-    std::fprintf(stderr, "usage: %s control|genesis-notready|genesis-timeout|ancestor-notready|permanent|cancelled|skip-before-recovery|conflict-during-retry|conflicting-cert-during-retry\n", argv[0]);
+    std::fprintf(stderr, "usage: %s control|genesis-notready|genesis-timeout|ancestor-notready|permanent|cancelled|skip-before-recovery|conflict-during-retry|conflicting-cert-during-retry|exhausted-notready\n", argv[0]);
     return 2;
   }
   std::string mode_name = argv[1];
@@ -841,6 +872,8 @@ int main(int argc, char** argv) {
     mode = Mode::ConflictDuringRetry;
   } else if (mode_name == "conflicting-cert-during-retry") {
     mode = Mode::ConflictingCertDuringRetry;
+  } else if (mode_name == "exhausted-notready") {
+    mode = Mode::ExhaustedNotready;
   } else {
     std::fprintf(stderr, "unknown mode %s\n", argv[1]);
     return 2;

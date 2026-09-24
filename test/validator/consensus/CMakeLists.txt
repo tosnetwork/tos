@@ -104,7 +104,7 @@ target_link_libraries(test-notarize-after-transient-resolve PRIVATE
     tdutils
 )
 foreach(mode control genesis-notready genesis-timeout ancestor-notready permanent cancelled skip-before-recovery
-             conflict-during-retry conflicting-cert-during-retry)
+             conflict-during-retry conflicting-cert-during-retry exhausted-notready)
     add_test(NAME c05-notarize-${mode} COMMAND test-notarize-after-transient-resolve ${mode})
 endforeach()
 
