@@ -101,3 +101,33 @@ empty-chain test with a permanently missing *nonzero finalized anchor* still
 passes because it can reconstruct from candidate data back to the accessible
 zerostate; that is **not** a permanent-origin-outage test. A fixed-head branch
 CI result is required before closing the C03 registry question.
+
+## Current integration-tree recheck (507c039dc)
+
+Commit `1e1c1c9eb` containing the permanent-origin actor control is an
+ancestor of pushed `507c039dc` (`origin/n6/measurement-contract`). The latter
+tree rebuilt `test-consensus` and ran the **five exact names in the Branch PQ
+workflow**: empty-chain restart, transient anchor, zerostate transient-anchor
+control, transient origin, and permanent origin. All five passed. The verbose
+raw output is
+`test/integration/.c03-permanent-origin-20260924/507c039dc-workflow-five-raw.log`
+(SHA-256 `461cba49e889565fd6ec87c72c78c9f036149838e20464ca3efd1aaa968adf37`).
+The permanent case reported six exact-origin reads, four anchor failures,
+and stable candidate records `4512 -> 4512` while origin remained unavailable.
+Current production resolver SHA-256 is
+`2c07ccb84cebb322b39a8d67ebe3127b3a866a1b6aaac9adb120c2c530988095`,
+actor test source SHA-256 is
+`89ac4a49b92f850a04e985515af2b44e7e499df659943be0615dbd8880be8e8e`,
+and exact-tree `test-consensus` binary SHA-256 is
+`ce8df16bd7f29e2d811df830a7823564edcbce1829eae5d561ae22d242734cfa`.
+The `simplex-exact-ancestor-source-guard` also passed locally.
+
+An earlier local 5/5 command selected the generic `restart` test rather than
+the workflow's `empty-chain-restart`; its summary SHA-256 is
+`c714e01742fdb0719662893cb6d9431b5f671bb34fe8b9abfc89595771f3e215`.
+It is supporting coverage, **not** the claimed CI-equivalent matrix; the
+exact-name run above replaces it. Branch PQ job `36026270609` on `507c039dc`
+was still running when this paragraph was recorded. C03 remains OPEN until
+its named step and the fixed-head job reach success. Neither run proves
+eventual recovery from permanent origin loss or attributes the distinct
+September base-behind mismatch.
