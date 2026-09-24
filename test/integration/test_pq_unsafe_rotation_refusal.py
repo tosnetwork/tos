@@ -118,6 +118,12 @@ async def observe(
 async def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parents[2]
+    # Read provenance before booting either network. In container CI the
+    # checkout can be owned by the host runner, so trust only this checkout
+    # for this invocation rather than changing the runner's global Git config.
+    source_commit = subprocess.check_output(
+        ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"], cwd=root, text=True
+    ).strip()
     artifact_dir = args.artifact_dir.resolve()
     if artifact_dir.exists():
         raise ValueError(f"artifact directory already exists: {artifact_dir}")
@@ -125,7 +131,6 @@ async def main() -> int:
     install = Install(args.build_dir.resolve(), root)
     zero = await observe(install, artifact_dir / "zero", args.base_port, 0, args.timeout)
     nonzero = await observe(install, artifact_dir / "nonzero", args.base_port + 100, 1, args.timeout)
-    source_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     summary = {"source_commit": source_commit, "zero_rotation": zero, "nonzero_rotation": nonzero}
     (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     if zero["decision"] != "masterchain_stats_success":
