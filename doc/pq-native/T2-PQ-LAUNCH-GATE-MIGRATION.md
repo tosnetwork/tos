@@ -8,7 +8,8 @@ default-route conversion did **not** retire the script-wide classical caller:
 locally, and attributed stake recovery to validator wallets at `60a299125`.
 That distinct route was converted at `471e0a027`; both modes now obtain node
 authorization and use the same production pool stake builder. This does not
-retire the base Fift tools, which have other retained callers.
+at that checkpoint retire the base Fift tools, which had other retained callers.
+T10 has since retired the installed request command alone; T11/T12 remain open.
 
 The shared PQ route is node `createPqStakeAuthorization` ->
 `nominator::new_stake_with_witness` -> validator wallet -> single-nominator
@@ -20,22 +21,24 @@ IDs. Neither a sent message nor `STAKE_ACCEPTED` alone proves election.
 ## Classical stake caller inventory at `8fdc1c044`
 
 This is an exact-file inventory, not the shorthand globs in the open
-correctness entry. Eight rows retain literal Fift dependencies and prevent
-deleting the base election tools today; two cleared callers remain here as
+correctness entry. At `8fdc1c044`, eight rows retained literal Fift
+dependencies and prevented deleting the base election tools. T10's current
+inventory has seven executable files after removing the request command;
+the historical row is kept visibly in the table. Two cleared callers remain as
 migration history. The remaining paths are
 recorded to keep already-converted tosctl callers and intentional legacy
 fixtures from being confused with an unconverted launch path.
 
 | File | Current use / disposition |
 | --- | --- |
-| `crypto/smartcont/validator-elect-req.fif` | Base classical preimage producer; retain until all callers move in T3. |
+| `crypto/smartcont/validator-elect-req.fif` | T10 retired the installed classical preimage command after T07 isolated the C++ historical byte test and T09 made proposal parity self-contained. Its test-only counterpart remains; this is not retirement of the library word or signed command. |
 | `crypto/smartcont/validator-elect-signed.fif` | Base classical signed-body producer; same T3 constraint. |
 | `crypto/fift/lib/Validator.fif` | Defines `validator-elect-req>B`; removing it alone breaks the pool tools and Fift tests below. |
 | `crypto/test/fift/fixtures/single-nominator-legacy-elect-signed.fif` | Historical Ed25519 bytes only. Moved out of the supported single-pool operator directory at T05; `test-smartcont.cpp` remains a classical parity fixture, not PQ acceptance. |
 | `crypto/test/fift/fixtures/liquid-controller-legacy-elect-signed.fif` | T06 moved the classical liquid-controller command out of the distributed smart-contract tree. Historical Ed25519 bytes remain test-only; the controller now parses PQ-shaped pool terms, but the liquid-staking product is not launch-supported. |
 | `crypto/test/fift/fixtures/validator-legacy-elect-req.fif` | T07 test-only copy of the historical Ed25519 preimage producer; still includes `Validator.fif` until T12 isolates the shared words. |
 | `crypto/test/fift/fixtures/validator-legacy-elect-signed.fif` | T07 test-only copy of the historical Ed25519 signed-body producer; not an operator command and still dependent on `Validator.fif`. |
-| `crypto/test/test-smartcont.cpp` | T07 loads only test-only fixtures for its four historical Ed25519 byte vectors. Its green recorded answer is parity evidence, not PQ stake acceptance. The distributed base tools still have other consumers and remain until T10–T12. |
+| `crypto/test/test-smartcont.cpp` | T07 loads only test-only fixtures for its four historical Ed25519 byte vectors. Its green recorded answer is parity evidence, not PQ stake acceptance. T10 retired the installed request script; the signed script and shared `Validator.fif` remain for T11–T12. |
 | `crypto/test/fift/validator-proposal-test.fif` | T08 removed the redundant classical validator preimage/body checks and `Validator.fif` include; this test now exercises Proposal/complaint helpers only. T09 retains the historical validator-byte parity control. |
 | `crypto/test/fift/validator-proposal-legacy-parity.fif` | T09 preserves the exact historical Ed25519 preimage/body byte vectors with test-local `legacy-` words, no product `Validator.fif` include. This is parity only, not a supported PQ stake. |
 | `scripts/nominator-pool-lifecycle-e2e.py` | Cleared as a literal Fift caller in the T3 multi-nominator lifecycle conversion. The economics profile requires four Genesis validators, so the fifth controller-bound PQ candidate is explicitly noninitial. Its node-authorization and production pool-body path remains static/diagnostic until a live run; it does not prove either tosctl product caller can supply a first-stake witness. |
@@ -103,8 +106,9 @@ retained rather than silently replaced.
    `experiment` route still called the two classical election Fift tools and
    signed locally at that checkpoint. The original script-wide dependency was
    discharged separately at `471e0a027`, not by changing the default. The two
-   Fift files themselves remain until **all** other retained callers and
-   `test-smartcont.cpp` migrate together under T3.
+   Fift files themselves remained at that checkpoint until **all** other retained callers and
+   `test-smartcont.cpp` migrated together under T3. T07/T09 isolated the byte tests;
+   T10 then retired only the request file. The signed file and `Validator.fif` remain.
 
 The no-argument default run from exact source commit `60a299125` completed
 with report `test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json`

@@ -22,7 +22,6 @@ MARKERS = (
     "liquid-controller-legacy-elect-signed.fif",
 )
 EXPECTED: dict[str, dict[str, int]] = {
-    "crypto/smartcont/validator-elect-req.fif": {"validator-elect-req>B": 1},
     "crypto/smartcont/validator-elect-signed.fif": {"validator-elect-req>B": 1},
     "crypto/fift/lib/Validator.fif": {
         "validator-elect-signed.fif": 1,
@@ -97,6 +96,9 @@ def main() -> int:
     retired_liquid_operator = root / "crypto/smartcont/liquid-staking/controller-elect-signed.fif"
     if retired_liquid_operator.exists():
         fail("retired liquid-staking Ed25519 operator script is still packaged")
+    retired_base_request = root / "crypto/smartcont/validator-elect-req.fif"
+    if retired_base_request.exists():
+        fail("retired base Ed25519 request script is still packaged")
     smartcont_test = (root / "crypto/test/test-smartcont.cpp").read_text(encoding="utf-8")
     base_request_fixture = "test/fift/fixtures/validator-legacy-elect-req.fif"
     base_signed_fixture = "test/fift/fixtures/validator-legacy-elect-signed.fif"
@@ -146,7 +148,8 @@ def main() -> int:
     print(
         f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact executable files retain the inventoried "
         "validator-elect Fift path/word literals; the single-nominator operator path is absent, "
-        "both retired pool operator paths are absent, the base Fift byte tests load test-only "
+        "both retired pool operator paths and the base request script are absent, "
+        "the base Fift byte tests load test-only "
         "fixtures, proposal smoke has no classical stake dependency, the parity codec is test-local, "
         "and the migration map names each"
     )

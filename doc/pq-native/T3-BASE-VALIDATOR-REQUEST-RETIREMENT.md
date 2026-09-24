@@ -1,0 +1,28 @@
+# T10: retire the installed classical validator request command
+
+Scope: `crypto/smartcont/validator-elect-req.fif` was a wallet/operator-facing Ed25519 preimage command, not a PQ stake entry point. The exact pre-T10 source SHA-256 was `d8dec0257429d803001a912c205c5c91506410981a6c7221d7fcbf73bb4deed0`. T07 moved `test-smartcont`'s historical byte check to `crypto/test/fift/fixtures/validator-legacy-elect-req.fif`; T09 made `validator-proposal-legacy-parity.fif` use test-local historical words. A source scan found no remaining executable inclusion of the product request **file**. The remaining `validator-elect-req>B` calls in `crypto/smartcont/validator-elect-signed.fif` and `crypto/fift/lib/Validator.fif` are word dependencies, not inclusions of that file. T11/T12 remain separate.
+
+The request file is now removed from `smartcont`, which `crypto/CMakeLists.txt` installs wholesale. `scripts/check-classical-stake-callers.py` refuses its return and inventories seven remaining executable files. Before removal its inventory said eight. The test-only request fixture and recorded answer remain; this does not enable a classical stake product or establish PQ election acceptance.
+
+All raw files below are retained under `test/integration/.t10-base-request-retirement-20260924/` and are not Git assets:
+
+| Check | Exact result | Raw SHA-256 |
+| --- | --- | --- |
+| Before: `build/test-smartcont --regression test/regression-tests.ans --filter ValidatorFiftScriptRegression` | exit 0, 1/1 | `0e7fbad236bd3b14758b826ac9b64d2184d1300182fb1c83e317679019e8f186` |
+| After: same recorded-answer command | exit 0, 1/1 | `2789d79e0864500506f67392323e3af13c4268fdf52fa35a92a1d9a11061cf49` |
+| Before: `build/test-fift --regression test/regression-tests.ans --filter test_validator_proposal_legacy_parity` | exit 0, 1/1 | `563602115f6348591d6a445486eae5fbecda1e444d92c547234644254399e0f3` |
+| After: same parity command | exit 0, 1/1 | `f3b927113e70b84732a6dbeb513febcddf7671e6c51598483737019e83194d54` |
+| `ctest --test-dir build --output-on-failure -R '^(test-smartcont\|test-fift)$'` | exit 0, 2/2 | `b5277e40da28458982dfa1fa9521959db138ff11d4aec5043f90a68e21188a3f` |
+| Final-source CTest: `-R '^(classical-stake-callers-source\|test-fift\|test-smartcont)$'` | exit 0, 3/3 after the documentation correction | `ab0c52350b546a989b9a6c915ecfc91a956071f18fcd564fa5b50477104d1668` |
+| `./scripts/check-regression-db.sh . build` | exit 0, every recorded answer still has a test | `4f333c611c75ac77b9ee52c137ec848c7b96aaaa58c73548cabf89573849be6c` |
+| Before/after literal caller inventory | exit 0, 8 then 7 files | `f6db299361a4f36726102d1ac38a226a044c84ef7c4d5373a246a1bf9c72be16` / `dedb94afd82744dc1dfcb8b4948cf6d458846967b99399341a1cadb7d2e37f89` |
+
+The frozen recorded-answer DB is SHA-256 `9653b4411d3c7213f6b6845b6cec231a5b97e8fdf2101244cdbab41c69125e20`. Test binary hashes: `test-smartcont` `d728fbc3dafae21bd3d5d2c94750487281a4706e0444bc47ec490b6f71868570`, `test-fift` `2a5b914d75460bee87c2d81c61a2069a02686203df96643442dea3e0e2297984`. These run the live test-only fixture files (request fixture SHA-256 `39f9e955eb48ffbb0dca10a85f9441b27979420a1e451fc730f4503b3515b519`; T09 parity source `3c431230208bab35d6495fe4789366b3289aa6459c9910c666f45df05b8a577f`).
+
+## Reverse control and package boundary
+
+`old-product-request-mutant.patch` re-adds the exact old product bytes **and executable mode** (patch SHA-256 `e11db1b1b1486bd6a980be45c5f3215bcf1263d483de5f2f3ee9d4bd5fc650a8`; `git apply --check` exit 0). With that file present, the guard exits 1 and names `retired base Ed25519 request script is still packaged`, `old-product-executable-mutant.raw.log` SHA-256 `798a3156fee70a29e8a10f05071422807c1561549483a23fbcd959e1de991e66`. The restored file SHA matched `d8dec025...` above and `git diff --quiet HEAD -- crypto/smartcont/validator-elect-req.fif` exited 0; it was deleted again before final handoff. An earlier byte-exact but non-executable trial (`old-product-request-mutant.raw.log`) is retained as superseded, not cited as the faithful old-path control. The opposite control is the unchanged recorded-answer/parity execution after removal: a deleted *product* file did not silently delete the historical-byte tests. This tests the source invariant; it does not claim a published GitHub ZIP was inspected.
+
+The prior T09 installed-tree list (`.t09-validator-parity-20260924/install-source-list.raw.log`, SHA-256 `f0d651357e7bbb2e40164a0e512d108abf51ee8cf321bbd16492e9a3a4d0f3aa`) contains `smartcont/validator-elect-req.fif`, `smartcont/validator-elect-signed.fif` and `lib/fift/Validator.fif`. A **fresh-prefix** `cmake --install build --prefix test/integration/.t10-base-request-retirement-20260924/install` now contains the latter two but not the first (`install.raw.log` SHA-256 `7d5caa9f6248b59f6365d484cdc518b5b7ed735ec03e08ef3dbb8b7ebf5a9eb5`). Both release workflows copy the installed `smartcont` and `lib` trees into `smartcont_lib.zip`; a local full-tree ZIP made from those two fresh installed directories has SHA-256 `85839d7e6bdcb52588fae6ccb1accc973281aa1dd4849ecbb0f8ea2abce89537`. Its complete `unzip -Z1` list, SHA-256 `5ce69cd9a5c6defc1dc67b623d0b57bbd5dae42706be4927ad322f012d355a27`, contains `smartcont/validator-elect-signed.fif` and `lib/fift/Validator.fif`, and no request file. This is a local reproduction of the workflow's copy/ZIP step, **not** a claim about an already published asset. An initial partial ZIP copied only `lib/fift`; it is retained as a superseded staging artifact and is not the evidence cited here.
+
+T10 stops here. T11 must separately handle the installed signed script, and T12 must separately handle the installed shared `Validator.fif` and all test-only word dependencies.
