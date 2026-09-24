@@ -25,7 +25,7 @@ extern "C" int malloc_trim(size_t) __attribute__((weak));
 // JEMALLOC_LIBRARIES it links publicly), and mallctl is only referenced then.
 #if defined(__APPLE__)
 #if defined(TOS_DB_LINKS_JEMALLOC)
-#include <jemalloc/jemalloc.h>
+#include TOS_DB_JEMALLOC_HEADER
 #endif
 #else
 extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen)

@@ -373,8 +373,11 @@ target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto ${JEMALLOC_LIBRARIES
 if (JEMALLOC_FOUND)
   # Every tos_db consumer links jemalloc when it is found, so the allocator trim can
   # reference mallctl directly on platforms whose linker has no usable weak symbols.
-  target_include_directories(tos_db PRIVATE ${JEMALLOC_INCLUDE_DIR})
-  target_compile_definitions(tos_db PRIVATE TOS_DB_LINKS_JEMALLOC=1)
+  # The header is named by full path rather than adding JEMALLOC_INCLUDE_DIR to the
+  # search path: that directory is often a shared prefix (e.g. /opt/homebrew/include)
+  # whose other libraries would shadow the vendored headers tos_db is built against.
+  target_compile_definitions(tos_db PRIVATE TOS_DB_LINKS_JEMALLOC=1
+                             TOS_DB_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
 endif()
 
 add_library(fift-lib STATIC ${FIFT_SOURCE})
