@@ -1059,6 +1059,10 @@ int main(int argc, char **argv) {
   const bool n5_cut2 = argc == 3 && std::string_view(argv[1]) == "--n5-cut2";
   const bool n5_cut3 = argc == 3 && std::string_view(argv[1]) == "--n5-cut3";
   const bool n5_cut4 = argc == 3 && std::string_view(argv[1]) == "--n5-cut4";
+  const bool n5_cut5 = argc == 3 && std::string_view(argv[1]) == "--n5-cut5";
+  const bool n5_cut5_rebuild = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild";
+  const bool n5_cut5_absent = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild-absent";
+  const bool n5_cut5_no_archive = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild-no-archive";
   const bool n5_joined_reopen = argc == 6 &&
       (std::string_view(argv[1]) == "--n5-joined-reopen" ||
        std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature");
@@ -1074,16 +1078,16 @@ int main(int argc, char **argv) {
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 ||
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 ||
         n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
-        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume ||
+        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume || n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive ||
         n5_reopen || n5_joined_reopen)) {
     std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1|--n5-cut2|--n5-cut3|--n5-cut4 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 ||
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 ||
                        n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
-                       n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume ||
+                       n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume || n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive ||
                        n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
@@ -1101,7 +1105,10 @@ int main(int argc, char **argv) {
     std::cerr << "C04_REAL_STATE_FAILED: genesis header\n";
     return 1;
   }
-  pq_block_signature_test::Fixture keys;
+  std::optional<pq_block_signature_test::Fixture> keys;
+  if (!n5_cut5_rebuild && !n5_cut5_absent && !n5_cut5_no_archive) {
+    keys.emplace();
+  }
   auto target_time = record.gen_utime + 1;
   constexpr CatchainSeqno cc = 0;
   auto vset = state0->get_validator_set(ShardIdFull{masterchainId}, target_time, cc);
@@ -1110,12 +1117,14 @@ int main(int argc, char **argv) {
     return 1;
   }
   auto nodes = vset->export_vector();
-  for (size_t i = 0; i < keys.validator_ids.size(); ++i) {
-    auto node = vset->get_validator(keys.validator_ids[i]);
-    if (!node || !node->is_pq() || node->pq_public_key != keys.stores[i].consensus_key().public_key ||
-        node->weight != 17) {
-      std::cerr << "C04_REAL_STATE_FAILED: Config34 signer mismatch index=" << i << "\n";
-      return 1;
+  if (keys) {
+    for (size_t i = 0; i < keys->validator_ids.size(); ++i) {
+      auto node = vset->get_validator(keys->validator_ids[i]);
+      if (!node || !node->is_pq() || node->pq_public_key != keys->stores[i].consensus_key().public_key ||
+          node->weight != 17) {
+        std::cerr << "C04_REAL_STATE_FAILED: Config34 signer mismatch index=" << i << "\n";
+        return 1;
+      }
     }
   }
   // A post-genesis masterchain state must record the zerostate in OldMcBlocks.
@@ -1259,8 +1268,94 @@ int main(int argc, char **argv) {
   }
   std::cout << "C04_REAL_APPLY_OK root=" << replay_state->root_hash().to_hex() << '\n';
   auto context = require_ok(derive_pq_finality_context(*state0, vset, id1, 0, 0), "PQ session");
+  if (n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive) {
+    // This process has no fixture signing key and receives no FinalCert TL
+    // file. The hash arguments are assertions; all evidence bytes must come
+    // from the two retained production DB/archive roots.
+    const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                         context.expected_session_id, "") + "/db/";
+    std::optional<td::BufferSlice> exact_cert;
+    td::actor::Scheduler journal_scheduler({1});
+    journal_scheduler.run_in_context([&] {
+      auto bus = n5_joined_bus(vset, context.expected_session_id, {}, journal_path);
+      for (auto &[key, value] : bus->db->get_by_prefix(tos_api::consensus_simplex_db_key_vote::ID)) {
+        auto wrapper = fetch_tl_object<tos_api::consensus_simplex_db_cert>(value, true);
+        if (wrapper.is_error() || !wrapper.ok()->cert_) {
+          continue;
+        }
+        auto bytes = serialize_tl_object(wrapper.ok()->cert_, true);
+        if (sha256_bits256(bytes.as_slice()).to_hex() == std::string_view(argv[5])) {
+          if (exact_cert) {
+            std::cerr << "N5_CUT5_FAILED: duplicate exact FinalCert journal records\n";
+            return;
+          }
+          exact_cert.emplace(std::move(bytes));
+        }
+      }
+    });
+    journal_scheduler.run(0.01);
+    journal_scheduler.stop();
+    if (n5_cut5_absent) {
+      if (exact_cert) {
+        std::cerr << "N5_CUT5_FAILED: wrong DB root exposed the FinalCert\n";
+        return 1;
+      }
+      std::cout << "N5_CUT5_WRONG_ROOT_CERT_ABSENT_OK\n";
+      return 0;
+    }
+    if (!exact_cert) {
+      std::cerr << "N5_CUT5_FAILED: exact FinalCert absent from retained journal\n";
+      return 1;
+    }
+    BlockCandidate cold_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                              block_boc.clone(), td::BufferSlice{}};
+    const auto candidate_id = consensus::CandidateHashData::create_full(cold_block, std::nullopt)
+                                  .build_id_with(0);
+    std::vector<block::PQBlockSignature> exact_signatures;
+    if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate_id, exact_cert->as_slice(), true, exact_signatures)) {
+      return 1;
+    }
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    std::optional<td::Result<td::Unit>> checked;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cut5-cold-manager", id0, argv[3]);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_n5_accept_cold,
+                              id0, id1, expected_state_root, vset, context.expected_session_id,
+                              std::string(argv[4]), std::move(exact_signatures),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                checked.emplace(std::move(outcome));
+                              }));
+    });
+    const auto deadline = td::Timestamp::in(30.0);
+    while (!checked.has_value() && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    scheduler.run_in_context([&] { manager.reset(); });
+    scheduler.stop();
+    if (n5_cut5_no_archive) {
+      const bool missing = checked && checked->is_error() &&
+          checked->error().to_string().find("N5 cold handle: block handle not in db") != std::string::npos;
+      if (!missing) {
+        std::cerr << "N5_CUT5_FAILED: journal-only root did not report missing RootDb handle\n";
+        return 1;
+      }
+      std::cout << "N5_CUT5_JOURNAL_ONLY_ROOTDB_ABSENT_OK\n";
+      return 0;
+    }
+    if (!checked.has_value() || checked->is_error()) {
+      std::cerr << "N5_CUT5_FAILED: RootDb proof/state reconstruction "
+                << (checked && checked->is_error() ? checked->error().to_string() : "timeout") << '\n';
+      return 1;
+    }
+    std::cout << "N5_CUT5_DB_ARCHIVE_ONLY_OK candidate=" << candidate_id.hash.to_hex()
+              << " finalcert=" << argv[5] << " proof=" << argv[4] << '\n';
+    return 0;
+  }
   auto candidate = pq_block_signature_test::candidate(id1);
-  auto pairs = keys.sign({0, 1, 2}, context.expected_session_id, pq_block_signature_test::Fixture::slot,
+  auto pairs = keys->sign({0, 1, 2}, context.expected_session_id, pq_block_signature_test::Fixture::slot,
                          candidate, true, id1);
   const ValidatorWeight quorum_weight = 51;
   auto good_cell = require_ok(block::BlockSignatureSet::serialize_simplex_pq(
@@ -1725,7 +1820,7 @@ int main(int argc, char **argv) {
     std::cout << "N5_CUT1_COLD_NO_TARGET_HANDLE_OK block=" << id1.to_str() << '\n';
     return 0;
   }
-  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4) {
+  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5) {
     auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
     std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
     std::filesystem::create_directories(db_root + "/static");
@@ -1749,15 +1844,15 @@ int main(int argc, char **argv) {
     constexpr td::uint32 joined_slot = 0;
     auto candidate_id = consensus::CandidateHashData::create_full(candidate_block, std::nullopt)
                             .build_id_with(joined_slot);
-    auto leader_it = std::find(keys.validator_ids.begin(), keys.validator_ids.end(), nodes.front().validator_id);
-    if (leader_it == keys.validator_ids.end()) {
+    auto leader_it = std::find(keys->validator_ids.begin(), keys->validator_ids.end(), nodes.front().validator_id);
+    if (leader_it == keys->validator_ids.end()) {
       std::cerr << "N5_JOINED_FAILED: candidate leader not in signing fixture\n";
       return 1;
     }
     auto candidate_bytes = serialize_tl_object(candidate_id.to_tl(), true);
     auto candidate_envelope = create_serialize_tl_object<tos_api::consensus_dataToSign>(
         context.expected_session_id, candidate_bytes.clone());
-    auto candidate_signature = keys.stores[static_cast<size_t>(leader_it - keys.validator_ids.begin())]
+    auto candidate_signature = keys->stores[static_cast<size_t>(leader_it - keys->validator_ids.begin())]
                                    .sign_consensus(std::string_view(candidate_envelope.data(), candidate_envelope.size()));
     if (!candidate_signature) {
       std::cerr << "N5_JOINED_FAILED: leader candidate signature unavailable\n";
@@ -1842,8 +1937,8 @@ int main(int argc, char **argv) {
       bus = runtime.start(std::move(trusted), "n5-joined-simplex");
       bus.publish<consensus::Start>(td::make_ref<consensus::ChainState>(
           consensus::ChainState::ZerostateTip{id0, root0}, id0));
-      auto notar = n5_joined_cert(sx::NotarizeVote{candidate_id}, *bus, keys);
-      auto final = n5_joined_cert(sx::FinalizeVote{candidate_id}, *bus, keys);
+      auto notar = n5_joined_cert(sx::NotarizeVote{candidate_id}, *bus, *keys);
+      auto final = n5_joined_cert(sx::FinalizeVote{candidate_id}, *bus, *keys);
       if (notar.is_error() || final.is_error()) {
         result.emplace(td::Status::Error("N5 joined certificate fixture failed production verification"));
         return;
@@ -2019,6 +2114,55 @@ int main(int argc, char **argv) {
         return 1;
       }
       std::cout << "N5_CUT4_WRITER_EXIT_OK root=" << db_root << " finalcert_tl=" << finalcert_path << '\n';
+    }
+    if (n5_cut5) {
+      std::ifstream cert_file(finalcert_path, std::ios::binary);
+      std::ostringstream cert_bytes;
+      cert_bytes << cert_file.rdbuf();
+      if (!cert_file || cert_bytes.str().empty()) {
+        std::cerr << "N5_CUT5_FAILED: writer FinalCert witness unavailable\n";
+        return 1;
+      }
+      std::string cert_hash = sha256_bits256(td::Slice(cert_bytes.str())).to_hex();
+      std::string static_boc = db_root + "/static/" + id0.file_hash.to_hex();
+      mode = "--n5-cut5-rebuild";
+      child_argv[1] = mode.data();
+      child_argv[2] = static_boc.data();
+      child_argv[5] = cert_hash.data();
+      child = -1;
+      const int rebuilt = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+      status = 0;
+      if (rebuilt != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        std::cerr << "N5_CUT5_FAILED: DB/archive-only rebuild child status=" << status << " spawn=" << rebuilt << '\n';
+        return 1;
+      }
+      auto wrong_root = require_ok(td::mkdtemp("", "n5-cut5-wrong-root-"), "N5 cut5 wrong DB root");
+      mode = "--n5-cut5-rebuild-absent";
+      child_argv[1] = mode.data();
+      child_argv[3] = wrong_root.data();
+      child = -1;
+      const int absent = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+      status = 0;
+      if (absent != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        std::cerr << "N5_CUT5_FAILED: wrong-root control status=" << status << " spawn=" << absent << '\n';
+        return 1;
+      }
+      auto journal_only_root = require_ok(td::mkdtemp("", "n5-cut5-journal-only-"),
+                                          "N5 cut5 journal-only root");
+      std::filesystem::copy(db_root + "/consensus", journal_only_root + "/consensus",
+                            std::filesystem::copy_options::recursive);
+      mode = "--n5-cut5-rebuild-no-archive";
+      child_argv[1] = mode.data();
+      child_argv[3] = journal_only_root.data();
+      child = -1;
+      const int no_archive = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+      status = 0;
+      if (no_archive != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        std::cerr << "N5_CUT5_FAILED: journal-only control status=" << status << " spawn=" << no_archive << '\n';
+        return 1;
+      }
+      std::cout << "N5_CUT5_JOURNAL_ONLY_ROOT=" << journal_only_root << '\n';
+      std::cout << "N5_CUT5_WRITER_EXIT_OK root=" << db_root << " wrong_root=" << wrong_root << '\n';
     }
     return 0;
   }

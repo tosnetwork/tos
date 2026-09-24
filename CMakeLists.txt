@@ -1272,6 +1272,10 @@ add_test(NAME test-n5-cut3-proof-recovery COMMAND test-c04-real-state-proof --n5
 # BlockProof/state exist; neither AcceptBlock nor the persisted bytes may change.
 add_test(NAME test-n5-cut4-finalized-replay COMMAND test-c04-real-state-proof --n5-cut4
          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N06 builds a fresh process from only the retained DB/archive roots. The
+# expected hashes are comparison metadata, never replacement evidence bytes.
+add_test(NAME test-n5-cut5-full-root-rebuild COMMAND test-c04-real-state-proof --n5-cut5
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)
