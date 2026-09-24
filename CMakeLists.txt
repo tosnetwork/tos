@@ -1276,6 +1276,10 @@ add_test(NAME test-n5-cut4-finalized-replay COMMAND test-c04-real-state-proof --
 # expected hashes are comparison metadata, never replacement evidence bytes.
 add_test(NAME test-n5-cut5-full-root-rebuild COMMAND test-c04-real-state-proof --n5-cut5
          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N07 reads the same persisted PQ BlockProof into a fresh genesis-only
+# consumer RootDb and exercises real CheckProof for valid/tampered signatures.
+add_test(NAME test-n5-cut6-check-proof COMMAND test-c04-real-state-proof --n5-cut6
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)

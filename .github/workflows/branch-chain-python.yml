@@ -115,6 +115,9 @@ jobs:
       - name: Check N5 DB/archive-only full-root rebuild
         run: ctest --test-dir build --output-on-failure -R '^test-n5-cut5-full-root-rebuild$'
 
+      - name: Check N5 cold persisted PQ CheckProof acceptance and tamper refusal
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut6-check-proof$'
+
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote
       # must never be retried into an unsafe late vote.

@@ -204,6 +204,18 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     promise.set_value(td::Unit());
   }
 
+  // The governing state is reloaded through RootDb before this call. The
+  // consumer target handle has no proof, so CheckProof cannot take its
+  // already-inited proof shortcut.
+  void check_n5_proof_from_restored_state(BlockIdExt id, td::Ref<Proof> proof,
+                                           td::Promise<BlockHandle> promise) {
+    if (last_masterchain_state_.is_null()) {
+      return promise.set_error(td::Status::Error("N5 cut6 governing state not restored from RootDb"));
+    }
+    run_check_proof_query(id, std::move(proof), actor_id(this), td::Timestamp::in(30.0),
+                          std::move(promise), last_masterchain_state_);
+  }
+
   void broadcast_bad_then_good(BlockIdExt id, td::BufferSlice data, td::Ref<block::BlockSignatureSet> bad,
                                td::Ref<block::BlockSignatureSet> good, td::Promise<td::Unit> promise) {
     cached_masterchain_block_candidates_.put(id, std::move(data));
@@ -1060,6 +1072,8 @@ int main(int argc, char **argv) {
   const bool n5_cut3 = argc == 3 && std::string_view(argv[1]) == "--n5-cut3";
   const bool n5_cut4 = argc == 3 && std::string_view(argv[1]) == "--n5-cut4";
   const bool n5_cut5 = argc == 3 && std::string_view(argv[1]) == "--n5-cut5";
+  const bool n5_cut6 = argc == 3 && std::string_view(argv[1]) == "--n5-cut6";
+  const bool n5_cut6_check = argc == 6 && std::string_view(argv[1]) == "--n5-cut6-check";
   const bool n5_cut5_rebuild = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild";
   const bool n5_cut5_absent = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild-absent";
   const bool n5_cut5_no_archive = argc == 6 && std::string_view(argv[1]) == "--n5-cut5-rebuild-no-archive";
@@ -1078,14 +1092,14 @@ int main(int argc, char **argv) {
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 ||
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_cut6_check ||
         n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
         n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume || n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive ||
         n5_reopen || n5_joined_reopen)) {
     std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1|--n5-cut2|--n5-cut3|--n5-cut4 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 ||
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6 || n5_cut6_check ||
                        n5_cut1_reopen || n5_cut2_reopen || n5_cut3_reopen ||
                        n5_cut1_resume || n5_cut2_resume || n5_cut3_resume || n5_cut4_resume || n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive ||
                        n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
@@ -1106,7 +1120,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   std::optional<pq_block_signature_test::Fixture> keys;
-  if (!n5_cut5_rebuild && !n5_cut5_absent && !n5_cut5_no_archive) {
+  if (!n5_cut5_rebuild && !n5_cut5_absent && !n5_cut5_no_archive && !n5_cut6_check) {
     keys.emplace();
   }
   auto target_time = record.gen_utime + 1;
@@ -1268,6 +1282,156 @@ int main(int argc, char **argv) {
   }
   std::cout << "C04_REAL_APPLY_OK root=" << replay_state->root_hash().to_hex() << '\n';
   auto context = require_ok(derive_pq_finality_context(*state0, vset, id1, 0, 0), "PQ session");
+  if (n5_cut6_check) {
+    // The source RootDb has an already accepted handle. Running CheckProof
+    // against that handle would take its inited_proof shortcut and never
+    // inspect a changed signature. Read its exact archived proof, then use
+    // fresh genesis-only consumer roots for both verdicts.
+    td::actor::Scheduler source_scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> source_manager;
+    std::optional<td::Result<td::Ref<Proof>>> source_proof;
+    source_scheduler.run_in_context([&] {
+      source_manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cut6-source", id0, argv[3]);
+      td::actor::send_closure(source_manager, &PendingFinalityManagerActorProbe::get_block_proof_from_db_short,
+                              id1, td::PromiseCreator::lambda([&](td::Result<td::Ref<Proof>> result) {
+                                source_proof.emplace(std::move(result));
+                              }));
+    });
+    auto source_deadline = td::Timestamp::in(30.0);
+    while (!source_proof && !source_deadline.is_in_past()) {
+      source_scheduler.run(0.01);
+    }
+    source_scheduler.run_in_context([&] { source_manager.reset(); });
+    source_scheduler.stop();
+    if (!source_proof || source_proof->is_error() ||
+        block::compute_file_hash(source_proof->ok()->data().as_slice()).to_hex() != argv[4]) {
+      std::cerr << "N5_CUT6_FAILED: exact source RootDb proof not read\n";
+      return 1;
+    }
+    auto source_cell = require_ok(source_proof->ok()->get_root_cell(), "N5 cut6 source proof root");
+    auto envelope = require_ok(parse_block_proof_signature_envelope(source_cell), "N5 cut6 signature envelope");
+    if (envelope.block_id != id1 || envelope.signatures.is_null() || !envelope.signatures->is_pq()) {
+      std::cerr << "N5_CUT6_FAILED: source proof is not the expected PQ target\n";
+      return 1;
+    }
+    auto carried = require_ok(envelope.signatures->export_pq_signatures(), "N5 cut6 PQ signatures");
+    if (carried.empty() || carried.front().signature.empty()) {
+      std::cerr << "N5_CUT6_FAILED: no signature bytes to perturb\n";
+      return 1;
+    }
+    std::string changed = carried.front().signature.as_slice().str();
+    changed[0] ^= 1;
+    carried.front().signature = td::BufferSlice(changed);
+    auto candidate_bytes = require_ok(envelope.signatures->pq_candidate_data(), "N5 cut6 candidate bytes");
+    auto candidate_data = require_ok(fetch_tl_object<tos_api::consensus_CandidateHashData>(
+        candidate_bytes.as_slice(), true), "N5 cut6 candidate TL");
+    auto signature_cell = require_ok(block::BlockSignatureSet::serialize_simplex_pq(
+        carried, envelope.signatures->get_catchain_seqno(), envelope.signatures->get_validator_set_hash(),
+        envelope.claimed_weight, require_ok(envelope.signatures->pq_session_id(), "N5 cut6 session"),
+        require_ok(envelope.signatures->pq_slot(), "N5 cut6 slot"), candidate_data), "N5 cut6 altered #13");
+    block::gen::BlockProof::Record altered_record;
+    if (!block::gen::t_BlockProof.cell_unpack(source_cell, altered_record)) {
+      std::cerr << "N5_CUT6_FAILED: source proof unpack\n";
+      return 1;
+    }
+    vm::CellBuilder altered_signatures;
+    if (!altered_signatures.store_bool_bool(true) || !altered_signatures.store_ref_bool(signature_cell)) {
+      std::cerr << "N5_CUT6_FAILED: altered signature reference pack\n";
+      return 1;
+    }
+    altered_record.signatures = vm::load_cell_slice_ref(altered_signatures.finalize());
+    td::Ref<vm::Cell> altered_cell;
+    if (!block::gen::t_BlockProof.cell_pack(altered_cell, altered_record)) {
+      std::cerr << "N5_CUT6_FAILED: altered proof pack\n";
+      return 1;
+    }
+    auto altered_boc = require_ok(vm::std_boc_serialize(altered_cell, 0), "N5 cut6 altered BOC");
+    auto altered_proof = require_ok(create_proof(id1, std::move(altered_boc)), "N5 cut6 altered proof");
+    auto check_one = [&](std::string_view label, td::Ref<Proof> offered, bool valid) {
+      auto consumer_root = require_ok(td::mkdtemp("", "n5-cut6-consumer-"), "N5 cut6 consumer root");
+      td::actor::Scheduler scheduler({1});
+      td::actor::ActorOwn<PendingFinalityManagerActorProbe> consumer;
+      std::optional<td::Result<td::Unit>> seeded;
+      scheduler.run_in_context([&] {
+        consumer = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cut6-consumer", id0, consumer_root);
+        td::actor::send_closure(consumer, &PendingFinalityManagerActorProbe::seed_zerostate,
+                                id0, state0, boc.clone(),
+                                td::PromiseCreator::lambda([&](td::Result<td::Unit> result) {
+                                  seeded.emplace(std::move(result));
+                                }));
+      });
+      auto deadline = td::Timestamp::in(30.0);
+      while (!seeded && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      if (!seeded || seeded->is_error()) {
+        std::cerr << "N5_CUT6_FAILED: consumer genesis seed " << label << '\n';
+        scheduler.run_in_context([&] { consumer.reset(); });
+        scheduler.stop();
+        return false;
+      }
+      std::optional<td::Result<td::Unit>> restored;
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(consumer, &PendingFinalityManagerActorProbe::restore_zero_context,
+                                id0, RootHash{root0->get_hash().bits()},
+                                td::PromiseCreator::lambda([&](td::Result<td::Unit> result) {
+                                  restored.emplace(std::move(result));
+                                }));
+      });
+      deadline = td::Timestamp::in(30.0);
+      while (!restored && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      if (!restored || restored->is_error()) {
+        std::cerr << "N5_CUT6_FAILED: consumer RootDb genesis restore " << label << '\n';
+        scheduler.run_in_context([&] { consumer.reset(); });
+        scheduler.stop();
+        return false;
+      }
+      std::optional<td::Result<BlockHandle>> verdict;
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(consumer, &PendingFinalityManagerActorProbe::check_n5_proof_from_restored_state,
+                                id1, offered, td::PromiseCreator::lambda([&](td::Result<BlockHandle> result) {
+                                  verdict.emplace(std::move(result));
+                                }));
+      });
+      deadline = td::Timestamp::in(30.0);
+      while (!verdict && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      const bool accepted = verdict && verdict->is_ok() && verdict->ok()->id() == id1 &&
+          verdict->ok()->inited_proof();
+      const bool rejected_signature = verdict && verdict->is_error() &&
+          verdict->error().to_string().find("pq signatures: invalid signature") != std::string::npos;
+      std::optional<td::Result<td::Ref<Proof>>> persisted;
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(consumer, &PendingFinalityManagerActorProbe::get_block_proof_from_db_short,
+                                id1, td::PromiseCreator::lambda([&](td::Result<td::Ref<Proof>> result) {
+                                  persisted.emplace(std::move(result));
+                                }));
+      });
+      deadline = td::Timestamp::in(30.0);
+      while (!persisted && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      const bool proof_present = persisted && persisted->is_ok() &&
+          block::compute_file_hash(persisted->ok()->data().as_slice()).to_hex() == argv[4];
+      const bool proof_absent = persisted && persisted->is_error();
+      std::cout << "N5_CUT6_CHECK label=" << label << " accepted=" << accepted
+                << " proof_present=" << proof_present << " proof_absent=" << proof_absent
+                << " error=" << (verdict && verdict->is_error() ? verdict->error().to_string() : "none")
+                << " root=" << consumer_root << '\n';
+      scheduler.run_in_context([&] { consumer.reset(); });
+      scheduler.stop();
+      return valid ? accepted && proof_present : rejected_signature && proof_absent;
+    };
+    if (!check_one("valid", source_proof->ok(), true) || !check_one("altered-signature", altered_proof, false)) {
+      std::cerr << "N5_CUT6_FAILED: CheckProof did not distinguish retained valid and altered PQ finality\n";
+      return 1;
+    }
+    std::cout << "N5_CUT6_CHECKPROOF_OK source=" << argv[3] << " proof=" << argv[4] << '\n';
+    return 0;
+  }
   if (n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive) {
     // This process has no fixture signing key and receives no FinalCert TL
     // file. The hash arguments are assertions; all evidence bytes must come
@@ -1824,7 +1988,7 @@ int main(int argc, char **argv) {
     std::cout << "N5_CUT1_COLD_NO_TARGET_HANDLE_OK block=" << id1.to_str() << '\n';
     return 0;
   }
-  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5) {
+  if (n5_joined || n5_cut1 || n5_cut2 || n5_cut3 || n5_cut4 || n5_cut5 || n5_cut6) {
     auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
     std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
     std::filesystem::create_directories(db_root + "/static");
@@ -2119,7 +2283,7 @@ int main(int argc, char **argv) {
       }
       std::cout << "N5_CUT4_WRITER_EXIT_OK root=" << db_root << " finalcert_tl=" << finalcert_path << '\n';
     }
-    if (n5_cut5) {
+    if (n5_cut5 || n5_cut6) {
       std::ifstream cert_file(finalcert_path, std::ios::binary);
       std::ostringstream cert_bytes;
       cert_bytes << cert_file.rdbuf();
@@ -2129,7 +2293,7 @@ int main(int argc, char **argv) {
       }
       std::string cert_hash = sha256_bits256(td::Slice(cert_bytes.str())).to_hex();
       std::string static_boc = db_root + "/static/" + id0.file_hash.to_hex();
-      mode = "--n5-cut5-rebuild";
+      mode = n5_cut6 ? "--n5-cut6-check" : "--n5-cut5-rebuild";
       child_argv[1] = mode.data();
       child_argv[2] = static_boc.data();
       child_argv[5] = cert_hash.data();
@@ -2139,6 +2303,10 @@ int main(int argc, char **argv) {
       if (rebuilt != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         std::cerr << "N5_CUT5_FAILED: DB/archive-only rebuild child status=" << status << " spawn=" << rebuilt << '\n';
         return 1;
+      }
+      if (n5_cut6) {
+        std::cout << "N5_CUT6_WRITER_EXIT_OK root=" << db_root << " proof=" << proof << '\n';
+        return 0;
       }
       auto wrong_root = require_ok(td::mkdtemp("", "n5-cut5-wrong-root-"), "N5 cut5 wrong DB root");
       mode = "--n5-cut5-rebuild-absent";
