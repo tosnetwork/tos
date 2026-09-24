@@ -69,6 +69,19 @@ def main() -> None:
         fail("config-wallet live pool roles are not checked before the verified pool order")
     if wallet.count("let artifact_path = configured_birth_artifact_path(binding, binding_name)?;") != 1:
         fail("config-wallet verified pool order no longer requires the configured birth artifact")
+    stake_command = wallet.split("impl WalletStakeCmd", 1)[1]
+    seqno_check = stake_command.find("let initial_seqno = require_observable_wallet_seqno(")
+    broadcast = stake_command.find("provider.send_boc(&msg_boc).await")
+    if seqno_check < 0 or broadcast < 0 or seqno_check >= broadcast or stake_command.count("Some(initial_seqno)") != 1:
+        fail("config-wallet stake can send without a wallet type and seqno that chain RPC can observe")
+
+    # The CLI embeds this V1R3 code; chain RPC must recognize its cell hash or
+    # getWalletInformation returns wallet=false/seqno=null forever.
+    v1r3_hash = "587cc789eff1c84f46ec3797e45fc809a14ff5ae24f1e0c7a6a99cc9dc9061ff"
+    wallet_code = collapsed(root / "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs")
+    account_model = collapsed(root / "validator-engine/json-rpc-account-model.cpp")
+    if v1r3_hash not in wallet_code or v1r3_hash.upper() not in account_model:
+        fail("tosctl V1R3 code hash is not pinned in both the wallet test and chain RPC recognizer")
 
     policy_provider = collapsed(
         root / "tosctl/src/node-control/elections/src/providers/default.rs"
@@ -128,7 +141,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles before the verified birth-artifact builder and wallet message; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 

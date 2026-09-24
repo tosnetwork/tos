@@ -465,6 +465,8 @@ impl WalletStakeCmd {
         if wallet_info_res.account_state != AccountState::Active {
             anyhow::bail!("Wallet '{}' is {}", binding.wallet, wallet_info_res.account_state);
         }
+        let initial_seqno =
+            require_observable_wallet_seqno(wallet_info_res.wallet, wallet_info_res.seqno)?;
         let pool_address = resolve_pool_address(pool_cfg, &wallet_address)?;
         let pool_addr_bytes = pool_address.address().clone().storage().to_vec();
         let live_roles =
@@ -646,7 +648,7 @@ impl WalletStakeCmd {
         wait_for_seqno_change(
             rpc_client.clone(),
             &wallet_address,
-            wallet_info_res.seqno,
+            Some(initial_seqno),
             &cancellation_ctx,
             SEND_TIMEOUT,
         )
@@ -679,6 +681,16 @@ impl WalletStakeCmd {
         let _ = provider.shutdown().await;
         Ok(())
     }
+}
+
+fn require_observable_wallet_seqno(wallet: bool, seqno: Option<u32>) -> anyhow::Result<u32> {
+    anyhow::ensure!(
+        wallet,
+        "active operator account is not recognized as a wallet by chain RPC; stake not sent"
+    );
+    seqno.ok_or_else(|| {
+        anyhow::anyhow!("active operator wallet has no observable seqno; stake not sent")
+    })
 }
 
 const STAKE_POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(3);
@@ -840,6 +852,15 @@ mod birth_artifact_tests {
         SliceData, StateInit,
     };
     use std::io::Write;
+
+    #[test]
+    fn operator_wallet_must_have_a_trackable_seqno_before_stake_send() {
+        assert_eq!(require_observable_wallet_seqno(true, Some(7)).unwrap(), 7);
+        let not_wallet = require_observable_wallet_seqno(false, None).unwrap_err().to_string();
+        assert!(not_wallet.contains("not recognized as a wallet"), "wrong refusal: {not_wallet}");
+        let no_seqno = require_observable_wallet_seqno(true, None).unwrap_err().to_string();
+        assert!(no_seqno.contains("no observable seqno"), "wrong refusal: {no_seqno}");
+    }
 
     fn binding(path: Option<&str>) -> NodeBinding {
         NodeBinding {

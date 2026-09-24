@@ -412,10 +412,15 @@ mod tests {
     /// recognition table carries the same values.
     #[test]
     fn test_wallet_code_hashes() {
+        let v1r3 = read_single_root_boc(hex::decode(V1R3_CODE).unwrap()).unwrap();
         let v3r2 = read_single_root_boc(hex::decode(V3R2_CODE).unwrap()).unwrap();
         let v4r2 = read_single_root_boc(base64_decode(V4R2_CODE_B64).unwrap()).unwrap();
         let v5r1 = read_single_root_boc(base64_decode(V5R1_CODE_B64).unwrap()).unwrap();
 
+        assert_eq!(
+            format!("{:x}", v1r3.repr_hash()),
+            "587cc789eff1c84f46ec3797e45fc809a14ff5ae24f1e0c7a6a99cc9dc9061ff"
+        );
         assert_eq!(
             format!("{:x}", v3r2.repr_hash()),
             "6c6caaf194af3660e7ae4c584785c1bda0d85fafd80e947d725105947cd11d7d"

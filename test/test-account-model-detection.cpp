@@ -50,6 +50,13 @@ TEST(AccountModel, compiled_wallets_are_recognised_by_their_compiled_hash) {
   ASSERT_EQ("wallet v5 r1", tos::detect_wallet_type(compiled(tos::SmartContractCode::WalletV5)->get_hash(0)));
 }
 
+TEST(AccountModel, tosctl_v1r3_wallet_is_recognised_by_its_embedded_code_hash) {
+  // This is the cell hash of WalletContract::V1R3_CODE, not its BOC SHA256.
+  td::Bits256 code_hash;
+  CHECK(code_hash.from_hex("587cc789eff1c84f46ec3797e45fc809a14ff5ae24f1e0c7a6a99cc9dc9061ff") == 256);
+  ASSERT_EQ("wallet v1 r3", tos::detect_wallet_type(vm::CellHash::from_slice(code_hash.as_slice())));
+}
+
 TEST(AccountModel, unknown_code_is_not_claimed_to_be_a_wallet) {
   ASSERT_EQ("", tos::detect_wallet_type(foreign_code()->get_hash(0)));
 }
