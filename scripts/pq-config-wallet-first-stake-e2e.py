@@ -118,6 +118,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         "one product config-wallet first stake through a real pool/controller on an "
         "accelerated co-located PQ chain; no daemon caller or scale claim"
     )
+    report["test_only_genesis_faucet_nanotos"] = 150_000 * NANO
     try:
         life.artifacts_dir.mkdir(parents=True, exist_ok=True)
         life.prepare_pq_election_fixture()
@@ -183,7 +184,8 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         wallet = Address(wallet_text)
         report["product_wallet"] = lifecycle_module.raw_address(wallet)
         faucet = life.network.zerostate.main_wallet(life.client)
-        await life.send(faucet, dest=wallet, amount=100 * NANO,
+        await life.send(faucet, dest=wallet,
+                        amount=lifecycle_module.SUPPORT_POOL_CAPITAL + 100 * NANO,
                         body=Cell.empty(), label="product-wallet-fund")
         await cli(binary, config, env, "wallet", "activate", "--name", "operator")
         active = await life.retry(
@@ -201,9 +203,11 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             description="product single-nominator pool active",
             predicate=lambda value: bool(value.code),
         )
-        await life.send(faucet, dest=pool.address,
-                        amount=lifecycle_module.SUPPORT_POOL_CAPITAL,
-                        body=Cell.empty(), label="product-single-pool-capital")
+        report["product_pool_funding_output"] = await cli(
+            binary, config, env, "wallet", "send", "--from", "operator", "--to",
+            lifecycle_module.raw_address(pool.address), "--amount-nanotos",
+            str(lifecycle_module.SUPPORT_POOL_CAPITAL), "--yes",
+        )
         await life.retry(
             lambda: life.balance(pool.address), timeout=60,
             description="product pool capital", predicate=lambda value: value >= STAKE,

@@ -2630,6 +2630,14 @@ class PoolLifecycle:
             network.config.validator_election_experiment_faucet_balance_nanotos = (
                 INTEGRATED_FAUCET_FUNDING
             )
+        elif self.product_rpc_address is not None:
+            # The product CLI provisions an additional operator wallet and
+            # single-nominator pool beyond the ordinary lifecycle fixture.
+            # Make that test-only genesis budget explicit instead of letting
+            # a faucet send advance seqno while its unfunded out-message fails.
+            network.config.validator_election_experiment_faucet_balance_nanotos = (
+                150_000 * NANO
+            )
         network.config.shard_validators = 4
         network.config.validator_economics_profile = True
         network.config.validator_election_stage_a_profile = True
