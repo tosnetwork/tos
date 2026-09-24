@@ -1,4 +1,6 @@
 #!/usr/bin/fift -s
+// Test-only historical Ed25519 body. The liquid-staking product is not
+// launch-supported; this file must not be packaged as an operator command.
 "TosUtil.fif" include
 "Validator.fif" include
 

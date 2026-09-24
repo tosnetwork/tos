@@ -310,7 +310,7 @@ A third open correctness question inventories the classical stake-production
 surface instead of treating the two base Fift files as orphaned. The inventory
 includes those two files, the `validator-elect-req>B` library word,
 `test-smartcont.cpp`, two validator-proposal Fift tests, the former nominator-pool and
-validator-election Python flows, the liquid-staking operator script, the relocated
+validator-election Python flows, the former liquid-staking operator script's test-only fixture, the relocated
 single-nominator legacy byte fixture, and tosctl's
 election daemon, interactive bid command, and config-wallet pool command.
 These consumers make deleting the
@@ -327,11 +327,14 @@ query `1790237617` received Elector `STAKE_ACCEPTED` (reason 0), and live
 ConfigParam 34 paired its controller with the observed relay ADNL. The old codec is now a
 test-only legacy fixture for `test-smartcont.cpp`; a PQ pool sandbox test
 confirms that its classical body aborts before controller relay. In contrast,
-`liquid-staking/controller.func` still submits classical `new_stake` directly
-and handles the elector reply itself. The liquid-staking directory is therefore
-not launch-supported and must be absent from release claims and entry-point
-inventories until that contract-level conversion is complete. The converted
-single-nominator contract is the worked example for that future work. The
+The earlier statement that `liquid-staking/controller.func` "still submits
+classical `new_stake` directly" is obsolete: its current `check_new_stake_msg`
+parses PQ-shaped pool terms and forwards them to a named Validator Controller.
+T06 retired the old Ed25519 Fift command from the distributed smart-contract
+tree and kept its codec only as a test fixture. This does not make the
+liquid-staking product launch-supported: its production deployment,
+authorization, admitted-controller route, live stake acceptance and ConfigParam
+34 pairing have not been proven. Keep it absent from release claims. The
 registry's closure condition also pins the local tosctl signature-length
 refusal and the rule that common Fift tools cannot be removed until every
 retained caller and `test-smartcont.cpp` move in the same change. The election

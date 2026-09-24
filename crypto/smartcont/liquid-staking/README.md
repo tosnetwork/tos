@@ -73,7 +73,7 @@ and owes nothing.
 | `return_unused_loan.boc` | Return unused loan to pool |
 | `update_validator_hash.boc` | Update validator set hash |
 | `deposit.boc` | Deposit to pool |
-| `controller-elect-signed.fif` | Election entry via controller |
+| `crypto/test/fift/fixtures/liquid-controller-legacy-elect-signed.fif` | Test-only historical Ed25519 body; no liquid-staking election operator is distributed. This product is not launch-supported. |
 | `generate-loan-request.fif` | Generate loan request |
 | `withdraw-controller.fif` | Withdraw from controller |
 

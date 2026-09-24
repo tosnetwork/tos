@@ -357,8 +357,11 @@ std::string run_validator_fift_script_regression() {
   auto single_boc = single_run.source_lookup.read_file("single-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(single_boc).move_as_ok().not_null());
 
+  // Historical Ed25519 byte parity only; the current liquid controller
+  // requires a PQ-shaped pool order and this is not an operator command.
   auto controller_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/liquid-staking/controller-elect-signed.fif")).move_as_ok();
+      fift::create_mem_source_lookup(load_source("test/fift/fixtures/liquid-controller-legacy-elect-signed.fif"))
+          .move_as_ok();
   controller_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(controller_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto controller_run =
