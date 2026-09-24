@@ -45,7 +45,6 @@ EXPECTED: dict[str, dict[str, int]] = {
         "single-nominator-legacy-elect-signed.fif": 1,
         "liquid-controller-legacy-elect-signed.fif": 1,
     },
-    "crypto/test/fift/validator-proposal-test.fif": {"validator-elect-req>B": 1},
     "crypto/test/fift/validator-proposal-legacy-parity.fif": {
         "validator-elect-req>B": 1,
     },
@@ -102,6 +101,14 @@ def main() -> int:
     liquid_fixture = "test/fift/fixtures/liquid-controller-legacy-elect-signed.fif"
     if smartcont_test.count(liquid_fixture) != 1:
         fail("test-smartcont no longer loads exactly one test-only liquid-controller legacy fixture")
+    proposal_smoke = (root / "crypto/test/fift/validator-proposal-test.fif").read_text(encoding="utf-8")
+    if '"Proposal.fif" include' not in proposal_smoke or "proposal-query-id" not in proposal_smoke:
+        fail("proposal smoke no longer exercises the Proposal.fif helper")
+    if '"Validator.fif" include' in proposal_smoke or any(
+        marker in proposal_smoke
+        for marker in ("validator-elect-req>B", "validator-elect-body", "parse-val-pubkey", "parse-val-signature")
+    ):
+        fail("proposal smoke has regained a classical validator-stake dependency")
     actual = discover(root)
     missing = sorted(set(EXPECTED) - set(actual))
     unexpected = sorted(set(actual) - set(EXPECTED))
