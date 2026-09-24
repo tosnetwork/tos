@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "consensus/types.h"
 #include "validator/fabric.h"
 
 namespace tos::validator::consensus {
@@ -24,7 +25,8 @@ class ManagerFacade : public td::actor::Actor {
                                          ValidatorSessionId expected_session_id, int block_broadcast_mode,
                                          int finality_broadcast_mode, bool send_shard_block_desc, bool apply) = 0;
 
-  virtual td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) = 0;
+  virtual td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
+      BlockIdExt block_id, td::Timestamp timeout, std::optional<CandidateId> requesting_candidate) = 0;
   virtual td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) = 0;
 
   virtual void cache_block_candidate(BlockCandidate candidate) {

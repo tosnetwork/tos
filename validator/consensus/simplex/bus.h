@@ -193,6 +193,9 @@ struct ResolveState {
   using ReturnType = Result;
 
   ParentId id;
+  // Diagnostic provenance only: state identity and cache lookup still use id.
+  // A notarization request supplies its signed candidate; leader-base reads do not.
+  std::optional<CandidateId> requesting_candidate = std::nullopt;
 
   std::string contents_to_string() const;
   static std::string response_to_string(const ReturnType&);

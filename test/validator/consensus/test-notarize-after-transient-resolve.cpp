@@ -376,7 +376,8 @@ class ControlledManager : public ManagerFacade {
     co_return td::Unit{};
   }
 
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp) override {
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp,
+                                                          std::optional<CandidateId>) override {
     size_t call;
     {
       std::scoped_lock lock(observations.mutex);

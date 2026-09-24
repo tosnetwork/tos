@@ -262,7 +262,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       if (!may_vote()) {
         co_return td::Unit{};
       }
-      auto resolved = co_await owning_bus().publish<ResolveState>(candidate->parent_id).wrap();
+      auto resolved = co_await owning_bus().publish<ResolveState>(candidate->parent_id, candidate->id).wrap();
       if (resolved.is_ok()) {
         parent = resolved.move_as_ok();
         break;

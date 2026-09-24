@@ -73,7 +73,7 @@ std::string StoreCandidate::contents_to_string() const {
 }
 
 std::string ResolveState::contents_to_string() const {
-  return PSTRING() << "{id=" << id << "}";
+  return PSTRING() << "{id=" << id << ", requesting_candidate=" << requesting_candidate << "}";
 }
 
 std::string ResolveState::response_to_string(const ReturnType &result) {

@@ -609,7 +609,8 @@ class TestManagerFacade : public ManagerFacade {
                                  int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
                                  bool apply) override;
 
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override;
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
+      BlockIdExt block_id, td::Timestamp timeout, std::optional<CandidateId> requesting_candidate) override;
   td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) override;
   void send_block_candidate_broadcast(BlockIdExt id, td::BufferSlice data, int mode) override;
 
@@ -1737,9 +1738,11 @@ class TestConsensus : public td::actor::Actor {
         co_return td::Unit{};
       }
       for (size_t node = 1; node < 4; ++node) {
-        if (fault_reads[node].size() != C05_GENESIS_FAULT_BUDGET) {
+        if (fault_reads[node].empty() || fault_reads[node].size() > C05_GENESIS_FAULT_BUDGET ||
+            C05_GENESIS_FAULTS[node].load() != fault_reads[node].size() ||
+            (C05_GENESIS_FAULT_BUDGET == 3 && fault_reads[node].size() != 3)) {
           fail(PSTRING() << "C05 node " << node << " recorded " << fault_reads[node].size()
-                         << " target-bound parent-state faults, expected " << C05_GENESIS_FAULT_BUDGET);
+                         << " requester-bound parent-state faults under cap " << C05_GENESIS_FAULT_BUDGET);
           co_return td::Unit{};
         }
         for (size_t read = 0; read < fault_reads[node].size(); ++read) {
@@ -1771,7 +1774,7 @@ class TestConsensus : public td::actor::Actor {
         }
         auto wanted_vote = serialize_tl_object(simplex::Vote{simplex::NotarizeVote{*target}}.to_tl(), true);
         for (size_t node = 1; node < 4; ++node) {
-          if (C05_GENESIS_FAULTS[node].load() != 24 ||
+          if (fault_reads[node].size() < 4 ||
               C05_LAST_FAULT_TIME[node].load() - candidate_time <= 1.0) {
             fail(PSTRING() << "C05 node " << node << " did not remain unavailable beyond the one-second window");
             co_return td::Unit{};
@@ -1783,9 +1786,11 @@ class TestConsensus : public td::actor::Actor {
             }
           }
         }
-        LOG(WARNING) << "C05_SIMULTANEOUS_OVER_BUDGET_OK: three nodes each missed 24 parent-state reads beyond "
-                        "the one-second first-block window; original candidate had no late vote, NotarCert, "
-                        "FinalCert or acceptance; a later candidate was accepted";
+        LOG(WARNING) << "C05_SIMULTANEOUS_OVER_BUDGET_OK: first-candidate requester reads per node="
+                     << fault_reads[1].size() << "," << fault_reads[2].size() << "," << fault_reads[3].size()
+                     << " under a 24-read cap; all remained unavailable beyond the one-second first-block window; "
+                        "original candidate had no late vote, NotarCert, FinalCert or acceptance; a later "
+                        "candidate was accepted";
         pq_finality_completed_ = true;
         co_return td::Unit{};
       }
@@ -1819,7 +1824,16 @@ class TestConsensus : public td::actor::Actor {
         }
         size_t signed_votes = 0;
         for (const auto& entry : own_vote_journal(nodes_[node].instances[0])) {
-          signed_votes += entry.is_signed && serialize_tl_object(entry.vote, true).as_slice() == wanted_vote.as_slice();
+          if (!entry.is_signed || serialize_tl_object(entry.vote, true).as_slice() != wanted_vote.as_slice()) {
+            continue;
+          }
+          ++signed_votes;
+          for (const auto& [signer, signature] : notar_cert->signatures) {
+            if (signer.value() == node && signature.as_slice() != entry.signature.as_slice()) {
+              fail(PSTRING() << "C05 node " << node << " NotarCert signature differs from its signed vote journal");
+              co_return td::Unit{};
+            }
+          }
         }
         if (signed_votes != 1) {
           fail(PSTRING() << "C05 node " << node << " had " << signed_votes
@@ -2873,21 +2887,23 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
 }
 
 td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
-                                                                            td::Timestamp timeout) {
+                                                                            td::Timestamp timeout,
+                                                                            std::optional<CandidateId> requesting_candidate) {
   if (C05_GENESIS_FAULT_BUDGET != 0 && block_id == FIRST_PARENT && node_idx_ > 0 && node_idx_ < 4) {
     std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
     const auto& target = C05_SIMULTANEOUS_OBSERVATION.first_candidate;
-    // The manager interface carries a block ID, not its caller. Arm only after this node
-    // received the exact first candidate, whose signed parent is this genesis block.
-    if (target && !C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent &&
+    // Only try_notarize supplies this requester. Leader-base ResolveState has no requester
+    // and cannot consume the fault budget, even after the next leader window begins.
+    if (target && requesting_candidate == target && !C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent &&
         C05_SIMULTANEOUS_OBSERVATION.received_candidate[node_idx_] == target &&
         C05_GENESIS_FAULTS[node_idx_].load() < C05_GENESIS_FAULT_BUDGET) {
       auto failure = ++C05_GENESIS_FAULTS[node_idx_];
       C05_SIMULTANEOUS_OBSERVATION.fault_reads[node_idx_].push_back(
-          {*target, C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent, block_id, failure});
+          {*requesting_candidate, C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent, block_id, failure});
       C05_LAST_FAULT_TIME[node_idx_] = td::Time::now();
-      LOG(WARNING) << "C05_SIMULTANEOUS_STATE_FAULT node=" << node_idx_ << " candidate=" << *target
-                   << " slot=" << target->slot << " parent=" << FIRST_PARENT.to_str() << " read=" << failure;
+      LOG(WARNING) << "C05_SIMULTANEOUS_STATE_FAULT node=" << node_idx_ << " requester=" << *requesting_candidate
+                   << " slot=" << requesting_candidate->slot << " parent=" << FIRST_PARENT.to_str()
+                   << " read=" << failure;
       co_return td::Status::Error(ErrorCode::notready, "injected simultaneous parent-state miss");
     }
   }

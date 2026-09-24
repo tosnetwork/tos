@@ -221,7 +221,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   template <>
   td::actor::Task<ResolvedState> process(BusHandle, std::shared_ptr<ResolveState> request) {
-    co_return co_await resolve_state(request->id);
+    co_return co_await resolve_state(request->id, request->requesting_candidate);
   }
 
   template <>
@@ -264,7 +264,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   size_t state_admission_rejections_ = 0;
   std::optional<td::uint32> latest_finalized_slot_;
 
-  td::actor::Task<ResolvedState> resolve_state(ParentId id) {
+  td::actor::Task<ResolvedState> resolve_state(ParentId id, std::optional<CandidateId> requesting_candidate) {
     if (!state_cache_.contains(id) && !state_inflight_.try_admit()) {
       ++state_admission_rejections_;
       co_return td::Status::Error(
@@ -283,7 +283,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       SCOPE_EXIT {
         state_inflight_.release();
       };
-      auto result = co_await resolve_state_inner(id).wrap();
+      auto result = co_await resolve_state_inner(id, requesting_candidate).wrap();
       for (auto& p : entry.promises) {
         p.set_result(result.clone());
       }
@@ -373,7 +373,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     co_return Finalization::Finalized;
   }
 
-  td::actor::Task<ResolvedState> resolve_state_inner(ParentId id) {
+  td::actor::Task<ResolvedState> resolve_state_inner(ParentId id,
+                                                     std::optional<CandidateId> requesting_candidate) {
     std::vector<CandidateRef> candidates_to_apply;
     std::optional<double> gen_utime_exact;
     std::optional<ChainStateRef> state;
@@ -447,7 +448,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         auto genesis = co_await genesis_.get();
         auto manager_state =
             co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                              {candidate->block_id()}, genesis->state->min_mc_block_id())
+                                              {candidate->block_id()}, genesis->state->min_mc_block_id(),
+                                              requesting_candidate)
                 .wrap();
         if (manager_state.is_ok()) {
           state = manager_state.move_as_ok();
@@ -509,7 +511,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       for (unsigned attempt = 0; attempt < 3; ++attempt) {
         auto manager_state =
             co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                              base_blocks, genesis->state->min_mc_block_id())
+                                              base_blocks, genesis->state->min_mc_block_id(), requesting_candidate)
                 .wrap();
         if (manager_state.is_ok()) {
           state = manager_state.move_as_ok();

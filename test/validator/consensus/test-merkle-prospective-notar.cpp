@@ -412,7 +412,8 @@ class StaticManager : public ManagerFacade {
 
   // Only the zerostate is available from the manager: the whole chain above it must be
   // replayed from candidate data, which is the path under test.
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp) override {
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp,
+                                                          std::optional<CandidateId>) override {
     if (block_id == FIRST_PARENT) {
       co_return gen_shard_state(0);
     }
