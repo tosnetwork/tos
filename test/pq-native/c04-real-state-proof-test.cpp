@@ -1272,6 +1272,10 @@ int main(int argc, char **argv) {
     // This process has no fixture signing key and receives no FinalCert TL
     // file. The hash arguments are assertions; all evidence bytes must come
     // from the two retained production DB/archive roots.
+    if (keys.has_value()) {
+      std::cerr << "N5_CUT5_FAILED: cold process unexpectedly constructed signing-key custody\n";
+      return 1;
+    }
     const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
         consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
                                          context.expected_session_id, "") + "/db/";
