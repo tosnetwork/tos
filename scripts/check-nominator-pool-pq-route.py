@@ -66,6 +66,8 @@ def validate(source: str) -> None:
     primary = method(tree, "stake_through_pool")
     feedback = method(tree, "record_pool_stake_feedback")
     history = method(tree, "_transactions_since")
+    window = method(tree, "stakeable_election_id")
+    window_parser = method(tree, "stakeable_election_id_from_live_status")
     upkeep = method(tree, "keep_elections_alive")
     selection = method(tree, "record_pool_validator_selection")
     recover = method(tree, "recover")
@@ -146,6 +148,34 @@ def validate(source: str) -> None:
             and "await self.record_pool_stake_feedback(final_query_id, label='pool-stake-after-drain')"
             in ast.unparse(execute),
             "second-stake timeout no longer collects exact-query chain feedback")
+    require("'participant_list_extended'" in ast.unparse(window)
+            and "state.sync_utime" in ast.unparse(window)
+            and bool(calls(window, "stakeable_election_id_from_live_status")),
+            "final election window no longer comes from Elector status and chain time")
+    parser_text = ast.unparse(window_parser)
+    require("elect_close - chain_utime > minimum_window_seconds" in parser_text
+            and "failed != 0" in parser_text and "finished != 0" in parser_text,
+            "final election selector no longer rejects closed or finished windows")
+    final_retries = [
+        call for call in calls(execute, "retry")
+        if keyword(call, "description") == repr("an election with an open pool-stake acceptance window")
+    ]
+    require(len(final_retries) == 1 and len(final_retries[0].args) == 1
+            and ast.unparse(final_retries[0].args[0]) == "self.stakeable_election_id",
+            "final pool stake can select a nonzero but closed active_election_id")
+    rechecks = [
+        node for node in ast.walk(execute)
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "await self.stakeable_election_id() != final_election"
+        and any(isinstance(child, ast.Raise) for child in node.body)
+    ]
+    final_orders = [
+        call for call in calls(execute, "stake_through_pool")
+        if keyword(call, "label") == repr("pool-stake-after-drain")
+    ]
+    require(len(rechecks) == 1 and len(final_orders) == 1
+            and final_retries[0].lineno < rechecks[0].lineno < final_orders[0].lineno,
+            "final pool order is not preceded by a same-election live-window recheck")
     require(bool(calls(upkeep, "stake_support_pool")) and not calls(upkeep, "stake_directly"),
             "election upkeep bypasses controller-backed support pools")
     selection_text = ast.unparse(selection)
@@ -202,6 +232,11 @@ def self_test(source: str) -> None:
             ("controller_relay_result(\n                controller_transactions", "ignored_relay(\n                controller_transactions"),
         "history stops after one page":
             ("cursor = previous\n", "return transactions, pages, False, latest_cursor\n"),
+        "closed election selected by nonzero ID":
+            ("                self.stakeable_election_id,\n", "                self.active_election_id,\n"),
+        "final election recheck removed":
+            ("if await self.stakeable_election_id() != final_election:",
+             "if False and await self.stakeable_election_id() != final_election:"),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
@@ -217,7 +252,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and Config34 lookup are wired; the second-stake timeout pages to pre-order cursors and records the exact order, Elector reply, controller bounce and relay result; no live second stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and Config34 lookup are wired; final stake selection uses Elector close/finished and chain time with a same-ID recheck; the second-stake timeout pages to pre-order cursors and records the exact order, Elector reply, controller bounce and relay result; no live second stake is claimed")
 
 
 if __name__ == "__main__":

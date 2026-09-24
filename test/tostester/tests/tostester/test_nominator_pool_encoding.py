@@ -205,6 +205,79 @@ async def test_stake_history_page_containing_baseline_covers_a_crossing_previous
         await lifecycle._transactions_since(history, pool, baseline)
 
 
+def test_retained_e48_elector_reply_boc_names_the_second_order_and_reason():
+    # Exact 33-byte msg_dataRaw.body from e48-feedback.typescript at the pool's
+    # transaction LT 2973000009; the report's old paginator missed this page.
+    raw_boc = bytes.fromhex(
+        "B5EE9C72410101010012000020EE6F454C18D81E04FD033C07000000000F0F0726"
+    )
+    body = Cell.one_from_boc(raw_boc).begin_parse()
+    assert body.load_uint(32) == 0xEE6F454C, "Elector returned new_stake_error"
+    assert body.load_uint(64) == 1790213858653322247, "reply belongs to the second order"
+    assert body.load_uint(32) == 0, "Elector refused the closed election window"
+    assert body.remaining_bits == 0 and body.remaining_refs == 0
+
+
+def test_stakeable_election_uses_retained_nested_lite_result_and_chain_time():
+    # The result line is from the retained Stage A
+    # pq-first-three-participants.txt lite-client artifact. In particular the
+    # participant field is a nested list, not a flat or synthetic scalar.
+    output = (
+        "latest masterchain block known to server is (...) created at 1790167863 (0 seconds ago)\n"
+        "result:  [ 1790168036 1790167976 10000000000000 33002996815200 "
+        "([55392454601739683101030057185327320091104615244476379864841778615102464643493 "
+        "[11000998938400 65536 55392454601739683101030057185327320091104615244476379864841778615102464643493 "
+        "10283624232448845151441132844116982100985049163861272061177687486932267280526 1 "
+        "14925801811550709604792904528259573664636697764697987786843027814863549428870]] "
+        "[63010924172525535203294055080544777106932079563086164000710734919987150757014 "
+        "[11000998938400 65536 63010924172525535203294055080544777106932079563086164000710734919987150757014 "
+        "47147084184177998116520657006052665219782500765440204427466007507775635949696 1 "
+        "59543992462595740249799304067798352916495611302171032631772060641303919675445]] "
+        "[99015643309189529179487703194031552256490370530619076264926756871097233987544 "
+        "[11000998938400 65536 99015643309189529179487703194031552256490370530619076264926756871097233987544 "
+        "72573946950039640214173829320371631433146214514938492398138548629191990669208 1 "
+        "26441272602624862153025102099042242420141956466890100754248526485588422033076]]) 0 0 ] \n"
+        "remote result (not to be trusted): [ 999 999 0 0 () 0 0 ]\n"
+    )
+    election_id = 1790168036
+    assert lifecycle.stakeable_election_id_from_live_status(output, 1790167900) == election_id
+    assert lifecycle.stakeable_election_id_from_live_status(output, 1790167976) == 0
+    assert lifecycle.stakeable_election_id_from_live_status(output, 1790167950) == 0
+    wrapped = output.replace("]]) 0 0 ]", "]])\n0 0 ]")
+    assert lifecycle.stakeable_election_id_from_live_status(wrapped, 1790167900) == election_id
+    finished = output.replace("]]) 0 0 ]", "]]) 0 -1 ]")
+    assert lifecycle.stakeable_election_id_from_live_status(finished, 1790167900) == 0
+    with pytest.raises(ValueError, match="unterminated result stack"):
+        lifecycle.stakeable_election_id_from_live_status(output.replace("]]) 0 0 ]", "]]) 0 0 "), 1790167900)
+
+
+@pytest.mark.asyncio
+async def test_nonzero_active_id_does_not_override_closed_live_election(tmp_path, monkeypatch):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="closed-election-test")
+    election_id = 1790213868
+
+    async def fake_runmethod(address, method):
+        assert address == lifecycle.raw_address(lifecycle.ELECTOR)
+        if method == "active_election_id":
+            return f"result: [ {election_id} ]"
+        assert method == "participant_list_extended"
+        return "result: [ 1790213868 1790213808 1 1 () 0 0 ]"
+
+    class FakeClient:
+        chain_utime = 1790213858
+
+        async def raw_get_account_state(self, address):
+            assert address == lifecycle.ELECTOR
+            return SimpleNamespace(sync_utime=self.chain_utime)
+
+    client = FakeClient()
+    runner.client = client
+    monkeypatch.setattr(runner, "runmethod", fake_runmethod)
+    assert await runner.active_election_id() == election_id
+    assert await runner.stakeable_election_id() == 0, "nonzero ID is not an accepting window"
+    client.chain_utime = 1790213700
+    assert await runner.stakeable_election_id() == election_id
+
 @pytest.mark.asyncio
 async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
     runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-query-test")

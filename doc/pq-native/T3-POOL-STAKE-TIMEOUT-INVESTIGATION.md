@@ -73,7 +73,12 @@ GREEN; a page that crosses without the exact LT+hash still fails closed.
 
 The retained **pool** page contains the second order transaction at LT
 `2973000003` and an inbound message **from the Elector** at LT `2973000009`.
-Decoding the latter's full 33-byte message BOC yields opcode `0xee6f454c`
+Its `msg_dataRaw.body`, copied from `e48-feedback.typescript`'s
+`raw_transactions` reply, is the full 33-byte BOC
+`B5EE9C72410101010012000020EE6F454C18D81E04FD033C07000000000F0F0726`.
+The tracked `test_retained_e48_elector_reply_boc_names_the_second_order_and_reason`
+decodes those exact bytes and checks that no bits or references remain.
+Decoding yields opcode `0xee6f454c`
 (`new_stake_error`), the exact query ID above, reason **0**, and no trailing
 bits or refs. The retained **controller** page contains the matching pool
 relay at LT `2973000005` and an outgoing `PQst` message to the Elector;
@@ -81,6 +86,13 @@ therefore this was not a missing controller relay. The pool page between the
 order and reply contains no controller bounce. The recorder does not expose a
 separate parsed controller `aborted` boolean, so do not invent one: the
 outgoing Elector message and returned Elector opcode establish the route.
+
+This is **raw-recorder evidence**, not a retroactive correction of the e48
+`report.json`: that report remains `INCONCLUSIVE` with zero scanned pages
+because its paginator failed before analysis. Reading the saved raw replies
+shows the exact baseline in each page, the pool's two newer transactions and
+the controller's one newer transaction. The corrected paginator will report
+that coverage on a future run; no new run is claimed here.
 
 Reason 0 is the Elector's “no active election / finished election / election
 deadline reached” family (`elector-code.fc:236-242,303-311`). The accelerated
@@ -92,6 +104,18 @@ dictionary exists, including after its accepting window closes. The final
 predicate `value > 0` therefore selected a stale election. This is the
 specific script-level boundary to repair; it is not a controller-witness or
 stake-amount refusal and does not justify extending the 180-second wait.
+The selector now reads `participant_list_extended`'s actual `elect_close` and
+`finished` fields, compares them to the lite-server chain time with a
+30-second **harness send allowance**, and rechecks the same `elect_at`
+immediately before making the final wallet order. This guard concerns the
+script's fee-bearing order timing, not Simplex or PQ consensus parameters.
+The parser test embeds the exact nested `result:` line from retained
+`test/integration/.pq-election-first-round-retry/20260923T124354Z/artifacts/pq-first-three-participants.txt`
+and also checks a wrapped-line variant. The source guard rejects restoring
+the old `active_election_id` selection or dropping the pre-send recheck;
+the short behavior test proves that the e48-style nonzero ID is rejected
+after its close while an open window is returned. No new live
+second-stake acceptance is claimed; T3 remains OPEN.
 
 ## Contract-level falsification and bounded fixture correction
 

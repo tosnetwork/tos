@@ -272,6 +272,41 @@ async def _transactions_since(
     return transactions, pages, False, latest_cursor
 
 
+def stakeable_election_id_from_live_status(
+    participant_output: str, chain_utime: int, *, minimum_window_seconds: int = 30
+) -> int:
+    """Require an open Elector window, not merely a nonempty election dictionary.
+
+    `active_election_id` remains nonzero after `elect_close`. Use the Elector's
+    own close and finished fields and a fresh lite-server chain timestamp. The
+    small remaining-window allowance is for this harness's authorization and
+    wallet delivery, not a change to any consensus or election parameter.
+    """
+    start = re.search(r"^result:\s*\[", participant_output, re.MULTILINE)
+    if start is None:
+        raise ValueError("participant_list_extended has no parseable election window")
+    depth = 1
+    end = start.end()
+    while end < len(participant_output) and depth:
+        if participant_output[end] == "[":
+            depth += 1
+        elif participant_output[end] == "]":
+            depth -= 1
+        end += 1
+    if depth:
+        raise ValueError("participant_list_extended has an unterminated result stack")
+    stack = participant_output[start.end():end - 1]
+    prefix = re.match(r"\s*(\d+)\s+(\d+)\s+", stack)
+    suffix = re.search(r"\s+(-?\d+)\s+(-?\d+)\s*$", stack)
+    if prefix is None or suffix is None:
+        raise ValueError("participant_list_extended has no parseable election window")
+    elect_at, elect_close = map(int, prefix.groups())
+    failed, finished = map(int, suffix.groups())
+    if elect_at == 0 or failed != 0 or finished != 0:
+        return 0
+    return elect_at if elect_close - chain_utime > minimum_window_seconds else 0
+
+
 def pool_controller_bounce(
     transactions: list[Any], controller: Address, query_id: int
 ) -> dict[str, Any] | None:
@@ -2077,6 +2112,13 @@ class PoolLifecycle:
             if token.lstrip("-").isdigit():
                 return int(token)
         return 0
+
+    async def stakeable_election_id(self) -> int:
+        """Read the Elector's acceptance window against this lite-server's chain time."""
+        assert self.client is not None
+        output = await self.runmethod(raw_address(ELECTOR), "participant_list_extended")
+        state = await self.client.raw_get_account_state(ELECTOR)
+        return stakeable_election_id_from_live_status(output, state.sync_utime)
 
     async def config34_selection(self) -> Config34Selection:
         output = await self.lite("time", "getconfig 34")
@@ -4040,11 +4082,15 @@ class PoolLifecycle:
             # closed, and the Elector refuses a stake for a finished one --
             # which looks exactly like the pool still being blocked.
             final_election = await self.retry(
-                self.active_election_id,
+                self.stakeable_election_id,
                 timeout=900,
-                description="an election the pool can still enter",
+                description="an election with an open pool-stake acceptance window",
                 predicate=lambda value: value > 0,
             )
+            # The election may rotate while the retry returns; do not sign or
+            # send for an ID whose live accepting window just closed.
+            if await self.stakeable_election_id() != final_election:
+                raise RuntimeError("final pool-stake election changed or closed before the order")
             final_query_id = await self.stake_through_pool(
                 final_election, label="pool-stake-after-drain"
             )
