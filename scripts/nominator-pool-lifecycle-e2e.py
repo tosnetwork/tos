@@ -1759,6 +1759,7 @@ class PoolLifecycle:
         integrated_source_config: Path | None = None,
         tosctl_path: Path | None = None,
         rpc_base_port: int = 0,
+        product_rpc_address: str | None = None,
         ready_out: Path | None = None,
         hold_until: Path | None = None,
     ) -> None:
@@ -1796,6 +1797,7 @@ class PoolLifecycle:
         )
         self.tosctl_path = tosctl_path
         self.rpc_base_port = rpc_base_port
+        self.product_rpc_address = product_rpc_address
         self.ready_out = ready_out
         self.hold_until = hold_until
         if self.integrated_mode and (
@@ -2656,7 +2658,9 @@ class PoolLifecycle:
         await dht.run(StartOptions(threads=2, verbosity=3))
         for index, node in enumerate(self.nodes):
             arguments: list[str] = []
-            if self.integrated_mode and index < INTEGRATED_RPC_COUNT:
+            if self.product_rpc_address is not None and index == 0:
+                arguments = ["--json-rpc-address", self.product_rpc_address]
+            elif self.integrated_mode and index < INTEGRATED_RPC_COUNT:
                 arguments = [
                     "--json-rpc-address",
                     self.integrated_rpc_addresses[index],
