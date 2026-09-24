@@ -33,6 +33,7 @@
 #include "validator/manager-resource-policy.h"
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
+#include "vm/cells/MerkleUpdate.h"
 
 #include "block-auto.h"
 
@@ -2782,19 +2783,21 @@ void test_state_resolver_inflight_admission() {
   CHECK(admission.count() == 2);
 }
 
-void test_skipped_slot_resolution_policy() {
-  CandidateId requested{.slot = 411,
-                        .hash = from_hex("1111111111111111111111111111111111111111111111111111111111111111")};
-  CandidateId conflicting{.slot = 411,
-                          .hash = from_hex("2222222222222222222222222222222222222222222222222222222222222222")};
+void test_merkle_exact_parent_height_control() {
+  // The recovered failures expected old state N but applied the update to
+  // N-1. An exact ancestor supplies N; omitting its transition supplies N-1.
+  for (BlockSeqno expected : {BlockSeqno{5}, BlockSeqno{23}}) {
+    auto exact_parent_state = gen_shard_state(expected);
+    auto skipped_base_state = gen_shard_state(expected - 1);
+    auto next_state = gen_shard_state(expected + 1);
+    auto update = vm::CellBuilder::create_merkle_update(exact_parent_state, next_state);
 
-  CHECK(simplex::select_skipped_slot_resolution(requested, false, std::nullopt).move_as_ok() ==
-        simplex::SkippedSlotResolution::ResolveCandidate);
-  CHECK(simplex::select_skipped_slot_resolution(requested, true, std::nullopt).move_as_ok() ==
-        simplex::SkippedSlotResolution::UseAvailableBase);
-  CHECK(simplex::select_skipped_slot_resolution(requested, true, requested).move_as_ok() ==
-        simplex::SkippedSlotResolution::ResolveCandidate);
-  CHECK(simplex::select_skipped_slot_resolution(requested, true, conflicting).is_error());
+    auto correct = vm::MerkleUpdate::apply(exact_parent_state, update);
+    CHECK(correct.is_ok());
+    CHECK(correct.move_as_ok()->get_hash() == next_state->get_hash());
+
+    CHECK(vm::MerkleUpdate::apply(skipped_base_state, update).is_error());
+  }
 }
 
 void test_candidate_resolver_retention() {
@@ -3346,7 +3349,7 @@ int main(int argc, char* argv[]) {
   bool run_candidate_relay_eviction_test = false;
   bool run_state_resolver_cache_unit_test = false;
   bool run_state_resolver_inflight_admission_unit_test = false;
-  bool run_skipped_slot_resolution_unit_test = false;
+  bool run_merkle_exact_parent_height_control_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
   bool run_simplex_db_finalized_slot_dedup_unit_test = false;
@@ -3525,9 +3528,9 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "state-resolver-inflight-admission-unit-test",
                "verify in-flight resolution admission control bounds concurrent pending entries",
                [&]() { run_state_resolver_inflight_admission_unit_test = true; });
-  p.add_option('\0', "skipped-slot-resolution-unit-test",
-               "verify skip-only and simultaneous skip/notar candidate resolution",
-               [&]() { run_skipped_slot_resolution_unit_test = true; });
+  p.add_option('\0', "merkle-exact-parent-height-control-test",
+               "verify the recovered N/N-1 Merkle base-state mismatch shape",
+               [&]() { run_merkle_exact_parent_height_control_test = true; });
   p.add_option('\0', "candidate-resolver-retention-unit-test",
                "verify finalized-window pruning and in-flight retention",
                [&]() { run_candidate_resolver_retention_unit_test = true; });
@@ -3590,8 +3593,8 @@ int main(int argc, char* argv[]) {
     test_state_resolver_inflight_admission();
     return 0;
   }
-  if (run_skipped_slot_resolution_unit_test) {
-    test_skipped_slot_resolution_policy();
+  if (run_merkle_exact_parent_height_control_test) {
+    test_merkle_exact_parent_height_control();
     return 0;
   }
   if (run_candidate_resolver_retention_unit_test) {

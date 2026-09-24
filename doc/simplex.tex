@@ -164,7 +164,7 @@ The skip stage provides {\em liveness} when the leader fails. If a validator doe
 \item When skip votes accumulate to $W_{\text{thresh}}$, a {\em skip certificate\/} $\SkipCert$ is formed.
 \end{enumerate}
 
-The skip certificate proves that at least $2/3+1$ of validator weight has agreed that this slot should be empty. The protocol then advances to the next slot.
+The skip certificate proves that at least $2/3+1$ of validator weight has agreed to advance beyond this slot. It does not prove that no candidate for the slot exists: a notarization certificate may also exist before finality. The protocol then advances to the next slot.
 
 \nxsubpoint\emb{Timeout mechanism}
 The timeout for producing a skip vote is managed by {\tt ConsensusImpl}:
@@ -192,14 +192,15 @@ The protocol enforces strict per-validator, per-slot voting invariants to preven
 \item Each validator casts at most one finalize vote per slot.
 \item If a validator casts both a notarize vote and a finalize vote for the same slot, they must reference the same candidate.
 \item A validator {\em cannot\/} cast both a skip vote and a finalize vote for the same slot (these are mutually exclusive outcomes).
+\item A validator may cast both a notarize vote and a skip vote for the same slot, provided it has not finalized that slot. This permits a validator that validated a candidate to participate in liveness after a timeout.
 \end{enumerate}
 
 Any violation of these invariants constitutes a {\em misbehavior report} containing the two conflicting signed votes as cryptographic proof of equivocation.
 
 \nxpoint\emb{Safety argument}\label{p:safety}
-The mutual exclusivity of notarization certificates and skip certificates follows from the BFT threshold. Suppose both $\NotarCert(c)$ and $\SkipCert(s)$ exist for the same slot. The signers of $\NotarCert$ have total weight $\geq W_{\text{thresh}}$ and the signers of $\SkipCert$ also have total weight $\geq W_{\text{thresh}}$. Their intersection must have weight $\geq 2W_{\text{thresh}} - W_{\text{total}} > W_{\text{total}}/3$, which means more than $1/3$ of the total weight signed both. But Invariant~5 prohibits any honest validator from doing so. Therefore, at least $W_{\text{total}}/3$ weight must be Byzantine, contradicting our assumption $f<n/3$. This proves that for any slot, at most one of $\{\NotarCert, \SkipCert\}$ can exist.
+Notarization and skip certificates may coexist for one slot: an honest validator may sign both votes before finalization. The safety-critical exclusion is between a finalization certificate and a skip certificate. Their supermajority signer sets intersect in more than one third of total validator weight, whose honest members cannot sign both votes by Invariant~5. Under $f<n/3$, the two certificates cannot coexist.
 
-Similarly, two finalization certificates for different candidates in the same slot cannot coexist under $f<n/3$.
+Two finalization certificates for different candidates in the same slot also cannot coexist under $f<n/3$. A dual-certified notarize/skip slot may cause nodes to construct different pre-finality branches. Once a candidate has signed an exact parent CandidateId, state resolution must follow that explicit chain; local skip evidence cannot erase its ancestor.
 
 \clearpage
 %========================================================================
@@ -233,14 +234,13 @@ The {\tt PoolImpl} component maintains per-slot, per-candidate weight accumulato
 \end{enumerate}
 
 \nxpoint\emb{Certificate uniqueness}\label{p:cert.unique}
-For a given slot, the following certificates are mutually exclusive:
+For a given slot, the following certificates are mutually exclusive under $f<n/3$:
 \begin{itemize}
-\item $\NotarCert(c)$ and $\SkipCert(s)$ for the same slot (proved in~\ptref{p:safety}).
 \item $\FinalCert(c)$ and $\FinalCert(c')$ for different candidates $c \neq c'$ in the same slot.
 \item $\FinalCert(c)$ and $\SkipCert(s)$ for the same slot.
 \end{itemize}
 
-A slot may have both $\NotarCert(c)$ and $\FinalCert(c)$ for the {\em same\/} candidate; indeed, this is the normal progression for a successfully finalized block.
+A slot may have both $\NotarCert(c)$ and $\SkipCert(s)$. This is a pre-finality ambiguity, not a finalized-state ambiguity. A later candidate commits to its signed parent CandidateId, and state resolution follows that chain. A slot may also have both $\NotarCert(c)$ and $\FinalCert(c)$ for the {\em same\/} candidate; this is the normal progression for a successfully finalized block.
 
 \clearpage
 %========================================================================
@@ -277,6 +277,8 @@ When a finalization certificate is observed for slot~$s$ with candidate~$c$:
 
 \nxpoint\emb{Skipped slot handling}\label{p:skip.handling}
 A skipped slot does not produce a block, but the protocol still advances its internal slot counter. The next non-skipped block's {\em parent} reference points to the most recently finalized block, which may be several slots earlier. This creates a sparse chain where consecutive finalized blocks may have non-consecutive slot numbers.
+
+The available base used to construct a future candidate and the parent of an already-signed candidate are distinct. A skip certificate may advance the available base for a new proposal. It must not substitute a different ancestor for an exact CandidateId already embedded in a signed candidate chain.
 
 \nxpoint\emb{State caching}\label{p:state.cache}
 The {\tt StateResolverImpl} caches computed states to avoid redundant re-application of blocks. This is important because multiple slots may finalize in rapid succession (e.g., after a network partition heals), and the finalization of later blocks requires the state produced by earlier blocks.

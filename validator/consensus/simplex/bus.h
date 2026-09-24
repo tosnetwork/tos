@@ -107,19 +107,6 @@ struct ResolveCandidate {
   std::string contents_to_string() const;
 };
 
-// Purely local query answered from Pool's own in-memory slot state -- no
-// network round-trip, no candidate resolution. Lets StateResolver skip an
-// exact CandidateId only when its slot is skip-certified and has no notarized
-// candidate. A slot may legally have both SkipCert and NotarCert, in which
-// case the notarized candidate must still be resolved and applied.
-struct QuerySlotSkipped {
-  using ReturnType = std::optional<ParentId>;
-
-  CandidateId id;
-
-  std::string contents_to_string() const;
-};
-
 // Read-only observability: number of CandidateStates the resolver currently
 // tracks in memory whose slot is at or above min_slot. Used by diagnostics
 // and by tests that assert a peer cannot grow this map with out-of-window ids
@@ -190,11 +177,6 @@ struct QueryVoteIngress {
   std::string contents_to_string() const;
 };
 
-enum class SkippedSlotResolution { ResolveCandidate, UseAvailableBase };
-
-td::Result<SkippedSlotResolution> select_skipped_slot_resolution(const CandidateId& requested, bool is_skipped,
-                                                                 std::optional<CandidateId> notarized);
-
 struct StoreCandidate {
   using ReturnType = td::Unit;
 
@@ -250,7 +232,7 @@ class Bus : public consensus::Bus {
   using Parent = consensus::Bus;
   using Events = td::TypeList<BroadcastVote, PersistOwnVoteIntent, PersistOwnSignedVote, NotarizationObserved,
                               FinalizationObserved, LeaderWindowObserved, WaitForParent, ResolveCandidate,
-                              StoreCandidate, ResolveState, SaveCertificate, QueryValidatorGroupInfo, QuerySlotSkipped,
+                              StoreCandidate, ResolveState, SaveCertificate, QueryValidatorGroupInfo,
                               QueryResolverTrackedStateCount, QueryFinalizationState, QueryVoteIngress>;
 
   Bus() = default;
