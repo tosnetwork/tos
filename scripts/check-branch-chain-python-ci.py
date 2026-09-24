@@ -83,6 +83,7 @@ def main() -> int:
     for test_name, boundary in (
         ("test-n5-manager-db-fixture", "FinalCert journal cold read"),
         ("test-n5-accept-block", "PQ AcceptBlock cold read"),
+        ("test-n5-joined-finalcert", "same-FinalCert actor and cold persistence path"),
     ):
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -105,6 +106,14 @@ def main() -> int:
             cmake,
         ) is not None,
         "N5 FinalCert journal CTest is absent",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-joined-finalcert COMMAND test-c04-real-state-proof "
+            r"--n5-joined\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        ) is not None,
+        "N5 same-FinalCert actor CTest is absent or no longer invokes its joined mode",
     )
     c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
     require(
@@ -174,7 +183,7 @@ def main() -> int:
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
-        "both N5 FinalCert-journal and AcceptBlock cold-read CTests, "
+        "N5 FinalCert-journal, AcceptBlock, and same-FinalCert actor cold-read CTests, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
         "and five named restart-origin controls, "

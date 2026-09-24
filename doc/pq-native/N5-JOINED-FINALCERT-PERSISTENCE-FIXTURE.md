@@ -1,0 +1,64 @@
+# N01 same-FinalCert actor/DB slice (still OPEN)
+
+The `test-n5-joined-finalcert` CTest uses the valid PQ Config34 seq0→seq1
+fixture from `c04-real-state-proof-test.cpp`. It builds one candidate and one
+quorum-signed NotarCert and FinalCert for the same `CandidateId`. The candidate
+is seeded through production `StoreCandidate`; the two certificates enter the
+production Pool as serialized `IncomingProtocolMessage`s. The fixture waits for
+the NotarCert to make that exact candidate resolvable before sending the
+FinalCert. Pool verifies the certificate, awaits production `SaveCertificate`,
+then emits `FinalizationObserved`; StateResolver awaits production
+`FinalizeBlock`; BlockAccepter forwards the resulting PQ signature set to the
+real Manager's `run_accept_block_query`, including RootDb/ApplyBlock. Only after
+that return does StateResolver write the exact finalized marker.
+
+A second process reads the same Simplex RocksDB root and RootDb root. It
+requires the original serialized FinalCert under its production journal key,
+verifies that cert again under the Config34 signers, and finds the exact
+`CandidateId` finalized marker. From RootDb it requires the seq1 handle flags,
+BlockProof bytes and PQ verification, applied state/root, block bytes and
+seq0→seq1 `next`. It compares every PQ signature byte in the cold BlockProof
+against that one recovered FinalCert, not merely two independently valid
+signature sets. Its wrong-signature control alters one *expected* byte after
+journal verification and requires the named proof-comparison refusal. A
+comparison-bypass source mutation made the CTest fail on that control.
+
+This is a local actor/DB boundary, not a real node network. Test-supplied
+`StoreCandidate` and transport metadata do not prove candidate transport
+authentication or ADNL. The FinalCert is made by the test signers and admitted
+by production Pool, not assembled by Pool from live votes. The production
+Bridge's anonymous `ManagerFacadeImpl` is replaced by a narrow test facade
+that forwards `accept_block` to the same production `run_accept_block_query`;
+it never substitutes a success result. The fixture does not separately cold
+read the #13 signature file, which may be moved to archive after acceptance;
+the persisted BlockProof is its observed PQ evidence. No write-after crash
+boundary is claimed here.
+
+Local pre-commit evidence (source tree based on `6d0d08d06`, with this unit's
+tracked patch):
+
+| Evidence | Result |
+| --- | --- |
+| `cmake --build build --target test-c04-real-state-proof -j4` | exit 0 |
+| `ctest --test-dir build -V -R '^test-n5-joined-finalcert$'` | exit 0; [raw log](../../test/integration/.n5-manager-db-fixture-20260924/n5-joined-final-green.log), SHA-256 `1740c72ea6a205541a7cd884ccc4041eec276b0e8a44c4c7421903c1769965de` |
+| Final test source / binary | SHA-256 `1ae99a9f07b9a1ff4eae225bf202db00facb847f142b4af95ba3f84729355b1e` / `75c28b84ca6212b39cbbec3506f130cecad44c8e495b31b45d911bf4b3db1b4b` |
+| Comparison bypass `if (false && !expected_cert_signatures.empty())` | CTest exit 8; named failure `wrong-signature control missed exact proof comparison`; [raw red log](../../test/integration/.n5-manager-db-fixture-20260924/n5-joined-compare-bypass-red.log), SHA-256 `07bd0d5437c55d6fdc21b308a34099968984202b569dc6de2516effc250ce61a`; mutant source / binary SHA-256 `c491964f7e60fa0116d74af2ba078f49f951ad61c36ff373e98f1aa8b31d9854` / `5a207b65adad0dacaa47e212650d3ac1d4c1e76eead28140e90c1bac7b6770df` |
+| CI source guard: remove joined CTest run / change its CMake mode to `--n5-accept` | both exit 1 with their own named failure; restored guard exit 0 |
+
+The `N5_JOINED_DB_ROOT` and retained `.finalcert.tl` paths in each raw log are
+preserved for independent inspection. The individual roots are not added to
+Git. This artifact is **not fixed-commit CI evidence** until a commit including
+this test is pushed and the branch job reaches success.
+
+N01 remains OPEN. The next cutpoint controls, in task order, are:
+
+| Unit | Required crash/rebuild boundary |
+| --- | --- |
+| N02 | After real Pool FinalCert journal save, before #13 write: rebuild the same session, recover without losing or duplicating that certificate; reverse the save. |
+| N03 | After #13 signature storage, before BlockProof storage: cold read the exact signature bytes and resume to proof; reverse the #13 write. |
+| N04 | After BlockProof storage, before finalized marker: cold proof plus resumed marker, with a skipped-marker counterexample. |
+| N05 | After marker and block acceptance: restart and show neither finality loss nor duplicate application. |
+| N06 | Clear all actor memory, keep only DB/archive, and independently recover the same cert, proof, state and marker with wrong-root controls. |
+
+The current joined test supplies a reusable baseline for those cuts; it does
+not sign off N02–N06 or N07.

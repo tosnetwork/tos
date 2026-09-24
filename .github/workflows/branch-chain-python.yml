@@ -95,6 +95,9 @@ jobs:
       - name: Check N5 PQ AcceptBlock cold read
         run: ctest --test-dir build --output-on-failure -R '^test-n5-accept-block$'
 
+      - name: Check N5 same-FinalCert actor and cold persistence path
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-joined-finalcert$'
+
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote
       # must never be retried into an unsafe late vote.

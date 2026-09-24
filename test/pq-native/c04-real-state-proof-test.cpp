@@ -1,5 +1,7 @@
 // Offline C04 candidate: real PQ Config34 genesis -> seqno-1 Merkle/proof.
 #include <filesystem>
+#include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -23,6 +25,11 @@
 #include "validator/impl/ext-message-pool.hpp"
 #include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
+#include "validator/consensus/simplex/bus.h"
+#include "validator/consensus/simplex/certificate.h"
+#include "validator/consensus/chain-state.h"
+#include "validator/consensus/manager-facade.h"
+#include "validator/consensus/db-path.h"
 #include "validator/pq-finality-verification.h"
 #include "td/actor/actor.h"
 #include "td/utils/port/path.h"
@@ -385,12 +392,14 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   void verify_n5_accept_cold(BlockIdExt zero_id, BlockIdExt target_id, RootHash expected_root,
                              td::Ref<block::ValidatorSet> vset, ValidatorSessionId session,
                              std::string expected_proof_hash,
+                             std::vector<block::PQBlockSignature> expected_cert_signatures,
                              td::Promise<td::Unit> promise) {
     auto db = db_.get();
     td::actor::send_closure(db, &Db::get_block_handle, target_id,
                             td::PromiseCreator::lambda(
         [db, zero_id, target_id, expected_root, vset, session,
-         expected_proof_hash = std::move(expected_proof_hash), promise = std::move(promise)]
+         expected_proof_hash = std::move(expected_proof_hash),
+         expected_cert_signatures = std::move(expected_cert_signatures), promise = std::move(promise)]
         (td::Result<BlockHandle> result) mutable {
       if (result.is_error()) {
         return promise.set_error(result.move_as_error_prefix("N5 cold handle: "));
@@ -409,7 +418,8 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
       td::actor::send_closure(db, &Db::get_block_proof, ConstBlockHandle{handle},
                                 td::PromiseCreator::lambda(
             [db, handle, zero_id, target_id, expected_root, vset, session,
-             expected_proof_hash = std::move(expected_proof_hash), promise = std::move(promise)]
+             expected_proof_hash = std::move(expected_proof_hash),
+             expected_cert_signatures = std::move(expected_cert_signatures), promise = std::move(promise)]
             (td::Result<td::Ref<Proof>> result) mutable {
           if (result.is_error()) {
             return promise.set_error(result.move_as_error_prefix("N5 cold BlockProof: "));
@@ -435,6 +445,24 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
                                                      envelope.ok().claimed_weight);
           if (verified.is_error()) {
             return promise.set_error(verified.move_as_error_prefix("N5 cold BlockProof signatures: "));
+          }
+          if (!expected_cert_signatures.empty()) {
+            auto carried = envelope.ok().signatures->export_pq_signatures();
+            if (carried.is_error() || carried.ok().size() != expected_cert_signatures.size()) {
+              return promise.set_error(td::Status::Error("N5 cold proof signer count differs from exact FinalCert"));
+            }
+            for (const auto &expected : expected_cert_signatures) {
+              const auto match = std::find_if(carried.ok().begin(), carried.ok().end(),
+                                              [&](const auto &actual) {
+                return actual.validator_id == expected.validator_id &&
+                       actual.algorithm_id == expected.algorithm_id &&
+                       actual.signature.as_slice() == expected.signature.as_slice();
+              });
+              if (match == carried.ok().end()) {
+                return promise.set_error(td::Status::Error("N5 cold proof signature bytes differ from exact FinalCert"));
+              }
+            }
+            std::cout << "N5_JOINED_COLD_PROOF_SIGNATURES_MATCH count=" << carried.ok().size() << '\n';
           }
           td::actor::send_closure(db, &Db::get_block_state, ConstBlockHandle{handle},
                                   td::PromiseCreator::lambda(
@@ -497,20 +525,242 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   }
 };
 
+// The production Bridge owns an anonymous ManagerFacadeImpl. Keep this test
+// adapter narrow: BlockAccepter still calls its real accept_block request and
+// the adapter forwards it to the same production AcceptBlock query and real
+// Manager/RootDb. It does not simulate a successful acceptance.
+class N5AcceptFacade final : public consensus::ManagerFacade {
+ public:
+  N5AcceptFacade(td::actor::ActorId<ValidatorManager> manager, td::Ref<block::ValidatorSet> set)
+      : manager_(manager), set_(std::move(set)) {
+  }
+
+  td::actor::Task<GeneratedCandidate> collate_block(
+      CollateParams, td::CancellationToken) override {
+    co_return td::Status::Error("N5 fixture does not collate");
+  }
+
+  td::actor::Task<ValidateCandidateResult> validate_block_candidate(
+      BlockCandidate, ValidateParams, td::Timestamp) override {
+    co_return td::Status::Error("N5 fixture does not validate candidates");
+  }
+
+  td::actor::Task<> accept_block(BlockIdExt id, td::Ref<BlockData> data, size_t,
+                                  td::Ref<block::BlockSignatureSet> signatures,
+                                  ValidatorSessionId session, int block_mode, int finality_mode,
+                                  bool send_desc, bool apply) override {
+    auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+    run_accept_block_query(id, data, {}, set_, signatures, session, block_mode,
+                           finality_mode, send_desc, apply, manager_, std::move(promise));
+    co_return co_await std::move(task);
+  }
+
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
+      BlockIdExt id, td::Timestamp timeout, std::optional<consensus::CandidateId>) override {
+    auto state = co_await td::actor::ask(manager_, &ValidatorManager::wait_block_state_short,
+                                         id, 0, timeout, false);
+    co_return state->root_cell();
+  }
+
+  td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt id, td::Timestamp timeout) override {
+    co_return co_await td::actor::ask(manager_, &ValidatorManager::wait_block_data_short,
+                                      id, 0, timeout);
+  }
+
+ private:
+  td::actor::ActorId<ValidatorManager> manager_;
+  td::Ref<block::ValidatorSet> set_;
+};
+
 }  // namespace tos::validator
+
+namespace {
+
+namespace sx = tos::validator::consensus::simplex;
+
+std::shared_ptr<sx::Bus> n5_joined_bus(td::Ref<block::ValidatorSet> set,
+                                        ValidatorSessionId session,
+                                        td::actor::ActorId<consensus::ManagerFacade> facade,
+                                        const std::string &journal_path) {
+  auto bus = std::make_shared<sx::Bus>();
+  bus->session_id = session;
+  bus->shard = ShardIdFull{masterchainId};
+  bus->manager = facade;
+  bus->cc_seqno = set->get_catchain_seqno();
+  bus->validator_set_hash = set->get_validator_set_hash();
+  bus->config.protocol_version = 2;
+  bus->config.slots_per_leader_window = 4;
+  bus->validator_opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  for (const auto &descriptor : set->export_vector()) {
+    pq::ConsensusPQKey key;
+    key.algorithm_id = static_cast<pq::PQAlgorithmId>(descriptor.algorithm_id);
+    std::memcpy(key.key_id.data(), descriptor.key_id.value.data(), 32);
+    key.public_key = descriptor.pq_public_key;
+    const auto adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(descriptor)};
+    bus->validator_set.push_back(consensus::PeerValidator{
+        .validator_id = descriptor.validator_id,
+        .idx = consensus::PeerValidatorId{bus->validator_set.size()},
+        .consensus_key = std::move(key),
+        .transport_key_id = adnl_id.pubkey_hash(),
+        .adnl_id = adnl_id,
+        .weight = descriptor.weight,
+    });
+    bus->all_validators.push_back(adnl_id);
+    CHECK(tos::checked_add_validator_weight(bus->total_weight, descriptor.weight));
+  }
+  bus->local_id = bus->validator_set.front();
+  bus->local_adnl_id = bus->local_id->adnl_id;
+  bus->db = consensus::open_rocksdb_consensus_db(journal_path);
+  return bus;
+}
+
+template <typename V>
+td::Result<td::Ref<sx::Certificate<V>>> n5_joined_cert(V vote, const sx::Bus &bus,
+                                                        const pq_block_signature_test::Fixture &keys) {
+  auto unsigned_vote = serialize_tl_object(vote.to_tl(), true);
+  auto envelope = create_serialize_tl_object<tos_api::consensus_dataToSign>(bus.session_id,
+                                                                              unsigned_vote.clone());
+  std::vector<sx::tl::VoteSignatureRef> signatures;
+  for (size_t index = 0; index < 3; ++index) {
+    const auto &validator = bus.validator_set[index];
+    auto key_index = std::find(keys.validator_ids.begin(), keys.validator_ids.end(), validator.validator_id);
+    if (key_index == keys.validator_ids.end()) {
+      return td::Status::Error("N5 joined cert signer is not in Config34 fixture");
+    }
+    auto signed_vote = keys.stores[static_cast<size_t>(key_index - keys.validator_ids.begin())].sign_consensus(
+        std::string_view(envelope.data(), envelope.size()));
+    if (!signed_vote) {
+      return td::Status::Error("N5 joined cert signing failed");
+    }
+    signatures.push_back(create_tl_object<sx::tl::voteSignature>(static_cast<int>(index),
+                                                                  td::BufferSlice(signed_vote->signature)));
+  }
+  auto set = create_tl_object<sx::tl::voteSignatureSet>(std::move(signatures));
+  return sx::Certificate<V>::from_tl(std::move(*set), vote, bus);
+}
+
+class N5JoinedPublisher final : public td::actor::Actor {
+ public:
+  void publish(sx::BusHandle bus, consensus::CandidateRef candidate, sx::NotarCertRef notar,
+               sx::FinalCertRef final, td::Promise<td::Unit> promise) {
+    publish_inner(std::move(bus), std::move(candidate), std::move(notar), std::move(final),
+                  std::move(promise)).start().detach();
+  }
+
+ private:
+  td::actor::Task<> publish_inner(sx::BusHandle bus, consensus::CandidateRef candidate,
+                                   sx::NotarCertRef notar, sx::FinalCertRef final,
+                                   td::Promise<td::Unit> promise) {
+    const auto id = candidate->id;
+    auto stored = co_await bus.publish<sx::StoreCandidate>(candidate).wrap();
+    if (stored.is_error()) {
+      promise.set_error(stored.move_as_error_prefix("N5 StoreCandidate: "));
+      co_return td::Unit{};
+    }
+    const auto source = bus->validator_set.front().adnl_id;
+    bus.publish<consensus::IncomingProtocolMessage>(std::nullopt, source, notar->serialize());
+    auto resolved = co_await bus.publish<sx::ResolveCandidate>(id).wrap();
+    if (resolved.is_error() || resolved.ok().candidate->id != id || resolved.ok().notar->vote.id != id) {
+      promise.set_error(td::Status::Error("N5 Pool notar certificate did not make exact candidate resolvable"));
+      co_return td::Unit{};
+    }
+    bus.publish<consensus::IncomingProtocolMessage>(std::nullopt, source, final->serialize());
+    auto marker = create_serialize_tl_object<tos_api::consensus_simplex_db_key_finalizedBlock>(id.to_tl());
+    const auto deadline = td::Timestamp::in(30.0);
+    while (!deadline.is_in_past()) {
+      auto present = co_await bus->db->get_latest(marker.clone()).wrap();
+      if (present.is_error()) {
+        promise.set_error(present.move_as_error_prefix("N5 finalized marker: "));
+        co_return td::Unit{};
+      }
+      if (present.ok().has_value()) {
+        auto closed = co_await bus->db->close().wrap();
+        if (closed.is_error()) {
+          promise.set_error(closed.move_as_error_prefix("N5 consensus journal close: "));
+          co_return td::Unit{};
+        }
+        promise.set_value(td::Unit());
+        co_return td::Unit{};
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
+    }
+    promise.set_error(td::Status::Error("N5 same FinalCert did not reach finalized marker"));
+    co_return td::Unit{};
+  }
+};
+
+bool n5_cold_joined_journal(const std::string &path, ValidatorSessionId session,
+                             td::Ref<block::ValidatorSet> set, consensus::CandidateId id,
+                             td::Slice expected_cert,
+                             std::vector<block::PQBlockSignature> &expected_signatures) {
+  td::actor::Scheduler scheduler({1});
+  bool matched = false;
+  scheduler.run_in_context([&] {
+    auto bus = n5_joined_bus(set, session, {}, path);
+    const auto hash = sha256_bits256(expected_cert);
+    auto cert_key = create_serialize_tl_object<tos_api::consensus_simplex_db_key_vote>(hash);
+    auto saved = bus->db->get(cert_key.as_slice());
+    if (!saved) {
+      std::cerr << "N5_JOINED_COLD_FAILED: exact FinalCert journal key absent\n";
+      return;
+    }
+    auto wrapper = fetch_tl_object<tos_api::consensus_simplex_db_cert>(*saved, true);
+    if (wrapper.is_error() || !wrapper.ok()->cert_) {
+      std::cerr << "N5_JOINED_COLD_FAILED: FinalCert journal value is not db_cert\n";
+      return;
+    }
+    auto original = serialize_tl_object(wrapper.ok()->cert_, true);
+    if (original.as_slice() != expected_cert) {
+      std::cerr << "N5_JOINED_COLD_FAILED: FinalCert TL changed across restart\n";
+      return;
+    }
+    auto verified = sx::Certificate<sx::Vote>::from_tl(std::move(*wrapper.ok()->cert_), *bus);
+    if (verified.is_error() || !std::holds_alternative<sx::FinalizeVote>(verified.ok()->vote.vote) ||
+        std::get<sx::FinalizeVote>(verified.ok()->vote.vote).id != id) {
+      std::cerr << "N5_JOINED_COLD_FAILED: exact FinalCert fails production verification\n";
+      return;
+    }
+    for (const auto &item : verified.ok()->signatures) {
+      if (item.validator.value() >= bus->validator_set.size()) {
+        std::cerr << "N5_JOINED_COLD_FAILED: FinalCert signer index outside Config34\n";
+        return;
+      }
+      const auto &descriptor = bus->validator_set[item.validator.value()];
+      expected_signatures.push_back(block::PQBlockSignature{
+          descriptor.validator_id, descriptor.consensus_key.algorithm_id, item.signature.clone()});
+    }
+    auto marker_key = create_serialize_tl_object<tos_api::consensus_simplex_db_key_finalizedBlock>(id.to_tl());
+    if (!bus->db->get(marker_key.as_slice()).has_value()) {
+      std::cerr << "N5_JOINED_COLD_FAILED: exact finalized marker absent\n";
+      return;
+    }
+    matched = true;
+    std::cout << "N5_JOINED_COLD_JOURNAL_MARKER_OK slot=" << id.slot
+              << " candidate_hash=" << id.hash.to_hex() << " finalcert_hash=" << hash.to_hex() << '\n';
+  });
+  scheduler.run(0.01);
+  scheduler.stop();
+  return matched;
+}
+
+}  // namespace
 
 int main(int argc, char **argv) {
   const bool n5_accept = argc == 3 && std::string_view(argv[1]) == "--n5-accept";
+  const bool n5_joined = argc == 3 && std::string_view(argv[1]) == "--n5-joined";
+  const bool n5_joined_reopen = argc == 6 &&
+      (std::string_view(argv[1]) == "--n5-joined-reopen" ||
+       std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature");
   const bool n5_reopen = argc == 5 && (std::string_view(argv[1]) == "--n5-reopen" ||
                                            std::string_view(argv[1]) == "--n5-reopen-bad-hash" ||
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_reopen)) {
-    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_reopen || n5_joined_reopen)) {
+    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_reopen) ? argv[2] : argv[1], std::ios::binary);
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
   if (!input) {
@@ -726,7 +976,40 @@ int main(int argc, char **argv) {
     std::cerr << "C04_REAL_PROOF_FAILED: wrong hash certificate was not attributed to finality evidence\n";
     return 1;
   }
-  if (n5_reopen) {
+  if (n5_reopen || n5_joined_reopen) {
+    std::vector<block::PQBlockSignature> exact_cert_signatures;
+    if (n5_joined_reopen) {
+      std::ifstream final_file(argv[5], std::ios::binary);
+      std::ostringstream final_bytes;
+      final_bytes << final_file.rdbuf();
+      if (!final_file || final_bytes.str().empty()) {
+        std::cerr << "N5_JOINED_COLD_FAILED: retained exact FinalCert TL absent\n";
+        return 1;
+      }
+      BlockCandidate joined_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                                  block_boc.clone(), td::BufferSlice{}};
+      const auto joined_id = consensus::CandidateHashData::create_full(joined_block, std::nullopt)
+                                 .build_id_with(0);
+      const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+          consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                            context.expected_session_id, "") + "/db/";
+      const auto original = final_bytes.str();
+      if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                  joined_id, td::Slice(original), exact_cert_signatures)) {
+        return 1;
+      }
+      if (std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature") {
+        // A positive proof-verification result alone cannot bind the proof to
+        // this exact saved FinalCert. Perturb only the expected bytes after
+        // the journal has been read and verified; the cold proof comparison
+        // must reject the resulting mismatch by its own named assertion.
+        if (exact_cert_signatures.empty()) {
+          std::cerr << "N5_JOINED_COLD_FAILED: no signature available for negative control\n";
+          return 1;
+        }
+        exact_cert_signatures.front().signature.data()[0] ^= 1;
+      }
+    }
     td::actor::Scheduler scheduler({1});
     td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
     std::optional<td::Result<td::Unit>> result;
@@ -734,6 +1017,7 @@ int main(int argc, char **argv) {
       manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cold-manager", id0, argv[3]);
       td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_n5_accept_cold, id0, id1,
                               expected_state_root, vset, context.expected_session_id, std::string(argv[4]),
+                              std::move(exact_cert_signatures),
                               td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
                                 result.emplace(std::move(outcome));
                               }));
@@ -743,7 +1027,19 @@ int main(int argc, char **argv) {
       scheduler.run(0.01);
     }
     const auto mode = std::string_view(argv[1]);
-    if (mode != "--n5-reopen" && result.has_value() && result->is_error()) {
+    if (mode == "--n5-joined-reopen-bad-signature") {
+      if (result.has_value() && result->is_error() &&
+          result->error().to_string().find("N5 cold proof signature bytes differ from exact FinalCert") !=
+              std::string::npos) {
+        std::cout << "N5_JOINED_COLD_WRONG_SIGNATURE_REJECTED\n";
+        scheduler.run_in_context([&] { manager.reset(); });
+        scheduler.stop();
+        return 0;
+      }
+      std::cerr << "N5_JOINED_COLD_FAILED: wrong-signature control missed exact proof comparison\n";
+      return 1;
+    }
+    if (mode != "--n5-reopen" && mode != "--n5-joined-reopen" && result.has_value() && result->is_error()) {
       const auto detail = result->error().to_string();
       const auto expected = mode == "--n5-reopen-bad-hash"
                                 ? "N5 cold BlockProof bytes differ from writer"
@@ -755,7 +1051,8 @@ int main(int argc, char **argv) {
         return 0;
       }
     }
-    if (!result.has_value() || result->is_error() || mode != "--n5-reopen") {
+    if (!result.has_value() || result->is_error() ||
+        (mode != "--n5-reopen" && mode != "--n5-joined-reopen")) {
       std::cerr << "N5_ACCEPT_BLOCK_COLD_FAILED: "
                 << (result.has_value() ? (result->is_error() ? result->error().to_string() : "negative unexpectedly passed")
                                        : "actor timeout") << '\n';
@@ -764,6 +1061,161 @@ int main(int argc, char **argv) {
     std::cout << "N5_ACCEPT_BLOCK_COLD_OK block=" << id1.to_str() << " root=" << expected_state_root.to_hex() << '\n';
     scheduler.run_in_context([&] { manager.reset(); });
     scheduler.stop();
+    return 0;
+  }
+  if (n5_joined) {
+    auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
+    std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
+    std::filesystem::create_directories(db_root + "/static");
+    {
+      std::ofstream static_zero(db_root + "/static/" + id0.file_hash.to_hex(), std::ios::binary);
+      static_zero.write(boc.as_slice().data(), static_cast<std::streamsize>(boc.size()));
+      if (!static_zero) {
+        std::cerr << "N5_JOINED_FAILED: genesis StaticFilesDb provision\n";
+        return 1;
+      }
+    }
+    const auto journal_path = consensus::consensus_db_root(db_root) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                          context.expected_session_id, "") + "/db/";
+    // StoreCandidate is a local fixture ingress, not a candidate transport
+    // authentication proof. Pool's certificate ingress, persistence ordering,
+    // StateResolver and BlockAccepter remain production actors.
+    const auto collated_hash = sha256_bits256(td::Slice{});
+    BlockCandidate candidate_block{nodes.front().validator_id, id1, collated_hash,
+                                   block_boc.clone(), td::BufferSlice{}};
+    constexpr td::uint32 joined_slot = 0;
+    auto candidate_id = consensus::CandidateHashData::create_full(candidate_block, std::nullopt)
+                            .build_id_with(joined_slot);
+    auto candidate_ref = td::make_ref<consensus::Candidate>(
+        candidate_id, std::nullopt, consensus::PeerValidatorId{0},
+        std::variant<BlockIdExt, BlockCandidate>{std::move(candidate_block)}, td::BufferSlice{});
+
+    td::actor::Scheduler scheduler({1});
+    td::actor::Runtime runtime;
+    consensus::BlockAccepter::register_in(runtime);
+    sx::CandidateResolver::register_in(runtime);
+    sx::StateResolver::register_in(runtime);
+    sx::Pool::register_in(runtime);
+    sx::Db::register_in(runtime);
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    td::actor::ActorOwn<N5AcceptFacade> facade;
+    td::actor::ActorOwn<N5JoinedPublisher> publisher;
+    sx::BusHandle bus;
+    std::optional<td::Result<td::Unit>> result;
+    bool bus_stopped = false;
+    const auto finalcert_path = db_root + ".finalcert.tl";
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-joined-manager", id0, db_root);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::seed_zerostate,
+                              id0, state0, boc.clone(),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    auto wait_result = [&](const char *stage) {
+      const auto deadline = td::Timestamp::in(30.0);
+      while (!result.has_value() && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      if (!result.has_value() || result->is_error()) {
+        std::cerr << "N5_JOINED_FAILED stage=" << stage << " error="
+                  << (result.has_value() ? result->error().to_string() : "timeout") << '\n';
+        return false;
+      }
+      result.reset();
+      return true;
+    };
+    if (!wait_result("seed")) {
+      return 1;
+    }
+    scheduler.run_in_context([&] {
+      facade = td::actor::create_actor<N5AcceptFacade>("n5-joined-facade", manager.get(), vset);
+      auto trusted = n5_joined_bus(vset, context.expected_session_id, facade.get(), journal_path);
+      trusted->stop_promise = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+        bus_stopped = outcome.is_ok();
+      });
+      bus = runtime.start(std::move(trusted), "n5-joined-simplex");
+      bus.publish<consensus::Start>(td::make_ref<consensus::ChainState>(
+          consensus::ChainState::ZerostateTip{id0, root0}, id0));
+      auto notar = n5_joined_cert(sx::NotarizeVote{candidate_id}, *bus, keys);
+      auto final = n5_joined_cert(sx::FinalizeVote{candidate_id}, *bus, keys);
+      if (notar.is_error() || final.is_error()) {
+        result.emplace(td::Status::Error("N5 joined certificate fixture failed production verification"));
+        return;
+      }
+      auto final_tl = serialize_tl_object(final.ok()->to_tl(), true);
+      std::ofstream retained(finalcert_path, std::ios::binary);
+      retained.write(final_tl.data(), static_cast<std::streamsize>(final_tl.size()));
+      retained.close();
+      if (!retained) {
+        result.emplace(td::Status::Error("N5 exact FinalCert TL retention failed"));
+        return;
+      }
+      publisher = td::actor::create_actor<N5JoinedPublisher>("n5-joined-publisher");
+      td::actor::send_closure(publisher, &N5JoinedPublisher::publish, bus, candidate_ref,
+                              notar.move_as_ok(), final.move_as_ok(),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    if (!wait_result("Pool-to-finalized-marker")) {
+      return 1;
+    }
+    std::optional<td::Result<std::string>> proof_hash;
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::n5_written_proof_hash,
+                              id1, td::PromiseCreator::lambda([&](td::Result<std::string> outcome) {
+                                proof_hash.emplace(std::move(outcome));
+                              }));
+    });
+    const auto proof_deadline = td::Timestamp::in(30.0);
+    while (!proof_hash.has_value() && !proof_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (!proof_hash.has_value() || proof_hash->is_error()) {
+      std::cerr << "N5_JOINED_FAILED: production BlockProof absent after marker\n";
+      return 1;
+    }
+    std::cout << "N5_JOINED_SAME_CERT_WRITTEN slot=" << candidate_id.slot
+              << " candidate_hash=" << candidate_id.hash.to_hex()
+              << " block=" << id1.to_str() << " proof_hash=" << proof_hash->ok() << '\n';
+    scheduler.run_in_context([&] {
+      publisher.reset();
+      bus.publish<consensus::StopRequested>();
+      bus = {};
+    });
+    const auto stop_deadline = td::Timestamp::in(10.0);
+    while (!bus_stopped && !stop_deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (!bus_stopped) {
+      std::cerr << "N5_JOINED_FAILED: consensus bus did not close before cold restart\n";
+      return 1;
+    }
+    scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
+    scheduler.stop();
+    std::string mode = "--n5-joined-reopen";
+    std::string proof = proof_hash->ok();
+    char *child_argv[] = {argv[0], mode.data(), argv[2], db_root.data(), proof.data(),
+                          const_cast<char *>(finalcert_path.c_str()), nullptr};
+    pid_t child = -1;
+    const int spawned = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+    int status = 0;
+    if (spawned != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      std::cerr << "N5_JOINED_COLD_FAILED: child status=" << status << " spawn=" << spawned << '\n';
+      return 1;
+    }
+    mode = "--n5-joined-reopen-bad-signature";
+    child_argv[1] = mode.data();
+    child = -1;
+    const int negative_spawned = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
+    status = 0;
+    if (negative_spawned != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      std::cerr << "N5_JOINED_COLD_FAILED: wrong-signature child status=" << status
+                << " spawn=" << negative_spawned << '\n';
+      return 1;
+    }
     return 0;
   }
   if (n5_accept) {
