@@ -73,3 +73,21 @@ tail that caused the failure. The next diagnostic must report the tail from
 the exact StackEntry being parsed, not from a later RPC call. This is a
 measurement-timing limit, not evidence that the parser should accept all
 tail types.
+
+The diagnostic at `a7109b87e` settled the tail type without changing list
+acceptance. Its exact-tree report
+`test/integration/.pq-tosctl-config-wallet-product/20260924T062425Z/report.json`
+has SHA-256 `cab9359cf2745a3d31119dcd2148374bfcaabd7243114eda0b1ac2f9c226b442`.
+The parser's same-response error names the rejected tail as
+`Tvm_StackEntryList(StackEntryList { list: Tvm_List(List { elements: [] }) })`.
+The same report contains the pool's exact `STAKE_ACCEPTED`, reason 0, for query
+ID `1790231489`; ConfigParam 34 was still not checked because the CLI exited.
+The pre-order root was numeric zero and is a separate encoding observation,
+not evidence about this tail. In `crypto/vm/stack.cpp`, null satisfies
+`is_list()`, and the JSON-RPC stack renderer serializes it as an empty
+`tvm.stackEntryList` at a cons-chain tail. The parser now accepts that exact
+empty-list terminator, while rejecting a nonempty List tail and other
+malformed tails. The unit test asserts both values and the two-element cons
+ordering; removing the terminator arm or negating its emptiness check makes
+it red. A new fixed-tree product run is still required for a successful CLI
+exit and live ConfigParam 34 controller/ADNL pairing.

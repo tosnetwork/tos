@@ -91,6 +91,11 @@ def main() -> None:
     ):
         if marker not in list_parser:
             fail(f"JSON-RPC TVM cons-list parser lost its strict {marker!r} check")
+    if re.search(
+        r"StackEntry::Tvm_StackEntryList\(list\)\s+if\s+list\.list\.elements\(\)\.is_empty\(\)\s*=>",
+        list_parser,
+    ) is None:
+        fail("JSON-RPC TVM cons-list parser no longer requires an empty List tail")
 
     product_probe = collapsed(root / "scripts/pq-config-wallet-first-stake-e2e.py")
     if "elector_reply(pool_txs, query_id)" not in product_probe or "elector_reply(controller_txs, query_id)" in product_probe:
@@ -160,7 +165,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and a nil tail (numeric zero accepted, nonzero refused); product probe saves the live stack and reads Elector feedback at the stake-owner pool; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and an actual nil tail (numeric zero or empty list, never nonzero or nonempty); product probe saves the live stack and reads Elector feedback at the stake-owner pool; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 

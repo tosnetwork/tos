@@ -190,6 +190,14 @@ impl TvmStackParser {
                         {
                             return Ok(Self::new(elements));
                         }
+                        // The same node renders a proper nonempty cons chain
+                        // with an explicit empty tvm.stackEntryList terminator.
+                        // Only an empty list may terminate the chain.
+                        StackEntry::Tvm_StackEntryList(list)
+                            if list.list.elements().is_empty() =>
+                        {
+                            return Ok(Self::new(elements));
+                        }
                         _ => anyhow::bail!(
                             "stack cons list has a non-null tail: index={index}, tail={current:?}"
                         ),
@@ -611,6 +619,28 @@ mod tests {
         let error =
             TvmStackParser::new(vec![wrong_arity]).list_or_empty(0).unwrap_err().to_string();
         assert!(error.contains("non-pair tuple"), "wrong refusal: {error}");
+    }
+
+    #[test]
+    fn list_or_empty_accepts_only_empty_list_as_cons_tail() {
+        let proper = create_tuple_entry(vec![
+            create_number_entry("11"),
+            create_list_entry(vec![]),
+        ]);
+        let parsed = TvmStackParser::new(vec![proper]).list_or_empty(0).unwrap();
+        assert_eq!(parsed.stack.len(), 1);
+        assert_eq!(parsed.i64(0).unwrap(), 11);
+
+        let wrong_tail = create_tuple_entry(vec![
+            create_number_entry("11"),
+            create_list_entry(vec![create_number_entry("22")]),
+        ]);
+        let error = TvmStackParser::new(vec![wrong_tail])
+            .list_or_empty(0)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("non-null tail"), "wrong refusal: {error}");
+        assert!(error.contains("Tvm_StackEntryList"), "tail type was lost: {error}");
     }
 
     #[test]
