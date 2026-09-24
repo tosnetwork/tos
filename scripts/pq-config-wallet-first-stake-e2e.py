@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Exercise the launch-facing tosctl config-wallet stake, not a fixture signer.
+"""Exercise one launch-facing tosctl first-stake caller, not a fixture signer.
 
 The fixture only provisions the chain, admitted controllers, pools and funds.
-The product CLI creates/activates its own wallet, imports the controller's
-actual deployment transaction, asks the node to authorize, and sends the stake.
-This run is not a production-duration or independently hosted network claim.
+The product CLI creates/activates its wallet and imports the controller's
+actual deployment transaction. The selected caller (interactive command or
+election daemon) asks the node to authorize and sends the stake. Neither mode
+is a production-duration or independently hosted network claim.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -79,6 +81,20 @@ def adnl_from_controller_relay(transactions: list, pool: Address, query_id: int)
     return matching[0]
 
 
+def wallet_pool_stake_orders(transactions: list, wallet: Address) -> list[int]:
+    """Only count NEW_STAKE messages sent by the configured product wallet."""
+    orders = []
+    for raw in transactions:
+        message = lifecycle_module._decoded_transaction(raw).in_msg
+        if (message is None or not isinstance(message.info, lifecycle_module.InternalMsgInfo)
+                or message.info.src != wallet):
+            continue
+        body = message.body.begin_parse()
+        if body.remaining_bits >= 96 and body.load_uint(32) == 0x4E73744B:
+            orders.append(body.load_uint(64))
+    return orders
+
+
 async def cli(binary: Path, config: Path, env: dict[str, str], *args: str,
               answers: bytes = b"", timeout: int = 120) -> str:
     process = await asyncio.create_subprocess_exec(
@@ -108,6 +124,8 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
     vault = run_dir / "product-vault.json"
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{vault}?master_key={'0' * 63}1"
+    daemon = None
+    daemon_log = None
     report["source_commit"] = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
     ).strip()
@@ -115,9 +133,10 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         "tosctl": sha256(binary),
         "validator_engine": sha256(life.install.validator_engine_exe),
     }
+    report["caller"] = args.caller
     report["claim_boundary"] = (
-        "one product config-wallet first stake through a real pool/controller on an "
-        "accelerated co-located PQ chain; no daemon caller or scale claim"
+        f"one product {args.caller} first stake through a real pool/controller on an "
+        "accelerated co-located PQ chain; no other caller or scale claim"
     )
     report["test_only_genesis_faucet_nanotos"] = 150_000 * NANO
     try:
@@ -243,6 +262,17 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         report["live_param47"]["raw_path"] = str(param47_path)
         report["live_param47"]["raw_sha256"] = sha256(param47_path)
 
+        if args.caller == "daemon":
+            document = json.loads(config.read_text())
+            document["master_wallet"] = document["wallets"]["operator"]
+            document["bindings"]["validator-1"]["enable"] = True
+            document["elections"]["policy"] = "minimum"
+            document["elections"]["tick_interval"] = 5
+            document["tick_interval"] = 40
+            document["http"]["bind"] = f"127.0.0.1:{args.service_port}"
+            config.write_text(json.dumps(document, indent=2) + "\n")
+            config.chmod(0o600)
+
         election = await life.retry(
             life.stakeable_election_id, timeout=900,
             description="open Elector acceptance window",
@@ -275,14 +305,52 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         # exact contract feedback in that case instead of ending observation
         # at the CLI exit code and losing the only causal evidence.
         cli_error = None
-        try:
-            report["stake_cli_output"] = await cli(
-                binary, config, env, "config", "wallet", "stake", "--binding", "validator-1",
-                "--amount", f"{STAKE / NANO:.9f}", answers=b"y\ny\n", timeout=150,
+        if args.caller == "config-wallet":
+            try:
+                report["stake_cli_output"] = await cli(
+                    binary, config, env, "config", "wallet", "stake", "--binding", "validator-1",
+                    "--amount", f"{STAKE / NANO:.9f}", answers=b"y\ny\n", timeout=150,
+                )
+            except Exception as error:
+                cli_error = error
+                report["stake_cli_error"] = repr(error)
+        else:
+            log_path = run_dir / "tosctl-election-daemon.log"
+            daemon_log = log_path.open("wb")
+            daemon = await asyncio.create_subprocess_exec(
+                str(binary), "service", "-c", str(config),
+                stdin=asyncio.subprocess.DEVNULL, stdout=daemon_log,
+                stderr=asyncio.subprocess.STDOUT, env=env,
             )
-        except Exception as error:
-            cli_error = error
-            report["stake_cli_error"] = repr(error)
+            report["daemon"] = {"pid": daemon.pid, "log_path": str(log_path)}
+            deadline = time.monotonic() + 150
+            while time.monotonic() < deadline:
+                if daemon.returncode is not None:
+                    raise RuntimeError(f"tosctl service exited before a stake: {daemon.returncode}")
+                pool_probe, _, complete, _ = await lifecycle_module._transactions_since(
+                    life.client, pool.address, pool_baseline
+                )
+                if not complete:
+                    raise RuntimeError("daemon pool-order transaction window is incomplete")
+                if wallet_pool_stake_orders(pool_probe, wallet):
+                    break
+                await asyncio.sleep(1)
+            else:
+                raise RuntimeError("daemon did not send a wallet-to-pool NEW_STAKE within 150s")
+            daemon.send_signal(signal.SIGINT)
+            try:
+                await asyncio.wait_for(daemon.wait(), 25)
+            except TimeoutError:
+                daemon.kill()
+                await daemon.wait()
+            daemon = None
+            daemon_log.close()
+            daemon_log = None
+            report["daemon"]["log_sha256"] = sha256(log_path)
+            log_text = log_path.read_text(errors="replace")
+            if "node [validator-1] send stake" not in log_text:
+                raise RuntimeError("pool order observed but daemon send-stake log is absent")
+            report["daemon"]["send_stake_log_seen"] = True
 
         participant_after = await asyncio.to_thread(
             lifecycle_module.json_rpc_call,
@@ -321,15 +389,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             raise RuntimeError("product stake transaction window is incomplete")
         # A product first-stake acknowledgement must be located by the exact
         # query id extracted from the pool's order, then joined to the Elector.
-        orders = []
-        for tx in pool_txs:
-            decoded = lifecycle_module._decoded_transaction(tx)
-            msg = decoded.in_msg
-            if msg is None or not isinstance(msg.info, lifecycle_module.InternalMsgInfo):
-                continue
-            cursor = msg.body.begin_parse()
-            if cursor.remaining_bits >= 96 and cursor.load_uint(32) == 0x4E73744B:
-                orders.append(cursor.load_uint(64))
+        orders = wallet_pool_stake_orders(pool_txs, wallet)
         report["stake_feedback"] = {"pool_order_query_ids": orders}
         if cli_error is not None and len(orders) != 1:
             raise RuntimeError(f"product CLI failed before an exact pool order was observed: {cli_error}")
@@ -371,7 +431,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         }
         if cli_error is not None:
             raise RuntimeError(f"product CLI failed after exact feedback capture: {cli_error}")
-        if "Stake accepted by elector" not in report["stake_cli_output"]:
+        if args.caller == "config-wallet" and "Stake accepted by elector" not in report["stake_cli_output"]:
             raise RuntimeError("product command did not report Elector participant acceptance")
         if reply is None or reply[0] != 0xF374484C:
             raise RuntimeError(f"exact Elector STAKE_ACCEPTED not observed: {reply}")
@@ -400,6 +460,15 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         report["live_config34"]["raw_sha256"] = sha256(config34_path)
         report["passed"] = True
     finally:
+        if daemon is not None and daemon.returncode is None:
+            daemon.send_signal(signal.SIGINT)
+            try:
+                await asyncio.wait_for(daemon.wait(), 25)
+            except TimeoutError:
+                daemon.kill()
+                await daemon.wait()
+        if daemon_log is not None:
+            daemon_log.close()
         await life.shutdown()
 
 
@@ -411,11 +480,13 @@ async def main() -> int:
                         default=REPO / "test/integration/.pq-tosctl-config-wallet-product")
     parser.add_argument("--base-port", type=int, default=25100)
     parser.add_argument("--rpc-port", type=int, default=25120)
+    parser.add_argument("--service-port", type=int, default=25130)
+    parser.add_argument("--caller", choices=("config-wallet", "daemon"), default="config-wallet")
     args = parser.parse_args()
-    reserve_ports(*range(args.base_port, args.base_port + 17), args.rpc_port)
+    reserve_ports(*range(args.base_port, args.base_port + 17), args.rpc_port, args.service_port)
     run_dir = (args.run_root / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
-    report = {"schema": "tos.pq.config-wallet-first-stake.v1", "passed": False,
+    report = {"schema": "tos.pq.product-first-stake.v2", "passed": False,
               "run_dir": str(run_dir), "failures": []}
     try:
         await product_run(args, run_dir, report)
