@@ -204,8 +204,8 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             predicate=lambda value: bool(value.code),
         )
         report["product_pool_funding_output"] = await cli(
-            binary, config, env, "wallet", "send", "--from", "operator", "--to",
-            lifecycle_module.raw_address(pool.address), "--amount-nanotos",
+            binary, config, env, "wallet", "send", "--from", "operator",
+            f"--to={lifecycle_module.raw_address(pool.address)}", "--amount-nanotos",
             str(lifecycle_module.SUPPORT_POOL_CAPITAL), "--yes",
         )
         await life.retry(
