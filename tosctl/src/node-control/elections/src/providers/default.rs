@@ -123,7 +123,7 @@ impl ElectionsProvider for DefaultElectionsProvider {
         }
     }
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()> {
-        self.client.send_boc(msg_boc).await
+        self.chain_provider.send_boc(msg_boc).await
     }
     async fn sign(&mut self, key_id: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>> {
         self.client.sign(&SignRq { key_hash: key_id, data }).await

@@ -640,7 +640,7 @@ impl WalletStakeCmd {
         }
 
         println!("{} Sending message to wallet...", "DOING".blue().bold());
-        // Send via control protocol
+        // Broadcast through chain RPC; validator control is only for node authorization.
         provider.send_boc(&msg_boc).await.context("send stake message")?;
 
         wait_for_seqno_change(
