@@ -162,3 +162,78 @@ mutations were red: treating evidence error as bad block bytes; treating
 trusted-context error as bad evidence; swapping either header-identity
 verdict; and a manager bypass of the production classifier. The first four
 were killed by the component test, the manager bypass by the source guard.
+
+## DB-backed Manager actor gate (6171d053f)
+
+The earlier statement above that the Manager probe ends at a supplied
+successful broadcast callback describes `test-pending-finality-cache` and
+was true when written. A separate fixture now takes the next boundary.
+`test-c04-real-state-proof` starts a no-network `ValidatorManagerImpl` with
+production `create_db_actor`/`RootDb`, a genuine seqno-0 PQ masterchain state
+and a persisted genesis handle. Only production startup is suppressed; the
+test provides the genesis static file, a no-op local Manager callback, and a
+real `ExtMessagePool` actor. It does not replace pending-finality scheduling,
+signature checking, `new_block_broadcast`, `ValidateBroadcast`, `CheckProof`,
+`ApplyBlock`, or DB methods with success callbacks. It does not pre-mark any
+seqno-1 target flags.
+
+For one exact seqno-1 block, the actor admits wrong-set PQ finality first and
+valid PQ finality second. The bad certificate fails proof construction with
+621 and is removed as evidence; the same cached candidate then reaches the
+good proof. After the queue drains, a fresh `RootDb::get_block_handle` fetch
+from the archive checks `received`, `inited_proof`, `received_state`,
+`is_applied`, `applied_stored` and the exact state root. Further DB calls read
+the exact block data hash, byte-identical good proof, state root, and genesis
+handle's next pointer to the target. The Manager's live handle separately
+checks `processed`: that flag does not increment the handle version and is
+not a persisted-handle contract. A successful broadcast Promise alone cannot
+satisfy these assertions.
+
+With the one-line old-behaviour mutation in
+`c04-blockbytes-classification-mutant.patch` (SHA-256
+`e5561627153f37a23af32a9df0ddea7797b9ea10c64a68492755b63b89544ec0`),
+the same test source failed: `candidate_present=0 pending_entries=2
+target_processed=0`, then the queue timed out. The patch applies cleanly to
+the restored tree. The mutant `manager.cpp` SHA-256 was
+`f2aefb3543fe071de7a5e4c059dd6e8b3788cc1519612608b5a27aed96db5c4b`
+and binary SHA-256 was
+`52227454cdda606e16b9950961e831db304026b150a31283574bf4af86217118`.
+The restored production source SHA-256 is
+`43ffd95fb6c6ab8d3a4fd5e36ffdf6b06ab91a0c32c4cdbcd526da08446ee79c`;
+the test source is identical across red and green (SHA-256
+`4fd8993878260990f29bb59c44bf0e7fb73181048bd4bef124a968ef6061a053`).
+The clean binary SHA-256 is
+`fcceb81977e681170125107356b28525be34361cb0afd575322c6711f0709f2f`.
+
+Raw old-red and new-green logs, respectively, are
+`test/integration/.c04-manager-actor-20260924/final-harness-old-red.log`
+(SHA-256 `c70bc806beb6e425c50ecf879fc7202bb190ff18c0fa86131f659972fda61486`)
+and `final-harness-new-green.log` (SHA-256
+`35ff934a1937afcce3656b323ed920c667d201debd4bd5e3ef8522891b62d189`).
+On committed `6171d053f`, the three targeted CTests passed; retained
+`6171d053f-ctest.log` SHA-256 is
+`9ec6c951542adc0c03fe69b1c0e2f3f9c108ab3af9c53cc8c8c31ead506d9bea`.
+The DB roots printed in the raw logs remain in `/tmp` and were not removed.
+The committed-tree green run's root is `/tmp/c04-manager-ccYOsW`: 39 files,
+504 KiB allocated. SHA-256 of the sorted, relative-path `sha256sum` manifest
+for those files is
+`2f46747842fa03d6ee93c46ea4a6bba8e593a1b1198d6d2c35d59206b9149969`.
+This is a local retained DB artifact, not a Git payload.
+
+The DB-read handle has `processed() == false` even on the successful run;
+`BlockHandleImpl::serialize()` and its deserialize constructor explicitly
+mask `dbf_processed` (`validator/block-handle.cpp:34-50`). The successful
+run's earlier diagnostic printed `received=1 proof=1 state=1 applied=1
+applied_stored=1 processed=0` with the expected root. Therefore adding
+`processed()` to the DB-read rejection condition would create a false
+negative. The test asserts `processed()` on the live Manager handle and the
+persisted effects on the separately fetched DB handle. This distinction was
+raised in independent review of `6171d053f`; it is an intentional boundary,
+not an omitted success condition.
+
+This establishes downstream acceptance and persistence for the bad-front,
+good-back case in the no-network Manager actor. It does **not** yet extend
+the DB-backed path to transient trusted-context recovery or retention expiry;
+those controls still use the earlier no-DB Manager probe. Fixed-head CI for
+this added gate is also pending. C04 therefore remains OPEN, and no historical
+network outage is attributed to this test.
