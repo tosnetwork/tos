@@ -43,6 +43,10 @@ Retained evidence:
 | proof-hash-bypass mutant source | `4e3788666100b294fcf9daff8ea957daaef1dba85f45cdc5bab21cd6ea6a3268` |
 | proof-hash-bypass mutant binary | `7a27193aab1b52c0cf277c16fd48fec8ad7f163bf0c4ddc835278207aa1e0a51` |
 | `n5-accept-proof-hash-bypass-mutant.patch` | `eb1a1cb95863c1965382579ac2314bc3501e792f43a795a8b7f213e63f43c90d` |
+| `n5-accept-skip-signature-write-mutant.patch` | `5f7e305d944c8c8baf7327df0b2f2e508e6264ced4d3f472ce719c11ab9e8ccc` |
+| signature-write-bypass mutant log | `7691aae1908b5205b5f9a095216e357ce03a47ec7a980637fac7a7994a096083` |
+| signature-write-bypass mutant source | `7b7a804fba3ed0c3348e35e30e45695cbad7f5006b63aae8782b89d530b1de18` |
+| signature-write-bypass mutant binary | `aa457d9d602969ab7f2ee884f61457450fbca880ed033703be51df5505eb6e75` |
 
 The committed green wrote proof hash
 `82328EE006CC0F83CF260BA1900BF12AF6FF6387613FA731E0A20268E784F754`
@@ -53,6 +57,16 @@ root to fail specifically with `N5 cold handle: block handle not in db`.
 The one-line proof-hash-bypass patch passes `git apply --check` on `edf3b3a14`;
 with it, the all-zero-hash control turns red as `negative unexpectedly passed`
 (exit 1). The production source was restored before the clean build.
+The separate production-call bypass in `AcceptBlockQuery::written_block_data`
+skipped only `set_block_signatures` while leaving its later callbacks in
+place. The query itself returned success, but the writer-side RootDb read
+refused with `N5 writer proof/signatures not initialized` (exit 1). The
+unique patch applies to the clean tree; `validator/impl/accept-block.cpp`
+was restored to SHA-256
+`447169fb3300e0971c543024f94f436a0b5d0d83d37d70321cf69c4287b0f5ef`,
+and the rebuilt clean test binary returned to the hash in the table. This
+proves the `set_block_signatures` write is needed for this gate, but it still
+does **not** directly cold-read a separate #13 record after archiving.
 The CI source guard was also tested against removal of the N5 AcceptBlock
 CTest, removal of the N5 FinalCert-journal CTest, and removal of its native
 build target. Each separately returned exit 1 naming the missing gate; the

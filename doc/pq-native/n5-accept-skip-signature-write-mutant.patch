@@ -1,0 +1,11 @@
+--- a/validator/impl/accept-block.cpp
++++ b/validator/impl/accept-block.cpp
+@@ -471,6 +471,8 @@ void AcceptBlockQuery::written_block_data() {
+   if (handle_->inited_signatures() || is_fake_ || !signatures_->is_final() || is_fork_) {
+     written_block_signatures();
+     return;
+   }
++  written_block_signatures();
++  return;
+   td::actor::send_closure(manager_, &ValidatorManager::set_block_signatures, handle_, signatures_, validator_set_,
+                           [SelfId = actor_id(this)](td::Result<td::Unit> R) {
