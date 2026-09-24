@@ -46,11 +46,23 @@ require_marker validator/manager.cpp \
   'pending->erase_expired(td::Time::now())' \
   'manager expiry callback no longer frees expired sender slots'
 require_marker validator/manager.cpp \
-  'error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout' \
-  'proof-creation failures no longer distinguish transient local state from bad block bytes'
+  'pending_block_proof_failure_action(proof_failure_source, error.code())' \
+  'manager no longer classifies proof failure by its input source'
 require_marker validator/manager.cpp \
-  'failed_pending_block_finality(block_id, attempt_token, std::move(error), "create block proof")' \
-  'transient proof-creation failure no longer uses the bounded retry decision'
+  'action != PendingBlockProofFailureAction::DiscardBlockBytes' \
+  'manager can again erase block bytes for finality-evidence proof failure'
+require_marker validator/manager.cpp \
+  'failed_pending_block_finality(block_id, attempt_token, std::move(error),' \
+  'evidence/context proof failure no longer uses the bounded retry decision'
+require_marker validator/downloaders/wait-block-data.cpp \
+  'failure_source = PendingBlockProofFailureSource::FinalityEvidence;' \
+  'signature-set proof failures no longer identify the evidence input'
+require_marker validator/downloaders/wait-block-data.cpp \
+  'failure_source = PendingBlockProofFailureSource::TrustedContext;' \
+  'context proof failures no longer identify the trusted-state input'
+require_marker validator/downloaders/wait-block-data.cpp \
+  'pending_block_proof_identity_verdict(' \
+  'proof construction no longer compares block-header, trusted-set and evidence identities'
 require_marker validator/manager.cpp \
   'failed_pending_block_finality(block_id, attempt_token, result.move_as_error(), "verify signatures")' \
   'signature-check failure no longer uses the bounded retry decision'
@@ -97,4 +109,4 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "PENDING_FINALITY_RETRY_SOURCE_OK: transient evidence uses bounded retries and permanent mismatches are classified at creation"
+echo "PENDING_FINALITY_RETRY_SOURCE_OK: manager calls the proof-source policy; proof producer labels evidence and context; bounded retry markers remain"

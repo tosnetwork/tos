@@ -999,18 +999,29 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
     return;
   }
   const auto attempt_token = finality.token;
+  PendingBlockProofFailureSource proof_failure_source = PendingBlockProofFailureSource::BlockBytes;
   td::Result<td::BufferSlice> proof =
       block_id.is_masterchain() ? WaitBlockData::generate_proof(block_id, block.ok()->root_cell(),
-                                                                finality->evidence.sig_set, last_masterchain_state_)
+                                                                finality->evidence.sig_set, last_masterchain_state_,
+                                                                proof_failure_source)
                                 : WaitBlockData::generate_proof_link(block_id, block.ok()->root_cell());
   if (proof.is_error()) {
     auto error = proof.move_as_error();
-    if (error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout) {
-      failed_pending_block_finality(block_id, attempt_token, std::move(error), "create block proof");
+    auto action = pending_block_proof_failure_action(proof_failure_source, error.code());
+    if (action != PendingBlockProofFailureAction::DiscardBlockBytes) {
+      if (proof_failure_source == PendingBlockProofFailureSource::TrustedContext &&
+          error.code() != ErrorCode::notready && error.code() != ErrorCode::timeout) {
+        // Context can be temporarily behind a valid block. Retain both inputs
+        // within the pending-evidence deadline rather than deleting either.
+        error = td::Status::Error(ErrorCode::notready, PSTRING() << "masterchain proof context: " << error);
+      }
+      failed_pending_block_finality(block_id, attempt_token, std::move(error),
+                                    action == PendingBlockProofFailureAction::DiscardEvidence
+                                        ? "check finality evidence for block proof"
+                                        : "create block proof with current context");
     } else {
-      // A proof-construction failure describes the cached block bytes, not the
-      // independently received finality evidence. Retain the latter for a
-      // correct block arrival, but remove the bad block candidate.
+      // Only an error attributed to the cached candidate bytes retires those
+      // bytes while preserving independently received finality evidence.
       pending->cancel_processing(attempt_token);
       VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
       if (block_id.is_masterchain()) {

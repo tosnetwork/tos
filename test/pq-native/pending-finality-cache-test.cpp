@@ -135,6 +135,32 @@ int main() {
     std::cerr << "PENDING_FINALITY_TIMEOUT_CLASSIFICATION_FAILURE: verification timeout was treated as permanent\n";
     return 1;
   }
+  using ProofSource = tos::validator::PendingBlockProofFailureSource;
+  using ProofAction = tos::validator::PendingBlockProofFailureAction;
+  using ProofIdentity = tos::validator::PendingBlockProofIdentity;
+  using ProofVerdict = tos::validator::PendingBlockProofIdentityVerdict;
+  auto proof_action = tos::validator::pending_block_proof_failure_action;
+  if (proof_action(ProofSource::FinalityEvidence, tos::ErrorCode::protoviolation) !=
+          ProofAction::DiscardEvidence ||
+      proof_action(ProofSource::BlockBytes, tos::ErrorCode::protoviolation) != ProofAction::DiscardBlockBytes ||
+      proof_action(ProofSource::TrustedContext, tos::ErrorCode::protoviolation) != ProofAction::Retry ||
+      proof_action(ProofSource::FinalityEvidence, tos::ErrorCode::notready) != ProofAction::Retry) {
+    std::cerr << "PENDING_FINALITY_PROOF_SOURCE_FAILURE: proof errors no longer retire the input that caused them\n";
+    return 1;
+  }
+  constexpr ProofIdentity header{7, 0x11111111};
+  if (tos::validator::pending_block_proof_identity_verdict(header, header, header) != ProofVerdict::Match ||
+      tos::validator::pending_block_proof_identity_verdict(header, {7, 0x11111110}, header) !=
+          ProofVerdict::ContextMismatch ||
+      tos::validator::pending_block_proof_identity_verdict(header, header, {7, 0x11111110}) !=
+          ProofVerdict::EvidenceMismatch ||
+      tos::validator::pending_block_proof_identity_verdict(header, {8, 0x11111111}, header) !=
+          ProofVerdict::ContextMismatch ||
+      tos::validator::pending_block_proof_identity_verdict(header, header, {8, 0x11111111}) !=
+          ProofVerdict::EvidenceMismatch) {
+    std::cerr << "PENDING_FINALITY_PROOF_IDENTITY_FAILURE: trusted context and evidence are not separated\n";
+    return 1;
+  }
   if (!tos::validator::pending_finality_exceeds_budget(0, std::numeric_limits<std::size_t>::max(), 0, 10)) {
     std::cerr
         << "PENDING_FINALITY_BUDGET_ARITHMETIC_FAILURE: removed bytes exceeded current accounting without rejection\n";
@@ -586,6 +612,48 @@ int main() {
   }
   const block::PQFinalityVerificationContext context{fixture.validator_set, fixture.id, fixture.session};
 
+  // A public broadcast can carry a final certificate with the wrong set hash:
+  // ingress has no trusted set yet. It must not poison the cached block bytes
+  // or strand a later valid certificate behind the same pending queue front.
+  auto wrong_set_cell = require_ok(
+      block::BlockSignatureSet::serialize_simplex_pq(clone_pairs(valid_pairs),
+                                                      fixture.validator_set->get_catchain_seqno(),
+                                                      fixture.validator_set->get_validator_set_hash() ^ 1u, weight,
+                                                      fixture.session, Fixture::slot, candidate_data),
+      "wrong-set-final");
+  tos::ValidatorWeight parsed_weight = 0;
+  auto wrong_set = require_ok(block::BlockSignatureSet::fetch(wrong_set_cell, parsed_weight), "parse-wrong-set-final");
+  wrong_set = require_ok(block::BlockSignatureSet::fetch_node_checked(wrong_set->tl()), "broadcast-wrong-set-final");
+  auto wrong_set_proof_step = wrong_set->serialize(fixture.validator_set);
+  if (wrong_set_proof_step.is_ok() ||
+      proof_action(ProofSource::FinalityEvidence, wrong_set_proof_step.error().code()) !=
+          ProofAction::DiscardEvidence) {
+    std::cerr << "PENDING_FINALITY_WRONG_SET_FAILURE: wrong-set finality was not attributed to evidence\n";
+    return 1;
+  }
+  tos::validator::PendingFinalityStore<int, int, td::Ref<block::BlockSignatureSet>> wrong_set_queue;
+  auto charge = [](const td::Ref<block::BlockSignatureSet> &set) { return serialize_tl_object(set->tl(), true).size(); };
+  if (!wrong_set_queue.admit(0, 1, wrong_set, charge(wrong_set), ValidatorCapacity, false, true, NoExpiry).admitted() ||
+      !wrong_set_queue.admit(0, 2, valid, charge(valid), ValidatorCapacity, false, true, NoExpiry).admitted()) {
+    std::cerr << "PENDING_FINALITY_WRONG_SET_FAILURE: both candidates were not admitted\n";
+    return 1;
+  }
+  auto *wrong_set_candidates = wrong_set_queue.get_if_exists(0);
+  auto first_proof = wrong_set_candidates->begin_processing(0);
+  if (!first_proof || first_proof->evidence.get() != wrong_set.get() ||
+      first_proof->evidence->serialize(fixture.validator_set).is_ok()) {
+    std::cerr << "PENDING_FINALITY_WRONG_SET_FAILURE: wrong-set evidence was not the failing front\n";
+    return 1;
+  }
+  wrong_set_candidates->complete_front(first_proof.token, false);
+  auto next_proof = wrong_set_candidates->begin_processing(0);
+  if (!next_proof || next_proof->evidence.get() != valid.get() ||
+      next_proof->evidence->serialize(fixture.validator_set).is_error()) {
+    std::cerr << "PENDING_FINALITY_WRONG_SET_FAILURE: valid evidence stayed behind the wrong-set front\n";
+    return 1;
+  }
+  wrong_set_candidates->complete_front(next_proof.token, true);
+
   tos::validator::PendingFinalityStore<int, int, td::Ref<block::BlockSignatureSet>> authority_reservation_gate;
   for (std::size_t i = 0; i < public_sender_shares; ++i) {
     if (!authority_reservation_gate
@@ -705,6 +773,7 @@ int main() {
   std::cout << "PENDING_FINALITY_REJECTION_NAME_OK: ingress and store refusals have stable textual names\n";
   std::cout << "PENDING_FINALITY_RETRY_OK: notready retained valid evidence and a later attempt accepted it\n";
   std::cout << "PENDING_FINALITY_TIMEOUT_CLASSIFICATION_OK: verification timeout remains transient\n";
+  std::cout << "PENDING_FINALITY_PROOF_SOURCE_OK: wrong-set evidence is retired without erasing the block, while stale context retries\n";
   std::cout << "PENDING_FINALITY_PERMANENT_OK: protocol violation was discarded without retry\n";
   std::cout << "PENDING_FINALITY_RETRY_DEADLINE_OK: transient evidence freed its slot after "
             << tos::validator::pending_finality_retention_seconds << " seconds\n";
