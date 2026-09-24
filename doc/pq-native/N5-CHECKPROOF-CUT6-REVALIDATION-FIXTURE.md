@@ -12,7 +12,7 @@ On committed `c53885d5fe8efaf4d8e991978f7f708a5852ca15`, `test-n5-cut6-check-pro
 | --- | --- |
 | committed test source | `052f0c1e1469c09f06b0e0486ee6c271919e2ea1fbfc35ef783792c2b85fc0dd` |
 | clean production `check-proof.cpp` | `0e6a880458518fd512ab9800d85129298c307e167f8a592420bee74ba49549b6` |
-| restored clean test binary | `b6a65a5b74069e3188a9dfd941f128ca5e141c3806ea980be101fb8391a63de3` |
+| retained `c538-restored-test-c04-real-state-proof` binary | `b6a65a5b74069e3188a9dfd941f128ca5e141c3806ea980be101fb8391a63de3` |
 | `c538-restored.raw.log` | `86254422cc84eaf1c08373c4677d023a1be1cb7c00c0e00fff1f0669d655b12b` |
 | `c538-restored-ctest.log` | `b0e51ed8468d5fae54fa7b42527da05d8147136385b3d2bde8506cdef9a602f4` |
 
@@ -21,9 +21,11 @@ The one-line production mutation in `n5-cut6-bypass-pq-check-mutant.patch` repla
 | Mutant artifact | SHA-256 |
 | --- | --- |
 | mutant source | `cd1f6c2e0a6117a1330a7ae63a16c135377b5c2a6863a761f5c2bd2850457b57` |
-| mutant binary | `7bd14a31bc8317a33176037c7d77bcd6019a1f19b6ff9d8f47f8ce83fb82beb9` |
+| retained `c538-mutant-test-c04-real-state-proof` binary | `7bd14a31bc8317a33176037c7d77bcd6019a1f19b6ff9d8f47f8ce83fb82beb9` |
 | `c538-mutant-build.log` | `72ba272629db9b9479699ad29c8ce32054fbba5beea7278715a1c168edb07b06` |
 | `c538-mutant.raw.log` | `f6a4a5de4a988812b0bb92a198a27d284816546a528bcd7eca41f2b751910915` |
 | mutation patch | `1aa1cd478a313c93572c65cca63631dc138debb4aa90bc587fd41e15a82d8be5` |
 
 The CTest is registered in CMake and run by the every-push Branch PQ workflow. Its CI source guard pins both registrations. A fixed pushed SHA CI has not yet completed for this N07 addition. N03–N06 remain governed by their separate closure conditions; this result does not retroactively sign them off.
+
+An independent review of `c0c5f2d47` found that the two binary hashes above originally pointed only to a moving build path. Both exact executables are now retained under the named artifact directory. Rebuilding the one-target mutant from the same unique patch reproduced `7bd14a31…`; restoring the production line rebuilt `b6a65a5b…`. The follow-up build logs are `c538-mutant-retain-build.log` (SHA-256 `f3771aa9d01008985fb20088fcdcc53c63327c196461fd1f4f6c03890ab6b433`) and `c538-clean-retain-build.log` (SHA-256 `72ba272629db9b9479699ad29c8ce32054fbba5beea7278715a1c168edb07b06`). This closes that provenance gap, not the pending fixed-head CI or broader N01 boundary.
