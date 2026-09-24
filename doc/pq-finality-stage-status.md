@@ -453,9 +453,12 @@ for the guard, not evidence about paths outside its declared scan roots.
 
 Correction to the former wording, “Both are parked by owner decision, with
 implementation work not started”: that description predates the N02–N07
-controlled actor/DB cuts and the N01 cold seq2 continuation. Those cuts are
-implemented; the encompassing N01 remains open pending fixed-tree CI and
-aggregate review. They do not establish power-loss or cross-node recovery.
+controlled actor/DB cuts and the N01 cold seq2 continuation. The later
+“N01 remains open pending fixed-tree CI and aggregate review” statement is
+also superseded: memo/main `4946db6b` signed N01 off under owner O-4's
+controlled single-machine actor/DB scope, after exact-tree Branch PQ/Python
+`36066590519` and Source guards `36066590546` succeeded. This does not
+establish power-loss or cross-node recovery.
 The other entries below record resolved rows, deliberate naming
 choices, harness boundaries, evidence-retention limits, or separately scoped
 API/tooling debt; none is silently promoted to a green claim.
@@ -530,8 +533,10 @@ API/tooling debt; none is silently promoted to a green claim.
    through a real CheckProof actor. Their individual scoped sign-offs do not by
    themselves prove continuation. [N01's seq2 fixture](pq-native/N5-COLD-SEQ2-CONTINUATION-FIXTURE.md)
    adds a cold-restored second FinalCert, real AcceptBlock/marker, a third cold
-   read of both DB roots and a latest-finalized Pool anchor. N01 stays open until
-   its committed/pushed-tree CI and aggregate review. Controlled orderly stops
+   read of both DB roots and a latest-finalized Pool anchor. The former
+   “N01 stays open until its committed/pushed-tree CI and aggregate review”
+   condition was met and signed off under owner O-4 at memo/main `4946db6b`.
+   Controlled orderly stops
    are not SIGKILL/power-loss atomicity; live overlay/Bridge and peer convergence
    require separate testnet fault evidence.
 
