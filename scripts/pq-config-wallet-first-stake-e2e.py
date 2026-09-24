@@ -22,6 +22,8 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -93,6 +95,26 @@ def wallet_pool_stake_orders(transactions: list, wallet: Address) -> list[int]:
         if body.remaining_bits >= 96 and body.load_uint(32) == 0x4E73744B:
             orders.append(body.load_uint(64))
     return orders
+
+
+def observed_json_rpc(address: str, method: str, params: dict) -> dict:
+    """Keep the exact JSON-RPC error envelope rather than a generic failure."""
+    payload = json.dumps(
+        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    ).encode()
+    request = urllib.request.Request(
+        f"http://{address}/jsonRPC", data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            raw = response.read().decode(errors="replace")
+            return {"http_status": response.status, "raw_response": raw,
+                    "response": json.loads(raw)}
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode(errors="replace")
+        return {"http_status": error.code, "raw_response": raw,
+                "response": json.loads(raw)}
 
 
 async def cli(binary: Path, config: Path, env: dict[str, str], *args: str,
@@ -267,7 +289,7 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             document["master_wallet"] = document["wallets"]["operator"]
             document["bindings"]["validator-1"]["enable"] = True
             document["elections"]["policy"] = "minimum"
-            document["elections"]["tick_interval"] = 5
+            document["elections"]["tick_interval"] = 40
             document["tick_interval"] = 40
             document["http"]["bind"] = f"127.0.0.1:{args.service_port}"
             config.write_text(json.dumps(document, indent=2) + "\n")
@@ -337,35 +359,46 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
                 await asyncio.sleep(1)
             else:
                 raise RuntimeError("daemon did not send a wallet-to-pool NEW_STAKE within 150s")
-            daemon.send_signal(signal.SIGINT)
-            try:
-                await asyncio.wait_for(daemon.wait(), 25)
-            except TimeoutError:
-                daemon.kill()
-                await daemon.wait()
-            daemon = None
-            daemon_log.close()
-            daemon_log = None
-            report["daemon"]["log_sha256"] = sha256(log_path)
             log_text = log_path.read_text(errors="replace")
             if "node [validator-1] send stake" not in log_text:
                 raise RuntimeError("pool order observed but daemon send-stake log is absent")
             report["daemon"]["send_stake_log_seen"] = True
 
-        participant_after = await asyncio.to_thread(
-            lifecycle_module.json_rpc_call,
-            f"127.0.0.1:{args.rpc_port}", "runGetMethodStd",
-            {"address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
-             "method": "participant_list_extended", "stack": []},
-        )
-        participant_after_path = run_dir / "participant-list-extended-raw-after-cli.json"
-        participant_after_path.write_text(json.dumps(participant_after, indent=2) + "\n")
-        report["participant_list_after_cli_raw"] = {
-            "path": str(participant_after_path),
-            "sha256": sha256(participant_after_path),
-            "exit_code": participant_after["result"]["exit_code"],
-            "index4_type": participant_after["result"]["stack"][4]["@type"],
+        participant_params = {
+            "address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
+            "method": "participant_list_extended", "stack": [],
         }
+        participant_after = None
+        for attempt in range(5):
+            try:
+                observation = await asyncio.to_thread(
+                    observed_json_rpc, f"127.0.0.1:{args.rpc_port}",
+                    "runGetMethodStd", participant_params,
+                )
+            except Exception as error:
+                observation = {"transport_error": repr(error)}
+            attempt_path = run_dir / f"participant-list-after-attempt-{attempt}.json"
+            attempt_path.write_text(json.dumps(observation, indent=2) + "\n")
+            report.setdefault("participant_list_after_attempts", []).append({
+                "path": str(attempt_path), "sha256": sha256(attempt_path),
+            })
+            participant_after = observation.get("response", {}).get("result")
+            if participant_after is not None:
+                report["participant_list_after_raw"] = {
+                    "path": str(attempt_path), "sha256": sha256(attempt_path),
+                    "exit_code": participant_after.get("exit_code"),
+                    "index4_type": participant_after["stack"][4]["@type"],
+                }
+                break
+            if attempt < 4:
+                await asyncio.sleep(2)
+        if participant_after is None:
+            report["participant_list_after_error"] = "all five JSON-RPC observations failed"
+            elector_state = await life.client.raw_get_account_state(lifecycle_module.ELECTOR)
+            report["elector_account_after_json_rpc_error"] = {
+                "last_transaction_id": str(elector_state.last_transaction_id),
+                "block_id": str(getattr(elector_state, "block_id", None)),
+            }
 
         pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
             life.client, pool.address, pool_baseline
@@ -429,6 +462,17 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             "feedback_window_seconds": 45,
             "classification": "ELECTOR_REPLY_OBSERVED" if reply is not None else "INCONCLUSIVE",
         }
+        if daemon is not None:
+            daemon.send_signal(signal.SIGINT)
+            try:
+                await asyncio.wait_for(daemon.wait(), 25)
+            except TimeoutError:
+                daemon.kill()
+                await daemon.wait()
+            daemon = None
+            daemon_log.close()
+            daemon_log = None
+            report["daemon"]["log_sha256"] = sha256(log_path)
         if cli_error is not None:
             raise RuntimeError(f"product CLI failed after exact feedback capture: {cli_error}")
         if args.caller == "config-wallet" and "Stake accepted by elector" not in report["stake_cli_output"]:
@@ -469,6 +513,10 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
                 await daemon.wait()
         if daemon_log is not None:
             daemon_log.close()
+        if args.caller == "daemon":
+            log_path = run_dir / "tosctl-election-daemon.log"
+            if log_path.exists():
+                report.setdefault("daemon", {})["log_sha256"] = sha256(log_path)
         await life.shutdown()
 
 
