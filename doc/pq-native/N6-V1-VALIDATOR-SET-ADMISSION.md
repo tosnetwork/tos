@@ -121,11 +121,29 @@ The branch source guard pins the presence of both shared-vector test entries
 and the named 22-row table; it does not run either sandbox in branch CI. The
 regenerated table SHA-256 is
 `5bdebc0253b59172387cc634627601fa38b3ce3174c68865be47ca88c394f9a6`.
+Mac's independent 22-BOC review is retained at
+`/home/tomi/memo/pq-native/N6-MAC-C02-VECTORS-RESULT-20260924.md`
+(`memo/main@4f9241e6`, 66/66 artifact hashes): the `valid` set installed
+through both compiled-contract routes, all 21 negative sets were refused by
+both, and the node's 44 normal/inverted verdict checks agreed with the table.
+The old contract was RED on each route. This is independent behavior evidence,
+not a substitute for exact-head CI.
 The contract-sandbox workflow now treats either the table or its generator as
 a trigger on PRs and integration-branch pushes; the branch source guard checks
 both trigger lists so a vector-only edit cannot silently bypass that suite.
 
+The first exact `19f5b3406` contract-sandbox CI run failed its recorded-answer
+step, not a validator-set verdict: recompiling the changed config contract
+changes the config-upgrade proposal BOC and production zerostate BOC. The two
+`test-smartcont` answer hashes were re-derived from that tree's Fift output:
+`127397e81a78203935b999be80be537557f440bf7f0d228dc62598656856f5ed`
+for the governance upgrade proposal and
+`ef8a33e7a129642a6784eaff85098dcda13377c3343be9c5041886227f43651a`
+for the zerostate. The corrected local `check-regression-db.sh` run says every
+recorded answer is verified and unchanged. This CI failure is retained rather
+than counted as a passing run; the corrected head still needs exact-tree CI.
+
 The `pq-validator-set-installation-parity` question remains OPEN until the
-fixed-head CI result and the independent rule-parity review are recorded. No
+corrected-head CI result is recorded. No
 deliberately malformed set has been installed on a real network, so chain-halt
 impact remains a source-and-decoder inference, not a run observation.
