@@ -1,0 +1,10 @@
+diff --git a/validator/db/rootdb.cpp b/validator/db/rootdb.cpp
+--- a/validator/db/rootdb.cpp
++++ b/validator/db/rootdb.cpp
+@@ -73,4 +73,6 @@ void RootDb::store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data,
+                                     Ref<block::ValidatorSet> vset, td::Promise<td::Unit> promise) {
++  promise.set_value(td::Unit{});  // MUTATION: acknowledge without writing #13.
++  return;
+   if (handle->inited_signatures() || handle->moved_to_archive()) {
+     promise.set_value(td::Unit());
+     return;
