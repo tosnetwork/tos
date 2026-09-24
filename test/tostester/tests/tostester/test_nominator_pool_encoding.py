@@ -162,6 +162,50 @@ def test_second_stake_feedback_distinguishes_exact_controller_bounce_from_relay_
 
 
 @pytest.mark.asyncio
+async def test_stake_history_page_containing_baseline_covers_a_crossing_previous_cursor():
+    """The retained e48 raw page includes baseline LT+hash, then previous jumps earlier."""
+    pool = Address((-1, bytes([0x31]) * 32))
+    baseline = toslib_api.Internal_transactionId(
+        lt=2964000001,
+        hash=bytes.fromhex("2470dd98843d4bc6c4b73be3d1815fe168bd47a9c63458289057c1da24308251"),
+    )
+    latest = toslib_api.Internal_transactionId(lt=3000000001, hash=bytes([0x30]) * 32)
+    earlier = toslib_api.Internal_transactionId(lt=2710000001, hash=bytes([0x27]) * 32)
+    order = SimpleNamespace(transaction_id=latest)
+    old = SimpleNamespace(transaction_id=baseline)
+
+    class FakeHistory:
+        def __init__(self, page):
+            self.page = page
+            self.queries = 0
+
+        async def raw_get_account_state(self, address):
+            assert address == pool
+            return SimpleNamespace(last_transaction_id=latest)
+
+        async def raw_get_transactions(self, address, cursor):
+            assert address == pool and cursor is latest
+            self.queries += 1
+            return SimpleNamespace(transactions=self.page, previous_transaction_id=earlier)
+
+    history = FakeHistory([order, old])
+    seen, pages, covered, start = await lifecycle._transactions_since(history, pool, baseline)
+    assert seen == [order] and pages == 1 and covered and start is latest
+    assert history.queries == 1, "the exact baseline in this page must stop pagination"
+
+    history = FakeHistory([order])
+    with pytest.raises(RuntimeError, match="crossed the pre-order cursor without its exact transaction"):
+        await lifecycle._transactions_since(history, pool, baseline)
+
+    wrong_hash = SimpleNamespace(transaction_id=toslib_api.Internal_transactionId(
+        lt=baseline.lt, hash=bytes([0xFF]) * 32,
+    ))
+    history = FakeHistory([order, wrong_hash])
+    with pytest.raises(RuntimeError, match="pre-order transaction hash changed in history page"):
+        await lifecycle._transactions_since(history, pool, baseline)
+
+
+@pytest.mark.asyncio
 async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
     runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-query-test")
     runner.pool_address = Address((-1, bytes([0x55]) * 32))

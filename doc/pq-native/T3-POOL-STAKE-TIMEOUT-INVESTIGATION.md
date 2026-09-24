@@ -1,9 +1,11 @@
 # T3 multi-nominator first-stake timeout: bounded investigation
 
-Status: **OPEN — a contract sandbox reproduces a precise amount-based refusal,
-but the retained live run did not capture its Elector reply.** This is a
-same-host diagnostic, not launch or release acceptance. Do not extend the
-180-second wait or mark the live stake accepted on this evidence.
+Status: **OPEN — the a4 report lacked second-stake feedback; the retained e48
+raw transaction trace now contains an exact-query-ID Elector refusal.** The
+e48 report's own pagination classification was inconclusive because of a
+diagnostic bug, corrected below with an old-RED/new-GREEN unit test. This is
+a same-host diagnostic, not launch or release acceptance. Do not extend the
+180-second wait or mark the second live stake accepted on this evidence.
 
 ## a4d31b351 live2: first round proven, second round unresolved
 
@@ -42,9 +44,54 @@ call) back to those cursor IDs, records pages/transactions scanned, and
 requires the exact pool order transaction to appear. If a cursor cannot be
 reached or the order is absent, the classification is `INCONCLUSIVE`; null
 reply/bounce fields mean **not found in the covered window or unavailable with
-a recorded collection error**, not “no bounce” or “no refusal”. A fresh fixed-tree
-diagnostic run is needed for that evidence. No wait extension or causal claim
-follows from this section. T3 remains OPEN.
+a recorded collection error**, not “no bounce” or “no refusal”. The later e48
+run supplied raw feedback, described below. No wait extension or causal claim
+follows from the a4 report alone. T3 remains OPEN.
+
+### e48a31af1 follow-up: a reply recovered from the retained raw trace
+
+The e48 exact-tree run ended `passed=false`; its report is
+`test/integration/.pq-nominator-pool-t3/e48-feedback/20260924T011747Z/report.json`
+(SHA-256 `c5c1a605b958316c82ff838ed9a36d2b8262e755aa1ce3c90571ba4744762c52`).
+The terminal recorder is `test/integration/.pq-nominator-pool-t3/e48-feedback.typescript`
+(SHA-256 `09a63284b9adafcf19b1a615ccf3726ef9fc9fb8d6203cc456d8267824675b8c`).
+The first pool stake, live ConfigParam 34 selection, recovery, eight positive
+rewards, queued refusal and drain passed again. The second order used query ID
+`1790213858653322247` and again ended state 0 after 180 seconds.
+
+The report's `INCONCLUSIVE` was **an instrument error, not an absence of chain
+feedback**. The raw `raw_getTransactions` reply in the retained recorder has
+the pool's exact pre-order baseline LT `2964000001` and hash
+`2470dd98…24308251` **in the returned page**; its `previous_transaction_id`
+is `2710000001`. The controller page likewise contains its exact baseline LT
+`1045000005` and hash `ad9c93be…1076bc71`, then `previous` is zero.
+`_transactions_since` had filtered out the baseline before checking that it
+was present and moved to `previous`, incorrectly reporting a crossed cursor
+and zero scanned transactions. Its new regression reconstructs this page
+semantics: old logic RED on the crossed-cursor exception, corrected logic
+GREEN; a page that crosses without the exact LT+hash still fails closed.
+
+The retained **pool** page contains the second order transaction at LT
+`2973000003` and an inbound message **from the Elector** at LT `2973000009`.
+Decoding the latter's full 33-byte message BOC yields opcode `0xee6f454c`
+(`new_stake_error`), the exact query ID above, reason **0**, and no trailing
+bits or refs. The retained **controller** page contains the matching pool
+relay at LT `2973000005` and an outgoing `PQst` message to the Elector;
+therefore this was not a missing controller relay. The pool page between the
+order and reply contains no controller bounce. The recorder does not expose a
+separate parsed controller `aborted` boolean, so do not invent one: the
+outgoing Elector message and returned Elector opcode establish the route.
+
+Reason 0 is the Elector's “no active election / finished election / election
+deadline reached” family (`elector-code.fc:236-242,303-311`). The accelerated
+profile installs `election_params = 300 180 60 180`, so for the second
+`elect_at=1790213868`, `elect_close=1790213808`. The Elector reply transaction
+has chain `utime=1790213858`, **50 seconds after that close**. The script's
+`active_election_id` get method returns a nonzero ID whenever the election
+dictionary exists, including after its accepting window closes. The final
+predicate `value > 0` therefore selected a stale election. This is the
+specific script-level boundary to repair; it is not a controller-witness or
+stake-amount refusal and does not justify extending the 180-second wait.
 
 ## Contract-level falsification and bounded fixture correction
 

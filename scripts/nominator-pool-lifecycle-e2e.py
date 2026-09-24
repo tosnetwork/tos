@@ -250,13 +250,24 @@ async def _transactions_since(
             return transactions, pages, True, latest_cursor
         response = await client.raw_get_transactions(address, cursor)
         pages += 1
+        baseline_in_page = False
+        for item in response.transactions:
+            transaction_id = item.transaction_id
+            if transaction_id is not None and transaction_id.lt == baseline.lt:
+                if transaction_id.hash != baseline.hash:
+                    raise RuntimeError("pre-order transaction hash changed in history page")
+                baseline_in_page = True
         transactions.extend(
             item for item in response.transactions
             if item.transaction_id is not None and item.transaction_id.lt > baseline.lt
         )
+        if baseline_in_page:
+            return transactions, pages, True, latest_cursor
         previous = response.previous_transaction_id
         if previous is None or previous.lt >= cursor.lt:
             raise RuntimeError("transaction history did not advance toward the pre-order cursor")
+        if previous.lt < baseline.lt:
+            raise RuntimeError("history page crossed the pre-order cursor without its exact transaction")
         cursor = previous
     return transactions, pages, False, latest_cursor
 
