@@ -334,6 +334,23 @@ def recoverable_support_election_ids(
     return eligible if credit >= len(eligible) * NETWORK_MIN_STAKE else []
 
 
+def support_keeper_poll_seconds(
+    *, chain_utime: int, retired_past: dict[int, dict[str, int]],
+    submitted: dict[int, set[int]], recovered: dict[int, set[int]],
+) -> int:
+    """Poll near an actual retired-set unfreeze before the next window closes.
+
+    This only schedules observation. It does not infer maturity or authorize a
+    recovery; recoverable_support_election_ids still checks the live chain.
+    """
+    for index, elections in submitted.items():
+        for election_id in elections - recovered[index]:
+            record = retired_past.get(election_id)
+            if record is not None and record["unfreeze_at"] - chain_utime <= 60:
+                return 5
+    return 20
+
+
 def elector_credit_from_output(output: str) -> int:
     match = re.search(r"result:\s*\[\s*(\d+)", output)
     if match is None:
@@ -3631,6 +3648,7 @@ class PoolLifecycle:
     async def keep_elections_alive(self) -> None:
         """Rotate support validators, reusing only chain-proven matured capital."""
         while True:
+            poll_seconds = 20
             try:
                 snapshot = await self.support_chain_snapshot("keeper-poll")
                 election_id = snapshot["stakeable_election_id"]
@@ -3661,11 +3679,17 @@ class PoolLifecycle:
                         break
                     await self.stake_support_pool(index, election_id)
                     self.support_submitted[index].add(election_id)
+                poll_seconds = support_keeper_poll_seconds(
+                    chain_utime=snapshot["chain_utime"],
+                    retired_past=self.support_retired_past,
+                    submitted=self.support_submitted,
+                    recovered=self.support_recovered,
+                )
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # noqa: BLE001 - report the missed rotation
                 self.event("keep_elections_alive_error", error=repr(error))
-            await asyncio.sleep(20)
+            await asyncio.sleep(poll_seconds)
 
     async def authorized_pool_order(
         self, index: int, election_id: int, pool_address: Address, *, query_id: int | None = None

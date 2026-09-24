@@ -255,6 +255,31 @@ def test_support_credit_reuse_requires_retired_chain_record_and_exact_owner_cred
     )
 
 
+def test_support_keeper_shortens_poll_near_actual_unfreeze_only_while_recovery_pending():
+    election_id = 1790219476
+    status = dict(
+        retired_past={election_id: {"unfreeze_at": 1790219956}},
+        submitted={1: {election_id}, 2: {election_id}},
+        recovered={1: set(), 2: set()},
+    )
+    poll = lifecycle.support_keeper_poll_seconds
+    assert poll(chain_utime=1790219895, **status) == 20
+    assert poll(chain_utime=1790219896, **status) == 5, (
+        "within 60 seconds of the chain-reported unfreeze, do not miss the next stake window"
+    )
+    assert poll(chain_utime=1790219970, **status) == 5, (
+        "keep looking for credit after unfreeze until both support pools recover"
+    )
+    one_recovered = {**status, "recovered": {1: {election_id}, 2: set()}}
+    assert poll(chain_utime=1790219970, **one_recovered) == 5
+    both_recovered = {**status, "recovered": {1: {election_id}, 2: {election_id}}}
+    assert poll(chain_utime=1790219970, **both_recovered) == 20
+    no_chain_record = {**status, "retired_past": {}}
+    assert poll(chain_utime=1790219970, **no_chain_record) == 20, (
+        "an estimated election schedule must not substitute for the retired chain record"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reply_opcode", [0xF96F7324, 0xFFFFFFFE])
 async def test_support_recovery_requires_exact_elector_reply_and_pool_balance(

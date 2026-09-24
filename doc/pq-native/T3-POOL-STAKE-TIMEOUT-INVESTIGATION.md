@@ -313,3 +313,58 @@ instead; neither a longer wait nor a speculative amount increase is evidence.
 
 T3 and the product first-stake witness correctness question remain OPEN. The
 separate Merkle actor reproduction is not touched by this investigation.
+
+## 2026-09-24 support-capital reuse run (diagnostic, still failing)
+
+The exact `07a9e25d8` tree ran with the production pool-order builder and
+fixed-head native binaries. Its retained report is
+`test/integration/.pq-nominator-pool-t3/957-support-reuse/20260924T030116Z/report.json`
+(SHA-256 `df537aa870c0b9a67bff9d26d18a00110b3e4a601d6da4ae507eec105bebd3d6`).
+The report says `passed=false`: all 26 checks reached passed, but the final
+"draining the queue lets the pool back into an election" check was not
+exercised. The main pool's second order was **not sent**. The script waited
+its existing 900-second limit for an election with an accepting window and
+ended with `last=0`. This is not an Elector refusal of a second order.
+Before launch, `build/git.cc` identified `07a9e25d8`; SHA-256 was
+`5b9922c73a90ddd5eba7c91137ec699bdffa199d2959d9867dd27df5590f58ce`
+for `build/validator-engine/validator-engine` and
+`0f8ec7280d913127012f811da0cdc37f6bc8be87e2ffdddce9ac6083f5842ca1`
+for the production Rust `pq_pool_stake_order` bridge. The bridge's Cargo
+target was already up to date because its Rust sources had not changed since
+the preceding build; its binary predates this head and is identified by hash,
+not claimed as newly compiled from this commit. The bounded run exited
+1 without a watchdog stop; peak run-directory size was 9,884,368,896 bytes,
+below its 12 GiB cap. Its report and raw artifacts remain in place.
+
+The run did establish four independent support-pool capital recoveries from
+the *first* election. ConfigParam 34 had moved from set `1790219476` to
+`1790219776` with different hashes; the former set's chain-reported reset
+`unfreeze_at=1790219956` passed, its `past_elections_list` record disappeared,
+and each pool owner then had `compute_returned_stake=10014780045073` nanotos.
+Each pool sent its own `RECOVER_STAKE` and received exact query-id Elector
+reply `0xf96f7324`, detail zero. Transaction pagination covered the pre-order
+baseline (two transactions, one page each), the owner credit was consumed,
+and each pool balance rose from about 32 TOS to about 10,047.78 TOS. The raw
+ConfigParam 34, past-elections, participant-list, account, credit and pool-data
+outputs are retained under the same run's `artifacts/` directory. These are
+evidence of first-set maturity and capital reuse, not evidence of a complete
+multi-nominator lifecycle.
+
+At the third election, `elect_at=1790220076` and `elect_close=1790220016`.
+The keeper's 20-second poll first observed recoverable credit at chain time
+about `1790219974`. Recoveries then ran serially. Support pools 1–3 sent a
+third-round stake; after pool 4's successful recovery the chain time was
+`1790219989`, leaving 27 seconds before close, below the harness's 30-second
+send allowance. Pool 4 did not send. The later participant-list output still
+named this closed election and live ConfigParam 34 remained set `1790219776`.
+This is a directly observed *window scheduling boundary*, not yet proof that
+the missing fourth order alone prevented a new set. The next falsifying step
+is a bounded keeper-poll scheduling test, followed by an exact-tree live run.
+The next tree polls every five rather than twenty seconds when an
+unrecovered support stake has a chain-observed retired-set `unfreeze_at`
+within sixty seconds. The unit test checks both sides of the threshold,
+continuation after unfreeze while credit is pending, and return to the normal
+poll after all pools recover; the source guard pins the call-site wiring. This
+does not weaken the accepting-window check or change an Elector/consensus
+parameter. It is **not yet live-verified**. T3 and the product first-stake
+witness question remain OPEN.

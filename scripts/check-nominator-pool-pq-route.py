@@ -71,6 +71,7 @@ def validate(source: str) -> None:
     upkeep = method(tree, "keep_elections_alive")
     support_snapshot = method(tree, "support_chain_snapshot")
     support_eligibility = method(tree, "recoverable_support_election_ids")
+    support_poll = method(tree, "support_keeper_poll_seconds")
     support_recovery = method(tree, "recover_support_pool")
     selection = method(tree, "record_pool_validator_selection")
     recover = method(tree, "recover")
@@ -207,7 +208,13 @@ def validate(source: str) -> None:
         "self.recover_support_pool(index, eligible, snapshot)",
         "await self.stakeable_election_id() != election_id",
         "self.support_submitted[index].add(election_id)",
+        "support_keeper_poll_seconds", "await asyncio.sleep(poll_seconds)",
     )), "support keeper no longer proves recovery and open window before reusing capital")
+    poll_text = ast.unparse(support_poll)
+    require(all(token in poll_text for token in (
+        "elections - recovered[index]", "retired_past.get(election_id)",
+        "record['unfreeze_at'] - chain_utime <= 60", "return 5", "return 20",
+    )), "support keeper no longer polls promptly near a chain-observed unfreeze")
     require(one_call(upkeep, "recover_support_pool").lineno < one_call(upkeep, "stake_support_pool").lineno,
             "support keeper spends another principal before attempting mature pool credit recovery")
     selection_text = ast.unparse(selection)
@@ -295,6 +302,13 @@ def self_test(source: str) -> None:
         "support recovery bypassed": (
             "await self.recover_support_pool(index, eligible, snapshot)",
             "await self.balance(self.support_pools[index].address)",
+        ),
+        "pre-unfreeze fast poll removed": (
+            "record[\"unfreeze_at\"] - chain_utime <= 60:",
+            "record[\"unfreeze_at\"] - chain_utime <= 0:",
+        ),
+        "keeper ignores fast poll": (
+            "await asyncio.sleep(poll_seconds)", "await asyncio.sleep(20)"
         ),
     }
     for label, (before, after) in mutations.items():
