@@ -25,12 +25,24 @@ production `nominator::new_stake_with_witness` path. Missing or mismatched
 birth artifacts refuse before wallet send. The import validates transaction
 shape and identity offline; it is not an independent chain-finality proof.
 
-The exact-tree `ca842b0f1` product run is the live first-stake evidence:
-`test/integration/.pq-tosctl-config-wallet-product/20260924T063630Z/report.json`,
-SHA-256 `b5a448040fd75f5f55e206751f86831cf68b3c2de5d3f84fdca236e2447a693d`,
-as recorded in `T3-CONFIG-WALLET-FIRST-STAKE-DIAGNOSTIC.md`. It records product
-CLI exit 0, pool Elector `STAKE_ACCEPTED` for query `1790232216`, and live
-ConfigParam 34 pairing the configured controller with its actual relay ADNL.
+The first product proof was `ca842b0f1`, recorded in
+`T3-CONFIG-WALLET-FIRST-STAKE-DIAGNOSTIC.md`. T05 independently repeated it on
+the exact retirement tree `d74c3abd3e694fcfdbd2bc5c2099282b82e1e396`:
+`test/integration/.pq-tosctl-config-wallet-product/20260924T080636Z/report.json`,
+SHA-256 `6b9141ce9bcc3b55850f729697e0e5541791e71a490e53105bbac4d330cb0937`,
+`passed=true`, `failures=[]`. The product CLI exited 0. Complete pool (2
+transactions, 1 page) and controller (1 transaction, 1 page) histories bind
+query `1790237617` to the pool's Elector `STAKE_ACCEPTED`, reason 0. Live
+ConfigParam 34 at `utime_since=1790237797` pairs controller
+`dae8de3bc465a977f3c2c40efa33f89d463b46a1c9498e17a19a0603101c57d8`
+with actual relay ADNL
+`c513062a689a3af0a85d70a08e6573ec095ead28e650e85782fa6d1f08f3a19c`.
+Raw pool/controller JSON SHA-256 values are
+`33fb76efd0b7968f03b2cad618ef0a19480a88b39cf4d92b8979b41c31eeedd6`
+and `cfe976b56b5f15a2eb4f81a3c8d9708274b1b314aef3d166a323a97803ef4d38`;
+the raw live Config34 text is
+`8d754fcff431a5603702f3bb85dca30b2c051c5f4b2d536dd3b7a932de08708f`.
+This is a single co-located product proof, not release-scale evidence.
 The new sandbox negative constructs the retired classical body, requires the
 compiled PQ pool transaction to abort, and requires no controller relay.
 

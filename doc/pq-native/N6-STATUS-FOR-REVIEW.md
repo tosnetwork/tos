@@ -320,7 +320,11 @@ Pooled staking remains in the launch set through `single-nominator-pool`. Its
 contract already relays stake through the controller and parses the PQ
 authorization shape. T05 retired its Ed25519 Fift operator path after the
 node-authorized `tosctl config wallet stake` command passed an exact first
-stake and live ConfigParam 34 pairing at `ca842b0f1`. The old codec is now a
+stake and live ConfigParam 34 pairing at `ca842b0f1`. On the exact T05
+retirement tree `d74c3abd3`, the independent repeat passed with report
+SHA-256 `6b9141ce9bcc3b55850f729697e0e5541791e71a490e53105bbac4d330cb0937`:
+query `1790237617` received Elector `STAKE_ACCEPTED` (reason 0), and live
+ConfigParam 34 paired its controller with the observed relay ADNL. The old codec is now a
 test-only legacy fixture for `test-smartcont.cpp`; a PQ pool sandbox test
 confirms that its classical body aborts before controller relay. In contrast,
 `liquid-staking/controller.func` still submits classical `new_stake` directly
