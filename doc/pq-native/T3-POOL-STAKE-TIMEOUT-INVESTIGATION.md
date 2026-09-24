@@ -117,6 +117,59 @@ the short behavior test proves that the e48-style nonzero ID is rejected
 after its close while an open window is returned. No new live
 second-stake acceptance is claimed; T3 remains OPEN.
 
+### 463f44bea exact-tree run: the stale order is prevented, re-entry remains untested
+
+The serial run at
+`test/integration/.pq-nominator-pool-t3/463f-window/20260924T015823Z/report.json`
+has SHA-256 `9408613f6391226e1a29fd972f4472d007aefa9eaa2dd99fb0ea08de15d89f7f`.
+Its unedited terminal recorder is
+`test/integration/.pq-nominator-pool-t3/463f-window.typescript`, SHA-256
+`6a6b269f1c3eb43c1a7fa56aff383c78d9f4ac603523c8c34ac858e973c3b828`.
+The native build's `build/git.cc` identified full source commit
+`463f44bea31e04da48abf5fa8b01c2b04426c8d3`; the validator-engine,
+Rust order-builder and lifecycle script SHA-256 values recorded before the
+run were respectively `7697fb1c1fb762c38a3b6c1204f3e4f920b067841dfcf139da7c2564b7985143`,
+`ddc7e5e8ac36bc040163d232797be01509c40d495a62f1ff8da31ad21f545f64`, and
+`fc717bb2b69782b329011b1fbc0be49f869792d5ce5f5073f903b950d5943553`.
+
+The report is `passed=false`, exit 1, with **26/26 executed checks passing**.
+It proves the first pool stake reached state 2 for election `1790215703`,
+its controller/ADNL pair entered live ConfigParam 34, the stake was recovered,
+eight identity-bound nominators received positive reward, and the blocked
+withdrawal queue drained without validator messages on the exit path. The
+specific unexercised check is “draining the queue lets the pool back into an
+election”. The terminal failure is
+`TimeoutError('an election with an open pool-stake acceptance window: gave up after 900s, last=0')`.
+**No second order was sent**: there is no second query ID, no second Elector
+reply and no second state-2 claim. This differs from e48, where a second order
+was sent and the Elector explicitly returned reason 0.
+
+A read-only live query during the wait found `elect_at=1790216303`,
+`elect_close=1790216243`, chain time `1790216521`, and an empty participant
+list. This shows the nonzero old `active_election_id` would have selected a
+closed window again; the new selector correctly returned zero. The terminal
+recorder contains two waves of four `support-validator-*-pool-stake` sends,
+and no third wave. At chain time `1790216809`, a separate read-only
+`getaccount` reported one supporting pool's balance as
+`31.999833183 TOS`, below the script's approximately `10012 TOS` threshold
+for another order. That one-off balance response was not saved as a separate
+raw artifact, so it is supporting observation, not an artifact-backed
+four-pool balance inventory.
+
+The fixture reserves only two stake principals per supporting pool
+(`SUPPORT_POOL_CAPITAL = 2 * POOL_STAKE_VALUE + 20 TOS`), and the upkeep loop
+does not recover their matured first-round Elector credits. The source and
+two observed support-stake waves make **support-capital exhaustion a specific,
+testable explanation** for the empty later election; they do not establish
+that all four credits were available for recovery at the required times.
+The ordinary 100,000-TOS Genesis faucet has only 3,600 TOS uncommitted after
+known fixture transfers, so simply granting each supporting pool a third
+10,002-TOS principal would not fit the existing profile. The next bounded
+unit is to prove whether those first-round credits can be recovered and
+reused before the third window closes; do not extend the wait, alter Elector
+or consensus parameters, or report a second accepted stake until a new live
+run supplies it. T3 remains OPEN.
+
 ## Contract-level falsification and bounded fixture correction
 
 The original section below deliberately preserves the hypothesis and its
