@@ -1314,7 +1314,60 @@ int main(int argc, char **argv) {
       std::cerr << "N5_CUT6_FAILED: source proof is not the expected PQ target\n";
       return 1;
     }
+    const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                         context.expected_session_id, "") + "/db/";
+    std::optional<td::BufferSlice> exact_cert;
+    td::actor::Scheduler journal_scheduler({1});
+    journal_scheduler.run_in_context([&] {
+      auto bus = n5_joined_bus(vset, context.expected_session_id, {}, journal_path);
+      for (auto &[key, value] : bus->db->get_by_prefix(tos_api::consensus_simplex_db_key_vote::ID)) {
+        auto wrapper = fetch_tl_object<tos_api::consensus_simplex_db_cert>(value, true);
+        if (wrapper.is_error() || !wrapper.ok()->cert_) {
+          continue;
+        }
+        auto bytes = serialize_tl_object(wrapper.ok()->cert_, true);
+        if (sha256_bits256(bytes.as_slice()).to_hex() == std::string_view(argv[5])) {
+          if (exact_cert) {
+            std::cerr << "N5_CUT6_FAILED: duplicate exact FinalCert journal records\n";
+            return;
+          }
+          exact_cert.emplace(std::move(bytes));
+        }
+      }
+    });
+    journal_scheduler.run(0.01);
+    journal_scheduler.stop();
+    if (!exact_cert) {
+      std::cerr << "N5_CUT6_FAILED: exact FinalCert absent from source journal\n";
+      return 1;
+    }
+    BlockCandidate cold_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                              block_boc.clone(), td::BufferSlice{}};
+    const auto candidate_id = consensus::CandidateHashData::create_full(cold_block, std::nullopt)
+                                  .build_id_with(0);
+    std::vector<block::PQBlockSignature> exact_signatures;
+    if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate_id, exact_cert->as_slice(), true, exact_signatures)) {
+      return 1;
+    }
     auto carried = require_ok(envelope.signatures->export_pq_signatures(), "N5 cut6 PQ signatures");
+    if (carried.size() != exact_signatures.size()) {
+      std::cerr << "N5_CUT6_FAILED: proof signer count differs from exact FinalCert\n";
+      return 1;
+    }
+    for (const auto &expected : exact_signatures) {
+      const auto match = std::find_if(carried.begin(), carried.end(), [&](const auto &actual) {
+        return actual.validator_id == expected.validator_id && actual.algorithm_id == expected.algorithm_id &&
+               actual.signature.as_slice() == expected.signature.as_slice();
+      });
+      if (match == carried.end()) {
+        std::cerr << "N5_CUT6_FAILED: proof signature bytes differ from exact FinalCert\n";
+        return 1;
+      }
+    }
+    std::cout << "N5_CUT6_SOURCE_PROOF_MATCHES_FINALCERT cert=" << argv[5]
+              << " signatures=" << carried.size() << '\n';
     if (carried.empty() || carried.front().signature.empty()) {
       std::cerr << "N5_CUT6_FAILED: no signature bytes to perturb\n";
       return 1;
@@ -2288,7 +2341,8 @@ int main(int argc, char **argv) {
       std::ostringstream cert_bytes;
       cert_bytes << cert_file.rdbuf();
       if (!cert_file || cert_bytes.str().empty()) {
-        std::cerr << "N5_CUT5_FAILED: writer FinalCert witness unavailable\n";
+        std::cerr << (n5_cut6 ? "N5_CUT6_FAILED" : "N5_CUT5_FAILED")
+                  << ": writer FinalCert witness unavailable\n";
         return 1;
       }
       std::string cert_hash = sha256_bits256(td::Slice(cert_bytes.str())).to_hex();
@@ -2301,7 +2355,8 @@ int main(int argc, char **argv) {
       const int rebuilt = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
       status = 0;
       if (rebuilt != 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        std::cerr << "N5_CUT5_FAILED: DB/archive-only rebuild child status=" << status << " spawn=" << rebuilt << '\n';
+        std::cerr << (n5_cut6 ? "N5_CUT6_FAILED" : "N5_CUT5_FAILED")
+                  << ": cold child status=" << status << " spawn=" << rebuilt << '\n';
         return 1;
       }
       if (n5_cut6) {
