@@ -94,6 +94,26 @@ retention expiry gives the two remaining controls. The current synthetic
 block/state pair is sufficient for `WaitBlockData::generate_proof` and the
 manager queue, but is not a replacement for that predecessor-state fixture.
 
+An offline component fixture now supplies that predecessor-state input without
+claiming the downstream actor result. `test-c04-real-state-proof` reads the
+frozen public PQ masterchain zerostate BOC (SHA-256
+`4e833bf9650c48448969688b862abfd6ad31dd504aa9ab68757db683e47bb162`),
+checks all four ConfigParam 34 signers, constructs a seqno-1 state with the
+required zerostate entry in `OldMcBlocks`, and applies a real Merkle update.
+It then signs with the shared test signer fixture, runs production proof
+generation and parsing, and rejects a wrong old root, trusted session, or
+declared validator-set hash. The imported fixture is the independently checked
+candidate described in
+`/home/tomi/memo/pq-native/N6-MAC-C04-REAL-FIXTURE-CANDIDATE-20260924.md`;
+its patch SHA-256 is
+`a04f9f8ec88ce89985a2f25c852417c6997cf8a1a028663547418304a0ea5224`.
+On the working tree based on `19aba0749`, the new target built and its CTest passed
+1/1; the test binary SHA-256 was
+`52a1bcbaf602c766a1bcc0290f38e93f8a54cfffaaafd1751937192b7069e541`.
+This is a component fixture and the Mac old/new result was a fixture repair,
+not production C04 RED/GREEN. The Manager probe still substitutes the success
+callback and has no DB-backed applied-block assertion. C04 remains OPEN.
+
 The old-behavior mutation changed only the proof-error branch of
 `try_process_pending_block_finality` back to candidate-byte erasure. The
 `test-pending-finality-cache` CTest exited 8 and named

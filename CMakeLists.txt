@@ -803,6 +803,13 @@ target_link_libraries(test-pending-finality-cache PRIVATE validator full-node to
                       tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-pending-finality-cache PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
+add_executable(test-c04-real-state-proof test/pq-native/c04-real-state-proof-test.cpp)
+target_include_directories(test-c04-real-state-proof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-c04-real-state-proof PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-c04-real-state-proof PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
 add_executable(test-pq-launch-cap test/pq-native/pq-launch-cap-test.cpp)
 target_link_libraries(test-pq-launch-cap PRIVATE tos_block)
 
@@ -1231,6 +1238,7 @@ tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)
 tos_test(test-pending-finality-cache)
+tos_test(test-c04-real-state-proof ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)
 add_test(NAME n6-metric-schema COMMAND test-measurement-contract --filter MetricSchema)
