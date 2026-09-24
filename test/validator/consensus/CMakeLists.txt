@@ -464,6 +464,14 @@ add_test(
 set_tests_properties(test-consensus-simplex2-pq-restart-transient-origin PROPERTIES
     ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2;TOS_TEST_ORIGIN_TRANSIENT_FAILURES=2")
 add_test(
+    NAME test-consensus-simplex2-pq-restart-permanent-origin
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-permanent-origin PROPERTIES
+    ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ORIGIN_PERMANENTLY_UNAVAILABLE=1")
+add_test(
     NAME test-consensus-simplex2-query-abuse
     COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
             --net-ping 0.005:0.02 --query-abuse-test

@@ -5,6 +5,7 @@
  */
 
 #include <atomic>
+#include <cstdio>
 
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
@@ -160,6 +161,7 @@ std::atomic<size_t> EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES = 0;
 // The session origin is a separate dependency from a finalized nonzero anchor.
 std::atomic<size_t> EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = 0;
 std::atomic<size_t> EMPTY_CHAIN_ORIGIN_FAILURES = 0;
+bool EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = false;
 // Production restarts an active group from its current accepted chain tip.
 bool RESTART_FROM_LAST_ACCEPTED_BLOCK = false;
 
@@ -2301,6 +2303,44 @@ class TestConsensus : public td::actor::Actor {
     auto stopped_count = candidate_record_count(instance);
     start_instance(0, 0);
 
+    if (EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE) {
+      // A missing exact predecessor is an unavailable session, not a usable
+      // restart tip. Require the real resolver to reach its third read, then
+      // observe a stable no-production window. This is deliberately a
+      // fail-closed assertion; it does not claim eventual liveness.
+      auto origin_deadline = td::Timestamp::in(DURATION * 0.2);
+      while (EMPTY_CHAIN_ORIGIN_FAILURES < 3 && !origin_deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+      }
+      if (EMPTY_CHAIN_ORIGIN_FAILURES < 3 || EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES == 0) {
+        empty_chain_restart_error_ = PSTRING() << "permanent origin injection did not reach replay: origin reads="
+                                               << EMPTY_CHAIN_ORIGIN_FAILURES
+                                               << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
+        co_return td::Unit{};
+      }
+      if (candidate_record_count(instance) != stopped_count) {
+        empty_chain_restart_error_ = "candidate production resumed with the exact origin unavailable";
+        co_return td::Unit{};
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
+      auto after_window = candidate_record_count(instance);
+      if (after_window != stopped_count) {
+        empty_chain_restart_error_ = PSTRING() << "candidate production resumed with the exact origin unavailable: "
+                                               << stopped_count << " -> " << after_window;
+        co_return td::Unit{};
+      }
+      LOG(WARNING) << "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=" << EMPTY_CHAIN_ORIGIN_FAILURES
+                   << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES
+                   << " candidate records=" << stopped_count << " -> " << after_window;
+      std::fprintf(stderr,
+                   "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=%zu anchor failures=%zu candidate records=%zu -> %zu\n",
+                   EMPTY_CHAIN_ORIGIN_FAILURES.load(), EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load(), stopped_count,
+                   after_window);
+      std::fflush(stderr);
+      empty_chain_restart_completed_ = true;
+      co_return td::Unit{};
+    }
+
     const size_t RECOVERY_CANDIDATES = SLOTS_PER_LEADER_WINDOW * 2;
     auto recovery_deadline = td::Timestamp::in(DURATION * 0.25);
     while (candidate_record_count(instance) < stopped_count + RECOVERY_CANDIDATES && !recovery_deadline.is_in_past()) {
@@ -2617,7 +2657,8 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
 td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
                                                                             td::Timestamp timeout) {
   if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() == 0 &&
-      EMPTY_CHAIN_ORIGIN_FAILURES < EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES) {
+      (EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE ||
+       EMPTY_CHAIN_ORIGIN_FAILURES < EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES)) {
     ++EMPTY_CHAIN_ORIGIN_FAILURES;
     co_return td::Status::Error(ErrorCode::notready, "simulated session origin not ready");
   }
@@ -3631,9 +3672,14 @@ int main(int argc, char* argv[]) {
     LOG_CHECK(parsed.is_ok() && parsed.ok() > 0) << "TOS_TEST_ORIGIN_TRANSIENT_FAILURES must be a positive integer";
     EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = parsed.ok();
   }
+  if (const char* value = std::getenv("TOS_TEST_ORIGIN_PERMANENTLY_UNAVAILABLE");
+      value != nullptr && std::string_view(value) == "1") {
+    EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = true;
+  }
   LOG(WARNING) << "C03 harness switches: restart_from_last_accepted_block=" << RESTART_FROM_LAST_ACCEPTED_BLOCK
                << " anchor_transient_failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES.load()
-               << " origin_transient_failures=" << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES.load();
+               << " origin_transient_failures=" << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES.load()
+               << " origin_permanently_unavailable=" << EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE;
   if (run_configured_maximum_candidate_test) {
     test_configured_maximum_candidate();
     return 0;

@@ -27,6 +27,7 @@ RESTART_ORIGIN_TESTS = (
     "test-consensus-simplex2-pq-restart-transient-anchor",
     "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
     "test-consensus-simplex2-pq-restart-transient-origin",
+    "test-consensus-simplex2-pq-restart-permanent-origin",
 )
 
 
@@ -126,7 +127,7 @@ def main() -> int:
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and the C05 parent-state retry CTest selector, "
-        "and four restart-origin controls, "
+        "and five named restart-origin controls, "
         "and compiles every Rust test target"
     )
     return 0

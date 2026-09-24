@@ -69,8 +69,33 @@ The local source-guard set passed 39/39
 (`test/integration/.c03-sr1-d086-fixed/source-guards.log`, SHA-256
 `f50bfc2d7938fa4bbeab8c07eec41bbee280415bfa2b23e3f4018dbb73386c83`).
 
-The tests
-do not prove eventual liveness if the exact predecessor is permanently
+The permanent-origin actor control added after the initial comparison
+restarts from a non-zerostate accepted tip with both the nonzero finalized
+anchor and exact session origin unavailable. On the local `602658148` tree,
+the production resolver made six origin reads and saw four anchor failures;
+candidate records stayed `4352 -> 4352` across the observation window. The
+CTest passed, and the transient-origin control passed separately. A deliberate
+mutation that replaces the terminal `notready` with `state = genesis->state`
+failed the same permanent-origin CTest (exit 8): the seqno-1 candidate expected
+old root `4649E206...AA016399` but applied it to restart-tip root
+`8E60D12D...9924A539` at `chain-state.cpp:129`. After restoring the production
+resolver and rebuilding, the permanent-origin CTest passed again. The raw
+logs are retained under `test/integration/.c03-permanent-origin-20260924/`:
+initial green `602658148-permanent-raw.log` SHA-256
+`44bd21b61dae2d86b4a73e2ca3581f8eddf12ad150b6a524866016b80147a0b2`,
+wrong-Start red `602658148-wrong-start-raw.log` SHA-256
+`5c5aa3434e1a63615489aca402895acc3d0aefeb259ff78d5b3052ae62b8bbfc`,
+restored green `602658148-restored-raw.log` SHA-256
+`017b10bc5b554a45ff8ecc6f709a3bd7b6b775b92036f5d8a9ad9867c5235cb1`,
+and transient control `602658148-transient-raw.log` SHA-256
+`0f2a856b60be5c6297473e43f8c68da3efa90ee7638740be2ab665e0f8ae93c5`.
+The restored `test-consensus` binary SHA-256 is
+`2dbbf46dcbb1f8f4b0b659765fe91bc11b1ad8ec7213f49ed416f2f4a601613f`.
+The every-push chain job now runs this named control; removing its invocation
+made the workflow guard fail by naming the missing test, then restoration
+returned it to green. These are local tests before CI on this committed tree.
+
+The tests do not prove eventual liveness if the exact predecessor is permanently
 unavailable, nor do they cover all split/merge histories. The existing long
 empty-chain test with a permanently missing *nonzero finalized anchor* still
 passes because it can reconstruct from candidate data back to the accessible

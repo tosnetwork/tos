@@ -96,6 +96,7 @@ jobs:
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-origin$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-permanent-origin$'
 
       - name: Prepare generated Python API and dependencies
         run: |
