@@ -356,8 +356,7 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                 "classical-config-vote-tooling-incompatible-with-pq-contract, "
                 "classical-e2e-fixtures-incompatible-with-pq-consensus, "
                 "classical-stake-producers-incompatible-with-pq-elector, "
-                "merkle-base-state-mismatch, "
-                "pool-first-stake-birth-witness-missing"
+                "merkle-base-state-mismatch"
             )
             if expected not in str(exc):
                 fail(f"open correctness registry reported the wrong release refusal: {exc}")

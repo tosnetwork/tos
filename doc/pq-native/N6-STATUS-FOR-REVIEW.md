@@ -585,12 +585,18 @@ Elector `STAKE_ACCEPTED` for query ID `1790232216`, and live ConfigParam 34
 paired the configured controller with the ADNL read from that controller's
 relay. The diagnostic report SHA-256 is
 `b5a448040fd75f5f55e206751f86831cf68b3c2de5d3f84fdca236e2447a693d`.
-The election-daemon caller has not supplied its own first-stake and live
-ConfigParam 34 evidence. Deployment commands still do not create or retain
-the public controller-birth artifact. T3 and
-`pool-first-stake-birth-witness-missing` therefore stay OPEN;
-the source/binding plan and remaining handoffs are in
-`T3-POOL-OPERATOR-AUDIT.md`.
+At exact `92f79ddf3`, the independent `tosctl service` election-daemon run
+sent product wallet-to-pool query `1790235203`. The pool recorded an exact
+Elector `STAKE_ACCEPTED` reply (reason 0), and live ConfigParam 34 paired its
+controller with the ADNL from that controller's relay. The report SHA-256 is
+`f0ffb55470730ee3d78717bfcce91789490b9b89e943581ea5021edb5b61ba50`;
+the complete red/green and raw-history boundary is in
+`T3-TOSCTL-ELECTION-DAEMON-FIRST-STAKE.md`. Both launch-facing product callers
+now have separate first-stake and ConfigParam 34 evidence, so
+`pool-first-stake-birth-witness-missing` is RESOLVED. Deployment commands still
+do not create or retain the public controller-birth artifact, and retained
+classical Fift consumers keep the broader T3 tooling question OPEN; the
+source/binding plan and remaining handoffs are in `T3-POOL-OPERATOR-AUDIT.md`.
 Supervisor acceptance at `c15d9f852` marks **T2 COMPLETE within
 `validator-election-stage-a.py`**: both the default launch gate and explicit
 experiment now use the node-authorized production builder, pool, controller,

@@ -102,10 +102,11 @@ def main() -> None:
         fail("product first-stake probe no longer reads the Elector reply from the stake-owner pool")
     if any(marker not in product_probe for marker in (
         "participant-list-extended-raw-open.json", "participant_path.write_text(",
-        "participant-list-extended-raw-after-cli.json", "participant_after_path.write_text(",
+        "participant-list-after-attempt-", "attempt_path.write_text(",
+        'report["participant_list_after_raw"]',
         '"index4_type": raw_stack[4]["@type"]',
     )):
-        fail("product first-stake probe no longer saves the raw live participant-list stack")
+        fail("product first-stake probe no longer saves both pre-order and post-order raw participant-list observations")
 
     policy_provider = collapsed(
         root / "tosctl/src/node-control/elections/src/providers/default.rs"
@@ -165,7 +166,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and an actual nil tail (numeric zero or empty list, never nonzero or nonempty); product probe saves the live stack and reads Elector feedback at the stake-owner pool; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and an actual nil tail (numeric zero or empty list, never nonzero or nonempty); product probe saves pre-order and per-attempt post-order raw participant responses and reads Elector feedback at the stake-owner pool; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 
