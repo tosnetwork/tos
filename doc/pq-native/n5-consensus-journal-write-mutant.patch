@@ -1,9 +1,12 @@
 diff --git a/test/pq-native/n5-manager-db-fixture-test.cpp b/test/pq-native/n5-manager-db-fixture-test.cpp
 --- a/test/pq-native/n5-manager-db-fixture-test.cpp
 +++ b/test/pq-native/n5-manager-db-fixture-test.cpp
-@@ -223,5 +223,4 @@ int main(int argc, char **argv) {
-   std::cout << "N5_MANAGER_DB_EMPTY_ROOT=" << empty << '\n';
-   std::cout << "N5_CONSENSUS_DB_WRITTEN_PATH=" << consensus_path(persisted, session_id) << '\n';
-   if (!run_actor(id, state, std::move(boc), persisted, true, true) ||
--      !write_consensus_marker(consensus_path(persisted, session_id)) ||
-       !cold_child(argv[0], boc_path, persisted, true) ||
+@@ -194,7 +194,6 @@ int main(int argc, char **argv) {
+   if (child) {
+     if (std::string_view(argv[1]) == "--write") {
+-      if (!run_actor(id, state, std::move(boc), argv[3], true, true) ||
+-          !write_consensus_marker(consensus_path(argv[3], session_id))) {
++      if (!run_actor(id, state, std::move(boc), argv[3], true, true)) {
+         return 1;
+       }
+       std::cout << "N5_DUAL_DB_WRITER_EXIT_OK root=" << argv[3] << '\n';

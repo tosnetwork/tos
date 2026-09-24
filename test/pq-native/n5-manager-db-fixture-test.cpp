@@ -104,7 +104,8 @@ bool read_consensus_marker(const std::string &path, bool expect_present) {
 }
 
 bool run_actor(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::BufferSlice boc,
-               const std::string &root, bool write, bool expect_present) {
+               const std::string &root, bool write, bool expect_present,
+               std::string *failure_out = nullptr) {
   td::actor::Scheduler scheduler({1});
   td::actor::ActorOwn<N5ManagerDbFixture> manager;
   std::optional<td::Result<td::Unit>> result;
@@ -127,16 +128,19 @@ bool run_actor(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::BufferSlice 
   }
   const bool ok = result.has_value() && result->is_ok();
   if (!ok) {
-    std::cerr << "N5_MANAGER_DB_FIXTURE_FAILED: "
-              << (result.has_value() ? result->error().to_string() : "actor timeout") << '\n';
+    auto failure = result.has_value() ? result->error().to_string() : "actor timeout";
+    if (failure_out) {
+      *failure_out = std::move(failure);
+    } else {
+      std::cerr << "N5_MANAGER_DB_FIXTURE_FAILED: " << failure << '\n';
+    }
   }
   scheduler.run_in_context([&] { manager.reset(); });
   scheduler.stop();
   return ok;
 }
 
-bool cold_child(char *program, const char *boc_path, const std::string &root, bool expect_present) {
-  std::string mode = expect_present ? "--reopen-present" : "--reopen-absent";
+bool cold_child(char *program, const char *boc_path, const std::string &root, std::string mode) {
   char *args[] = {program, mode.data(), const_cast<char *>(boc_path),
                   const_cast<char *>(root.c_str()), nullptr};
   pid_t pid = -1;
@@ -157,9 +161,11 @@ bool cold_child(char *program, const char *boc_path, const std::string &root, bo
 
 int main(int argc, char **argv) {
   const bool child = argc == 4 && (std::string_view(argv[1]) == "--reopen-present" ||
-                                    std::string_view(argv[1]) == "--reopen-absent");
+                                    std::string_view(argv[1]) == "--reopen-absent" ||
+                                    std::string_view(argv[1]) == "--reopen-missing-control" ||
+                                    std::string_view(argv[1]) == "--write");
   if (!(argc == 2 || child)) {
-    std::cerr << "usage: n5-manager-db-fixture-test GENESIS_BOC | --reopen-present|--reopen-absent GENESIS_BOC ROOT\n";
+    std::cerr << "usage: n5-manager-db-fixture-test GENESIS_BOC | --write|--reopen-present|--reopen-absent|--reopen-missing-control GENESIS_BOC ROOT\n";
     return 2;
   }
   const char *boc_path = child ? argv[2] : argv[1];
@@ -187,9 +193,30 @@ int main(int argc, char **argv) {
   auto state = state_result.move_as_ok();
   const ValidatorSessionId session_id = id.root_hash;
   if (child) {
+    if (std::string_view(argv[1]) == "--write") {
+      if (!run_actor(id, state, std::move(boc), argv[3], true, true) ||
+          !write_consensus_marker(consensus_path(argv[3], session_id))) {
+        return 1;
+      }
+      std::cout << "N5_DUAL_DB_WRITER_EXIT_OK root=" << argv[3] << '\n';
+      return 0;
+    }
     const bool present = std::string_view(argv[1]) == "--reopen-present";
-    if (!run_actor(id, state, std::move(boc), argv[3], false, present) ||
-        !read_consensus_marker(consensus_path(argv[3], session_id), present)) {
+    if (std::string_view(argv[1]) == "--reopen-missing-control") {
+      std::string failure;
+      const bool accepted = run_actor(id, state, std::move(boc), argv[3], false, true, &failure);
+      if (accepted || failure.find("N5 persisted handle: block handle not in db") == std::string::npos ||
+          !read_consensus_marker(consensus_path(argv[3], session_id), false)) {
+        std::cerr << "N5_MANAGER_DB_FIXTURE_FAILED: wrong-root control did not fail on the exact missing handle\n";
+        return 1;
+      }
+      std::cout << "N5_MANAGER_DB_WRONG_ROOT_REJECTED reason=missing-handle journal=absent\n";
+      return 0;
+    }
+    if (!run_actor(id, state, std::move(boc), argv[3], false, present)) {
+      return 1;
+    }
+    if (!read_consensus_marker(consensus_path(argv[3], session_id), present)) {
       std::cerr << "N5_CONSENSUS_DB_FIXTURE_FAILED: journal marker presence differs from DB-root expectation\n";
       return 1;
     }
@@ -222,20 +249,18 @@ int main(int argc, char **argv) {
   std::cout << "N5_MANAGER_DB_WRITTEN_ROOT=" << persisted << '\n';
   std::cout << "N5_MANAGER_DB_EMPTY_ROOT=" << empty << '\n';
   std::cout << "N5_CONSENSUS_DB_WRITTEN_PATH=" << consensus_path(persisted, session_id) << '\n';
-  if (!run_actor(id, state, std::move(boc), persisted, true, true) ||
-      !write_consensus_marker(consensus_path(persisted, session_id)) ||
-      !cold_child(argv[0], boc_path, persisted, true) ||
-      !cold_child(argv[0], boc_path, empty, false)) {
+  if (!cold_child(argv[0], boc_path, persisted, "--write") ||
+      !cold_child(argv[0], boc_path, persisted, "--reopen-present") ||
+      !cold_child(argv[0], boc_path, empty, "--reopen-absent")) {
     return 1;
   }
   // A positive read deliberately pointed at the unwritten root must fail.
   // Otherwise a fixture could appear to pass while reading from a global
   // cache, static file or the wrong DB path.
-  if (cold_child(argv[0], boc_path, empty, true)) {
-    std::cerr << "N5_MANAGER_DB_FIXTURE_FAILED: wrong-root positive control unexpectedly passed\n";
+  if (!cold_child(argv[0], boc_path, empty, "--reopen-missing-control")) {
+    std::cerr << "N5_MANAGER_DB_FIXTURE_FAILED: wrong-root control failed for an unexpected reason\n";
     return 1;
   }
-  std::cout << "N5_MANAGER_DB_WRONG_ROOT_REJECTED\n";
   std::cout << "N5_MANAGER_DB_SAME_ROOT_REOPEN_OK state=" << id.root_hash.to_hex() << '\n';
   return 0;
 }
