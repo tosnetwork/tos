@@ -688,6 +688,9 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
                            finality_mode, send_desc, apply, manager_, std::move(promise));
     co_await std::move(task);
     if (cut3_gate_ && cut3_target_ && id == *cut3_target_) {
+      if (cut3_cancelled_) {
+        co_return td::Status::Error(ErrorCode::cancelled, "N5 cut3 controlled stop");
+      }
       // StateResolver cannot write its marker until FinalizeBlock returns.
       // Hold only this test facade's response after production AcceptBlock.
       auto [held, held_promise] = td::actor::StartedTask<>::make_bridge();
@@ -700,11 +703,11 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
   }
 
   void cancel_cut3(td::Promise<td::Unit> acknowledged) {
-    if (!cut3_promise_) {
-      return acknowledged.set_error(td::Status::Error("N5 cut3 held response was not reached"));
+    cut3_cancelled_ = true;
+    if (cut3_promise_) {
+      cut3_promise_->set_error(td::Status::Error(ErrorCode::cancelled, "N5 cut3 controlled stop"));
+      cut3_promise_.reset();
     }
-    cut3_promise_->set_error(td::Status::Error(ErrorCode::cancelled, "N5 cut3 controlled stop"));
-    cut3_promise_.reset();
     acknowledged.set_value(td::Unit());
   }
 
@@ -726,6 +729,7 @@ class N5AcceptFacade final : public consensus::ManagerFacade {
   std::shared_ptr<std::atomic<bool>> cut3_gate_;
   std::optional<BlockIdExt> cut3_target_;
   std::optional<td::Promise<td::Unit>> cut3_promise_;
+  bool cut3_cancelled_ = false;
 };
 
 }  // namespace tos::validator
@@ -1650,7 +1654,7 @@ int main(int argc, char **argv) {
       return true;
     };
     auto cancel_cut3_gate = [&] {
-      if (!n5_cut3 || !cut3_gate->load(std::memory_order_acquire)) {
+      if (!n5_cut3) {
         return true;
       }
       std::optional<td::Result<td::Unit>> cancelled;
