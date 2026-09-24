@@ -230,6 +230,14 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                         "status": "RESOLVED",
                         "resolved_by": "666666666",
                     },
+                    "pq-unsafe-session-rotation": {
+                        "observation": "fixture unsafe rotation observation",
+                        "observed_commit": "19f5b3406",
+                        "location": "fixture-manager.cpp:1",
+                        "closure_condition": "fixture rotation closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "777777777",
+                    },
                     "pool-first-stake-birth-witness-missing": {
                         "observation": "fixture pool witness observation",
                         "observed_commit": "717e2879e",

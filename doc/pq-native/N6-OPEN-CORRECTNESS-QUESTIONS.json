@@ -6,7 +6,8 @@
     "classical-stake-producers-incompatible-with-pq-elector",
     "pool-first-stake-birth-witness-missing",
     "merkle-base-state-mismatch",
-    "pq-validator-set-installation-parity"
+    "pq-validator-set-installation-parity",
+    "pq-unsafe-session-rotation"
   ],
   "questions": {
     "classical-config-vote-tooling-incompatible-with-pq-contract": {
@@ -45,6 +46,13 @@
       "location": "crypto/smartcont/config-code.fc:check_validator_set,valid_live_validator_set_limits?,install_param; crypto/block/mc-config.cpp:Config::unpack_validator_set",
       "observation": "C01 identified a source-level ADNL uniqueness mismatch. C07 independently ran the old config contract against a duplicate-ADNL set: the contract returned VALIDATOR_SET_INSTALLED while the node decoder rejected the same BOC; no live chain was halted. A compiled-contract sandbox also showed that a set above the node's UINT64_MAX/3 total-weight cap was installed. The Elector's check_validator_set now refuses both, with old-red/new-green tests and an Elector-produced duplicate-ADNL set negative. A second compiled sandbox established that validator-governed install_param could still install the duplicate-ADNL ConfigParam 36 through its count-only path, even after the Elector route was repaired. It now invokes and consumes the full descriptor check for non-null ConfigParams 34-37; an ignored pure call was optimized away and remained RED until its result became load-bearing. Both routes pass locally, but fixed-head CI and independent node-rule parity review remain to be recorded. Chain halt has not been run and is not claimed as an observed incident.",
       "observed_commit": "a500f88b0",
+      "status": "OPEN"
+    },
+    "pq-unsafe-session-rotation": {
+      "closure_condition": "Nonzero unsafe-catchain-rotate must not silently alter the chain-derived PQ ValidatorSessionId. The temporary pre-group refusal must pass a real Manager/Bridge process regression with zero-rotation positive and nonzero-rotation negative controls on the exact integration tree. Restoring rotation requires a separately proven canonical-consensus/local-storage identity split, no overlapping signer actors, compatible old vote journals and DB cleanup, future/observer handling, and a FinalCert through serialized BlockProof and independent CheckProof. Do not make the verifier trust a local CLI tag.",
+      "location": "validator/manager.cpp:update_shards; validator/consensus/bridge.cpp; validator/consensus/simplex/db.cpp",
+      "observation": "A strict same-script process red/green used one final test script SHA-256 on both sides: production Manager source exactly matching 19f5b3406 produced a trusted-session mismatch under nonzero local rotation while zero rotation recorded successful masterchain stats; the committed fail-closed Manager refused nonzero rotation before active group creation while retaining the zero positive control. Binary, source, tracked-patch and report SHA-256 values are recorded in N6-PQ-UNSAFE-ROTATION-FAIL-CLOSED.md. An older red/green pair used a prior script with a different name for the same zero-rotation stats condition and is supporting rather than strict comparison evidence. Forcing refusal for zero rotation makes the positive control fail. This is a local process red/green, not a retained serialized BlockProof/CheckProof or full actor-lifecycle proof. Exact fixed-head CI and the broader recovery/rotation disposition remain open.",
+      "observed_commit": "19f5b3406",
       "status": "OPEN"
     },
     "pool-first-stake-birth-witness-missing": {

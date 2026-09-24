@@ -1428,6 +1428,14 @@ set_tests_properties(quic-ctest-isolation-source PROPERTIES LABELS "source-guard
 add_test(NAME validator-session-assembly-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-session-assembly.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(validator-session-assembly-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-unsafe-rotation-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-unsafe-rotation.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-unsafe-rotation-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-unsafe-rotation-source-mutations
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/pq-unsafe-rotation-source-mutations.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-unsafe-rotation-source-mutations PROPERTIES LABELS "source-guard" RUN_SERIAL TRUE)
 add_test(NAME regression-fixture-concurrency
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
           ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

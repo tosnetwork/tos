@@ -3290,6 +3290,20 @@ void ValidatorManagerImpl::update_shards() {
                         "validation for this shard is disabled until the node is upgraded or the config is fixed";
           continue;
         }
+        // A local recovery tag is not part of the chain-derived PQ signing
+        // session. The old path hashed it into val_group_id, then handed that
+        // ID to Bridge as bus->session_id; trusted validation then logged a
+        // carried-session mismatch against the chain-derived ID. Do not
+        // create an active group until storage incarnation and
+        // consensus identity have been safely split, including old DB votes.
+        if (auto rotation_tag =
+                opts_->check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno());
+            rotation_tag != 0) {
+          LOG(ERROR) << "refusing to create PQ Simplex validator group for " << shard.to_str()
+                     << ": --unsafe-catchain-rotate=" << rotation_tag
+                     << " cannot alter the canonical PQ ValidatorSessionId";
+          continue;
+        }
         ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
         auto val_group_id =
             block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
@@ -3306,19 +3320,6 @@ void ValidatorManagerImpl::update_shards() {
                 .session_id;
         if (destroyed_validator_sessions_.contains(val_group_id)) {
           continue;
-        }
-
-        if (force_recover) {
-          auto r = opts_->check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno());
-          if (r) {
-            td::uint8 b[36];
-            td::MutableSlice x{b, 36};
-            x.copy_from(val_group_id.as_slice());
-            x.remove_prefix(32);
-            CHECK(x.size() == 4);
-            x.copy_from(td::Slice(reinterpret_cast<const td::uint8 *>(&r), 4));
-            val_group_id = sha256_bits256(td::Slice(b, 36));
-          }
         }
 
         auto find_or_create_validator_group = [&] {

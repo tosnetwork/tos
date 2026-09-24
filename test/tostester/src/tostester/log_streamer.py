@@ -64,6 +64,9 @@ class LogStreamer:
         while not self._stream.at_eof():
             chunk = await self._stream.read(131072)
             _ = self._file.write(chunk)
+            # Integration observers read this path while the node is running.
+            # Sparse refusal logs must be visible before teardown closes it.
+            self._file.flush()
 
             if leftover and not chunk:
                 self._process_line(bytes(leftover))

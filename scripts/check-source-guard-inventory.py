@@ -41,6 +41,8 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "pq-finality-boundary-source",
         "pq-launch-cap-mutations",
         "pq-launch-cap-source",
+        "pq-unsafe-rotation-source",
+        "pq-unsafe-rotation-source-mutations",
         "quic-ctest-isolation-source",
         "simplex-exact-ancestor-source-guard",
         "test-quorum-static-grep",

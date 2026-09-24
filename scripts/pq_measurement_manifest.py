@@ -28,6 +28,7 @@ REQUIRED_CORRECTNESS_QUESTION_IDS = (
     "pool-first-stake-birth-witness-missing",
     "merkle-base-state-mismatch",
     "pq-validator-set-installation-parity",
+    "pq-unsafe-session-rotation",
 )
 REQUIRED_MEASUREMENT_GAP_IDS = (
     "release-scale-matrix-unmeasured",

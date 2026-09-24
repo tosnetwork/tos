@@ -84,6 +84,15 @@ jobs:
       - name: Boot a four-validator PQ chain and exercise a transfer
         run: uv run python test/integration/test_basic.py
 
+      # A local recovery tag must never become a PQ signing session. The
+      # process gate first proves zero rotation still records successful
+      # masterchain stats, then
+      # requires nonzero rotation to refuse before creating an active group.
+      - name: Refuse unsafe PQ session rotation before group creation
+        run: >-
+          uv run python test/integration/test_pq_unsafe_rotation_refusal.py
+          --build-dir build --artifact-dir test/integration/.pq-unsafe-rotation-ci
+
   # Package allowlists left chain_block_json's test target uncompilable for two
   # days. Compile every workspace test target on every branch push, separately
   # from the native chain fixture so neither job can silently stand in for the other.
