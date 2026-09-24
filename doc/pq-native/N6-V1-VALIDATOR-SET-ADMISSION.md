@@ -41,8 +41,10 @@ the unchanged `elector-code.fif` is
 `fc41a49427042f0e4cf3e2fa8f96a45a583d6966271834332c69518e4866e08d`.
 The pre-fix config Fift in C07 was
 `c58e86672c59f5baa51c75ce368a9ba4966d7f6fed33cb9a6f68c8a536f9fb45`.
-The existing C++ `test-validator-identity` vector suite passes, including its
-`duplicate-adnl reject` case. C07 additionally verified its *same* BOC was
+The exact-head C++ `test-validator-identity` binary (SHA-256
+`5bfa6139ef9b98e0c6891d95fc1b6487ed3420b9a41a3f4ae42650e34796a5d1`)
+passes its vector suite, including `duplicate-adnl reject`. C07 additionally
+verified its *same* BOC was
 installed by the old contract and rejected by the node; the two C07 BOCs
 differ only in the second descriptor's 32-byte ADNL field.
 
