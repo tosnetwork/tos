@@ -71,6 +71,7 @@ class WaitZeroState;
 class WaitShardState;
 class WaitBlockData;
 class AppliedExtMessageCleanupActor;
+class PendingFinalityManagerActorProbe;
 
 struct PendingBlockFinalityCandidate {
   td::Ref<block::BlockSignatureSet> sig_set;
@@ -93,6 +94,7 @@ class BlockHandleLru : public td::ListNode {
 };
 
 class ValidatorManagerImpl : public ValidatorManager {
+  friend class PendingFinalityManagerActorProbe;
  private:
   // WAITERS
   //
@@ -621,6 +623,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void add_shard_block_description(td::Ref<ShardTopBlockDescription> desc);
   void add_cached_block_data(BlockIdExt block_id, td::BufferSlice data);
   void try_process_pending_block_finality(BlockIdExt block_id);
+  void failed_pending_block_proof(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token,
+                                  PendingBlockProofFailureSource source, td::Status error);
   void failed_pending_block_finality(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token, td::Status error,
                                      td::Slice operation);
   void schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at);

@@ -1,4 +1,5 @@
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
@@ -7,11 +8,122 @@
 #include <vector>
 
 #include "block/mc-config.h"
+#include "common/delay.h"
+#include "quic/quic-sender.h"
 #include "validator/finality-cache-policy.h"
 #include "validator/full-node-serializer.hpp"
+#include "validator/impl/applied-ext-message-cleanup.hpp"
+#include "validator/manager.hpp"
 #include "validator/pending-finality-ingress.h"
 
 #include "pq-block-signature-test-common.h"
+
+namespace tos::validator {
+
+// The production manager's startup opens databases and network actors. This
+// probe suppresses only startup; its pending-finality store, cache, failure
+// handler and actor scheduling are the real ValidatorManagerImpl members.
+class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
+ public:
+  PendingFinalityManagerActorProbe()
+      : ValidatorManagerImpl(ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}), "", {}, {}, {}, {}, {}) {
+  }
+
+  void start_up() override {
+  }
+
+  void check_bad_front(td::Promise<bool> promise) {
+    const auto id = pq_block_signature_test::block_id("manager-actor-proof-source");
+    cached_masterchain_block_candidates_.put(id, td::BufferSlice{"cached block bytes"});
+    auto now = td::Time::now();
+    auto first = pending_block_finality_.admit(
+        id, PendingBlockFinalitySender::remote(PublicKeyHash{pq_block_signature_test::hash_of("bad-sender")}),
+        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
+        PendingFinalityCapacity::Shared, false, true, now + 10);
+    auto second = pending_block_finality_.admit(
+        id, PendingBlockFinalitySender::remote(PublicKeyHash{pq_block_signature_test::hash_of("good-sender")}),
+        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
+        PendingFinalityCapacity::Shared, false, true, now + 10);
+    auto *pending = pending_block_finality_.get_if_exists(id);
+    if (!first.admitted() || !second.admitted() || pending == nullptr || pending->size() != 2) {
+      promise.set_value(false);
+      return;
+    }
+    auto attempt = pending->begin_processing(now);
+    if (!attempt) {
+      promise.set_value(false);
+      return;
+    }
+    failed_pending_block_proof(id, attempt.token, PendingBlockProofFailureSource::FinalityEvidence,
+                               td::Status::Error(ErrorCode::protoviolation, "bad finality set hash"));
+    pending = pending_block_finality_.get_if_exists(id);
+    bool retained = cached_masterchain_block_candidates_.contains(id) && pending != nullptr && pending->size() == 1;
+    // With no masterchain state, the manager must retain rather than process
+    // the next entry. A real attempt token proves the second entry is still
+    // reachable; this is not yet a positive proof-validation test.
+    auto next = pending ? pending->begin_processing(td::Time::now()) : decltype(attempt){};
+    promise.set_value(retained && static_cast<bool>(next) && next.token != attempt.token);
+  }
+
+  void check_bad_block_bytes(td::Promise<bool> promise) {
+    const auto id = pq_block_signature_test::block_id("manager-actor-bad-block-bytes");
+    cached_masterchain_block_candidates_.put(id, td::BufferSlice{"invalid block bytes"});
+    auto now = td::Time::now();
+    auto admitted = pending_block_finality_.admit(
+        id, PendingBlockFinalitySender::local_source(),
+        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
+        PendingFinalityCapacity::Shared, false, true, now + 10);
+    auto *pending = pending_block_finality_.get_if_exists(id);
+    auto attempt = pending ? pending->begin_processing(now) : decltype(pending->begin_processing(now)){};
+    if (!admitted.admitted() || !attempt) {
+      promise.set_value(false);
+      return;
+    }
+    failed_pending_block_proof(id, attempt.token, PendingBlockProofFailureSource::BlockBytes,
+                               td::Status::Error(ErrorCode::protoviolation, "invalid block root"));
+    pending = pending_block_finality_.get_if_exists(id);
+    promise.set_value(!cached_masterchain_block_candidates_.contains(id) && pending != nullptr &&
+                      pending->size() == 1 && !pending->processing());
+  }
+
+  void check_context_retry_and_expiry(td::Promise<bool> promise) {
+    const auto id = pq_block_signature_test::block_id("manager-actor-context-expiry");
+    cached_masterchain_block_candidates_.put(id, td::BufferSlice{"cached block bytes"});
+    const auto now = td::Time::now();
+    auto admitted = pending_block_finality_.admit(
+        id, PendingBlockFinalitySender::local_source(),
+        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
+        PendingFinalityCapacity::Shared, false, true, now + 0.2);
+    auto *pending = pending_block_finality_.get_if_exists(id);
+    auto attempt = pending ? pending->begin_processing(now) : decltype(pending->begin_processing(now)){};
+    if (!admitted.admitted() || !attempt) {
+      promise.set_value(false);
+      return;
+    }
+    failed_pending_block_proof(id, attempt.token, PendingBlockProofFailureSource::TrustedContext,
+                               td::Status::Error(ErrorCode::protoviolation, "stale trusted set"));
+    pending = pending_block_finality_.get_if_exists(id);
+    if (pending == nullptr || pending->size() != 1 || pending->processing() ||
+        !cached_masterchain_block_candidates_.contains(id)) {
+      promise.set_value(false);
+      return;
+    }
+    delay_action(
+        [self = actor_id(this), id, promise = std::move(promise)]() mutable {
+          td::actor::send_closure(self, &PendingFinalityManagerActorProbe::finish_context_expiry, id,
+                                  std::move(promise));
+        },
+        td::Timestamp::at(now + 0.3));
+  }
+
+  void finish_context_expiry(BlockIdExt id, td::Promise<bool> promise) {
+    expire_pending_block_finality(id);
+    promise.set_value(pending_block_finality_.get_if_exists(id) == nullptr &&
+                      cached_masterchain_block_candidates_.contains(id));
+  }
+};
+
+}  // namespace tos::validator
 
 namespace {
 
@@ -105,6 +217,78 @@ block::ShardConfig make_split_shard_config(tos::CatchainSeqno catchain_seqno, to
 }  // namespace
 
 int main() {
+  {
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<tos::validator::PendingFinalityManagerActorProbe> probe;
+    std::atomic<bool> done{false};
+    bool passed = false;
+    scheduler.run_in_context([&] {
+      probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-finality-manager-probe");
+      td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_bad_front,
+                              td::PromiseCreator::lambda([&](td::Result<bool> result) {
+                                passed = result.is_ok() && result.ok();
+                                done.store(true, std::memory_order_release);
+                              }));
+    });
+    auto deadline = td::Timestamp::in(5.0);
+    while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    scheduler.run_in_context([&] { probe.reset(); });
+    scheduler.stop();
+    if (!done.load(std::memory_order_acquire) || !passed) {
+      std::cerr << "PENDING_FINALITY_MANAGER_ACTOR_FAILURE: bad front evidence erased cached block bytes or blocked the next candidate\n";
+      return 1;
+    }
+  }
+  {
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<tos::validator::PendingFinalityManagerActorProbe> probe;
+    std::atomic<bool> done{false};
+    bool passed = false;
+    scheduler.run_in_context([&] {
+      probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-block-bytes-probe");
+      td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_bad_block_bytes,
+                              td::PromiseCreator::lambda([&](td::Result<bool> result) {
+                                passed = result.is_ok() && result.ok();
+                                done.store(true, std::memory_order_release);
+                              }));
+    });
+    auto deadline = td::Timestamp::in(5.0);
+    while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    scheduler.run_in_context([&] { probe.reset(); });
+    scheduler.stop();
+    if (!done.load(std::memory_order_acquire) || !passed) {
+      std::cerr << "PENDING_FINALITY_MANAGER_BLOCK_BYTES_FAILURE: malformed candidate bytes were retained or evidence was retired\n";
+      return 1;
+    }
+  }
+  {
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<tos::validator::PendingFinalityManagerActorProbe> probe;
+    std::atomic<bool> done{false};
+    bool passed = false;
+    scheduler.run_in_context([&] {
+      probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-context-probe");
+      td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_context_retry_and_expiry,
+                              td::PromiseCreator::lambda([&](td::Result<bool> result) {
+                                passed = result.is_ok() && result.ok();
+                                done.store(true, std::memory_order_release);
+                              }));
+    });
+    auto deadline = td::Timestamp::in(5.0);
+    while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    scheduler.run_in_context([&] { probe.reset(); });
+    scheduler.stop();
+    if (!done.load(std::memory_order_acquire) || !passed) {
+      std::cerr << "PENDING_FINALITY_MANAGER_CONTEXT_FAILURE: stale context did not retain inputs until bounded expiry\n";
+      return 1;
+    }
+  }
   constexpr std::array ingress_rejection_names{
       std::pair{tos::validator::PendingFinalityIngressRejection::None, "none"},
       std::pair{tos::validator::PendingFinalityIngressRejection::MissingRemoteByteCount, "missing_remote_byte_count"},

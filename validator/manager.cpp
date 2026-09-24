@@ -1006,30 +1006,7 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
                                                                 proof_failure_source)
                                 : WaitBlockData::generate_proof_link(block_id, block.ok()->root_cell());
   if (proof.is_error()) {
-    auto error = proof.move_as_error();
-    auto action = pending_block_proof_failure_action(proof_failure_source, error.code());
-    if (action != PendingBlockProofFailureAction::DiscardBlockBytes) {
-      if (proof_failure_source == PendingBlockProofFailureSource::TrustedContext &&
-          error.code() != ErrorCode::notready && error.code() != ErrorCode::timeout) {
-        // Context can be temporarily behind a valid block. Retain both inputs
-        // within the pending-evidence deadline rather than deleting either.
-        error = td::Status::Error(ErrorCode::notready, PSTRING() << "masterchain proof context: " << error);
-      }
-      failed_pending_block_finality(block_id, attempt_token, std::move(error),
-                                    action == PendingBlockProofFailureAction::DiscardEvidence
-                                        ? "check finality evidence for block proof"
-                                        : "create block proof with current context");
-    } else {
-      // Only an error attributed to the cached candidate bytes retires those
-      // bytes while preserving independently received finality evidence.
-      pending->cancel_processing(attempt_token);
-      VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
-      if (block_id.is_masterchain()) {
-        cached_masterchain_block_candidates_.erase(block_id);
-      } else {
-        cached_block_data_.erase(block_id);
-      }
-    }
+    failed_pending_block_proof(block_id, attempt_token, proof_failure_source, proof.move_as_error());
     return;
   }
 
@@ -1061,6 +1038,38 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::processed_pending_block_finality, block_id, was_final,
                                 attempt_token, std::move(result));
       });
+}
+
+void ValidatorManagerImpl::failed_pending_block_proof(BlockIdExt block_id,
+                                                       PendingFinalityAttemptToken attempt_token,
+                                                       PendingBlockProofFailureSource source, td::Status error) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr || !pending->is_processing(attempt_token)) {
+    return;
+  }
+  auto action = pending_block_proof_failure_action(source, error.code());
+  if (action != PendingBlockProofFailureAction::DiscardBlockBytes) {
+    if (source == PendingBlockProofFailureSource::TrustedContext && error.code() != ErrorCode::notready &&
+        error.code() != ErrorCode::timeout) {
+      // Context can be temporarily behind a valid block. Retain both inputs
+      // within the pending-evidence deadline rather than deleting either.
+      error = td::Status::Error(ErrorCode::notready, PSTRING() << "masterchain proof context: " << error);
+    }
+    failed_pending_block_finality(block_id, attempt_token, std::move(error),
+                                  action == PendingBlockProofFailureAction::DiscardEvidence
+                                      ? "check finality evidence for block proof"
+                                      : "create block proof with current context");
+    return;
+  }
+  // Only an error attributed to the cached candidate bytes retires those
+  // bytes while preserving independently received finality evidence.
+  pending->cancel_processing(attempt_token);
+  VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
+  if (block_id.is_masterchain()) {
+    cached_masterchain_block_candidates_.erase(block_id);
+  } else {
+    cached_block_data_.erase(block_id);
+  }
 }
 
 void ValidatorManagerImpl::schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at) {

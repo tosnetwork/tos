@@ -30,9 +30,27 @@ classifier with wrong-hash evidence ahead of valid evidence. It separately
 pins header/trusted/evidence identity verdicts, including catchain sequence
 and set hash, and the three source-specific actions. The source guard checks
 the manager actually calls that classifier and the proof producer labels
-evidence and trusted-context failures. The test remains component-level; an
-actual `ValidatorManagerImpl` actor red/green, plus a stale-context positive
-recovery path, is still required before this correctness question closes.
+evidence and trusted-context failures. A no-startup `ValidatorManagerImpl`
+actor probe now exercises the manager's actual pending queue, block cache and
+proof-failure handler in three directions: bad finality evidence retires only
+the front certificate and leaves the next entry dequeuable; bad block bytes
+retire only cached bytes; a stale trusted-context error retains both inputs
+until bounded expiry removes the certificate. The test-only actor suppresses
+database/network startup, and the fixture supplies the proof error at the
+handler boundary. It does **not** show the next valid certificate passing
+proof construction or broadcast validation, nor a stale context becoming
+current within the retention window. Those real actor paths, with
+old-red/new-green, remain required before C04 closes.
+
+During actor-probe construction, three intentionally wrong manager mutations
+were observed red with named assertions: forcing block-byte disposal for all
+errors failed the bad-front evidence assertion; forcing all sources to
+`FinalityEvidence` failed the bad-block-bytes assertion; and suppressing
+trusted-context conversion to retryable `notready` failed the context
+retention assertion. All mutations were restored before the clean build. The
+all-`FinalityEvidence` mutation initially survived while the probe lacked a
+bad-block-bytes case; that blind spot prompted the third direction. This is a
+partial manager-integration gate, not C04 acceptance evidence.
 
 Local pre-commit checks used `cmake --build build --parallel 4 --target
 test-pending-finality-cache validator-engine test-pq-lite-forward-proof

@@ -799,8 +799,8 @@ target_link_libraries(test-validator-transport-authority PRIVATE overlay tos_blo
 add_executable(test-pending-finality-cache test/pq-native/pending-finality-cache-test.cpp)
 target_include_directories(test-pending-finality-cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-pending-finality-cache PRIVATE full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer
-                      tos_pq_consensus tl_lite_api tdutils)
+target_link_libraries(test-pending-finality-cache PRIVATE validator full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer
+                      tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-pending-finality-cache PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
 add_executable(test-pq-launch-cap test/pq-native/pq-launch-cap-test.cpp)
