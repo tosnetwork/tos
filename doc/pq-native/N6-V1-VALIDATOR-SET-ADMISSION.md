@@ -147,3 +147,19 @@ The `pq-validator-set-installation-parity` question remains OPEN until the
 corrected-head CI result is recorded. No
 deliberately malformed set has been installed on a real network, so chain-halt
 impact remains a source-and-decoder inference, not a run observation.
+
+The later `b2f894afd` Smart contract sandboxes run `35985581008` failed
+`elector_sandbox` with 71 passes and three fixture failures (original failed-step
+log SHA-256 `c0e434c82096a5828cfc43f48596454ed23b81043d3c8c707b6edff30afc99be`).
+Two measurements attempted 100/400-member elections despite the enforced
+21-member production ceiling; they now measure valid 4/21 selections and
+one/eight controller profiles at 21, while separate contract tests explicitly
+refuse 22. The third failure was `e2646356` (bad current value hash), not
+underfunding: the sandbox ran two successive Param 47 proposals, but after the
+first installation its VM still exposed the old value while config-contract
+storage contained the new one. The fixture now adopts the governed config
+between proposals. A focused test compares the two Param 47 hashes after a
+real governed update; omitting the adoption reproduces the mismatch. The
+repaired local `elector_sandbox` run passed 75/75. This is local evidence only;
+the three CI failures and the open closure condition remain until a new
+immutable exact-head sandbox run succeeds.
