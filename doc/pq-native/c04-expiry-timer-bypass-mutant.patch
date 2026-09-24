@@ -1,0 +1,11 @@
+diff --git a/test/pq-native/c04-real-state-proof-test.cpp b/test/pq-native/c04-real-state-proof-test.cpp
+--- a/test/pq-native/c04-real-state-proof-test.cpp
++++ b/test/pq-native/c04-real-state-proof-test.cpp
+@@ -191,6 +191,6 @@
+     std::cout << "C04_MANAGER_STALE_RETAINED evidence=1 candidate=1\n";
+     if (expire) {
+       // Match ingress's delayed closure, not a direct call from the observer.
+-      delay_action([self = actor_id(this), id]() {
++      if (false) delay_action([self = actor_id(this), id]() {
+         td::actor::send_closure(self, &ValidatorManagerImpl::expire_pending_block_finality, id);
+       }, td::Timestamp::at(expires_at));

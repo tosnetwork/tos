@@ -237,3 +237,125 @@ the DB-backed path to transient trusted-context recovery or retention expiry;
 those controls still use the earlier no-DB Manager probe. Fixed-head CI for
 this added gate is also pending. C04 therefore remains OPEN, and no historical
 network outage is attributed to this test.
+
+## Trusted-context and cold-reopen extension (1e7760020)
+
+The preceding paragraph records the `6171d053f` boundary, not the current
+one. On committed test source `1e7760020`, the same real Manager/RootDb path
+also admits good evidence against a deliberately stale trusted validator
+set. It observes the proof-construction context error 651 while retaining
+both evidence and candidate bytes. Restoring the genuine genesis state
+within the retention deadline lets that same evidence reach the real
+ValidateBroadcast, CheckProof and ApplyBlock path; the DB-backed seqno-1
+state and predecessor next pointer then pass readback. A separate 0.2-second
+deadline expires the evidence without creating a target handle or deleting
+cached bytes. This is controlled actor state, not an observed live-network
+stale-context event.
+
+Each successful case closes its scheduler and invokes a **new process** with
+a new RootDb actor on its preserved DB root. The child reads target handle,
+block data, the exact stored proof hash, state root and seqno-0 next pointer;
+the expiry child requires the target handle to be absent. This removes the
+same-process CellDb-cache ambiguity. The expected proof hash is passed from
+the parent because a newly generated ML-DSA proof may have different bytes.
+The three roots from the committed-tree raw run are
+`/tmp/c04-manager-gWZ1oE` (528 KiB),
+`/tmp/c04-manager-recovery-rSoSEb` (528 KiB), and
+`/tmp/c04-manager-expiry-RH9SRU` (404 KiB); none was deleted.
+
+The committed-tree raw green log is
+`test/integration/.c04-manager-actor-20260924/1e7760020-committed-cold-green.log`
+(SHA-256 `91dbcd87fbd5406bfc2849854380e2e91fb6b55e8ec17ef7e1278820f219d21b`).
+The restored build's three relevant CTests passed 3/3; the full CTest output
+is `1e7760020-committed-3-ctest.log` in the same directory (SHA-256
+`e9d9910ebf3429fc4619cb44af64bf7a9875203eb3acb83221e4a7bdcd14bd99`).
+The test source SHA-256 is
+`5d53589728e5e21de53b9a48151972dd94055a1ec26f277875673c6171afd9f2`,
+restored production policy SHA-256 is
+`f706d9cd608d8cdcdf817d0c74ddd5c72ae108cf32199a1d4d410868c0e1f5de`,
+and restored test binary SHA-256 is
+`5f3539fecf0ec78f4fe6c1c1d640dd50e976c0d306935e0b7f2e7989ae2e0f9e`.
+
+The one-line `c04-trusted-context-discard-mutant.patch` (SHA-256
+`9cec38e7a3a95efceb04eac83dfe1cd83df107918420b5340daf47b41760e9cb`)
+changes only TrustedContext's action from Retry to DiscardBlockBytes. With
+the **same test source**, the recovery case exits 1 at `C04 stale context did
+not retain evidence and block bytes`; the red log is
+`1e7760020-trusted-context-discardblock-red.log` (SHA-256
+`42278e5df196f19277e010b028c074d94965399951eb70c9c8fdfe4c27021be7`),
+mutant policy SHA-256 is
+`2f01ae0df35200293f9fe738a288a9bf2183eeb8af20064e17369d3fa16317f7`,
+and mutant binary SHA-256 is
+`14a44d35ec7b3d30826645ab37ebcf5627d502dd1146f362f481f3e738eedbf4`.
+An initial DiscardEvidence mutation survived: Manager converts that
+TrustedContext error to retryable `notready`, so it was not a faithful
+candidate-loss control. It is not counted as a red proof.
+
+The bad-front/good-back test proves ordered queue handling and downstream
+acceptance, but it does not directly capture and assert each intermediate
+attempt token. Its first-error/second-success association is from the
+single-threaded actor's ordered logs and final queue state. Do not describe
+that as a per-token causal assertion. Fixed-head CI and independent review
+are still pending; C04 remains OPEN, with no historical outage attribution.
+
+## Source, retry and timer controls (0c7328e1d)
+
+Independent review of `1e7760020` signed the narrow cold-DB and stale
+recovery result, while identifying three remaining assertion gaps. The next
+test commit compares the complete cached candidate BOC before and after the
+stale failure and after expiry, rather than only checking the block ID's
+presence. It also runs the exact candidate/certificate/stale-state tuple
+through production `WaitBlockData::generate_proof` before admission and
+requires `PendingBlockProofFailureSource::TrustedContext`. That preflight
+pins source classification for the inputs; it does not inspect the private
+token of the subsequent Manager attempt.
+
+Recovery no longer calls `try_process_pending_block_finality` a second time
+from the fixture. The candidate reaches ApplyBlock only after Manager's
+scheduled retry. In the expiry case, the fixture schedules the same delayed
+`expire_pending_block_finality` closure used at production ingress and the
+observer merely waits past its deadline; it does not invoke expiry itself.
+This proves the delayed callback is necessary in this actor fixture, but the
+fixture still admits directly to the bounded store, **not** through the full
+network ingress coroutine. Do not call it an ingress end-to-end test.
+
+On committed source `0c7328e1d`, direct raw execution and the three
+applicable CTests passed. The raw log
+`test/integration/.c04-manager-actor-20260924/0c7328e1d-committed-timer-green.log`
+has SHA-256 `7b6cbd674b2cd91b10a81a5e2557c898655afb3ac23dfcb81fdbde425974cd1d`;
+the `0c7328e1d-committed-3-ctest.log` in the same directory has SHA-256
+`8b2059cbcd27696590f2f4190515a80cddf0f1df9cb38d6a370ef98c7089dd2f`.
+Both successful cases and the expiry case still use separate cold-reopen
+processes. Their retained DB roots in this raw run are
+`/tmp/c04-manager-wSF0ar`, `/tmp/c04-manager-recovery-Nj0684`, and
+`/tmp/c04-manager-expiry-cMUBRx`. The clean test source SHA-256 is
+`801575edda600453589c85dc9e618945cda2590aebd443e457a66152c9c4bd55`,
+production policy SHA-256 is
+`f706d9cd608d8cdcdf817d0c74ddd5c72ae108cf32199a1d4d410868c0e1f5de`,
+and clean binary SHA-256 is
+`d09692d8baf18d4c351d9b3b9f300a7f9f8e3f26c302c1c31b6772aec97a972f`.
+
+Two single-change mutants were red against that test source. The production
+TrustedContext→DiscardBlockBytes patch already recorded above (SHA-256
+`9cec38e7a3a95efceb04eac83dfe1cd83df107918420b5340daf47b41760e9cb`)
+made the test exit 1 at `C04 stale context did not retain evidence and block
+bytes`. Its new raw red log `0c7328e1d-trusted-context-discardblock-red.log`
+has SHA-256 `22a9d5dbc8f22db63a56908bfa724118d75ee78aaaaa21fbafa36fdb73fd4cb1`;
+the mutant policy SHA-256 remained
+`2f01ae0df35200293f9fe738a288a9bf2183eeb8af20064e17369d3fa16317f7`
+and mutant binary SHA-256 was
+`5c7d24a1d1114ea4850f96402fbc84d9ea360948b06c7b7cf8d2cb169e9d391c`.
+The test-only `c04-expiry-timer-bypass-mutant.patch` (SHA-256
+`1846f63b1c50e7cbf31db1cbae727d04a79e08424de4748ed82ceb69840a5fcc`)
+disabled only the scheduled expiry callback. It exited 1 at `C04 expiry
+changed block bytes or accepted target` because the evidence remained in the
+store. Raw red `0c7328e1d-expiry-timer-bypass-red.log` has SHA-256
+`f36acd8bbc3804a73a9985e0e682134be599d8cb2abe3332ef780ad419ec659b`,
+mutant test source SHA-256 was
+`a4ed21b9c5ca15f1d10d81b547409b0278e2ac754ee7300fd859914908cbb045`,
+and mutant binary SHA-256 was
+`96b48a343d72133e912c3760b81d259e7b38bde94a5b8b1da7c0ba54b684c508`.
+Both source files were restored afterward. C04 remains OPEN for fixed-head
+CI and independent review of this extension; the queue's per-attempt token
+association and full ingress timer remain explicitly narrower than a direct
+production-ingress assertion.
