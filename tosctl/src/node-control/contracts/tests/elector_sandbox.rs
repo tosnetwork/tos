@@ -1436,6 +1436,36 @@ fn a_set_the_node_would_refuse_is_refused_before_it_is_installed() {
     }
 }
 
+/// Governance uses install_param, not the Elector's set_next_validators branch.
+/// A set rejected on the latter path must not become authoritative by a vote.
+#[test]
+fn a_governed_next_set_obeys_the_node_descriptor_rules() {
+    let (mut honest_chain, honest_validators, _election) = elect_install_and_rotate();
+    require_one_winning_round(&mut honest_chain);
+    let honest = validator_set_cell(&honest_chain, &honest_validators, Flaw::None);
+    let control = govern_install(&mut honest_chain, &honest_validators, 36, honest, 800);
+    assert_eq!(
+        control,
+        Governed { decided: true, installed: true },
+        "the honest governed set was not installed"
+    );
+
+    for (flaw, name, query) in [
+        (Flaw::DuplicateAdnl, "duplicate-ADNL", 900),
+        (Flaw::WeightOverProtocolCap, "overweight", 1000),
+    ] {
+        let (mut bad_chain, bad_validators, _election) = elect_install_and_rotate();
+        require_one_winning_round(&mut bad_chain);
+        let invalid = validator_set_cell(&bad_chain, &bad_validators, flaw);
+        let result = govern_install(&mut bad_chain, &bad_validators, 36, invalid, query);
+        assert_eq!(
+            result,
+            Governed { decided: true, installed: false },
+            "a governed {name} set reached ConfigParam 36"
+        );
+    }
+}
+
 /// `0x4e565354`: the elector asking the configuration contract to install a set.
 fn set_next_validators_body(query_id: u64, vset: chain_block::Cell) -> chain_block::Cell {
     use chain_block::IBitstring;

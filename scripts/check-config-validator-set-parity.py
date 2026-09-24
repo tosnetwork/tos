@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the branch-CI-visible source half of PQ ConfigParam 36 admission.
+"""Check the branch-CI-visible source half of PQ validator-set admission.
 
 The contract sandbox tests prove behaviour. This guard keeps the two node-side
 rules visible in the configure-only source-guard job on branch pushes too.
@@ -42,4 +42,18 @@ for label, pattern in required.items():
     if not re.search(pattern, body, re.S):
         fail(f"check_validator_set no longer records {label}")
 
-print("CONFIG_VALIDATOR_SET_PARITY_OK: pre-install PQ set check records ADNL deduplication and the node's weight cap")
+install = re.search(r"\(cell, int\) install_param\(cell cfg_dict, int param_id, cell param_val\) inline_ref \{(.*?)\n\}", contract, re.S)
+if not install:
+    fail("governance install_param body is absent")
+install_body = install.group(1)
+governance_checks = {
+    "ConfigParams 34-37 route": r"param_id\s*>=\s*34.*?param_id\s*<=\s*37",
+    "full PQ descriptor check": r"check_validator_set\(param_val\)",
+    "consumed check result": r"valid\s*=\s*t_until\s*>\s*t_since",
+    "refusal before install": r"ifnot\s*\(valid\).*?return\s*\(cfg_dict,\s*false\)",
+}
+for label, pattern in governance_checks.items():
+    if not re.search(pattern, install_body, re.S):
+        fail(f"governance install_param no longer records {label}")
+
+print("CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance PQ set installation record ADNL deduplication and the node's weight cap")

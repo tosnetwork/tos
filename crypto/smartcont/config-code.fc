@@ -323,9 +323,25 @@ int valid_controller_policy?(cell value) inline_ref {
   if ((param_id == 28) & (~ valid_catchain_limits?(param_val))) {
     return (cfg_dict, false);
   }
-  if ((param_id >= 34) & (param_id <= 37)
-      & (~ valid_live_validator_set_limits?(cfg_dict, param_val))) {
-    return (cfg_dict, false);
+  if ((param_id >= 34) & (param_id <= 37)) {
+    ifnot (valid_live_validator_set_limits?(cfg_dict, param_val)) {
+      return (cfg_dict, false);
+    }
+    ;; Governance installs through this route, not through the Elector's
+    ;; set_next_validators handler. A count-only check would let a valid vote
+    ;; install a set the node cannot decode. Preserve optional-set deletion.
+    ifnot (cell_null?(param_val)) {
+      int valid = true;
+      try {
+        (int t_since, int t_until) = check_validator_set(param_val);
+        valid = t_until > t_since;
+      } catch (_, _) {
+        valid = false;
+      }
+      ifnot (valid) {
+        return (cfg_dict, false);
+      }
+    }
   }
   cfg_dict~idict_set_ref(32, param_id, param_val);
   return (cfg_dict, true);

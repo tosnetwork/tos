@@ -1,6 +1,7 @@
 # V1: PQ validator-set pre-install parity
 
-Status: **partially repaired, correctness question OPEN**. This is contract/node
+Status: **both live installation routes repaired locally, correctness question OPEN
+pending fixed-head CI and rule-parity review**. This is contract/node
 rule parity, not an observed masterchain halt. C01 was a source review; C07's
 independent compiled-contract and node-decoder results are in
 `/home/tomi/memo/pq-native/N6-MAC-C07-RESULT-20260924.md` and its hashed data
@@ -32,8 +33,10 @@ the contract's duplicate-ADNL refusal made this test RED with
 Removing only the weight-cap check made the over-cap row RED with
 `[ee764f4b]`. Both mutations were restored before the final checks.
 
-The fixed compiled `build/crypto/smartcont/auto/config-code.fif` SHA-256 is
-`047ddbe08f6633469130a0d886430c7454fe3a34b7160d85cbae8376f880e15e`;
+The Elector-only repair compiled `config-code.fif` to SHA-256
+`047ddbe08f6633469130a0d886430c7454fe3a34b7160d85cbae8376f880e15e`.
+The later Elector-plus-governance repair compiled it to
+`95bbfa11e05dfc49d7a89bfbdd7055e03f920785f7d0c8c688899c6b35fa47b2`;
 the unchanged `elector-code.fif` is
 `fc41a49427042f0e4cf3e2fa8f96a45a583d6966271834332c69518e4866e08d`.
 The pre-fix config Fift in C07 was
@@ -46,22 +49,41 @@ differ only in the second descriptor's 32-byte ADNL field.
 The branch source guard checks these two exact contract rules against the
 node-side source and is killed separately by deleting either refusal. It is
 not a substitute for the sandbox: the sandbox is what proves the compiled
-contract's reply and storage effect. The full local `elector_sandbox` run had
-68 passes and 3 unrelated existing failures. Two of those still demand
+contract's reply and storage effect. After the governance repair, the full
+local `elector_sandbox` run had 69 passes and 3 unrelated existing failures.
+Two of those still demand
 100/400-validator elected sets despite the enforced 21-validator launch cap;
 the third is the controller-policy proposal fixture. The three are not
 evidence that either new negative failed.
 
 ## Remaining installation boundary
 
-The Elector's `set_next_validators` route now invokes the complete
-`check_validator_set`. The separate validator-governance `install_param`
-route for ConfigParams 34–37 invokes `valid_live_validator_set_limits?`, which
-only checks the header counts. It does **not** run the ADNL/weight/descriptor
-check before writing one of those cells. This is a separate route to the same
-class of invalid authoritative set; it is not closed by the Elector-path fix.
-The `pq-validator-set-installation-parity` correctness question remains OPEN
-until that route is covered by its own compiled-contract negative and the
-node's required rules are checked for parity there. No deliberately malformed
-set has been installed on a real network, so chain-halt impact remains a
-source-and-decoder inference, not a run observation.
+The Elector's `set_next_validators` route invokes `check_validator_set`. The
+separate validator-governance `install_param` route for ConfigParams 34–37
+originally invoked `valid_live_validator_set_limits?`, which only checks header
+counts. A compiled sandbox with a real current PQ set and current-set votes
+confirmed the distinct route: an honest ConfigParam 36 was decided and
+installed, but so was a duplicate-ADNL set (`Governed { decided: true,
+installed: true }`). This was a RED result even after the Elector route was
+fixed. The governance route now calls the full check for non-null sets and
+refuses a duplicate ADNL or over-cap total; optional-set deletion retains its
+previous null behavior. It consumes the check's returned times in a condition.
+An earlier version merely called the pure check and ignored its return values;
+FunC optimized that call away, and the same sandbox stayed RED. Replacing the
+condition with `valid = true` makes both the branch source guard and the
+sandbox RED, naming the duplicate-ADNL ConfigParam 36 installation.
+
+The node-side audit of this loader found the other enforced PQ requirements:
+well-formed `validator_pq` descriptors, admitted algorithm and key length,
+derived key ID, nonzero validator ID/ADNL/weight, unique validator/key/ADNL,
+contiguous indices, matching total weight, and the `UINT64_MAX/3` cap. The
+contract's `pq::parse_descriptor` handles descriptor shape, algorithm/key,
+derived ID and nonzero fields; the pre-install loop handles uniqueness,
+indices, weight sum and the cap. Counts and launch limits are also checked.
+The source guard names only the newly added ADNL/cap rules and both call paths;
+it does not claim to prove this entire audit.
+
+The `pq-validator-set-installation-parity` question remains OPEN until the
+fixed-head CI result and the independent rule-parity review are recorded. No
+deliberately malformed set has been installed on a real network, so chain-halt
+impact remains a source-and-decoder inference, not a run observation.
