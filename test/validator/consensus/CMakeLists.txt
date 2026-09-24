@@ -472,6 +472,20 @@ add_test(
 set_tests_properties(test-consensus-simplex2-pq-restart-permanent-origin PROPERTIES
     ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ORIGIN_PERMANENTLY_UNAVAILABLE=1")
 add_test(
+    NAME c05-notarize-simultaneous-recovery
+    COMMAND test-consensus --duration 8 --n-nodes 4 --target-rate-ms 400
+            --net-ping 0:0 --pq-finality-e2e-test --min-finalized-blocks 3
+)
+set_tests_properties(c05-notarize-simultaneous-recovery PROPERTIES
+    ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS=3")
+add_test(
+    NAME c05-notarize-simultaneous-overbudget
+    COMMAND test-consensus --duration 16 --n-nodes 4 --target-rate-ms 400
+            --net-ping 0:0 --pq-finality-e2e-test --min-finalized-blocks 3
+)
+set_tests_properties(c05-notarize-simultaneous-overbudget PROPERTIES
+    ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS=24")
+add_test(
     NAME test-consensus-simplex2-query-abuse
     COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100
             --net-ping 0.005:0.02 --query-abuse-test

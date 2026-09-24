@@ -78,6 +78,20 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(c05_ctest)}\s*$", text) is not None,
         "Simplex parent-state retry voting behavior gate is absent",
     )
+    consensus_tests = (root / "test/validator/consensus/CMakeLists.txt").read_text(encoding="utf-8")
+    for test_name, fault_count in (
+        ("c05-notarize-simultaneous-recovery", 3),
+        ("c05-notarize-simultaneous-overbudget", 24),
+    ):
+        require(
+            re.search(rf"(?m)^\s*NAME {re.escape(test_name)}\s*$", consensus_tests) is not None
+            and re.search(
+                rf'(?m)^set_tests_properties\({re.escape(test_name)} PROPERTIES\s*\n'
+                rf'\s*ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS={fault_count}"\)\s*$',
+                consensus_tests,
+            ) is not None,
+            f"C05 four-node behavior CTest is absent or has wrong fault budget: {test_name}",
+        )
     for test_name in RESTART_ORIGIN_TESTS:
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -126,7 +140,8 @@ def main() -> int:
     print(
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
-        "the pending-finality manager actor and the C05 parent-state retry CTest selector, "
+        "the pending-finality manager actor, the C05 parent-state retry CTest selector "
+        "and its two named four-node fault controls, "
         "and five named restart-origin controls, "
         "and compiles every Rust test target"
     )
