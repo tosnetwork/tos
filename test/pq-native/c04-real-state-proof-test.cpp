@@ -254,12 +254,16 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     if (stale_proof.is_ok() || failure_source != PendingBlockProofFailureSource::TrustedContext) {
       return promise.set_error(td::Status::Error("C04 ingress expiry did not identify TrustedContext"));
     }
-    try_process_pending_block_finality(id);
+    // Keep the candidate bytes available without triggering proof processing:
+    // otherwise the scheduled retry can lazily erase expired evidence before
+    // the ingress timer, and the control measures only empty-map cleanup.
     auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
-    if (!pending_block_finality_.get_if_exists(id) || !cached ||
+    if (!pending_block_finality_.get_if_exists(id) ||
+        pending_block_finality_.get_if_exists(id)->size() != 1 || !cached ||
         cached->as_slice() != expected_data.as_slice()) {
       return promise.set_error(td::Status::Error("C04 ingress expiry lost evidence or candidate bytes"));
     }
+    std::cout << "C04_MANAGER_INGRESS_TIMER_ONLY evidence=1 candidate_equal=1\n";
     delay_action([self = actor_id(this), id, expected_data = std::move(expected_data),
                   promise = std::move(promise)]() mutable {
       td::actor::send_closure(self, &PendingFinalityManagerActorProbe::finish_stale_expiry, id,
@@ -278,7 +282,8 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     const bool candidate_equal = cached && cached->as_slice() == expected_data.as_slice();
     const bool target_live = last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id;
     if (pending || !candidate_equal || target_live) {
-      std::cerr << "C04_MANAGER_EXPIRY_FLAGS pending_entries=" << (pending ? pending->size() : 0)
+      std::cerr << "C04_MANAGER_EXPIRY_FLAGS pending_present=" << (pending != nullptr)
+                << " pending_entries=" << (pending ? pending->size() : 0)
                 << " candidate_equal=" << candidate_equal << " target_live=" << target_live << '\n';
       return promise.set_error(td::Status::Error("C04 expiry changed block bytes or accepted target"));
     }
