@@ -15,6 +15,7 @@ MARKERS = (
     "validator-elect-req.fif",
     "validator-elect-signed.fif",
     "validator-elect-req>B",
+    "single-nominator-legacy-elect-signed.fif",
 )
 EXPECTED: dict[str, dict[str, int]] = {
     "crypto/smartcont/validator-elect-req.fif": {"validator-elect-req>B": 1},
@@ -23,7 +24,7 @@ EXPECTED: dict[str, dict[str, int]] = {
         "validator-elect-signed.fif": 1,
         "validator-elect-req>B": 1,
     },
-    "crypto/smartcont/single-nominator-pool/validator-elect-signed.fif": {
+    "crypto/test/fift/fixtures/single-nominator-legacy-elect-signed.fif": {
         "validator-elect-req>B": 1,
     },
     "crypto/smartcont/liquid-staking/controller-elect-signed.fif": {
@@ -31,7 +32,8 @@ EXPECTED: dict[str, dict[str, int]] = {
     },
     "crypto/test/test-smartcont.cpp": {
         "validator-elect-req.fif": 1,
-        "validator-elect-signed.fif": 2,
+        "validator-elect-signed.fif": 1,
+        "single-nominator-legacy-elect-signed.fif": 1,
     },
     "crypto/test/fift/validator-proposal-test.fif": {"validator-elect-req>B": 1},
     "crypto/test/fift/validator-proposal-legacy-parity.fif": {
@@ -72,6 +74,13 @@ def discover(root: Path) -> dict[str, dict[str, int]]:
 
 def main() -> int:
     root = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path(__file__).resolve().parents[1]
+    retired_operator = root / "crypto/smartcont/single-nominator-pool/validator-elect-signed.fif"
+    if retired_operator.exists():
+        fail("retired single-nominator Ed25519 operator script is still executable")
+    legacy_fixture = "test/fift/fixtures/single-nominator-legacy-elect-signed.fif"
+    smartcont_test = (root / "crypto/test/test-smartcont.cpp").read_text(encoding="utf-8")
+    if smartcont_test.count(legacy_fixture) != 1:
+        fail("test-smartcont no longer loads exactly one test-only single-nominator legacy fixture")
     actual = discover(root)
     missing = sorted(set(EXPECTED) - set(actual))
     unexpected = sorted(set(actual) - set(EXPECTED))
@@ -88,7 +97,8 @@ def main() -> int:
         fail(f"retained literal Fift callers absent from migration map: {undocumented}")
     print(
         f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact executable files retain the inventoried "
-        "validator-elect Fift path/word literals; the migration map names each"
+        "validator-elect Fift path/word literals; the single-nominator operator path is absent, "
+        "its legacy bytes are loaded only by test-smartcont, and the migration map names each"
     )
     return 0
 

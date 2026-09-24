@@ -309,16 +309,20 @@ local variable. This complements rather than duplicates the earlier
 A third open correctness question inventories the classical stake-production
 surface instead of treating the two base Fift files as orphaned. The inventory
 includes those two files, the `validator-elect-req>B` library word,
-`test-smartcont.cpp`, two validator-proposal Fift tests, the nominator-pool and
-validator-election Python flows, both pool operator scripts, and tosctl's
+`test-smartcont.cpp`, two validator-proposal Fift tests, the former nominator-pool and
+validator-election Python flows, the liquid-staking operator script, the relocated
+single-nominator legacy byte fixture, and tosctl's
 election daemon, interactive bid command, and config-wallet pool command.
 These consumers make deleting the
 base tools in isolation an invalid retirement.
 
 Pooled staking remains in the launch set through `single-nominator-pool`. Its
 contract already relays stake through the controller and parses the PQ
-authorization shape; its stale operator script must be converted to consume
-`engine.validator.createPqStakeAuthorization`. In contrast,
+authorization shape. T05 retired its Ed25519 Fift operator path after the
+node-authorized `tosctl config wallet stake` command passed an exact first
+stake and live ConfigParam 34 pairing at `ca842b0f1`. The old codec is now a
+test-only legacy fixture for `test-smartcont.cpp`; a PQ pool sandbox test
+confirms that its classical body aborts before controller relay. In contrast,
 `liquid-staking/controller.func` still submits classical `new_stake` directly
 and handles the elector reply itself. The liquid-staking directory is therefore
 not launch-supported and must be absent from release claims and entry-point
@@ -340,7 +344,7 @@ builder and asserts an elector `STAKE_ACCEPTED` reply; changing the signed
 owner to the controller rather than the pool makes that gate red after both
 relays. These are enablement paths, not rollback repairs: the earlier generic
 keyring produced a 64-byte Ed25519 signature and the shared builder refused it
-locally. The registry remains open for the operator Fift tools and other
+locally. The registry remains open for the remaining Fift tools and other
 retained callers. The multi-nominator pool uses the same PQ order-body layout;
 its two sandbox cases now call the production builder. Liquid staking remains
 outside the launch set.

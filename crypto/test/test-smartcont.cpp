@@ -345,8 +345,9 @@ std::string run_validator_fift_script_regression() {
   auto signed_boc = signed_run.source_lookup.read_file("validator-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(signed_boc).move_as_ok().not_null());
 
+  // Historical Ed25519 byte parity only. This path is not a PQ pool operator.
   auto single_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/single-nominator-pool/validator-elect-signed.fif"))
+      fift::create_mem_source_lookup(load_source("test/fift/fixtures/single-nominator-legacy-elect-signed.fif"))
           .move_as_ok();
   single_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(single_lookup, "wallet.addr", kScriptWalletAddrHex);

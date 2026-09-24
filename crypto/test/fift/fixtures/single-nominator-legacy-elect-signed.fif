@@ -1,4 +1,6 @@
 #!/usr/bin/fift -s
+// Test-only historical Ed25519 byte fixture. The supported single-nominator
+// operator uses tosctl config wallet stake with node PQ authorization instead.
 "TosUtil.fif" include
 "Validator.fif" include
 

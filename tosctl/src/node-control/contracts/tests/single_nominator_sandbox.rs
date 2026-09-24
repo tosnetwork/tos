@@ -387,6 +387,42 @@ fn terms_that_are_not_a_stake_are_refused_before_anything_is_sent() {
     assert!(sent(&result).is_none(), "a stake with no terms was relayed anyway");
 }
 
+/// The retired single-pool Fift tool wrote Validator.fif's Ed25519 layout:
+/// a raw 256-bit key before the election terms and one 64-byte signature ref.
+/// A syntactically complete classical order must not be relayed as a PQ stake.
+#[test]
+fn classical_single_nominator_order_is_refused_before_controller_relay() {
+    let mut pooled = launch(20_000 * TOS);
+    let election = pooled.election();
+    let mut body = BuilderData::new();
+    body.append_u32(NEW_STAKE).expect("operation");
+    body.append_u64(7).expect("query id");
+    Coins::new(1_000 * TOS).write_to(&mut body).expect("stake amount");
+    body.append_raw(&[0x11; 32], 256).expect("classical public key");
+    body.append_u32(election).expect("election");
+    body.append_u32(0x10000).expect("max factor");
+    body.append_raw(&[0xa5; 32], 256).expect("adnl address");
+    let mut signature = BuilderData::new();
+    signature.append_raw(&[0x33; 64], 512).expect("Ed25519 signature");
+    body.checked_append_reference(signature.into_cell().expect("signature cell"))
+        .expect("classical signature reference");
+
+    let result = pooled.from(
+        &pooled.validator.clone(),
+        body.into_cell().expect("complete classical stake order"),
+        2 * TOS,
+    );
+    let pool_transaction = &result.transactions.first().expect("pool transaction").1;
+    assert!(
+        pool_transaction.read_description().expect("description").is_aborted(),
+        "the PQ pool accepted a classical Ed25519 stake body",
+    );
+    assert!(
+        !reply_tags(&result).contains(&RELAY_STAKE),
+        "the PQ pool relayed a classical Ed25519 stake body to the controller",
+    );
+}
+
 /// Only the validator may spend the owner's money on a stake, and a stake spends only
 /// what it was told to.
 #[test]
