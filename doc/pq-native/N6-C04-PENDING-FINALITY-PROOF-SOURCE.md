@@ -114,6 +114,21 @@ This is a component fixture and the Mac old/new result was a fixture repair,
 not production C04 RED/GREEN. The Manager probe still substitutes the success
 callback and has no DB-backed applied-block assertion. C04 remains OPEN.
 
+The fixture also now parses its seqno-1 block with production `create_block`
+and applies it to a freshly fetched seqno-0 `MasterchainStateQ` using the
+production `apply_block`, requiring the exact generated seqno-1 state root.
+The clean CTest passed; a one-field mutation that compared the applied result
+to the old root failed with `C04_REAL_APPLY_FAILED` (exit 8 from CTest), then
+the restored test passed. Raw logs are
+`test/integration/.c04-real-state-proof-149b3d360/wrong-result-root-red.log`
+(SHA-256 `9e0b54e23065ec45923b0a7e8861b94ffb94ffcc2002048a6a9bb0e3768af202`)
+and `real-apply-final-green.log`
+(SHA-256 `8ddafbeba3c885e0324d3d55271d2b7491dcf74e4343d5bdedbae00dab931811`).
+The clean binary SHA-256 was
+`e14e4a57de3ba07b060e39710d2191d1517465ab3fa8246e924e6269ef50896c`.
+This rules out an inapplicable synthetic state transition as the next actor
+fixture's first obstacle; it still does not exercise Manager/DB persistence.
+
 The old-behavior mutation changed only the proof-error branch of
 `try_process_pending_block_finality` back to candidate-byte erasure. The
 `test-pending-finality-cache` CTest exited 8 and named

@@ -184,6 +184,23 @@ int main(int argc, char **argv) {
   auto block_boc = require_ok(vm::std_boc_serialize(block_root, 31), "block BOC");
   auto id1 = BlockIdExt{masterchainId, shardIdAll, 1, td::Bits256(block_root->get_hash().bits()),
                         block::compute_file_hash(block_boc)};
+  // A proof that parses is not necessarily an applicable block. Pin the
+  // production state transition before using this fixture in a DB-backed
+  // Manager test.
+  auto parsed_block = require_ok(create_block(id1, block_boc.clone()), "C04 apply preflight block");
+  auto replay_state = require_ok(MasterchainStateQ::fetch(id0, boc.clone(), root0), "C04 apply preflight state");
+  auto application = replay_state.write().apply_block(id1, parsed_block, nullptr);
+  if (application.is_error()) {
+    std::cerr << "C04_REAL_APPLY_FAILED: " << application.to_string() << '\n';
+    return 1;
+  }
+  const auto expected_state_root = RootHash{root1->get_hash().bits()};
+  if (replay_state->root_hash() != expected_state_root) {
+    std::cerr << "C04_REAL_APPLY_FAILED: expected root " << expected_state_root.to_hex() << ", actual "
+              << replay_state->root_hash().to_hex() << '\n';
+    return 1;
+  }
+  std::cout << "C04_REAL_APPLY_OK root=" << replay_state->root_hash().to_hex() << '\n';
   auto context = require_ok(derive_pq_finality_context(*state0, vset, id1, 0, 0), "PQ session");
   auto candidate = pq_block_signature_test::candidate(id1);
   auto pairs = keys.sign({0, 1, 2}, context.expected_session_id, pq_block_signature_test::Fixture::slot,
