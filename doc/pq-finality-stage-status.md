@@ -451,9 +451,11 @@ for the guard, not evidence about paths outside its declared scan roots.
 
 ## Registered gaps and explicit non-claims
 
-The two remaining closure gaps are the restart-cut part of item 5 and item 7.
-Both are parked by owner decision, with implementation work not started on either
-fixture; they are not pending-and-imminent work on this branch.
+Correction to the former wording, “Both are parked by owner decision, with
+implementation work not started”: that description predates the N02–N07
+controlled actor/DB cuts and the N01 cold seq2 continuation. Those cuts are
+implemented; the encompassing N01 remains open pending fixed-tree CI and
+aggregate review. They do not establish power-loss or cross-node recovery.
 The other entries below record resolved rows, deliberate naming
 choices, harness boundaries, evidence-retention limits, or separately scoped
 API/tooling debt; none is silently promoted to a green claim.
@@ -521,20 +523,17 @@ API/tooling debt; none is silently promoted to a green claim.
    would duplicate CI runtime without adding evidence, and renaming would likewise
    add no evidence.  This is a documented naming deviation, not an unmet gate.
 
-   The five restart cuts listed in §10.5.4 remain a parked gap; implementation
-   work has not started.  They need deterministic
-   cut points spanning the Simplex journal, `#13` storage,
-   BlockProof storage, the finalized marker, and a reconstruction from DB/archive
-   state without actor memory.  The first four require production failpoints and
-   restart orchestration; the fifth requires the engine/manager persistence harness
-   that this tree currently lacks.  A mock-only version would not establish the
-   required crash property.  These are missing scenarios, not a claim that the
-   properties are intrinsically untestable.
-   **Closure condition and cost:** close all five with deterministic production
-   failpoints and restart orchestration across journal, `#13`, BlockProof,
-   finalized marker and DB/archive reconstruction; four need production
-   failpoints, while the reconstruction cut also needs the manager persistence
-   harness.
+   Correction to the former “five restart cuts remain parked / implementation
+   not started” statement: N02–N06 now exercise controlled write-after and
+   cold-process recovery at the Simplex journal, `#13`, BlockProof, marker and
+   DB/archive reconstruction boundaries; N07 exercises the retained PQ proof
+   through a real CheckProof actor. Their individual scoped sign-offs do not by
+   themselves prove continuation. [N01's seq2 fixture](pq-native/N5-COLD-SEQ2-CONTINUATION-FIXTURE.md)
+   adds a cold-restored second FinalCert, real AcceptBlock/marker, a third cold
+   read of both DB roots and a latest-finalized Pool anchor. N01 stays open until
+   its committed/pushed-tree CI and aggregate review. Controlled orderly stops
+   are not SIGKILL/power-loss atomicity; live overlay/Bridge and peer convergence
+   require separate testnet fault evidence.
 
 6. **Mutation transcripts are not repository artifacts.**
    This file records the exact failure lines retained in the implementation/review
@@ -543,21 +542,15 @@ API/tooling debt; none is silently promoted to a green claim.
    transcripts is possible by rerunning those mutations, but the original complete
    output cannot be reconstructed from committed files alone.
 
-7. **The focused BlockProof fixture does not run the `CheckProof` actor.**
-   This integration fixture is parked by owner decision and implementation work
-   has not started.
-   `test-pq-signature-persistence` parses a serialized BlockProof envelope and
-   calls the shared verifier directly.  Deleting the real actor's verifier-error
-   rejection leaves it green.  Exercising `CheckProof` requires an actor scheduler,
-   a `ValidatorManager` actor serving block handles and governing state, a proof
-   whose verified header and state update match that state, and persistence sinks
-   for the accepted proof/handle transitions.  The manager interface is broad and
-   this tree has no focused fake implementing that orchestration.  This is missing
-   integration coverage; the direct matrix is not production-consumer coverage.
-   **Closure condition and cost:** close it with an actor-scheduler fixture whose
-   `ValidatorManager` serves block handles and governing state to a matching
-   proof/state update and exposes the persistence sinks; the cost is a broad
-   manager/DB test fixture rather than a local verifier unit test.
+7. **CheckProof actor coverage is now separate from the older direct matrix.**
+   The former “implementation work has not started” statement described only
+   `test-pq-signature-persistence`, which still calls a verifier directly.
+   [N07's controlled Cut 6](pq-native/N5-CHECKPROOF-CUT6-REVALIDATION-FIXTURE.md)
+   instead reads a persisted PQ BlockProof and the matching FinalCert from a
+   cold source, then invokes the production CheckProof actor in a genesis-only
+   consumer: the original proof is accepted and a tampered PQ signature is
+   refused. This is actor-consumer coverage, not a full-node or remote-peer
+   proof-ingress test. N01's overall persistence continuation is tracked above.
 
    TopBlockDescr no longer shares this gap at its decisive boundary: the focused
    fixture supplies two masterchain-state objects with configuration and shard
