@@ -22,6 +22,15 @@ if spec is None or spec.loader is None:
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
+# These newly diagnosed consensus defects remain mandatory even if someone
+# removes both an entry and its JSON required-id in one edit.
+for mandatory_id in (
+    "pq-finality-proof-failure-source",
+    "simplex-notarize-state-retry-liveness",
+):
+    if mandatory_id not in module.REQUIRED_CORRECTNESS_QUESTION_IDS:
+        fail(f"compiled required correctness question disappeared: {mandatory_id}")
+
 
 def run(*args: str, cwd: Path) -> None:
     subprocess.run(
@@ -237,6 +246,22 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                         "closure_condition": "fixture rotation closure condition",
                         "status": "RESOLVED",
                         "resolved_by": "777777777",
+                    },
+                    "pq-finality-proof-failure-source": {
+                        "observation": "fixture proof failure source observation",
+                        "observed_commit": "a8c94eadb",
+                        "location": "fixture-manager.cpp:2",
+                        "closure_condition": "fixture proof source closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "888888888",
+                    },
+                    "simplex-notarize-state-retry-liveness": {
+                        "observation": "fixture notarize retry liveness observation",
+                        "observed_commit": "52de1ac64",
+                        "location": "fixture-consensus.cpp:1",
+                        "closure_condition": "fixture retry liveness closure condition",
+                        "status": "RESOLVED",
+                        "resolved_by": "999999999",
                     },
                     "pool-first-stake-birth-witness-missing": {
                         "observation": "fixture pool witness observation",

@@ -30,6 +30,8 @@ REQUIRED_CORRECTNESS_QUESTION_IDS = (
     "simplex-restart-origin-state-replay",
     "pq-validator-set-installation-parity",
     "pq-unsafe-session-rotation",
+    "pq-finality-proof-failure-source",
+    "simplex-notarize-state-retry-liveness",
 )
 REQUIRED_MEASUREMENT_GAP_IDS = (
     "release-scale-matrix-unmeasured",

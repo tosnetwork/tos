@@ -8,7 +8,9 @@
     "merkle-base-state-mismatch",
     "simplex-restart-origin-state-replay",
     "pq-validator-set-installation-parity",
-    "pq-unsafe-session-rotation"
+    "pq-unsafe-session-rotation",
+    "pq-finality-proof-failure-source",
+    "simplex-notarize-state-retry-liveness"
   ],
   "questions": {
     "classical-config-vote-tooling-incompatible-with-pq-contract": {
@@ -61,6 +63,20 @@
       "location": "validator/manager.cpp:update_shards; validator/consensus/bridge.cpp; validator/consensus/simplex/db.cpp",
       "observation": "A strict same-script process red/green used one final test script SHA-256 on both sides: production Manager source exactly matching 19f5b3406 produced a trusted-session mismatch under nonzero local rotation while zero rotation recorded successful masterchain stats; the committed fail-closed Manager refused nonzero rotation before active group creation while retaining the zero positive control. Binary, source, tracked-patch and report SHA-256 values are recorded in N6-PQ-UNSAFE-ROTATION-FAIL-CLOSED.md. An older red/green pair used a prior script with a different name for the same zero-rotation stats condition and is supporting rather than strict comparison evidence. Forcing refusal for zero rotation makes the positive control fail. This is a local process red/green, not a retained serialized BlockProof/CheckProof or full actor-lifecycle proof. Exact fixed-head CI and the broader recovery/rotation disposition remain open.",
       "observed_commit": "19f5b3406",
+      "status": "OPEN"
+    },
+    "pq-finality-proof-failure-source": {
+      "closure_condition": "On one fixed tree, run the real ValidatorManagerImpl actor with a valid cached masterchain block and wrong-validator-set PQ finality evidence at the queue front, followed by valid evidence. Preserve old-red/new-green showing that the bad certificate alone is retired, block bytes remain cached, and the later valid evidence reaches acceptance. Separately show a stale trusted-context failure recovering when context arrives within the bounded retention window, and an expired-context control that frees the evidence without erasing the block. Record actor logs and exact source/binary hashes; component classification alone cannot close this item.",
+      "location": "validator/manager.cpp:try_process_pending_block_finality; validator/downloaders/wait-block-data.cpp:generate_proof",
+      "observation": "Mac C04/FN1 showed at component level that a wrong-validator-set PQ finality carrier can enter the pending queue and cause proof serialization error 621; the pre-fix manager branch erased valid cached block bytes while retaining bad evidence at the front. Commit 73e8315c7 separates block-byte, finality-evidence and trusted-context failures, and its component test proves the intended queue action with mutations. It is not a real ValidatorManagerImpl actor red/green, does not prove later valid evidence is applied, and does not prove stale-context recovery or terminal expiry. The new actor probe in progress checks one manager queue transition only. C04 remains OPEN.",
+      "observed_commit": "a8c94eadb",
+      "status": "OPEN"
+    },
+    "simplex-notarize-state-retry-liveness": {
+      "closure_condition": "Drive the real Consensus/Pool/CandidateResolver/StateResolver actor path with a transient ResolveState notready, timeout and ancestor-notready, restoration and same CandidateReceived redelivery. Retain old-red/new-green proving one valid NotarizeVote after recovery while pending_block remains set, and a permanent-error control that fails closed. The retry must be internally bounded, recheck voted_notar/voted_skip/finality state before casting, and must not clear pending_block or erase V-019 double-proposal evidence. Record source/binary/log hashes and at least a focused simultaneous-failure boundary before closure.",
+      "location": "validator/consensus/simplex/consensus.cpp:try_notarize; validator/consensus/simplex/pool.cpp:CandidateReceived",
+      "observation": "Mac C09 ran a deterministic actor diagnosis against production code at 52de1ac64: one transient ResolveState notready, timeout or ancestor-notready missed NotarizeVote in 3/3 each; restoring state and redelivering the same CandidateReceived still cast zero votes because pending_block suppressed the handler. A diagnostic clear-pending mutation made those cases green but is not shippable because it loses V-019 double-proposal evidence. The unchanged control cast one vote and finalized. No production C05 repair or multi-node simultaneous-failure test is claimed; C05 remains OPEN.",
+      "observed_commit": "52de1ac64",
       "status": "OPEN"
     },
     "pool-first-stake-birth-witness-missing": {
