@@ -9,6 +9,11 @@ from pathlib import Path
 
 HELPER_MODULE = "tostester.pq_initial_validator"
 HELPER_NAME = "make_deterministic_pq_initial_validator"
+LOW_LEVEL_METHODS = frozenset({
+    "make_initial_validator",
+    "make_initial_pq_validator",
+    "make_noninitial_pq_validator",
+})
 EXPECTED_CALLS = {
     "test/integration/test_simplex2_release.py": 1,
     "scripts/localnet-jsonrpc.py": 1,
@@ -50,6 +55,39 @@ def helper_calls_in(node: ast.AST) -> int:
     )
 
 
+def forbidden_bypasses(tree: ast.AST) -> list[tuple[str, int]]:
+    """Find low-level method references, including bound aliases and literal getattr."""
+    bypasses: list[tuple[str, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in LOW_LEVEL_METHODS:
+            bypasses.append((node.attr, node.lineno))
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and node.args[1].value in LOW_LEVEL_METHODS
+        ):
+            bypasses.append((f"getattr(..., {node.args[1].value!r})", node.lineno))
+    return bypasses
+
+
+def check_detector_controls() -> None:
+    """A clean scan is credible only while each known bypass remains detectable."""
+    controls = {
+        "getattr initial": ("getattr(node, 'make_initial_pq_validator')(id, seed)", "getattr"),
+        "bound method": ("provision = node.make_initial_validator\nprovision()", "make_initial_validator"),
+        "direct spare": ("node.make_noninitial_pq_validator(id, seed)", "make_noninitial_pq_validator"),
+    }
+    for name, (source, marker) in controls.items():
+        if not any(marker in method for method, _ in forbidden_bypasses(ast.parse(source))):
+            fail(f"detector control missed {name}")
+    if forbidden_bypasses(ast.parse("getattr(os, 'O_CLOEXEC', 0)")):
+        fail("detector control marked an unrelated getattr as validator provisioning")
+
+
 def check_election_branches(tree: ast.AST) -> None:
     """Both launch fixture and legacy network paths must use the shared helper."""
     execute = [
@@ -78,6 +116,7 @@ def check_election_branches(tree: ast.AST) -> None:
 
 
 def main() -> int:
+    check_detector_controls()
     root = (
         Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path(__file__).resolve().parents[1]
     )
@@ -88,17 +127,12 @@ def main() -> int:
         if not imported_helper(tree):
             failures.append(f"{relative}: does not import {HELPER_MODULE}.{HELPER_NAME}")
         helper_calls = 0
-        forbidden: list[tuple[str, int]] = []
+        forbidden = forbidden_bypasses(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             if isinstance(node.func, ast.Name) and node.func.id == HELPER_NAME:
                 helper_calls += 1
-            if isinstance(node.func, ast.Attribute) and node.func.attr in {
-                "make_initial_validator",
-                "make_initial_pq_validator",
-            }:
-                forbidden.append((node.func.attr, node.lineno))
         if helper_calls != expected_count:
             failures.append(
                 f"{relative}: has {helper_calls} shared helper calls, expected {expected_count}"
@@ -114,7 +148,8 @@ def main() -> int:
         "PQ_E2E_INITIAL_VALIDATOR_OK: "
         f"{len(EXPECTED_CALLS)} retained entry points use "
         f"{sum(EXPECTED_CALLS.values())} shared deterministic PQ validator calls; "
-        "the election rehearsal has one call in each PQ and legacy provisioning branch"
+        "the election rehearsal has one call in each PQ and legacy provisioning branch; "
+        "no low-level validator method attribute reference or literal getattr of those methods appears"
     )
     return 0
 
