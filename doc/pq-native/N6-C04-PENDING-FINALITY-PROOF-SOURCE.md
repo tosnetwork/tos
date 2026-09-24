@@ -433,3 +433,22 @@ test. The bad-front/good-back and stale-context recovery controls remain
 separate real Manager/RootDb tests. The registry's closure condition does
 not require a production attempt-token hook or real ADNL ingress. C04 stays
 OPEN until the complete fixed-tree gate and independent review are recorded.
+
+## Registered closure on pushed bec258805
+
+The paragraph above records the state when `6e66c54f8` was committed; its
+pending condition has since been met. On pushed `bec258805ece6e6202ac3acdb8bbff6f5c114547`,
+Branch PQ/Python CI run `36031192773` completed successfully and logged
+`test-c04-real-state-proof` **1/1 Passed, 61.33 s**. Source guards run
+`36031192885` also completed successfully. Mac's independent review of the
+timer-only clean/red mechanism is retained at memo/main `2bacd443`.
+The committed `6e66c54f8` tree supplied the exact raw green/red logs, clean
+and mutant executables, exit codes, unique mutation patch and SHA-256 values
+above; `bec258805` contains those sources and the evidence correction.
+
+`pq-finality-proof-failure-source` is therefore **RESOLVED** on `bec258805`
+under its registered closure condition. The proof is a local Manager/RootDb
+actor result. It does not authenticate ADNL transport metadata, demonstrate
+the historical incident's route, or close other N5 persistence cuts. The
+separate N6 microbench smoke run is not a condition of this C04 correctness
+closure.
