@@ -17,6 +17,8 @@ on:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
       - "tosctl/src/sandbox/**"
+      - "test/pq-native/validator-set-cases.txt"
+      - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
       - ".github/workflows/contract-sandboxes.yml"
     types: [opened, reopened, synchronize, ready_for_review]
@@ -31,6 +33,8 @@ on:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
       - "tosctl/src/sandbox/**"
+      - "test/pq-native/validator-set-cases.txt"
+      - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
       - ".github/workflows/contract-sandboxes.yml"
   workflow_dispatch:

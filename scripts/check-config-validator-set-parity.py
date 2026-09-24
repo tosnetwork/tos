@@ -22,6 +22,7 @@ node = (root / "crypto/block/mc-config.cpp").read_text()
 quorum = (root / "tos/quorum.h").read_text()
 sandbox = (root / "tosctl/src/node-control/contracts/tests/elector_sandbox.rs").read_text()
 vector_file = root / "test/pq-native/validator-set-cases.txt"
+workflow = (root / ".github/workflows/contract-sandboxes.yml").read_text()
 
 match = re.search(r"\(int, int\) check_validator_set\(cell vset\) \{(.*?)\n\}", contract, re.S)
 if not match:
@@ -105,5 +106,8 @@ if len(actual_cases) != len(rows) or actual_cases != required_cases:
 valid = [(name, verdict) for name, verdict, _ in rows if verdict == "accept"]
 if valid != [("valid", "accept")]:
     fail(f"shared node validator-set BOC positive control changed: {valid}")
+for path in ("test/pq-native/validator-set-cases.txt", "test/pq-native/validator-set-cases-gen.cpp"):
+    if workflow.count(f'"{path}"') != 2:
+        fail(f"contract sandbox PR and integration-push triggers no longer both include {path}")
 
-print("CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance record ADNL/weight rules; both sandbox tests decode the 22 shared node vectors")
+print("CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance record ADNL/weight rules; both sandbox tests decode the 22 shared node vectors and vector changes trigger contract CI")

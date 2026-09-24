@@ -121,6 +121,9 @@ The branch source guard pins the presence of both shared-vector test entries
 and the named 22-row table; it does not run either sandbox in branch CI. The
 regenerated table SHA-256 is
 `5bdebc0253b59172387cc634627601fa38b3ce3174c68865be47ca88c394f9a6`.
+The contract-sandbox workflow now treats either the table or its generator as
+a trigger on PRs and integration-branch pushes; the branch source guard checks
+both trigger lists so a vector-only edit cannot silently bypass that suite.
 
 The `pq-validator-set-installation-parity` question remains OPEN until the
 fixed-head CI result and the independent rule-parity review are recorded. No
