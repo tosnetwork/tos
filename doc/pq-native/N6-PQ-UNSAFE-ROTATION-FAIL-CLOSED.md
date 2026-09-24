@@ -1,7 +1,10 @@
 # C06/P0-5: refuse local PQ session rotation before active group creation
 
-Status: **OPEN**. This is a fail-closed safety cut, not an implementation of
-recoverable PQ session rotation. The fixed-head branch CI result is pending.
+Status: **RESOLVED for the temporary pre-group fail-closed safety cut**. Earlier
+revisions said "OPEN" while fixed-head CI was pending. The real Manager/Bridge
+zero/nonzero process test passed on immutable `029295c2a` (branch CI
+`35991788936`) and the later integration tree `422847c8d` (branch CI
+`35997167936`). This is not an implementation of recoverable PQ rotation.
 
 ## Defect and chosen boundary
 
@@ -76,9 +79,10 @@ The old process observation is stronger than a source-only hypothesis: the
 production validator logged the trusted-session mismatch. It does **not**
 retain a serialized `BlockProof` accepted locally and rejected by independent
 `CheckProof`, nor prove the old/new actor or DB lifecycle is safe for a dual-ID
-repair. No September Merkle incident is attributed to this finding. These
-missing pieces and exact fixed-head CI remain closure conditions. The branch
-CI now runs the short process gate after its existing PQ chain test; its
+repair. No September Merkle incident is attributed to this finding. Those
+missing pieces gate any future **restoration** of rotation, not the temporary
+refusal. The branch CI now runs the short process gate after its existing PQ
+chain test, and the two fixed-tree runs above both passed; its
 source guard also checks that the pre-group refusal and invocation remain.
 
 `LogStreamer` now flushes each received chunk so a sparse refusal line is

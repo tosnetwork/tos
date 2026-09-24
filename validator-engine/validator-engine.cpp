@@ -6149,7 +6149,8 @@ int main(int argc, char *argv[]) {
         acts.push_back([&x, seq]() { td::actor::send_closure(x, &ValidatorEngine::add_unsafe_catchain, seq); });
         return td::Status::OK();
       });
-  p.add_checked_option('F', "unsafe-catchain-rotate", "use forceful and DANGEROUS catchain rotation",
+  p.add_checked_option('F', "unsafe-catchain-rotate",
+                       "forceful DANGEROUS classical catchain rotation; PQ rejects a nonzero tag before group creation",
                        [&](td::Slice params) {
                          auto pos1 = params.find(':');
                          TRY_RESULT(b_seq, td::to_integer_safe<tos::BlockSeqno>(params.substr(0, pos1)));

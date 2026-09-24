@@ -57,8 +57,13 @@ for name, marker in (
 workflow = (root / ".github/workflows/branch-chain-python.yml").read_text()
 invocation = "uv run python test/integration/test_pq_unsafe_rotation_refusal.py"
 require(workflow.count(invocation) == 1, "every-push process regression invocation absent or duplicated")
+engine = (root / "validator-engine/validator-engine.cpp").read_text()
+require(
+    '"forceful DANGEROUS classical catchain rotation; PQ rejects a nonzero tag before group creation"' in engine,
+    "CLI help again presents unsafe PQ rotation as available",
+)
 
 print(
     "PQ_UNSAFE_ROTATION_SOURCE_OK: nonzero tag refusal precedes active group creation; "
-    "the process regression is scheduled on every branch push"
+    "the process regression is scheduled on every branch push and CLI help names the PQ refusal"
 )

@@ -1,7 +1,9 @@
 # V1: PQ validator-set pre-install parity
 
-Status: **both live installation routes repaired locally, correctness question OPEN
-pending fixed-head CI and rule-parity review**. This is contract/node
+Status: **RESOLVED for the registered installation-parity rule**. Earlier
+revisions said "OPEN pending fixed-head CI and rule-parity review"; the
+immutable `029295c2a` sandbox run `35991814234` and independent 22-BOC
+contract/node parity table supplied that missing evidence. This is contract/node
 rule parity, not an observed masterchain halt. C01 was a source review; C07's
 independent compiled-contract and node-decoder results are in
 `/home/tomi/memo/pq-native/N6-MAC-C07-RESULT-20260924.md` and its hashed data
@@ -143,8 +145,13 @@ for the zerostate. The corrected local `check-regression-db.sh` run says every
 recorded answer is verified and unchanged. This CI failure is retained rather
 than counted as a passing run; the corrected head still needs exact-tree CI.
 
-The `pq-validator-set-installation-parity` question remains OPEN until the
-corrected-head CI result is recorded. No
+The earlier OPEN condition is superseded by immutable `029295c2a` sandbox CI
+`35991814234`: `elector_sandbox` passed 75/75, including honest and 21
+negative vectors through both Elector and governance routes. Independent node
+decoding agreed with all 22 BOCs; restoring duplicate-ADNL and over-cap
+defects made their respective tests red. Governance runtime vectors exercised
+ConfigParam 36; ConfigParams 34, 35 and 37 share its checked code path but
+were not each run as a separate vector. No
 deliberately malformed set has been installed on a real network, so chain-halt
 impact remains a source-and-decoder inference, not a run observation.
 
@@ -160,6 +167,6 @@ first installation its VM still exposed the old value while config-contract
 storage contained the new one. The fixture now adopts the governed config
 between proposals. A focused test compares the two Param 47 hashes after a
 real governed update; omitting the adoption reproduces the mismatch. The
-repaired local `elector_sandbox` run passed 75/75. This is local evidence only;
-the three CI failures and the open closure condition remain until a new
-immutable exact-head sandbox run succeeds.
+repaired local `elector_sandbox` run passed 75/75. The three earlier CI
+failures remain historical failures, not passing evidence; the later
+immutable `029295c2a` sandbox run above is the corrected-head result.
