@@ -166,11 +166,20 @@ bool EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = false;
 size_t C05_GENESIS_FAULT_BUDGET = 0;
 std::array<std::atomic<size_t>, 4> C05_GENESIS_FAULTS{};
 std::array<std::atomic<double>, 4> C05_LAST_FAULT_TIME{};
+struct C05FaultObservation {
+  CandidateId candidate;
+  ParentId signed_parent;
+  BlockIdExt requested_block;
+  size_t read;
+};
 struct C05SimultaneousObservation {
   std::mutex mutex;
   std::optional<CandidateId> first_candidate;
+  ParentId first_candidate_parent;
   BlockIdExt first_block;
   double candidate_time = 0;
+  std::array<std::optional<CandidateId>, 4> received_candidate;
+  std::array<std::vector<C05FaultObservation>, 4> fault_reads;
   simplex::NotarCertRef notar_cert;
   double notar_cert_time = 0;
 };
@@ -383,6 +392,15 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   }
 
   void receive_candidate(CandidateRef candidate) {
+    if (C05_GENESIS_FAULT_BUDGET != 0 && candidate->block_id().seqno() == 1) {
+      auto node = owning_bus()->local_id->idx.value();
+      if (node > 0 && node < 4) {
+        std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+        if (C05_SIMULTANEOUS_OBSERVATION.first_candidate == candidate->id) {
+          C05_SIMULTANEOUS_OBSERVATION.received_candidate[node] = candidate->id;
+        }
+      }
+    }
     owning_bus().publish<CandidateReceived>(candidate);
     if (RELAY_LOOP_TEST) {
       // Model a candidate returning through a second transport/relay path.
@@ -666,6 +684,7 @@ class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public 
       std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
       if (!C05_SIMULTANEOUS_OBSERVATION.first_candidate) {
         C05_SIMULTANEOUS_OBSERVATION.first_candidate = event->candidate->id;
+        C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent = event->candidate->parent_id;
         C05_SIMULTANEOUS_OBSERVATION.first_block = event->candidate->block_id();
         C05_SIMULTANEOUS_OBSERVATION.candidate_time = td::Time::now();
       }
@@ -1696,26 +1715,53 @@ class TestConsensus : public td::actor::Actor {
         co_return td::Unit{};
       }
       std::optional<CandidateId> target;
+      ParentId target_parent;
       BlockIdExt target_block;
+      std::array<std::vector<C05FaultObservation>, 4> fault_reads;
       simplex::NotarCertRef notar_cert;
       double candidate_time = 0;
       double cert_time = 0;
       {
         std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
         target = C05_SIMULTANEOUS_OBSERVATION.first_candidate;
+        target_parent = C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent;
         target_block = C05_SIMULTANEOUS_OBSERVATION.first_block;
+        fault_reads = C05_SIMULTANEOUS_OBSERVATION.fault_reads;
         notar_cert = C05_SIMULTANEOUS_OBSERVATION.notar_cert;
         candidate_time = C05_SIMULTANEOUS_OBSERVATION.candidate_time;
         cert_time = C05_SIMULTANEOUS_OBSERVATION.notar_cert_time;
       }
-      if (!target || target_block.seqno() != 1 || !accepted_blocks_.contains(1)) {
+      if (!target || target->slot != 0 || target_parent || target_block.seqno() != 1 ||
+          !accepted_blocks_.contains(1)) {
         fail("C05 injected first candidate or later recovery block was not observed");
         co_return td::Unit{};
+      }
+      for (size_t node = 1; node < 4; ++node) {
+        if (fault_reads[node].size() != C05_GENESIS_FAULT_BUDGET) {
+          fail(PSTRING() << "C05 node " << node << " recorded " << fault_reads[node].size()
+                         << " target-bound parent-state faults, expected " << C05_GENESIS_FAULT_BUDGET);
+          co_return td::Unit{};
+        }
+        for (size_t read = 0; read < fault_reads[node].size(); ++read) {
+          const auto& observed = fault_reads[node][read];
+          if (observed.candidate != *target || observed.candidate.slot != target->slot || observed.signed_parent ||
+              observed.requested_block != FIRST_PARENT || observed.read != read + 1) {
+            fail(PSTRING() << "C05 node " << node << " fault read " << read + 1
+                           << " is not bound to the first candidate's signed parent and slot");
+            co_return td::Unit{};
+          }
+        }
       }
       if (C05_GENESIS_FAULT_BUDGET == 24) {
         if (!notar_cert.is_null() || accepted_blocks_.at(1)->block_id() == target_block) {
           fail("C05 over-budget first candidate was notarized or accepted after its skip window");
           co_return td::Unit{};
+        }
+        for (const auto& item : accepted_carriers_) {
+          if (item.block_id == target_block) {
+            fail("C05 over-budget first candidate reached an accepted finality carrier");
+            co_return td::Unit{};
+          }
         }
         for (const auto& observed : read_finality_log()) {
           if (observed.id == *target) {
@@ -1745,6 +1791,10 @@ class TestConsensus : public td::actor::Actor {
       }
       if (notar_cert.is_null() || accepted_blocks_.at(1)->block_id() != target_block) {
         fail("C05 recovered first candidate did not reach a NotarCert and accepted block");
+        co_return td::Unit{};
+      }
+      if (notar_cert->vote.id != *target) {
+        fail("C05 first NotarCert vote ID differs from the injected candidate");
         co_return td::Unit{};
       }
       if (cert_time <= candidate_time || cert_time - candidate_time >= 1.0) {
@@ -1777,12 +1827,45 @@ class TestConsensus : public td::actor::Actor {
           co_return td::Unit{};
         }
       }
-      bool finalized_target = false;
-      for (const auto& observed : read_finality_log()) {
-        finalized_target |= observed.id == *target;
+      bool exact_target_carrier = false;
+      for (const auto& item : accepted_carriers_) {
+        if (item.block_id != target_block) {
+          continue;
+        }
+        auto slot = item.signatures->pq_slot();
+        auto candidate_data = item.signatures->pq_candidate_data();
+        auto pairs = item.signatures->export_pq_signatures();
+        if (slot.is_error() || candidate_data.is_error() || pairs.is_error() || slot.ok() != target->slot ||
+            td::sha256_bits256(candidate_data.ok().as_slice()) != target->hash) {
+          continue;
+        }
+        std::map<ValidatorId, td::Slice> carrier_by_id;
+        for (const auto& pair : pairs.ok()) {
+          carrier_by_id.emplace(pair.validator_id, pair.signature.as_slice());
+        }
+        for (const auto& observed : read_finality_log()) {
+          if (observed.id != *target || observed.cert->vote.id != *target ||
+              observed.cert->signatures.size() != carrier_by_id.size()) {
+            continue;
+          }
+          bool bytes_match = true;
+          for (const auto& [signer_index, signature] : observed.cert->signatures) {
+            auto index = signer_index.value();
+            if (index >= validators_.size()) {
+              bytes_match = false;
+              break;
+            }
+            auto carried = carrier_by_id.find(validators_[index].validator_id);
+            if (carried == carrier_by_id.end() || carried->second != signature.as_slice()) {
+              bytes_match = false;
+              break;
+            }
+          }
+          exact_target_carrier |= bytes_match;
+        }
       }
-      if (!finalized_target) {
-        fail("C05 recovered first candidate never reached FinalCert");
+      if (!exact_target_carrier) {
+        fail("C05 first candidate's FinalCert vote ID, signature bytes and accepted block carrier diverged");
         co_return td::Unit{};
       }
       LOG(WARNING) << "C05_SIMULTANEOUS_RECOVERY_OK: three nodes each exhausted three parent-state reads; "
@@ -2791,12 +2874,22 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
 
 td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
                                                                             td::Timestamp timeout) {
-  if (C05_GENESIS_FAULT_BUDGET != 0 && block_id == FIRST_PARENT && node_idx_ > 0 && node_idx_ < 4 &&
-      C05_GENESIS_FAULTS[node_idx_].load() < C05_GENESIS_FAULT_BUDGET) {
-    auto failure = ++C05_GENESIS_FAULTS[node_idx_];
-    C05_LAST_FAULT_TIME[node_idx_] = td::Time::now();
-    LOG(WARNING) << "C05_SIMULTANEOUS_STATE_FAULT node=" << node_idx_ << " read=" << failure;
-    co_return td::Status::Error(ErrorCode::notready, "injected simultaneous parent-state miss");
+  if (C05_GENESIS_FAULT_BUDGET != 0 && block_id == FIRST_PARENT && node_idx_ > 0 && node_idx_ < 4) {
+    std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+    const auto& target = C05_SIMULTANEOUS_OBSERVATION.first_candidate;
+    // The manager interface carries a block ID, not its caller. Arm only after this node
+    // received the exact first candidate, whose signed parent is this genesis block.
+    if (target && !C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent &&
+        C05_SIMULTANEOUS_OBSERVATION.received_candidate[node_idx_] == target &&
+        C05_GENESIS_FAULTS[node_idx_].load() < C05_GENESIS_FAULT_BUDGET) {
+      auto failure = ++C05_GENESIS_FAULTS[node_idx_];
+      C05_SIMULTANEOUS_OBSERVATION.fault_reads[node_idx_].push_back(
+          {*target, C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent, block_id, failure});
+      C05_LAST_FAULT_TIME[node_idx_] = td::Time::now();
+      LOG(WARNING) << "C05_SIMULTANEOUS_STATE_FAULT node=" << node_idx_ << " candidate=" << *target
+                   << " slot=" << target->slot << " parent=" << FIRST_PARENT.to_str() << " read=" << failure;
+      co_return td::Status::Error(ErrorCode::notready, "injected simultaneous parent-state miss");
+    }
   }
   if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() == 0 &&
       (EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE ||
