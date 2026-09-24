@@ -84,9 +84,22 @@ def main() -> None:
         fail("tosctl V1R3 code hash is not pinned in both the wallet test and chain RPC recognizer")
     parser = collapsed(root / "tosctl/src/node-control/common/src/tvm_stack_parser.rs")
     list_parser = parser.split("pub fn list_or_empty", 1)[1].split("pub fn tuple", 1)[0]
-    for marker in ("StackEntry::Tvm_StackEntryTuple(_) =>", "slots.len() == 2", "stack cons list has a non-null tail"):
+    for marker in (
+        "StackEntry::Tvm_StackEntryTuple(_) =>", "slots.len() == 2",
+        "self.i64(index)? == 0", 'number.number.number() == "0"',
+        "stack cons list has a non-null tail",
+    ):
         if marker not in list_parser:
             fail(f"JSON-RPC TVM cons-list parser lost its strict {marker!r} check")
+
+    product_probe = collapsed(root / "scripts/pq-config-wallet-first-stake-e2e.py")
+    if "elector_reply(pool_txs, query_id)" not in product_probe or "elector_reply(controller_txs, query_id)" in product_probe:
+        fail("product first-stake probe no longer reads the Elector reply from the stake-owner pool")
+    if any(marker not in product_probe for marker in (
+        "participant-list-extended-raw-open.json", "participant_path.write_text(",
+        '"index4_type": raw_stack[4]["@type"]',
+    )):
+        fail("product first-stake probe no longer saves the raw live participant-list stack")
 
     policy_provider = collapsed(
         root / "tosctl/src/node-control/elections/src/providers/default.rs"
@@ -146,7 +159,7 @@ def main() -> None:
         )
 
     print(
-        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and a null tail; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and a nil tail (numeric zero accepted, nonzero refused); product probe saves the live stack and reads Elector feedback at the stake-owner pool; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
     )
 
 

@@ -19,6 +19,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -248,6 +249,22 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             predicate=lambda value: value > 0, interval=1,
         )
         report["election_id"] = election
+        # Preserve the node's actual TVM stack encoding before the product
+        # CLI parses it. In particular FunC nil is not always a list entry.
+        participant_raw = await asyncio.to_thread(
+            lifecycle_module.json_rpc_call,
+            f"127.0.0.1:{args.rpc_port}", "runGetMethodStd",
+            {"address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
+             "method": "participant_list_extended", "stack": []},
+        )
+        participant_path = run_dir / "participant-list-extended-raw-open.json"
+        participant_path.write_text(json.dumps(participant_raw, indent=2) + "\n")
+        raw_stack = participant_raw["result"]["stack"]
+        report["participant_list_raw"] = {
+            "path": str(participant_path), "sha256": sha256(participant_path),
+            "exit_code": participant_raw["result"]["exit_code"],
+            "index4_type": raw_stack[4]["@type"],
+        }
         pool_baseline = (await life.client.raw_get_account_state(pool.address)).last_transaction_id
         controller_baseline = (
             await life.client.raw_get_account_state(controller.address)
@@ -304,10 +321,38 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         if len(orders) != 1:
             raise RuntimeError(f"expected one product stake order, found {len(orders)}")
         query_id = orders[0]
-        reply = lifecycle_module.elector_reply(controller_txs, query_id)
+        # The Elector acknowledges the stake owner (the pool), not the
+        # relaying controller. The controller history proves forwarding;
+        # the pool history carries the exact acceptance/refusal reply.
+        reply = lifecycle_module.elector_reply(pool_txs, query_id)
+        # A CLI parse failure can occur before the asynchronous Elector answer
+        # reaches the controller. Give that exact query a bounded observation
+        # window; an absent answer at the boundary is still inconclusive.
+        feedback_deadline = time.monotonic() + 45
+        while reply is None and time.monotonic() < feedback_deadline:
+            await asyncio.sleep(1)
+            pool_txs, pool_pages, pool_complete, _ = (
+                await lifecycle_module._transactions_since(
+                    life.client, pool.address, pool_baseline
+                )
+            )
+            if not pool_complete:
+                raise RuntimeError("pool feedback transaction window is incomplete")
+            reply = lifecycle_module.elector_reply(pool_txs, query_id)
+        pool_path = run_dir / "product-stake-pool-transactions.json"
+        pool_path.write_text(
+            json.dumps([tx.to_dict() for tx in pool_txs], indent=2) + "\n"
+        )
+        report["transaction_coverage"].update({
+            "pool_count": len(pool_txs), "pool_pages": pool_pages,
+            "pool_complete": pool_complete,
+            "pool_raw_sha256": sha256(pool_path),
+        })
         report["stake_feedback"] = {
             "query_id": query_id, "elector_reply": reply,
             "pool_order_seen": True,
+            "feedback_window_seconds": 45,
+            "classification": "ELECTOR_REPLY_OBSERVED" if reply is not None else "INCONCLUSIVE",
         }
         if cli_error is not None:
             raise RuntimeError(f"product CLI failed after exact feedback capture: {cli_error}")

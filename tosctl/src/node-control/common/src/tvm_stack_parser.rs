@@ -159,10 +159,17 @@ impl TvmStackParser {
         match entry {
             StackEntry::Tvm_StackEntryList(list) => Ok(Self::new(list.list.elements().clone())),
             StackEntry::Tvm_StackEntryUnsupported => Ok(Self::new(Vec::new())),
+            // FunC nil is serialized by this node's JSON-RPC stack renderer as
+            // tvm.stackEntryNumber(0), as observed from participant_list_extended.
+            // A nonzero number is not an empty list and must remain an error.
+            StackEntry::Tvm_StackEntryNumber(_) if self.i64(index)? == 0 => {
+                Ok(Self::new(Vec::new()))
+            }
             // The node's JSON-RPC renderer currently checks is_tuple before
             // is_list. A non-empty TVM cons list satisfies both predicates,
             // so it arrives as nested two-element tuples. Flatten only a
-            // proper cons chain ending in nil; reject any other tuple shape.
+            // proper cons chain ending in nil (number zero in this renderer);
+            // reject any other tuple shape or tail.
             StackEntry::Tvm_StackEntryTuple(_) => {
                 let mut elements = Vec::new();
                 let mut current = entry;
@@ -178,6 +185,11 @@ impl TvmStackParser {
                             current = &slots[1];
                         }
                         StackEntry::Tvm_StackEntryUnsupported => return Ok(Self::new(elements)),
+                        StackEntry::Tvm_StackEntryNumber(number)
+                            if number.number.number() == "0" =>
+                        {
+                            return Ok(Self::new(elements));
+                        }
                         _ => anyhow::bail!("stack cons list has a non-null tail: index={index}"),
                     }
                 }
@@ -564,10 +576,24 @@ mod tests {
     }
 
     #[test]
+    fn list_or_empty_accepts_only_numeric_nil() {
+        assert!(TvmStackParser::new(vec![create_number_entry("0")])
+            .list_or_empty(0)
+            .unwrap()
+            .stack
+            .is_empty());
+        let error = TvmStackParser::new(vec![create_number_entry("1")])
+            .list_or_empty(0)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not a list"), "wrong refusal: {error}");
+    }
+
+    #[test]
     fn list_or_empty_decodes_only_proper_json_rpc_cons_pairs() {
         let proper = create_tuple_entry(vec![
             create_number_entry("11"),
-            create_tuple_entry(vec![create_number_entry("22"), create_unsupported_entry()]),
+            create_tuple_entry(vec![create_number_entry("22"), create_number_entry("0")]),
         ]);
         let parsed = TvmStackParser::new(vec![proper]).list_or_empty(0).unwrap();
         assert_eq!(parsed.stack.len(), 2);
@@ -575,7 +601,7 @@ mod tests {
         assert_eq!(parsed.i64(1).unwrap(), 22);
 
         let wrong_tail =
-            create_tuple_entry(vec![create_number_entry("11"), create_number_entry("0")]);
+            create_tuple_entry(vec![create_number_entry("11"), create_number_entry("1")]);
         let error = TvmStackParser::new(vec![wrong_tail]).list_or_empty(0).unwrap_err().to_string();
         assert!(error.contains("non-null tail"), "wrong refusal: {error}");
         let wrong_arity = create_tuple_entry(vec![create_number_entry("11")]);
