@@ -65,7 +65,7 @@ jobs:
             gen_fif create-state toslibjson \
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
-            test-pq-lite-forward-proof test-pending-finality-cache test-consensus \
+            test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof test-consensus \
             test-notarize-after-transient-resolve
           ccache --show-stats
 
@@ -79,6 +79,11 @@ jobs:
       # not substitute for downstream AcceptBlock integration evidence.
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # C04's real PQ predecessor/Merkle/proof fixture supplies valid inputs
+      # for downstream actor work; this component gate does not prove DB apply.
+      - name: Check real PQ predecessor and BlockProof fixture
+        run: ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'
 
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote

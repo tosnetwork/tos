@@ -18,6 +18,7 @@ REQUIRED_NATIVE_TARGETS = {
     "validator-engine",
     "test-pq-lite-forward-proof",
     "test-pending-finality-cache",
+    "test-c04-real-state-proof",
     "test-consensus",
     "test-notarize-after-transient-resolve",
 }
@@ -72,6 +73,11 @@ def main() -> int:
     require(
         re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
         "pending PQ finality manager actor behavior gate is absent",
+    )
+    real_state_ctest = "ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(real_state_ctest)}\s*$", text) is not None,
+        "real PQ predecessor and BlockProof component gate is absent",
     )
     c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
     require(
@@ -140,7 +146,8 @@ def main() -> int:
     print(
         "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
-        "the pending-finality manager actor, the C05 parent-state retry CTest selector "
+        "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
+        "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
         "and five named restart-origin controls, "
         "and compiles every Rust test target"
