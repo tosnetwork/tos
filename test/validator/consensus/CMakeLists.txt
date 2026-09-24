@@ -413,6 +413,33 @@ add_test(
             --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
             --pq-finality-e2e-test
 )
+# SR1: a restarted session may start at the latest accepted tip while its
+# persisted candidate chain reaches back to genesis. A temporarily unavailable
+# finalized anchor must not make the resolver replay an old update on that tip.
+add_test(
+    NAME test-consensus-simplex2-pq-restart-transient-anchor
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-transient-anchor PROPERTIES
+    ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2")
+add_test(
+    NAME test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control PROPERTIES
+    ENVIRONMENT "TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2")
+add_test(
+    NAME test-consensus-simplex2-pq-restart-transient-origin
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-transient-origin PROPERTIES
+    ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2;TOS_TEST_ORIGIN_TRANSIENT_FAILURES=2")
 add_test(
     NAME test-consensus-simplex2-query-abuse
     COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100

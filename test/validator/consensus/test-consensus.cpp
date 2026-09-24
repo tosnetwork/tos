@@ -155,6 +155,13 @@ bool PQ_FINALITY_E2E_TEST = false;
 // deterministically produce that class of failure.
 bool PERMANENT_FINALIZATION_TEST = false;
 std::atomic<bool> EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE = false;
+// Model cold-start replay: the first N manager anchor reads time out, then recover.
+std::atomic<size_t> EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES = 0;
+// The session origin is a separate dependency from a finalized nonzero anchor.
+std::atomic<size_t> EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = 0;
+std::atomic<size_t> EMPTY_CHAIN_ORIGIN_FAILURES = 0;
+// Production restarts an active group from its current accepted chain tip.
+bool RESTART_FROM_LAST_ACCEPTED_BLOCK = false;
 
 // Adversity that was configured but never fired turns a scenario into a quiet no-op: the
 // post-quantum gate finishes in well under a second, sooner than a gremlin period. These
@@ -1078,8 +1085,19 @@ class TestConsensus : public td::actor::Actor {
                              PSTRING() << "consensus." << node_idx << "." << instance_idx);
     inst.status = Instance::Running;
     inst.bus.publish<BlockFinalizedInMasterchain>(last_accepted_block_);
-    inst.bus.publish<Start>(
-        td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+    if (RESTART_FROM_LAST_ACCEPTED_BLOCK && inst.started_before) {
+      CHECK(!accepted_blocks_.empty());
+      const auto& [seqno, block] = *accepted_blocks_.rbegin();
+      CHECK(seqno > FIRST_PARENT.seqno());
+      LOG(WARNING) << "Restarting node #" << node_idx << "." << instance_idx << " from last accepted block "
+                   << block->block_id().to_str();
+      inst.bus.publish<Start>(
+          td::make_ref<ChainState>(ChainState::NormalTip{block, gen_shard_state(seqno)}, MIN_MC_BLOCK_ID));
+    } else {
+      inst.bus.publish<Start>(
+          td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+    }
+    inst.started_before = true;
     LOG(ERROR) << "Starting node #" << node_idx << "." << instance_idx;
   }
 
@@ -2324,10 +2342,22 @@ class TestConsensus : public td::actor::Actor {
 
     co_await td::actor::coro_sleep(td::Timestamp::in(0.25));
     auto final_anchor_failures = EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load();
+    if (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES != 0 &&
+        final_anchor_failures != EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES) {
+      empty_chain_restart_error_ = PSTRING() << "expected exactly " << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES
+                                             << " transient manager-anchor failures, observed " << final_anchor_failures;
+      co_return td::Unit{};
+    }
     if (final_anchor_failures != settled_anchor_failures) {
       empty_chain_restart_error_ =
           PSTRING() << "manager anchor failures increased after startup requests settled: " << settled_anchor_failures
                     << " -> " << final_anchor_failures << "; completed-ancestor cache was not reused";
+      co_return td::Unit{};
+    }
+    if (EMPTY_CHAIN_ORIGIN_FAILURES != EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES) {
+      empty_chain_restart_error_ = PSTRING() << "expected " << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES
+                                             << " transient session-origin failures, observed "
+                                             << EMPTY_CHAIN_ORIGIN_FAILURES;
       co_return td::Unit{};
     }
     LOG(WARNING) << "Long empty-chain restart recovered after " << empty_chain_length
@@ -2451,6 +2481,7 @@ class TestConsensus : public td::actor::Actor {
     td::actor::Runtime runtime;
     td::actor::ActorOwn<TestManagerFacade> manager_facade;
     simplex::BusHandle bus;
+    bool started_before = false;
 
     BlockSeqno last_accepted_block = FIRST_PARENT.seqno();
     std::shared_ptr<TestDbImpl::DbInner> db_inner;
@@ -2585,7 +2616,14 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
 
 td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
                                                                             td::Timestamp timeout) {
-  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0) {
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() == 0 &&
+      EMPTY_CHAIN_ORIGIN_FAILURES < EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES) {
+    ++EMPTY_CHAIN_ORIGIN_FAILURES;
+    co_return td::Status::Error(ErrorCode::notready, "simulated session origin not ready");
+  }
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0 &&
+      (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES == 0 ||
+       EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES < EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES)) {
     ++EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
     co_return td::Status::Error(ErrorCode::timeout, "simulated missing finalized anchor state");
   }
@@ -2593,7 +2631,9 @@ td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(Bloc
 }
 
 td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdExt block_id, td::Timestamp timeout) {
-  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0) {
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0 &&
+      (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES == 0 ||
+       EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES < EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES)) {
     ++EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
     co_return td::Status::Error(ErrorCode::timeout, "simulated missing finalized anchor data");
   }
@@ -3577,6 +3617,23 @@ int main(int argc, char* argv[]) {
                        });
 
   p.run(argc, argv).ensure();
+  if (const char* value = std::getenv("TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK");
+      value != nullptr && std::string_view(value) == "1") {
+    RESTART_FROM_LAST_ACCEPTED_BLOCK = true;
+  }
+  if (const char* value = std::getenv("TOS_TEST_ANCHOR_TRANSIENT_FAILURES"); value != nullptr) {
+    auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
+    LOG_CHECK(parsed.is_ok() && parsed.ok() > 0) << "TOS_TEST_ANCHOR_TRANSIENT_FAILURES must be a positive integer";
+    EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES = parsed.ok();
+  }
+  if (const char* value = std::getenv("TOS_TEST_ORIGIN_TRANSIENT_FAILURES"); value != nullptr) {
+    auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
+    LOG_CHECK(parsed.is_ok() && parsed.ok() > 0) << "TOS_TEST_ORIGIN_TRANSIENT_FAILURES must be a positive integer";
+    EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = parsed.ok();
+  }
+  LOG(WARNING) << "C03 harness switches: restart_from_last_accepted_block=" << RESTART_FROM_LAST_ACCEPTED_BLOCK
+               << " anchor_transient_failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES.load()
+               << " origin_transient_failures=" << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES.load();
   if (run_configured_maximum_candidate_test) {
     test_configured_maximum_candidate();
     return 0;
