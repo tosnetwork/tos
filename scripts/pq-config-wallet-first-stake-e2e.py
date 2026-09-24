@@ -254,12 +254,18 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         ).last_transaction_id
         if pool_baseline is None or controller_baseline is None:
             raise RuntimeError("cannot bound product stake transaction history")
-        report["stake_cli_output"] = await cli(
-            binary, config, env, "config", "wallet", "stake", "--binding", "validator-1",
-            "--amount", f"{STAKE / NANO:.9f}", answers=b"y\ny\n", timeout=150,
-        )
-        if "Stake accepted by elector" not in report["stake_cli_output"]:
-            raise RuntimeError("product command did not report Elector participant acceptance")
+        # The CLI may fail after the wallet message is included. Keep the
+        # exact contract feedback in that case instead of ending observation
+        # at the CLI exit code and losing the only causal evidence.
+        cli_error = None
+        try:
+            report["stake_cli_output"] = await cli(
+                binary, config, env, "config", "wallet", "stake", "--binding", "validator-1",
+                "--amount", f"{STAKE / NANO:.9f}", answers=b"y\ny\n", timeout=150,
+            )
+        except Exception as error:
+            cli_error = error
+            report["stake_cli_error"] = repr(error)
 
         pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
             life.client, pool.address, pool_baseline
@@ -274,13 +280,13 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             "pool_complete": pool_complete, "controller_count": len(controller_txs),
             "controller_pages": controller_pages, "controller_complete": controller_complete,
         }
-        if not pool_complete or not controller_complete:
-            raise RuntimeError("product stake transaction window is incomplete")
         for name, transactions in (("pool", pool_txs), ("controller", controller_txs)):
             path = run_dir / f"product-stake-{name}-transactions.json"
             path.write_text(json.dumps([tx.to_dict() for tx in transactions], indent=2) + "\n")
             report["transaction_coverage"][f"{name}_raw_path"] = str(path)
             report["transaction_coverage"][f"{name}_raw_sha256"] = sha256(path)
+        if not pool_complete or not controller_complete:
+            raise RuntimeError("product stake transaction window is incomplete")
         # A product first-stake acknowledgement must be located by the exact
         # query id extracted from the pool's order, then joined to the Elector.
         orders = []
@@ -292,6 +298,9 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             cursor = msg.body.begin_parse()
             if cursor.remaining_bits >= 96 and cursor.load_uint(32) == 0x4E73744B:
                 orders.append(cursor.load_uint(64))
+        report["stake_feedback"] = {"pool_order_query_ids": orders}
+        if cli_error is not None and len(orders) != 1:
+            raise RuntimeError(f"product CLI failed before an exact pool order was observed: {cli_error}")
         if len(orders) != 1:
             raise RuntimeError(f"expected one product stake order, found {len(orders)}")
         query_id = orders[0]
@@ -300,6 +309,10 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             "query_id": query_id, "elector_reply": reply,
             "pool_order_seen": True,
         }
+        if cli_error is not None:
+            raise RuntimeError(f"product CLI failed after exact feedback capture: {cli_error}")
+        if "Stake accepted by elector" not in report["stake_cli_output"]:
+            raise RuntimeError("product command did not report Elector participant acceptance")
         if reply is None or reply[0] != 0xF374484C:
             raise RuntimeError(f"exact Elector STAKE_ACCEPTED not observed: {reply}")
 
