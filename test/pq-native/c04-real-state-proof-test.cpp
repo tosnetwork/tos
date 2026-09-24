@@ -1,6 +1,7 @@
 // Offline C04 candidate: real PQ Config34 genesis -> seqno-1 Merkle/proof.
 #include <filesystem>
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -78,14 +79,36 @@ class C04StaleState final : public MasterchainStateQ {
 // production broadcast/proof/apply methods remain in the path.
 class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
  public:
-  PendingFinalityManagerActorProbe(BlockIdExt zero_id, std::string root)
-      : ValidatorManagerImpl(ValidatorManagerOptions::create(zero_id, zero_id), std::move(root), {}, {}, {}, {}, {}) {
+  PendingFinalityManagerActorProbe(BlockIdExt zero_id, std::string root,
+                                   std::shared_ptr<std::atomic<bool>> cut2_gate = {},
+                                   std::optional<BlockIdExt> cut2_target = std::nullopt)
+      : ValidatorManagerImpl(ValidatorManagerOptions::create(zero_id, zero_id), std::move(root), {}, {}, {}, {}, {})
+      , cut2_gate_(std::move(cut2_gate))
+      , cut2_target_(std::move(cut2_target)) {
   }
 
   void start_up() override {
     db_ = create_db_actor(actor_id(this), db_root_, opts_);
     callback_ = std::make_unique<ValidatorManagerInterface::Callback>();
     ext_message_pool_ = td::actor::create_actor<ExtMessagePool>("c04-ext-messages", opts_, actor_id(this));
+  }
+
+  // N03's controlled write-after gate is after production RootDb has returned
+  // from set_block_signatures, but before this separate proof write begins.
+  // Hold the AcceptBlock promise until this writer process exits; the resumed
+  // process must re-enter the real AcceptBlock path from the journalled cert.
+  void set_block_proof(BlockHandle handle, td::Ref<Proof> proof, td::Promise<td::Unit> promise) override {
+    if (cut2_gate_ && cut2_target_ && handle->id() == *cut2_target_) {
+      if (handle->inited_proof()) {
+        return promise.set_error(td::Status::Error("N5 cut2 proof gate came after proof write"));
+      }
+      cut2_proof_promise_.emplace(std::move(promise));
+      cut2_gate_->store(true, std::memory_order_release);
+      std::cout << "N5_CUT2_BLOCKED_PROOF block=" << handle->id().to_str()
+                << " signatures_flag=" << handle->inited_signatures() << '\n';
+      return;
+    }
+    ValidatorManagerImpl::set_block_proof(std::move(handle), std::move(proof), std::move(promise));
   }
 
   void seed_zerostate(BlockIdExt zero_id, td::Ref<MasterchainStateQ> state, td::BufferSlice boc,
@@ -570,6 +593,67 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
       }));
     }));
   }
+
+  void verify_n5_cut2_signatures(BlockIdExt target_id,
+                                 std::vector<block::PQBlockSignature> expected,
+                                 td::Promise<td::Unit> promise) {
+    auto db = db_.get();
+    td::actor::send_closure(db, &Db::get_block_handle, target_id,
+                            td::PromiseCreator::lambda(
+        [db, target_id, expected = std::move(expected), promise = std::move(promise)]
+        (td::Result<BlockHandle> result) mutable {
+      if (result.is_error()) {
+        return promise.set_error(result.move_as_error_prefix("N5 cut2 cold handle: "));
+      }
+      auto handle = result.move_as_ok();
+      if (handle->id() != target_id || !handle->received() || !handle->inited_signatures() ||
+          handle->inited_proof() || handle->is_applied() || handle->moved_to_archive()) {
+        return promise.set_error(td::Status::Error("N5 cut2 cold handle did not stop between #13 and proof"));
+      }
+      td::actor::send_closure(db, &Db::get_block_signatures, ConstBlockHandle{handle},
+                              td::PromiseCreator::lambda(
+          [db, handle, expected = std::move(expected), promise = std::move(promise)]
+          (td::Result<td::Ref<block::BlockSignatureSet>> result) mutable {
+        if (result.is_error()) {
+          return promise.set_error(result.move_as_error_prefix("N5 cut2 cold #13: "));
+        }
+        if (!result.ok()->is_pq()) {
+          return promise.set_error(td::Status::Error("N5 cut2 cold #13 is not PQ"));
+        }
+        auto carried = result.ok()->export_pq_signatures();
+        if (carried.is_error() || carried.ok().size() != expected.size()) {
+          return promise.set_error(td::Status::Error("N5 cut2 cold #13 signer count differs from FinalCert"));
+        }
+        for (const auto &signature : expected) {
+          const auto match = std::find_if(carried.ok().begin(), carried.ok().end(),
+                                          [&](const auto &actual) {
+            return actual.validator_id == signature.validator_id &&
+                   actual.algorithm_id == signature.algorithm_id &&
+                   actual.signature.as_slice() == signature.signature.as_slice();
+          });
+          if (match == carried.ok().end()) {
+            return promise.set_error(td::Status::Error("N5 cut2 cold #13 bytes differ from FinalCert"));
+          }
+        }
+        const auto count = carried.ok().size();
+        td::actor::send_closure(db, &Db::get_block_proof, ConstBlockHandle{handle},
+                                td::PromiseCreator::lambda(
+            [count, promise = std::move(promise)](td::Result<td::Ref<Proof>> result) mutable {
+          if (result.is_ok() || result.error().code() != ErrorCode::notready) {
+            return promise.set_error(td::Status::Error("N5 cut2 cold BlockProof was not specifically absent"));
+          }
+          std::cout << "N5_CUT2_COLD_SIGNATURES_MATCH count=" << count
+                    << " proof=notready" << '\n';
+          promise.set_value(td::Unit());
+        }));
+      }));
+    }));
+  }
+
+ private:
+  std::shared_ptr<std::atomic<bool>> cut2_gate_;
+  std::optional<BlockIdExt> cut2_target_;
+  std::optional<td::Promise<td::Unit>> cut2_proof_promise_;
 };
 
 // The production Bridge owns an anonymous ManagerFacadeImpl. Keep this test
@@ -689,15 +773,19 @@ td::Result<td::Ref<sx::Certificate<V>>> n5_joined_cert(V vote, const sx::Bus &bu
 class N5JoinedPublisher final : public td::actor::Actor {
  public:
   void publish(sx::BusHandle bus, consensus::CandidateRef candidate, sx::NotarCertRef notar,
-               sx::FinalCertRef final, bool cut_after_journal, td::Promise<td::Unit> promise) {
+               sx::FinalCertRef final, bool cut_after_journal,
+               std::shared_ptr<std::atomic<bool>> cut_after_signatures,
+               td::Promise<td::Unit> promise) {
     publish_inner(std::move(bus), std::move(candidate), std::move(notar), std::move(final),
-                  cut_after_journal, std::move(promise)).start().detach();
+                  cut_after_journal, std::move(cut_after_signatures), std::move(promise)).start().detach();
   }
 
  private:
   td::actor::Task<> publish_inner(sx::BusHandle bus, consensus::CandidateRef candidate,
                                    sx::NotarCertRef notar, sx::FinalCertRef final,
-                                   bool cut_after_journal, td::Promise<td::Unit> promise) {
+                                   bool cut_after_journal,
+                                   std::shared_ptr<std::atomic<bool>> cut_after_signatures,
+                                   td::Promise<td::Unit> promise) {
     const auto id = candidate->id;
     auto stored = co_await bus.publish<sx::StoreCandidate>(candidate).wrap();
     if (stored.is_error()) {
@@ -717,6 +805,23 @@ class N5JoinedPublisher final : public td::actor::Actor {
     auto cert_key = create_serialize_tl_object<tos_api::consensus_simplex_db_key_vote>(final_hash);
     const auto deadline = td::Timestamp::in(30.0);
     while (!deadline.is_in_past()) {
+      if (cut_after_signatures && cut_after_signatures->load(std::memory_order_acquire)) {
+        auto saved = co_await bus->db->get_latest(cert_key.clone()).wrap();
+        auto finalized = co_await bus->db->get_latest(marker.clone()).wrap();
+        if (saved.is_error() || !saved.ok().has_value() || finalized.is_error() ||
+            finalized.ok().has_value()) {
+          promise.set_error(td::Status::Error("N5 cut2 gate lacks cert journal or already has marker"));
+          co_return td::Unit{};
+        }
+        auto closed = co_await bus->db->close().wrap();
+        if (closed.is_error()) {
+          promise.set_error(closed.move_as_error_prefix("N5 cut2 journal close: "));
+          co_return td::Unit{};
+        }
+        std::cout << "N5_CUT2_SIGNATURES_WRITTEN_BEFORE_PROOF cert=" << final_hash.to_hex() << '\n';
+        promise.set_value(td::Unit());
+        co_return td::Unit{};
+      }
       if (cut_after_journal) {
         auto saved = co_await bus->db->get_latest(cert_key.clone()).wrap();
         if (saved.is_error()) {
@@ -858,23 +963,28 @@ int main(int argc, char **argv) {
   const bool n5_accept = argc == 3 && std::string_view(argv[1]) == "--n5-accept";
   const bool n5_joined = argc == 3 && std::string_view(argv[1]) == "--n5-joined";
   const bool n5_cut1 = argc == 3 && std::string_view(argv[1]) == "--n5-cut1";
+  const bool n5_cut2 = argc == 3 && std::string_view(argv[1]) == "--n5-cut2";
   const bool n5_joined_reopen = argc == 6 &&
       (std::string_view(argv[1]) == "--n5-joined-reopen" ||
        std::string_view(argv[1]) == "--n5-joined-reopen-bad-signature");
   const bool n5_cut1_reopen = argc == 5 && std::string_view(argv[1]) == "--n5-cut1-reopen";
+  const bool n5_cut2_reopen = argc == 5 && std::string_view(argv[1]) == "--n5-cut2-reopen";
   const bool n5_cut1_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut1-resume";
+  const bool n5_cut2_resume = argc == 5 && std::string_view(argv[1]) == "--n5-cut2-resume";
   const bool n5_reopen = argc == 5 && (std::string_view(argv[1]) == "--n5-reopen" ||
                                            std::string_view(argv[1]) == "--n5-reopen-bad-hash" ||
                                            std::string_view(argv[1]) == "--n5-reopen-absent");
   const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
                                       std::string_view(argv[1]) == "--reopen-absent");
-  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut1_reopen ||
-        n5_cut1_resume || n5_reopen || n5_joined_reopen)) {
+  if (!(argc == 2 || reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 ||
+        n5_cut1_reopen || n5_cut2_reopen || n5_cut1_resume || n5_cut2_resume ||
+        n5_reopen || n5_joined_reopen)) {
     std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --n5-accept|--n5-joined|--n5-cut1 GENESIS_BOC | --n5-reopen GENESIS_BOC DB_ROOT PROOF_HASH | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut1_reopen ||
-                       n5_cut1_resume || n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
+  std::ifstream input((reopen || n5_accept || n5_joined || n5_cut1 || n5_cut2 ||
+                       n5_cut1_reopen || n5_cut2_reopen || n5_cut1_resume ||
+                       n5_cut2_resume || n5_reopen || n5_joined_reopen) ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
   if (!input) {
@@ -1177,7 +1287,7 @@ int main(int argc, char **argv) {
     scheduler.stop();
     return 0;
   }
-  if (n5_cut1_resume) {
+  if (n5_cut1_resume || n5_cut2_resume) {
     std::ifstream final_file(argv[4], std::ios::binary);
     std::ostringstream final_bytes;
     final_bytes << final_file.rdbuf();
@@ -1300,8 +1410,54 @@ int main(int argc, char **argv) {
       std::cerr << "N5_CUT1_RESUME_FAILED: cold proof child status=" << status << " spawn=" << spawned << '\n';
       return 1;
     }
-    std::cout << "N5_CUT1_RECOVERY_OK block=" << id1.to_str() << " proof_hash=" << proof << '\n';
+    std::cout << (n5_cut2_resume ? "N5_CUT2_RECOVERY_OK block=" : "N5_CUT1_RECOVERY_OK block=")
+              << id1.to_str() << " proof_hash=" << proof << '\n';
     return 0;
+  }
+  if (n5_cut2_reopen) {
+    std::ifstream final_file(argv[4], std::ios::binary);
+    std::ostringstream final_bytes;
+    final_bytes << final_file.rdbuf();
+    if (!final_file || final_bytes.str().empty()) {
+      std::cerr << "N5_CUT2_COLD_FAILED: retained FinalCert TL absent\n";
+      return 1;
+    }
+    BlockCandidate candidate_block{nodes.front().validator_id, id1, sha256_bits256(td::Slice{}),
+                                   block_boc.clone(), td::BufferSlice{}};
+    const auto candidate_id = consensus::CandidateHashData::create_full(candidate_block, std::nullopt)
+                                  .build_id_with(0);
+    const auto journal_path = consensus::consensus_db_root(std::string(argv[3])) +
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc,
+                                          context.expected_session_id, "") + "/db/";
+    std::vector<block::PQBlockSignature> exact_signatures;
+    const auto original = final_bytes.str();
+    if (!n5_cold_joined_journal(journal_path, context.expected_session_id, vset,
+                                candidate_id, td::Slice(original), false, exact_signatures)) {
+      return 1;
+    }
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    std::optional<td::Result<td::Unit>> result;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cut2-cold-manager", id0, argv[3]);
+      td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_n5_cut2_signatures,
+                              id1, std::move(exact_signatures),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    const auto deadline = td::Timestamp::in(10.0);
+    while (!result.has_value() && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    const bool valid = result.has_value() && result->is_ok();
+    if (!valid) {
+      std::cerr << "N5_CUT2_COLD_FAILED: #13 cold read: "
+                << (result.has_value() ? result->error().to_string() : "timeout") << '\n';
+    }
+    scheduler.run_in_context([&] { manager.reset(); });
+    scheduler.stop();
+    return valid ? 0 : 1;
   }
   if (n5_cut1_reopen) {
     std::ifstream final_file(argv[4], std::ios::binary);
@@ -1350,7 +1506,7 @@ int main(int argc, char **argv) {
     std::cout << "N5_CUT1_COLD_NO_TARGET_HANDLE_OK block=" << id1.to_str() << '\n';
     return 0;
   }
-  if (n5_joined || n5_cut1) {
+  if (n5_joined || n5_cut1 || n5_cut2) {
     auto db_root = require_ok(td::mkdtemp("", "n5-joined-finalcert-"), "N5 joined DB root");
     std::cout << "N5_JOINED_DB_ROOT=" << db_root << '\n';
     std::filesystem::create_directories(db_root + "/static");
@@ -1408,9 +1564,13 @@ int main(int argc, char **argv) {
     sx::BusHandle bus;
     std::optional<td::Result<td::Unit>> result;
     bool bus_stopped = false;
+    auto cut2_gate = n5_cut2 ? std::make_shared<std::atomic<bool>>(false)
+                             : std::shared_ptr<std::atomic<bool>>{};
     const auto finalcert_path = db_root + ".finalcert.tl";
     scheduler.run_in_context([&] {
-      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-joined-manager", id0, db_root);
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>(
+          "n5-joined-manager", id0, db_root, cut2_gate,
+          n5_cut2 ? std::optional<BlockIdExt>{id1} : std::nullopt);
       td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::seed_zerostate,
                               id0, state0, boc.clone(),
                               td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
@@ -1458,7 +1618,7 @@ int main(int argc, char **argv) {
       }
       publisher = td::actor::create_actor<N5JoinedPublisher>("n5-joined-publisher");
       td::actor::send_closure(publisher, &N5JoinedPublisher::publish, bus, candidate_ref,
-                              notar.move_as_ok(), final.move_as_ok(), n5_cut1,
+                              notar.move_as_ok(), final.move_as_ok(), n5_cut1, cut2_gate,
                               td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
                                 result.emplace(std::move(outcome));
                               }));
@@ -1466,11 +1626,17 @@ int main(int argc, char **argv) {
     if (!wait_result("Pool-to-finalized-marker")) {
       return 1;
     }
-    if (n5_cut1) {
-      // This is deliberately before any StateResolver/BlockAccepter exists:
-      // the only completed write is Pool's production FinalCert journal.
+    if (n5_cut1 || n5_cut2) {
+      // Cut1 has no StateResolver/BlockAccepter, so only the FinalCert journal
+      // can complete. Cut2 has both actors, but holds the proof promise after
+      // production #13 storage and before BlockProof storage.
       scheduler.run_in_context([&] {
         publisher.reset();
+        if (n5_cut2) {
+          // The AcceptBlock promise is intentionally held at the proof gate.
+          // Stop its Manager so the waiting StateResolver task can unwind.
+          manager.reset();
+        }
         bus.publish<consensus::StopRequested>();
         bus = {};
       });
@@ -1484,7 +1650,7 @@ int main(int argc, char **argv) {
       }
       scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
       scheduler.stop();
-      std::string mode = "--n5-cut1-reopen";
+      std::string mode = n5_cut2 ? "--n5-cut2-reopen" : "--n5-cut1-reopen";
       char *child_argv[] = {argv[0], mode.data(), argv[2], db_root.data(),
                             const_cast<char *>(finalcert_path.c_str()), nullptr};
       pid_t child = -1;
@@ -1494,7 +1660,7 @@ int main(int argc, char **argv) {
         std::cerr << "N5_CUT1_COLD_FAILED: child status=" << status << " spawn=" << spawned << '\n';
         return 1;
       }
-      mode = "--n5-cut1-resume";
+      mode = n5_cut2 ? "--n5-cut2-resume" : "--n5-cut1-resume";
       child_argv[1] = mode.data();
       child = -1;
       const int resumed = posix_spawn(&child, argv[0], nullptr, nullptr, child_argv, environ);
@@ -1503,7 +1669,7 @@ int main(int argc, char **argv) {
         std::cerr << "N5_CUT1_FAILED: resume child status=" << status << " spawn=" << resumed << '\n';
         return 1;
       }
-      std::cout << "N5_CUT1_WRITER_EXIT_OK root=" << db_root
+      std::cout << (n5_cut2 ? "N5_CUT2_WRITER_EXIT_OK root=" : "N5_CUT1_WRITER_EXIT_OK root=") << db_root
                 << " finalcert_tl=" << finalcert_path << '\n';
       return 0;
     }
