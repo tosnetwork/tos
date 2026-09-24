@@ -3,8 +3,11 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <spawn.h>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <sys/wait.h>
 #include <vector>
 
 #include "block/block-auto.h"
@@ -31,7 +34,38 @@ using namespace tos;
 using namespace tos::validator;
 using pq_block_signature_test::require_ok;
 
+extern char **environ;
+
 namespace tos::validator {
+
+class C04StaleConfig final : public ConfigHolder {
+ public:
+  explicit C04StaleConfig(td::Ref<block::ValidatorSet> set) : set_(std::move(set)) {
+  }
+  td::Ref<block::ValidatorSet> get_total_validator_set(int) const override { return set_; }
+  td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull, UnixTime, CatchainSeqno) const override { return set_; }
+  std::pair<UnixTime, UnixTime> get_validator_set_start_stop(int) const override { return {0, 0x7fffffff}; }
+  td::int32 get_global_id() const override { return 0; }
+  td::Result<td::int32> get_config_global_id() const override { return 0; }
+  ValidatorSessionConfig get_consensus_config() const override { return {}; }
+  td::optional<SelectedNewConsensusConfig> get_selected_new_consensus_config(WorkchainId) const override { return {}; }
+
+ private:
+  td::Ref<block::ValidatorSet> set_;
+};
+
+class C04StaleState final : public MasterchainStateQ {
+ public:
+  C04StaleState(BlockIdExt id, td::Ref<block::ValidatorSet> set)
+      : MasterchainStateQ(id, vm::CellBuilder{}.finalize_novm()), set_(std::move(set)) {
+  }
+  td::Result<td::Ref<ConfigHolder>> get_config_holder() const override {
+    return td::Ref<ConfigHolder>{td::make_ref<C04StaleConfig>(set_)};
+  }
+
+ private:
+  td::Ref<block::ValidatorSet> set_;
+};
 
 // Suppress only network-heavy Manager startup. The real DB actor and the
 // production broadcast/proof/apply methods remain in the path.
@@ -135,16 +169,80 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     }, td::Timestamp::in(0.01));
   }
 
+  void start_stale_context_case(BlockIdExt id, td::BufferSlice data, td::Ref<block::BlockSignatureSet> good,
+                                td::Ref<block::ValidatorSet> stale_set, td::Ref<MasterchainStateQ> real_state,
+                                bool expire, td::Promise<td::Unit> promise) {
+    cached_masterchain_block_candidates_.put(id, std::move(data));
+    last_masterchain_state_ = td::make_ref<C04StaleState>(id, std::move(stale_set));
+    auto admitted = pending_block_finality_.admit(
+        id, PendingBlockFinalitySender::local_source(),
+        PendingBlockFinalityCandidate{std::move(good), BroadcastSource::consensus_overlay}, 4096,
+        PendingFinalityCapacity::Shared, false, true, td::Time::now() + (expire ? 0.2 : 10.0));
+    if (!admitted.admitted()) {
+      return promise.set_error(td::Status::Error("C04 trusted-context evidence was not admitted"));
+    }
+    try_process_pending_block_finality(id);
+    auto *pending = pending_block_finality_.get_if_exists(id);
+    if (!pending || pending->size() != 1 || pending->processing() ||
+        !cached_masterchain_block_candidates_.contains(id)) {
+      return promise.set_error(td::Status::Error("C04 stale context did not retain evidence and block bytes"));
+    }
+    std::cout << "C04_MANAGER_STALE_RETAINED evidence=1 candidate=1\n";
+    if (expire) {
+      delay_action([self = actor_id(this), id, promise = std::move(promise)]() mutable {
+        td::actor::send_closure(self, &PendingFinalityManagerActorProbe::finish_stale_expiry, id,
+                                std::move(promise));
+      }, td::Timestamp::in(0.35));
+      return;
+    }
+    last_masterchain_state_ = std::move(real_state);
+    delay_action([self = actor_id(this), id, promise = std::move(promise)]() mutable {
+      td::actor::send_closure(self, &PendingFinalityManagerActorProbe::resume_stale_case, id, std::move(promise));
+    }, td::Timestamp::in(0.1));
+  }
+
+  void resume_stale_case(BlockIdExt id, td::Promise<td::Unit> promise) {
+    try_process_pending_block_finality(id);
+    await_queue_drained(id, td::Timestamp::in(5.0), std::move(promise));
+  }
+
+  void finish_stale_expiry(BlockIdExt id, td::Promise<td::Unit> promise) {
+    expire_pending_block_finality(id);
+    if (pending_block_finality_.get_if_exists(id) || !cached_masterchain_block_candidates_.contains(id) ||
+        (last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id)) {
+      return promise.set_error(td::Status::Error("C04 expiry changed block bytes or accepted target"));
+    }
+    td::actor::send_closure(db_, &Db::get_block_handle, id,
+                            td::PromiseCreator::lambda([promise = std::move(promise)](
+                                                          td::Result<BlockHandle> result) mutable {
+      if (result.is_ok() || result.error().code() != ErrorCode::notready) {
+        return promise.set_error(td::Status::Error("C04 expired context produced a target DB handle"));
+      }
+      promise.set_value(td::Unit());
+    }));
+  }
+
+  void verify_target_absent(BlockIdExt id, td::Promise<td::Unit> promise) {
+    td::actor::send_closure(db_, &Db::get_block_handle, id,
+                            td::PromiseCreator::lambda([promise = std::move(promise)](
+                                                          td::Result<BlockHandle> result) mutable {
+      if (result.is_ok() || result.error().code() != ErrorCode::notready) {
+        return promise.set_error(td::Status::Error("C04 cold DB unexpectedly contains expired target"));
+      }
+      promise.set_value(td::Unit());
+    }));
+  }
+
   void verify_persisted(BlockIdExt zero_id, BlockIdExt target_id, RootHash expected_root,
-                        td::BufferSlice expected_proof, td::Promise<td::Unit> promise) {
-    if (!last_masterchain_block_handle_ || last_masterchain_block_handle_->id() != target_id ||
-        !last_masterchain_block_handle_->processed()) {
+                        std::string expected_proof_hash, bool require_live, td::Promise<td::Unit> promise) {
+    if (require_live && (!last_masterchain_block_handle_ || last_masterchain_block_handle_->id() != target_id ||
+                         !last_masterchain_block_handle_->processed())) {
       return promise.set_error(td::Status::Error("Manager did not process target masterchain block"));
     }
     auto db = db_.get();
     td::actor::send_closure(db, &Db::get_block_handle, target_id,
                             td::PromiseCreator::lambda(
-                                [db, zero_id, target_id, expected_root, expected_proof = std::move(expected_proof),
+                                [db, zero_id, target_id, expected_root, expected_proof_hash = std::move(expected_proof_hash),
                                  promise = std::move(promise)](td::Result<BlockHandle> result) mutable {
       if (result.is_error()) {
         return promise.set_error(result.move_as_error_prefix("DB target handle: "));
@@ -162,7 +260,7 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
       td::actor::send_closure(db, &Db::get_block_data, ConstBlockHandle{handle},
                               td::PromiseCreator::lambda(
                                   [db, zero_id, target_id, expected_root,
-                                   expected_proof = std::move(expected_proof), handle = std::move(handle),
+                                   expected_proof_hash = std::move(expected_proof_hash), handle = std::move(handle),
                                    promise = std::move(promise)](td::Result<td::Ref<BlockData>> result) mutable {
         if (result.is_error()) {
           return promise.set_error(result.move_as_error_prefix("DB target data: "));
@@ -172,13 +270,13 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
         }
         td::actor::send_closure(db, &Db::get_block_proof, ConstBlockHandle{handle},
                                 td::PromiseCreator::lambda(
-                                    [db, zero_id, expected_root, expected_proof = std::move(expected_proof),
+                                    [db, zero_id, expected_root, expected_proof_hash = std::move(expected_proof_hash),
                                      handle = std::move(handle), promise = std::move(promise)](
                                         td::Result<td::Ref<Proof>> result) mutable {
           if (result.is_error()) {
             return promise.set_error(result.move_as_error_prefix("DB target proof: "));
           }
-          if (result.ok()->data().as_slice() != expected_proof.as_slice()) {
+          if (block::compute_file_hash(result.ok()->data().as_slice()).to_hex() != expected_proof_hash) {
             return promise.set_error(td::Status::Error("DB target proof bytes changed"));
           }
           td::actor::send_closure(db, &Db::get_block_state, ConstBlockHandle{handle},
@@ -212,11 +310,13 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
 }  // namespace tos::validator
 
 int main(int argc, char **argv) {
-  if (argc != 2) {
-    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC\n";
+  const bool reopen = argc == 5 && (std::string_view(argv[1]) == "--reopen" ||
+                                      std::string_view(argv[1]) == "--reopen-absent");
+  if (!(argc == 2 || reopen)) {
+    std::cerr << "usage: c04-real-state-proof-test GENESIS_BOC | --reopen[|-absent] GENESIS_BOC DB_ROOT PROOF_HASH\n";
     return 2;
   }
-  std::ifstream input(argv[1], std::ios::binary);
+  std::ifstream input(reopen ? argv[2] : argv[1], std::ios::binary);
   std::ostringstream bytes;
   bytes << input.rdbuf();
   if (!input) {
@@ -432,6 +532,42 @@ int main(int argc, char **argv) {
     std::cerr << "C04_REAL_PROOF_FAILED: wrong hash certificate was not attributed to finality evidence\n";
     return 1;
   }
+  // Signing may randomize the proof in another process. Bind cold readback to
+  // the exact proof stored by this parent, not a newly generated equivalent.
+  const auto proof_hash = block::compute_file_hash(proof.ok()).to_hex();
+  if (reopen) {
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> manager;
+    std::optional<td::Result<td::Unit>> result;
+    scheduler.run_in_context([&] {
+      manager = td::actor::create_actor<PendingFinalityManagerActorProbe>("c04-cold-reopen", id0, argv[3]);
+      auto done = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+        result.emplace(std::move(outcome));
+      });
+      if (std::string_view(argv[1]) == "--reopen-absent") {
+        td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_target_absent, id1,
+                                std::move(done));
+      } else {
+        td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_persisted, id0, id1,
+                                expected_state_root, std::string(argv[4]), false, std::move(done));
+      }
+    });
+    auto deadline = td::Timestamp::in(30.0);
+    while (!result.has_value() && !deadline.is_in_past()) {
+      scheduler.run(0.01);
+    }
+    if (!result.has_value() || result->is_error()) {
+      std::cerr << "C04_MANAGER_COLD_DB_FAILED: "
+                << (result.has_value() ? result->error().to_string() : "timeout") << '\n';
+      return 1;
+    }
+    std::cout << (std::string_view(argv[1]) == "--reopen-absent" ? "C04_MANAGER_COLD_DB_ABSENT_OK"
+                                                                    : "C04_MANAGER_COLD_DB_APPLIED_OK")
+              << " root=" << argv[3] << '\n';
+    scheduler.run_in_context([&] { manager.reset(); });
+    scheduler.stop();
+    return 0;
+  }
   auto db_root = require_ok(td::mkdtemp("", "c04-manager-"), "C04 manager DB directory");
   std::cout << "C04_MANAGER_DB_ROOT=" << db_root << '\n';
   std::filesystem::create_directories(db_root + "/static");
@@ -488,7 +624,7 @@ int main(int argc, char **argv) {
     result.reset();
     scheduler.run_in_context([&] {
       td::actor::send_closure(manager, &PendingFinalityManagerActorProbe::verify_persisted, id0, id1,
-                              expected_state_root, proof.ok().clone(),
+                              expected_state_root, proof_hash, true,
                               td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
                                 result.emplace(std::move(outcome));
                               }));
@@ -500,6 +636,113 @@ int main(int argc, char **argv) {
               << '\n';
     scheduler.run_in_context([&] { manager.reset(); });
     scheduler.stop();
+  }
+  auto stale_nodes = nodes;
+  ++stale_nodes[0].weight;
+  td::Ref<block::ValidatorSet> stale_set{
+      true, cc, ShardIdFull{masterchainId}, std::move(stale_nodes)};
+  if (stale_set->get_validator_set_hash() == vset->get_validator_set_hash()) {
+    std::cerr << "C04_MANAGER_ACTOR_FAILED: stale set did not change identity\n";
+    return 1;
+  }
+  std::string recovery_root;
+  std::string expiry_root;
+  auto run_stale_case = [&](bool expire) {
+    std::string prefix = expire ? "c04-manager-expiry-" : "c04-manager-recovery-";
+    auto root = require_ok(td::mkdtemp("", prefix),
+                           "C04 stale-context DB directory");
+    std::cout << "C04_MANAGER_" << (expire ? "EXPIRY" : "RECOVERY") << "_DB_ROOT=" << root << '\n';
+    std::filesystem::create_directories(root + "/static");
+    {
+      std::ofstream static_zero(root + "/static/" + id0.file_hash.to_hex(), std::ios::binary);
+      static_zero.write(boc.as_slice().data(), static_cast<std::streamsize>(boc.size()));
+      if (!static_zero) {
+        std::cerr << "C04_MANAGER_ACTOR_FAILED: cannot provision stale-case genesis\n";
+        return false;
+      }
+    }
+    td::actor::Scheduler scheduler({1});
+    td::actor::ActorOwn<PendingFinalityManagerActorProbe> actor;
+    std::optional<td::Result<td::Unit>> result;
+    auto wait_result = [&]() {
+      auto deadline = td::Timestamp::in(30.0);
+      while (!result.has_value() && !deadline.is_in_past()) {
+        scheduler.run(0.01);
+      }
+      if (!result.has_value()) {
+        std::cerr << "C04_MANAGER_ACTOR_FAILED: stale-case actor step timed out\n";
+        return false;
+      }
+      if (result->is_error()) {
+        std::cerr << "C04_MANAGER_ACTOR_FAILED: " << result->error().to_string() << '\n';
+        return false;
+      }
+      return true;
+    };
+    scheduler.run_in_context([&] {
+      actor = td::actor::create_actor<PendingFinalityManagerActorProbe>("c04-stale-manager", id0, root);
+      td::actor::send_closure(actor, &PendingFinalityManagerActorProbe::seed_zerostate, id0, state0, boc.clone(),
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    if (!wait_result()) {
+      return false;
+    }
+    result.reset();
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(actor, &PendingFinalityManagerActorProbe::start_stale_context_case, id1,
+                              block_boc.clone(), good, stale_set, state0, expire,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                result.emplace(std::move(outcome));
+                              }));
+    });
+    if (!wait_result()) {
+      return false;
+    }
+    std::cout << "C04_MANAGER_STALE_" << (expire ? "EXPIRY" : "RECOVERY") << "_OK\n";
+    if (!expire) {
+      result.reset();
+      scheduler.run_in_context([&] {
+        td::actor::send_closure(actor, &PendingFinalityManagerActorProbe::verify_persisted, id0, id1,
+                                expected_state_root, proof_hash, true,
+                                td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
+                                  result.emplace(std::move(outcome));
+                                }));
+      });
+      if (!wait_result()) {
+        return false;
+      }
+      std::cout << "C04_MANAGER_STALE_RECOVERY_DB_APPLIED_OK\n";
+    }
+    scheduler.run_in_context([&] { actor.reset(); });
+    scheduler.stop();
+    (expire ? expiry_root : recovery_root) = root;
+    return true;
+  };
+  if (!run_stale_case(false) || !run_stale_case(true)) {
+    return 1;
+  }
+  auto cold_reopen = [&](std::string_view mode, const std::string &root) {
+    std::string mode_arg(mode);
+    char *child_argv[] = {argv[0], mode_arg.data(), argv[1], const_cast<char *>(root.c_str()),
+                          const_cast<char *>(proof_hash.c_str()), nullptr};
+    pid_t pid = -1;
+    const int spawn_error = posix_spawn(&pid, argv[0], nullptr, nullptr, child_argv, environ);
+    if (spawn_error != 0) {
+      std::cerr << "C04_MANAGER_COLD_DB_FAILED: posix_spawn error=" << spawn_error << '\n';
+      return false;
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      std::cerr << "C04_MANAGER_COLD_DB_FAILED: child status=" << status << " root=" << root << '\n';
+      return false;
+    }
+    return true;
+  };
+  if (!cold_reopen("--reopen", db_root) || !cold_reopen("--reopen", recovery_root) ||
+      !cold_reopen("--reopen-absent", expiry_root)) {
+    return 1;
   }
   std::cout << "C04_REAL_PROOF_OK session=" << context.expected_session_id.to_hex()
             << " block=" << id1.to_str() << " proof_bytes=" << proof.ok().size() << '\n';
