@@ -172,6 +172,15 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   void start_stale_context_case(BlockIdExt id, td::BufferSlice data, td::Ref<block::BlockSignatureSet> good,
                                 td::Ref<block::ValidatorSet> stale_set, td::Ref<MasterchainStateQ> real_state,
                                 bool expire, td::Promise<td::Unit> promise) {
+    if (expire) {
+      // Admit through the real Manager coroutine while genesis context is
+      // still available and before candidate bytes arrive. That coroutine
+      // owns the production 60-second retention timer.
+      new_block_finality_broadcast({id, good, 0}, BroadcastSource::consensus_overlay).start().detach();
+      await_ingress_expiry_admission(id, std::move(data), std::move(good), std::move(stale_set),
+                                    td::Timestamp::in(2.0), std::move(promise));
+      return;
+    }
     auto expected_data = data.clone();
     cached_masterchain_block_candidates_.put(id, std::move(data));
     last_masterchain_state_ = td::make_ref<C04StaleState>(id, std::move(stale_set));
@@ -188,7 +197,7 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
       return promise.set_error(td::Status::Error("C04 stale proof did not identify TrustedContext"));
     }
     std::cout << "C04_MANAGER_TRUSTED_CONTEXT_SOURCE_OK\n";
-    const double expires_at = td::Time::now() + (expire ? 0.2 : 10.0);
+    const double expires_at = td::Time::now() + 10.0;
     auto admitted = pending_block_finality_.admit(
         id, PendingBlockFinalitySender::local_source(),
         PendingBlockFinalityCandidate{std::move(good), BroadcastSource::consensus_overlay}, 4096,
@@ -204,22 +213,58 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
       return promise.set_error(td::Status::Error("C04 stale context did not retain evidence and block bytes"));
     }
     std::cout << "C04_MANAGER_STALE_RETAINED evidence=1 candidate=1\n";
-    if (expire) {
-      // Match ingress's delayed closure, not a direct call from the observer.
-      delay_action([self = actor_id(this), id]() {
-        td::actor::send_closure(self, &ValidatorManagerImpl::expire_pending_block_finality, id);
-      }, td::Timestamp::at(expires_at));
-      delay_action([self = actor_id(this), id, expected_data = std::move(expected_data),
-                    promise = std::move(promise)]() mutable {
-        td::actor::send_closure(self, &PendingFinalityManagerActorProbe::finish_stale_expiry, id,
-                                std::move(expected_data), std::move(promise));
-      }, td::Timestamp::in(0.35));
-      return;
-    }
     last_masterchain_state_ = std::move(real_state);
     delay_action([self = actor_id(this), id, promise = std::move(promise)]() mutable {
       td::actor::send_closure(self, &PendingFinalityManagerActorProbe::resume_stale_case, id, std::move(promise));
     }, td::Timestamp::in(0.1));
+  }
+
+  void await_ingress_expiry_admission(BlockIdExt id, td::BufferSlice data,
+                                     td::Ref<block::BlockSignatureSet> good,
+                                     td::Ref<block::ValidatorSet> stale_set,
+                                     td::Timestamp deadline, td::Promise<td::Unit> promise) {
+    auto *pending = pending_block_finality_.get_if_exists(id);
+    if (!pending) {
+      if (deadline.is_in_past()) {
+        return promise.set_error(td::Status::Error("C04 Manager ingress did not admit finality"));
+      }
+      delay_action([self = actor_id(this), id, data = std::move(data), good = std::move(good),
+                    stale_set = std::move(stale_set), deadline, promise = std::move(promise)]() mutable {
+        td::actor::send_closure(self, &PendingFinalityManagerActorProbe::await_ingress_expiry_admission, id,
+                                std::move(data), std::move(good), std::move(stale_set), deadline,
+                                std::move(promise));
+      }, td::Timestamp::in(0.01));
+      return;
+    }
+    if (pending->size() != 1 || pending->processing()) {
+      return promise.set_error(td::Status::Error("C04 Manager ingress admitted wrong evidence count"));
+    }
+    std::cout << "C04_MANAGER_INGRESS_ADMITTED evidence=1 retention_seconds="
+              << pending_finality_retention_seconds << '\n';
+    auto expected_data = data.clone();
+    last_masterchain_state_ = td::make_ref<C04StaleState>(id, std::move(stale_set));
+    cached_masterchain_block_candidates_.put(id, std::move(data));
+    auto block = create_block(id, expected_data.clone());
+    if (block.is_error()) {
+      return promise.set_error(block.move_as_error());
+    }
+    PendingBlockProofFailureSource failure_source = PendingBlockProofFailureSource::BlockBytes;
+    auto stale_proof = WaitBlockData::generate_proof(id, block.ok()->root_cell(), good,
+                                                    last_masterchain_state_, failure_source);
+    if (stale_proof.is_ok() || failure_source != PendingBlockProofFailureSource::TrustedContext) {
+      return promise.set_error(td::Status::Error("C04 ingress expiry did not identify TrustedContext"));
+    }
+    try_process_pending_block_finality(id);
+    auto *cached = cached_masterchain_block_candidates_.get_if_exists(id);
+    if (!pending_block_finality_.get_if_exists(id) || !cached ||
+        cached->as_slice() != expected_data.as_slice()) {
+      return promise.set_error(td::Status::Error("C04 ingress expiry lost evidence or candidate bytes"));
+    }
+    delay_action([self = actor_id(this), id, expected_data = std::move(expected_data),
+                  promise = std::move(promise)]() mutable {
+      td::actor::send_closure(self, &PendingFinalityManagerActorProbe::finish_stale_expiry, id,
+                              std::move(expected_data), std::move(promise));
+    }, td::Timestamp::in(pending_finality_retention_seconds + 0.5));
   }
 
   void resume_stale_case(BlockIdExt id, td::Promise<td::Unit> promise) {
@@ -234,6 +279,7 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
         (last_masterchain_block_handle_ && last_masterchain_block_handle_->id() == id)) {
       return promise.set_error(td::Status::Error("C04 expiry changed block bytes or accepted target"));
     }
+    std::cout << "C04_MANAGER_INGRESS_TIMER_EXPIRED\n";
     td::actor::send_closure(db_, &Db::get_block_handle, id,
                             td::PromiseCreator::lambda([promise = std::move(promise)](
                                                           td::Result<BlockHandle> result) mutable {
@@ -687,7 +733,7 @@ int main(int argc, char **argv) {
     td::actor::ActorOwn<PendingFinalityManagerActorProbe> actor;
     std::optional<td::Result<td::Unit>> result;
     auto wait_result = [&]() {
-      auto deadline = td::Timestamp::in(30.0);
+      auto deadline = td::Timestamp::in(expire ? 75.0 : 30.0);
       while (!result.has_value() && !deadline.is_in_past()) {
         scheduler.run(0.01);
       }
