@@ -83,6 +83,7 @@ from tostester.pq_election_fixture import (  # noqa: E402
     assert_controller_identity,
     build_production_pool_stake_order,
     compile_controller_code,
+    elector_reply,
     make_controller_fixture,
     make_pool_fixture,
     participant_ids_from_runmethod,
@@ -196,6 +197,73 @@ def utc_now() -> str:
 
 def raw_address(address: Address) -> str:
     return f"{address.wc}:{address.hash_part.hex()}"
+
+
+def _decoded_transaction(raw_transaction: Any) -> Transaction:
+    if not raw_transaction.data:
+        raise ValueError("raw transaction has no BOC for bounce/abort classification")
+    return Transaction.deserialize(Cell.one_from_boc(raw_transaction.data).begin_parse())
+
+
+def _relay_query_id(message: MessageAny, *, bounced: bool) -> int | None:
+    """Read the pool's relay query ID, including the VM's bounced-body prefix."""
+    if not isinstance(message.info, InternalMsgInfo) or message.info.bounced != bounced:
+        return None
+    body = message.body.begin_parse()
+    if bounced and (body.remaining_bits < 32 or body.load_uint(32) != 0xFFFFFFFF):
+        return None
+    if body.remaining_bits < 96 or body.load_uint(32) != 0x5051726C:
+        return None
+    return body.load_uint(64)
+
+
+def pool_controller_bounce(
+    transactions: list[Any], controller: Address, query_id: int
+) -> dict[str, Any] | None:
+    """Find this order's actual bounced relay, not merely an idle pool state."""
+    for raw_transaction in transactions:
+        raw_message = raw_transaction.in_msg
+        if (
+            raw_message is None or raw_message.source is None
+            or Address(raw_message.source.account_address) != controller
+        ):
+            continue
+        transaction = _decoded_transaction(raw_transaction)
+        message = transaction.in_msg
+        if (
+            message is not None
+            and isinstance(message.info, InternalMsgInfo)
+            and message.info.src == controller
+            and _relay_query_id(message, bounced=True) == query_id
+        ):
+            return {"transaction_lt": str(transaction.lt), "bounced": True}
+    return None
+
+
+def controller_relay_result(
+    transactions: list[Any], pool: Address, query_id: int
+) -> dict[str, Any] | None:
+    """Report whether the exact pool relay reached and aborted in its controller."""
+    for raw_transaction in transactions:
+        raw_message = raw_transaction.in_msg
+        if (
+            raw_message is None or raw_message.source is None
+            or Address(raw_message.source.account_address) != pool
+        ):
+            continue
+        transaction = _decoded_transaction(raw_transaction)
+        message = transaction.in_msg
+        if (
+            message is not None
+            and isinstance(message.info, InternalMsgInfo)
+            and message.info.src == pool
+            and _relay_query_id(message, bounced=False) == query_id
+        ):
+            return {
+                "transaction_lt": str(transaction.lt),
+                "aborted": getattr(transaction.description, "aborted", None),
+            }
+    return None
 
 
 def validate_campaign_run_id(value: str) -> str:
@@ -3243,7 +3311,7 @@ class PoolLifecycle:
             await asyncio.sleep(20)
 
     async def authorized_pool_order(
-        self, index: int, election_id: int, pool_address: Address
+        self, index: int, election_id: int, pool_address: Address, *, query_id: int | None = None
     ) -> Cell:
         """Node authority plus the production builder; no local stake signer."""
         node = self.nodes[index]
@@ -3263,7 +3331,7 @@ class PoolLifecycle:
             raise AssertionError(f"validator {index + 1} authorization differs from its bound key")
         return build_production_pool_stake_order(
             REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order",
-            query_id=time.time_ns(), stake_amount=POOL_STAKE_VALUE,
+            query_id=time.time_ns() if query_id is None else query_id, stake_amount=POOL_STAKE_VALUE,
             stake_at=election_id, max_factor=MAX_FACTOR,
             adnl_addr=node.validator_key.id, algorithm_id=auth.algorithm_id,
             public_key=auth.public_key, signature=auth.signature,
@@ -3290,14 +3358,59 @@ class PoolLifecycle:
             await self.runmethod(raw_address(ELECTOR), "participant_list_extended")
         )
 
-    async def stake_through_pool(self, election_id: int, *, label: str) -> None:
+    async def stake_through_pool(self, election_id: int, *, label: str) -> int:
         if self.pool_address is None:
             raise AssertionError("primary pool is not deployed")
-        body = await self.authorized_pool_order(0, election_id, self.pool_address)
+        query_id = time.time_ns()
+        body = await self.authorized_pool_order(
+            0, election_id, self.pool_address, query_id=query_id
+        )
+        self.event("pool_stake_order", label=label, election_id=election_id, query_id=query_id)
         await self.send(
             self.wallets[0], dest=self.pool_address, amount=POOL_STAKE_GAS,
             body=body, label=label,
         )
+        return query_id
+
+    async def record_pool_stake_feedback(self, query_id: int, *, label: str) -> None:
+        """Record exact on-chain feedback without treating an absent reply as a refusal."""
+        assert self.client is not None and self.pool_address is not None
+        controller_address = self.controllers[0].address
+        details: dict[str, Any] = {
+            "label": label, "query_id": query_id,
+            "elector_reply": None, "controller_bounce": None,
+            "controller_relay": None,
+            "pool_transactions_scanned": 0, "controller_transactions_scanned": 0,
+            "collection_errors": {},
+        }
+        try:
+            pool_state = await self.client.raw_get_account_state(self.pool_address)
+            if pool_state.last_transaction_id is None:
+                raise RuntimeError("pool has no transaction cursor")
+            pool_transactions = (await self.client.raw_get_transactions(
+                self.pool_address, pool_state.last_transaction_id
+            )).transactions
+            details["pool_transactions_scanned"] = len(pool_transactions)
+            details["elector_reply"] = elector_reply(pool_transactions, query_id)
+            details["controller_bounce"] = pool_controller_bounce(
+                pool_transactions, controller_address, query_id
+            )
+        except Exception as error:  # noqa: BLE001 - preserve the original stake timeout
+            details["collection_errors"]["pool"] = repr(error)
+        try:
+            controller_state = await self.client.raw_get_account_state(controller_address)
+            if controller_state.last_transaction_id is None:
+                raise RuntimeError("controller has no transaction cursor")
+            controller_transactions = (await self.client.raw_get_transactions(
+                controller_address, controller_state.last_transaction_id
+            )).transactions
+            details["controller_transactions_scanned"] = len(controller_transactions)
+            details["controller_relay"] = controller_relay_result(
+                controller_transactions, self.pool_address, query_id
+            )
+        except Exception as error:  # noqa: BLE001 - preserve the original stake timeout
+            details["collection_errors"]["controller"] = repr(error)
+        self.event("pool_stake_feedback", **details)
 
     async def nominator_components(self, nominator: Nominator) -> tuple[int, int]:
         assert self.pool_address is not None
@@ -3836,13 +3949,21 @@ class PoolLifecycle:
                 description="an election the pool can still enter",
                 predicate=lambda value: value > 0,
             )
-            await self.stake_through_pool(final_election, label="pool-stake-after-drain")
-            data = await self.retry(
-                self.pool_data,
-                timeout=180,
-                description="the pool can stake again once the queue is clear",
-                predicate=lambda value: value.state == POOL_STATE_STAKED,
+            final_query_id = await self.stake_through_pool(
+                final_election, label="pool-stake-after-drain"
             )
+            try:
+                data = await self.retry(
+                    self.pool_data,
+                    timeout=180,
+                    description="the pool can stake again once the queue is clear",
+                    predicate=lambda value: value.state == POOL_STATE_STAKED,
+                )
+            except TimeoutError:
+                await self.record_pool_stake_feedback(
+                    final_query_id, label="pool-stake-after-drain"
+                )
+                raise
             self.check(
                 "draining the queue lets the pool back into an election",
                 data.state == POOL_STATE_STAKED,

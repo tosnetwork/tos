@@ -20,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 from pytosiq_core import Address, Builder, Cell, CurrencyCollection, InternalMsgInfo, MessageAny
+from tosapi import toslib_api
 from tostester.zerostate import NetworkConfig
 
 REPO = Path(__file__).resolve().parents[4]
@@ -112,6 +113,138 @@ def test_a_withdrawal_request_uses_the_same_shape():
     body = lifecycle.text_command("w").begin_parse()
     assert body.load_uint(32) == 0
     assert body.load_uint(8) == ord("w")
+
+
+def _relay_message(source, target, query_id, *, bounced):
+    body = Builder()
+    if bounced:
+        body.store_uint(0xFFFFFFFF, 32)
+    body.store_uint(0x5051726C, 32).store_uint(query_id, 64)
+    return MessageAny(
+        info=InternalMsgInfo(
+            ihr_disabled=True, bounce=True, bounced=bounced,
+            src=source, dest=target, value=CurrencyCollection(tomis=1),
+            ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+        ),
+        init=None, body=body.end_cell(),
+    )
+
+
+def test_second_stake_feedback_distinguishes_exact_controller_bounce_from_relay_abort(monkeypatch):
+    pool = Address((-1, bytes([0x31]) * 32))
+    controller = Address((-1, bytes([0x42]) * 32))
+    query_id = 123456
+    bounce = SimpleNamespace(
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(controller.to_str())),
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=77, in_msg=_relay_message(controller, pool, query_id, bounced=True),
+            description=SimpleNamespace(aborted=False),
+        ),
+    )
+    aborted = SimpleNamespace(
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=78, in_msg=_relay_message(pool, controller, query_id, bounced=False),
+            description=SimpleNamespace(aborted=True),
+        ),
+    )
+    monkeypatch.setattr(lifecycle, "_decoded_transaction", lambda raw: raw.decoded)
+    assert lifecycle.pool_controller_bounce([bounce], controller, query_id) == {
+        "transaction_lt": "77", "bounced": True,
+    }
+    assert lifecycle.controller_relay_result([aborted], pool, query_id) == {
+        "transaction_lt": "78", "aborted": True,
+    }
+    assert lifecycle.pool_controller_bounce([bounce], controller, query_id + 1) is None
+    assert lifecycle.controller_relay_result([aborted], pool, query_id + 1) is None
+    assert lifecycle.pool_controller_bounce([aborted], controller, query_id) is None
+    assert lifecycle.controller_relay_result([bounce], pool, query_id) is None
+
+
+@pytest.mark.asyncio
+async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-query-test")
+    runner.pool_address = Address((-1, bytes([0x55]) * 32))
+    runner.wallets = [object()]
+    seen = {}
+
+    async def build(index, election_id, pool_address, *, query_id):
+        seen["built"] = query_id
+        return Cell.empty()
+
+    async def send(*args, **kwargs):
+        seen["sent"] = kwargs["label"]
+
+    runner.authorized_pool_order = build
+    runner.send = send
+    query_id = await runner.stake_through_pool(123, label="pool-stake-after-drain")
+    assert query_id == seen["built"]
+    assert seen["sent"] == "pool-stake-after-drain"
+    assert runner.report.events[-1]["query_id"] == query_id
+
+
+@pytest.mark.asyncio
+async def test_second_stake_feedback_records_exact_elector_reason_and_relay_result(
+    tmp_path, monkeypatch
+):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-feedback-test")
+    pool = Address((-1, bytes([0x51]) * 32))
+    controller = Address((-1, bytes([0x52]) * 32))
+    runner.pool_address = pool
+    runner.controllers = [SimpleNamespace(address=controller)]
+    query_id = 7001
+    elector_body = (
+        Builder().store_uint(0xEE6F454C, 32).store_uint(query_id, 64)
+        .store_uint(5, 32).end_cell().to_boc()
+    )
+    elector_transaction = SimpleNamespace(
+        data=b"recorded", decoded=SimpleNamespace(lt=90, in_msg=None),
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(lifecycle.ELECTOR.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=elector_body),
+        ),
+    )
+    relay_transaction = SimpleNamespace(
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=80, in_msg=_relay_message(pool, controller, query_id, bounced=False),
+            description=SimpleNamespace(aborted=False),
+        ),
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
+    )
+    cursors = {pool: object(), controller: object()}
+    transactions = {pool: [elector_transaction], controller: [relay_transaction]}
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            return SimpleNamespace(last_transaction_id=cursors[address])
+
+        async def raw_get_transactions(self, address, cursor):
+            assert cursor is cursors[address]
+            return SimpleNamespace(transactions=transactions[address])
+
+    runner.client = FakeClient()
+    monkeypatch.setattr(lifecycle, "_decoded_transaction", lambda raw: raw.decoded)
+    await runner.record_pool_stake_feedback(query_id, label="pool-stake-after-drain")
+    event = runner.report.events[-1]
+    assert event["event"] == "pool_stake_feedback"
+    assert event["query_id"] == query_id
+    assert event["elector_reply"] == (0xEE6F454C, 5)
+    assert event["controller_bounce"] is None
+    assert event["controller_relay"] == {"transaction_lt": "80", "aborted": False}
+    assert event["pool_transactions_scanned"] == 1
+
+    class PoolQueryFails(FakeClient):
+        async def raw_get_transactions(self, address, cursor):
+            if address == pool:
+                raise RuntimeError("pool lite query unavailable")
+            return await super().raw_get_transactions(address, cursor)
+
+    runner.client = PoolQueryFails()
+    await runner.record_pool_stake_feedback(query_id, label="pool-stake-after-drain")
+    partial = runner.report.events[-1]
+    assert partial["elector_reply"] is None
+    assert partial["collection_errors"]["pool"] == "RuntimeError('pool lite query unavailable')"
+    assert partial["controller_relay"] == {"transaction_lt": "80", "aborted": False}
 
 
 def test_config34_pq_identity_and_adnl_stay_in_one_record():

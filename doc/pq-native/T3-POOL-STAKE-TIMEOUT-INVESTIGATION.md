@@ -5,6 +5,44 @@ but the retained live run did not capture its Elector reply.** This is a
 same-host diagnostic, not launch or release acceptance. Do not extend the
 180-second wait or mark the live stake accepted on this evidence.
 
+## a4d31b351 live2: first round proven, second round unresolved
+
+The later exact-a4 diagnostic report is
+`test/integration/.pq-nominator-pool-t3/20260924T003514Z/report.json`,
+SHA-256 `fc93d48ab90ac019afa6ed1de91543469b767e92b7da809adc8b0b10ec24b16a`.
+It has 26 passing checks, one not-exercised check, and `passed=false`. Its
+campaign manifest digest is
+`0b5a4284080a8cc0440f554dded4e70bd3e318f8be3b8d9078bae6272fba19ad`.
+This is evidence from **a4d31b351**, not from the later 096a150c8 tree.
+
+The **first** pool stake reached state 2 for election `1790210715`, the pool's
+controller `dae8de3b…1c57d8` and ADNL `73606979…21ef71` were paired in live
+ConfigParam 34, the stake was recovered, all eight identity-bound nominators
+received positive ledger reward, and the queued withdrawal blocked staking
+then drained. These are separate passing checks in the report. They do not
+prove that the pool could stake **again** after the queue cleared.
+
+The **second** order, labelled `pool-stake-after-drain`, was sent at
+00:55:05 UTC for election `1790211315`. At 00:58:06 the unchanged 180-second
+poll ended with pool state 0, `stake_amount_sent=10001000000000`, seven
+nominators and one not-exercised check: “draining the queue lets the pool back
+into an election”. The a4 report and terminal transcript contain neither the
+second order's query ID nor its controller bounce/abort or Elector reply.
+Pool state 1→0 is ambiguous: `pool.fc:345-376` handles a bounced controller
+relay, while `pool.fc:510-518` handles Elector `new_stake_error`. Neither
+branch is established by the retained result. The first-round amount fix
+must not be assumed to diagnose the second round.
+
+The minimum next observation is an exact-query-ID read of the pool's inbound
+Elector opcode/reason and bounced controller relay, plus the matching
+controller transaction's abort bit. The lifecycle script now records that
+query ID at order construction and collects these chain transactions on the
+same 180-second failure path; null fields mean **not found in the queried
+transaction window or unavailable with a recorded collection error**, not
+“no bounce” or “no refusal”. A fresh fixed-tree
+diagnostic run is needed for that evidence. No wait extension or causal claim
+follows from this section. T3 remains OPEN.
+
 ## Contract-level falsification and bounded fixture correction
 
 The original section below deliberately preserves the hypothesis and its

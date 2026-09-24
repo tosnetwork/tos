@@ -64,6 +64,7 @@ def validate(source: str) -> None:
     order = method(tree, "authorized_pool_order")
     support = method(tree, "stake_support_pool")
     primary = method(tree, "stake_through_pool")
+    feedback = method(tree, "record_pool_stake_feedback")
     upkeep = method(tree, "keep_elections_alive")
     selection = method(tree, "record_pool_validator_selection")
     recover = method(tree, "recover")
@@ -123,6 +124,18 @@ def validate(source: str) -> None:
                 f"production pool builder {field} is not bound to node/controller data")
     require(bool(calls(support, "authorized_pool_order")) and bool(calls(primary, "authorized_pool_order")),
             "a pool stake route bypasses the shared node-authorized order")
+    require(keyword(builder, "query_id") == "time.time_ns() if query_id is None else query_id"
+            and keyword(one_call(primary, "authorized_pool_order"), "query_id") == "query_id"
+            and "return query_id" in ast.unparse(primary),
+            "primary pool order no longer binds a recorded query ID to its body")
+    feedback_text = ast.unparse(feedback)
+    require(all(calls(feedback, name) for name in (
+        "raw_get_transactions", "elector_reply", "pool_controller_bounce", "controller_relay_result"
+    )), "second-stake feedback no longer reads Elector reply, controller bounce and relay")
+    require("except TimeoutError:" in source
+            and "await self.record_pool_stake_feedback(final_query_id, label='pool-stake-after-drain')"
+            in ast.unparse(execute),
+            "second-stake timeout no longer collects exact-query chain feedback")
     require(bool(calls(upkeep, "stake_support_pool")) and not calls(upkeep, "stake_directly"),
             "election upkeep bypasses controller-backed support pools")
     selection_text = ast.unparse(selection)
@@ -167,6 +180,16 @@ def self_test(source: str) -> None:
             ("CONTROLLER_FORWARDING_ALLOWANCE = 1 * NANO", "CONTROLLER_FORWARDING_ALLOWANCE = 0 * NANO"),
         "stake builder bypasses budgeted amount":
             ("stake_amount=POOL_STAKE_VALUE", "stake_amount=NETWORK_MIN_STAKE"),
+        "unbound second stake query":
+            ("self.pool_address, query_id=query_id", "self.pool_address, query_id=0"),
+        "second stake feedback removed":
+            ("await self.record_pool_stake_feedback(\n                    final_query_id", "await self.pool_data(\n                    final_query_id"),
+        "Elector reply ignored":
+            ("elector_reply(pool_transactions, query_id)", "None"),
+        "controller bounce ignored":
+            ("pool_controller_bounce(\n                pool_transactions", "ignored_bounce(\n                pool_transactions"),
+        "controller relay ignored":
+            ("controller_relay_result(\n                controller_transactions", "ignored_relay(\n                controller_transactions"),
     }
     for label, (before, after) in mutations.items():
         require(source.count(before) == 1, f"self-test {label} mutation target is not unique")
@@ -182,7 +205,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder with both forwarding and Elector allowances, and paired Config34 lookup are wired; no live stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: four Genesis PQ validators plus one noninitial spare, ConfigParam 47, node authorization, witness, production pool builder and Config34 lookup are wired; the second-stake timeout records its exact query ID, Elector reply, controller bounce and relay result; no live second stake is claimed")
 
 
 if __name__ == "__main__":
