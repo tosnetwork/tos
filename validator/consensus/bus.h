@@ -197,6 +197,10 @@ class Db {
   virtual td::actor::Task<> close() = 0;
 };
 
+// Bridge and restart-cut fixtures open the same durable consensus journal
+// implementation. The caller owns the session-specific path.
+std::unique_ptr<Db> open_rocksdb_consensus_db(std::string path);
+
 class Bus : public td::actor::Bus {
  public:
   using Events =

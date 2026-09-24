@@ -1,0 +1,11 @@
+diff --git a/test/pq-native/n5-manager-db-fixture.h b/test/pq-native/n5-manager-db-fixture.h
+--- a/test/pq-native/n5-manager-db-fixture.h
++++ b/test/pq-native/n5-manager-db-fixture.h
+@@ -96,5 +96,5 @@ class N5ManagerDbFixture : public ValidatorManagerImpl {
+       td::actor::send_closure(self, &N5ManagerDbFixture::seed_handle, handle, std::move(promise));
+     };
+-    td::actor::send_closure(db_, &Db::store_block_state, handle, td::Ref<ShardState>{state}, vm::StoreCellHint{},
+-                            td::PromiseCreator::lambda(std::move(after_state)));
++    static_cast<void>(state);
++    after_state(td::Ref<ShardState>{});
+   }

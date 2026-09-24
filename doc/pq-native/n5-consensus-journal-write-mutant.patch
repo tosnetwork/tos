@@ -1,0 +1,9 @@
+diff --git a/test/pq-native/n5-manager-db-fixture-test.cpp b/test/pq-native/n5-manager-db-fixture-test.cpp
+--- a/test/pq-native/n5-manager-db-fixture-test.cpp
++++ b/test/pq-native/n5-manager-db-fixture-test.cpp
+@@ -223,5 +223,4 @@ int main(int argc, char **argv) {
+   std::cout << "N5_MANAGER_DB_EMPTY_ROOT=" << empty << '\n';
+   std::cout << "N5_CONSENSUS_DB_WRITTEN_PATH=" << consensus_path(persisted, session_id) << '\n';
+   if (!run_actor(id, state, std::move(boc), persisted, true, true) ||
+-      !write_consensus_marker(consensus_path(persisted, session_id)) ||
+       !cold_child(argv[0], boc_path, persisted, true) ||

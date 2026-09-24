@@ -424,7 +424,7 @@ class BridgeImpl final : public IValidatorGroup {
     bus->overlays = params_.overlays;
     bus->adnl_sender = params_.adnl_sender;
 
-    bus->db = std::make_unique<DbImpl>(db_path() + "/db/");
+    bus->db = open_rocksdb_consensus_db(db_path() + "/db/");
 
     auto [stop_waiter, stop_promise] = td::actor::StartedTask<>::make_bridge();
     stop_waiter_ = std::move(stop_waiter);
@@ -652,6 +652,10 @@ class BridgeImpl final : public IValidatorGroup {
 };
 
 }  // namespace
+
+std::unique_ptr<Db> open_rocksdb_consensus_db(std::string path) {
+  return std::make_unique<DbImpl>(std::move(path));
+}
 
 void CandidateBroadcastRelay::register_in(td::actor::Runtime& runtime) {
   runtime.register_actor<CandidateBroadcastRelayImpl>("CandidateBroadcastRelay");

@@ -72,6 +72,7 @@ class WaitShardState;
 class WaitBlockData;
 class AppliedExtMessageCleanupActor;
 class PendingFinalityManagerActorProbe;
+class N5ManagerDbFixture;
 
 struct PendingBlockFinalityCandidate {
   td::Ref<block::BlockSignatureSet> sig_set;
@@ -95,6 +96,7 @@ class BlockHandleLru : public td::ListNode {
 
 class ValidatorManagerImpl : public ValidatorManager {
   friend class PendingFinalityManagerActorProbe;
+  friend class N5ManagerDbFixture;
  private:
   // WAITERS
   //
