@@ -35,12 +35,36 @@ actor probe now exercises the manager's actual pending queue, block cache and
 proof-failure handler in three directions: bad finality evidence retires only
 the front certificate and leaves the next entry dequeuable; bad block bytes
 retire only cached bytes; a stale trusted-context error retains both inputs
-until bounded expiry removes the certificate. The test-only actor suppresses
-database/network startup, and the fixture supplies the proof error at the
-handler boundary. It does **not** show the next valid certificate passing
-proof construction or broadcast validation, nor a stale context becoming
-current within the retention window. Those real actor paths, with
-old-red/new-green, remain required before C04 closes.
+until bounded expiry removes the certificate. That first actor case supplies
+errors at the handler boundary. A second no-startup fixture supplies a
+syntactically valid masterchain block, wrong-set and correct PQ finality
+evidence, and controlled masterchain state. It calls the production
+`try_process_pending_block_finality` path: the wrong-set certificate fails
+actual `WaitBlockData::generate_proof`, is removed while block bytes remain,
+and the next certificate reaches proof construction and real PQ signature
+verification. With stale trusted context, the same path retains both inputs,
+retries after the context is replaced within the deadline, and completes.
+A separate expired-context case shows the certificate is retired while block
+bytes remain. Restoring the old proof-error behavior of deleting the cached
+candidate makes the same manager test fail with
+`PENDING_FINALITY_MANAGER_REAL_PROOF_FAILURE`.
+
+The probe substitutes a successful `new_block_broadcast` callback; it does
+**not** run downstream `AcceptBlock`, a database write, or a real network.
+It therefore proves queue progression through proof and cryptographic
+verification, not actual block acceptance. C04 remains OPEN pending that
+downstream actor proof and fixed-commit CI. The historical network impact
+is still not established from the component or actor fixtures alone.
+
+The old-behavior mutation changed only the proof-error branch of
+`try_process_pending_block_finality` back to candidate-byte erasure. The
+`test-pending-finality-cache` CTest exited 8 and named
+`PENDING_FINALITY_MANAGER_REAL_PROOF_FAILURE`; the restored tree passed.
+The retained logs are
+`test/integration/.c04-manager-proof-actor-20260924/old-behaviour-red.log`
+(SHA-256 `8406f6e72baf85e84ac8bfdb10a17ac14ba15ee86d5fd9786bfada4ece87843c`)
+and `current-green.log`
+(SHA-256 `69c062d28c8e034c090663e7794880fbae5a0fe5e7f134c5fb2855c5422211c1`).
 
 During actor-probe construction, three intentionally wrong manager mutations
 were observed red with named assertions: forcing block-byte disposal for all
