@@ -625,11 +625,12 @@ mod tests {
     fn list_or_empty_accepts_only_empty_list_as_cons_tail() {
         let proper = create_tuple_entry(vec![
             create_number_entry("11"),
-            create_list_entry(vec![]),
+            create_tuple_entry(vec![create_number_entry("22"), create_list_entry(vec![])]),
         ]);
         let parsed = TvmStackParser::new(vec![proper]).list_or_empty(0).unwrap();
-        assert_eq!(parsed.stack.len(), 1);
+        assert_eq!(parsed.stack.len(), 2);
         assert_eq!(parsed.i64(0).unwrap(), 11);
+        assert_eq!(parsed.i64(1).unwrap(), 22);
 
         let wrong_tail = create_tuple_entry(vec![
             create_number_entry("11"),
