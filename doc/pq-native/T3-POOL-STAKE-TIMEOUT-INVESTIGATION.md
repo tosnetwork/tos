@@ -368,3 +368,47 @@ poll after all pools recover; the source guard pins the call-site wiring. This
 does not weaken the accepting-window check or change an Elector/consensus
 parameter. It is **not yet live-verified**. T3 and the product first-stake
 witness question remain OPEN.
+
+## 2026-09-24 fast-poll follow-up: ordinary lifecycle PASS, bounded claims
+
+The fixed `1af9df5f175bd67fbfd77e0caedc33ba3e66bc22` tree ran from
+`03:42:30` to `04:04:53` UTC. Its retained report is
+`test/integration/.pq-nominator-pool-t3/1af-fast-poll/20260924T034230Z/report.json`
+(SHA-256 `31fe07ddcb7bf0c1f06b135dc4b58d4fd9cefb2b14478c595df54ed06404c8ca`):
+`passed=true`, 27/27 reached checks passed, `failures=[]`, no unexercised
+checks, process exit 0. The bounded watcher did not stop it; peak run-directory
+size was 9,180,938,240 bytes, below 12 GiB. The native validator binary was
+rebuilt after CMake recorded this head in `build/git.cc`, SHA-256
+`660bf51c04c76f850da6b71ca2c87ecc94b5290563b0760f8ff4d7fd6cb75280`.
+The Rust production order bridge was Cargo-checked as up to date, SHA-256
+`6b73c2b8d0b96b9c2fa5415b9114f6a18f9c30cd68599a629007387ddd330e05`;
+the Python lifecycle source SHA-256 was
+`fa75e298f26cc5cb79f46e5c36d8b45ba5a7d740cd769a37000c9bbbddce9f43`.
+
+The first primary order used election `1790221951`; pool state 2 was observed,
+and live ConfigParam 34 included the exact controller/ADNL pair recorded in
+the report's `validator_selection`. Four support pools staked in each of the
+first two windows. Once the first set retired, the keeper used its actual
+`past_elections_list.unfreeze_at=1790222431`, not a schedule estimate. Around
+that time its snapshots changed from 20-second to roughly 5-second spacing.
+After the past record disappeared and each owner had a positive Elector credit,
+all four pool-owned recovery transactions received exact query-id
+`0xf96f7324` replies, consumed the credits and increased their pool balances.
+All four then re-staked in the third accepting window: pool 4's recovery reply
+was at chain time `1790222452`, and its order was sent at `1790222454`, 37
+seconds before `elect_close=1790222491`. Live ConfigParam 34 subsequently
+advanced to `1790222551`. This is the control missing in the failed 07a run;
+it supports the keeper-window diagnosis without changing Elector parameters.
+
+The script then proved the queued withdrawal blocked a stake, drained the
+queue, and sent a second primary order for election `1790222851`, query_id
+`1790222689324543516`. The post-drain check observed pool `state=2`. In
+`nominator-pool/pool.fc:516-517`, that transition requires the Elector's
+`new_stake_ok` opcode `0xf374484c`; it is stronger than merely observing a
+message send. This run did **not** collect the successful second order's raw
+Elector reply through the timeout-only feedback recorder, and it ended before
+election `1790222851` could become live ConfigParam 34. Therefore its exact
+claim is second-stake acceptance at the pool and an ordinary lifecycle PASS,
+not second-round ConfigParam 34 selection. It also does not exercise either
+tosctl product caller's first-stake witness handoff. Those product paths, the
+other retained classical Fift consumers and the full T3 retirement remain OPEN.
