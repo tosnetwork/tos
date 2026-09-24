@@ -1,0 +1,12 @@
+diff --git a/test/pq-native/c04-real-state-proof-test.cpp b/test/pq-native/c04-real-state-proof-test.cpp
+--- a/test/pq-native/c04-real-state-proof-test.cpp
++++ b/test/pq-native/c04-real-state-proof-test.cpp
+@@ -767 +767 @@
+-  void handle(sx::BusHandle, std::shared_ptr<const sx::FinalizationObserved> event) {
++  void handle(sx::BusHandle bus, std::shared_ptr<const sx::FinalizationObserved> event) {
+@@ -777,0 +778,5 @@
++    if (n5_replay_state->observed.load(std::memory_order_acquire) == 1) {
++      delay_action([bus, event]() mutable {
++        bus.publish<sx::FinalizationObserved>(event->id, event->certificate);
++      }, td::Timestamp::in(0.2));  // N05 MUTANT: second event after the initial assertion.
++    }
