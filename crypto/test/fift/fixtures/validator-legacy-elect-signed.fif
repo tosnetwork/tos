@@ -2,7 +2,7 @@
 // Test-only historical Ed25519 signed-body fixture. The PQ elector does not
 // accept this wallet-originated body; node authorization follows the pool/controller path.
 "TosUtil.fif" include
-"Validator.fif" include
+"ValidatorLegacy.fif" include
 
 { ."usage: " @' $0 type ." <wallet-addr> <elect-utime> <max-factor> <adnl-addr> <validator-pubkey> <validator-signature> [<savefile>]" cr
   ."Creates a message body for participating in validator elections starting at <elect-utime> on behalf of smart-contract with address <wallet-addr> (prefix with '@' to load address from file) and hexadecimal adnl address <adnl-addr> (empty string or '0' for none)." cr

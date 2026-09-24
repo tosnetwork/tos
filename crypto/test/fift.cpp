@@ -117,7 +117,12 @@ TEST(Fift, test_validator_proposal_legacy_parity) {
 }
 
 TEST(Fift, test_validator_proposal_invalid_signature) {
-  run_fift("validator-proposal-invalid-signature.fif", true);
+  auto lookup = fift::create_mem_source_lookup(load_test("validator-proposal-invalid-signature.fif")).move_as_ok();
+  lookup.write_file("/ValidatorLegacy.fif", load_test("fixtures/ValidatorLegacy.fif")).ensure();
+  auto result = fift::mem_run_fift(std::move(lookup), {});
+  result.ensure_error();
+  CHECK(result.error().message().str().find("validator Ed25519 signature must be exactly 64 bytes long") !=
+        std::string::npos);
 }
 
 TEST(Fift, test_validator_proposal_invalid_complaint) {

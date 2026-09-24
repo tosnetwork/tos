@@ -1,8 +1,9 @@
-library Validator  // Validator request, vote, and signed body codecs
+// Test-only frozen classical Ed25519 validator codec. Never install this file.
+// The words below preserve recorded historical bytes, not PQ stake authority.
+library Validator
 "Addr.fif" include
 "Currency.fif" include
-"Key.fif" include   // Transitive: not used here, re-exported for historical
-                    // test-only fixtures that need PK' / parse-val-pubkey.
+"Key.fif" include
 "Msg.fif" include
 
 // ( S -- B )
@@ -18,10 +19,6 @@ library Validator  // Validator request, vote, and signed body codecs
 } : validator-elect-req>B
 
 // ( query-id pubkey elect-utime max-factor adnl-addr signature -- c )
-// Defensive: pubkey is appended raw via `B,` (no length tag), so a
-// wrong-size pubkey would silently produce a malformed cell. Honest
-// callers route pubkey through parse-val-pubkey/PK' (Key.fif) which
-// already enforces 32 bytes; the check below catches direct callers.
 { 4 pick Blen 32 <> abort"validator Ed25519 pubkey must be exactly 32 bytes long"
   <b x{4e73744b} s, 6 roll 64 u, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
   swap <b swap B, b> ref, b>
@@ -32,8 +29,3 @@ library Validator  // Validator request, vote, and signed body codecs
   <b x{4e73744b} s, 7 roll 64 u, 6 roll Tomi, 5 roll B, 4 roll 32 u, 3 roll 32 u, rot 256 u,
   swap <b swap B, b> ref, b>
 } : validator-elect-body+stake
-
-// A validator's vote on a configuration proposal or on a complaint is not built here.
-// It is signed with the validator's post-quantum consensus key over a preimage that
-// names the validator set counting it, which a script has no way to know, and the node
-// builds the message itself.

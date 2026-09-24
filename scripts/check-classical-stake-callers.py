@@ -3,7 +3,8 @@
 
 This is deliberately narrower than "all classical stake producers": it
 discovers references to the two base Fift tools and their library word in
-executable source files. Rust legacy vectors and prose are not callers.
+source files, including the retained test-only codec. Rust legacy vectors
+and prose are not callers.
 """
 
 from __future__ import annotations
@@ -17,27 +18,35 @@ MARKERS = (
     "validator-elect-signed.fif",
     "validator-legacy-elect-req.fif",
     "validator-legacy-elect-signed.fif",
+    "ValidatorLegacy.fif",
     "validator-elect-req>B",
     "single-nominator-legacy-elect-signed.fif",
     "liquid-controller-legacy-elect-signed.fif",
 )
 EXPECTED: dict[str, dict[str, int]] = {
-    "crypto/fift/lib/Validator.fif": {
+    "crypto/test/fift/fixtures/ValidatorLegacy.fif": {
         "validator-elect-req>B": 1,
     },
     "crypto/test/fift/fixtures/single-nominator-legacy-elect-signed.fif": {
+        "ValidatorLegacy.fif": 1,
         "validator-elect-req>B": 1,
     },
     "crypto/test/fift/fixtures/liquid-controller-legacy-elect-signed.fif": {
+        "ValidatorLegacy.fif": 1,
         "validator-elect-req>B": 1,
     },
     "crypto/test/fift/fixtures/validator-legacy-elect-req.fif": {
+        "ValidatorLegacy.fif": 1,
         "validator-elect-req>B": 1,
     },
     "crypto/test/fift/fixtures/validator-legacy-elect-signed.fif": {
+        "ValidatorLegacy.fif": 1,
         "validator-elect-req>B": 1,
     },
+    "crypto/test/fift/validator-proposal-invalid-signature.fif": {"ValidatorLegacy.fif": 1},
+    "crypto/test/fift.cpp": {"ValidatorLegacy.fif": 2},
     "crypto/test/test-smartcont.cpp": {
+        "ValidatorLegacy.fif": 2,
         "validator-legacy-elect-req.fif": 1,
         "validator-legacy-elect-signed.fif": 1,
         "single-nominator-legacy-elect-signed.fif": 1,
@@ -100,6 +109,20 @@ def main() -> int:
     retired_base_signed = root / "crypto/smartcont/validator-elect-signed.fif"
     if retired_base_signed.exists():
         fail("retired base Ed25519 signed-body script is still packaged")
+    if (root / "crypto/fift/lib/Validator.fif").exists():
+        fail("retired classical Validator.fif library is still packaged")
+    fift_loader = (root / "crypto/fift/utils.cpp").read_text(encoding="utf-8")
+    if '"/Validator.fif"' in fift_loader or "load_Validator_fif" in fift_loader:
+        fail("memory Fift loader still preloads the retired product Validator.fif")
+    for directory in ("crypto/smartcont", "scripts", "tosctl/src"):
+        for path in (root / directory).rglob("*"):
+            if not path.is_file() or path.suffix not in SUFFIXES:
+                continue
+            if path.name == "check-classical-stake-callers.py":
+                continue
+            source = path.read_text(encoding="utf-8", errors="replace")
+            if re.search(r"(?<![A-Za-z0-9_-])validator-elect-body(?:\+stake)?(?![A-Za-z0-9_+])", source):
+                fail(f"product source regained a classical validator-elect body word: {path.relative_to(root)}")
     smartcont_test = (root / "crypto/test/test-smartcont.cpp").read_text(encoding="utf-8")
     base_request_fixture = "test/fift/fixtures/validator-legacy-elect-req.fif"
     base_signed_fixture = "test/fift/fixtures/validator-legacy-elect-signed.fif"
@@ -147,9 +170,10 @@ def main() -> int:
     if undocumented:
         fail(f"retained literal Fift callers absent from migration map: {undocumented}")
     print(
-        f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact executable files retain the inventoried "
+        f"CLASSICAL_STAKE_CALLERS_OK: {len(EXPECTED)} exact source files retain the inventoried "
         "validator-elect Fift path/word literals; the single-nominator operator path is absent, "
-        "both retired pool operator paths and both base election scripts are absent, "
+        "both retired pool operator paths, both base election scripts, and product Validator.fif are absent; "
+        "no scanned product .py/.fif/.fc/.cpp/.rs source names a classical stake body word; "
         "the base Fift byte tests load test-only "
         "fixtures, proposal smoke has no classical stake dependency, the parity codec is test-local, "
         "and the migration map names each"

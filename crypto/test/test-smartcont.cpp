@@ -316,6 +316,12 @@ std::string run_zerostate_regression(td::Slice script_name) {
   return summary;
 }
 
+fift::SourceLookup create_legacy_validator_fixture_lookup(const std::string& fixture) {
+  auto lookup = fift::create_mem_source_lookup(load_source(fixture)).move_as_ok();
+  lookup.write_file("/ValidatorLegacy.fif", load_source("test/fift/fixtures/ValidatorLegacy.fif")).ensure();
+  return lookup;
+}
+
 std::string run_legacy_validator_fift_script_regression() {
   auto private_key = td::Ed25519::PrivateKey(td::SecureString(hex_bytes(kValidatorPrivKeyHex)));
   auto public_key = private_key.get_public_key().move_as_ok();
@@ -328,8 +334,7 @@ std::string run_legacy_validator_fift_script_regression() {
 
   // Historical Ed25519 byte parity only. Neither fixture is an operator
   // command or evidence that a PQ stake was accepted.
-  auto request_lookup =
-      fift::create_mem_source_lookup(load_source("test/fift/fixtures/validator-legacy-elect-req.fif")).move_as_ok();
+  auto request_lookup = create_legacy_validator_fixture_lookup("test/fift/fixtures/validator-legacy-elect-req.fif");
   request_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(request_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto request_run =
@@ -339,8 +344,7 @@ std::string run_legacy_validator_fift_script_regression() {
   auto signature_b64 = sign_b64(private_key, request);
   check_signature_b64(public_key, request, signature_b64);
 
-  auto signed_lookup =
-      fift::create_mem_source_lookup(load_source("test/fift/fixtures/validator-legacy-elect-signed.fif")).move_as_ok();
+  auto signed_lookup = create_legacy_validator_fixture_lookup("test/fift/fixtures/validator-legacy-elect-signed.fif");
   signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(signed_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto signed_run = fift::mem_run_fift(std::move(signed_lookup),
@@ -351,8 +355,7 @@ std::string run_legacy_validator_fift_script_regression() {
 
   // Historical Ed25519 byte parity only. This path is not a PQ pool operator.
   auto single_lookup =
-      fift::create_mem_source_lookup(load_source("test/fift/fixtures/single-nominator-legacy-elect-signed.fif"))
-          .move_as_ok();
+      create_legacy_validator_fixture_lookup("test/fift/fixtures/single-nominator-legacy-elect-signed.fif");
   single_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(single_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto single_run = fift::mem_run_fift(std::move(single_lookup), {"aba", wallet_arg, elect_time, "2", adnl_hex,
@@ -364,8 +367,7 @@ std::string run_legacy_validator_fift_script_regression() {
   // Historical Ed25519 byte parity only; the current liquid controller
   // requires a PQ-shaped pool order and this is not an operator command.
   auto controller_lookup =
-      fift::create_mem_source_lookup(load_source("test/fift/fixtures/liquid-controller-legacy-elect-signed.fif"))
-          .move_as_ok();
+      create_legacy_validator_fixture_lookup("test/fift/fixtures/liquid-controller-legacy-elect-signed.fif");
   controller_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(controller_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto controller_run =

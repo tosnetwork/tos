@@ -2,7 +2,7 @@
 // Test-only historical Ed25519 byte fixture. The supported single-nominator
 // operator uses tosctl config wallet stake with node PQ authorization instead.
 "TosUtil.fif" include
-"Validator.fif" include
+"ValidatorLegacy.fif" include
 
 { ."usage: " @' $0 type ." <wallet-addr> <elect-utime> <max-factor> <adnl-addr> <validator-pubkey> <validator-signature> <savefile> <amount>" cr
   ."Creates a message body for participating in validator elections starting at <elect-utime> on behalf of smart-contract with address <wallet-addr> (prefix with '@' to load address from file) and hexadecimal adnl address <adnl-addr> (empty string or '0' for none)." cr

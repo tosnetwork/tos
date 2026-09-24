@@ -16,6 +16,15 @@ set -euo pipefail
 root="${1:-.}"
 failed=0
 
+# T12 retired the whole classical validator stake codec from the installed
+# Fift library. Its five former vote/admin absence checks are now subsumed
+# by a stronger check: the product file itself must not return. Historical
+# bytes live only in crypto/test/fift/fixtures/ValidatorLegacy.fif.
+if [ -e "$root/crypto/fift/lib/Validator.fif" ]; then
+  echo "authority check failed: retired product Validator.fif returned" >&2
+  failed=1
+fi
+
 # file<TAB>pattern<TAB>what it would mean
 while IFS=$'\t' read -r file pattern meaning; do
   case "$file" in ''|'#'*) continue ;; esac
@@ -39,11 +48,6 @@ crypto/smartcont/config-code.fc	check_signature	the config contract authorises s
 crypto/smartcont/config-code.fc	0x43665021	the administrator can change a parameter again
 crypto/smartcont/config-code.fc	0x50624b21	the administrator key can be replaced again, so there is one
 crypto/smartcont/config-code.fc	0x4e43ef05	the administrator can replace the elector code again
-crypto/fift/lib/Validator.fif	566f7465	a script builds the classical configuration vote again
-crypto/fift/lib/Validator.fif	566f7445	a script builds the classical internal configuration vote again
-crypto/fift/lib/Validator.fif	56744350	a script builds the classical complaint-vote request again
-crypto/fift/lib/Validator.fif	56744370	a script builds the classical complaint-vote body again
-crypto/fift/lib/Validator.fif	4e436f64	a script builds the administrator's code replacement again
 tosctl/src/node-control/contracts/src/elector/messages.rs	0x56744350	the tooling builds the classical complaint-vote request again
 tosctl/src/node-control/contracts/src/elector/messages.rs	0x56744370	the tooling builds the classical complaint-vote body again
 tosctl/src/node-control/contracts/src/config_contract/messages.rs	0x566f7465	the tooling builds the classical configuration vote again
