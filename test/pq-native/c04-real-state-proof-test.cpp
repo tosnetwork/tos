@@ -1472,6 +1472,8 @@ int main(int argc, char **argv) {
     while (!settled.is_in_past()) {
       scheduler.run(0.01);
     }
+    const auto observed_after_settle = n5_replay_state->observed.load(std::memory_order_acquire);
+    const auto mismatch_after_settle = n5_replay_state->mismatch.load(std::memory_order_acquire);
     const auto duplicate = accept_calls->load(std::memory_order_acquire);
     scheduler.run_in_context([&] {
       bus.publish<consensus::StopRequested>();
@@ -1484,8 +1486,10 @@ int main(int argc, char **argv) {
     scheduler.run_in_context([&] { facade.reset(); manager.reset(); });
     scheduler.stop();
     n5_replay_state.reset();
-    if (!bus_stopped || duplicate != 0) {
-      std::cerr << "N5_CUT4_FAILED: duplicate AcceptBlock after exact FinalCert replay count=" << duplicate << '\n';
+    if (!bus_stopped || observed_after_settle != 1 || mismatch_after_settle || duplicate != 0) {
+      std::cerr << "N5_CUT4_FAILED: replay is not exactly once or repeated AcceptBlock"
+                << " events=" << observed_after_settle << " mismatch=" << mismatch_after_settle
+                << " accept_calls=" << duplicate << '\n';
       return 1;
     }
     std::string mode = "--n5-joined-reopen";
