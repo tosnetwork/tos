@@ -1255,6 +1255,11 @@ add_test(NAME test-n5-accept-block COMMAND test-c04-real-state-proof --n5-accept
 # BlockAccepter and Manager/RootDb, then both DB roots are cold-read.
 add_test(NAME test-n5-joined-finalcert COMMAND test-c04-real-state-proof --n5-joined
          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N02 controlled write-after cut: stop with only Pool's production FinalCert
+# journal, cold restart the same session via Db/Pool bootstrap, then cold-read
+# the recovered Manager proof/state and exact finalized marker.
+add_test(NAME test-n5-cut1-finalcert-recovery COMMAND test-c04-real-state-proof --n5-cut1
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)

@@ -98,6 +98,11 @@ jobs:
       - name: Check N5 same-FinalCert actor and cold persistence path
         run: ctest --test-dir build --output-on-failure -R '^test-n5-joined-finalcert$'
 
+      # N02 stops with the exact FinalCert journal but no marker or target
+      # RootDb handle, then cold-restarts through production Db/Pool bootstrap.
+      - name: Check N5 FinalCert write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut1-finalcert-recovery$'
+
       # C05: one transient parent-state miss must not cost a slot its local
       # notarize vote; permanent/cancelled errors and an already cast SkipVote
       # must never be retried into an unsafe late vote.
