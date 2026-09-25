@@ -1,9 +1,12 @@
 # E04 Agent Wallet / Agent Account retained route: custody boundary
 
-Status: OPEN for final signoff. The full advertised single-node retained route
-passes locally at fixed source `0e2f4bc90`; its fixed-head CI and independent
-evidence review are still pending. This is not a multi-validator or Byzantine
-fault-tolerance claim.
+Status: RESOLVED for the E04 retained-script scope only. The advertised
+single-validator PQ-chain route passes at fixed source `0e2f4bc90`; Mac's
+independent exact-artifact review and that same tree's Source guards
+`36094171127`, Branch PQ/Python `36094171129`, and N6 microbench
+`36094171153` all reached terminal success. This is not a multi-validator or
+Byzantine fault-tolerance claim.
+Independent review: `/home/tomi/memo/pq-native/N6-MAC-E04-0E-EXACT-RERUN-REVIEW-20260925.md`.
 
 ## Final exact-source rerun: 35/35 local PASS
 
@@ -27,8 +30,8 @@ and its custody journal SHA-256 is
 The rerun exercised the same exact bad-seqno refusal, primary-view cancellation
 absence with three-view head progression, two task-send majority resolutions,
 owner transfer, policy, rotation, restart and expiry controls as the previous
-640 run. This is local
-single-validator evidence only; fixed-head CI and independent signoff remain.
+640 run. This is local single-validator evidence only; the fixed-tree CI and
+independent review named above have since completed.
 The cancellation/expiry account state and destination balances are read from
 the **primary RPC**. Three distinct processes supply finalized-head progression
 and the product's positive native-action quorum, not three-way negative account
@@ -39,8 +42,9 @@ negative-window/refusal tests and nine Rust exact-wallet-confirmation tests.
 Its CI source guard went red when the Python target was renamed away, then
 went red separately when the Rust selector was renamed away; restored workflow
 and guard are green. These steps do **not** boot the full E04 route. The 35/35
-retained run above is the full-route evidence; the new CI steps still require
-a terminal fixed-head run before E04 signoff.
+retained run above is the full-route evidence. The newly added CI steps still
+require their own terminal run before claiming those steps have executed in CI;
+they are not a retroactive part of the successful `0e2f4bc90` workflow.
 
 ## Repaired exact-tree result: 35/35 local PASS
 
@@ -94,7 +98,7 @@ revision accepts only either an admitted submission or this exact contract
 refusal; a generic HTTP 500 is not evidence. For expired Gifts it similarly
 allows only admission or the contract's exact `expired=1706` refusal. Six
 focused negative-window tests pass, including wrong-code and malformed-body
-controls; a full committed-tree route rerun is still required.
+controls; at that point a full committed-tree route rerun was still required.
 
 That `5af85d723` run also reached the owner-signed Agent Wallet transfer and
 then timed out in its 15-second seqno poll. Read-only forensics on a copy of
@@ -286,6 +290,8 @@ The script SHA-256 at `be74e9cc6` is `c4b422a1d2ee962d97428f7aed1ca51bc4f5769e42
 The owner permitted separate Agent Accounts for terminal cancellation/expiry
 negative controls, while requiring the positive Gift, task sends, policy,
 rotation and restart to remain on one main account. `fe3918712` implements that
-fixture boundary and retains the exact source-bound evidence above. E04 remains
-OPEN for fixed-head CI and independent signoff; neither local pass is
-release-scale evidence.
+fixture boundary and retains the exact source-bound evidence above. E04 is now
+RESOLVED only for the retained script's single-validator PQ-chain scope;
+neither local pass is release-scale evidence. Negative account-state reads
+remain primary-RPC-only, as the scope decision permits. The two E03 indexer
+follow-ups remain OPEN independently.
