@@ -245,10 +245,10 @@ def main() -> int:
     recovery_line = one_call(election, "assert_pq_early_recovery_no_credit")
     if not (
         negative_line < pool_negative_line < positive_lines[0]
-        < restart_line < positive_lines[1] < duplicate_line
+        < duplicate_line < restart_line < positive_lines[1]
         < activated_line < liveness_line < recovery_line
     ):
-        fail("PQ first election no longer orders negative, three stakes, restart, fourth stake")
+        fail("PQ first election no longer orders negative, first stake/duplicate, restart, fourth stake")
     three_loops = [
         node for node in ast.walk(election)
         if isinstance(node, ast.For)
@@ -257,6 +257,14 @@ def main() -> int:
     ]
     if len(three_loops) != 1:
         fail("PQ first election no longer submits exactly three candidates before restarting the fourth")
+    duplicate_gates = [
+        node for node in ast.walk(three_loops[0]) if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "index == 0"
+        and len(call_lines(ast.Module(body=node.body, type_ignores=[]),
+                           "assert_duplicate_pq_key_refused")) == 1
+    ]
+    if len(duplicate_gates) != 1:
+        fail("PQ duplicate-key control is not bound to the first accepted stake")
     election_text = ast.unparse(election)
     if "participant_ids != expected_ids" not in election_text:
         fail("PQ election no longer requires exactly the four controller participants")
@@ -293,8 +301,12 @@ def main() -> int:
         fail("PQ first-round negatives no longer require unchanged participation")
     duplicate = method(tree, "assert_duplicate_pq_key_refused")
     duplicate_text = ast.unparse(duplicate)
-    if "reason != 4" not in duplicate_text or "after != before" not in duplicate_text:
-        fail("PQ duplicate held-key negative no longer pins reason 4 and unchanged stake")
+    if ("reason != 4" not in duplicate_text or "after != before" not in duplicate_text
+            or "input_transaction.utime >= elect_close" not in duplicate_text
+            or "pq-duplicate-key-elector-input-transaction.boc" not in duplicate_text
+            or "Address(message.source.account_address) != wallet.address" not in duplicate_text
+            or "body_slice.load_uint(64) == query_id" not in duplicate_text):
+        fail("PQ duplicate held-key negative no longer pins an open-window exact Elector input, reason 4, and unchanged stake")
     recovery = method(tree, "assert_pq_early_recovery_no_credit")
     recovery_text = ast.unparse(recovery)
     if "compute_returned_stake" not in recovery_text or "after_credit != 0" not in recovery_text:
@@ -413,7 +425,7 @@ def main() -> int:
         "Python engine-console transport admits the PQ authorization query; "
         "generated TL response fields are checked before snapshot/node boot and hashed in the snapshot; "
         "PQ candidates call the shared node-authorized, keyword-compatible Rust nominator::new_stake_with_witness pool-order path; "
-        "the three exact pool-route refusals precede three accepted stakes, a restarted fourth stake with bounded pre-send authorization retry, and a duplicate-key refusal; "
+        "the three exact pool-route refusals precede the first accepted stake and duplicate-key refusal, then three accepted stakes and a restarted fourth stake with bounded pre-send authorization retry; "
         "STAKE_ACCEPTED, exact controller participants, and activated ConfigParam 34 with paired controller/ADNL identities are required; "
         "three-of-four liveness and pool-owned early recovery checks follow activation; "
         "the default and explicit full PQ routes budget their faucet in Genesis before the first election and retain "

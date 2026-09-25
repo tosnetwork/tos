@@ -62,7 +62,7 @@ from pytosiq_core import (  # noqa: E402
     WalletMessage,
 )
 from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
-from tosapi import tos_api  # noqa: E402
+from tosapi import tos_api, toslib_api  # noqa: E402
 from toslib.errors import LocalError, RemoteError  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
@@ -3032,6 +3032,11 @@ class ValidatorElectionRehearsal:
         await self.assert_pq_first_round_negative_cases(self.first_election_id)
         for index in range(VALIDATOR_COUNT - 1):
             await self.submit_pq_candidate(index, self.first_election_id)
+            if index == 0:
+                # Exercise duplicate-key admission while the same election is
+                # demonstrably open. The later fourth-node restart can consume
+                # the remaining window; reason 0 then masks reason 4.
+                await self.assert_duplicate_pq_key_refused(self.first_election_id)
         three_output = await self.runmethod("participant_list_extended")
         (self.artifacts_dir / "pq-first-three-participants.txt").write_text(three_output)
         three_ids = participant_ids_from_runmethod(three_output)
@@ -3066,7 +3071,6 @@ class ValidatorElectionRehearsal:
                 f"unexpected={sorted(participant_ids - expected_ids)}"
             )
         self.event("pq_first_election_participants", controllers=len(participant_ids))
-        await self.assert_duplicate_pq_key_refused(self.first_election_id)
         await self.wait_until_chain_time(
             self.first_election_id - 55, "first PQ election closed"
         )
@@ -3440,6 +3444,19 @@ class ValidatorElectionRehearsal:
         node = self.nodes[0]
         controller_id = "0x" + self.controllers[0].address.hash_part.hex()
         before = await self.runmethod_int("participates_in", controller_id)
+        window_output = await self.runmethod("participant_list_extended")
+        (self.artifacts_dir / "pq-duplicate-key-presend-window.txt").write_text(window_output)
+        window = re.search(r"result:\s*\[\s*(\d+)\s+(\d+)", window_output)
+        if window is None:
+            raise RuntimeError("PQ duplicate-key control has no live Elector window")
+        elect_at, elect_close = map(int, window.groups())
+        presend_chain_time = await self.chain_time()
+        if elect_at != election_id or elect_close - presend_chain_time <= 30:
+            raise RuntimeError(
+                "PQ duplicate-key control lacks an open election window: "
+                f"elect_at={elect_at} elect_close={elect_close} "
+                f"chain_time={presend_chain_time}"
+            )
         query_id = 0xE1EC8
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
             election_date=election_id, max_factor=MAX_FACTOR,
@@ -3460,20 +3477,79 @@ class ValidatorElectionRehearsal:
             body=body, label="pq-negative-duplicate-key",
         )
 
-        async def duplicate_reply() -> tuple[int, int] | None:
+        async def duplicate_reply() -> tuple[int, int, Any] | None:
             state = await self.client.raw_get_account_state(wallet.address)
             if state.last_transaction_id is None:
                 return None
             transactions = await self.client.raw_get_transactions(
                 wallet.address, state.last_transaction_id
             )
-            return elector_reply(transactions.transactions, query_id)
+            for transaction in transactions.transactions:
+                reply = elector_reply([transaction], query_id)
+                if reply is not None:
+                    return reply[0], reply[1], transaction
+            return None
 
-        opcode, reason = await self.retry(
+        opcode, reason, reply_transaction = await self.retry(
             duplicate_reply, timeout=60,
             description="PQ duplicate key elector return reason",
             predicate=lambda value: value is not None,
         )
+        receipt_path = self.artifacts_dir / "pq-duplicate-key-elector-reply-transaction.boc"
+        receipt_path.write_bytes(reply_transaction.data)
+        receipt_id = reply_transaction.transaction_id
+
+        async def elector_input() -> Any | None:
+            state = await self.client.raw_get_account_state(ELECTOR)
+            cursor = state.last_transaction_id
+            for _ in range(8):
+                if cursor is None:
+                    return None
+                page = await self.client.raw_get_transactions(ELECTOR, cursor)
+                for transaction in page.transactions:
+                    message = transaction.in_msg
+                    if (message is None or message.source is None
+                            or not message.source.account_address
+                            or Address(message.source.account_address) != wallet.address
+                            or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)):
+                        continue
+                    body_slice = Cell.one_from_boc(message.msg_data.body).begin_parse()
+                    if (body_slice.remaining_bits >= 96
+                            and body_slice.load_uint(32) == 0x50517374
+                            and body_slice.load_uint(64) == query_id):
+                        return transaction
+                previous = page.previous_transaction_id
+                if previous is None or previous.lt >= cursor.lt:
+                    return None
+                cursor = previous
+            return None
+
+        input_transaction = await self.retry(
+            elector_input, timeout=30,
+            description="PQ duplicate key exact Elector inbound transaction",
+            predicate=lambda value: value is not None,
+        )
+        input_path = self.artifacts_dir / "pq-duplicate-key-elector-input-transaction.boc"
+        input_path.write_bytes(input_transaction.data)
+        input_id = input_transaction.transaction_id
+        self.event(
+            "pq_duplicate_key_reply_observed", election_id=election_id,
+            elect_close=elect_close, presend_chain_time=presend_chain_time,
+            elector_input_utime=input_transaction.utime,
+            elector_input_lt=input_id.lt if input_id is not None else None,
+            elector_input_hash=input_id.hash.hex() if input_id is not None else None,
+            elector_input_boc=self.file_provenance(input_path),
+            reply_utime=reply_transaction.utime,
+            reply_lt=receipt_id.lt if receipt_id is not None else None,
+            reply_hash=receipt_id.hash.hex() if receipt_id is not None else None,
+            reply_boc=self.file_provenance(receipt_path),
+            opcode=f"0x{opcode:08x}", reason=reason,
+        )
+        if input_transaction.utime >= elect_close:
+            raise AssertionError(
+                "PQ duplicate-key control reached Elector after election close: "
+                f"elector_input_utime={input_transaction.utime} elect_close={elect_close}"
+            )
         if opcode != 0xEE6F454C or reason != 4:
             raise AssertionError(
                 f"PQ duplicate held key returned opcode=0x{opcode:08x} reason={reason}, "
