@@ -70,8 +70,13 @@ def main(root: Path) -> None:
         completion,
         "ADNL_EXT_QUERY server_completion id=",
         "outcome=error response_sent=false",
-        "outcome=success response_sent=true",
+        "outcome=success response_ready=true",
+        "bool enqueued = send(",
+        "ADNL_EXT_QUERY server_answer_enqueue id=",
+        "enqueued=",
     )
+    if completion.index("ADNL_EXT_QUERY server_answer_enqueue id=") < completion.index("bool enqueued = send("):
+        fail("answer enqueue trace precedes the send queue result")
     answer = segment(root, "adnl/adnl-ext-client.cpp", "AdnlOutboundConnection::process_packet(", "AdnlExtMultiClientImpl::start_up(")
     require("client answer", answer, "ADNL_EXT_QUERY client_answer id=", "F->query_id_.to_hex()")
     query = (root / "adnl/adnl-query.cpp").read_text(encoding="utf-8")
@@ -83,7 +88,7 @@ def main(root: Path) -> None:
         "elapsed_ms=",
         "id_.to_hex()",
     )
-    print("ADNL_QUERY_ID_TRACE_OK: client create/refuse/transmit, server ingress/completion, and client answer/timeout retain id-tagged debug events")
+    print("ADNL_QUERY_ID_TRACE_OK: client create/refuse/transmit, server ingress/completion/answer enqueue, and client answer/timeout retain id-tagged debug events")
 
 
 if __name__ == "__main__":

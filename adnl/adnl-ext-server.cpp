@@ -84,9 +84,11 @@ void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::
     LOG(INFO) << "failed ext query: " << result.error();
     return;
   }
-  LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=success response_sent=true";
+  LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=success response_ready=true";
   auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, result.move_as_ok());
-  send(serialize_tl_object(answer, true));
+  bool enqueued = send(serialize_tl_object(answer, true));
+  LOG(DEBUG) << "ADNL_EXT_QUERY server_answer_enqueue id=" << query_id.to_hex()
+             << " enqueued=" << enqueued;
 }
 
 td::Status AdnlInboundConnection::process_init_packet(td::BufferSlice data) {

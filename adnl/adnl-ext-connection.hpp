@@ -51,7 +51,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   AdnlExtConnection(td::SocketFd fd, std::unique_ptr<Callback> callback, bool is_client)
       : buffered_fd_(std::move(fd)), callback_(std::move(callback)), is_client_(is_client) {
   }
-  void send(td::BufferSlice data);
+  bool send(td::BufferSlice data);
   void send_uninit(td::BufferSlice data);
   td::Status receive(td::ChainBufferReader &input, bool &exit_loop);
   virtual td::Status process_packet(td::BufferSlice data) = 0;
