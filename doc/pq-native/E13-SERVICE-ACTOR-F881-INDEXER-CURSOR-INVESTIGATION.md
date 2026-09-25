@@ -49,3 +49,15 @@ satisfy the gate. If the scanner fails to reach a target within the bounded
 window, the route fails explicitly. This is a cursor prerequisite, not a
 blind extension of the old 60-second poll. E13 stays OPEN pending a new
 committed-tree real-chain run and independent review.
+
+The first `9d754b254` cursor-gated run also failed before its deployment
+barrier could finish: one `/explorer/status` HTTP read hit the 8-second socket
+timeout, which the initial gate let escape. The retained console is
+`test/integration/.e13-service-9d754b254-20260925-console.typescript`
+(SHA-256 `c5875903bbdb6a8f91d19dc8493202c127f9bfb90d8d19c8342f588ac0977206`),
+with network artifacts in the same-stem `-network/` directory. Its raw HTTP
+transcript SHA-256 is `a373d8ea275cfeda89eb46ff000b6117c1479b374d58ccc25cb320a4b894fa3c`;
+it contains ten successful `/explorer/status` responses before the unrecorded
+transport timeout. This is neither a completed 300-second cursor timeout nor
+a lifecycle result. A follow-up records each transport error and retries only
+within the original total cursor deadline, with persistent-timeout refusal.

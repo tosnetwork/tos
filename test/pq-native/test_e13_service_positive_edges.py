@@ -87,6 +87,35 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                 self.assertFalse(ready)
                 self.assertTrue(record.call_args.args[1]["timed_out"])
 
+    def test_indexer_barrier_retries_transport_timeout_within_same_deadline(self):
+        covered = {"ok": True, "result": {"masterchain_indexed": 47}}
+        with (patch.object(e13, "http_get", side_effect=[TimeoutError("slow indexer"),
+                                                       (200, covered)]) as get,
+              patch.object(e13.asyncio, "sleep", new=AsyncMock()),
+              patch.object(e13, "record_jsonl") as record):
+            ready, _ = asyncio.run(e13.wait_indexer_through("deploy", 46))
+        self.assertTrue(ready)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(record.call_args_list[0].args[1]["label"], "deploy")
+        self.assertTrue(record.call_args_list[0].args[1]["poll_error"])
+        self.assertEqual(record.call_args.args[1]["target_mc_seqno"], 46)
+
+    def test_indexer_barrier_persistent_timeout_fails_closed(self):
+        with (patch.object(e13, "http_get", side_effect=TimeoutError("still slow")),
+              patch.object(e13.asyncio, "sleep", new=AsyncMock()),
+              patch.object(e13, "record_jsonl") as record):
+            ready, last = asyncio.run(e13.wait_indexer_through("deploy", 46, timeout=0.001))
+        self.assertFalse(ready)
+        self.assertEqual(last["transport_error"], "TimeoutError")
+        self.assertTrue(record.call_args.args[1]["timed_out"])
+
+    def test_http_timeout_is_retained_before_raising(self):
+        with patch.object(e13.urllib.request, "urlopen", side_effect=TimeoutError("slow")), \
+                patch.object(e13, "record_jsonl") as record:
+            with self.assertRaisesRegex(TimeoutError, "slow"):
+                e13.http_get("/explorer/status")
+        self.assertEqual(record.call_args.args[1]["transport_error"], "TimeoutError")
+
     def run_edge(self, *, wallet=None, service=None, receiver=None,
                  expected=50_000_000, expected_inbound=None, heads=None):
         usual = rows()

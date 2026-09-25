@@ -351,6 +351,10 @@ def http_get(path: str) -> tuple[int, dict]:
     except urllib.error.HTTPError as e:
         raw = e.read()
         status = e.code
+    except (TimeoutError, urllib.error.URLError) as error:
+        record_jsonl(HTTP_TRANSCRIPT, {"path": path, "status": None,
+                     "transport_error": type(error).__name__, "detail": str(error)})
+        raise
     record_jsonl(HTTP_TRANSCRIPT, {"path": path, "status": status,
                  "response_base64": base64.b64encode(raw).decode()})
     try:
@@ -400,7 +404,14 @@ async def wait_indexer_through(label: str, mc_seqno: int,
     deadline = time.monotonic() + timeout
     last: dict = {}
     while time.monotonic() < deadline:
-        status, body = http_get("/explorer/status")
+        try:
+            status, body = http_get("/explorer/status")
+        except (TimeoutError, urllib.error.URLError) as error:
+            last = {"transport_error": type(error).__name__,
+                    "detail": str(error), "target_mc_seqno": mc_seqno}
+            record_jsonl(INDEXER_EVIDENCE, {"label": label, "poll_error": True, **last})
+            await asyncio.sleep(1)
+            continue
         last = {"http_status": status, "body": body, "target_mc_seqno": mc_seqno}
         result = body.get("result") or {}
         indexed = result.get("masterchain_indexed")
