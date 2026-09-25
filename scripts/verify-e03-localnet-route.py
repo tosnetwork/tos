@@ -121,7 +121,8 @@ def demo(workdir, rpc_port, control_port, base_port):
 
 
 def toscan(workdir, tosctl, rpc_port, control_port, explorer_port, base_port):
-    for port in (rpc_port, control_port, explorer_port, *range(base_port, base_port + 17)):
+    proxy_port = explorer_port + 1
+    for port in (rpc_port, control_port, explorer_port, proxy_port, *range(base_port, base_port + 17)):
         checked_port(port)
     workdir.mkdir(parents=True, exist_ok=False)
     output = workdir / "toscan.stdout.log"
@@ -130,11 +131,33 @@ def toscan(workdir, tosctl, rpc_port, control_port, explorer_port, base_port):
                "--workdir", str(workdir / "network"), "--tosctl", str(tosctl),
                "--rpc-port", str(rpc_port), "--control-port", str(control_port),
                "--explorer-port", str(explorer_port), "--base-port", str(base_port)]
-    environment = {**os.environ, "E03_HTTP_TRANSCRIPT": str(transcript)}
+    environment = {**os.environ, "E03_HTTP_TRANSCRIPT": str(transcript),
+                   "E03_TOSCTL_RPC_ORIGIN": f"http://127.0.0.1:{proxy_port}"}
     environment["PYTHONPATH"] = str(REPO / "test/tostester/src") + os.pathsep + environment.get("PYTHONPATH", "")
-    with output.open("wb") as log:
-        completed = subprocess.run(command, cwd=REPO, env=environment, stdout=log,
-                                   stderr=subprocess.STDOUT, timeout=900)
+    proxy_environment = {**environment,
+                         "E03_HTTP_TRANSCRIPT": str(workdir / "tosctl-http-transcript.jsonl")}
+    with (workdir / "proxy.stdout.log").open("wb") as proxy_log, output.open("wb") as log:
+        proxy = subprocess.Popen(
+            [sys.executable, "-u", str(REPO / "scripts/e03_http_proxy.py"),
+             "--port", str(proxy_port), "--upstream", f"http://127.0.0.1:{rpc_port}"],
+            cwd=REPO, env=proxy_environment, stdout=proxy_log, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while True:
+                if proxy.poll() is not None:
+                    raise RuntimeError(f"E03 tosctl HTTP proxy exited {proxy.returncode}")
+                with socket.socket() as sock:
+                    if sock.connect_ex(("127.0.0.1", proxy_port)) == 0:
+                        break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("E03 tosctl HTTP proxy did not listen")
+                time.sleep(0.05)
+            completed = subprocess.run(command, cwd=REPO, env=environment, stdout=log,
+                                       stderr=subprocess.STDOUT, timeout=900)
+        finally:
+            stop(proxy)
     assert completed.returncode == 0, f"TOSCAN route exited {completed.returncode}"
     assert "TOSCAN REAL-CHAIN GATE: PASS" in output.read_text(), "TOSCAN did not report its route gate"
     return {"command": command, "exit_code": completed.returncode}

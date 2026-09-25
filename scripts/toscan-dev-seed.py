@@ -101,7 +101,10 @@ class Seeder:
                 env=self.env,
             )
         config = self.config_data()
-        config["chain_rpc"] = {"urls": [f"{self.rpc}/"], "api_key": None}
+        # E03 alone routes tosctl through a loopback recorder. Seeder's own
+        # observations still query the node directly and remain independent.
+        tosctl_rpc = os.environ.get("E03_TOSCTL_RPC_ORIGIN", self.rpc).rstrip("/")
+        config["chain_rpc"] = {"urls": [f"{tosctl_rpc}/"], "api_key": None}
         config["elections"] = None
         config["voting"] = None
         config["master_wallet"] = None
