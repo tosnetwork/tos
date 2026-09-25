@@ -9778,33 +9778,131 @@ pub(crate) async fn send_wallet_message_with_state_init(
         .await?;
     let boc = write_boc(&msg)?;
     let exact_hash = read_single_root_boc(&boc)?.hash(0);
-    rpc_client.send_boc(&boc).await?;
-    let confirmation = tokio::time::timeout(DEPLOY_TIMEOUT, async {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            let current = rpc_client.get_address_information(owner_address).await?;
-            if current.last_transaction_id.lt <= before.last_transaction_id.lt {
-                continue;
+    rpc_client.send_boc(&boc).await.map_err(|error| anyhow::anyhow!(
+        "deployment message sha256:{} may have been submitted: {error}; inspect it before retrying",
+        hex::encode(exact_hash.as_slice())))?;
+    await_deploy_confirmation(
+        DEPLOY_TIMEOUT,
+        tokio::time::Duration::from_secs(2),
+        || {
+            let rpc_client = rpc_client.clone();
+            let exact_hash = exact_hash.clone();
+            let destination_for_confirmation = destination_for_confirmation.clone();
+            async move {
+                let current = rpc_client.get_address_information(owner_address).await?;
+                if current.last_transaction_id.lt <= before.last_transaction_id.lt {
+                    return Ok(false);
+                }
+                let cursor_hash = base64::engine::general_purpose::STANDARD
+                    .encode(&current.last_transaction_id.hash);
+                scan_deploy_wallet_history(
+                    current.last_transaction_id.lt,
+                    cursor_hash,
+                    before.last_transaction_id.lt,
+                    &exact_hash,
+                    &destination_for_confirmation,
+                    |lt, hash| {
+                        let rpc_client = rpc_client.clone();
+                        async move {
+                            Ok(rpc_client.get_transactions(owner_address, lt, &hash, 10)
+                                .await?.transactions)
+                        }
+                    },
+                ).await
             }
-            let cursor_hash = base64::engine::general_purpose::STANDARD
-                .encode(&current.last_transaction_id.hash);
-            let page = rpc_client
-                .get_transactions(owner_address, current.last_transaction_id.lt, &cursor_hash, 10)
-                .await?;
-            for raw in &page.transactions {
-                if raw.lt <= before.last_transaction_id.lt {
-                    break;
-                }
-                if exact_deploy_wallet_transaction(raw, &exact_hash, &destination_for_confirmation)? {
-                    return Ok(());
-                }
+        },
+    ).await.map_err(|last_error| anyhow::anyhow!(
+        "deployment message sha256:{} was submitted but its exact wallet transaction is not visible; last read error: {last_error}; inspect it before retrying",
+        hex::encode(exact_hash.as_slice())))
+}
+
+async fn await_deploy_confirmation<F, Fut>(
+    deadline: tokio::time::Duration,
+    poll_interval: tokio::time::Duration,
+    mut observe: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    let mut last_error = None;
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            tokio::time::sleep(poll_interval).await;
+            match observe().await {
+                Ok(true) => return,
+                Ok(false) => {},
+                Err(error) => last_error = Some(error.to_string()),
             }
         }
+    }).await;
+    match result {
+        Ok(()) => Ok(()),
+        Err(_) => Err(last_error.unwrap_or_else(|| "none".to_owned())),
+    }
+}
+
+async fn scan_deploy_wallet_history<F, Fut>(
+    mut cursor_lt: u64,
+    mut cursor_hash: String,
+    baseline_lt: u64,
+    expected_external_hash: &chain_block::UInt256,
+    destination: &MsgAddressInt,
+    mut fetch_page: F,
+) -> anyhow::Result<bool>
+where
+    F: FnMut(u64, String) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<RawTransaction>>>,
+{
+    loop {
+        let page = fetch_page(cursor_lt, cursor_hash).await?;
+        match scan_deploy_wallet_page(&page, baseline_lt, expected_external_hash, destination)? {
+            DeployWalletPage::Confirmed => return Ok(true),
+            DeployWalletPage::ReachedBaseline => return Ok(false),
+            DeployWalletPage::Next { lt, hash } => {
+                anyhow::ensure!(lt < cursor_lt, "wallet transaction pagination did not advance");
+                cursor_lt = lt;
+                cursor_hash = hash;
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DeployWalletPage {
+    Confirmed,
+    ReachedBaseline,
+    Next { lt: u64, hash: String },
+}
+
+fn scan_deploy_wallet_page(
+    transactions: &[RawTransaction],
+    baseline_lt: u64,
+    expected_external_hash: &chain_block::UInt256,
+    destination: &MsgAddressInt,
+) -> anyhow::Result<DeployWalletPage> {
+    anyhow::ensure!(!transactions.is_empty(), "wallet transaction page was empty above baseline");
+    for raw in transactions {
+        if raw.lt <= baseline_lt {
+            return Ok(DeployWalletPage::ReachedBaseline);
+        }
+        if exact_deploy_wallet_transaction(raw, expected_external_hash, destination)? {
+            return Ok(DeployWalletPage::Confirmed);
+        }
+    }
+    let last = transactions.last().unwrap();
+    let boc = base64::engine::general_purpose::STANDARD.decode(&last.data)?;
+    let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc)?)?;
+    anyhow::ensure!(transaction.logical_time() == last.lt,
+                    "wallet transaction page identity differs from its BOC");
+    let next_lt = transaction.prev_trans_lt();
+    if next_lt <= baseline_lt {
+        return Ok(DeployWalletPage::ReachedBaseline);
+    }
+    Ok(DeployWalletPage::Next {
+        lt: next_lt,
+        hash: base64::engine::general_purpose::STANDARD.encode(transaction.prev_trans_hash().as_slice()),
     })
-    .await;
-    confirmation.map_err(|_| anyhow::anyhow!(
-        "deployment message sha256:{} was submitted but its exact wallet transaction is not visible; inspect it before retrying",
-        hex::encode(exact_hash.as_slice())))?
 }
 
 fn exact_deploy_wallet_transaction(
@@ -9884,6 +9982,89 @@ mod exact_deploy_wallet_transaction_tests {
         raw.data = base64::engine::general_purpose::STANDARD
             .encode(write_boc(&transaction.serialize().unwrap()).unwrap());
         assert!(exact_deploy_wallet_transaction(&raw, &hash, &destination).is_err());
+    }
+
+    #[tokio::test]
+    async fn exact_broadcast_pages_past_ten_newer_wallet_transactions() {
+        let (target, hash, destination) = retained_wallet_transaction();
+        let target_boc = base64::engine::general_purpose::STANDARD
+            .decode(&target.data).unwrap();
+        let target_cell = read_single_root_boc(&target_boc).unwrap();
+        let target_transaction = Transaction::construct_from_cell(target_cell.clone()).unwrap();
+        let mut decoys = Vec::new();
+        for offset in (1..=10).rev() {
+            let mut transaction = target_transaction.clone();
+            let lt = target.lt + offset;
+            transaction.set_logical_time(lt);
+            transaction.set_in_msg_cell(chain_block::Cell::default());
+            transaction.set_prev_trans_lt(lt - 1);
+            if offset == 1 {
+                transaction.set_prev_trans_hash(target_cell.hash(0));
+            }
+            decoys.push(RawTransaction {
+                lt,
+                data: base64::engine::general_purpose::STANDARD
+                    .encode(write_boc(&transaction.serialize().unwrap()).unwrap()),
+                ..target.clone()
+            });
+        }
+        assert_eq!(scan_deploy_wallet_page(&decoys, 69_000_003, &hash, &destination).unwrap(),
+                   DeployWalletPage::Next {
+                       lt: target.lt,
+                       hash: base64::engine::general_purpose::STANDARD.encode(target_cell.hash(0).as_slice()),
+                   });
+        assert_eq!(scan_deploy_wallet_page(&[target], 69_000_003, &hash, &destination).unwrap(),
+                   DeployWalletPage::Confirmed);
+        let (target, hash, destination) = retained_wallet_transaction();
+        let page_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let visited = page_count.clone();
+        assert!(scan_deploy_wallet_history(
+            decoys[0].lt,
+            "newest-hash".to_owned(),
+            69_000_003,
+            &hash,
+            &destination,
+            move |_lt, _hash| {
+                let index = visited.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let page = if index == 0 { decoys.clone() } else { vec![target.clone()] };
+                async move { Ok(page) }
+            },
+        ).await.unwrap());
+        assert_eq!(page_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn exact_broadcast_read_error_is_not_a_false_confirmation() {
+        let (raw, hash, destination) = retained_wallet_transaction();
+        let mut invalid = raw.clone();
+        invalid.data = "not a BOC".to_owned();
+        assert!(scan_deploy_wallet_page(&[invalid], 69_000_003, &hash, &destination).is_err());
+        assert_eq!(scan_deploy_wallet_page(&[raw], 69_000_003, &hash, &destination).unwrap(),
+                   DeployWalletPage::Confirmed);
+    }
+
+    #[tokio::test]
+    async fn exact_broadcast_retries_read_errors_without_reporting_false_success() {
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = attempts.clone();
+        await_deploy_confirmation(
+            tokio::time::Duration::from_millis(100),
+            tokio::time::Duration::from_millis(1),
+            move || {
+                let attempt = observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    if attempt == 0 { anyhow::bail!("temporary RPC read error") }
+                    Ok(true)
+                }
+            },
+        ).await.unwrap();
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let error = await_deploy_confirmation(
+            tokio::time::Duration::from_millis(10),
+            tokio::time::Duration::from_millis(1),
+            || async { anyhow::bail!("persistent BOC read error") },
+        ).await.unwrap_err();
+        assert_eq!(error, "persistent BOC read error");
     }
 }
 

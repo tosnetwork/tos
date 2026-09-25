@@ -145,4 +145,19 @@ hash and instructs inspection before retry; the CLI does not resend it. The
 unit fixture is the public wallet transaction BOC from this 6f6 run
 (`e03_wallet_deploy_tx.b64`, SHA-256
 `c0f1c81328e17a50cd40a06f5e74a27bf9e99a996e5e5925286a34427ba803ab`).
+The follow-up closes two review boundaries before a new live run: it follows
+the transaction predecessor cursor across 10-entry pages until the pre-send
+wallet LT, and it retries post-send account/page/BOC read failures inside the
+same deadline. Any unconfirmed terminal error retains the exact message hash
+and forbids blind resubmission. A matched successful wallet action proves the
+payment to the destination was emitted, **not** that the registry/service
+contract activated; the TOSCAN seed still checks the target account effect.
 This change still needs a new exact-tree full-route run before E03 can close.
+
+Local controls for the pagination/retry follow-up used the retained transaction
+BOC: five focused Rust tests passed. Replacing the `Next` page transition with
+`Ok(false)` made the >10-transactions test fail at its confirmation assertion;
+restoring it passed. Returning from the observation loop on its first read
+error made the transient-error test fail at `attempts: 1 != 2`; restoring it
+passed. Neither mutation was committed. These are local behavioral controls,
+not yet a live-route result.
