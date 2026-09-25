@@ -301,12 +301,29 @@ def main() -> int:
         fail("PQ first-round negatives no longer require unchanged participation")
     duplicate = method(tree, "assert_duplicate_pq_key_refused")
     duplicate_text = ast.unparse(duplicate)
+    elector_input = method(tree, "exact_pq_elector_input")
+    elector_input_text = ast.unparse(elector_input)
     if ("reason != 4" not in duplicate_text or "after != before" not in duplicate_text
             or "input_transaction.utime >= elect_close" not in duplicate_text
             or "pq-duplicate-key-elector-input-transaction.boc" not in duplicate_text
-            or "Address(message.source.account_address) != wallet.address" not in duplicate_text
-            or "body_slice.load_uint(64) == query_id" not in duplicate_text):
+            or "self.exact_pq_elector_input(wallet.address, query_id)" not in duplicate_text
+            or "Address(message.source.account_address) != source" not in elector_input_text
+            or "body_slice.load_uint(64) == query_id" not in elector_input_text):
         fail("PQ duplicate held-key negative no longer pins an open-window exact Elector input, reason 4, and unchanged stake")
+    positive = method(tree, "submit_pq_candidate")
+    positive_text = ast.unparse(positive)
+    inbound_guards = [node for node in ast.walk(positive) if isinstance(node, ast.If)
+                      and ast.unparse(node.test) == "elector_input.utime >= elect_close"]
+    if (one_call(positive, "require_open_pq_election") >= one_call(positive, "send_from_wallet")
+            or "self.exact_pq_elector_input(controller.address, query_id)" not in positive_text
+            or len(inbound_guards) != 1
+            or "pq_candidate_elector_input_observed" not in positive_text):
+        fail("each PQ positive stake must bind a pre-send window to its exact Elector inbound time")
+    window = method(tree, "require_open_pq_election")
+    if not any(isinstance(node, ast.If) and ast.unparse(node.test) ==
+               "elect_at != election_id or elect_close - chain_time <= 30"
+               for node in ast.walk(window)):
+        fail("positive PQ stake lacks the same-ID live election pre-send margin")
     recovery = method(tree, "assert_pq_early_recovery_no_credit")
     recovery_text = ast.unparse(recovery)
     if "compute_returned_stake" not in recovery_text or "after_credit != 0" not in recovery_text:

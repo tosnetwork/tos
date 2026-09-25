@@ -41,7 +41,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from ipaddress import ip_address
 from pathlib import Path
@@ -198,6 +198,15 @@ PROFILES = {
         accelerated=False,
     ),
 }
+
+
+def f01_profile(profile: RehearsalProfile, enabled: bool) -> RehearsalProfile:
+    """Give only the opt-in F01 Stage-A run time for four serial stake receipts."""
+    if not enabled:
+        return profile
+    if profile.stage != "a":
+        raise ValueError("F01 extended election window requires Stage A")
+    return replace(profile, label="Stage A F01 extended window", elect_start_before=240)
 
 
 @dataclass
@@ -2911,6 +2920,9 @@ class ValidatorElectionRehearsal:
             index, election_id, query_id,
             retry_restart_transients=retry_restart_transients,
         )
+        elect_close = await self.require_open_pq_election(
+            election_id, f"round-{round_number}-validator-{index + 1}",
+        )
         body_path = self.artifacts_dir / f"pq-round-{round_number}-validator-{index + 1}-pool-order.boc"
         body_path.parent.mkdir(parents=True, exist_ok=True)
         body_path.write_bytes(body.to_boc())
@@ -2921,6 +2933,31 @@ class ValidatorElectionRehearsal:
         opcode, detail = await self.wait_pq_pool_elector_reply(
             index, query_id, description=f"validator {index + 1} elector answer to pool"
         )
+        elector_input = await self.retry(
+            lambda: self.exact_pq_elector_input(controller.address, query_id),
+            timeout=30, description=f"validator {index + 1} exact Elector inbound",
+            predicate=lambda value: value is not None,
+        )
+        input_path = self.artifacts_dir / (
+            f"pq-round-{round_number}-validator-{index + 1}-elector-input-transaction.boc"
+        )
+        input_path.write_bytes(elector_input.data)
+        input_id = elector_input.transaction_id
+        self.event(
+            "pq_candidate_elector_input_observed", validator=index + 1,
+            round=round_number, query_id=query_id, election_id=election_id,
+            elect_close=elect_close, elector_input_utime=elector_input.utime,
+            elector_input_lt=input_id.lt if input_id is not None else None,
+            elector_input_hash=input_id.hash.hex() if input_id is not None else None,
+            elector_input_boc=self.file_provenance(input_path),
+            elector_reply_opcode=f"0x{opcode:08x}", elector_reply_detail=detail,
+        )
+        if elector_input.utime >= elect_close:
+            raise AssertionError(
+                f"PQ validator {index + 1} Elector inbound was after election close: "
+                f"query_id={query_id} utime={elector_input.utime} elect_close={elect_close} "
+                f"reply=0x{opcode:08x}/{detail}"
+            )
         if opcode != 0xF374484C:
             raise AssertionError(
                 f"PQ validator {index + 1} did not receive STAKE_ACCEPTED: "
@@ -2950,6 +2987,55 @@ class ValidatorElectionRehearsal:
             "elector_reply_opcode": f"0x{opcode:08x}",
             "effective_stake_nanotos": actual,
         }
+
+    async def require_open_pq_election(self, election_id: int, label: str) -> int:
+        output = await self.runmethod("participant_list_extended")
+        path = self.artifacts_dir / f"pq-{label}-presend-window.txt"
+        path.write_text(output)
+        window = re.search(r"result:\s*\[\s*(\d+)\s+(\d+)", output)
+        if window is None:
+            raise RuntimeError(f"PQ {label} has no readable Elector acceptance window")
+        elect_at, elect_close = map(int, window.groups())
+        chain_time = await self.chain_time()
+        self.event(
+            "pq_candidate_presend_window", label=label,
+            election_id=election_id, elect_at=elect_at,
+            elect_close=elect_close, chain_time=chain_time,
+            raw_window=self.file_provenance(path),
+        )
+        if elect_at != election_id or elect_close - chain_time <= 30:
+            raise RuntimeError(
+                f"PQ {label} lacks an open election acceptance window: "
+                f"target={election_id} elect_at={elect_at} "
+                f"elect_close={elect_close} chain_time={chain_time}"
+            )
+        return elect_close
+
+    async def exact_pq_elector_input(self, source: Address, query_id: int) -> Any | None:
+        assert self.client is not None
+        state = await self.client.raw_get_account_state(ELECTOR)
+        cursor = state.last_transaction_id
+        for _ in range(32):
+            if cursor is None:
+                return None
+            page = await self.client.raw_get_transactions(ELECTOR, cursor)
+            for transaction in page.transactions:
+                message = transaction.in_msg
+                if (message is None or message.source is None
+                        or not message.source.account_address
+                        or Address(message.source.account_address) != source
+                        or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)):
+                    continue
+                body_slice = Cell.one_from_boc(message.msg_data.body).begin_parse()
+                if (body_slice.remaining_bits >= 96
+                        and body_slice.load_uint(32) == 0x50517374
+                        and body_slice.load_uint(64) == query_id):
+                    return transaction
+            previous = page.previous_transaction_id
+            if previous is None or previous.lt >= cursor.lt:
+                return None
+            cursor = previous
+        return None
 
     async def wait_pq_pool_elector_reply(
         self, index: int, query_id: int, *, description: str
@@ -3499,33 +3585,8 @@ class ValidatorElectionRehearsal:
         receipt_path.write_bytes(reply_transaction.data)
         receipt_id = reply_transaction.transaction_id
 
-        async def elector_input() -> Any | None:
-            state = await self.client.raw_get_account_state(ELECTOR)
-            cursor = state.last_transaction_id
-            for _ in range(8):
-                if cursor is None:
-                    return None
-                page = await self.client.raw_get_transactions(ELECTOR, cursor)
-                for transaction in page.transactions:
-                    message = transaction.in_msg
-                    if (message is None or message.source is None
-                            or not message.source.account_address
-                            or Address(message.source.account_address) != wallet.address
-                            or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)):
-                        continue
-                    body_slice = Cell.one_from_boc(message.msg_data.body).begin_parse()
-                    if (body_slice.remaining_bits >= 96
-                            and body_slice.load_uint(32) == 0x50517374
-                            and body_slice.load_uint(64) == query_id):
-                        return transaction
-                previous = page.previous_transaction_id
-                if previous is None or previous.lt >= cursor.lt:
-                    return None
-                cursor = previous
-            return None
-
         input_transaction = await self.retry(
-            elector_input, timeout=30,
+            lambda: self.exact_pq_elector_input(wallet.address, query_id), timeout=30,
             description="PQ duplicate key exact Elector inbound transaction",
             predicate=lambda value: value is not None,
         )
@@ -3862,6 +3923,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="'a' for accelerated timing or 'b' for unmodified production timing",
     )
     parser.add_argument(
+        "--f01-extended-election-window", action="store_true",
+        help="F01 launch-gate Stage A only: elect_start_before=240 instead of 180",
+    )
+    parser.add_argument(
         "--base-port",
         type=int,
         default=26_000,
@@ -3948,7 +4013,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 async def async_main() -> int:
     args = parse_args()
-    profile = PROFILES[args.stage]
+    if args.f01_extended_election_window and args.mode not in ("launch-gate", "pq-launch-gate"):
+        raise ValueError("F01 extended election window requires launch-gate mode")
+    profile = f01_profile(PROFILES[args.stage], args.f01_extended_election_window)
     if args.mode in ("experiment", "transfer-soak") and not profile.accelerated:
         raise ValueError(f"{args.mode} mode requires the accelerated Stage-A profile")
     experiment = None
