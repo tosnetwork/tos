@@ -81,3 +81,42 @@ observation failure, not evidence that B's response changed A. The follow-up
 uses the existing bounded state predicate poll for A and makes that poll
 retry only transport errors within its original deadline. It never accepts
 504 as the expected state; persistent 504 remains red.
+
+The committed `faaefd59d278f7ebc7f4921a1730007469a05aec` follow-up ran
+the same serial, single-validator local route with
+`TOS_BUILD_DIR=build PYTHONPATH=test/tostester/src uv run python -u scripts/service-actor-e2e.py`
+under `script -q -e -f -c`. The wrapper exited **0** with **90 PASS, zero
+FAIL**, and `RESULT: ALL PASS`. Its in-run `provenance.json` binds the exact
+script, contract, `tosctl`, validator-engine and other binary hashes to that
+source commit. The fixed cursor gates passed before discovery and request
+classification. In particular, after B was indexed as `responded`, A's HTTP
+status was observed as `pending` before A's own response; A and B were later
+both indexed as `responded`. The raw HTTP transcript contains three HTTP 504
+responses for A's request endpoint before the successful pending observation;
+they were retried, not counted as a pending state. It also records 22
+`/explorer/status` socket timeouts during cursor polling. The daemon's
+separate contracts task continued to log its unfunded master wallet; the
+indexer nevertheless advanced through every required fixed height. During
+the script's deliberate daemon shutdown, `tosctld` required a kill after the
+grace period and exited `-9`; this is visible in the console and is not
+presented as an independent graceful-shutdown proof.
+
+| Retained artifact | SHA-256 |
+| --- | --- |
+| `test/integration/.e13-service-faaefd59d-20260925-console.typescript` | `8bb6c5598e8cf9492ff43eee7ab299f9c8b92ceb15e5dbf73399e8f9eff2ad00` |
+| `-network/provenance.json` | `3d8f42d6e54f7bef3f993da124585dd8e39d71ff19e483cfbf5179582749aaf9` |
+| `-network/indexer-evidence.jsonl` | `14be75408eaa5cc8e61ce67a3bd724adf68c85c8c318f3000ba6b466e4e34060` |
+| `-network/positive-evidence.jsonl` | `15fde09b05238cb84e12d430778c16affc085b066c0a1a10b45d4bd619e5c417` |
+| `-network/negative-evidence.jsonl` | `ed4439753b882def3053d94ba4b1e211133e4aba160818287f9483777aa1750b` |
+| `-network/http-transcript.jsonl` | `8a4f33c2f4087fe18bba83005f42bdaeb504d767b3a6d2978e5a872bbbb0a52f` |
+| `-network/rpc-transcript.jsonl` | `d01c06fce7586a3cb852e31876525a382955d1fa76c074d22b56a917f9e4b55c` |
+| `-network/cli-transcript.jsonl` | `09625f650a824e9d83c97aca1981130144f8ab8f0a719e82c2410e398a882e03` |
+| `-network/tosctld-service.log` | `4ef374c240bce17614ac9f5721ac0d456066d48f015a6576e429784a1f1016cd` |
+| `-network/tosctl-indexer.db` | `d7fb6c8ad83dcf15b3b60036016c955543670c9d11b32158043f0099e94e58ec` |
+
+The `-network/` files are all under
+`test/integration/.e13-service-faaefd59d-20260925-network/`. The test
+processes exited and no validator or service daemon was left running. This
+is local route evidence, **not** multi-validator, transport-authentication,
+release-scale, or arbitrary crash-recovery evidence. E13 remains OPEN until
+independent raw review and the owner's scoped signoff.
