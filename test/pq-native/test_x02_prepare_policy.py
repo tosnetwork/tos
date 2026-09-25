@@ -94,6 +94,26 @@ class PolicyFreezeTests(unittest.TestCase):
             prepare.build_policy(raw, fixture["source_commit"],
                                  fixture["source_files"], fixture["nodes"])
 
+    def test_duplicate_raw_stderr_pipe_is_rejected(self):
+        fixture, manifest = native_fixture()
+        fixture["nodes"][1]["input_link"] = fixture["nodes"][0]["input_link"]
+        manifest["validators"][1]["raw_log_stream"]["input_link"] = (
+            manifest["validators"][0]["raw_log_stream"]["input_link"])
+        raw = json.dumps(manifest, sort_keys=True).encode()
+        with self.assertRaisesRegex(ValueError, "alias the same stderr input pipe"):
+            prepare.build_policy(raw, fixture["source_commit"],
+                                 fixture["source_files"], fixture["nodes"])
+
+    def test_wrong_stage_a_name_or_index_is_rejected(self):
+        fixture, manifest = native_fixture()
+        for wrong in ("node1", "node-2", "node-5"):
+            mutated = copy.deepcopy(manifest)
+            mutated["validators"][0]["node_name"] = wrong
+            raw = json.dumps(mutated, sort_keys=True).encode()
+            with self.assertRaisesRegex(ValueError, "name/index|duplicate Stage A"):
+                prepare.build_policy(raw, fixture["source_commit"],
+                                     fixture["source_files"], fixture["nodes"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -99,6 +99,16 @@ def full_id(raw: dict, name: str) -> tuple[int, str, int, str, str]:
     return wc, SHARD, seq, hash_value(root, f"{name} root"), hash_value(file_hash, f"{name} file")
 
 
+def canonical_node_name(raw_name: object, validator_index: object) -> str:
+    """Map only Stage A's explicit node-1..4 identities to X02's node1..4."""
+    require(isinstance(raw_name, str), "Stage A validator name is absent")
+    match = re.fullmatch(r"node-([1-4])", raw_name)
+    require(match is not None and type(validator_index) is int
+            and validator_index == int(match.group(1)),
+            "Stage A validator name/index does not map to one X02 node")
+    return f"node{validator_index}"
+
+
 def validate_policy(policy: dict) -> None:
     require(policy.get("schema") == "tos.x02.fault-policy.v1", "wrong policy schema")
     require(isinstance(policy.get("source_commit"), str)
@@ -129,8 +139,12 @@ def validate_policy(policy: dict) -> None:
     require(manifest_zero.get("root_hash_hex", "").lower() == zero["root_hash"].lower()
             and manifest_zero.get("file_hash_hex", "").lower() == zero["file_hash"].lower(),
             "Stage A readiness zerostate differs")
-    manifest_nodes = {item.get("node_name"): item for item in manifest.get("validators", [])
-                      if isinstance(item, dict)}
+    manifest_nodes = {}
+    for item in manifest.get("validators", []):
+        require(isinstance(item, dict), "malformed Stage A validator entry")
+        canonical = canonical_node_name(item.get("node_name"), item.get("validator_index"))
+        require(canonical not in manifest_nodes, "duplicate Stage A validator identity")
+        manifest_nodes[canonical] = item
     nodes = policy.get("nodes")
     require(isinstance(nodes, list) and len(nodes) == 4, "policy requires four nodes")
     names, pids, rpc_urls, endpoints = set(), set(), set(), set()
@@ -171,7 +185,7 @@ def validate_policy(policy: dict) -> None:
     require(len({node["adnl_id"].lower() for node in nodes}) == 4,
             "ADNL identities are not distinct")
     if policy.get("log_source") == "native-file":
-        log_paths, log_inodes, db_inodes = set(), set(), set()
+        log_paths, log_inodes, db_inodes, input_links = set(), set(), set(), set()
         harnesses = set()
         for node in nodes:
             path = Path(node.get("log_path", ""))
@@ -207,6 +221,9 @@ def validate_policy(policy: dict) -> None:
                     and isinstance(stream.get("input_link"), str)
                     and PIPE_FD.fullmatch(stream["input_link"]) is not None,
                     "Stage A does not bind this stderr pipe to this log writer FD")
+            require(stream["input_link"] not in input_links,
+                    "two validators alias the same stderr input pipe")
+            input_links.add(stream["input_link"])
             harnesses.add((pid, start))
         require(len(harnesses) == 1, "validators have different log-streamer harnesses")
     else:

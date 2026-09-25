@@ -31,7 +31,8 @@ def fixed_source() -> tuple[str, dict[str, str]]:
 
 
 def live_node(item: dict) -> dict:
-    name, pid = item["node_name"], item["process_id"]
+    name = x02.canonical_node_name(item.get("node_name"), item.get("validator_index"))
+    pid = item["process_id"]
     directory = Path(item["node_data_dir"]).resolve(strict=True)
     log = directory / "log"
     log_stat = log.stat()

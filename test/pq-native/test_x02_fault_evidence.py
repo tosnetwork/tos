@@ -96,7 +96,8 @@ def policy():
                 "network": {"zero_state": {"masterchain": {
                     "root_hash_hex": result["zerostate"]["root_hash"],
                     "file_hash_hex": result["zerostate"]["file_hash"]}}},
-                "validators": [{"node_name": node["name"],
+                "validators": [{"node_name": f"node-{node['name'][-1]}",
+                                "validator_index": int(node["name"][-1]),
                                 "consensus_key_id_hex": node["consensus_key_id"],
                                 "adnl_id_hex": node["adnl_id"],
                                 "rpc_url": node["rpc_url"],
