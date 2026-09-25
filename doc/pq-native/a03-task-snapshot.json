@@ -1,0 +1,440 @@
+{
+  "schema": 1,
+  "memo_commit": "331c92eccf13423258653c31c627cd5211922e72",
+  "task_table_path": "pq-native/N6-AGENT-WORK-UNITS-20260924.md",
+  "task_table_sha256": "ff04af53b730d466efa57c2b5285daeef890a01ab63d924c5b57a0022c7d9eaf",
+  "tasks": [
+    {
+      "id": "M01",
+      "lane": "P0-1 Merkle",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "M02",
+      "lane": "P0-1 Merkle",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "N01",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N02",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N03",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N04",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N05",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N06",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N07",
+      "lane": "P0-2 N5",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "N08",
+      "lane": "P0-2 N5",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E01",
+      "lane": "P0-3 retained E2E",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E17",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E02",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E03",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E04",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E05",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E06",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E07",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E08",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E09",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E10",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "E11",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E12",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E13",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E14",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E15",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "E16",
+      "lane": "P0-3 retained E2E",
+      "owner": "PQ + PG + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "T01",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T02",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T03",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T04",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T05",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T06",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T07",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T08",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T09",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T10",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T11",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T12",
+      "lane": "P0-4 T3",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "T13",
+      "lane": "P0-4 T3",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "C01",
+      "lane": "P0-5 共识语义",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "C02",
+      "lane": "P0-5 共识语义",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "C03",
+      "lane": "P0-5 共识语义",
+      "owner": "PQ／Mac",
+      "status": "✅"
+    },
+    {
+      "id": "C04",
+      "lane": "P0-5 共识语义",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "C05",
+      "lane": "P0-5 共识语义",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "C09",
+      "lane": "P0-5 共识语义",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "C10",
+      "lane": "P0-5 共识语义",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "C06",
+      "lane": "P0-5 共识语义",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "C07",
+      "lane": "P0-5 共识语义",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "C08",
+      "lane": "P0-5 共识语义",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "F01",
+      "lane": "F-1 VR-1",
+      "owner": "PQ + PG + Mac",
+      "status": "✅"
+    },
+    {
+      "id": "F02",
+      "lane": "F-1 VR-1",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "F03",
+      "lane": "F-1 VR-1",
+      "owner": "Mac",
+      "status": "◇"
+    },
+    {
+      "id": "X01",
+      "lane": "F-2 VR-2",
+      "owner": "PQ + PG + Mac",
+      "status": "▶"
+    },
+    {
+      "id": "X02",
+      "lane": "F-2 VR-2",
+      "owner": "PQ + PG + Mac",
+      "status": "▶"
+    },
+    {
+      "id": "X03",
+      "lane": "F-2 VR-2",
+      "owner": "Mac",
+      "status": "□"
+    },
+    {
+      "id": "X04",
+      "lane": "F-2 VR-2",
+      "owner": "Mac",
+      "status": "◇"
+    },
+    {
+      "id": "L01",
+      "lane": "D-1 长尾/Skip",
+      "owner": "Mac",
+      "status": "◇"
+    },
+    {
+      "id": "Q01",
+      "lane": "D-2 Lite query",
+      "owner": "PQ + PG + Mac",
+      "status": "▶"
+    },
+    {
+      "id": "Q02",
+      "lane": "D-2 Lite query",
+      "owner": "PQ",
+      "status": "□"
+    },
+    {
+      "id": "S01",
+      "lane": "R-1 发布测量",
+      "owner": "Mac",
+      "status": "◇"
+    },
+    {
+      "id": "Z01",
+      "lane": "R-2 Genesis",
+      "owner": "PQ",
+      "status": "□"
+    },
+    {
+      "id": "Z02",
+      "lane": "R-2 Genesis",
+      "owner": "PQ",
+      "status": "□"
+    },
+    {
+      "id": "Z03",
+      "lane": "R-2 Genesis",
+      "owner": "Mac",
+      "status": "□"
+    },
+    {
+      "id": "A01",
+      "lane": "G-1 账本",
+      "owner": "PQ",
+      "status": "✅"
+    },
+    {
+      "id": "A02",
+      "lane": "G-1 账本",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "A03",
+      "lane": "G-1 账本",
+      "owner": "PG + PQ + Mac",
+      "status": "▶"
+    },
+    {
+      "id": "A04",
+      "lane": "G-1 账本",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "I01",
+      "lane": "G-2 集成",
+      "owner": "Mac",
+      "status": "✅"
+    },
+    {
+      "id": "I02",
+      "lane": "G-2 集成",
+      "owner": "PQ／指挥",
+      "status": "✅"
+    },
+    {
+      "id": "I04",
+      "lane": "G-2 集成",
+      "owner": "PQ",
+      "status": "□"
+    },
+    {
+      "id": "I05",
+      "lane": "G-2 集成",
+      "owner": "Mac",
+      "status": "□"
+    }
+  ]
+}

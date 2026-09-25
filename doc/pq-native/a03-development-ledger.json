@@ -1,0 +1,2044 @@
+{
+  "schema": 1,
+  "snapshot_sha256": "53249169f93c1eecf508fa48bc79b0c485b6ac038e733f637821c59451f67c79",
+  "source_commit": "84a30e4268f94e894497e402d97058cadcbb876d",
+  "units": {
+    "M01": {
+      "status": "✅",
+      "scope": "P0-1 Merkle",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "80beda7f3c683b42e90689052844e2c453bebe49733da83a58225294af7e385a",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "M02": {
+      "status": "✅",
+      "scope": "P0-1 Merkle",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "01958b0ebd84aaa28ebfe4f3b1c424ba2760db327d4fd87ae25f2c158681fe37",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-M02-RESULT-20260924.md",
+            "sha256": "5b64902dda65bbb4eadf7490e3020a4431f4f80cb58074db020619c2dc621389"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N01": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "6ec5f0649a56403e87716a0643f2d816664835ff962e2ea4fe22c1535fc56d1d",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N08-A2B646C80-N5-CLOSEOUT-AUDIT-20260924.md",
+            "sha256": "05adfc0400599874d21b1b944d238317e9d0dab211add9aeaeded9dabb5498e7"
+          },
+          {
+            "path": "pq-native/N6-MAC-N01-0F104CAEE-SEQ2-CONTINUATION-REVIEW-20260924.md",
+            "sha256": "73b1d2cf4e10815fe8e770e45e4cc25d4a7e62bf3522bde6a809a1991b7ae2ca"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/test_manager_session_identity.py",
+            "sha256": "4e7a6d22d620413dda81cbdcd031dac587f180e97603ac8f558711706a8dd4e8",
+            "cited_by": "pq-native/N6-MAC-N08-A2B646C80-N5-CLOSEOUT-AUDIT-20260924.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "e0923941d799cfdca47fac0a2de268eb9fddb46f",
+            "path": "validator/manager.cpp",
+            "sha256": "43ffd95fb6c6ab8d3a4fd5e36ffdf6b06ab91a0c32c4cdbcd526da08446ee79c",
+            "cited_by": "pq-native/N6-MAC-N01-0F104CAEE-SEQ2-CONTINUATION-REVIEW-20260924.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N02": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "cae63420bfb05b6824e8871cf287b9537059412759685d52c61fec98bcab96d3",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N02-B1E6C2BB9-CUT1-REVIEW-20260924.md",
+            "sha256": "3453e8459cc37eaf20297e443f6af0ca5e2f5ff229b30a61bc6c3760e71350e2"
+          },
+          {
+            "path": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "sha256": "3bd0dd5a1546a6c52815fa881606ba9a6fd5da39eb6359861e6755cd0c368c0e"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-cut1-green.raw.log",
+            "sha256": "761f90a6d47a5477b9bc034f2429252fa6bc1f67f4708c43157114c6aed9204a",
+            "cited_by": "pq-native/N6-MAC-N02-B1E6C2BB9-CUT1-REVIEW-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-bootstrap-red.raw.log",
+            "sha256": "9a8522e20be8524fd804e8ade6e6c5f3719f981139a3fe58a57f02b806cf433b",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "114474c0247fdc0e3e00e531e5fd651799eee57e",
+            "path": "doc/pq-native/n5-cut1-no-bootstrap-mutant.patch",
+            "sha256": "972be130c5ab3339166106fde3ab9ad47a5fb6ef51af534a5b5e6c13415be746",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "sha_origin": "sha_literal_present_in_report"
+          },
+          {
+            "commit": "b1e6c2bb90a57b99cc443e7c705e1901929f2daa",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "sha_origin": "computed_from_cited_path"
+          },
+          {
+            "commit": "114474c0247fdc0e3e00e531e5fd651799eee57e",
+            "path": "doc/pq-native/n5-cut1-no-save-mutant.patch",
+            "sha256": "cb4158f313b5712efba055e3d938252282efe5ad698af24726827db211e8d43f",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "sha_origin": "sha_literal_present_in_report"
+          },
+          {
+            "commit": "b1e6c2bb90a57b99cc443e7c705e1901929f2daa",
+            "path": "test/pq-native/c04-real-state-proof-test.cpp",
+            "sha256": "bfd993c07e8748e3c5d6ded385c4355918b5377db677ea4b209b26c45bf702d3",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N03": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "b8ef69f4815eaf527ed2f6d57a54ab3fa9b94f1fd968c90c0763b13ddc418a1c",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N03-DF3A6B037-CUT2-REVIEW-20260924.md",
+            "sha256": "bf4c0360f66a85556d5db5b0837ada76df7bbfdaf68c3a929708abf3e8f8d108"
+          },
+          {
+            "path": "pq-native/N6-MAC-N03-D28E2EC7B-CUT2-MUTANTS-REVIEW-20260924.md",
+            "sha256": "997d385941cf0a04abae3eaa2c76b4ab4b5e81301f054a08365b1816952b2de1"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/df3a6b037-cut2-green.raw.log",
+            "sha256": "03e10449cbf6163fdfb7357b84c6d996e9fa99c36aaaf72c07edfefd8ef7178d",
+            "cited_by": "pq-native/N6-MAC-N03-DF3A6B037-CUT2-REVIEW-20260924.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "df3a6b037833e235e8a3e3b50bce612f7573e584",
+            "path": "validator/db/rootdb.cpp",
+            "sha256": "d05c73083b15ba922debe7e0158ec2e2a30c630a112f127761ffbe330ab909fd",
+            "cited_by": "pq-native/N6-MAC-N03-D28E2EC7B-CUT2-MUTANTS-REVIEW-20260924.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N04": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "14c716b644b14e0082f29c960d5fc731d06c74c75a5d5b0223e94f3b167b84ca",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N04-EBCCA660A-CUT3-EVIDENCE-REVIEW-20260924.md",
+            "sha256": "7d524409e0792b5f4c9d28c084317f82f20538563a37b044c51c0e71744391c0"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N05": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "734c5ebd16cc2ef572147f1f31f9c09761b823f9e698ae7a2947599eda3478a1",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N05-5DCED784D-CUT4-REVIEW-20260924.md",
+            "sha256": "b75e0c80dff86d9e16e9583eb59e36369dbd0af56ee877d9591b60b6403a8eb7"
+          },
+          {
+            "path": "pq-native/N6-MAC-N05-336174546-PROVENANCE-FOLLOWUP-20260924.md",
+            "sha256": "83a792236ce712610bcba8813fadfa99ad21e17518ea45ad573daf63b0f38f6c"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N06": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "62ac1cd1a97b36b40c163364f5cc406453616d58a2c4074413fe017ea38df3ef",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N06-8DE6706DF-CUT5-REVIEW-20260924.md",
+            "sha256": "118dbd5927e3bf44ee950e224f8c52342de9929ddcf07d184987bb7510c1774c"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [
+          {
+            "commit": "10ece72ab1ede5edba50889e30f474b8be1155ce",
+            "path": "test/pq-native/c04-real-state-proof-test.cpp",
+            "sha256": "5b1c59cce22ccfd44326acdcfae6484ffcbbe544e6183c101ca2f789bc0be168",
+            "cited_by": "pq-native/N6-MAC-N06-8DE6706DF-CUT5-REVIEW-20260924.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N07": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "3488b3655921c1a4a0cedb24b8ca1af472feff37ec36abc0a9bace7aec35d48d",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N07-A527F5B6E-CUT6-SIGNOFF-FOLLOWUP-20260924.md",
+            "sha256": "c00875d7aa684a20461ce6046d9672364bea372eb7f84a6f8671145ee8299aa8"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "N08": {
+      "status": "✅",
+      "scope": "P0-2 N5",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "f56a34479dc4aef419b3d7cb9c7d47b8bb29c9689f2505c638bc6317f6b409f0",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-N08-A2B646C80-N5-CLOSEOUT-AUDIT-20260924.md",
+            "sha256": "05adfc0400599874d21b1b944d238317e9d0dab211add9aeaeded9dabb5498e7"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/test_manager_session_identity.py",
+            "sha256": "4e7a6d22d620413dda81cbdcd031dac587f180e97603ac8f558711706a8dd4e8",
+            "cited_by": "pq-native/N6-MAC-N08-A2B646C80-N5-CLOSEOUT-AUDIT-20260924.md"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "no fixed source file bytes referenced by directly linked review",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E01": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "62f674c7acaeaaa85c7617d97e5b8fd0edb5ec9310c76d31d3cc6006e02edb45",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E01-RESULT-20260924.md",
+            "sha256": "d901dc9883ece1b92991bdfde13399550e564ffc99689a6f088a57698b676304"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json",
+            "sha256": "a5f8491276fa2718e1898fdd2d8bbd533edba3cfb56c114fc920bf142eb871cf",
+            "cited_by": "pq-native/N6-MAC-E01-RESULT-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.pq-nominator-pool-t3/1af-fast-poll/20260924T034230Z/report.json",
+            "sha256": "31fe07ddcb7bf0c1f06b135dc4b58d4fd9cefb2b14478c595df54ed06404c8ca",
+            "cited_by": "pq-native/N6-MAC-E01-RESULT-20260924.md"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E17": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "ce5420a675d1d9d9a635cc4e93e52de527bb8546a01fd098f2abd4000c1fcc17",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md",
+            "sha256": "d0d066b7bb7645fa68a3b83f7383d6307f7d6aa5a56eb3d57e830999a2e75ff1"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E02": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "d0c7fb534d00ad9494f3a4f6301fd59b0392e44c863ac9827fb14b75c1bd56bb",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E02-4DD8F00A2-EXACT-RUN-FOLLOWUP-20260925.md",
+            "sha256": "b097d36e02b1c76983355cee0ef34e8b729951ae59d04a41d7275a717b816f7d"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/build/simplex2-release/e02-4dd8f00a2-20260925T002527Z/run/summary.json",
+            "sha256": "c63fcac801654ee9c43c260af814c470444fba727306661e86d8a9839034cf82",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/test_simplex2_release.py",
+            "sha256": "0fb8ff2154b118e837485b46fc6a72941a8f7ddff46d49094d667679990bc5c6",
+            "cited_by": "pq-native/N6-MAC-E02-4DD8F00A2-EXACT-RUN-FOLLOWUP-20260925.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "4dd8f00a2933544c5ea6f34a7562edb2b630f412",
+            "path": "test/integration/test_simplex2_release.py",
+            "sha256": "0fb8ff2154b118e837485b46fc6a72941a8f7ddff46d49094d667679990bc5c6",
+            "cited_by": "pq-native/N6-MAC-E02-4DD8F00A2-EXACT-RUN-FOLLOWUP-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E03": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "561ef4310bbb1d31b46487ea5da74f8a23950bccbec3b3f8e5fe97e523b36625",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e03-localnet-3f8c7301e-20260925/report.json",
+            "sha256": "e3f7498b79ecc09c83ebf485b977a54a5c1f6e538c8971a92897f8ab41d03fba",
+            "cited_by": "task_table"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E04": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "6c7c6ad4e4317aa6ab2d672b7171f6017b2d8bd4a2dcf3063e4593bf04c9f62e",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E04-0E-EXACT-RERUN-REVIEW-20260925.md",
+            "sha256": "1c27764831cf31147ecc8e95a78fa780886e6bd64245b494b1eb0e9778e1e870"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e04-agent-wallet-0e2f4bc90-20260925-console.typescript",
+            "sha256": "32bb1061b00ed567a7a96b460e8be588e944cc9512c36d263d87610020e58b10",
+            "cited_by": "task_table"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "0e2f4bc90b64203819d758078a005b0394dcb242",
+            "path": "scripts/agent-wallet-account-e2e.py",
+            "sha256": "236e6b1e6f4f0217bc0ed71feae3c4fc15a8f17f5b6d60aec3aba9e5049c4ee9",
+            "cited_by": "pq-native/N6-MAC-E04-0E-EXACT-RERUN-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E05": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "89a6517970f6acbeccc4a43c3601be1176c189e41b8db2bac8caeb15138359ac",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E05-FILTER-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "ba1f603918f1aae144f19de2f5b9e32718e155be53e211b70507f127936b134a"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e05-agent-query-api-c5b77a3c8-20260925-console.typescript",
+            "sha256": "d23a002757222ed8b17d0bbe54c83aa61db010fd749f5ce45200d7190de0f8cb",
+            "cited_by": "pq-native/N6-MAC-E05-FILTER-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "c5b77a3c8a888a42f223ccbec66ecbde4940bd81",
+            "path": "scripts/agent-query-api-e2e.py",
+            "sha256": "9c632121e56688fcad352311bd67c7a4c221efdf72f285ec515c96ea52971b64",
+            "cited_by": "pq-native/N6-MAC-E05-FILTER-EXACT-RUN-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E06": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "137a6ceeee088e162f8927fa4371440ebd7e95d89e01951c39000cc733d46ff7",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "f4122521ccfc2d0324250dd8b467604b86946a6371c540de793a96006b3b4b82"
+          },
+          {
+            "path": "pq-native/N6-MAC-E06-CURSOR-CI-FOLLOWUP-20260925.md",
+            "sha256": "28eb1f1833b4ec3ff0f3c5ede17077fdb668b78778c7d1723b040a18f561514b"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-console.typescript",
+            "sha256": "9c33d842610e600480b0e0afe7b4b9dd697e6358578b105f63d958a65a47b2d7",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-network/http-transcript.jsonl",
+            "sha256": "a137dd4e3b66a0fd53bcef0ae7323c03bfc020f713ef6161eaa8825b9cc6de6c",
+            "cited_by": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-network/manifest.json",
+            "sha256": "3ba577af16d91e7c67fa3e7293fb60ef2269b2f8748f4d9ce8ac12fd77cc91fb",
+            "cited_by": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e06-cursor-direction-mutant-20260925.typescript",
+            "sha256": "35019991b71c192dee58082bf3e4d66bf1ff2451dbcdfd8c3b3a62ae0fe49111",
+            "cited_by": "pq-native/N6-MAC-E06-CURSOR-CI-FOLLOWUP-20260925.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "d6d5b37f5f975ade0e1cb9ba3731053dfe215ceb",
+            "path": "scripts/agent-chain-index-e2e.py",
+            "sha256": "973eeb88ab397f9059aaefc17737c5e83cbe763088dcb2beeaacbb9e6ac6d578",
+            "cited_by": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          },
+          {
+            "commit": "d6d5b37f5f975ade0e1cb9ba3731053dfe215ceb",
+            "path": "test/pq-native/test_e06_http_transcript.py",
+            "sha256": "2d30575f3c9310250549adcd7843b493c7053289b3f1347e24aba95c650e437e",
+            "cited_by": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E07": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "543e76abd7696c3b43db9bbd68f90aa5b0e26b093513f9181d293dc8e81f0695",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E07-F21-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "4418e98b77ee981c5d2127f3e114a879fcfaa6f3562a0fc96527fbe3a706f29b"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e07-task-escrow-f21f0c726-20260925-console.typescript",
+            "sha256": "9b458d8fe64d8fb70999ae3d1c43e59ab77663547d89ee33e477b4b9f3d37153",
+            "cited_by": "pq-native/N6-MAC-E07-F21-EXACT-RUN-REVIEW-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e07-bounce-hash-mutant-f21f0c726-20260925.log",
+            "sha256": "5c3e6ee254ca320e6584faae166d7309adf486bcd31603a1846e8bd2ed225779",
+            "cited_by": "pq-native/N6-MAC-E07-F21-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E08": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "d86d09fcf298ab29a1db603f0e6b4b81f40306aac8c1774223e26b972e9ef458",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E08-F580-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "fa08126b92ffcd1ee95d4a70d60b413667458057e74b639be2b5bd12052dcf48"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e08-proof-attestation-f5808d03d-20260925-console.typescript",
+            "sha256": "5b6708adb70b1899caa6ce6eaf6fc068f6bcfa6ff0124de2d78a27125ca049f3",
+            "cited_by": "pq-native/N6-MAC-E08-F580-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E09": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "f5f8d6e1b68ff4b86323bbc2804c933b65903a633445dcc8b915c4c0d7f4aa56",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E09-E1DD-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "7f0efae1413601b722c2237f181ca2f608ed61b21d7497c82a5d7d259fa8e843"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e09-capability-registry-e1dd48d6f-20260925-console.typescript",
+            "sha256": "3c5d1fe3cc005059bcf6bd2f08ddd1093bad05f63a726acc1f047652ecea1e0a",
+            "cited_by": "pq-native/N6-MAC-E09-E1DD-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E10": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "af15a5c44482ce8f80f0877cc942000c90ef918e910c24abe8816a39a7cb967b",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E10-A859-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "62f367d1a71b5ec67fe62d7ff068f5a8346192a5e60c36518e0820529be4315f"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e10-composed-a859bb515-20260925-console.typescript",
+            "sha256": "6927596f2df2e58e4c8186ef5409110cb2312adbf9619b34e7ecbc6b91a15409",
+            "cited_by": "pq-native/N6-MAC-E10-A859-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "a859bb515547688e088adaf35482933a044dae7b",
+            "path": "scripts/agent-economy-composed-e2e.py",
+            "sha256": "394f4cb8ac4d3b5a5eaee312d16f069972297e5d22b9e06e501886bea4b657e8",
+            "cited_by": "pq-native/N6-MAC-E10-A859-EXACT-RUN-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E11": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "c6df3ae3a1162cee78e8c37a09812e538c368ca6f490175578fbd0f1e2e6e9ae",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E11-DUPLICATE-RECOVERY-BALANCE-FOLLOWUP-20260925.md",
+            "sha256": "e86fe8ec9fef38e85bb7a43806ab151ee87781b133e49041e59acb5e4d48e9f3"
+          },
+          {
+            "path": "pq-native/N6-MAC-E11-D6BB-EXACT-TREE-RECOVERY-REVIEW-20260925.md",
+            "sha256": "e514bd5f9825dbf239ab8df530cbd72ef76a55eed9521ad21e31934ef8c199f8"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/report.json",
+            "sha256": "40833cd44a1f268c2e20dee4e7c9804c7301433504f2b360970a2f8f8f50b1fb",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-2d7e4cd7d-20260925-forensic/elector-transactions.raw.json",
+            "sha256": "a6127e7c0a99596319d92f86fcb0f7b6a154d60cd10a91c3d00251a517ce693e",
+            "cited_by": "pq-native/N6-MAC-E11-D6BB-EXACT-TREE-RECOVERY-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "d6bb1aaf19414827c4cb56a70f68e40705cd9b2b",
+            "path": "scripts/validator-election-stage-a.py",
+            "sha256": "df77ad7ff59ed981897ecdd02a9aa6082b2b3e4ac8e0320c1159a1a84a27c012",
+            "cited_by": "pq-native/N6-MAC-E11-D6BB-EXACT-TREE-RECOVERY-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E12": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "c355c5c6c274e58fe8537bbb1d3cd30678d7600a1e2b491b1c6ecc0d768b11c9",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E12-11DD-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "c014574e7f2c662cfb036711b8db47f90d61e7d61dd7ac8f185c8b63a6e5f057"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e12-dispute-11ddcad18-20260925-console.typescript",
+            "sha256": "913c6ebacf4ea12f50bcd5b63a186eb6e9add2ead875daed3548e44e8ea29809",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e12-dispute-11ddcad18-20260925-network/manifest.json",
+            "sha256": "31dfc241e148559e05ae379e49d078d4b06b5eeca1963a64fb84da8dbe74e988",
+            "cited_by": "pq-native/N6-MAC-E12-11DD-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E13": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "54222ab426a68772b522022b7a1478c03782eabca6a09bd08c7be6df8c01137d",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md",
+            "sha256": "d783e8a2c65ca4e6ef2b179e4b80d62c01dba070c33b05fd18e3dd4e3ddb4d2d"
+          },
+          {
+            "path": "pq-native/N6-PG-E13-FAA-EXACT-FIFT-FUNC-SNAPSHOT-20260925.md",
+            "sha256": "a6091952af44a42d660ce4b5bf2b3e15edaea670586c688e9cc85701da4f3e4a"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e13-service-f881e8d0a-20260925-console.typescript",
+            "sha256": "3fced6594ba257aa7c197eb56bf5c83ef8b79bf633c2774a11bbeea7b4792a33",
+            "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e13-service-9d754b254-20260925-console.typescript",
+            "sha256": "c5875903bbdb6a8f91d19dc8493202c127f9bfb90d8d19c8342f588ac0977206",
+            "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e13-service-b6486b7b3-20260925-console.typescript",
+            "sha256": "bd3baa0053346ac8a51d4f2d0077894e2546fe86b74059dc8306744a8ae3e39e",
+            "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/fift",
+            "sha256": "37e0b3be30e96faf99db7061917dcf3a3950fd1ae1a6c8a7524ee52c0c0280ef",
+            "cited_by": "pq-native/N6-PG-E13-FAA-EXACT-FIFT-FUNC-SNAPSHOT-20260925.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/func",
+            "sha256": "d47ff59584adb975d8b813542b1b2aef7a3caf0320ec30008696b673a9dec5fd",
+            "cited_by": "pq-native/N6-PG-E13-FAA-EXACT-FIFT-FUNC-SNAPSHOT-20260925.md"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "f881e8d0a5d2425dde45e43c1b413af000110cc6",
+            "path": "scripts/service-actor-e2e.py",
+            "sha256": "5953619296c00731697d6abced5ae0ef844dab0a213745f1065f6df56ff4f981",
+            "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          },
+          {
+            "commit": "9d754b254c7854f7b1a6e6e04d3e5ed39b74c97f",
+            "path": "scripts/service-actor-e2e.py",
+            "sha256": "fb479722fc3b1cbb76121c22864c1c052cd64a4b7466bba486ed3515ebe7f7ac",
+            "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          },
+          {
+            "commit": "b6486b7b3a7241d474082e17cbeed46d555e88f3",
+            "path": "scripts/service-actor-e2e.py",
+            "sha256": "8a64870958343ac5c4bd37171a65cb04a8030f60336dfc77700d434f770724f2",
+            "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E14": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "d46bb62aa9737ebd28b44b55bde6f7de06601937922443ce3399f56a471dcdf0",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E14-88D-EXACT-RECEIPT-AND-SKIP-BLOCK-CONTROL-20260925.md",
+            "sha256": "000bd337d680a948def4e4b353f7689ea9c69481fd6f6ac8289c7ce151bf89b0"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E15": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "da7a22c7101736cee6e84d0b1278201e0e5202306f7fabe0bc395e9d277c5d4c",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E15-934-DNS-GOVERNANCE-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "6e77ac2789e7c6aeb885e1b1765f9f87db3d1fdd4fadce2909c768a6a09cc8e2"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "E16": {
+      "status": "✅",
+      "scope": "P0-3 retained E2E",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "3c74e329a3516f0415099c827a8d7758dd266559922a76d13b2cc5c2a72401d6",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-E16-84A-EXACT-RUN-INDEPENDENT-REVIEW-20260925.md",
+            "sha256": "8490172c8a89183c342501d2fa3a92dcf99e3d2bdb82e084864ceb9844a9c2ed"
+          }
+        ],
+        "memo_raw_artifacts": [
+          {
+            "path": "pq-native/evidence/e16-84a-binary-sha256sums.txt",
+            "sha256": "b59f508ae4caa11df03cd7cabc756b7315b3b60cd2df6851c1add633156bbdbf",
+            "cited_by": "pq-native/N6-MAC-E16-84A-EXACT-RUN-INDEPENDENT-REVIEW-20260925.md"
+          }
+        ],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-console.typescript",
+            "sha256": "7d5922ca5d0dfadf3a2fed593f4e6eb2830af35d75eecc208aede3fe0172d620",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
+            "sha256": "c4ad6b36eaf185d2be34cd308229913d6f89d48cc84c1c1ab88ebb0bb1705c88",
+            "cited_by": "task_table"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "84a30e4268f94e894497e402d97058cadcbb876d",
+            "path": "scripts/nominator-pool-lifecycle-e2e.py",
+            "sha256": "ccc3a931b22e7fc180f1ec9b0ea856ae29f09c779a15ef5cfe39302cbdef2176",
+            "cited_by": "pq-native/N6-MAC-E16-84A-EXACT-RUN-INDEPENDENT-REVIEW-20260925.md",
+            "sha_origin": "sha_literal_present_in_report"
+          }
+        ],
+        "missing_required_fields": [
+          "review-referenced source bytes are not yet bound to one exact executed command",
+          "verified artifact references are not yet classified as complete per-unit run and control raw",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T01": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "a72862c0a07f2f94a020030738a6db8f27218112a0f784824f88bfb2041cedb2",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T02": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "02353b82cdd0c2221af176096ce8b97b59b28dfbe0fa87a2981b4c25f122a03b",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T03": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "a44bc91c6e59dc7b9ec45b6f247225374cfcfcc3ae20059bd33136a93cd7d92b",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T04": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "ef2b8436d30efe9dace8541fbe9918b6457ce5df7c33be8d783c078bb0abadba",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T05": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "3c49780d2be7c5f6df8aeb59f3017621d3ccf1e35e139ae8085b326854896bc9",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T06": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "34a52e56fca133b43eff2d0fcef9ba9a40ce3da2543fa5bdda07eb115f5d38ca",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T06-24448BD1E-EVIDENCE-REVIEW-20260924.md",
+            "sha256": "b09ba4bdee5aede805fcdb0d87064992a52b71ab8627f802a996b5abdf4f8721"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T07": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "d1b1069725aa03ef934333ad87a224895f963195ca964c9921b1771fa11054db",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T07-E1A384534-LEGACY-FIXTURE-REVIEW-20260924.md",
+            "sha256": "2c304bfca056bb5189457d2bea8801bd6d3e1f1e753a8946820162158a0eacf0"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T08": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "afa1acb5a65bb925d35828f7af596e9bc1555397edfac616172575942292352e",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T08-441EEF29B-PROPOSAL-SMOKE-REVIEW-20260924.md",
+            "sha256": "caa3ebf1e577cad8d3279831e42de18d9cfcacc12fa5ea860ed66d8e199f95d1"
+          },
+          {
+            "path": "pq-native/N6-MAC-T09-0799098BB-LEGACY-PARITY-REVIEW-20260924.md",
+            "sha256": "fb2d6fa04950bf553b6365b8dccff8aee7debbcca56d02e0123501aca20bb6fd"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T09": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "adb84593f7d7ead6f1ad11694ae1e34dda5228ad7af5723cb5e624110f77ce97",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T09-0799098BB-LEGACY-PARITY-REVIEW-20260924.md",
+            "sha256": "fb2d6fa04950bf553b6365b8dccff8aee7debbcca56d02e0123501aca20bb6fd"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T10": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "99328db7a81b81d005948a31b556d3915e1e4e071ad9a04e12cae73632f752d0",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T10-7F405FA15-REQUEST-RETIREMENT-REVIEW-20260924.md",
+            "sha256": "976910fc5f9033f541a56d19b08ea327807b6c26da7ed55b3441285aaeccb47f"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T11": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "f25ab374ee28260e160bc4d3a7072ffadc98d89b7175fc61c5e8bacfb114e88c",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T11-9C6AB13D5-SIGNED-RETIREMENT-REVIEW-20260924.md",
+            "sha256": "e65cfd5897562767bb7e756104839b6bc9c4ddd146e410fc33082f9b3a1b465e"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T12": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "f4a539da7438ebddd55f252d5c9cfe33f2e85d324b521790c6307efb87a62cdf",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T12-BD20BA189-VALIDATOR-LIBRARY-REVIEW-20260924.md",
+            "sha256": "ab27a88741702cc32096fca482e86be2c61be054982cf925345c01d7f3d97d33"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "T13": {
+      "status": "✅",
+      "scope": "P0-4 T3",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "cfee648174ea8c4d0b3015b9a7e5685c972319361064d52b5bc1e97fe77aa6c4",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-T13-RESULT-20260924.md",
+            "sha256": "473d294fc167575f102f63ec6599d46ab56b296ed160d6cb40ec22cdc7028978"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C01": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "9d81e4449a9b81d036a9a44508eccd1fec38cab4d48337c81b4323fc36c16982",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C01-RESULT-20260924.md",
+            "sha256": "41334ee46773bc9390c80d7b347da793495d557c947e7573167d8b7338d1c280"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C02": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "3a0a7245882525fe05947197ae0a28fdea7e4a7f7e38b2c89ac208b93913b5fe",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C08-STAGE-RESULT-20260924.md",
+            "sha256": "918228d994b3933513b04561f0a5212d0e3a0299422396d208fcc5ef8f487d5d"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C03": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "b1813040d812e4d7579ec5a3e3ee251fe197a5efbc30449dc0359032a1e91b59",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C03-PERMANENT-RESULT-20260924.md",
+            "sha256": "4c1cce91b9dbe9c76ed0e81f414b6d3802d46be24eface60f4e192b574a17b53"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C04": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "df54a1a15d7eb538efc72d381e87149825919bdfc3390a44cf9582ad3e0111dd",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C04-TIMER-ONLY-6E66C54F8-REVIEW-20260924.md",
+            "sha256": "a9f02c2d812f65993365e3545fdfcc7d2b5ffd738380926694ed3a41cc3ece32"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C05": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "379e5cf398b6b5646d90984bee0e3f1fec41228688a9adcf1b65a24a34a0bd3a",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C05-61C-REQUESTER-READONLY-20260924.md",
+            "sha256": "c3ba6117a4d677a90163e3fc82e98225589791f1fa89427d1737032f39b57f4e"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C09": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "f6721e74f9a0c745ce24d8015d2b7f0387e28e0b48d521796ba76246f0def538",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C09-RESULT-20260924.md",
+            "sha256": "ad5b8e8ab6b2c078077d3b1ac6be3ea9aab2dd4a738cdca3e82200b36c367314"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C10": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "0ff55e2e34f0daebbc69766e0dc282c916de548bbda5c193a3cc63ec266c8bd5",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C10-RESULT-20260924.md",
+            "sha256": "33b06f235193a867103abbbdca5914de917cf4b7ecc8769816ce192f11f81217"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C06": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "3fa3547ee3eb55445a7fe62d491d1c6a3eda63d6ff5f435bb5e7dd4760fad5a9",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C08-STAGE-RESULT-20260924.md",
+            "sha256": "918228d994b3933513b04561f0a5212d0e3a0299422396d208fcc5ef8f487d5d"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C07": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "1aea773455b140d475512415229c3195c5ab3640d763f7c391ccc2238d164edc",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C07-RESULT-20260924.md",
+            "sha256": "0dfac74171739b0e13e0a89b8b44d6be1bdfac5723dc4e7793051df81b986ed1"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "C08": {
+      "status": "✅",
+      "scope": "P0-5 共识语义",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "a7c0a3dec2750a5fda08e7e657a034f9b29141174074ce96fdc3cfd3c38ea006",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-C08-FINAL-CONSENSUS-SEMANTICS-20260925.md",
+            "sha256": "27cad55c1f8a1a809fad4467f56d52ef6d10899576764873395cd5340f7c5e7d"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "F01": {
+      "status": "✅",
+      "scope": "F-1 VR-1",
+      "accepted": false,
+      "evidence": null,
+      "partial_evidence": {
+        "task_table_row_sha256": "d051d8e361b1e902b05c434f722d1c33ee9e627bc2f97b5244e6eb7089e2f94e",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-F01-2E1-EXACT-RUN-REVIEW-20260925.md",
+            "sha256": "64292fe502d1d68a78349738ccd0e6259dc2d40e847b98b1fe1c6aaad99bf2fa"
+          }
+        ],
+        "memo_raw_artifacts": [
+          {
+            "path": "pq-native/evidence/f01-2e1-raw-sha256.txt",
+            "sha256": "4a40380e30fab01f972792edd5d4a33063a47577fae425dab3c9580b01968bd2",
+            "cited_by": "pq-native/N6-MAC-F01-2E1-EXACT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925-console.typescript",
+            "sha256": "51e67651e5c535aa9f816cd9cfedf47d57bdd488c4cce4c803359799d7503980",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/report.json",
+            "sha256": "7cb8f9b04ce322c413055c8b391d81503bffe9b34a0fa2eab66ccc86db163762",
+            "cited_by": "task_table"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/capture-manifest.json",
+            "sha256": "26053156186a422f61e6ac0626e4f5b3e04fd60ac17a9f9ce171136f06ac6bc5",
+            "cited_by": "task_table"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "2e1a51ad9f3be29c783aed3f8cff65abbb0dec08",
+            "path": "scripts/f01_finalized_ids.py",
+            "sha256": "eefa37199f54c9dac6b518b98855e09572bf42ededf110144c4189cb7e289b02",
+            "cited_by": "pq-native/N6-MAC-F01-2E1-EXACT-RUN-REVIEW-20260925.md",
+            "sha_origin": "computed_from_cited_path"
+          }
+        ],
+        "missing_required_fields": [
+          "exact run command, exit and original console/report are indexed in first-batch inventory but not yet bound to per-run receipt and complete controls",
+          "12 binary snapshots and independent OS watcher are indexed in first-batch inventory but not yet bound to complete per-unit acceptance record",
+          "exact 2e1 CI has no run returned in raw query; later CI or explicit scoped dispensation must be reconciled",
+          "old-red/new-green/mutant-red raw and independent review of full A03 row still missing"
+        ]
+      }
+    },
+    "F02": {
+      "status": "✅",
+      "scope": "F-1 VR-1",
+      "accepted": false,
+      "evidence": null,
+      "partial_evidence": {
+        "task_table_row_sha256": "d0b0abd43736cac961033e133ff1d8b38495d2f6c12401e68202bdb6efd579a8",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "F02 signed task-table row requires a separate original source/command/exit/binary/review/CI reconciliation; no evidence borrowed from F01"
+        ]
+      }
+    },
+    "F03": {
+      "status": "◇",
+      "scope": "F-1 VR-1",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "X01": {
+      "status": "▶",
+      "scope": "F-2 VR-2",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "X02": {
+      "status": "▶",
+      "scope": "F-2 VR-2",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "X03": {
+      "status": "□",
+      "scope": "F-2 VR-2",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "X04": {
+      "status": "◇",
+      "scope": "F-2 VR-2",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "L01": {
+      "status": "◇",
+      "scope": "D-1 长尾/Skip",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "Q01": {
+      "status": "▶",
+      "scope": "D-2 Lite query",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "Q02": {
+      "status": "□",
+      "scope": "D-2 Lite query",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "S01": {
+      "status": "◇",
+      "scope": "R-1 发布测量",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "Z01": {
+      "status": "□",
+      "scope": "R-2 Genesis",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "Z02": {
+      "status": "□",
+      "scope": "R-2 Genesis",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "Z03": {
+      "status": "□",
+      "scope": "R-2 Genesis",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "A01": {
+      "status": "✅",
+      "scope": "G-1 账本",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "01f4b395d0e4d5576991fa46dbfc73c93ff6e2d8f0bf448c67e2e10c47e3957b",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-A01-CANDIDATE-RESULT-20260924.md",
+            "sha256": "41483abb29cd1aaebf96f0f57da49d6a019199062ad57394b82efdebed857488"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "A02": {
+      "status": "✅",
+      "scope": "G-1 账本",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "b04030101d3b2114fc77150f3a070ae47b1810660216303df9a337fce0a5a640",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-A02-RESULT-20260924.md",
+            "sha256": "3f101358eb6226ac491309f420771d7a2e1baf7410940d9c19fc678e7ea5d2d1"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "A03": {
+      "status": "▶",
+      "scope": "G-1 账本",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "A04": {
+      "status": "✅",
+      "scope": "G-1 账本",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "d5c588d84d8fae81b5fac5c5fed0074a5e5f308072c5a8a3f5acbfc849191df3",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-A04-RESULT-20260924.md",
+            "sha256": "8529219682155877eeb410605022fbcee2da32abd7c599b9e5c0967e14d0b6de"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "I01": {
+      "status": "✅",
+      "scope": "G-2 集成",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "f1b2158caaf3f67b9d97d42166323ae8aadd5e8ae0c529250d0910c40c988ce9",
+        "review_reports": [],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "independent review report is not directly linked by fixed task-table row",
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "I02": {
+      "status": "✅",
+      "scope": "G-2 集成",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Evidence fields not yet individually reconciled against raw artifacts and independent review.",
+      "partial_evidence": {
+        "task_table_row_sha256": "aaf2d830377ac959420dcda46d690d86ae9e8ebf42b933647c96dc231c5d66e4",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-I02-LINUX-RESULT-20260924.md",
+            "sha256": "94a488445256de1ce59f86e8b84eabd153e632196f1e0da5592fa58e2dc4ba85"
+          }
+        ],
+        "memo_raw_artifacts": [],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [],
+        "source_references": [],
+        "missing_required_fields": [
+          "no fixed source file bytes referenced by directly linked review",
+          "no hash-verified raw artifact found in direct task-table/review references",
+          "exact command and exit are not machine-bound to the primary raw artifact",
+          "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
+          "binary SHA or explicit scoped gap is not reconciled",
+          "independent review scope, CI state, applicability, and invalidating changes are not mapped"
+        ]
+      }
+    },
+    "I04": {
+      "status": "□",
+      "scope": "G-2 集成",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    },
+    "I05": {
+      "status": "□",
+      "scope": "G-2 集成",
+      "accepted": false,
+      "evidence": null,
+      "gap": "Pending unit execution/review; task-table state only."
+    }
+  }
+}
