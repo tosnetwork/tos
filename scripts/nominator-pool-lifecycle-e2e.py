@@ -231,6 +231,25 @@ def _pool_order_transaction_lt(transactions: list[Any], query_id: int) -> str | 
     return None
 
 
+def _queued_stake_refusal(transactions: list[Any], query_id: int) -> dict[str, Any] | None:
+    """Require this order's pool transaction to abort at the queue guard (85)."""
+    for raw_transaction in transactions:
+        transaction = _decoded_transaction(raw_transaction)
+        message = transaction.in_msg
+        if message is None or not isinstance(message.info, InternalMsgInfo):
+            continue
+        body = message.body.begin_parse()
+        if body.remaining_bits < 96 or body.load_uint(32) != 0x4E73744B:
+            continue
+        if body.load_uint(64) != query_id:
+            continue
+        description = transaction.description
+        compute = getattr(description, "compute_ph", None)
+        if getattr(description, "aborted", None) is True and getattr(compute, "exit_code", None) == 85:
+            return {"transaction_lt": str(transaction.lt), "exit_code": 85}
+    return None
+
+
 async def _transactions_since(
     client: Any, address: Address, baseline: Any, *, max_pages: int = 64
 ) -> tuple[list[Any], int, bool, Any]:
@@ -3427,13 +3446,25 @@ class PoolLifecycle:
 
     async def stake_must_be_refused(self, election_id: int) -> None:
         """The refusal that takes a pool out of service without saying so."""
-        await self.stake_through_pool(election_id, label="stake-blocked-by-queue")
-        await asyncio.sleep(12)
+        assert self.client is not None and self.pool_address is not None
+        query_id = await self.stake_through_pool(election_id, label="stake-blocked-by-queue")
+        pool_baseline, _ = self.stake_feedback_baselines[query_id]
+
+        async def refusal() -> dict[str, Any] | None:
+            transactions, _, complete, _ = await _transactions_since(
+                self.client, self.pool_address, pool_baseline
+            )
+            return _queued_stake_refusal(transactions, query_id) if complete else None
+
+        refused = await self.retry(
+            refusal, timeout=120, description="queued stake order rejected by pool VM85",
+            predicate=lambda value: value is not None,
+        )
         data = await self.pool_data()
         self.check(
             "a queued withdrawal keeps the pool out of the next election",
-            data.state == POOL_STATE_IDLE,
-            state=data.state_name,
+            refused is not None and data.state == POOL_STATE_IDLE,
+            state=data.state_name, query_id=query_id, refusal=refused,
         )
 
     async def drain_withdraw_queue(self) -> None:
@@ -3759,7 +3790,7 @@ class PoolLifecycle:
             0, election_id, self.pool_address, query_id=query_id
         )
         cursor_evidence: dict[str, Any] = {}
-        if label == "pool-stake-after-drain":
+        if label in ("pool-stake-after-drain", "stake-blocked-by-queue"):
             assert self.client is not None
             pool_cursor = (await self.client.raw_get_account_state(
                 self.pool_address
