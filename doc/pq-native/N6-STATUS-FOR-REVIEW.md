@@ -670,14 +670,16 @@ be added to those counts as a current-head 15-route pass:
 | Stage A | Preserved default three-election report `test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json`, SHA-256 `a5f8491276fa2718e1898fdd2d8bbd533edba3cfb56c114fc920bf142eb871cf`, pins source commit `60a299125f877b9b18350324c764fe789e134e24` and records no failures | T2 script scope passed there; it does not rerun all other entrypoints or close T3 |
 | DNS governance | Node `createProposalVote` conversion at `6a219ff85`; passing full run reported, but no saved effect assertion result was found in the retained run directory | Live-effect closure evidence remains unverified; production Genesis is v14, whereas this diagnostic uses v16 |
 | Multi-nominator lifecycle | Exact `1af9df5f1` report `test/integration/.pq-nominator-pool-t3/1af-fast-poll/20260924T034230Z/report.json`, SHA-256 `31fe07ddcb7bf0c1f06b135dc4b58d4fd9cefb2b14478c595df54ed06404c8ca`: exit 0, 27/27 checks passed, four chain-matured support credits recovered with exact Elector replies and capital reused | Ordinary diagnostic lifecycle passed. The first primary stake entered live ConfigParam 34; the post-drain second stake reached pool state 2, which requires `new_stake_ok`, but this run ended before its election activated in ConfigParam 34 and did not save that successful raw reply. Neither tosctl product witness path is thereby proven. |
+| Localnet JSON-RPC + TOSCAN | Exact `3f8c7301e` retained report `test/integration/.e03-localnet-3f8c7301e-20260925/report.json`, SHA-256 `e3f7498b79ecc09c83ebf485b977a54a5c1f6e538c8971a92897f8ab41d03fba`: demo and TOSCAN exit 0, `passed=true`. Raw route discovers all five Agent Economy kinds and the pool, verifies pool/Elector and structured transactions, pairs PQ Config34 JSON/BOC/genesis identity, and reopens the durable Explorer index. | The single-node advertised E03 route passes at this exact tree. It is not an every-push route, nor a >4096-ancestor or reorg-ledger test. `E03-SHARD-ANCESTRY-INDEXER.md` registers those two independently OPEN follow-ups with owner and closure conditions. |
 
 The exact source inventory guard confirms all 15 retained entrypoints use the
 shared deterministic PQ initial-validator helper. The every-push
 `branch-chain-python.yml` job boots only the four-validator wallet/transfer
 regression, not each retained route. `tosctl-service.yml` still conditions its
-real-chain-explorer job on `workflow_dispatch`; therefore the TOSCAN consumer
-of `localnet-jsonrpc.py` is not an every-push branch check. Both P0-3
-correctness questions remain OPEN under their original closure conditions.
+real-chain-explorer job on `workflow_dispatch`; therefore the passing TOSCAN
+consumer of `localnet-jsonrpc.py` is not an every-push branch check. Both P0-3
+correctness questions remain OPEN under their original fleet-wide closure
+conditions; this one retained route is signed off separately.
 
 Rust `BlockSignaturesSimplexPq` now names its check as structural signer
 membership and declared weight, and `construct_from_pq_boc` states that it
