@@ -1,7 +1,7 @@
 # E02 retained route: Simplex2 observer churn
 
-Status: enhanced-route local PASS on
-`446940f187b1f93d276297c514aaeaee3e039111`;
+Status: final enhanced-route local PASS on
+`4dd8f00a2933544c5ea6f34a7562edb2b630f412`;
 this is not a release-scale finality, restart-recovery, or fork-identity test.
 The earlier status was "local route PASS on `c4f381584`". That run really did
 pass the then-current script, but its verdict did not enforce each node's
@@ -159,3 +159,56 @@ passed (raw SHA-256
 `e8826ddf071536d75e282d791d15a7e1d8c8d6b92c8b22ddeaf8b6d4ea1e8182`).
 The `446940f18` run's logs were retrospectively rechecked and had no dangling
 creates, but its verdict cannot stand in for a fresh run of the final script.
+
+## Final committed-tree route result
+
+With the dangling-create control committed, the clean `4dd8f00a2` source and
+native targets were built again. The build raw SHA-256 is
+`0c04e29e5312caa5c1c8403615432a5e6132688b7868d3b6a269b4719eb5d565`;
+route source SHA-256 is
+`0fb8ff2154b118e837485b46fc6a72941a8f7ddff46d49094d667679990bc5c6`;
+unit-control source SHA-256 is
+`5b811ce1521eda11c8473e6ff5903cd9dfcaca800098574b80786d60b3c32383`;
+native `validator-engine`, `dht-server`, and `create-state` SHA-256 values are
+`abb82ad2d32960958d55eb8b86326c0f46fcd9fabfdc5242f0e99cbe49cb4d6f`,
+`789dd72365e4c659ebd6298e9bf0111a3f0aec8985fcf33c632b47e91068b0e1`,
+and `3e7fca20f6a7d6d8b8fd0000b783e455baa547ee5aa8e54ebe1ae392d4d598d8`.
+The other required binary SHA-256 values on this tree are
+`crypto/pq/tos-pq-consensus-key`
+`039811cd49d0b2d6f4232a5ea46e8cd025fd8ddd5d7fe37ee46b292992ba5c6b`,
+`toslib/libtoslibjson.so.0.5`
+`3471f1a485301a6c098fdd931777236da33c32efb2a400e54c42f33f32a68161`,
+`validator-engine-console`
+`5fbe9840edc008bb29336c2cb0d0d8c724052f6acb410eb37a46b366d49c5c11`,
+`lite-client`
+`adf9501784215d3ae651cf1d1366dd9339e88e63516447bdfda485c96d682ff0`,
+and `generate-random-id`
+`d1eaf11089c5b37603036b6bc8c947d440acbdd074756bf9001216da382e59b5`.
+The final targeted 8/8 unit/startup tests have raw SHA-256
+`3247c50c34e782db19f552455bce1f096e033aae5010deec64401bb0f5ec19c7`.
+
+The command/options remained unchanged, with artifact directory
+`build/simplex2-release/e02-4dd8f00a2-20260925T002527Z/run`.
+Its complete stdout/stderr SHA-256 is
+`6d8d63072c2194f3bf92f24bb6c657a61cdb054fb8d2dd0dd93217523f3fcab7`,
+exit code 0; `run/summary.json` SHA-256 is
+`c63fcac801654ee9c43c260af814c470444fba727306661e86d8a9839034cf82`.
+The summary binds itself to `4dd8f00a2`, says `PASS` and `failures=[]`.
+Six nodes progressed 2→5 and one 2→6, with maximum sampled spread 1.
+There were 18 created, 18 started, and 15 destroyed observer groups, with
+zero exact-tuple lifecycle errors, cc_seqno 1–6, zero refusals, and no fatal
+diagnostics. All node databases and eight raw logs remain under `run/network`.
+Node-log SHA-256 in node order 0–7:
+`689544431d6c4027da7632a1b47cca46271581c0f628aab5b122be1839e29190`,
+`431e5a1e165015e56ee31447ace2e4f5633c5e0050a2f7c28f2bcf76189d1ffc`,
+`4d23984d8aa8e784465273edab7320a5f4389a8745811d5535343c2ca71513f0`,
+`95e637e1d6143e216d95ce63faf15a6cc864332f6bc7007a3cf673701311085e`,
+`a2e974c5fae90012df23ab1db43e009457c26d41e8f2fcb0a7886749756dad21`,
+`c13117e734c74c6db2f9b9ecccea936d601344051b491c1a11a13088d4c38abe`,
+`f58051cf45ce78562a53f75a1b3d6225f3625dc1d2e29f54c4848bb55a77e39c`,
+`753c4280938fa0928fc384e9d8e139486cab269db068fde45bbff15de6ed5ffa`.
+
+This signs only the E02 observer-churn route's advertised height and group
+behavior. No FinalCert/proof, restart recovery, or equal-height block-hash
+identity assertion was added or inferred. The overall 15-route registry
+remains open for its other retained entry points.
