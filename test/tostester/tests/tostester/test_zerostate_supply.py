@@ -321,6 +321,47 @@ def test_stage_a_can_extend_only_the_bootstrap_set_without_changing_election_par
     ) == (300, 180, 60, 180)
 
 
+def test_f01_stage_a_start_override_is_encoded_in_genesis_param15(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        shard_validators=EXPECTED_VALIDATOR_COUNT,
+        validator_economics_profile=True,
+        validator_election_stage_a_profile=True,
+        validator_election_stage_a_start_before=240,
+    )
+    genesis_dir = tmp_path / "f01-extended"
+    genesis_dir.mkdir()
+    zerostate = create_zerostate(
+        install, genesis_dir, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (300, 240, 60, 180)
+    assert _config(state, 34, ConfigParam34).cur_validators.utime_until - (
+        _config(state, 34, ConfigParam34).cur_validators.utime_since
+    ) == 600
+    for start in (False, 60, 300, 301):
+        with pytest.raises(ValueError, match="Stage A election start"):
+            create_zerostate(
+                install, tmp_path / f"bad-{start}",
+                NetworkConfig(
+                    validator_economics_profile=True,
+                    validator_election_stage_a_profile=True,
+                    validator_election_stage_a_start_before=start,
+                ), [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+            )
+    with pytest.raises(ValueError, match="requires the Stage A profile"):
+        create_zerostate(
+            install, tmp_path / "not-stage-a",
+            NetworkConfig(validator_election_stage_a_start_before=240), [Key()]
+        )
+
+
 def test_stage_a_lifecycle_can_extend_elected_sets_without_changing_other_params(tmp_path):
     install = Install(BUILD_DIR, REPO)
     config = NetworkConfig(

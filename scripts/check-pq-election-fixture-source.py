@@ -55,6 +55,8 @@ def main() -> int:
     if "pq_full=args.mode in ('launch-gate', 'pq-launch-gate')" not in main_text:
         fail("the default launch-gate no longer runs the complete multi-round PQ rehearsal")
     genesis_profile = method(tree, "configure_network_profile")
+    if "config.validator_election_stage_a_start_before = self.profile.elect_start_before" not in ast.unparse(genesis_profile):
+        fail("F01 election start override is not passed into the Genesis NetworkConfig")
     if "if self.pq_full:\n" not in ast.unparse(genesis_profile) or "PQ_FULL_GENESIS_FAUCET_FUNDING" not in ast.unparse(genesis_profile):
         fail("full PQ mode no longer sets its three-round faucet budget in Genesis")
     capacity_line = one_call(execute, "require_pq_full_faucet_capacity")

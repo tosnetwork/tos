@@ -48,6 +48,16 @@ class F01StakeWindowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(default.elect_start_before, 180)
         with self.assertRaisesRegex(ValueError, "requires Stage A"):
             stage["f01_profile"](stage["PROFILES"]["b"], True)
+        fixture = stage["ValidatorElectionRehearsal"].__new__(
+            stage["ValidatorElectionRehearsal"])
+        fixture.profile = wide
+        fixture.fixture_only = False
+        fixture.pq_election = False
+        fixture.pq_full = False
+        fixture.experiment = None
+        config = stage["NetworkConfig"]()
+        fixture.configure_network_profile(config)
+        self.assertEqual(config.validator_election_stage_a_start_before, 240)
 
     async def test_presend_requires_matching_open_window_and_margin(self):
         with tempfile.TemporaryDirectory() as directory:

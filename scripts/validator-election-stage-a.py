@@ -471,6 +471,8 @@ class ValidatorElectionRehearsal:
         config.shard_validators = VALIDATOR_COUNT
         config.validator_economics_profile = True
         config.validator_election_stage_a_profile = self.profile.accelerated
+        if self.profile.stage == "a" and self.profile.elect_start_before != PROFILES["a"].elect_start_before:
+            config.validator_election_stage_a_start_before = self.profile.elect_start_before
         if self.fixture_only or self.pq_election:
             if self.controller_code is None:
                 raise AssertionError("PQ controller code was not compiled before Genesis")
