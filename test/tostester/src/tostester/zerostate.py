@@ -81,6 +81,10 @@ class NetworkConfig:
     bootstrap_validator_set_valid_for: int | None = None
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
+    # TEST-ONLY: extend the elected-set period for a lifecycle that must
+    # recover an old stake before it can submit another order. None preserves
+    # the Stage A 300/180/60/180 election schedule.
+    validator_election_stage_a_elected_for: int | None = None
     # TEST-ONLY: an accelerated validator-election application experiment may
     # need a larger local faucet than the canonical 100,000-TOS validator
     # bootstrap.  None preserves the canonical/default zerostate exactly.
@@ -494,6 +498,16 @@ def create_zerostate(
         )
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
+    stage_a_elected_for = config.validator_election_stage_a_elected_for
+    if stage_a_elected_for is not None:
+        if not config.validator_election_stage_a_profile:
+            raise ValueError("elected-set duration override requires the Stage A profile")
+        if (
+            isinstance(stage_a_elected_for, bool)
+            or not isinstance(stage_a_elected_for, int)
+            or not 240 < stage_a_elected_for <= 0xFFFF_FFFF
+        ):
+            raise ValueError("Stage A elected-set duration must exceed the election lead and close periods")
     bootstrap_valid_for = config.bootstrap_validator_set_valid_for
     if bootstrap_valid_for is not None:
         if config.validator_economics_profile and not config.validator_election_stage_a_profile:
@@ -579,6 +593,8 @@ def create_zerostate(
             # election timing and original validator-set lifetime. Never use
             # this profile to generate a production zerostate.
             profile["election_params"] = "300 180 60 180"
+            if stage_a_elected_for is not None:
+                profile["election_params"] = f"{stage_a_elected_for} 180 60 180"
             profile["original_vset_valid_for"] = 600
             if bootstrap_valid_for is not None:
                 profile["original_vset_valid_for"] = bootstrap_valid_for

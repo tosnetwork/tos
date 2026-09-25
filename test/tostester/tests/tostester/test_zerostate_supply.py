@@ -321,6 +321,59 @@ def test_stage_a_can_extend_only_the_bootstrap_set_without_changing_election_par
     ) == (300, 180, 60, 180)
 
 
+def test_stage_a_lifecycle_can_extend_elected_sets_without_changing_other_params(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        shard_validators=EXPECTED_VALIDATOR_COUNT,
+        validator_economics_profile=True,
+        validator_election_stage_a_profile=True,
+        bootstrap_validator_set_valid_for=1200,
+        validator_election_stage_a_elected_for=600,
+    )
+    zerostate = create_zerostate(
+        install, tmp_path, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    validator_set = _config(state, 34, ConfigParam34).cur_validators
+    assert validator_set.utime_until - validator_set.utime_since == 1200
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (600, 180, 60, 180)
+
+
+@pytest.mark.parametrize("duration", [False, 0, 240, 0x1_0000_0000])
+def test_stage_a_elected_set_override_rejects_invalid_duration(tmp_path, duration):
+    with pytest.raises(ValueError, match="Stage A elected-set duration"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(
+                shard_validators=EXPECTED_VALIDATOR_COUNT,
+                validator_economics_profile=True,
+                validator_election_stage_a_profile=True,
+                validator_election_stage_a_elected_for=duration,
+            ),
+            [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+        )
+
+
+def test_elected_set_override_is_rejected_outside_stage_a(tmp_path):
+    with pytest.raises(ValueError, match="requires the Stage A profile"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(
+                validator_economics_profile=True,
+                validator_election_stage_a_elected_for=600,
+            ),
+            [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+        )
+
+
 def test_validator_economics_without_stage_a_rejects_bootstrap_lifetime_override(tmp_path):
     install = Install(BUILD_DIR, REPO)
     config = NetworkConfig(

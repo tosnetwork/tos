@@ -85,6 +85,8 @@ def validate(source: str) -> None:
             "Genesis no longer admits the compiled controller code")
     require("network.config.bootstrap_validator_set_valid_for = 1200" in ast.unparse(bring_up),
             "pool fixture no longer leaves a 1200-second first-set stake window")
+    require("network.config.validator_election_stage_a_elected_for = 600" in ast.unparse(bring_up),
+            "pool fixture no longer leaves a recovery-to-next-election stake window")
     provision = one_call(bring_up, "make_deterministic_pq_initial_validator")
     spare = one_call(bring_up, "make_deterministic_pq_spare_validator")
     require(keyword(provision, "validator_id") == "controller.address.hash_part",
@@ -158,6 +160,10 @@ def validate(source: str) -> None:
             and "state.sync_utime" in ast.unparse(window)
             and bool(calls(window, "stakeable_election_id_from_live_status")),
             "final election window no longer comes from Elector status and chain time")
+    require("pool-stake-pre-send-window-" in ast.unparse(window)
+            and "'participant_list_extended': output" in ast.unparse(window)
+            and "'chain_utime': state.sync_utime" in ast.unparse(window),
+            "pre-send Elector getter and chain time are no longer retained raw")
     parser_text = ast.unparse(window_parser)
     require("elect_close - chain_utime > minimum_window_seconds" in parser_text
             and "failed != 0" in parser_text and "finished != 0" in parser_text,
@@ -172,12 +178,24 @@ def validate(source: str) -> None:
     primary_rechecks = [
         node for node in ast.walk(primary)
         if isinstance(node, ast.If)
-        and ast.unparse(node.test) == "await self.stakeable_election_id() != election_id"
+        and ast.unparse(node.test) == "await self.stakeable_election_id(capture_query_id=query_id) != election_id"
         and any(isinstance(child, ast.Raise) for child in node.body)
     ]
     require(len(primary_rechecks) == 1
             and primary_rechecks[0].lineno < one_call(primary, "send").lineno,
             "pool order can be sent after its live election window closes")
+    queued_retries = [
+        call for call in calls(execute, "retry")
+        if keyword(call, "description") == repr("the next election has a live stake acceptance window")
+    ]
+    queued_orders = [
+        call for call in calls(execute, "stake_must_be_refused")
+    ]
+    require(len(queued_retries) == 1 and len(queued_retries[0].args) == 1
+            and ast.unparse(queued_retries[0].args[0]) == "self.stakeable_election_id"
+            and len(queued_orders) == 1
+            and queued_retries[0].lineno < queued_orders[0].lineno,
+            "queued-stake refusal can select a nonzero but closed active election")
     final_retries = [
         call for call in calls(execute, "retry")
         if keyword(call, "description") == repr("an election with an open pool-stake acceptance window")
@@ -296,8 +314,16 @@ def self_test(source: str) -> None:
             ("self.stakeable_election_id,\n                timeout=900,\n                description=\"an election has a live stake acceptance window\"",
              "self.active_election_id,\n                timeout=900,\n                description=\"an election has a live stake acceptance window\""),
         "first pool order window recheck removed":
-            ("if await self.stakeable_election_id() != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\"",
-             "if False and await self.stakeable_election_id() != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\""),
+            ("if await self.stakeable_election_id(capture_query_id=query_id) != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\"",
+             "if False and await self.stakeable_election_id(capture_query_id=query_id) != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\""),
+        "pre-send Elector getter capture removed":
+            ('"participant_list_extended": output,', '"participant_list_extended": "",'),
+        "next queued stake selected by stale active ID":
+            ("self.stakeable_election_id,\n                timeout=900,\n                description=\"the next election has a live stake acceptance window\"",
+             "self.active_election_id,\n                timeout=900,\n                description=\"the next election has a live stake acceptance window\""),
+        "recovery window shortened":
+            ("network.config.validator_election_stage_a_elected_for = 600",
+             "network.config.validator_election_stage_a_elected_for = 300"),
         "final closed election selected by nonzero ID":
             ("self.stakeable_election_id,\n                timeout=900,\n                description=\"an election with an open pool-stake acceptance window\"",
              "self.active_election_id,\n                timeout=900,\n                description=\"an election with an open pool-stake acceptance window\""),
@@ -350,7 +376,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: fixture identity and PQ pool-order wiring checked; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; first and final stake selection require an open window and same-ID recheck; no live second stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: fixture identity and PQ pool-order wiring checked; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; first, queued-refusal and final stake selection require an open window, with same-ID send rechecks; no live queued refusal is claimed")
 
 
 if __name__ == "__main__":

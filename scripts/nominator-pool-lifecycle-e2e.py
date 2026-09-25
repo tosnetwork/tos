@@ -2221,12 +2221,29 @@ class PoolLifecycle:
                 return int(token)
         return 0
 
-    async def stakeable_election_id(self) -> int:
+    async def stakeable_election_id(self, *, capture_query_id: int | None = None) -> int:
         """Read the Elector's acceptance window against this lite-server's chain time."""
         assert self.client is not None
         output = await self.runmethod(raw_address(ELECTOR), "participant_list_extended")
         state = await self.client.raw_get_account_state(ELECTOR)
-        return stakeable_election_id_from_live_status(output, state.sync_utime)
+        selected = stakeable_election_id_from_live_status(output, state.sync_utime)
+        if capture_query_id is not None:
+            # Keep the exact getter and chain-time read used by the final
+            # pre-send decision, rather than inferring it from a keeper poll.
+            path = self.artifacts_dir / f"pool-stake-pre-send-window-{capture_query_id}.json"
+            raw = json.dumps({
+                "query_id": str(capture_query_id),
+                "chain_utime": state.sync_utime,
+                "participant_list_extended": output,
+                "stakeable_election_id": selected,
+            }, indent=2, sort_keys=True).encode() + b"\n"
+            path.write_bytes(raw)
+            self.event(
+                "pool_stake_pre_send_window", query_id=capture_query_id,
+                chain_utime=state.sync_utime, stakeable_election_id=selected,
+                raw_path=str(path), raw_sha256=hashlib.sha256(raw).hexdigest(),
+            )
+        return selected
 
     async def config34_selection(self) -> Config34Selection:
         output = await self.lite("time", "getconfig 34")
@@ -2669,8 +2686,14 @@ class PoolLifecycle:
         # default first set before its initial election accepts a stake. Keep
         # ConfigParam 15 accelerated, but leave enough first-set time for the
         # fixture to enter that election before its close; later sets remain
-        # 300 seconds as configured by the production genesis dictionary.
+        # on the explicit Stage A test schedule below.  A 300-second elected
+        # set left only a 60-second interval between the first stake's actual
+        # unfreeze and the third election's close; four support-pool recoveries
+        # and the primary recovery could not finish within it.  Keep the
+        # production schedule untouched and give this recovery rehearsal a
+        # 600-second elected period instead.
         network.config.bootstrap_validator_set_valid_for = 1200
+        network.config.validator_election_stage_a_elected_for = 600
         network.config.global_version = 16
         network.config.validator_controller_code_hash = self.controller_code.hash
 
@@ -3818,7 +3841,7 @@ class PoolLifecycle:
                 "controller_pre_order_cursor_lt": str(controller_cursor.lt),
                 "controller_pre_order_cursor_hash": controller_cursor.hash.hex(),
             }
-        if await self.stakeable_election_id() != election_id:
+        if await self.stakeable_election_id(capture_query_id=query_id) != election_id:
             raise RuntimeError(
                 f"pool stake election window closed or changed before send: {election_id}"
             )
@@ -4385,9 +4408,9 @@ class PoolLifecycle:
             )
 
             next_election = await self.retry(
-                self.active_election_id,
+                self.stakeable_election_id,
                 timeout=900,
-                description="the next election opens",
+                description="the next election has a live stake acceptance window",
                 predicate=lambda value: value > 0 and value != election_id,
             )
             # This leg is the validator deliberately trying to stake and being

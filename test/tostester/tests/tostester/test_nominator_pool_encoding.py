@@ -12,6 +12,7 @@ constants.
 import asyncio
 import base64
 import copy
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -490,6 +491,16 @@ async def test_nonzero_active_id_does_not_override_closed_live_election(tmp_path
     assert await runner.stakeable_election_id() == 0, "nonzero ID is not an accepting window"
     client.chain_utime = 1790213700
     assert await runner.stakeable_election_id() == election_id
+    runner.artifacts_dir.mkdir()
+    assert await runner.stakeable_election_id(capture_query_id=7001) == election_id
+    raw_path = runner.artifacts_dir / "pool-stake-pre-send-window-7001.json"
+    raw = raw_path.read_bytes()
+    captured = json.loads(raw)
+    assert captured["query_id"] == "7001"
+    assert captured["chain_utime"] == 1790213700
+    assert captured["stakeable_election_id"] == election_id
+    assert "1790213808" in captured["participant_list_extended"]
+    assert runner.report.events[-1]["raw_sha256"] == hashlib.sha256(raw).hexdigest()
 
 
 def test_first_pool_stake_waits_for_the_live_window():
@@ -497,6 +508,59 @@ def test_first_pool_stake_waits_for_the_live_window():
     before_first_order = source.split('self.event("election_open"', 1)[0]
     first_election_retry = before_first_order.rsplit("election_id = await self.retry(", 1)[1]
     assert first_election_retry.lstrip().startswith("self.stakeable_election_id,")
+
+
+def test_queued_stake_refusal_waits_for_a_new_live_window():
+    source = inspect.getsource(lifecycle.PoolLifecycle.execute)
+    before_refusal = source.split("await self.stake_must_be_refused(next_election)", 1)[0]
+    next_election_retry = before_refusal.rsplit("next_election = await self.retry(", 1)[1]
+    assert next_election_retry.lstrip().startswith("self.stakeable_election_id,")
+    assert 'description="the next election has a live stake acceptance window"' in next_election_retry
+    assert "value > 0 and value != election_id" in next_election_retry
+
+
+@pytest.mark.asyncio
+async def test_queued_stake_wait_skips_a_closed_nonzero_active_id(tmp_path, monkeypatch):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="queued-window-test")
+    old_election = 1790346016
+    closed_election = 1790346616
+    next_election = 1790346916
+    observations = [
+        (closed_election, 1790346556, 1790346669),
+        (closed_election, 1790346556, 1790346680),
+        (next_election, 1790346856, 1790346750),
+    ]
+    current = observations[0]
+    calls = 0
+
+    async def fake_runmethod(address, method):
+        nonlocal current, calls
+        assert address == lifecycle.raw_address(lifecycle.ELECTOR)
+        if method == "active_election_id":
+            return f"result: [ {closed_election} ]"
+        assert method == "participant_list_extended"
+        current = observations[min(calls, len(observations) - 1)]
+        calls += 1
+        return f"result: [ {current[0]} {current[1]} 10000000000000 0 () 0 0 ]"
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            assert address == lifecycle.ELECTOR
+            return SimpleNamespace(sync_utime=current[2])
+
+    runner.client = FakeClient()
+    monkeypatch.setattr(runner, "runmethod", fake_runmethod)
+    predicate = lambda value: value > 0 and value != old_election
+    # The old selector falsely declares the already-closed third election ready.
+    assert await runner.retry(
+        runner.active_election_id, timeout=1, description="old selector",
+        predicate=predicate, interval=0,
+    ) == closed_election
+    assert await runner.retry(
+        runner.stakeable_election_id, timeout=1, description="live selector",
+        predicate=predicate, interval=0,
+    ) == next_election
+    assert calls == 3
 
 
 @pytest.mark.asyncio
@@ -515,7 +579,8 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
 
     runner.authorized_pool_order = build
     runner.send = send
-    async def stakeable():
+    async def stakeable(*, capture_query_id=None):
+        assert capture_query_id is not None
         return 123
     runner.stakeable_election_id = stakeable
     runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
@@ -548,7 +613,8 @@ async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path)
     async def build(*args, **kwargs):
         return Cell.empty()
 
-    async def stakeable():
+    async def stakeable(*, capture_query_id=None):
+        assert capture_query_id is not None
         return 0
 
     async def send(*args, **kwargs):
