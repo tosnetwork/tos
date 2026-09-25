@@ -56,3 +56,13 @@ all 20 rules can be removed after a real fault run. No failed sample may be
 skipped after inspection. These are offline controls only until a new
 exact-tree real run and independent review. X02 remains OPEN;
 partial packet loss is a separate unsatisfied slice.
+
+For the committed `d769cfb98` checker, the 69-test green raw is
+`/datax/tos-x02-fix-evidence-20260925/d769-x02-committed-green.raw`
+(SHA-256 `a3bd02637a7d1e6f5ebbbea4592cb88bcd6fdd8f7ff5cc8d6ef4e53f4c2a955c`, exit 0).
+The single-guard-removal control is
+`/datax/tos-x02-fix-evidence-20260925/d769-drain-guard-mutant.raw`
+(SHA-256 `99c318ea385893b26b948ef6a11f96ec1bcc23277e826face43f9bb027dcd426`,
+exit 1 at `ValueError not raised`). That raw records the exact deleted guard,
+clean source SHA-256 `f010c0b5e16b824d65d98c59d65d46b7c2449320cc64e07a7296bdfd60a3eadf`,
+and mutant source SHA-256 `593496f10e7c0bb12ea2721d48e82f574b5569bded89e5cfaadf978d2bff972f`.
