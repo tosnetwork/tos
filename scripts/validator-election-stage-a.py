@@ -607,12 +607,18 @@ class ValidatorElectionRehearsal:
         controller = self.controllers[index]
         pool = self.pools[index]
         rpc_address = self.experiment.rpc_addresses[index] if self.experiment is not None else None
+        peer_port = node.transport_ports[0]
+        if rpc_address is not None and int(rpc_address.rsplit(":", 1)[1]) in node.transport_ports:
+            raise ValueError(f"validator {index + 1} RPC port overlaps peer transport")
         return {
             "validator_index": index + 1,
             "node_name": node.name,
             "controller_id_hex": controller.address.hash_part.hex(),
             "consensus_key_id_hex": controller.consensus.key_id.hex(),
             "adnl_id_hex": node.validator_key.id.hex(),
+            "peer_transport": {"protocol": "udp", "ip": "127.0.0.1", "port": peer_port},
+            "node_data_dir": str(node.directory.resolve()),
+            "process_id": node.process_id,
             "operator_wallet_raw": raw_address(wallet.address),
             "operator_wallet_role": "funds pool capital and sends node-authorized pool orders",
             "pool_stake_owner_raw": raw_address(pool.address),
