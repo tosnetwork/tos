@@ -62,11 +62,13 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19246"
+OBSERVER_RPCS = ("127.0.0.1:19247", "127.0.0.1:19248")
 WORKDIR = REPO / "test/integration/.agent-economy-composed-e2e"
 RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 CHAIN_EVIDENCE = WORKDIR / "chain-evidence.jsonl"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
+OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000008"
 NANO = 1_000_000_000
 REVIEW_PERIOD = 3600
@@ -101,10 +103,10 @@ def check(label: str, ok: bool, detail: str = ""):
         failures.append(label)
 
 
-def rpc_call(method: str, **params):
+def rpc_call(method: str, *, endpoint: str = RPC, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
-        f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
+        f"http://{endpoint}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
@@ -236,11 +238,11 @@ async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -
     return False
 
 
-async def wait_rpc_ready(timeout: float = 180.0) -> bool:
+async def wait_rpc_ready(timeout: float = 180.0, endpoint: str = RPC) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if "result" in rpc_call("getMasterchainInfo"):
+            if "result" in rpc_call("getMasterchainInfo", endpoint=endpoint):
                 return True
         except Exception:
             pass
@@ -377,6 +379,43 @@ async def verify_payout_edge(label: str, escrow: str, recipient: str,
             return
         await asyncio.sleep(1)
     raise RuntimeError(f"{label}: exact escrow-to-agent-account payout not observed")
+def controller_task_args(operation: str, name: str) -> tuple[str, ...]:
+    """Stable per-action ID and two independent read-only RPC configurations."""
+    action_id = hashlib.sha256(f"e10:{name}:{operation}".encode()).hexdigest()
+    return ("--controller-action-id", action_id, "--quorum-config",
+            str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
+
+
+def write_config() -> None:
+    config = {
+        "nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
+        "chain_rpc": {"urls": [f"http://{RPC}/"]}, "http": {},
+        "master_wallet": None, "tick_interval": 40, "log": None,
+    }
+    CONFIG.write_text(json.dumps(config, indent=2))
+    for path, endpoint in zip(OBSERVER_CONFIGS, OBSERVER_RPCS, strict=True):
+        observer = dict(config)
+        observer["chain_rpc"] = {"urls": [f"http://{endpoint}/"]}
+        path.write_text(json.dumps(observer, indent=2))
+
+
+def require_same_zerostate() -> None:
+    if len(set((RPC, *OBSERVER_RPCS))) != 3:
+        raise RuntimeError("E10 quorum RPC endpoints are not independent")
+    primary = rpc_call("getMasterchainInfo")["result"]["init"]
+    for endpoint in OBSERVER_RPCS:
+        observed = rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["init"]
+        if observed != primary:
+            raise RuntimeError(f"E10 observer {endpoint} has a different zerostate")
+
+
+def require_independent_processes(process_map: list[dict]) -> None:
+    if (len(process_map) != 3 or
+            len({row["pid"] for row in process_map}) != 3 or
+            len({row["directory"] for row in process_map}) != 3 or
+            len({row["rpc"] for row in process_map}) != 3 or
+            any(row["pid"] is None for row in process_map)):
+        raise RuntimeError("E10 observer processes are not independent")
 
 
 async def run_checks(faucet) -> None:
@@ -385,6 +424,12 @@ async def run_checks(faucet) -> None:
         check("json-rpc endpoint ready", False, f"no response from http://{RPC}/jsonRPC")
         return
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
+    for endpoint in OBSERVER_RPCS:
+        if not await wait_rpc_ready(endpoint=endpoint):
+            check(f"independent observer RPC {endpoint} ready", False)
+            return
+    require_same_zerostate()
+    check("two independent observers share the validator zerostate", True)
 
     for name in ("planner", "verifier", "reviewer", "model-provider", "worker-owner"):
         await tosctl("wallet", "create", "-n", name, "-v", "V3R2", "-w", "0")
@@ -507,6 +552,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "accept", "--name", "workflow-happy",
         "--via-agent-account", "research-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("accept", "workflow-happy"),
     )
     check("worker Agent Account accepted the task",
           await wait_task_status("workflow-happy", "accepted") == "accepted")
@@ -533,6 +579,7 @@ async def run_checks(faucet) -> None:
         "agent", "task", "send", "--operation", "result", "--name", "workflow-happy",
         "--via-agent-account", "research-agent", "--amount", "0.1",
         "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+        *controller_task_args("result", "workflow-happy"),
     )
     check("worker Agent Account submitted the task result",
           await wait_task_status("workflow-happy", "result_submitted") == "result_submitted")
@@ -572,6 +619,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "accept", "--name", "workflow-contested",
         "--via-agent-account", "research-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("accept", "workflow-contested"),
     )
     check("worker Agent Account accepted the contested task",
           await wait_task_status("workflow-contested", "accepted") == "accepted")
@@ -583,6 +631,7 @@ async def run_checks(faucet) -> None:
         "--via-agent-account", "research-agent", "--amount", "0.1",
         "--result-hash", CONTESTED_RESULT_HASH, "--evidence-hash", CONTESTED_EVIDENCE_HASH,
         "--yes",
+        *controller_task_args("result", "workflow-contested"),
     )
     check("worker Agent Account submitted the contested result",
           await wait_task_status("workflow-contested", "result_submitted") == "result_submitted")
@@ -665,30 +714,50 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps({
-        "nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
-        "chain_rpc": {"urls": [f"http://{RPC}/"]}, "http": {},
-        "master_wallet": None, "tick_interval": 40, "log": None,
-    }, indent=2))
+    write_config()
     install = Install(BUILD_DIR, REPO)
 
     async with Network(install, WORKDIR / "net", base_port=23800) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
+        observers = [network.create_full_node() for _ in OBSERVER_RPCS]
         make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
+        for observer in observers:
+            observer.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        observer_tasks = [
+            asyncio.create_task(observer.run(StartOptions(args=["--json-rpc-address", endpoint])))
+            for observer, endpoint in zip(observers, OBSERVER_RPCS, strict=True)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            if len({id(node), *(id(observer) for observer in observers)}) != 3:
+                raise RuntimeError("E10 observer node objects are not independent")
+            process_map = [
+                {"role": role, "pid": process.process_id,
+                 "rpc": endpoint, "directory": str(process.directory)}
+                for role, process, endpoint in (
+                    ("validator", node, RPC),
+                    ("observer-1", observers[0], OBSERVER_RPCS[0]),
+                    ("observer-2", observers[1], OBSERVER_RPCS[1]),
+                )
+            ]
+            require_independent_processes(process_map)
+            (WORKDIR / "process-map.json").write_text(json.dumps(process_map, indent=2) + "\n")
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet)
         finally:
-            for t in (node_task, dht_task):
+            for t in (node_task, dht_task, *observer_tasks):
                 t.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            await asyncio.gather(node_task, dht_task, *observer_tasks, return_exceptions=True)
+            await node.stop()
+            for observer in observers:
+                await observer.stop()
+            await dht.stop()
 
     return 1 if failures else 0
 
