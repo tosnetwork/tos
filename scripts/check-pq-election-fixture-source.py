@@ -58,8 +58,15 @@ def main() -> int:
     if "if self.pq_full:\n" not in ast.unparse(genesis_profile) or "PQ_FULL_GENESIS_FAUCET_FUNDING" not in ast.unparse(genesis_profile):
         fail("full PQ mode no longer sets its three-round faucet budget in Genesis")
     capacity_line = one_call(execute, "require_pq_full_faucet_capacity")
-    if not capacity_line < one_call(execute, "run_pq_first_election"):
-        fail("full PQ faucet capacity is no longer checked before the first election")
+    prefund_line = one_call(execute, "prefund_pq_followup_rounds")
+    if not capacity_line < prefund_line < one_call(execute, "run_pq_first_election"):
+        fail("two followup rounds are no longer prefunded before the first election")
+    prefund = method(tree, "prefund_pq_followup_rounds")
+    pool_funding = method(tree, "prefund_pq_followup_pool")
+    if one_call(prefund, "prefund_pq_followup_pool") <= 0 or any(marker not in ast.unparse(pool_funding)
+        for marker in ("2 * (PQ_STAKE_MESSAGE_VALUE + 20 * NANO)",
+                       "amount + 40 * NANO", "pq_followup_pool_prefunded")):
+        fail("full PQ followup prefunding lost its two-round stake and fee budget")
     fixture_branches = [
         node for node in ast.walk(execute) if isinstance(node, ast.If)
         and ast.unparse(node.test) == "self.fixture_only or self.pq_election"
@@ -339,8 +346,6 @@ def main() -> int:
     followup_text = ast.unparse(followup)
     for marker in (
         "round_number=2", "round_number=3",
-        "await self.fund_pq_pool_for_round(faucet, index, 2)",
-        "await self.fund_pq_pool_for_round(faucet, index, 3)",
         "self.first_credits = await self.recover_pq_round(1)",
         "self.second_credits = await self.recover_pq_round(2)",
         "await self.assert_duplicate_pq_recovery_no_credit()",
@@ -349,6 +354,12 @@ def main() -> int:
     ):
         if marker not in followup_text:
             fail(f"full PQ rehearsal lost {marker!r}")
+    if "fund_pq_pool_for_round" in followup_text or "prefund_pq_followup_pool" in followup_text:
+        fail("followup capital is again being placed inside a short election window")
+    if followup_text.index("round_number=3") >= followup_text.index(
+        "self.first_credits = await self.recover_pq_round(1)"
+    ):
+        fail("first-round recovery again delays rollover stakes inside the election window")
     for name, marker in (
         ("recover_pq_round", "compute_returned_stake"),
         ("recover_pq_round", "pool_id = '0x' + pool.address.hash_part.hex()"),

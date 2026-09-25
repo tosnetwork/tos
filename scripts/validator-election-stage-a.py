@@ -2972,35 +2972,43 @@ class ValidatorElectionRehearsal:
         )
         return config
 
-    async def fund_pq_pool_for_round(self, faucet: WalletV1, index: int, round_number: int) -> None:
-        """Fresh fixture capital is distinct from an election's returned stake."""
+    async def prefund_pq_followup_rounds(self, faucet: WalletV1) -> None:
+        """Fund rounds 2 and 3 before any short election window opens.
+
+        This is fixture capital, not a returned stake. Funding inside an
+        election window can make a valid fourth order arrive after elect_close.
+        """
+        for index in range(VALIDATOR_COUNT):
+            await self.prefund_pq_followup_pool(faucet, index)
+
+    async def prefund_pq_followup_pool(self, faucet: WalletV1, index: int) -> None:
         wallet = self.wallets[index]
         pool = self.pools[index]
-        amount = PQ_STAKE_MESSAGE_VALUE + 20 * NANO
+        amount = 2 * (PQ_STAKE_MESSAGE_VALUE + 20 * NANO)
         wallet_before = await self.balance(wallet.address)
         await self.send_from_wallet(
-            faucet, dest=wallet.address, amount=amount + 20 * NANO,
+            faucet, dest=wallet.address, amount=amount + 40 * NANO,
             body=Cell.empty(),
-            label=f"pq-round-{round_number}-validator-{index + 1}-wallet-capital",
+            label=f"pq-followup-validator-{index + 1}-wallet-capital",
         )
         await self.retry(
             lambda: self.balance(wallet.address), timeout=60,
-            description=f"PQ round {round_number} wallet {index + 1} fresh capital",
+            description=f"PQ followup wallet {index + 1} fresh capital",
             predicate=lambda value: value >= wallet_before + amount,
         )
         before = await self.balance(pool.address)
         await self.send_from_wallet(
             wallet, dest=pool.address, amount=amount, body=Cell.empty(),
-            label=f"pq-round-{round_number}-validator-{index + 1}-pool-capital",
+            label=f"pq-followup-validator-{index + 1}-pool-capital",
         )
         after = await self.retry(
             lambda: self.balance(pool.address), timeout=60,
-            description=f"PQ round {round_number} pool {index + 1} fresh capital",
-            predicate=lambda value: value >= before + PQ_STAKE_MESSAGE_VALUE,
+            description=f"PQ followup pool {index + 1} fresh capital",
+            predicate=lambda value: value >= before + amount - 2 * NANO,
         )
         self.event(
-            "pq_pool_round_capital", round=round_number, validator=index + 1,
-            fresh_from_faucet=amount + 20 * NANO, fresh_to_pool=amount,
+            "pq_followup_pool_prefunded", rounds=[2, 3], validator=index + 1,
+            fresh_from_faucet=amount + 40 * NANO, fresh_to_pool=amount,
             pool_balance_before=before, pool_balance_after=after,
         )
 
@@ -3108,7 +3116,7 @@ class ValidatorElectionRehearsal:
         )
 
     async def run_pq_followup_elections(self, faucet: WalletV1) -> None:
-        """Preserve the legacy launch-gate's later elections and recovery checks."""
+        """Run later elections using capital placed before the first window."""
         self.second_election_id = await self.retry(
             lambda: self.runmethod_int("active_election_id"),
             timeout=max(240, self.profile.elected_for), interval=self.long_poll_interval,
@@ -3117,7 +3125,6 @@ class ValidatorElectionRehearsal:
         )
         self.event("pq_second_election_open", election_id=self.second_election_id)
         for index in range(VALIDATOR_COUNT):
-            await self.fund_pq_pool_for_round(faucet, index, 2)
             await self.submit_pq_candidate(
                 index, self.second_election_id, round_number=2,
                 retry_restart_transients=True,
@@ -3141,11 +3148,7 @@ class ValidatorElectionRehearsal:
             predicate=lambda value: value > self.second_election_id,
         )
         self.event("pq_rollover_election_open", election_id=self.rollover_election_id)
-        past_first = await self.runmethod("past_elections")
-        (self.artifacts_dir / "pq-past-elections-before-first-recovery.txt").write_text(past_first)
-        self.first_credits = await self.recover_pq_round(1)
         for index in range(VALIDATOR_COUNT):
-            await self.fund_pq_pool_for_round(faucet, index, 3)
             await self.submit_pq_candidate(
                 index, self.rollover_election_id, round_number=3,
                 retry_restart_transients=True,
@@ -3154,6 +3157,9 @@ class ValidatorElectionRehearsal:
         (self.artifacts_dir / "pq-round-3-participants.txt").write_text(rollover_output)
         if participant_ids_from_runmethod(rollover_output) != expected_ids:
             raise AssertionError("rollover PQ election participants are not exactly four controllers")
+        past_first = await self.runmethod("past_elections")
+        (self.artifacts_dir / "pq-past-elections-before-first-recovery.txt").write_text(past_first)
+        self.first_credits = await self.recover_pq_round(1)
         await self.wait_until_chain_time(self.rollover_election_id - 55, "rollover PQ election closed")
         self.rollover_config34 = await self.wait_pq_config_activation(
             self.rollover_election_id, "rollover PQ set"
@@ -3432,6 +3438,7 @@ class ValidatorElectionRehearsal:
                     return
                 if self.pq_full:
                     await self.require_pq_full_faucet_capacity(faucet)
+                    await self.prefund_pq_followup_rounds(faucet)
                 await self.run_pq_first_election()
                 if self.pq_full:
                     await self.run_pq_followup_elections(faucet)
