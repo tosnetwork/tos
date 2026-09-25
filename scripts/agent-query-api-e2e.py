@@ -94,6 +94,13 @@ def http_get(path: str) -> tuple[int, dict]:
         return status, {}
 
 
+async def http_get_async(path: str) -> tuple[int, dict]:
+    # run_checks shares this event loop with the process-log drain tasks.
+    # A synchronous urlopen can hold it for the service's full query timeout
+    # and backpressure the validator whose RPC answer we are awaiting.
+    return await asyncio.to_thread(http_get, path)
+
+
 def is_not_found(status: int, body: dict) -> bool:
     error = body.get("error")
     return (status == 404 and body.get("ok") is False
@@ -233,7 +240,7 @@ async def wait_http_ready(timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            status, _ = http_get("/health")
+            status, _ = await http_get_async("/health")
             if status == 200:
                 return True
         except Exception:
@@ -329,7 +336,7 @@ async def run_checks(faucet) -> None:
         check("tosctld health endpoint ready", await wait_http_ready())
 
         print("\n=== GET /agents/{address} ===")
-        status, body = http_get(f"/agents/{agent_account}")
+        status, body = await http_get_async(f"/agents/{agent_account}")
         check("get_agent status 200", status == 200, f"status={status} body={body}")
         check("get_agent owner matches",
               same_addr(body.get("result", {}).get("owner"), agent_account_owner), str(body))
@@ -344,7 +351,7 @@ async def run_checks(faucet) -> None:
             ("q-accepted", accepted_addr, "accepted", 2_000_000_000),
             ("q-settled", settled_addr, "settled", 0),
         ):
-            status, body = http_get(f"/tasks/{addr}")
+            status, body = await http_get_async(f"/tasks/{addr}")
             check(f"get_task {name} status 200", status == 200, f"status={status} body={body}")
             result = body.get("result", {})
             check(f"get_task {name} status field", result.get("status") == want_status,
@@ -355,7 +362,7 @@ async def run_checks(faucet) -> None:
                   str(result))
 
         print("\n=== GET /tasks (listing + filters) ===")
-        status, body = http_get("/tasks")
+        status, body = await http_get_async("/tasks")
         check("list_tasks status 200", status == 200, f"status={status}")
         names = {item["name"] for item in body.get("result", [])}
         check("list_tasks includes all three", {"q-open", "q-accepted", "q-settled"} <= names,
@@ -363,46 +370,46 @@ async def run_checks(faucet) -> None:
         check("list_tasks total matches", body.get("total") == len(body.get("result", [])),
               str(body))
 
-        status, body = http_get("/tasks?status=settled")
+        status, body = await http_get_async("/tasks?status=settled")
         settled_names = {item["name"] for item in body.get("result", [])}
         check("status filter returns only settled", settled_names == {"q-settled"},
               str(settled_names))
 
-        status, body = http_get(f"/tasks?creator={creator}")
+        status, body = await http_get_async(f"/tasks?creator={creator}")
         creator_names = {item["name"] for item in body.get("result", [])}
         check("creator filter returns all three", {"q-open", "q-accepted", "q-settled"} <= creator_names,
               str(creator_names))
 
-        status, body = http_get(f"/tasks?agent={agent}")
+        status, body = await http_get_async(f"/tasks?agent={agent}")
         agent_names = {item["name"] for item in body.get("result", [])}
         check("agent filter returns all three (all assigned to the same agent)",
               {"q-open", "q-accepted", "q-settled"} <= agent_names, str(agent_names))
 
-        status, body = http_get(f"/tasks?deadline_after={deadline + 15}")
+        status, body = await http_get_async(f"/tasks?deadline_after={deadline + 15}")
         after_names = {item["name"] for item in body.get("result", [])}
         check("deadline_after filter returns only q-settled", after_names == {"q-settled"},
               str(after_names))
 
         print("\n=== malformed addresses -> 400 invalid_request ===")
-        status, body = http_get("/agents/not-an-address")
+        status, body = await http_get_async("/agents/not-an-address")
         check("get_agent malformed address -> 400", status == 400, f"status={status}")
         check("get_agent malformed address kind", body.get("error", {}).get("kind") == "invalid_request",
               str(body))
 
-        status, body = http_get("/tasks/not-an-address")
+        status, body = await http_get_async("/tasks/not-an-address")
         check("get_task malformed address -> 400", status == 400, f"status={status}")
         check("get_task malformed address kind", body.get("error", {}).get("kind") == "invalid_request",
               str(body))
 
         print("\n=== never-deployed address (calibration) ===")
         never_deployed = "0:" + "ee" * 32
-        status, body = http_get(f"/tasks/{never_deployed}")
+        status, body = await http_get_async(f"/tasks/{never_deployed}")
         print(f"  OBSERVED: status={status} body={json.dumps(body)}")
         check("never-deployed address returns 404 not_found",
               is_not_found(status, body), f"status={status} body={body}")
 
         print("\n=== wrong contract kind (Agent Account queried as a Task) ===")
-        status, body = http_get(f"/tasks/{agent_account}")
+        status, body = await http_get_async(f"/tasks/{agent_account}")
         print(f"  OBSERVED: status={status} body={json.dumps(body)}")
         check("wrong-kind contract returns 404 not_found",
               is_not_found(status, body), f"status={status} body={body}")

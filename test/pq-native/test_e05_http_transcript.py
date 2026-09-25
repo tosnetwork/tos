@@ -1,11 +1,13 @@
 """Retain raw successful and error HTTP replies from the E05 query route."""
 
 import base64
+import asyncio
 import importlib.util
 import io
 import json
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -58,6 +60,31 @@ class HttpTranscriptTests(unittest.TestCase):
         self.assertEqual([row["response"]["status"] for row in rows], [200, 400])
         self.assertEqual([base64.b64decode(row["response"]["body_base64"])
                           for row in rows], [good, bad])
+
+
+class HttpEventLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_http_wait_does_not_block_node_log_drain(self):
+        released = threading.Event()
+        finished = threading.Event()
+        released_before_http_return = []
+
+        def delayed_http(_path):
+            released_before_http_return.append(released.wait(timeout=0.2))
+            finished.set()
+            return 200, {"ok": True}
+
+        async def drain_task():
+            await asyncio.sleep(0.01)
+            released.set()
+
+        with patch.object(e05, "http_get", side_effect=delayed_http):
+            result, _ = await asyncio.gather(
+                e05.http_get_async("/health"), drain_task())
+        self.assertTrue(finished.is_set())
+        self.assertEqual(result, (200, {"ok": True}))
+        # A direct synchronous call holds the event loop until delayed_http's
+        # timeout; the independent log-drain task must release it first.
+        self.assertEqual(released_before_http_return, [True])
 
 
 if __name__ == "__main__":
