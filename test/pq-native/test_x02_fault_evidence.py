@@ -25,7 +25,7 @@ BOOT = "12345678-1234-1234-1234-123456789abc"
 
 
 def block(height):
-    return {"workchain": -1, "shard": x02.SHARD, "seqno": height,
+    return {"workchain": -1, "shard": x02.RPC_SHARD, "seqno": height,
             "root_hash": f"{height + 1:064x}", "file_hash": f"{height + 101:064x}"}
 
 
@@ -154,7 +154,7 @@ def process(node):
 
 
 def rpc_row(node, method, height, at, query_id):
-    params = ({"workchain": -1, "shard": x02.SHARD, "seqno": height}
+    params = ({"workchain": -1, "shard": x02.RPC_SHARD, "seqno": height}
               if method == "getBlockHeader" else {})
     request = {"jsonrpc": "2.0", "id": query_id, "method": method, "params": params}
     result = ({"id": block(height)} if method == "getBlockHeader"
@@ -382,6 +382,50 @@ def shift_times(value, amount_ns):
 
 
 class X02IsolationTests(unittest.TestCase):
+    def test_signed_masterchain_shard_normalizes_only_the_exact_bit_pattern(self):
+        self.assertEqual(x02.full_id(block(42), "production RPC")[1], x02.SHARD)
+        legacy = dict(block(42), shard=x02.SHARD)
+        self.assertEqual(x02.full_id(legacy, "hex control")[1], x02.SHARD)
+        for wrong in ("-9223372036854775807", "8000000000000001", "0"):
+            with self.assertRaisesRegex(ValueError, "wrong shard"):
+                x02.full_id(dict(block(42), shard=wrong), "wrong RPC")
+
+    def test_retained_production_masterchain_info_signed_shard(self):
+        # BlockIdExt fields from the fixed 6ef baseline's original HTTP 200
+        # response (retained baseline.json SHA-256 223eab97...).
+        response = {"ok": True, "jsonrpc": "2.0", "id": 1, "result": {
+            "last": {"@type": "tos.blockIdExt", "workchain": -1,
+                     "shard": "-9223372036854775808", "seqno": 42,
+                     "root_hash": "i5w60HyzzQrc2rtuUqnQ0d+MIlvfK6kljnbTnqxVhP4=",
+                     "file_hash": "Kp3RcwbvwWgdiMcWlzy5fan/Qgww4/f261c1E+qlJ2U="},
+            "init": {"@type": "tos.blockIdExt", "workchain": -1,
+                     "shard": "-9223372036854775808", "seqno": 0,
+                     "root_hash": "kBi4aDlDeWbdBBwjoyD8bvfnUI5g8d3Cers4n2nNzn8=",
+                     "file_hash": "7Vt3dSYtABo9Cxeb2Imei6I+jkRWxOWoHi3hzRjvNVU="}}}
+        node = policy()["nodes"][0]
+        request = {"jsonrpc": "2.0", "id": 1,
+                   "method": "getMasterchainInfo", "params": {}}
+        raw = json.dumps(response, separators=(",", ":")).encode()
+        row = {"url": node["rpc_url"], "method": "getMasterchainInfo",
+               "http_status": 200, "error": None,
+               "request_b64": base64.b64encode(json.dumps(request).encode()).decode(),
+               "response_b64": base64.b64encode(raw).decode(),
+               "response_sha256": x02.digest(raw)}
+        self.assertEqual(x02.parse_rpc(row, node, "getMasterchainInfo")[2], 42)
+
+    def test_header_request_requires_production_signed_shard(self):
+        node = policy()["nodes"][0]
+        good = rpc_row(node, "getBlockHeader", 42, 1.0, 42)
+        self.assertEqual(x02.parse_rpc(good, node, "getBlockHeader",
+                                        expected_seq=42)[2], 42)
+        for wrong in (x02.SHARD, "-9223372036854775807"):
+            bad = copy.deepcopy(good)
+            request = json.loads(base64.b64decode(bad["request_b64"]))
+            request["params"]["shard"] = wrong
+            bad["request_b64"] = base64.b64encode(json.dumps(request).encode()).decode()
+            with self.assertRaisesRegex(ValueError, "wrong height"):
+                x02.parse_rpc(bad, node, "getBlockHeader", expected_seq=42)
+
     def test_journald_compact_boot_id_matches_proc_uuid(self):
         pol, snapshots, events = fixture()
         entry = x02.journal_entries(snapshots[0]["journals"]["node1"], pol["nodes"][0])[0]

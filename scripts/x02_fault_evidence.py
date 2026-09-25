@@ -31,6 +31,7 @@ MARKER = re.compile(
 NATIVE_TIME = re.compile(rb"\[(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\.\d{9})\]")
 PIPE_FD = re.compile(r"pipe:\[(\d+)\]\Z")
 SHARD = "8000000000000000"
+RPC_SHARD = str(-(1 << 63))
 PHASES = ("baseline", "three_of_four", "two_of_four", "recovery")
 SOURCE_FILES = ("scripts/x02_fault_evidence.py", "scripts/x02_prepare_policy.py",
                 "scripts/validator-election-stage-a.py",
@@ -95,7 +96,8 @@ def full_id(raw: dict, name: str) -> tuple[int, str, int, str, str]:
         raise ValueError(f"{name} has incomplete BlockIdExt") from error
     require(type(wc) is int and wc == -1 and type(seq) is int and seq >= 0,
             f"{name} has wrong masterchain height")
-    require(str(shard).lower() == SHARD.lower(), f"{name} has wrong shard")
+    require(str(shard).lower() in (SHARD.lower(), RPC_SHARD),
+            f"{name} has wrong shard")
     return wc, SHARD, seq, hash_value(root, f"{name} root"), hash_value(file_hash, f"{name} file")
 
 
@@ -745,7 +747,7 @@ def parse_rpc(row: dict, node: dict, method: str, *,
                 "RPC endpoint zerostate differs from frozen policy")
     if method == "getBlockHeader" and expected_seq is not None:
         params = request.get("params") or {}
-        require(params.get("workchain") == -1 and params.get("shard") == SHARD
+        require(params.get("workchain") == -1 and params.get("shard") == RPC_SHARD
                 and params.get("seqno") == expected_seq,
                 "raw header request is for the wrong height")
     value = result.get("last") if method == "getMasterchainInfo" else result.get("id")
@@ -808,7 +810,7 @@ def capture(policy: dict, policy_sha: str, phase: str,
                 else {node["name"] for node in policy["nodes"]})
         common = min(first_ids[name][2] for name in live)
         result["common_seqno"] = common
-        params = {"workchain": -1, "shard": SHARD, "seqno": common}
+        params = {"workchain": -1, "shard": RPC_SHARD, "seqno": common}
         result["rpc"]["headers"] = {
             node["name"]: rpc(node["rpc_url"], "getBlockHeader", params, i * 4 + 2)
             for i, node in enumerate(policy["nodes"]) if node["name"] in live}
