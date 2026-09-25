@@ -528,6 +528,9 @@ async def main() -> int:
             require_later_same_shard(forged_target_tx, canary_master_tx)
             canary_entry, victim_js = await victim_index_after_canary(
                 victim_raw, canary_raw, want_master)
+            record_jsonl(CHAIN_EVIDENCE, {"label": "post-forgery canary indexed",
+                         "canary_master_tx": canary_master_tx,
+                         "canary_entry": canary_entry, "victim_jettons": victim_js})
             require_forged_block_indexed(victim_raw, forged_target_tx)
             owner_js = get_jettons(owner.to_str())
             owner_control = any(j.get("jetton_master", "").lower() == want_master.lower()
