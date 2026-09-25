@@ -33,6 +33,13 @@ class Response:
 
 
 class HttpTranscriptTests(unittest.TestCase):
+    def test_not_found_controls_reject_server_error(self):
+        not_found = {"ok": False, "error": {"code": 404, "kind": "not_found"}}
+        self.assertTrue(e05.is_not_found(404, not_found))
+        self.assertFalse(e05.is_not_found(500, not_found))
+        self.assertFalse(e05.is_not_found(404, {"ok": False, "error": {
+            "code": 404, "kind": "rpc_unavailable"}}))
+
     def test_records_exact_success_and_error_bodies(self):
         good = b'{"result":{"status":"open"}}'
         bad = b'{"error":{"kind":"invalid_request"}}'

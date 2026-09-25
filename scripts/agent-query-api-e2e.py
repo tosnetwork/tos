@@ -94,6 +94,13 @@ def http_get(path: str) -> tuple[int, dict]:
         return status, {}
 
 
+def is_not_found(status: int, body: dict) -> bool:
+    error = body.get("error")
+    return (status == 404 and body.get("ok") is False
+            and isinstance(error, dict) and error.get("code") == 404
+            and error.get("kind") == "not_found")
+
+
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
 # the event loop that drains the in-process node's log pipes, deadlocking the
 # chain (and therefore the tosctl call itself) until the subprocess timeout.
@@ -391,12 +398,14 @@ async def run_checks(faucet) -> None:
         never_deployed = "0:" + "ee" * 32
         status, body = http_get(f"/tasks/{never_deployed}")
         print(f"  OBSERVED: status={status} body={json.dumps(body)}")
-        check("never-deployed address does not 200", status != 200, f"status={status}")
+        check("never-deployed address returns 404 not_found",
+              is_not_found(status, body), f"status={status} body={body}")
 
         print("\n=== wrong contract kind (Agent Account queried as a Task) ===")
         status, body = http_get(f"/tasks/{agent_account}")
         print(f"  OBSERVED: status={status} body={json.dumps(body)}")
-        check("wrong-kind contract does not 200", status != 200, f"status={status}")
+        check("wrong-kind contract returns 404 not_found",
+              is_not_found(status, body), f"status={status} body={body}")
     finally:
         service_proc.terminate()
         try:
