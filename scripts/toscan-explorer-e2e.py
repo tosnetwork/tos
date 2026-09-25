@@ -31,6 +31,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from e03_http_trace import record as record_e03_http
+
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_WORKDIR = REPO / "test/integration/.toscan-explorer-e2e"
 CONTRACT_KINDS = {
@@ -52,9 +54,12 @@ def request_json(url: str, body=None, timeout=15):
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read().decode())
+            raw = response.read()
+            record_e03_http(url, data, response.status, raw)
+            return response.status, json.loads(raw.decode())
     except urllib.error.HTTPError as error:
         raw = error.read()
+        record_e03_http(url, data, error.code, raw)
         return error.code, json.loads(raw.decode()) if raw else {}
 
 

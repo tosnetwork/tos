@@ -28,6 +28,7 @@ from pathlib import Path
 import shutil
 import logging
 import nacl.signing
+from e03_http_trace import record as record_e03_http
 
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions
@@ -50,7 +51,9 @@ def rpc_call(rpc_addr: str, method: str, **params):
         f"http://{rpc_addr}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+        raw = resp.read()
+        record_e03_http(req.full_url, body, resp.status, raw)
+        return json.loads(raw.decode())
 
 
 def rpc_balance_nano(rpc_addr: str, address: str) -> int:
