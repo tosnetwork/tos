@@ -172,7 +172,16 @@ async def assert_status_stays(name: str, want: str, label: str, settle_secs: flo
     check(label, status == want, f"status={status}")
 
 
-async def premature_timeout_control(name: str, requested_deadline: int) -> None:
+def transactions_after(address: str, baseline_lt: int) -> tuple[list[dict], list[dict]]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if not any(int(row["transaction_id"]["lt"]) <= baseline_lt for row in rows):
+        raise RuntimeError("timeout control transaction page did not cover baseline")
+    newer = [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+    return rows, newer
+
+
+async def premature_timeout_control(name: str, requested_deadline: int,
+                                    creator_wallet: str) -> None:
     task = await task_show(name)
     deadline = int(task["deadline"])
     if deadline != requested_deadline or task["status"] != "accepted":
@@ -185,29 +194,57 @@ async def premature_timeout_control(name: str, requested_deadline: int) -> None:
     address = norm_addr(task["address"])
     baseline_lt = int(rpc_call("getAddressInformation", address=address)
                       ["result"]["last_transaction_id"]["lt"])
+    wallet_baseline_lt = int(rpc_call("getAddressInformation", address=creator_wallet)
+                             ["result"]["last_transaction_id"]["lt"])
     await send_op("timeout", name, "creator")
     tx = None
+    wallet_tx = None
+    wallet_rows = []
+    escrow_rows = []
     until = time.monotonic() + 25
     while time.monotonic() < until:
-        rows = rpc_call("getTransactions", address=address, limit=10)["result"]
-        newer = [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
-        if newer:
-            if len(newer) != 1:
-                raise RuntimeError("premature timeout control found multiple new escrow transactions")
-            tx = newer[0]
+        wallet_rows, newer_wallet = transactions_after(creator_wallet, wallet_baseline_lt)
+        escrow_rows, newer_escrow = transactions_after(address, baseline_lt)
+        if len(newer_wallet) > 1 or len(newer_escrow) > 1:
+            raise RuntimeError("premature timeout control found multiple new transactions")
+        if newer_wallet and newer_escrow:
+            wallet_tx = newer_wallet[0]
+            tx = newer_escrow[0]
+            out = [message for message in wallet_tx.get("out_msgs", [])
+                   if same_addr(message.get("destination"), address)]
+            if (len(out) != 1 or out[0].get("hash") is None
+                    or (tx.get("in_msg") or {}).get("hash") != out[0]["hash"]
+                    or not same_addr((tx.get("in_msg") or {}).get("source"), creator_wallet)):
+                raise RuntimeError("premature timeout escrow inbound does not match wallet outbound")
+            if wallet_tx["aborted"] or not wallet_tx["compute"]["success"] or not wallet_tx["action"]["success"]:
+                raise RuntimeError("premature timeout wallet message failed before escrow")
             break
+        if newer_escrow and not newer_wallet:
+            # Both accounts may be read at different visible heads. Do not
+            # assign an escrow transaction to a wallet send by timing alone.
+            if int(newer_escrow[0]["utime"]) >= deadline:
+                raise RuntimeError("premature timeout escrow transaction arrived after deadline")
         if finalized_mc_header()["gen_utime"] >= deadline:
-            raise RuntimeError("premature timeout control reached chain deadline without escrow transaction")
+            raise RuntimeError("premature timeout control reached chain deadline without matched transaction")
         await asyncio.sleep(1)
-    if tx is None:
-        raise RuntimeError("premature timeout control transaction not observed")
+    if tx is None or wallet_tx is None:
+        raise RuntimeError("premature timeout control matching transaction not observed")
     after = finalized_mc_header()
     status = (await task_show(name))["status"]
+    (WORKDIR / "e07-premature-timeout-receipts.json").write_text(json.dumps({
+        "before_header": before, "after_header": after,
+        "wallet_baseline_lt": wallet_baseline_lt, "escrow_baseline_lt": baseline_lt,
+        "wallet_transactions": wallet_rows, "escrow_transactions": escrow_rows,
+        "wallet_transaction": wallet_tx, "escrow_transaction": tx,
+        "task_status_after": status,
+    }, indent=2, sort_keys=True) + "\n")
     print(f"  premature timeout observed: mc={after['id']['seqno']} "
           f"chain_time={after['gen_utime']} tx_lt={tx['transaction_id']['lt']} "
-          f"tx_utime={tx['utime']} aborted={tx['aborted']} status={status}")
+          f"tx_utime={tx['utime']} aborted={tx['aborted']} "
+          f"exit={tx['compute']['exit_code']} status={status}")
     if (after["id"]["seqno"] <= before["id"]["seqno"]
             or int(tx["utime"]) >= deadline or tx["aborted"] is not True
+            or tx["compute"]["exit_code"] != 109
             or status != "accepted"):
         raise RuntimeError("premature timeout control not proved before chain deadline")
     check("premature timeout rejected before chain deadline", True)
@@ -709,7 +746,7 @@ async def run_checks(faucet) -> None:
     check("timeout task accepted",
           await wait_status("e2e-timeout", "accepted") == "accepted")
 
-    await premature_timeout_control("e2e-timeout", short_deadline)
+    await premature_timeout_control("e2e-timeout", short_deadline, creator)
     await wait_chain_deadline(short_deadline)
     creator_before = balance(creator)
     await send_op("timeout", "e2e-timeout", "creator")
