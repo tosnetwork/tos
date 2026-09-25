@@ -23,6 +23,7 @@ import threading
 import time
 import os
 import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import shutil
@@ -50,10 +51,14 @@ def rpc_call(rpc_addr: str, method: str, **params):
     req = urllib.request.Request(
         f"http://{rpc_addr}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        raw = resp.read()
-        record_e03_http(req.full_url, body, resp.status, raw)
-        return json.loads(raw.decode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw = resp.read()
+            record_e03_http(req.full_url, body, resp.status, raw)
+            return json.loads(raw.decode())
+    except urllib.error.HTTPError as error:
+        record_e03_http(req.full_url, body, error.code, error.read())
+        raise
 
 
 def rpc_balance_nano(rpc_addr: str, address: str) -> int:
