@@ -120,3 +120,44 @@ processes exited and no validator or service daemon was left running. This
 is local route evidence, **not** multi-validator, transport-authentication,
 release-scale, or arbitrary crash-recovery evidence. E13 remains OPEN until
 independent raw review and the owner's scoped signoff.
+
+Subsequent provenance review found the **exact original faa Fift and Func
+executables**, contrary to an initial missing-snapshot assessment. The retained
+E11 Stage A snapshot at
+`test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/`
+contains `fift` SHA-256 `37e0b3be30e96faf99db7061917dcf3a3950fd1ae1a6c8a7524ee52c0c0280ef`
+and `func` SHA-256 `d47ff59584adb975d8b813542b1b2aef7a3caf0320ec30008696b673a9dec5fd`.
+Both equal the original faa in-run provenance. Mac independently checked
+those bytes, the other three named binaries, fixed source and raw receipts;
+the owner then signed E13 for the **single-validator local route** in
+memo/main `7c9d46fa`. Later shared-build Fift/Func changes do not retroactively
+invalidate the original chain run.
+
+An already-started second serial run from exact source
+`8d87f75446c64e975471c63acca5b63d03732765` also exited 0 with 90 PASS,
+zero FAIL and `RESULT: ALL PASS`. Its five execution binaries were copied
+*before* network boot to
+`test/integration/.e13-service-8d87f7544-20260925-binaries/` and their
+file hashes match that run's `provenance.json` individually. It is independent
+supplemental evidence, not the prerequisite for the prior scoped signoff.
+
+| Supplemental artifact | SHA-256 |
+| --- | --- |
+| `test/integration/.e13-service-8d87f7544-20260925-console.typescript` | `5a9f164edf729ee952efd366a3423f7b19de7e71a7ca608ced98bc0a831ff35a` |
+| `-network/provenance.json` | `5f44f95956b8780e41f5404b20ade3b2cb5a68fbfd35933ca75c46d975fe919c` |
+| `-network/indexer-evidence.jsonl` | `d794e0c24c81427187a8426d305ec885030fac6e97d9a4a0768a762e683a3431` |
+| `-network/positive-evidence.jsonl` | `b0837ecd214c1f7488fc0fc2b523aeea1113b430bc7e69ef41fe81c1ed04c530` |
+| `-network/negative-evidence.jsonl` | `8a07d9db656c789884c950e1b572ea15101740a08d7c413b923f132d94ac41eb` |
+| `-network/http-transcript.jsonl` | `7cd9289d7bc18c57245f71c650a32cc7ec53e6ef4342bd743629045c7b4cfc5e` |
+| `-network/rpc-transcript.jsonl` | `ff3d8f618c9557eab1aa81d24dd840ac8a8c3a292a5871908397ae880419de81` |
+| `-network/cli-transcript.jsonl` | `4b7e8d8e7acde425b6f26aa20b427febc4fd8a64467ac3ea124623b027e51fef` |
+| `-network/tosctl-indexer.db` | `af224518be1c5debf6c2954c118d048be110036bf4106b7973467e775f242beb` |
+
+The `-network/` files are under
+`test/integration/.e13-service-8d87f7544-20260925-network/`. The five
+frozen binary SHA-256 values, in `provenance.json` and the retained copies,
+are `fift` `5ab4ddcb586ca130dec69b1c40e513c666d2948e0ab720e73ff3529a2b4787d6`,
+`func` `3186336baa0d34d3efa59da0157093ba30dad0be3d448801ca1656411d771983`,
+validator-engine `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb38a8`,
+DHT `a55e3f16efc39a72e3c45f84bc4672b271f9be81d3e4612dbd019f077bff2937`,
+and tosctl `bb60afd03c43519d43f0c3aed0b053110034bcac181d0b4ee6d8c284876316d1`.
