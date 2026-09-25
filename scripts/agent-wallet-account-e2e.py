@@ -103,6 +103,20 @@ def exact_boc_hash(exact_boc_base64: str) -> str:
     return "sha256:" + Cell.one_from_boc(base64.b64decode(exact_boc_base64)).hash.hex()
 
 
+def explicit_contract_refusal(response: dict, exit_code: int) -> bool:
+    """One named Agent Account VM refusal, not an arbitrary HTTP 500."""
+    if response.get("http_status") != 500:
+        return False
+    try:
+        error = json.loads(response["body"])
+    except (KeyError, ValueError, TypeError):
+        return False
+    text = error.get("error", "")
+    return (error.get("code") == -32603
+            and "cannot apply external message to current state" in text
+            and f"exitcode={exit_code}" in text)
+
+
 async def tosctl(*args: str, may_fail: bool = False) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
@@ -473,8 +487,10 @@ async def run_checks(faucet, node) -> None:
     print("  losing same-seqno Gift submission:", json.dumps({
         "message_hash": exact_boc_hash(cancel_primary["exact_signed_boc"]),
         "response": losing_gift_submit}, sort_keys=True))
-    check("losing same-seqno Gift reached the node submission interface",
-          "result" in losing_gift_submit, str(losing_gift_submit))
+    check("losing same-seqno Gift is admitted or explicitly refused as bad_seqno",
+          "result" in losing_gift_submit
+          or explicit_contract_refusal(losing_gift_submit, 1705),
+          str(losing_gift_submit))
     check("finalized cancellation prevents destination credit for the observation window",
           await predicate_stays_true(
               lambda: balance(cancel_target) == cancel_target_before
@@ -595,8 +611,10 @@ async def run_checks(faucet, node) -> None:
     print("  expired Gift submission:", json.dumps({
         "message_hash": exact_boc_hash(expired["exact_signed_boc"]),
         "response": expired_submit}, sort_keys=True))
-    check("expired Gift reached the node submission interface",
-          "result" in expired_submit, str(expired_submit))
+    check("expired Gift is admitted or explicitly refused as expired",
+          "result" in expired_submit
+          or explicit_contract_refusal(expired_submit, 1706),
+          str(expired_submit))
 
     async def expired_state_unchanged() -> bool:
         state = await tosctl_json("agent", "account", "show", "--address", account)

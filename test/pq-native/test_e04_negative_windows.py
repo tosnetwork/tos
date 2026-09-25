@@ -2,6 +2,7 @@
 
 import base64
 import importlib.util
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -60,6 +61,19 @@ class NegativeWindowTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ExactCancellationTests(unittest.TestCase):
+    def test_only_precise_bad_seqno_submission_error_is_accepted(self):
+        body = {"code": -32603, "error":
+                "sendBoc failed: cannot apply external message to current state; exitcode=1705"}
+        self.assertTrue(e04.explicit_contract_refusal(
+            {"http_status": 500, "body": json.dumps(body)}, 1705))
+        body["error"] = body["error"].replace("1705", "1706")
+        self.assertFalse(e04.explicit_contract_refusal(
+            {"http_status": 500, "body": json.dumps(body)}, 1705))
+        self.assertTrue(e04.explicit_contract_refusal(
+            {"http_status": 500, "body": json.dumps(body)}, 1706))
+        self.assertFalse(e04.explicit_contract_refusal(
+            {"http_status": 500, "body": "not JSON"}, 1705))
+
     def test_winner_is_bound_to_exact_boc_and_baseline(self):
         boc = base64.b64encode(Cell.empty().to_boc()).decode()
         inbound_hash = base64.b64encode(Cell.empty().hash).decode()

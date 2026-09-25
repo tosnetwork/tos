@@ -5,6 +5,45 @@ passes locally at fixed source `fe3918712`; the fixed-head CI and independent
 evidence review are still pending. This is not a multi-validator or Byzantine
 fault-tolerance claim.
 
+## Post-pass negative-submission and owner-transfer boundary
+
+The stronger negative-submission run from committed `5af85d723` exited 1;
+its retained console is
+`test/integration/.e04-agent-wallet-5af85d723-20260925-console.typescript`
+(SHA-256 `5432c1111d1ec4d88dba7b138bed62e571bd8fa6f286651f95fc1c53420ced48`).
+The cancellation winner's exact `sendBoc` returned `ok=true,status=1`. The
+losing same-account, same-seqno Gift returned HTTP 500 with the Agent Account
+VM's precise `bad_seqno=1705` refusal (`agent-account-code.fc:61,553`). The
+earlier test had required a successful `sendBoc` response, so it correctly
+recorded a failure for this different, stronger no-effect outcome. The next
+revision accepts only either an admitted submission or this exact contract
+refusal; a generic HTTP 500 is not evidence. For expired Gifts it similarly
+allows only admission or the contract's exact `expired=1706` refusal. Six
+focused negative-window tests pass, including wrong-code and malformed-body
+controls; a full committed-tree route rerun is still required.
+
+That `5af85d723` run also reached the owner-signed Agent Wallet transfer and
+then timed out in its 15-second seqno poll. Read-only forensics on a copy of
+the retained DB found wallet transaction `lt=213000001` with successful
+compute/action and outgoing 0.3 TOS hash
+`1jD1Wk3AFwk6XFGI86dD7kR6DDLZIlLFnJiRv+ogSy8=`, matching the target's
+inbound transaction `lt=213000003`; the target balance was 1.599999996 TOS.
+Raw bodies are under
+`test/integration/.e04-agent-wallet-5af85d723-20260925-forensic/`:
+`owner-transactions.json` SHA-256
+`fff4f55326720160f3a98b616bbd4873cc3202fee2a5a97bbdcea5a072b41b8f`,
+`target-transactions.json` SHA-256
+`bdc791115060fb3ac39fff0baed007571ab6e0a6f6973530460606a770a8f06f`,
+and `target-info.json` SHA-256
+`c96c5226bc4636356bb31745fe4b7a1d137c4424c1944dc65b37c8e1ad683674`.
+The message was not resent. The product owner-transfer path now uses the same
+single prepared BOC and exact-hash/destination confirmation as the other
+wallet sends. Its focused routing and confirmation group passes 9/9; restoring
+the old one-send/short-seqno-poll structure fails the new routing test.
+This is a local repair plus eventual-chain forensic result, **not** an E04
+pass from the repaired tree. The two E03 indexer follow-ups remain separate
+and OPEN.
+
 ## Current fixed-tree result: 33/33 local PASS
 
 Command from repository root:
@@ -173,5 +212,5 @@ The owner permitted separate Agent Accounts for terminal cancellation/expiry
 negative controls, while requiring the positive Gift, task sends, policy,
 rotation and restart to remain on one main account. `fe3918712` implements that
 fixture boundary and retains the exact source-bound evidence above. E04 remains
-OPEN only for fixed-head CI and independent signoff; this local pass is not
-release-scale evidence.
+OPEN for a repaired exact-tree full-route rerun, fixed-head CI and independent
+signoff; the earlier local pass is not release-scale evidence.
