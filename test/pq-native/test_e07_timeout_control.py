@@ -3,6 +3,7 @@
 import asyncio
 import ast
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
@@ -55,6 +56,36 @@ def rpc_reply(method: str, **params) -> dict:
 
 
 class TimeoutControlTests(unittest.TestCase):
+    def test_multiple_new_wallet_rows_fail_closed_with_raw_pages_saved(self):
+        show = AsyncMock(return_value={"address": "0:escrow", "deadline": 175,
+                                       "status": "accepted"})
+        send = AsyncMock()
+
+        def extra_wallet_row_rpc(method, **params):
+            response = rpc_reply(method, **params)
+            if method == "getTransactions" and params["address"] == "0:wallet":
+                response["result"].insert(0, {
+                    "transaction_id": {"lt": "12"}, "out_msgs": [],
+                })
+            return response
+
+        with patch.object(e07, "task_show", show), patch.object(
+            e07, "finalized_mc_header", side_effect=[header(10, 100)]
+        ), patch.object(e07, "norm_addr", side_effect=lambda x: x), patch.object(
+            e07, "rpc_call", side_effect=extra_wallet_row_rpc
+        ), patch.object(e07, "send_op", send), tempfile.TemporaryDirectory() as directory, patch.object(
+            e07, "WORKDIR", Path(directory)
+        ):
+            with self.assertRaisesRegex(RuntimeError, "multiple new transactions"):
+                asyncio.run(e07.premature_timeout_control("e2e-timeout", 175, "0:wallet"))
+            evidence = json.loads((Path(directory) / "e07-premature-timeout-ambiguous.json").read_text())
+        self.assertEqual(evidence["newer_wallet_count"], 2)
+        self.assertEqual(evidence["newer_escrow_count"], 1)
+        self.assertEqual(evidence["wallet_baseline_lt"], 10)
+        self.assertEqual([row["transaction_id"]["lt"] for row in evidence["wallet_transactions"]],
+                         ["12", "11", "10"])
+        send.assert_awaited_once()
+
     def test_controller_actions_have_distinct_ids_and_two_observer_configs(self):
         expected = {
             ("accept", "e2e-controller"), ("result", "e2e-controller"),

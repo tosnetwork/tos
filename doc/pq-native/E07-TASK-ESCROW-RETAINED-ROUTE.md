@@ -31,3 +31,22 @@ duplicating one observer config fails the two-config assertion. This is only
 preflight evidence; E07 needs a new exact-tree chain run, retained premature
 timeout wallet→escrow receipt and VM exit, final expiry/refund, fixed-head CI,
 and independent review before signoff.
+
+The exact committed `20a88c314cab1b8a387a681b122734dac6448854` rerun
+provisioned three distinct validator-engine PIDs (one validator and two
+observers), verified each observer against the same zerostate, and passed the
+controller accept/result, claim/result, reject/refund and cancel/refund routes.
+It reached the TIMEOUT path with the task `accepted`, then exited 1 at
+`premature timeout control found multiple new transactions`. This is a
+**forensic ambiguity in the control**, not a demonstrated Task Escrow VM
+refusal or a passing E07 test. The raw console is
+`test/integration/.e07-task-escrow-20a88c314-20260925-console.typescript`
+(SHA-256 `9a514d51391d9f4148c88644bd6a07dd19f9f68c5bff5918a238e8a9dcfc7d42`);
+the original node/config data and process map are retained under
+`test/integration/.e07-task-escrow-20a88c314-20260925-network/`
+(about 2.0 GB). All child processes exited. The source control counted every
+wallet/escrow transaction after separately observed baseline LTs but did not
+record those rows before raising. It therefore cannot yet distinguish a
+lagging baseline/unrelated transaction from a duplicate Task send. The next
+bounded diagnostic must save the exact pages and both baselines on this error
+before changing the acceptance predicate or sending another test message.

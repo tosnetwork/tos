@@ -215,6 +215,16 @@ async def premature_timeout_control(name: str, requested_deadline: int,
         wallet_rows, newer_wallet = transactions_after(creator_wallet, wallet_baseline_lt)
         escrow_rows, newer_escrow = transactions_after(address, baseline_lt)
         if len(newer_wallet) > 1 or len(newer_escrow) > 1:
+            (WORKDIR / "e07-premature-timeout-ambiguous.json").write_text(json.dumps({
+                "task": name, "task_address": address, "creator_wallet": creator_wallet,
+                "before_header": before, "deadline": deadline,
+                "wallet_baseline_lt": wallet_baseline_lt,
+                "escrow_baseline_lt": baseline_lt,
+                "wallet_transactions": wallet_rows,
+                "escrow_transactions": escrow_rows,
+                "newer_wallet_count": len(newer_wallet),
+                "newer_escrow_count": len(newer_escrow),
+            }, indent=2, sort_keys=True) + "\n")
             raise RuntimeError("premature timeout control found multiple new transactions")
         if newer_wallet and newer_escrow:
             wallet_tx = newer_wallet[0]
