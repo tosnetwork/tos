@@ -88,6 +88,7 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
     rehearsal.wallets = [object()]
     rehearsal.pools = [SimpleNamespace(address=pool_address)]
     rehearsal.controllers = [SimpleNamespace(address=address)]
+    rehearsal.artifacts_dir.mkdir(parents=True)
     calls = []
 
     async def order(index, election_id, query_id, **kwargs):
@@ -101,6 +102,19 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
         calls.append(("reply", query_id))
         return 0xF374484C, 0
 
+    async def open_window(election_id, label):
+        calls.append(("window", election_id, label))
+        return 1_700_001_000
+
+    async def exact_input(source, query_id):
+        assert source == address
+        calls.append(("elector_input", query_id))
+        return SimpleNamespace(
+            data=stage_a.Cell.empty().to_boc(),
+            transaction_id=SimpleNamespace(lt=query_id, hash=bytes([0x44]) * 32),
+            utime=1_700_000_000,
+        )
+
     async def method(name, controller_id):
         return stage_a.EFFECTIVE_STAKE
 
@@ -110,6 +124,8 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
     monkeypatch.setattr(rehearsal, "authorized_pq_pool_order", order)
     monkeypatch.setattr(rehearsal, "send_from_wallet", send)
     monkeypatch.setattr(rehearsal, "wait_pq_pool_elector_reply", reply)
+    monkeypatch.setattr(rehearsal, "require_open_pq_election", open_window)
+    monkeypatch.setattr(rehearsal, "exact_pq_elector_input", exact_input)
     monkeypatch.setattr(rehearsal, "runmethod_int", method)
     monkeypatch.setattr(rehearsal, "retry", retry)
     for round_number in (1, 2, 3):
@@ -118,6 +134,10 @@ def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypa
         ))
     assert [call[2] for call in calls if call[0] == "order"] == [1, 1001, 2001]
     assert [call[1] for call in calls if call[0] == "reply"] == [1, 1001, 2001]
+    assert [call[1] for call in calls if call[0] == "elector_input"] == [1, 1001, 2001]
+    assert [call[1] for call in calls if call[0] == "window"] == [1_700_000_001,
+                                                                  1_700_000_002,
+                                                                  1_700_000_003]
     assert len({call[1] for call in calls if call[0] == "send"}) == 3
 
 
