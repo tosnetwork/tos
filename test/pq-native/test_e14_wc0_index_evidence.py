@@ -118,6 +118,27 @@ class Wc0EvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "RPC failed"):
                 e14.rpc_call("getAccountJettons", address="victim")
 
+    def test_getter_method_is_a_parameter_not_the_rpc_name(self):
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def read(self):
+                return b'{"result":{"exit_code":0,"stack":[]}}'
+
+        with patch.object(e14.urllib.request, "urlopen", return_value=Response()) as send, patch.object(
+            e14, "record_jsonl"
+        ):
+            self.assertEqual(e14.getter_stack("wallet", "get_wallet_data", []), [])
+        request = json.loads(send.call_args.args[0].data)
+        self.assertEqual(request["method"], "runGetMethodStd")
+        self.assertEqual(request["params"]["method"], "get_wallet_data")
+
     def test_raw_http_error_is_retained_and_rejected(self):
         raw = b'{"error":{"code":-32603}}'
         error = urllib.error.HTTPError("http://127.0.0.1/", 503, "unavailable", {},

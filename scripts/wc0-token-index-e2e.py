@@ -59,8 +59,8 @@ RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CHAIN_EVIDENCE = WORKDIR / "chain-evidence.jsonl"
 
 
-def rpc_call(method: str, **params):
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+def rpc_call(rpc_method: str, **params):
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
@@ -69,16 +69,16 @@ def rpc_call(method: str, **params):
             raw, status = resp.read(), resp.status
     except urllib.error.HTTPError as error:
         raw, status = error.read(), error.code
-        record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+        record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
                      "status": status, "request_base64": base64.b64encode(body).decode(),
                      "response_base64": base64.b64encode(raw).decode()})
         raise
-    record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+    record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
                  "status": status, "request_base64": base64.b64encode(body).decode(),
                  "response_base64": base64.b64encode(raw).decode()})
     result = json.loads(raw.decode())
     if status != 200 or "error" in result or "result" not in result:
-        raise RuntimeError(f"{method} RPC failed: HTTP {status}, {result}")
+        raise RuntimeError(f"{rpc_method} RPC failed: HTTP {status}, {result}")
     return result
 
 
