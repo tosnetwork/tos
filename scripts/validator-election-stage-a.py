@@ -49,6 +49,7 @@ from typing import Any, Awaitable, Callable, TypeVar
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
+sys.path.insert(0, str(REPO / "scripts"))
 
 from contract import WalletV1, WalletV1Blueprint  # noqa: E402
 from contract.pq_auth import byte_chain  # noqa: E402
@@ -69,6 +70,7 @@ from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # 
 from tostester.f01_stage_a_evidence import (  # noqa: E402
     config34_hash, extract_finalized_log, locate_transition, write_manifest,
 )
+from x01_window_evidence import validate as validate_x01_window  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
 )
@@ -429,6 +431,11 @@ class ValidatorElectionRehearsal:
         self.f01_previous_config_height: int | None = None
         self.f01_previous_config_hash: str | None = None
         self.f01_capture_provenance: dict[str, Any] | None = None
+        self.x01_directory = self.artifacts_dir / "x01-fault-window"
+        self.x01_policy: dict[str, Any] | None = None
+        self.x01_trace: dict[str, Any] = {"faults": [], "restarts": [], "phases": {}}
+        self.x01_policy_sha256: str | None = None
+        self.x01_capture_provenance: dict[str, Any] | None = None
         self.lite_config = run_dir / "lite-client.json"
         self.network: Network | None = None
         self.nodes: list[FullNode] = []
@@ -1159,6 +1166,9 @@ class ValidatorElectionRehearsal:
         script_target = snapshot_source / "scripts/validator-election-stage-a.py"
         script_target.parent.mkdir(parents=True)
         shutil.copy2(Path(__file__), script_target)
+        x01_checker_target = snapshot_source / "scripts/x01_window_evidence.py"
+        if self.pq_full:
+            shutil.copy2(REPO / "scripts/x01_window_evidence.py", x01_checker_target)
         if self.pq_election:
             relative = Path("tosctl/src/node-control/contracts/examples/pq_pool_stake_order.rs")
             target = snapshot_source / relative
@@ -1197,6 +1207,7 @@ class ValidatorElectionRehearsal:
             "git_status_start": git_status,
             "working_tree_patch": self.file_provenance(patch_path),
             "harness": self.file_provenance(script_target),
+            "x01_checker": self.file_provenance(x01_checker_target) if self.pq_full else None,
             "binaries": binaries,
             "generated_contracts": generated_contracts,
             "pq_stake_authorization_python_tl": (
@@ -1464,6 +1475,236 @@ class ValidatorElectionRehearsal:
         segment["process"] = dict(self.f01_process_generations[node.name][-1])
         segments.append(segment)
 
+    def x01_endpoint(self, index: int) -> str:
+        return f"127.0.0.1:{self.base_port + 500 + index}"
+
+    async def x01_rpc(self, index: int, method: str,
+                      params: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
+        """Keep the response bytes, endpoint and request for each independent node view."""
+        self.x01_directory.mkdir(parents=True, exist_ok=True)
+        endpoint = self.x01_endpoint(index)
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
+        request_bytes = json.dumps(payload).encode()
+
+        def call() -> tuple[dict[str, Any], str]:
+            request = urllib.request.Request(
+                f"http://{endpoint}/jsonRPC", data=request_bytes,
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    raw, status = response.read(), response.status
+                observed_at = utc_now()
+            except Exception as error:
+                with (self.x01_directory / "rpc.jsonl").open("a") as output:
+                    output.write(json.dumps({
+                        "at": utc_now(), "node": self.nodes[index].name,
+                        "endpoint": endpoint, "request_base64": base64.b64encode(request_bytes).decode(),
+                        "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+                        "transport_error": f"{type(error).__name__}: {error}",
+                    }, sort_keys=True) + "\n")
+                raise
+            with (self.x01_directory / "rpc.jsonl").open("a") as output:
+                output.write(json.dumps({
+                    "at": observed_at, "node": self.nodes[index].name,
+                    "endpoint": endpoint, "request_base64": base64.b64encode(request_bytes).decode(),
+                    "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+                    "http_status": status,
+                    "response_base64": base64.b64encode(raw).decode(),
+                    "response_sha256": hashlib.sha256(raw).hexdigest(),
+                }, sort_keys=True) + "\n")
+            document = json.loads(raw)
+            if status != 200 or document.get("error") is not None or document.get("result") is None:
+                raise RuntimeError(f"X01 {self.nodes[index].name} {method} failed")
+            return document["result"], observed_at
+
+        return await asyncio.to_thread(call)
+
+    @staticmethod
+    def x01_block_id(value: dict[str, Any]) -> dict[str, Any]:
+        def digest(field: str) -> str:
+            raw = base64.b64decode(value[field], validate=True)
+            if len(raw) != 32 or not any(raw):
+                raise ValueError(f"X01 {field} is missing or zero")
+            return raw.hex()
+
+        if int(value["workchain"]) != -1 or int(value["shard"]) not in (
+                -9223372036854775808, 9223372036854775808):
+            raise ValueError("X01 RPC returned a non-masterchain block")
+        return {"workchain": -1, "shard": "8000000000000000",
+                "seqno": int(value["seqno"]),
+                "root_hash": digest("root_hash"), "file_hash": digest("file_hash")}
+
+    async def x01_freeze_policy(self) -> None:
+        if not self.pq_full or self.x01_policy is not None:
+            return
+        assert self.network is not None
+        self.x01_directory.mkdir(parents=True, exist_ok=True)
+        policy_path = self.x01_directory / "policy.json"
+        if policy_path.exists():
+            raise RuntimeError("X01 policy already exists; refusing to replace a pre-fault policy")
+        nodes = {}
+        for index, node in enumerate(self.nodes):
+            info, _ = await self.x01_rpc(index, "getMasterchainInfo")
+            zero = self.x01_block_id(info["init"])
+            if zero["seqno"] != 0:
+                raise ValueError("X01 RPC zerostate has nonzero height")
+            nodes[node.name] = {
+                "endpoint": self.x01_endpoint(index), "zerostate": zero,
+                "node_data_dir": str(node.directory.resolve()),
+                "node_log_path": str(node.log_path.resolve()),
+                "pq_key_id_hex": node.pq_initial_validator.key_id.hex(),
+                "adnl_id_hex": node.validator_key.id.hex(),
+                "initial_pid": node.process_id,
+                "validator_engine_exe_path": self.provenance["binaries"]["validator-engine/validator-engine"]["path"],
+                "validator_engine_exe_sha256": self.provenance["binaries"]["validator-engine/validator-engine"]["sha256"],
+            }
+        if len({json.dumps(row["zerostate"], sort_keys=True) for row in nodes.values()}) != 1:
+            raise ValueError("X01 independent RPC endpoints do not share zerostate")
+        policy = {"schema": "tos.x01.window-policy.v1", "nodes": nodes,
+                  "thresholds": {"three_min_delta": 1, "halt_min_samples": 8,
+                                 "halt_tail_samples": 4, "recovery_min_delta": 1,
+                                 "three_max_seconds": 90, "halt_min_seconds": 30,
+                                 "halt_tail_min_seconds": 15, "recovery_max_seconds": 90}}
+        write_json_atomic(policy_path, policy)
+        self.x01_policy, self.x01_policy_sha256 = policy, hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        self.event("x01_policy_frozen", path=str(policy_path), sha256=self.x01_policy_sha256)
+
+    def x01_running_process(self, pid: int) -> tuple[bytes, str, str]:
+        proc = Path(f"/proc/{pid}")
+        stat = (proc / "stat").read_bytes()
+        executable = (proc / "exe").resolve(strict=True)
+        provenance = self.file_provenance(proc / "exe")
+        expected = self.provenance["binaries"]["validator-engine/validator-engine"]
+        if executable != Path(expected["path"]).resolve() or provenance["sha256"] != expected["sha256"]:
+            raise ValueError(f"X01 PID {pid} executable differs from snapshotted validator engine")
+        return stat, str(executable), provenance["sha256"]
+
+    def x01_process_event(self, phase: str, index: int, *, stopped: bool,
+                          old_pid: int, pid: int, proc_stat: bytes,
+                          exe_path: str, exe_sha256: str) -> None:
+        node = self.nodes[index]
+        observation = {
+            "schema": "tos.x01.process-stop.v1" if stopped else "tos.x01.process-start.v1",
+            "phase": phase, "node": node.name, "pid": pid, "at": utc_now(),
+            "running_before": stopped, "running_after": not stopped,
+            "proc_stat_base64": base64.b64encode(proc_stat).decode(),
+            "exe_path": exe_path, "exe_sha256": exe_sha256,
+            "node_data_dir": str(node.directory.resolve()),
+            "node_log_path": str(node.log_path.resolve()),
+            "pq_key_id_hex": node.pq_initial_validator.key_id.hex(),
+            "adnl_id_hex": node.validator_key.id.hex(),
+        }
+        if not stopped:
+            observation["old_pid"] = old_pid
+            observation["old_proc_absent"] = True
+        else:
+            observation["proc_after_absent"] = True
+        raw = (json.dumps(observation, sort_keys=True) + "\n").encode()
+        kind = "process_stopped" if stopped else "process_started"
+        collection = "faults" if stopped else "restarts"
+        event = {"phase": phase, "node": node.name, "kind": kind, "hit": True,
+                 "raw_evidence_sha256": hashlib.sha256(raw).hexdigest(),
+                 "raw_evidence_base64": base64.b64encode(raw).decode()}
+        self.x01_trace[collection].append(event)
+        path = self.x01_directory / f"{phase}-{node.name}-{kind}.json"
+        path.write_bytes(raw)
+
+    async def x01_stop(self, phase: str, index: int) -> None:
+        node = self.nodes[index]
+        pid = node.process_id
+        if pid is None or pid <= 0:
+            raise RuntimeError(f"X01 {node.name} had no running PID before stop")
+        proc_stat, exe_path, exe_sha256 = self.x01_running_process(pid)
+        await node.stop()
+        if node.process_id is not None or Path(f"/proc/{pid}/stat").exists():
+            raise RuntimeError(f"X01 {node.name} PID {pid} remained after stop")
+        self.x01_process_event(phase, index, stopped=True,
+                               old_pid=pid, pid=pid, proc_stat=proc_stat,
+                               exe_path=exe_path, exe_sha256=exe_sha256)
+
+    async def x01_start(self, phase: str, index: int) -> None:
+        node = self.nodes[index]
+        stopped = next(row for row in reversed(self.x01_trace["faults"])
+                       if row["node"] == node.name)
+        old_pid = json.loads(base64.b64decode(stopped["raw_evidence_base64"]))["pid"]
+        if Path(f"/proc/{old_pid}/stat").exists():
+            raise RuntimeError(f"X01 {node.name} old PID was reused before restart")
+        await node.run(self.validator_start_options(index))
+        pid = node.process_id
+        if pid is None or pid <= 0 or pid == old_pid:
+            raise RuntimeError(f"X01 {node.name} restart PID did not change")
+        proc_stat, exe_path, exe_sha256 = self.x01_running_process(pid)
+        self.x01_process_event(phase, index, stopped=False,
+                               old_pid=old_pid, pid=pid, proc_stat=proc_stat,
+                               exe_path=exe_path, exe_sha256=exe_sha256)
+
+    async def x01_sample(self, phase: str, indices: tuple[int, ...]) -> dict[str, Any]:
+        at = utc_now()  # before any RPC read, so a later stop cannot predate this sample
+        initial_tips = {}
+        for index in indices:
+            info, _ = await self.x01_rpc(index, "getMasterchainInfo")
+            initial_tips[self.nodes[index].name] = self.x01_block_id(info["last"])
+        height = min(tip["seqno"] for tip in initial_tips.values())
+        views = {}
+        for index in indices:
+            header, _ = await self.x01_rpc(index, "getBlockHeader", {
+                "workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": height,
+            })
+            views[self.nodes[index].name] = self.x01_block_id(header["id"])
+        if any(block["seqno"] != height for block in views.values()) or len({
+                json.dumps(block, sort_keys=True) for block in views.values()}) != 1:
+            raise AssertionError(f"X01 {phase} full IDs conflict at common height {height}")
+        tips, tip_observed_at = {}, {}
+        for index in indices:
+            info, observed_at = await self.x01_rpc(index, "getMasterchainInfo")
+            name = self.nodes[index].name
+            tip = self.x01_block_id(info["last"])
+            before = initial_tips[name]
+            if (tip["seqno"] < before["seqno"]
+                    or tip["seqno"] == before["seqno"] and tip != before):
+                raise AssertionError(f"X01 {phase} {name} tip regressed during sample")
+            tips[name], tip_observed_at[name] = tip, observed_at
+        sample = {"at": at, "completed_at": utc_now(), "nodes": views,
+                  "initial_tips": initial_tips, "tips": tips,
+                  "tip_observed_at": tip_observed_at}
+        self.x01_trace["phases"].setdefault(phase, []).append(sample)
+        return sample
+
+    async def x01_finish(self) -> None:
+        assert self.x01_policy is not None and self.x01_policy_sha256 is not None
+        policy_path = self.x01_directory / "policy.json"
+        if hashlib.sha256(policy_path.read_bytes()).hexdigest() != self.x01_policy_sha256:
+            raise ValueError("X01 pre-fault policy file changed during the run")
+        checkpoint_height = self.x01_trace["phases"]["two_of_four"][-1]["nodes"][self.nodes[0].name]["seqno"]
+        checkpoint = {}
+        for index, node in enumerate(self.nodes):
+            header, _ = await self.x01_rpc(index, "getBlockHeader", {
+                "workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": checkpoint_height,
+            })
+            checkpoint[node.name] = self.x01_block_id(header["id"])
+        self.x01_trace["recovery_halt_checkpoint"] = checkpoint
+        trace_path = self.x01_directory / "trace.json"
+        write_json_atomic(trace_path, self.x01_trace)
+        result = validate_x01_window(self.x01_policy, self.x01_trace)
+        result.update({"policy_sha256": self.x01_policy_sha256,
+                       "trace_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest()})
+        write_json_atomic(self.x01_directory / "check.json", result)
+        manifest = {"schema": "tos.x01.stage-a-capture.v1",
+                    "source_commit": self.provenance["source_commit"],
+                    "harness": self.provenance["harness"],
+                    "x01_checker": self.provenance["x01_checker"],
+                    "binaries": self.provenance["binaries"],
+                    "policy": self.file_provenance(self.x01_directory / "policy.json"),
+                    "trace": self.file_provenance(trace_path),
+                    "rpc_transcript": self.file_provenance(self.x01_directory / "rpc.jsonl"),
+                    "process_events": [self.file_provenance(path) for path in sorted(
+                        self.x01_directory.glob("*-process_*.json"))],
+                    "f01_capture_manifest": str(self.f01_directory / "capture-manifest.json")}
+        manifest_path = self.x01_directory / "capture-manifest.json"
+        write_json_atomic(manifest_path, manifest)
+        self.x01_capture_provenance = self.file_provenance(manifest_path)
+
     def write_f01_capture(self) -> None:
         """Seal all stopped log segments and the exact harness source snapshot."""
         if not self.pq_full:
@@ -1620,17 +1861,26 @@ class ValidatorElectionRehearsal:
         self.event("chain_time_reached", label=label, target=timestamp, actual=reached)
 
     async def verify_three_of_four_liveness(self) -> None:
+        if self.pq_full:
+            await self.x01_freeze_policy()
         before = await self.masterchain_seqno()
         self.event("three_of_four_begin", stopped_node=4, seqno=before)
-        await self.nodes[3].stop()
         if self.pq_full:
+            await self.x01_stop("three_of_four", 3)
             self.preserve_f01_log(3)
+            await self.x01_sample("three_of_four", (0, 1, 2))
+        else:
+            await self.nodes[3].stop()
         await asyncio.sleep(15)
         after = await self.masterchain_seqno()
         if after <= before:
             raise AssertionError(f"3-of-4 did not advance: {before} -> {after}")
-        await self.nodes[3].run(self.validator_start_options(3))
-        self.record_f01_process(3)
+        if self.pq_full:
+            await self.x01_sample("three_of_four", (0, 1, 2))
+            await self.x01_start("three_of_four", 3)
+            self.record_f01_process(3)
+        else:
+            await self.nodes[3].run(self.validator_start_options(3))
         self.event("three_of_four_passed", before=before, after=after)
 
     async def _node_mc_seqno(self, index: int) -> int:
@@ -2092,21 +2342,35 @@ class ValidatorElectionRehearsal:
 
     async def verify_two_of_four_safe_halt(self) -> None:
         self.event("two_of_four_begin", stopped_nodes=[3, 4])
-        await self.nodes[2].stop()
-        await self.nodes[3].stop()
         if self.pq_full:
+            await self.x01_stop("two_of_four", 2)
+            await self.x01_stop("two_of_four", 3)
             self.preserve_f01_log(2)
             self.preserve_f01_log(3)
+        else:
+            await self.nodes[2].stop()
+            await self.nodes[3].stop()
         samples: list[int] = []
         for _ in range(8):
             await asyncio.sleep(5)
             samples.append(await self.masterchain_seqno())
+            if self.pq_full:
+                await self.x01_sample("two_of_four", (0, 1))
         if len(set(samples[-4:])) != 1:
             raise AssertionError(f"2-of-4 did not reach a safe halt: {samples}")
-        await self.nodes[2].run(self.validator_start_options(2))
-        self.record_f01_process(2)
-        await self.nodes[3].run(self.validator_start_options(3))
-        self.record_f01_process(3)
+        if self.pq_full:
+            await self.x01_start("recovery", 2)
+            self.record_f01_process(2)
+            await self.x01_start("recovery", 3)
+            self.record_f01_process(3)
+            for index in range(4):
+                await self.retry(lambda index=index: self.x01_rpc(index, "getMasterchainInfo"),
+                                 timeout=60, interval=1,
+                                 description=f"X01 {self.nodes[index].name} RPC ready after restart")
+            await self.x01_sample("recovery", (0, 1, 2, 3))
+        else:
+            await self.nodes[2].run(self.validator_start_options(2))
+            await self.nodes[3].run(self.validator_start_options(3))
         resumed_from = samples[-1]
         resumed_to = await self.retry(
             self.masterchain_seqno,
@@ -2114,6 +2378,17 @@ class ValidatorElectionRehearsal:
             description="resume after restoring 4-of-4",
             predicate=lambda value: value > resumed_from,
         )
+        if self.pq_full:
+            halt_height = self.x01_trace["phases"]["two_of_four"][-1]["nodes"][self.nodes[0].name]["seqno"]
+            deadline = time.monotonic() + 90
+            while True:
+                sample = await self.x01_sample("recovery", (0, 1, 2, 3))
+                if next(iter(sample["nodes"].values()))["seqno"] > halt_height:
+                    break
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("X01 all four full IDs did not advance after recovery")
+                await asyncio.sleep(2)
+            await self.x01_finish()
         self.event(
             "two_of_four_safe_halt_passed",
             samples=samples,
@@ -3908,6 +4183,7 @@ class ValidatorElectionRehearsal:
             "failures": self.failures,
             "metrics_file": str(self.metrics_path),
             "f01_capture_manifest": self.f01_capture_provenance,
+            "x01_capture_manifest": self.x01_capture_provenance,
         }
         self.report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
         print(f"{self.profile.label} report: {self.report_path}", flush=True)
