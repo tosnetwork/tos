@@ -10021,6 +10021,23 @@ mod exact_deploy_wallet_transaction_tests {
         assert!(!funding.contains("rpc_client.send_boc("));
     }
 
+    #[test]
+    fn agent_wallet_owner_transfer_confirms_the_single_prepared_send_by_exact_hash() {
+        let source = include_str!("agent_cmd.rs");
+        let owner_send = source
+            .rsplit_once("impl AgentWalletSendCmd {")
+            .unwrap()
+            .1
+            .split_once("impl AgentWalletStatusCmd {")
+            .unwrap()
+            .0;
+        assert!(owner_send.find(".build_message(").unwrap()
+            < owner_send.find("confirm_prepared_wallet_message(").unwrap());
+        assert_eq!(owner_send.matches("confirm_prepared_wallet_message(").count(), 1);
+        assert!(!owner_send.contains("wait_for_seqno_change("));
+        assert!(!owner_send.contains("rpc_client.send_boc("));
+    }
+
     fn retained_wallet_transaction() -> (RawTransaction, chain_block::UInt256, MsgAddressInt) {
         // Public transaction BOC from the retained E03 6f6 registry deployment.
         // The signed external message is already on chain; this fixture contains no secret key.
@@ -10795,13 +10812,12 @@ impl AgentWalletSendCmd {
             .build_message(dest_addr.clone(), amount_nanotos, body, false, None, None, None)
             .await?;
         let msg_boc = write_boc(&msg)?;
-        rpc_client.send_boc(&msg_boc).await?;
-        wait_for_seqno_change(
-            rpc_client.clone(),
+        confirm_prepared_wallet_message(
+            rpc_client,
+            &msg_boc,
             &from_address,
-            from_info.seqno,
-            &common::task_cancellation::CancellationCtx::default(),
-            SEND_TIMEOUT,
+            &dest_addr,
+            DEPLOY_TIMEOUT,
         )
         .await?;
 
