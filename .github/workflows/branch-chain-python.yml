@@ -148,6 +148,11 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
+      # E04's negative controls are fast source-bound tests, not a replacement
+      # for the retained single-node real-chain lifecycle run.
+      - name: Check E04 exact cancellation and expiry controls
+        run: uv run pytest -q test/pq-native/test_e04_negative_windows.py
+
       - name: Boot a four-validator PQ chain and exercise a transfer
         run: uv run python test/integration/test_basic.py
 
@@ -174,3 +179,5 @@ jobs:
           workspaces: tosctl/src -> target
       - name: Compile every Rust workspace test target
         run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
+      - name: Check E04 exact wallet message confirmation
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib exact_deploy_wallet_transaction_tests --locked --no-default-features

@@ -63,6 +63,13 @@ def main() -> int:
     )
     require(re.search(r"(?m)^\s*run: uv run pytest\s*$", text) is not None, "full pytest is absent")
     require(
+        re.search(
+            r"(?m)^\s*run: uv run pytest -q test/pq-native/test_e04_negative_windows\.py\s*$",
+            text,
+        ) is not None,
+        "E04 exact cancellation and expiry behavior gate is absent",
+    )
+    require(
         "uv run python test/integration/test_basic.py" in text,
         "four-validator PQ chain regression is absent",
     )
@@ -216,6 +223,14 @@ def main() -> int:
         is not None,
         "all-crate Rust test compilation is absent or scoped to an allowlist",
     )
+    require(
+        re.search(
+            r"(?m)^\s*run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib "
+            r"exact_deploy_wallet_transaction_tests --locked --no-default-features\s*$",
+            rust_job.group("body"),
+        ) is not None,
+        "E04 exact wallet confirmation behavior gate is absent",
+    )
     zero_stats = text.find("ccache --zero-stats")
     native_build = text.find("cmake --build build --parallel 4 --target")
     show_stats = text.find("ccache --show-stats")
@@ -249,8 +264,8 @@ def main() -> int:
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
-        "and five named restart-origin controls, "
-        "and compiles every Rust test target"
+        "five named restart-origin controls, and the E04 Python negative-window tests; "
+        "the Rust job compiles every test target and runs the E04 exact wallet confirmation group"
     )
     return 0
 

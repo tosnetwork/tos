@@ -29,6 +29,14 @@ absence, two task-send majority resolutions, owner transfer, policy,
 rotation, restart and expiry controls as the previous 640 run. This is local
 single-validator evidence only; fixed-head CI and independent signoff remain.
 
+The branch workflow now names two fast E04 gates explicitly: the six Python
+negative-window/refusal tests and nine Rust exact-wallet-confirmation tests.
+Its CI source guard went red when the Python target was renamed away, then
+went red separately when the Rust selector was renamed away; restored workflow
+and guard are green. These steps do **not** boot the full E04 route. The 35/35
+retained run above is the full-route evidence; the new CI steps still require
+a terminal fixed-head run before E04 signoff.
+
 ## Repaired exact-tree result: 35/35 local PASS
 
 From clean tracked source `640ecfe11`, the command was
