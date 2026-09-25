@@ -50,10 +50,17 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
         for method in ("run_pq_first_election", "wait_pq_config_activation"):
             self.assertTrue(calls(method, "capture_f01_transition"), method)
         for method in ("restart_node", "verify_three_of_four_liveness",
-                       "verify_two_of_four_safe_halt"):
+                       "verify_two_of_four_safe_halt", "verify_live_rejoin"):
             self.assertTrue(calls(method, "preserve_f01_log"), method)
+            self.assertTrue(calls(method, "record_f01_process"), method)
         self.assertTrue(calls("write_report", "write_f01_capture"))
+        self.assertTrue(calls("execute", "record_f01_process"))
         self.assertIn("node_data_dir", ast.unparse(methods["write_f01_capture"]))
+        capture = ast.unparse(methods["capture_f01_transition"])
+        self.assertIn("height + 1", capture)
+        self.assertIn("(height - 1, height, height + 1)", capture)
+        self.assertIn("'getBlockHeader'", capture)
+        self.assertIn("'getConfigParam'", capture)
 
     async def test_transition_is_exact_first_new_cell_height(self):
         before = Builder().store_uint(1, 8).end_cell()
@@ -102,6 +109,13 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
                 combined = node_dir / "combined.log"
                 segment.write_text(f"node{index} segment\n")
                 combined.write_text(f"node{index} combined\n")
+                process = {
+                    "node_name": f"node{index}", "node_data_dir": str(node_dir),
+                    "generation": 0, "pid": 10000 + index,
+                    "proc_start_ticks": 20000 + index,
+                    "exe_path": "/build/validator-engine", "exe_device": 1,
+                    "exe_inode": 5000, "recorded_at": "2026-09-25T10:00:00Z",
+                }
                 nodes.append({
                     "node_name": f"node{index}", "node_data_dir": str(node_dir),
                     "controller_id_hex": f"{index:064x}",
@@ -109,8 +123,10 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
                     "pq_key_id_hex": f"{index + 20:064x}",
                     "adnl_id_hex": f"{index + 30:064x}",
                     "rpc_address": f"127.0.0.1:{20000 + index}",
+                    "process_generations": [process],
                     "log_segments": [{"path": str(segment),
-                                      "sha256": hashlib.sha256(segment.read_bytes()).hexdigest()}],
+                                      "sha256": hashlib.sha256(segment.read_bytes()).hexdigest(),
+                                      "process": dict(process)}],
                     "combined_log": {"path": str(combined),
                                      "sha256": hashlib.sha256(combined.read_bytes()).hexdigest()},
                 })
@@ -118,6 +134,23 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
             f01.write_manifest(target, source={"source_commit": "a" * 40},
                                nodes=nodes, transitions=[{"height": 7}])
             self.assertEqual(len(json.loads(target.read_text())["validators"]), 4)
+            copied = [dict(node) for node in nodes]
+            copied[-1]["process_generations"] = [dict(copied[0]["process_generations"][0])]
+            copied[-1]["log_segments"] = [dict(copied[-1]["log_segments"][0],
+                                              process=dict(copied[0]["process_generations"][0]))]
+            with self.assertRaisesRegex(ValueError, "process generation|aliases a validator process"):
+                f01.write_manifest(target, source={}, nodes=copied,
+                                   transitions=[{"height": 7}])
+            copied = [dict(node) for node in nodes]
+            duplicate = dict(copied[-1]["process_generations"][0])
+            duplicate["pid"] = copied[0]["process_generations"][0]["pid"]
+            duplicate["proc_start_ticks"] = copied[0]["process_generations"][0]["proc_start_ticks"]
+            copied[-1]["process_generations"] = [duplicate]
+            copied[-1]["log_segments"] = [dict(copied[-1]["log_segments"][0],
+                                              process=dict(duplicate))]
+            with self.assertRaisesRegex(ValueError, "aliases a validator process"):
+                f01.write_manifest(target, source={}, nodes=copied,
+                                   transitions=[{"height": 7}])
             for field in ("node_data_dir", "pq_validator_id_hex", "pq_key_id_hex",
                           "adnl_id_hex", "rpc_address"):
                 copied = [dict(node) for node in nodes]

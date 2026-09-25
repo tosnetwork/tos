@@ -97,11 +97,30 @@ def write_manifest(path: Path, *, source: dict, nodes: list[dict],
         raise ValueError("F01 capture aliases per-node data directories")
     log_paths = set()
     log_hashes = set()
+    process_ids = set()
     for node in nodes:
         combined = node.get("combined_log")
         segments = node.get("log_segments")
         if not isinstance(combined, dict) or not isinstance(segments, list) or not segments:
             raise ValueError("F01 capture lacks per-node raw logs")
+        generations = node.get("process_generations")
+        if not isinstance(generations, list) or len(generations) != len(segments):
+            raise ValueError("F01 capture lacks one process identity per raw log segment")
+        for index, (generation, segment) in enumerate(zip(generations, segments)):
+            if (not isinstance(generation, dict)
+                    or generation.get("node_name") != node["node_name"]
+                    or generation.get("node_data_dir") != node["node_data_dir"]
+                    or generation.get("generation") != index
+                    or not all(type(generation.get(field)) is int and generation[field] > 0
+                               for field in ("pid", "proc_start_ticks", "exe_device", "exe_inode"))
+                    or not isinstance(generation.get("exe_path"), str)
+                    or not generation["exe_path"]
+                    or segment.get("process") != generation):
+                raise ValueError("F01 capture raw log is not bound to its process generation")
+            identity = (generation["pid"], generation["proc_start_ticks"])
+            if identity in process_ids:
+                raise ValueError("F01 capture aliases a validator process identity")
+            process_ids.add(identity)
         for log in [combined, *segments]:
             if (not isinstance(log, dict) or not log.get("path")
                     or not isinstance(log.get("sha256"), str)

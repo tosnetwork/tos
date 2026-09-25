@@ -415,6 +415,7 @@ class ValidatorElectionRehearsal:
         self.report_path = run_dir / "report.json"
         self.f01_directory = self.artifacts_dir / "f01-finality"
         self.f01_segments: dict[str, list[dict[str, Any]]] = {}
+        self.f01_process_generations: dict[str, list[dict[str, Any]]] = {}
         self.f01_transitions: list[dict[str, Any]] = []
         self.f01_previous_config_height: int | None = None
         self.f01_previous_config_hash: str | None = None
@@ -1389,7 +1390,33 @@ class ValidatorElectionRehearsal:
             self.preserve_f01_log(index)
         await asyncio.sleep(1)
         await self.nodes[index].run(self.validator_start_options(index))
+        self.record_f01_process(index)
         self.event("node_restart_complete", node=index + 1, reason=reason)
+
+    def record_f01_process(self, index: int) -> None:
+        """Bind each raw log generation to the actual validator process."""
+        if not self.pq_full:
+            return
+        node = self.nodes[index]
+        pid = node.process_id
+        if pid is None or pid <= 0:
+            raise RuntimeError(f"F01 {node.name} has no running validator process")
+        proc = Path(f"/proc/{pid}")
+        stat_fields = (proc / "stat").read_text().rsplit(") ", 1)[1].split()
+        executable = (proc / "exe").resolve(strict=True)
+        executable_stat = executable.stat()
+        generations = self.f01_process_generations.setdefault(node.name, [])
+        generations.append({
+            "node_name": node.name,
+            "generation": len(generations),
+            "pid": pid,
+            "proc_start_ticks": int(stat_fields[19]),
+            "exe_path": str(executable),
+            "exe_device": executable_stat.st_dev,
+            "exe_inode": executable_stat.st_ino,
+            "node_data_dir": str(node.directory.resolve(strict=True)),
+            "recorded_at": utc_now(),
+        })
 
     def preserve_f01_log(self, index: int) -> None:
         """Copy a stopped validator's raw log before the next run truncates it."""
@@ -1398,7 +1425,9 @@ class ValidatorElectionRehearsal:
         segments = self.f01_segments.setdefault(node.name, [])
         target = self.f01_directory / f"{node.name}-segment-{len(segments):02d}.log"
         shutil.copyfile(node.log_path, target)
-        segments.append(extract_finalized_log(target))
+        segment = extract_finalized_log(target)
+        segment["process"] = dict(self.f01_process_generations[node.name][-1])
+        segments.append(segment)
 
     def write_f01_capture(self) -> None:
         """Seal all stopped log segments and the exact harness source snapshot."""
@@ -1428,6 +1457,7 @@ class ValidatorElectionRehearsal:
                 "pq_key_id_hex": node.pq_initial_validator.key_id.hex(),
                 "adnl_id_hex": node.validator_key.id.hex(),
                 "rpc_address": f"127.0.0.1:{self.base_port + 500 + index}",
+                "process_generations": self.f01_process_generations[node.name],
                 "log_segments": self.f01_segments[node.name],
                 "combined_log": combined_logs[node.name],
             }
@@ -1498,8 +1528,15 @@ class ValidatorElectionRehearsal:
             config_at, self.f01_previous_config_height, upper,
             self.f01_previous_config_hash, after_hash,
         )
+        for index, node in enumerate(self.nodes):
+            await self.retry(
+                lambda index=index: query(index, "getMasterchainInfo", {}),
+                timeout=90, interval=1,
+                description=f"F01 {node.name} reaches post-transition height {height + 1}",
+                predicate=lambda value: int(value["result"]["last"]["seqno"]) >= height + 1,
+            )
         observations = []
-        for boundary in (height - 1, height):
+        for boundary in (height - 1, height, height + 1):
             block_ids = []
             for index, node in enumerate(self.nodes):
                 config = await query(index, "getConfigParam", {"param": 34, "seqno": boundary})
@@ -1558,6 +1595,7 @@ class ValidatorElectionRehearsal:
         if after <= before:
             raise AssertionError(f"3-of-4 did not advance: {before} -> {after}")
         await self.nodes[3].run(self.validator_start_options(3))
+        self.record_f01_process(3)
         self.event("three_of_four_passed", before=before, after=after)
 
     async def _node_mc_seqno(self, index: int) -> int:
@@ -1885,6 +1923,8 @@ class ValidatorElectionRehearsal:
         )
 
         await self.nodes[node_index].stop()
+        if self.pq_full:
+            self.preserve_f01_log(node_index)
 
         # Peers must advance strictly past the pre-stop baseline while the target is down;
         # that gap is what the target has to catch up to. A stalled network here is itself a
@@ -1901,6 +1941,7 @@ class ValidatorElectionRehearsal:
 
         # Restart with cleanup armed (validator_start_options carries the flag when enabled).
         await self.nodes[node_index].run(self.validator_start_options(node_index))
+        self.record_f01_process(node_index)
 
         # SYNC PROOF: the target's own view must reach the tip its peers reached while it was
         # down (>= tip_during_downtime > pre_stop_baseline), so it cannot be satisfied by the
@@ -2028,7 +2069,9 @@ class ValidatorElectionRehearsal:
         if len(set(samples[-4:])) != 1:
             raise AssertionError(f"2-of-4 did not reach a safe halt: {samples}")
         await self.nodes[2].run(self.validator_start_options(2))
+        self.record_f01_process(2)
         await self.nodes[3].run(self.validator_start_options(3))
+        self.record_f01_process(3)
         resumed_from = samples[-1]
         resumed_to = await self.retry(
             self.masterchain_seqno,
@@ -3540,6 +3583,7 @@ class ValidatorElectionRehearsal:
             await dht.run(StartOptions(threads=2, verbosity=3))
             for index, node in enumerate(self.nodes):
                 await node.run(self.validator_start_options(index))
+                self.record_f01_process(index)
 
             self.lite_config.write_text(self.nodes[0]._liteserver_config.to_json())
             await asyncio.wait_for(network.wait_mc_block(seqno=3), timeout=120)
