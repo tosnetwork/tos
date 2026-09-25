@@ -186,6 +186,12 @@ and `generate-random-id`
 `d1eaf11089c5b37603036b6bc8c947d440acbdd074756bf9001216da382e59b5`.
 The final targeted 8/8 unit/startup tests have raw SHA-256
 `3247c50c34e782db19f552455bce1f096e033aae5010deec64401bb0f5ec19c7`.
+Copies of all eight required native binaries were retained under
+`e02-4dd8f00a2-20260925T002527Z/binaries/` before another build could
+overwrite the shared build tree. The corresponding `binary-hashes.txt` and
+`source-hashes.txt` SHA-256 values are
+`1061385cefdf979ee0c1bfc6d7969ee2b052c08cc17d1827a65074f5dea2f103`
+and `1cc08fe1261ec5180fbed4ed5b4ca95361b3eb3274258ec11963e4e2f981969f`.
 
 The command/options remained unchanged, with artifact directory
 `build/simplex2-release/e02-4dd8f00a2-20260925T002527Z/run`.
