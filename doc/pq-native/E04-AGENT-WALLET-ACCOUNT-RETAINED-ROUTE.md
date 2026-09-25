@@ -57,6 +57,32 @@ and `e69016396a2008c866051583a6d8e34d3cf654e0e2cda55c01743f2851e9c471`.
 These controls are not yet real-chain E04 evidence; the fixed-tree full run is
 still required before this entry can close.
 
+The first full run from committed `c951856a6` exited 1 earlier, at `agent
+wallet fund --name agent-1 --from funder --amount 2 --yes`; it never reached
+Gift or update-policy. Its complete console is
+`test/integration/.e04-agent-wallet-c951856a6-20260925-console.typescript`
+(SHA-256 `c9e95c3cc07b5e7af2d10b20be1760b5adb8410d5ffaaaed900961bba16fa22b`).
+The original DB is retained in the same-prefix `-network/` directory; a copy
+was reopened read-only for exact transaction inspection. The funder wallet's
+`lt=43000001` transaction has successful compute/action and a 2 TOS outgoing
+message hash `U85J/XVl+j5HX8G93CzC4iHQQ8wqSsFQO4LdeNK2y1A=`. The target
+Agent Wallet's `lt=43000003` inbound hash matches, and its chain balance is
+2 TOS. That account is not yet active, so its inbound transaction shows compute
+skipped/aborted; this does **not** undo the credit. Raw RPC bodies are in
+`test/integration/.e04-agent-wallet-c951856a6-20260925-forensic/`:
+`funder-transactions.json` SHA-256
+`05a9de43aed0a2eb95db92ca25aee02931f404153a1543b0e758ccc6749b4270`,
+`agent-wallet-transactions.json` SHA-256
+`ef465b282828462fd272f6910ea5a1623c7e478388fcbf95b7120406ca3fb95b`,
+and `agent-wallet-info.json` SHA-256
+`e6fbb9573e0dcc0d8230f764955be22d5cdf5429342e9f301946387c574ca246`.
+Again, the CLI's 15-second seqno timeout was a false negative, not a failed
+transfer; no ambiguous funding message was resent. `AgentWalletFundCmd` now
+uses the same single-send exact-hash/destination confirmation. Its routing
+control and six existing exact-confirmation tests pass 8/8, while restoring
+the old one-send/short-seqno structure makes the routing control red. A new
+fixed-tree E04 runtime run is still required.
+
 The first run used committed `a0a9fd52b` with `TOS_BUILD_DIR=build`, `PYTHONPATH=test/tostester/src`, and the retained command `uv run python -u scripts/agent-wallet-account-e2e.py` under `script -q -e -f`. Its full output is `test/integration/.e04-agent-wallet-a0a9fd52b-20260925/console.typescript` (SHA-256 `3476e5dc07228dd9b30d38cda2ec169d51eb5981f656fe78a72a18187d0663c6`); process exit was 1. Six provision/status checks passed. The second invocation of `agent account native-prepare` for the same action failed with `ambiguous broadcast must be resolved from finalized state`. The node directory is preserved under that run directory's `network/`, not deleted.
 
 That refusal follows `AgentAccountNativePrepareCmd::run`: after journaling the exact signed BOC, it calls `begin_broadcast` **before printing the BOC**. `ControllerActionJournal::begin_broadcast` refuses a second call while the record is Broadcasting. The first script assumed that invoking `native-prepare` again was an exact-BOC retry, but the safe retry is reusing the first printed BOC. Commit `be74e9cc6` changes the script accordingly and asserts the second preparation refuses for the precise ambiguity reason; it does not weaken production custody.

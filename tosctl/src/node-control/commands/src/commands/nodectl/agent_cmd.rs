@@ -10003,6 +10003,24 @@ mod exact_deploy_wallet_transaction_tests {
         assert!(!action.contains("send_wallet_message("));
     }
 
+    #[test]
+    fn agent_wallet_fund_confirms_the_single_prepared_send_by_exact_hash() {
+        let source = include_str!("agent_cmd.rs");
+        let funding = source
+            .rsplit_once("impl AgentWalletFundCmd {")
+            .unwrap()
+            .1
+            .split_once("impl AgentWalletSendCmd {")
+            .unwrap()
+            .0;
+        let built = funding.find("wallet.build_message(").unwrap();
+        let confirmed = funding.find("confirm_prepared_wallet_message(").unwrap();
+        assert!(built < confirmed);
+        assert_eq!(funding.matches("confirm_prepared_wallet_message(").count(), 1);
+        assert!(!funding.contains("wait_for_seqno_change("));
+        assert!(!funding.contains("rpc_client.send_boc("));
+    }
+
     fn retained_wallet_transaction() -> (RawTransaction, chain_block::UInt256, MsgAddressInt) {
         // Public transaction BOC from the retained E03 6f6 registry deployment.
         // The signed external message is already on chain; this fixture contains no secret key.
@@ -10683,16 +10701,16 @@ impl AgentWalletFundCmd {
             .context("create funding wallet")?;
         let body =
             if let Some(msg) = &self.message { build_comment_cell(msg)? } else { Cell::default() };
+        let confirmation_destination = dest_addr.clone();
         let msg =
             wallet.build_message(dest_addr, amount_nanotos, body, false, None, None, None).await?;
         let msg_boc = write_boc(&msg)?;
-        rpc_client.send_boc(&msg_boc).await?;
-        wait_for_seqno_change(
-            rpc_client.clone(),
+        confirm_prepared_wallet_message(
+            rpc_client,
+            &msg_boc,
             &from_wallet_address,
-            from_wallet_info.seqno,
-            &common::task_cancellation::CancellationCtx::default(),
-            SEND_TIMEOUT,
+            &confirmation_destination,
+            DEPLOY_TIMEOUT,
         )
         .await?;
 
