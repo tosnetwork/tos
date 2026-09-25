@@ -37,7 +37,8 @@ SOURCE_FILES = ("scripts/x02_fault_evidence.py", "scripts/x02_prepare_policy.py"
                 "scripts/x02_directed_run.py",
                 "scripts/validator-election-stage-a.py",
                 "test/tostester/src/tostester/network.py",
-                "test/tostester/src/tostester/log_streamer.py")
+                "test/tostester/src/tostester/log_streamer.py",
+                "quic/quic-sender.cpp", "quic/quic-sender.h")
 BOOT_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 BOOT_ID_COMPACT = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -166,6 +167,10 @@ def validate_policy(policy: dict) -> None:
         ipaddress.ip_address(node["peer_ip"])
         require(type(node.get("peer_port")) is int and 1 <= node["peer_port"] <= 65535,
                 "missing peer port")
+        require(type(node.get("quic_port")) is int
+                and node["quic_port"] == (node["peer_port"] + 1000) % 65536
+                and node["quic_port"] != 0,
+                "QUIC UDP port differs from the bound ADNL + 1000 source rule")
         require((node["peer_ip"], node["peer_port"]) not in endpoints,
                 "duplicate peer endpoint")
         for field in ("consensus_key_id", "adnl_id", "exe_sha256"):
@@ -185,6 +190,9 @@ def validate_policy(policy: dict) -> None:
                 f"{name} peer tuple or identity differs from Stage A readiness")
         names.add(name); pids.add(pid); rpc_urls.add(node["rpc_url"])
         endpoints.add((node["peer_ip"], node["peer_port"]))
+        require((node["peer_ip"], node["quic_port"]) not in endpoints,
+                "QUIC UDP endpoint aliases another validator transport")
+        endpoints.add((node["peer_ip"], node["quic_port"]))
     require(len({node["adnl_id"].lower() for node in nodes}) == 4,
             "ADNL identities are not distinct")
     if policy.get("log_source") == "native-file":
@@ -240,7 +248,8 @@ def validate_policy(policy: dict) -> None:
     thresholds = policy.get("thresholds") or {}
     for field in ("min_rule_packets", "min_rule_drops", "three_min_delta",
                   "three_max_seconds", "halt_min_seconds", "halt_tail_min_seconds",
-                  "halt_tail_samples", "recovery_min_delta", "recovery_max_seconds"):
+                  "halt_tail_samples", "two_drain_seconds", "recovery_min_delta",
+                  "recovery_max_seconds"):
         positive(thresholds.get(field), field)
     require(type(thresholds["halt_tail_samples"]) is int,
             "halt_tail_samples must be an integer")
@@ -249,6 +258,7 @@ def validate_policy(policy: dict) -> None:
             and thresholds["three_min_delta"] == 2
             and thresholds["three_max_seconds"] == 120
             and thresholds["halt_min_seconds"] == 60
+            and thresholds["two_drain_seconds"] == 30
             and thresholds["recovery_min_delta"] == 2
             and thresholds["recovery_max_seconds"] == 180,
             "isolation thresholds differ from the frozen X02 slice")
@@ -278,6 +288,8 @@ def validate_policy(policy: dict) -> None:
         seen.add(rule["id"])
         require(rule.get("phase") in ("three_of_four", "two_of_four"),
                 "fault rule has invalid phase")
+        require(rule.get("transport") in ("adnl", "quic"),
+                "fault rule does not identify ADNL or QUIC UDP")
         require(rule.get("src_node") in names and rule.get("dst_node") in names
                 and rule["src_node"] != rule["dst_node"], "fault rule has invalid peer pair")
         require(rule.get("mode") == "drop_all", "first X02 slice requires exact 100% drop")
@@ -299,15 +311,19 @@ def validate_policy(policy: dict) -> None:
                     and "handle" in argv and rule["handle"] in argv,
                     f"{action} command is absent or not bound to the rule")
             if action == "install":
+                port_field = "peer_port" if rule["transport"] == "adnl" else "quic_port"
                 for key, value in (("ip_proto", "udp"),
                                    ("src_ip", by_name[rule["src_node"]]["peer_ip"]),
                                    ("dst_ip", by_name[rule["dst_node"]]["peer_ip"]),
-                                   ("src_port", str(by_name[rule["src_node"]]["peer_port"])),
-                                   ("dst_port", str(by_name[rule["dst_node"]]["peer_port"]))):
+                                   ("src_port", str(by_name[rule["src_node"]][port_field])),
+                                   ("dst_port", str(by_name[rule["dst_node"]][port_field]))):
                     require(key in argv and argv[argv.index(key) + 1] == value,
                             f"install command lacks exact {key}")
                 require("flower" in argv and argv[-2:] == ["action", "drop"],
                         "install command is not an exact flower drop")
+            else:
+                require("flower" in argv,
+                        "remove command omits the flower filter type")
     require(any(rule["phase"] == "three_of_four" for rule in rules)
             and any(rule["phase"] == "two_of_four" for rule in rules),
             "isolation rule phases are absent")
@@ -321,9 +337,11 @@ def validate_policy(policy: dict) -> None:
         ("node3", a) for a in ("node1", "node2")}
     for phase, expected in (("three_of_four", expected_three),
                             ("two_of_four", expected_two_new)):
-        pairs = [(r["src_node"], r["dst_node"]) for r in rules if r["phase"] == phase]
-        require(len(pairs) == len(expected) and set(pairs) == expected,
-                f"{phase} peer pair set has a missing, duplicate or extra edge")
+        for transport in ("adnl", "quic"):
+            pairs = [(r["src_node"], r["dst_node"]) for r in rules
+                     if r["phase"] == phase and r["transport"] == transport]
+            require(len(pairs) == len(expected) and set(pairs) == expected,
+                    f"{phase} {transport} peer pair set has a missing or extra edge")
 
 
 def read_policy(path: Path, expected_sha: str) -> dict:
@@ -878,11 +896,12 @@ def tc_rule(snapshot: dict, rule: dict, nodes: dict) -> tuple[int, int] | None:
     opts = item.get("options") or {}
     keys = opts.get("keys") or {}
     src, dst = nodes[rule["src_node"]], nodes[rule["dst_node"]]
+    port_field = "peer_port" if rule["transport"] == "adnl" else "quic_port"
     require(keys.get("ip_proto") == "udp"
             and keys.get("src_ip") == src["peer_ip"]
             and keys.get("dst_ip") == dst["peer_ip"]
-            and int(keys.get("src_port", -1)) == src["peer_port"]
-            and int(keys.get("dst_port", -1)) == dst["peer_port"],
+            and int(keys.get("src_port", -1)) == src[port_field]
+            and int(keys.get("dst_port", -1)) == dst[port_field],
             "target rule does not match bound peer flow")
     actions = opts.get("actions") or []
     require(len(actions) == 1 and actions[0].get("kind") == "gact"
@@ -993,17 +1012,17 @@ def process_identity(raw: dict, node: dict) -> None:
     udp = base64.b64decode(raw["udp_table_b64"], validate=True)
     require(digest(udp) == raw.get("udp_table_sha256"), "raw UDP socket table differs")
     inodes = set(raw.get("socket_inodes") or [])
-    port = node["peer_port"]
-    matches = []
-    for line in udp.decode().splitlines()[1:]:
-        fields = line.split()
-        if len(fields) >= 10:
-            addr, raw_port = fields[1].split(":")
-            if int(raw_port, 16) == port and int(fields[9]) in inodes:
-                address = str(ipaddress.IPv4Address(bytes.fromhex(addr)[::-1]))
-                if address in (node["peer_ip"], "0.0.0.0"):
-                    matches.append(address)
-    require(bool(matches), "peer UDP port is not owned by bound PID")
+    for port in (node["peer_port"], node["quic_port"]):
+        matches = []
+        for line in udp.decode().splitlines()[1:]:
+            fields = line.split()
+            if len(fields) >= 10:
+                addr, raw_port = fields[1].split(":")
+                if int(raw_port, 16) == port and int(fields[9]) in inodes:
+                    address = str(ipaddress.IPv4Address(bytes.fromhex(addr)[::-1]))
+                    if address in (node["peer_ip"], "0.0.0.0"):
+                        matches.append(address)
+        require(bool(matches), f"peer UDP port {port} is not owned by bound PID")
 
 
 def verify_snapshot(snapshot: dict, policy: dict, policy_sha: str,

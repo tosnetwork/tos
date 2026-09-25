@@ -27,6 +27,11 @@ def fixed_source() -> tuple[str, dict[str, str]]:
         frozen = subprocess.check_output([*GIT, "show", f"HEAD:{name}"])
         x02.require(raw == frozen, f"{name} differs from fixed source commit")
         files[name] = x02.digest(raw)
+    sender = (REPO / "quic/quic-sender.cpp").read_text()
+    header = (REPO / "quic/quic-sender.h").read_text()
+    x02.require("NODE_PORT_OFFSET = 1000" in header
+                and "ip.set_port((ip.get_port() + NODE_PORT_OFFSET) % 65536);" in sender,
+                "production QUIC port derivation differs from frozen +1000 policy")
     return head, files
 
 
@@ -61,11 +66,14 @@ def live_node(item: dict) -> dict:
                 == (stream["output_dev"], stream["output_ino"]),
                 f"{name} harness writer is not its declared node log")
     peer = item["peer_transport"]
+    quic_port = (peer["port"] + 1000) % 65536
+    x02.require(quic_port != 0, "derived QUIC UDP port is zero")
     node = {"name": name, "pid": pid,
             "pid_start_ticks": x02._proc_start_ticks(raw_stat),
             "service": name, "data_dir": str(directory),
             "rpc_url": item["rpc_url"],
             "peer_ip": peer["ip"], "peer_port": peer["port"],
+            "quic_port": quic_port,
             "consensus_key_id": item["consensus_key_id_hex"],
             "adnl_id": item["adnl_id_hex"],
             "exe_sha256": x02.digest(exe.read_bytes()),
@@ -82,18 +90,21 @@ def live_node(item: dict) -> dict:
     return node
 
 
-def rule(index: int, phase: str, src: str, dst: str, nodes: dict) -> dict:
+def rule(index: int, phase: str, src: str, dst: str,
+         nodes: dict, transport: str) -> dict:
     pref, handle = 100 + index, str(index)
+    port_field = "peer_port" if transport == "adnl" else "quic_port"
     base = ["tc", "filter", "add", "dev", "lo", "egress", "protocol", "ip",
             "pref", str(pref), "handle", handle, "flower", "ip_proto", "udp",
             "src_ip", nodes[src]["peer_ip"], "dst_ip", nodes[dst]["peer_ip"],
-            "src_port", str(nodes[src]["peer_port"]),
-            "dst_port", str(nodes[dst]["peer_port"]), "action", "drop"]
+            "src_port", str(nodes[src][port_field]),
+            "dst_port", str(nodes[dst][port_field]), "action", "drop"]
     return {"id": f"r{index}", "phase": phase, "src_node": src,
-            "dst_node": dst, "mode": "drop_all", "interface": "lo",
+            "dst_node": dst, "transport": transport,
+            "mode": "drop_all", "interface": "lo",
             "pref": pref, "handle": handle, "install_argv": base,
             "remove_argv": ["tc", "filter", "del", "dev", "lo", "egress",
-                            "pref", str(pref), "handle", handle]}
+                            "pref", str(pref), "handle", handle, "flower"]}
 
 
 def build_policy(raw: bytes, head: str, files: dict[str, str], nodes: list[dict]) -> dict:
@@ -120,11 +131,14 @@ def build_policy(raw: bytes, head: str, files: dict[str, str], nodes: list[dict]
               "clsact": {"interface": "lo",
                          "setup_argv": ["tc", "qdisc", "add", "dev", "lo", "clsact"],
                          "cleanup_argv": ["tc", "qdisc", "del", "dev", "lo", "clsact"]},
-              "rules": [rule(index, *pair, by_name)
-                        for index, pair in enumerate(pairs, start=1)],
+              "rules": [rule(index, *pair, by_name, transport)
+                        for index, (transport, pair) in enumerate(
+                            [(transport, pair) for transport in ("adnl", "quic")
+                             for pair in pairs], start=1)],
               "thresholds": {"min_rule_packets": 1, "min_rule_drops": 1,
                              "three_min_delta": 2, "three_max_seconds": 120,
                              "halt_min_seconds": 60, "halt_tail_min_seconds": 20,
+                             "two_drain_seconds": 30,
                              "halt_tail_samples": 2, "recovery_min_delta": 2,
                              "recovery_max_seconds": 180}}
     x02.validate_policy(policy)

@@ -63,17 +63,20 @@ class PolicyFreezeTests(unittest.TestCase):
                     output.close()
         asyncio.run(exercise())
 
-    def test_four_node_native_policy_has_ten_exact_bidirectional_edges(self):
+    def test_four_node_native_policy_has_twenty_adnl_and_quic_edges(self):
         fixture, manifest = native_fixture()
         raw = json.dumps(manifest, sort_keys=True).encode()
         policy = prepare.build_policy(raw, fixture["source_commit"],
                                       fixture["source_files"], fixture["nodes"])
         self.assertEqual(policy["log_source"], "native-file")
-        self.assertEqual(len(policy["rules"]), 10)
+        self.assertEqual(len(policy["rules"]), 20)
         self.assertEqual(len([r for r in policy["rules"]
-                              if r["phase"] == "three_of_four"]), 6)
+                              if r["phase"] == "three_of_four"]), 12)
         self.assertEqual(len([r for r in policy["rules"]
-                              if r["phase"] == "two_of_four"]), 4)
+                              if r["phase"] == "two_of_four"]), 8)
+        self.assertEqual({r["transport"] for r in policy["rules"]}, {"adnl", "quic"})
+        self.assertTrue(all(r["remove_argv"][-1] == "flower"
+                            for r in policy["rules"]))
 
     def test_swapped_stream_mapping_is_rejected_before_policy_freeze(self):
         fixture, manifest = native_fixture()

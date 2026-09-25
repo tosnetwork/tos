@@ -52,6 +52,11 @@ def collect(policy: dict, sha: str, root: Path) -> dict:
     before = x02.capture_tc(policy)
     write_once(root / "tc-before.json", before)
     iface = policy["clsact"]["interface"]
+    qdiscs = x02.command_json(before[iface]["qdiscs"],
+                              ["tc", "-j", "-s", "qdisc", "show", "dev", iface])
+    x02.require(len(qdiscs) == 1 and qdiscs[0].get("kind") == "noqueue"
+                and qdiscs[0].get("root") is True,
+                "pre-existing root qdisc is not the allowed loopback noqueue state")
     x02.require(x02.command_json(before[iface]["filters"],
                                  ["tc", "-j", "-s", "filter", "show", "dev", iface,
                                   "egress"]) == [],
@@ -109,6 +114,9 @@ def collect(policy: dict, sha: str, root: Path) -> dict:
         for rule_id in two_ids:
             event(rule_id, "install")
             installed.append(rule_id)
+        # Predetermined drain: any old finality becoming visible in these 30 s
+        # remains in the first raw 2/4 sample, never silently skipped later.
+        time.sleep(policy["thresholds"]["two_drain_seconds"])
         first_two = sample("two_of_four")
         first_two_height = common_height(first_two)
         for _ in range(3):

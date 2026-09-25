@@ -38,29 +38,32 @@ def raw_command(argv, body, at):
             "stderr_sha256": x02.digest(b"")}
 
 
-def make_rule(index, phase, src, dst):
+def make_rule(index, phase, src, dst, transport="adnl"):
     pref = 100 + index
     handle = str(index)
     base = ["tc", "filter", "add", "dev", "lo", "egress", "protocol", "ip",
             "pref", str(pref), "handle", handle, "flower", "ip_proto", "udp",
             "src_ip", "127.0.0.1", "dst_ip", "127.0.0.1",
-            "src_port", str(20000 + src), "dst_port", str(20000 + dst),
+            "src_port", str(20000 + src + (1000 if transport == "quic" else 0)),
+            "dst_port", str(20000 + dst + (1000 if transport == "quic" else 0)),
             "action", "drop"]
     return {"id": f"r{index}", "phase": phase, "src_node": f"node{src}",
-            "dst_node": f"node{dst}", "mode": "drop_all", "interface": "lo",
+            "dst_node": f"node{dst}", "transport": transport,
+            "mode": "drop_all", "interface": "lo",
             "pref": pref, "handle": handle, "install_argv": base,
             "remove_argv": ["tc", "filter", "del", "dev", "lo", "egress",
-                            "pref", str(pref), "handle", handle]}
+                            "pref", str(pref), "handle", handle, "flower"]}
 
 
 def policy():
     rules = []
-    for src in (1, 2, 3):
-        rules.append(make_rule(len(rules) + 1, "three_of_four", src, 4))
-        rules.append(make_rule(len(rules) + 1, "three_of_four", 4, src))
-    for src in (1, 2):
-        rules.append(make_rule(len(rules) + 1, "two_of_four", src, 3))
-        rules.append(make_rule(len(rules) + 1, "two_of_four", 3, src))
+    for transport in ("adnl", "quic"):
+        for src in (1, 2, 3):
+            rules.append(make_rule(len(rules) + 1, "three_of_four", src, 4, transport))
+            rules.append(make_rule(len(rules) + 1, "three_of_four", 4, src, transport))
+        for src in (1, 2):
+            rules.append(make_rule(len(rules) + 1, "two_of_four", src, 3, transport))
+            rules.append(make_rule(len(rules) + 1, "two_of_four", 3, src, transport))
     source_commit = subprocess.check_output(
         ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip()
     result = {"schema": "tos.x02.fault-policy.v1",
@@ -75,6 +78,7 @@ def policy():
                        "data_dir": f"/tmp/x02-node{i}",
                        "rpc_url": f"http://127.0.0.1:{30000 + i}/jsonRPC",
                        "peer_ip": "127.0.0.1", "peer_port": 20000 + i,
+                       "quic_port": 21000 + i,
                        "consensus_key_id": f"{i:064x}",
                        "adnl_id": f"{i + 10:064x}", "exe_sha256": "a" * 64}
                       for i in range(1, 5)],
@@ -87,7 +91,7 @@ def policy():
             "thresholds": {"min_rule_packets": 1, "min_rule_drops": 1,
                            "three_min_delta": 2, "three_max_seconds": 120,
                            "halt_min_seconds": 60, "halt_tail_min_seconds": 20,
-                           "halt_tail_samples": 2,
+                           "halt_tail_samples": 2, "two_drain_seconds": 30,
                            "recovery_min_delta": 2,
                            "recovery_max_seconds": 180}}
     manifest = {"schema": "tos.validator-election-experiment-readiness.v2",
@@ -118,8 +122,10 @@ def flower(rule, hits):
             "options": {"handle": rule["handle"],
                         "keys": {"ip_proto": "udp", "src_ip": "127.0.0.1",
                                  "dst_ip": "127.0.0.1",
-                                 "src_port": 20000 + int(rule["src_node"][-1]),
-                                 "dst_port": 20000 + int(rule["dst_node"][-1])},
+                                 "src_port": 20000 + int(rule["src_node"][-1])
+                                             + (1000 if rule["transport"] == "quic" else 0),
+                                 "dst_port": 20000 + int(rule["dst_node"][-1])
+                                             + (1000 if rule["transport"] == "quic" else 0)},
                         "actions": [{"kind": "gact", "control_action": {"type": "drop"},
                                      "stats": {"packets": hits, "drops": hits}}]}}
 
@@ -139,7 +145,8 @@ def process(node):
     stat_fields[19] = str(node["pid_start_ticks"])
     stat = f"{node['pid']} (validator-engine) ".encode() + " ".join(stat_fields).encode()
     table = ("sl local_address rem_address st tx_queue rx_queue tr tm->when retrnsmt uid timeout inode\n"
-             f"0: 0100007F:{node['peer_port']:04X} 00000000:0000 07 0:0 00:0 0 1000 0 {9000 + node['pid']}\n").encode()
+             f"0: 0100007F:{node['peer_port']:04X} 00000000:0000 07 0:0 00:0 0 1000 0 {9000 + node['pid']}\n"
+             f"1: 0100007F:{node['quic_port']:04X} 00000000:0000 07 0:0 00:0 0 1000 0 {19000 + node['pid']}\n").encode()
     cmdline = (f"/tmp/validator-engine\0--db\0.\0--json-rpc-address\0"
                + node["rpc_url"].removeprefix("http://").removesuffix("/jsonRPC")
                + "\0").encode()
@@ -148,7 +155,7 @@ def process(node):
             "exe_sha256": node["exe_sha256"], "data_dir": node["data_dir"],
             "cwd": node["data_dir"], "cmdline_b64": base64.b64encode(cmdline).decode(),
             "cmdline_sha256": x02.digest(cmdline),
-            "socket_inodes": [9000 + node["pid"]],
+            "socket_inodes": [9000 + node["pid"], 19000 + node["pid"]],
             "udp_table_b64": base64.b64encode(table).decode(),
             "udp_table_sha256": x02.digest(table)}
 
@@ -282,7 +289,7 @@ def fixture(jump=False):
     active = []
     for i, rule in enumerate(rules3, start=1):
         active.append(rule)
-        events.append(event(pol, rule, "install", i, active[:]))
+        events.append(event(pol, rule, "install", 1 + (i - 1) / 2, active[:]))
     final_three = 14 if jump else 12
     for at, height, hits in ((10, 10, 1), (20, 11, 2), (30, final_three, 3)):
         snapshots.append(snapshot(pol, "three_of_four", at,
@@ -298,9 +305,9 @@ def fixture(jump=False):
                                    "node3": final_three, "node4": 10},
                                   active[:], {r["id"]: (3 + hits if r in rules3 else hits)
                                               for r in active}))
-    for i, rule in enumerate(pol["rules"], start=110):
+    for i, rule in enumerate(pol["rules"]):
         active.remove(rule)
-        events.append(event(pol, rule, "remove", i, active[:]))
+        events.append(event(pol, rule, "remove", 110 + i / 4, active[:]))
     for at, height in ((125, final_three), (145, final_three + 2)):
         snapshots.append(snapshot(pol, "recovery", at,
                                   {f"node{i}": height for i in range(1, 5)}, [], {}))
@@ -527,8 +534,49 @@ class X02IsolationTests(unittest.TestCase):
     def test_policy_peer_tuple_must_match_stage_a_readiness(self):
         pol, snapshots, events = fixture()
         pol["nodes"][0]["peer_port"] = 65500
+        pol["nodes"][0]["quic_port"] = (65500 + 1000) % 65536
         with self.assertRaisesRegex(ValueError, "readiness"):
             verify_fixture(pol, snapshots, events)
+
+    def test_missing_quic_edge_cannot_claim_two_of_four_isolation(self):
+        pol = policy()
+        pol["rules"] = [rule for rule in pol["rules"] if rule["id"] != "r17"]
+        with self.assertRaisesRegex(ValueError, "quic peer pair set"):
+            x02.validate_policy(pol)
+
+    def test_wrong_quic_port_or_remove_without_flower_is_rejected(self):
+        pol = policy()
+        pol["nodes"][0]["quic_port"] += 1
+        with self.assertRaisesRegex(ValueError, "QUIC UDP port differs"):
+            x02.validate_policy(pol)
+        pol = policy()
+        pol["rules"][0]["remove_argv"].remove("flower")
+        with self.assertRaisesRegex(ValueError, "omits the flower"):
+            x02.validate_policy(pol)
+
+    def test_quic_flower_must_match_frozen_quic_udp_pair(self):
+        pol, snapshots, events = fixture()
+        quic_rule = next(rule for rule in pol["rules"]
+                         if rule["transport"] == "quic"
+                         and rule["phase"] == "three_of_four")
+        row = snapshots[1]["tc"]["lo"]["filters"]
+        body = json.loads(base64.b64decode(row["stdout_b64"]))
+        target = next(item for item in body
+                      if item.get("options", {}).get("handle") == quic_rule["handle"])
+        target["options"]["keys"]["dst_port"] += 1
+        rewrite_raw(row, body)
+        with self.assertRaisesRegex(ValueError, "bound peer flow"):
+            verify_fixture(pol, snapshots, events)
+
+    def test_bound_pid_must_own_quic_udp_socket_as_well_as_adnl(self):
+        pol, snapshots, _events = fixture()
+        row = snapshots[1]["processes"]["node1"]
+        table = base64.b64decode(row["udp_table_b64"]).splitlines(keepends=True)
+        raw = b"".join(table[:2])
+        row["udp_table_b64"] = base64.b64encode(raw).decode()
+        row["udp_table_sha256"] = x02.digest(raw)
+        with self.assertRaisesRegex(ValueError, "peer UDP port 21001"):
+            x02.process_identity(row, pol["nodes"][0])
 
     def test_stale_v1_readiness_manifest_is_rejected(self):
         pol, snapshots, events = fixture()
@@ -572,7 +620,7 @@ class X02IsolationTests(unittest.TestCase):
 
     def test_extra_live_pair_drop_cannot_explain_halt(self):
         pol = policy()
-        pol["rules"].append(make_rule(11, "two_of_four", 1, 2))
+        pol["rules"].append(make_rule(21, "two_of_four", 1, 2))
         with self.assertRaisesRegex(ValueError, "extra edge"):
             x02.validate_policy(pol)
 
@@ -719,7 +767,7 @@ class X02IsolationTests(unittest.TestCase):
         # Shift progress and all later events; ordering stays valid but 120s expires.
         for snap in snapshots[3:]:
             shift_times(snap, 110 * NS)
-        for event_row in events[7:]:
+        for event_row in events[13:]:
             shift_times(event_row, 110 * NS)
         with self.assertRaisesRegex(ValueError, "120-second"):
             verify_fixture(pol, snapshots, events)
@@ -730,7 +778,7 @@ class X02IsolationTests(unittest.TestCase):
             shift_times(snapshots[index], shift * NS)
         for snap in snapshots[4:]:
             shift_times(snap, 100 * NS)
-        for event_row in events[7:]:
+        for event_row in events[13:]:
             shift_times(event_row, 100 * NS)
         with self.assertRaisesRegex(ValueError, "120-second"):
             verify_fixture(pol, snapshots, events)

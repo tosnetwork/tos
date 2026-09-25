@@ -16,17 +16,18 @@ spec.loader.exec_module(runner)
 
 
 def policy():
-    edges = [("three_of_four", f"r{i}") for i in range(1, 7)]
-    edges += [("two_of_four", f"r{i}") for i in range(7, 11)]
+    edges = [("three_of_four", f"r{i}") for i in range(1, 13)]
+    edges += [("two_of_four", f"r{i}") for i in range(13, 21)]
     return {"source_commit": "a" * 40, "clsact": {
         "interface": "lo", "cleanup_argv": ["tc", "qdisc", "del", "dev", "lo", "clsact"]},
+        "thresholds": {"two_drain_seconds": 30},
         "rules": [{"id": name, "phase": phase,
                    "remove_argv": ["tc", "filter", "del", name]}
                   for phase, name in edges]}
 
 
 class DirectedRunTests(unittest.TestCase):
-    def exercise(self, fail_at=None, verifier_passed=True):
+    def exercise(self, fail_at=None, verifier_passed=True, root_qdisc="noqueue"):
         current = [0.0]
         heights = [100, 100, 102, 102, 102, 102, 102, 102, 104]
         index = [0]
@@ -45,6 +46,11 @@ class DirectedRunTests(unittest.TestCase):
         def tc(_policy):
             return {"lo": {"filters": {}, "qdiscs": {}}}
 
+        def tc_json(_row, argv):
+            if "qdisc" in argv:
+                return [{"kind": root_qdisc, "root": True}]
+            return []
+
         def sleep(seconds):
             current[0] += seconds
 
@@ -53,34 +59,44 @@ class DirectedRunTests(unittest.TestCase):
             with (patch.object(runner.x02, "require_source_commit"),
                   patch.object(runner.os, "geteuid", return_value=0),
                   patch.object(runner.x02, "capture_tc", side_effect=tc),
-                  patch.object(runner.x02, "command_json", return_value=[]),
+                  patch.object(runner.x02, "command_json", side_effect=tc_json),
                   patch.object(runner.x02, "has_clsact", return_value=False),
-                  patch.object(runner.x02, "fault_event", side_effect=event),
+                  patch.object(runner.x02, "fault_event", side_effect=event) as fault_mock,
                   patch.object(runner.x02, "capture", side_effect=sample),
                   patch.object(runner.x02, "verify",
                                return_value={"passed": verifier_passed}),
                   patch.object(runner.x02, "run_raw", return_value={"exit": 0}),
                   patch.object(runner.time, "sleep", side_effect=sleep),
                   patch.object(runner.time, "monotonic", side_effect=lambda: current[0])):
+                if root_qdisc != "noqueue":
+                    with self.assertRaisesRegex(ValueError, "pre-existing root qdisc"):
+                        runner.collect(policy(), "b" * 64, root)
+                    fault_mock.assert_not_called()
+                    return None, None, sorted(root.iterdir())
                 result = runner.collect(policy(), "b" * 64, root)
             self.assertTrue((root / "result.json").exists())
             return result, root.joinpath("cleanup.json").read_text(), sorted(root.iterdir())
 
-    def test_complete_ten_rule_run_retains_all_events_and_samples(self):
+    def test_complete_twenty_rule_run_retains_all_events_and_samples(self):
         result, cleanup, paths = self.exercise()
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(result["events"], 22)
+        self.assertEqual(result["events"], 42)
         self.assertEqual(result["snapshots"], 9)
         self.assertIn('"fallback_commands": []', cleanup)
-        self.assertEqual(len([path for path in paths if path.name.startswith("event-")]), 22)
+        self.assertEqual(len([path for path in paths if path.name.startswith("event-")]), 42)
 
     def test_failure_removes_only_installed_rules_and_clsact(self):
         result, cleanup, _paths = self.exercise(fail_at="three_of_four")
         self.assertEqual(result["status"], "failed")
         self.assertIn("injected sample failure", result["error"])
-        self.assertIn('"rule_id": "r6"', cleanup)
+        self.assertIn('"rule_id": "r12"', cleanup)
         self.assertIn('"rule_id": "clsact"', cleanup)
-        self.assertNotIn('"rule_id": "r7"', cleanup)
+        self.assertNotIn('"rule_id": "r13"', cleanup)
+
+    def test_preexisting_netem_or_tbf_refuses_before_any_fault(self):
+        for kind in ("netem", "tbf"):
+            _, _, paths = self.exercise(root_qdisc=kind)
+            self.assertFalse(any(path.name.startswith("event-") for path in paths))
 
     def test_missing_install_receipt_still_removes_attempted_rule(self):
         result, cleanup, _paths = self.exercise(fail_at=("r2", "install"))
