@@ -103,6 +103,7 @@ CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
 POSITIVE_EVIDENCE = WORKDIR / "positive-evidence.jsonl"
 HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
+INDEXER_EVIDENCE = WORKDIR / "indexer-evidence.jsonl"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 PROVENANCE = WORKDIR / "provenance.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000004"
@@ -385,6 +386,30 @@ async def poll_http_predicate(path: str, predicate, timeout: float = 60.0) -> tu
             return True, body
         await asyncio.sleep(1)
     return False, last_body
+
+
+async def wait_indexer_through(label: str, mc_seqno: int,
+                               timeout: float = 300.0) -> tuple[bool, dict]:
+    """Require the production indexer's cursor to cover a fixed finalized head.
+
+    `/services/{address}/requests/{id}` can answer `pending` from a live-chain
+    fallback even when the lifecycle index has not saved that pending state.
+    Letting the request resolve before the index catches up would then make a
+    later `responded` classification impossible to establish from snapshots.
+    """
+    deadline = time.monotonic() + timeout
+    last: dict = {}
+    while time.monotonic() < deadline:
+        status, body = http_get("/explorer/status")
+        last = {"http_status": status, "body": body, "target_mc_seqno": mc_seqno}
+        result = body.get("result") or {}
+        indexed = result.get("masterchain_indexed")
+        if status == 200 and body.get("ok") is True and isinstance(indexed, int) and indexed >= mc_seqno:
+            record_jsonl(INDEXER_EVIDENCE, {"label": label, **last})
+            return True, last
+        await asyncio.sleep(1)
+    record_jsonl(INDEXER_EVIDENCE, {"label": label, "timed_out": True, **last})
+    return False, last
 
 
 async def service_show(name: str):
@@ -720,6 +745,7 @@ async def run_checks(faucet) -> None:
     call_amount = 0.05 + STORAGE_FEE + 0.05  # price + storage_fee + real-fee headroom
 
     print("\n=== start tosctld HTTP daemon (real query API + indexer, not the sandbox suite) ===")
+    deployment_mc_seqno = finalized_mc_header()["id"]["seqno"]
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
     # Redirected to a file, not asyncio.subprocess.PIPE: nothing in this
@@ -736,6 +762,12 @@ async def run_checks(faucet) -> None:
     )
     try:
         check("tosctld health endpoint ready", await wait_http_ready())
+
+        covered, cursor = await wait_indexer_through(
+            "svc-1 deployment", deployment_mc_seqno)
+        check("indexer cursor covers svc-1 deployment", covered, str(cursor))
+        if not covered:
+            return
 
         found, body = await poll_http_predicate(
             "/services", lambda b: any(same_addr(item.get("address", ""), address)
@@ -790,6 +822,13 @@ async def run_checks(faucet) -> None:
         check("request B is independently visible", req_b_data["found"] and req_b_data["request_hash"] == "dd" * 32,
               str(req_b_data))
 
+        pending_mc_seqno = finalized_mc_header()["id"]["seqno"]
+        covered, cursor = await wait_indexer_through(
+            "both svc-1 requests still pending", pending_mc_seqno)
+        check("indexer cursor covers both pending requests", covered, str(cursor))
+        if not covered:
+            return
+
         print("\n=== GET /services/{address}/requests/{id}: pending (real indexer tick) ===")
         found, body = await poll_http_predicate(
             f"/services/{address}/requests/{request_a}",
@@ -811,6 +850,13 @@ async def run_checks(faucet) -> None:
         req_b_data = await request_show("svc-1", request_b)
         check("request B resolved and no longer pending", not req_b_data["found"], str(req_b_data))
 
+        response_b_mc_seqno = finalized_mc_header()["id"]["seqno"]
+        covered, cursor = await wait_indexer_through(
+            "svc-1 request B response", response_b_mc_seqno)
+        check("indexer cursor covers request B response", covered, str(cursor))
+        if not covered:
+            return
+
         found, body = await poll_http_predicate(
             f"/services/{address}/requests/{request_b}",
             lambda b: b.get("result", {}).get("status") == "responded")
@@ -831,6 +877,13 @@ async def run_checks(faucet) -> None:
         expected_revenue = 2 * (0.05 + STORAGE_FEE)
         check("revenue accrued for both calls (price + storage_fee each)",
               abs(float(data["withdrawable_revenue"]) - expected_revenue) < 1e-6, str(data))
+
+        response_a_mc_seqno = finalized_mc_header()["id"]["seqno"]
+        covered, cursor = await wait_indexer_through(
+            "svc-1 request A response", response_a_mc_seqno)
+        check("indexer cursor covers request A response", covered, str(cursor))
+        if not covered:
+            return
 
         found, body = await poll_http_predicate(
             f"/services/{address}/requests/{request_a}",

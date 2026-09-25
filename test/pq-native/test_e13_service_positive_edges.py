@@ -63,6 +63,30 @@ def rows(*, service_hash="send-hash", service_ok=True, action_ok=True,
 
 
 class ServicePositiveEdgesTests(unittest.TestCase):
+    def test_indexer_barrier_uses_indexed_cursor_not_live_head(self):
+        behind = {"ok": True, "result": {
+            "masterchain_head": 90, "masterchain_indexed": 44}}
+        covered = {"ok": True, "result": {
+            "masterchain_head": 91, "masterchain_indexed": 47}}
+        with (patch.object(e13, "http_get", side_effect=[(200, behind), (200, covered)]) as get,
+              patch.object(e13.asyncio, "sleep", new=AsyncMock()),
+              patch.object(e13, "record_jsonl") as record):
+            ready, result = asyncio.run(e13.wait_indexer_through("deploy", 46))
+        self.assertTrue(ready)
+        self.assertEqual(result["body"]["result"]["masterchain_indexed"], 47)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(record.call_args.args[1]["target_mc_seqno"], 46)
+
+    def test_indexer_barrier_refuses_bad_status_or_missing_cursor(self):
+        for status, body in ((500, {"ok": True, "result": {"masterchain_indexed": 99}}),
+                             (200, {"ok": True, "result": {"masterchain_head": 99}})):
+            with self.subTest(status=status, body=body), patch.object(
+                e13, "http_get", return_value=(status, body)
+            ), patch.object(e13, "record_jsonl") as record:
+                ready, _ = asyncio.run(e13.wait_indexer_through("deploy", 46, timeout=0.001))
+                self.assertFalse(ready)
+                self.assertTrue(record.call_args.args[1]["timed_out"])
+
     def run_edge(self, *, wallet=None, service=None, receiver=None,
                  expected=50_000_000, expected_inbound=None, heads=None):
         usual = rows()
