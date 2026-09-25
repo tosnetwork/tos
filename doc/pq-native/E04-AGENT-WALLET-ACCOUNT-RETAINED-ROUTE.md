@@ -1,9 +1,33 @@
 # E04 Agent Wallet / Agent Account retained route: custody boundary
 
 Status: OPEN for final signoff. The full advertised single-node retained route
-passes locally at fixed source `640ecfe11`; its fixed-head CI and independent
+passes locally at fixed source `0e2f4bc90`; its fixed-head CI and independent
 evidence review are still pending. This is not a multi-validator or Byzantine
 fault-tolerance claim.
+
+## Final exact-source rerun: 35/35 local PASS
+
+The pushed `0e2f4bc90` tree tightened the negative VM code parser to require
+the complete top-level `exitcode=1705` field; a `17050` prefix is a failing
+unit control. From that exact tree the same command below, with output path
+`test/integration/.e04-agent-wallet-0e2f4bc90-20260925-console.typescript`,
+exited 0 with 35 PASS, 0 FAIL, `RESULT: ALL PASS`. Its complete console SHA-256
+is `32bb1061b00ed567a7a96b460e8be588e944cc9512c36d263d87610020e58b10`.
+The script SHA-256 is
+`236e6b1e6f4f0217bc0ed71feae3c4fc15a8f17f5b6d60aec3aba9e5049c4ee9`;
+the tosctl and validator-engine binaries remained
+`e133b281d00911a5d2fc97ad85ecf0b50eef13a9968f12b677beb056abc0337d`
+and `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb8a8`.
+The complete node DB is preserved in
+`test/integration/.e04-agent-wallet-0e2f4bc90-20260925-network/`; its
+process map SHA-256 is
+`c26b812bd4ade9271a74a5a6a5267e6e196606a61acf91390ad006a8d6fd752a`,
+and its custody journal SHA-256 is
+`cd8fdde44a9c813e92b9ce6c93cf68d42f4ccba17f899fde853b4cc9f558eaa8`.
+The rerun exercised the same exact bad-seqno refusal, three-view cancellation
+absence, two task-send majority resolutions, owner transfer, policy,
+rotation, restart and expiry controls as the previous 640 run. This is local
+single-validator evidence only; fixed-head CI and independent signoff remain.
 
 ## Repaired exact-tree result: 35/35 local PASS
 
