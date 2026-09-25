@@ -101,6 +101,16 @@ def balance(addr: str) -> int:
     return int(rpc_call("getAddressInformation", address=addr)["result"]["balance"])
 
 
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("masterchain header did not bind to the observed finalized block")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
 # the event loop that drains the in-process node's log pipes, deadlocking the
 # chain (and therefore the tosctl call itself) until the subprocess timeout.
@@ -160,6 +170,59 @@ async def assert_status_stays(name: str, want: str, label: str, settle_secs: flo
     await asyncio.sleep(settle_secs)
     status = (await task_show(name))["status"]
     check(label, status == want, f"status={status}")
+
+
+async def premature_timeout_control(name: str, requested_deadline: int) -> None:
+    task = await task_show(name)
+    deadline = int(task["deadline"])
+    if deadline != requested_deadline or task["status"] != "accepted":
+        raise RuntimeError(f"timeout control task state mismatch: {task}")
+    before = finalized_mc_header()
+    print(f"  premature timeout control: mc={before['id']['seqno']} "
+          f"chain_time={before['gen_utime']} deadline={deadline}")
+    if deadline - before["gen_utime"] < 30:
+        raise RuntimeError("premature timeout control window expired before send")
+    address = norm_addr(task["address"])
+    baseline_lt = int(rpc_call("getAddressInformation", address=address)
+                      ["result"]["last_transaction_id"]["lt"])
+    await send_op("timeout", name, "creator")
+    tx = None
+    until = time.monotonic() + 25
+    while time.monotonic() < until:
+        rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+        newer = [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+        if newer:
+            if len(newer) != 1:
+                raise RuntimeError("premature timeout control found multiple new escrow transactions")
+            tx = newer[0]
+            break
+        if finalized_mc_header()["gen_utime"] >= deadline:
+            raise RuntimeError("premature timeout control reached chain deadline without escrow transaction")
+        await asyncio.sleep(1)
+    if tx is None:
+        raise RuntimeError("premature timeout control transaction not observed")
+    after = finalized_mc_header()
+    status = (await task_show(name))["status"]
+    print(f"  premature timeout observed: mc={after['id']['seqno']} "
+          f"chain_time={after['gen_utime']} tx_lt={tx['transaction_id']['lt']} "
+          f"tx_utime={tx['utime']} aborted={tx['aborted']} status={status}")
+    if (after["id"]["seqno"] <= before["id"]["seqno"]
+            or int(tx["utime"]) >= deadline or tx["aborted"] is not True
+            or status != "accepted"):
+        raise RuntimeError("premature timeout control not proved before chain deadline")
+    check("premature timeout rejected before chain deadline", True)
+
+
+async def wait_chain_deadline(deadline: int, timeout: float = 120.0) -> None:
+    until = time.monotonic() + timeout
+    while time.monotonic() < until:
+        header = finalized_mc_header()
+        if header["gen_utime"] >= deadline + 5:
+            print(f"  timeout positive: mc={header['id']['seqno']} "
+                  f"chain_time={header['gen_utime']} deadline={deadline}")
+            return
+        await asyncio.sleep(2)
+    raise RuntimeError("chain deadline not observed before positive timeout")
 
 
 async def send_op(operation: str, name: str, frm: str, *extra: str):
@@ -639,23 +702,15 @@ async def run_checks(faucet) -> None:
 
     # ---------------- TIMEOUT PATH ----------------
     print("\n=== timeout path ===")
-    short_deadline = int(time.time()) + 75
+    short_deadline = finalized_mc_header()["gen_utime"] + 75
     escrow = await create_task("e2e-timeout", creator, agent, 2, short_deadline, 2.1)
     check("timeout task open", await wait_status("e2e-timeout", "open") == "open")
     await send_op("accept", "e2e-timeout", "agent")
     check("timeout task accepted",
           await wait_status("e2e-timeout", "accepted") == "accepted")
 
-    if time.time() < short_deadline - 20:
-        await send_op("timeout", "e2e-timeout", "creator")
-        await assert_status_stays("e2e-timeout", "accepted", "premature timeout rejected")
-    else:
-        print("  SKIP: premature timeout window already passed")
-
-    wait_for = short_deadline + 5 - time.time()
-    if wait_for > 0:
-        print(f"  waiting {wait_for:.0f}s for the deadline to pass ...")
-        await asyncio.sleep(wait_for)
+    await premature_timeout_control("e2e-timeout", short_deadline)
+    await wait_chain_deadline(short_deadline)
     creator_before = balance(creator)
     await send_op("timeout", "e2e-timeout", "creator")
     check("expired", await wait_status("e2e-timeout", "expired") == "expired")
