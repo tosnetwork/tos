@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import io
 import json
@@ -56,6 +57,38 @@ def contract_tx(exit_code: int = 2101) -> dict:
 
 
 class NegativeFinalityTests(unittest.TestCase):
+    def test_manifest_binds_source_binaries_and_refuses_dirty_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            validator = root / "validator-engine/validator-engine"
+            dht = root / "dht-server/dht-server"
+            validator.parent.mkdir()
+            dht.parent.mkdir()
+            validator.write_bytes(b"validator")
+            dht.write_bytes(b"dht")
+            tosctl = root / "tosctl"
+            tosctl.write_bytes(b"tosctl")
+            manifest_path = root / "manifest.json"
+            with patch.object(e08, "BUILD_DIR", root), patch.object(
+                e08, "TOSCTL", str(tosctl)
+            ), patch.object(e08, "MANIFEST", manifest_path), patch.object(
+                e08.subprocess, "check_output", return_value="fixed-sha\n"
+            ), patch.object(e08.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)):
+                e08.write_manifest()
+            manifest = json.loads(manifest_path.read_text())
+            self.assertEqual(manifest["source_commit"], "fixed-sha")
+            self.assertFalse(manifest["source_tracked_dirty"])
+            self.assertEqual(manifest["binaries"]["tosctl"]["sha256"],
+                             hashlib.sha256(b"tosctl").hexdigest())
+            with patch.object(e08, "BUILD_DIR", root), patch.object(
+                e08, "TOSCTL", str(tosctl)
+            ), patch.object(e08, "MANIFEST", manifest_path), patch.object(
+                e08.subprocess, "check_output", return_value="fixed-sha\n"
+            ), patch.object(e08.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)):
+                with self.assertRaisesRegex(RuntimeError, "clean tracked source tree"):
+                    e08.write_manifest()
+            self.assertTrue(json.loads(manifest_path.read_text())["source_tracked_dirty"])
+
     def test_bounced_refund_does_not_count_as_second_wallet_send(self):
         bounce = {"transaction_id": {"lt": "15"}, "out_msgs": [],
                   "in_msg": {"source": "0:abc", "bounced": True}}
@@ -72,6 +105,30 @@ class NegativeFinalityTests(unittest.TestCase):
                 e08.unique_attestation_send([duplicate, wallet_tx()], "0:abc")
             with self.assertRaisesRegex(RuntimeError, "unrelated wallet transaction"):
                 e08.unique_attestation_send([unrelated, wallet_tx()], "0:abc")
+
+    def test_bounce_must_match_this_attestation_transaction(self):
+        send = wallet_tx()
+        bounce = {"out_msgs": [], "in_msg": {
+            "source": "0:abc", "destination": "0:payer",
+            "bounced": True, "hash": "exact-bounce",
+        }}
+        contract = contract_tx()
+        contract["out_msgs"] = [{"source": "0:abc", "destination": "0:payer",
+                                 "bounced": True, "hash": "exact-bounce"}]
+        with patch.object(e08, "same_addr", side_effect=lambda left, right: left == right):
+            e08.validate_attestation_bounces([bounce, send], send, contract,
+                                             "0:payer", "0:abc")
+            wrong = dict(bounce, in_msg=dict(bounce["in_msg"], hash="wrong-bounce"))
+            with self.assertRaisesRegex(RuntimeError, "not this attestation's bounce"):
+                e08.validate_attestation_bounces([wrong, send], send, contract,
+                                                 "0:payer", "0:abc")
+            with self.assertRaisesRegex(RuntimeError, "not this attestation's bounce"):
+                e08.validate_attestation_bounces([bounce, dict(bounce), send], send, contract,
+                                                 "0:payer", "0:abc")
+            send["out_msgs"].append({"destination": "0:other", "hash": "other"})
+            with self.assertRaisesRegex(RuntimeError, "extra outbound"):
+                e08.validate_attestation_bounces([bounce, send], send, contract,
+                                                 "0:payer", "0:abc")
 
     def test_full_transaction_page_without_baseline_is_refused(self):
         rows = [{"transaction_id": {"lt": str(20 - index)}} for index in range(10)]

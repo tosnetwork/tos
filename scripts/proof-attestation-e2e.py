@@ -29,9 +29,12 @@ Run from the repository root: uv run python scripts/proof-attestation-e2e.py
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -51,6 +54,7 @@ WORKDIR = REPO / "test/integration/.proof-attestation-e2e"
 RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000007"
 NANO = 1_000_000_000
@@ -60,6 +64,37 @@ ATTESTED_HASH_1 = "22" * 32
 ATTESTED_HASH_2 = "33" * 32
 
 failures: list[str] = []
+
+
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e08_negative_finality.py").read_bytes()).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+        "rpc_transcript": RPC_TRANSCRIPT.name,
+        "cli_transcript": CLI_TRANSCRIPT.name,
+        "negative_evidence": NEGATIVE_EVIDENCE.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E08 real-chain run requires a clean tracked source tree")
 
 
 def check(label: str, ok: bool, detail: str = ""):
@@ -137,6 +172,37 @@ def unique_attestation_send(wallet_rows: list[dict], address: str) -> dict | Non
                 or row.get("out_msgs")):
             raise RuntimeError("unrelated wallet transaction after attestation send")
     return sends[0] if sends else None
+
+
+def validate_attestation_bounces(wallet_rows: list[dict], wallet_tx: dict,
+                                 contract_tx: dict, payer: str, address: str) -> None:
+    """Additional payer credits must be exact bounces emitted by this refusal."""
+    if len(wallet_tx.get("out_msgs") or []) != 1:
+        raise RuntimeError("attestation wallet send has extra outbound messages")
+    bounces = contract_tx.get("out_msgs") or []
+    if len(bounces) > 1 or any(
+        message.get("bounced") is not True
+        or not same_addr(message.get("source"), address)
+        or not same_addr(message.get("destination"), payer)
+        or not message.get("hash") for message in bounces
+    ):
+        raise RuntimeError("attestation emitted unexpected bounce messages")
+    expected_hashes = {message["hash"] for message in bounces}
+    observed_hashes: set[str] = set()
+    for row in wallet_rows:
+        if row is wallet_tx:
+            continue
+        incoming = row.get("in_msg") or {}
+        bounce_hash = incoming.get("hash")
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or not same_addr(incoming.get("destination"), payer)
+                or row.get("out_msgs")
+                or not bounce_hash
+                or bounce_hash not in expected_hashes
+                or bounce_hash in observed_hashes):
+            raise RuntimeError("wallet credit is not this attestation's bounce")
+        observed_hashes.add(bounce_hash)
 
 
 async def tosctl(*args: str) -> str:
@@ -291,6 +357,7 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
                 if (incoming.get("hash") != outgoing[0].get("hash")
                         or not same_addr(incoming.get("source"), payer)):
                     raise RuntimeError(f"{label}: attestation inbound hash differs from wallet outbound")
+                validate_attestation_bounces(wallet_rows, wallet_tx, contract_tx, payer, address)
                 break
         await asyncio.sleep(1)
     if contract_tx is None or wallet_tx is None:
@@ -430,6 +497,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging
