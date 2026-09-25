@@ -7,7 +7,7 @@ step": public-testnet-style acceptance for controller-signed Agent Account
 actions, beyond the throwaway per-op coverage other scripts exercise
 indirectly).
 
-Boots a single local TOS chain (same machinery as agent-task-escrow-e2e.py),
+Boots a one-validator local TOS chain with two independent observer RPC nodes,
 deploys an Agent Wallet/Account, and exercises every lifecycle CLI command
 end to end against a real validator:
 
@@ -33,8 +33,8 @@ It then stops and restarts the validator mid-lifecycle (with its data
 directory intact) and re-verifies the Agent Account's on-chain state is
 still correct after catch-up -- https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-testing-matrix.md's "restart
 one validator during task lifecycle" / "verify transaction history after
-catch-up" Local Testnet Tests, scoped to a single-node restart (this harness
-has no existing multi-validator example to build a true multi-validator
+catch-up" Local Testnet Tests, scoped to a one-validator restart (this harness
+does not build a multi-validator
 fault-tolerance test on top of; that remains open, see ROADMAP.md).
 
 Run from the repository root: uv run python scripts/agent-wallet-account-e2e.py
@@ -58,8 +58,10 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19546"
+OBSERVER_RPCS = ("127.0.0.1:19547", "127.0.0.1:19548")
 WORKDIR = REPO / "test/integration/.agent-wallet-account-e2e"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
+OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000010"
 NANO = 1_000_000_000
 
@@ -74,10 +76,10 @@ def check(label: str, ok: bool, detail: str = ""):
         failures.append(label)
 
 
-def rpc_call(method: str, **params):
+def rpc_call(method: str, *, endpoint: str = RPC, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
-        f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
+        f"http://{endpoint}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=8) as resp:
         return json.loads(resp.read().decode())
@@ -224,11 +226,11 @@ async def wait_account_seqno(account: str, target: int, timeout: float = 60.0) -
     return False
 
 
-async def wait_rpc_ready(timeout: float = 180.0) -> bool:
+async def wait_rpc_ready(timeout: float = 180.0, endpoint: str = RPC) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if "result" in rpc_call("getMasterchainInfo"):
+            if "result" in rpc_call("getMasterchainInfo", endpoint=endpoint):
                 return True
         except Exception:
             pass
@@ -244,6 +246,10 @@ def write_config():
     cfg["elections"] = None
     cfg.pop("voting", None)
     CONFIG.write_text(json.dumps(cfg, indent=2))
+    for observer_config, endpoint in zip(OBSERVER_CONFIGS, OBSERVER_RPCS, strict=True):
+        observer_cfg = dict(cfg)
+        observer_cfg["chain_rpc"] = {"urls": [f"http://{endpoint}/"], "api_key": None}
+        observer_config.write_text(json.dumps(observer_cfg, indent=2))
 
 
 async def run_checks(faucet, node) -> None:
@@ -252,6 +258,15 @@ async def run_checks(faucet, node) -> None:
         check("json-rpc endpoint ready", False, f"no response from http://{RPC}/jsonRPC")
         return
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
+    primary_chain = rpc_call("getMasterchainInfo")["result"]["init"]
+    for endpoint in OBSERVER_RPCS:
+        ready = await wait_rpc_ready(endpoint=endpoint)
+        check(f"independent observer RPC {endpoint} ready", ready)
+        if not ready:
+            return
+        observer_chain = rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["init"]
+        check(f"observer RPC {endpoint} follows the same zerostate",
+              observer_chain == primary_chain)
 
     await tosctl("wallet", "create", "-n", "funder", "-v", "V3R2", "-w", "0")
     funder_out = await tosctl_json("wallet", "ls")
@@ -344,12 +359,48 @@ async def run_checks(faucet, node) -> None:
               lambda: balance(target) == target_before + 500_000_000))
     check("native Gift consumes exactly one Agent Account seqno",
           await wait_account_seqno(account, 1))
+    native_resolution = await tosctl_action_json(
+        "agent", "account", "native-resolve", "--wallet", "agent-1",
+        "--action-id", "a" * 64,
+        "--quorum-config", str(OBSERVER_CONFIGS[0]),
+        str(OBSERVER_CONFIGS[1]),
+    )
+    quorum = native_resolution.get("quorum", {})
+    transaction = native_resolution.get("transaction", {})
+    check("native Gift exact winner resolved by independent RPC majority",
+          native_resolution.get("schema") == "tos.agent-account.native-action-finalized.v1"
+          and native_resolution.get("state") == "finalized"
+          and native_resolution.get("source_account") == account
+          and same_addr(native_resolution.get("destination", ""), target)
+          and native_resolution.get("amount_nanotos") == 500_000_000
+          and native_resolution.get("exact_signed_boc_digest")
+              == prepared.get("exact_signed_boc_digest")
+          and quorum.get("members") == 3 and quorum.get("threshold") == 2
+          and quorum.get("agreeing", 0) >= 2
+          and bool(transaction.get("transaction_hash"))
+          and transaction.get("transaction_lt", 0) > 0
+          and bool(transaction.get("block_root_hash")),
+          str(native_resolution))
 
-    print("\n=== same-seqno cancellation wins and original Gift stays unpaid ===")
+    print("\n=== isolated same-seqno cancellation wins and original Gift stays unpaid ===")
+    # A cancellation winner intentionally leaves the primary custody claim
+    # unresolved. Keep that terminal negative control on its own deployed
+    # account, while the main account continues the positive lifecycle.
+    await tosctl(
+        "agent", "wallet", "create", "--name", "cancel-agent", "-v", "V5R1", "-w", "0",
+        "--max-per-tx", "2", "--daily-limit", "10",
+    )
+    cancel_deploy = await tosctl_json(
+        "agent", "account", "deploy", "--wallet", "cancel-agent", "--from", "funder",
+        "-w", "0", "--amount", "3", "--yes",
+    )
+    cancel_account = norm_addr(cancel_deploy["address"])
+    check("cancellation account active on chain", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=cancel_account).get("result") == "active"))
     cancel_target_before = balance(target)
     cancel_valid_until = int(time.time()) + 300
     cancel_primary = await tosctl_action_json(
-        "agent", "account", "native-prepare", "--wallet", "agent-1", "--target", target,
+        "agent", "account", "native-prepare", "--wallet", "cancel-agent", "--target", target,
         "--amount-nanotos", str(200_000_000), "--fee-reserve-nanotos", str(50_000_000),
         "--valid-until", str(cancel_valid_until), "--action-id", "b" * 64,
         "--request-digest", "sha256:" + "5" * 64,
@@ -358,13 +409,14 @@ async def run_checks(faucet, node) -> None:
         "--unsigned-transfer-digest", "sha256:" + "8" * 64, "--yes",
     )
     cancellation = await tosctl_action_json(
-        "agent", "account", "cancel-prepare", "--wallet", "agent-1",
+        "agent", "account", "cancel-prepare", "--wallet", "cancel-agent",
         "--action-id", "b" * 64,
         "--owner-authorization-digest", "sha256:" + "9" * 64,
         "--valid-until", str(cancel_valid_until), "--yes",
     )
     broadcast_boc(cancellation.get("exact_signed_boc", ""))
-    check("cancellation consumes the shared sequence", await wait_account_seqno(account, 2))
+    check("cancellation consumes its account's shared sequence",
+          await wait_account_seqno(cancel_account, 1))
     broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
     check("finalized cancellation prevents destination credit for the observation window",
           await predicate_stays_true(lambda: balance(target) == cancel_target_before))
@@ -479,21 +531,31 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=24000) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
+        observers = [network.create_full_node() for _ in OBSERVER_RPCS]
         make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
+        for observer in observers:
+            observer.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        observer_tasks = [
+            asyncio.create_task(observer.run(StartOptions(args=["--json-rpc-address", endpoint])))
+            for observer, endpoint in zip(observers, OBSERVER_RPCS, strict=True)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet, node)
         finally:
-            node_task.cancel()
-            dht_task.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            for task in (node_task, dht_task, *observer_tasks):
+                task.cancel()
+            await asyncio.gather(node_task, dht_task, *observer_tasks,
+                                 return_exceptions=True)
             await node.stop()
+            for observer in observers:
+                await observer.stop()
             await dht.stop()
 
     print("\n=== RESULT:", "ALL PASS" if not failures else f"{len(failures)} FAILURE(S)", "===")
