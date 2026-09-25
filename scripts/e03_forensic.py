@@ -8,6 +8,7 @@ then checks exact message hashes and execution flags.
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -26,7 +27,8 @@ def rpc(origin, method, **params):
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as error:
         status, raw = error.code, error.read()
-    return {"request_body": request_body.decode(), "status": status,
+    return {"observed_at_utc": datetime.now(timezone.utc).isoformat(),
+            "request_body": request_body.decode(), "status": status,
             "response_body": raw.decode()}
 
 
@@ -46,6 +48,10 @@ def main():
                         help="re-evaluate already captured raw replies without reopening the network")
     parser.add_argument("--require-block-context", action="store_true",
                         help="refuse a poll lacking its exact masterchain and shard references")
+    parser.add_argument("--scan-mc-from", type=int,
+                        help="first historical masterchain height to query for this wallet")
+    parser.add_argument("--scan-mc-to", type=int,
+                        help="last historical masterchain height to query for this wallet")
     args = parser.parse_args()
     rows = [json.loads(line) for line in args.trace.read_text().splitlines()]
     requests = [json.loads(row["request_body"]) for row in rows]
@@ -93,7 +99,23 @@ def main():
     target_tx = target_matches[0]
     assert target_tx["aborted"] is False and target_tx["compute"]["success"] is True
     assert result(raw["destination_info"])["state"] == "active"
+    first_visible = None
+    if args.scan_mc_from is not None or args.scan_mc_to is not None:
+        assert args.scan_mc_from is not None and args.scan_mc_to is not None
+        assert 0 < args.scan_mc_from <= args.scan_mc_to and args.scan_mc_to - args.scan_mc_from <= 32
+        raw["historical_wallet_info"] = [
+            rpc(args.origin, "getWalletInformation", address=args.wallet, seqno=height)
+            for height in range(args.scan_mc_from, args.scan_mc_to + 1)
+        ]
+        args.output.write_text(json.dumps({"raw": raw}, indent=2) + "\n")
+        history = [result(exchange) for exchange in raw["historical_wallet_info"]]
+        visible = [entry for entry in history
+                   if entry.get("last_transaction_id", {}).get("lt") == wallet_tx["transaction_id"]["lt"]]
+        assert visible, "wallet transaction was not visible in the requested masterchain interval"
+        first_visible = {"masterchain": visible[0].get("observed_masterchain_block"),
+                         "shard": visible[0].get("observed_shard_block")}
     summary = {"trace_sha256": hashlib.sha256(args.trace.read_bytes()).hexdigest(),
+               "forensic_observed_at_utc": datetime.now(timezone.utc).isoformat(),
                "send_request_id": send["id"], "send_index": send_index,
                "external_message_hash": message_hash, "wallet": args.wallet,
                "pre_send_seqnos": pre_send_seqnos, "post_send_seqnos": post_send_seqnos,
@@ -108,6 +130,8 @@ def main():
                "destination_transaction_id": target_tx["transaction_id"],
                "destination_transaction_block_id": target_tx.get("block_id"),
                "destination_transaction_utime": target_tx["utime"]}
+    if first_visible is not None:
+        summary["first_visible_historical_reference"] = first_visible
     args.output.write_text(json.dumps({"summary": summary, "raw": raw}, indent=2) + "\n")
     print("E03_CAPTURED_SEND_EXECUTED", message_hash, wallet_tx["transaction_id"]["lt"],
           target_tx["transaction_id"]["lt"])

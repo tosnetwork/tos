@@ -76,3 +76,61 @@ matched the JSON and the separately provisioned node identity/ADNL/key tool.
 The validator-engine binary SHA-256 was
 `d862c6ad1dacd40e5214a05aaf4990947515eb015f3820294e2eead13cb9ca87`.
 This is a direct Config34 check, **not** a TOSCAN seed or explorer PASS.
+
+## 6f6 read-head follow-up
+
+Counts first: one more demo PASS, one TOSCAN seed FAIL, seven post-send wallet
+polls, one matched wallet transaction and one matched registry activation. The
+second complete-route command was `uv run python
+scripts/verify-e03-localnet-route.py --workdir
+test/integration/.e03-localnet-6f6ed9779-20260925`; source
+`6f6ed97790ff5579e3026cf869451d7f6650fc71`, exit 1, report SHA-256
+`74ff919439c95d577f63cd229cb7d0d439a20789282631fe23c15ed4ab72fe10`.
+The report records binary hashes, including validator-engine
+`aa0be26e10f758f8d5f314fb57bb503ad2c2bd4f8e7343181d58305e59f54de4`
+and tosctl `8e68f5b0cacd00ab8cbf4b1be42c9d59cf6e6865a05aacf8c3d856bae5148727`.
+
+The raw tosctl proxy transcript SHA-256 is
+`c5a83d8873de24e92b5f132a790ad227304dbb8fbea6be9367bf4f4ab7168341`.
+The registry deploy's `sendBoc` is entry 83 and hashes to
+`kIx5sD49hxRJWLetkhehLWSqLq8wmnLHVSwoSJm02Wg=`. Entries 84–90 all
+returned seqno 1, balance 50,999,947,869 nanotomis, last LT 69,000,003.
+Unlike the 903 run, each response names the exact referenced blocks:
+
+| Polls | Masterchain seqno | Account shard seqno | Wallet seqno |
+| --- | ---: | ---: | ---: |
+| 84–85 | 57 | 128 | 1 |
+| 86–87 | 58 | 130 | 1 |
+| 88 | 59 | 133 | 1 |
+| 89–90 | 60 | 135 | 1 |
+
+After the failed CLI exited, the saved chain was resumed without rebroadcast.
+`toscan/forensic-registry.json` (SHA-256
+`e744811edd338d476f2a3bfb5617f799d707510b0899295fb509d0fb51973f63`)
+binds that external hash to wallet transaction LT 137,000,001 and its single
+outgoing hash to the registry transaction LT 137,000,003. Both transactions
+are non-aborted with successful compute; the registry activated. Both are in
+the same workchain-0 shard block **136**, root hash
+`20EmfSUDiXS7LBDfmMWTmSkuF5V6f+ticFyXN8C5E50=`. The CLI's final poll
+referenced shard **135**, one block earlier. Thus its returned seqno 1 was
+consistent with the specific block it queried; this run does not support a
+client stuck on one cached block.
+
+Historical `getWalletInformation(seqno=N)` on the retained database returns
+seqno 1 at masterchain 60/shard 135, and first returns seqno 2 with the matched
+LT at masterchain **61**/shard **137**. All seven heights 60–66 and their raw
+replies are saved in the forensic file. A second timestamped read of heights
+60 and 61 is `toscan/forensic-registry-timed.json` (SHA-256
+`b5bd15aaf9a87d52b40b641a63e1c611e1f9c410e44530223bc3318beee85453`):
+at wall time 01:35:03.604782 UTC, height 60 still returned seqno 1; at
+01:35:03.608063 UTC, historical height 61 returned seqno 2. Those are the
+times of the **later diagnostic reads**, not the time height 61 first became
+available to the original CLI. The original proxy did not timestamp each poll,
+so it cannot establish that wall-clock availability time.
+
+The narrow demonstrated mechanism is a 15-second CLI observation window
+ending while the latest referenced shard block was 135 and the transaction was
+in block 136, first visible through masterchain reference 61/shard 137. The
+next fix needs a bounded, retry-safe *specific-message or deployment-effect*
+confirmation rather than another blind send or an unqualified timeout change.
+E03 remains OPEN until the same-tree demo and full TOSCAN route both pass.

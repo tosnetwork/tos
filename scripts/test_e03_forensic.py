@@ -65,6 +65,23 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
     assert summary["post_send_observed_blocks"] == [
         {"masterchain": {"seqno": 5}, "shard": {"seqno": 7}}]
 
+    def historical_rpc(_, method, **params):
+        assert method == "getWalletInformation"
+        height = params["seqno"]
+        return exchange({"seqno": 1 if height == 5 else 2,
+                         "last_transaction_id": {"lt": "9" if height == 5 else "10"},
+                         "observed_masterchain_block": {"seqno": height},
+                         "observed_shard_block": {"seqno": 7 if height == 5 else 8}})
+
+    monkeypatch.setattr(e03_forensic, "rpc", historical_rpc)
+    monkeypatch.setattr(sys, "argv", ["e03_forensic.py", "--trace", str(trace),
+                                         "--wallet", "wallet", "--captured", str(captured),
+                                         "--output", str(output), "--require-block-context",
+                                         "--scan-mc-from", "5", "--scan-mc-to", "6"])
+    e03_forensic.main()
+    assert json.loads(output.read_text())["summary"]["first_visible_historical_reference"] == {
+        "masterchain": {"seqno": 6}, "shard": {"seqno": 8}}
+
     missing_context = json.loads(trace.read_text().splitlines()[-1])
     missing_context["response_body"] = json.dumps({"result": {"seqno": 1, "balance": "120"}})
     original_trace = trace.read_text()
