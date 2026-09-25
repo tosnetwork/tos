@@ -52,6 +52,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -74,6 +75,8 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 RPC = "127.0.0.1:19667"
 WORKDIR = REPO / "test/integration/.dns-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+REGISTRATION_EVIDENCE = WORKDIR / "registration-evidence.json"
 DNS_DIR = REPO / "crypto/smartcont/dns"
 VECTORS = json.loads((REPO / "domains/packages/protocol/test/vectors.json").read_text())
 
@@ -95,8 +98,111 @@ def rpc_call(rpc_method: str, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    result = json.loads(raw.decode())
+    if status != 200 or "error" in result or "result" not in result:
+        raise RuntimeError(f"{rpc_method} RPC failed: HTTP {status}, {result}")
+    return result
+
+
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    info = rpc_call("getAddressInformation", address=address)["result"]
+    return int((info.get("last_transaction_id") or {}).get("lt", 0))
+
+
+def transactions_after(address: str, baseline_lt: int) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+def same_addr(left: str, right: str) -> bool:
+    try:
+        return (Address(left).to_str(is_user_friendly=False).lower()
+                == Address(right).to_str(is_user_friendly=False).lower())
+    except Exception:
+        return False
+
+
+async def registration_receipt(faucet_addr: str, collection_addr: str,
+                               faucet_lt: int, collection_lt: int,
+                               before_head: dict, auction_start: int) -> bool:
+    """Return whether the exact registration succeeded; require VM 199 before launch."""
+    deadline = time.monotonic() + 45
+    wallet_tx = collection_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(faucet_addr, faucet_lt)
+        collection_rows = transactions_after(collection_addr, collection_lt)
+        if len(wallet_rows) > 1 or len(collection_rows) > 1:
+            raise RuntimeError("registration has multiple new wallet or Collection transactions")
+        if wallet_rows and collection_rows:
+            wallet_tx, collection_tx = wallet_rows[0], collection_rows[0]
+            outgoing = [msg for msg in wallet_tx.get("out_msgs") or []
+                        if same_addr(msg.get("destination"), collection_addr)]
+            if (wallet_tx.get("aborted") is not False
+                    or (wallet_tx.get("compute") or {}).get("success") is not True
+                    or (wallet_tx.get("action") or {}).get("success") is not True
+                    or len(outgoing) != 1 or not outgoing[0].get("hash")
+                    or (collection_tx.get("in_msg") or {}).get("hash") != outgoing[0]["hash"]
+                    or not same_addr((collection_tx.get("in_msg") or {}).get("source"), faucet_addr)):
+                raise RuntimeError("registration wallet-to-Collection message did not match")
+            break
+        await asyncio.sleep(1)
+    if wallet_tx is None or collection_tx is None:
+        raise RuntimeError("registration wallet-to-Collection transaction not observed")
+    tx_time = int(collection_tx["utime"])
+    prelaunch = tx_time <= auction_start
+    compute = collection_tx.get("compute") or {}
+    if prelaunch:
+        if (collection_tx.get("aborted") is not True
+                or compute.get("success") is not False
+                or compute.get("exit_code") != 199):
+            raise RuntimeError(f"prelaunch registration expected Collection VM 199: {collection_tx}")
+    elif (collection_tx.get("aborted") is not False
+          or compute.get("success") is not True
+          or (collection_tx.get("action") or {}).get("success") is not True):
+        raise RuntimeError(f"postlaunch registration Collection transaction failed: {collection_tx}")
+    heads = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(heads) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            heads.append(head)
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(heads) != 2:
+        raise RuntimeError("registration did not reach two later finalized heads")
+    REGISTRATION_EVIDENCE.write_text(json.dumps({
+        "before_head": before_head, "after_heads": heads, "auction_start": auction_start,
+        "wallet_tx": wallet_tx, "collection_tx": collection_tx, "prelaunch": prelaunch,
+    }, sort_keys=True, indent=2) + "\n")
+    return prelaunch
 
 
 def min_price(label_bytes: int, now: int, auction_start_time: int) -> int:
@@ -542,13 +648,18 @@ async def run_checks(faucet, artifacts: dict, global_config: Path) -> None:
     bid = price + 1 * NANO
     print(f"  minimum price now: {price / NANO} TOS; sending {bid / NANO} TOS")
     body = begin_cell().store_uint(0, 32).store_bytes(LABEL.encode()).end_cell()
+    faucet_addr = faucet.address.to_str(is_user_friendly=False)
+    faucet_lt, collection_lt = last_lt(faucet_addr), last_lt(collection_addr)
+    before_head = finalized_mc_header()
     await faucet.send(transfer_message(faucet, collection_addr, bid, body))
+    prelaunch = await registration_receipt(
+        faucet_addr, collection_addr, faucet_lt, collection_lt, before_head,
+        VECTORS["auction_start_time"])
 
-    if now <= VECTORS["auction_start_time"]:
+    if prelaunch:
         # TIP-1 intentionally freezes a future mainnet activation time.  A
         # localnet run before that date must prove the launch gate remains
         # closed instead of waiting for an item that cannot legally deploy.
-        await asyncio.sleep(4)
         check("pre-launch registration is rejected and deploys no Domain Item",
               account_state(item_addr) in ("uninitialized", "nonexist", ""))
         print("  post-launch auction checks require a chain timestamp after "
