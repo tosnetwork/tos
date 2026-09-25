@@ -24,6 +24,47 @@ def load_verifier():
     return module
 
 
+def load_seed(monkeypatch):
+    path = Path(__file__).with_name("toscan-dev-seed.py")
+    monkeypatch.syspath_prepend(str(path.parent))
+    spec = importlib.util.spec_from_file_location("e03_seed", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_negative_workchain_controller_is_one_cli_argument(monkeypatch):
+    seed = load_seed(monkeypatch)
+    calls = []
+    created = False
+
+    class Address:
+        def __init__(self, value):
+            self.value = value
+
+        def to_str(self, is_user_friendly=False):
+            return self.value
+
+    monkeypatch.setattr(seed, "Address", Address)
+    seeder = object.__new__(seed.Seeder)
+
+    def run(*arguments):
+        nonlocal created
+        calls.append(arguments)
+        created = True
+
+    seeder.run = run
+    seeder.config_data = lambda: {"pools": {"toscan-staking": {"address": "0:" + "11" * 32}}
+                                  if created else {}}
+    seeder.fund = lambda *_: None
+    seeder.address_active = lambda *_: True
+    seeder.rpc_call = lambda *_args, **_kwargs: ["already deposited"]
+    controller = "-1:" + "00" * 32
+    seeder.ensure_nominator_pool("atlas-owner", "nova-provider", controller)
+    assert f"--controller={controller}" in calls[0]
+    assert controller not in calls[0]
+
+
 def http_error(body):
     error = urllib.error.HTTPError("http://127.0.0.1/jsonRPC", 500, "error", {}, None)
     error.json_rpc_body = body.encode()

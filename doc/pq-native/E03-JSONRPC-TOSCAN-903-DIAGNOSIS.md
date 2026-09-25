@@ -161,3 +161,26 @@ restoring it passed. Returning from the observation loop on its first read
 error made the transient-error test fail at `attempts: 1 != 2`; restoring it
 passed. Neither mutation was committed. These are local behavioral controls,
 not yet a live-route result.
+
+## e665 exact-tree route
+
+The committed `e6657e008d6a3d6c69dffab478837412ae3333e4` run used
+`uv run python scripts/verify-e03-localnet-route.py --workdir
+test/integration/.e03-localnet-e6657e008-20260925` and exited 1. Its
+`report.json` SHA-256 is
+`6c89f6cf10510ec4c83aea145e27b046a5a3ff55b8278fe930547fe61e36643e`;
+the tosctl proxy transcript SHA-256 is
+`30205153a1789d4387487b214f70e3497d9e937095a3e0d74598528294670189`.
+The report records tosctl binary SHA-256
+`68e61a57435a67bd73079ac7b91f42a3fde7ffb592bde8936da8d127baae5d26`.
+The demo passed. The TOSCAN seed progressed beyond the previous registry
+deploy timeout, then failed before its pool-create RPC: Clap parsed the
+standalone `-1:` controller address as an option and reported `unexpected
+argument '-1'`. This is a CLI invocation error, **not** an Elector or pool
+rejection. The raw seed output and all 124 tosctl proxy responses are retained.
+The next tree passes the negative-workchain address as a single
+`--controller=-1:...` argument; a focused test checks the exact tokenization.
+Restoring the old two-token form made that test fail at the named token
+assertion; the one-token form and the full seven-test localnet-route unit suite
+passed after restoration.
+This run is not a full TOSCAN PASS and E03 remains OPEN.
