@@ -1052,6 +1052,10 @@ class ValidatorElectionRehearsal:
     def report_status(self) -> str:
         if self.failures:
             return "fail"
+        if self.pq_full and not any(
+            event.get("event") == "pq_full_launch_gate_passed" for event in self.events
+        ):
+            return "fail"
         if self.experiment is not None and self.experiment_final_status != "complete":
             return "fail"
         return "pass"
