@@ -22,6 +22,9 @@ NS = 1_000_000_000
 ROOT = "1" * 64
 FILE = "2" * 64
 BOOT = "12345678-1234-1234-1234-123456789abc"
+REAL_TC_FILTER_B64 = (
+    "W3sicHJvdG9jb2wiOiJpcCIsInByZWYiOjEwMSwia2luZCI6ImZsb3dlciIsImNoYWluIjowfSx7InByb3RvY29sIjoiaXAiLCJwcmVmIjoxMDEsImtpbmQiOiJmbG93ZXIiLCJjaGFpbiI6MCwib3B0aW9ucyI6eyJoYW5kbGUiOjEsImtleXMiOnsiZXRoX3R5cGUiOiJpcHY0IiwiaXBfcHJvdG8iOiJ1ZHAiLCJkc3RfaXAiOiIxMjcuMC4wLjEiLCJzcmNfaXAiOiIxMjcuMC4wLjEiLCJkc3RfcG9ydCI6MjY2MTEsInNyY19wb3J0IjoyNjYwMn0sIm5vdF9pbl9odyI6dHJ1ZSwiYWN0aW9ucyI6W3sib3JkZXIiOjEsImtpbmQiOiJnYWN0IiwiY29udHJvbF9hY3Rpb24iOnsidHlwZSI6ImRyb3AifSwicHJvYiI6eyJyYW5kb21fdHlwZSI6Im5vbmUiLCJjb250cm9sX2FjdGlvbiI6eyJ0eXBlIjoicGFzcyJ9LCJ2YWwiOjB9LCJpbmRleCI6MSwicmVmIjoxLCJiaW5kIjoxLCJzdGF0cyI6eyJieXRlcyI6MCwicGFja2V0cyI6MCwiZHJvcHMiOjAsIm92ZXJsaW1pdHMiOjAsInJlcXVldWVzIjowLCJiYWNrbG9nIjowLCJxbGVuIjowfX1dfX1dCg=="
+)
 
 
 def block(height):
@@ -118,7 +121,7 @@ def policy():
 
 
 def flower(rule, hits):
-    return {"pref": rule["pref"], "kind": "flower",
+    return {"protocol": "ip", "pref": rule["pref"], "kind": "flower", "chain": 0,
             "options": {"handle": rule["handle"],
                         "keys": {"ip_proto": "udp", "src_ip": "127.0.0.1",
                                  "dst_ip": "127.0.0.1",
@@ -573,6 +576,36 @@ class X02IsolationTests(unittest.TestCase):
     def test_valid_isolation_fixture(self):
         pol, snapshots, events = fixture()
         self.assertTrue(verify_fixture(pol, snapshots, events)["passed"])
+
+    def test_real_tc_flower_header_pairs_with_one_authorized_handle(self):
+        pol = policy()
+        pol["nodes"][0]["peer_port"] = 26602
+        pol["nodes"][3]["peer_port"] = 26611
+        raw = base64.b64decode(REAL_TC_FILTER_B64, validate=True)
+        self.assertEqual(x02.digest(raw),
+                         "425146c59487044cb9a889d930192a00de7e6cbf6b76f464afd44de2d3fd6588")
+        argv = ["tc", "-j", "-s", "filter", "show", "dev", "lo", "egress"]
+        row = raw_command(argv, raw, 1)
+        surface = {"tc": {"lo": {"filters": row, "qdiscs": raw_command(
+            ["tc", "-j", "-s", "qdisc", "show", "dev", "lo"],
+            [{"kind": "clsact", "handle": "ffff:"}], 1)}}}
+        x02.validate_tc_surface(surface, pol)
+        self.assertEqual(x02.tc_rule(surface, pol["rules"][0],
+                                     {node["name"]: node for node in pol["nodes"]}), (0, 0))
+
+        original = json.loads(raw)
+        mutations = (
+            [original[0]],                       # unpaired header
+            [original[0], original[0], original[1]],  # duplicate header
+            [dict(original[0], extra="bypass"), original[1]],
+            [*original, {"protocol": "ip", "pref": 999,
+                         "kind": "u32", "chain": 0}],
+        )
+        for bad in mutations:
+            rewrite_raw(row, bad)
+            with self.assertRaisesRegex(ValueError,
+                                        "flower header|unaccounted tc filter"):
+                x02.validate_tc_surface(surface, pol)
 
     def test_policy_peer_tuple_must_match_stage_a_readiness(self):
         pol, snapshots, events = fixture()

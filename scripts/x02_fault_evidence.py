@@ -923,11 +923,28 @@ def validate_tc_surface(snapshot: dict, policy: dict) -> None:
                                ["tc", "-j", "-s", "filter", "show", "dev", iface, "egress"])
         allowed = {(str(rule["pref"]), rule["handle"])
                    for rule in policy["rules"] if rule["interface"] == iface}
+        headers: dict[str, int] = {}
+        actual: dict[str, int] = {}
         for item in filters:
+            pref = str(item.get("pref"))
+            if "options" not in item:
+                require(set(item) == {"protocol", "pref", "kind", "chain"}
+                        and item["protocol"] == "ip" and item["kind"] == "flower"
+                        and item["chain"] == 0
+                        and any(expected_pref == pref for expected_pref, _ in allowed),
+                        "unpaired or malformed tc flower header")
+                headers[pref] = headers.get(pref, 0) + 1
+                continue
             identity = (str(item.get("pref")),
                         str((item.get("options") or {}).get("handle", item.get("handle"))))
-            require(identity in allowed,
+            require(identity in allowed and item.get("kind") == "flower"
+                    and item.get("protocol") == "ip" and item.get("chain") == 0,
                     "unaccounted tc filter shares the validator peer interface")
+            actual[pref] = actual.get(pref, 0) + 1
+        require(all(count == 1 and actual.get(pref) == 1
+                    for pref, count in headers.items())
+                and all(count == 1 for count in actual.values()),
+                "tc flower header lacks one unique authorized handle")
 
 
 def has_clsact(snapshot: dict, iface: str) -> bool:
