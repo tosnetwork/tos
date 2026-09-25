@@ -90,7 +90,8 @@ def policy():
                            "halt_tail_samples": 2,
                            "recovery_min_delta": 2,
                            "recovery_max_seconds": 180}}
-    manifest = {"schema": "tos.validator-election-experiment-readiness.v1",
+    manifest = {"schema": "tos.validator-election-experiment-readiness.v2",
+                "schema_version": 2, "mode": "experiment",
                 "status": "ready", "provenance": {"source_commit": result["source_commit"]},
                 "network": {"zero_state": {"masterchain": {
                     "root_hash_hex": result["zerostate"]["root_hash"],
@@ -482,6 +483,17 @@ class X02IsolationTests(unittest.TestCase):
         pol, snapshots, events = fixture()
         pol["nodes"][0]["peer_port"] = 65500
         with self.assertRaisesRegex(ValueError, "readiness"):
+            verify_fixture(pol, snapshots, events)
+
+    def test_stale_v1_readiness_manifest_is_rejected(self):
+        pol, snapshots, events = fixture()
+        manifest = json.loads(base64.b64decode(pol["readiness_manifest_b64"]))
+        manifest["schema"] = "tos.validator-election-experiment-readiness.v1"
+        manifest["schema_version"] = 1
+        raw = json.dumps(manifest, sort_keys=True).encode()
+        pol["readiness_manifest_b64"] = base64.b64encode(raw).decode()
+        pol["readiness_manifest_sha256"] = x02.digest(raw)
+        with self.assertRaisesRegex(ValueError, "Stage A readiness provenance differs"):
             verify_fixture(pol, snapshots, events)
 
     def test_changed_recorder_sha_is_rejected(self):

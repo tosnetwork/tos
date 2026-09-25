@@ -112,7 +112,9 @@ def validate_policy(policy: dict) -> None:
         raise ValueError("raw Stage A readiness manifest is absent") from error
     require(digest(manifest_raw) == policy.get("readiness_manifest_sha256"),
             "Stage A readiness manifest SHA differs")
-    require(manifest.get("schema") == "tos.validator-election-experiment-readiness.v1"
+    require(manifest.get("schema") == "tos.validator-election-experiment-readiness.v2"
+            and manifest.get("schema_version") == 2
+            and manifest.get("mode") == "experiment"
             and manifest.get("status") == "ready"
             and (manifest.get("provenance") or {}).get("source_commit") == policy["source_commit"],
             "Stage A readiness provenance differs")
