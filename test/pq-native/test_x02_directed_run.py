@@ -97,6 +97,29 @@ class DirectedRunTests(unittest.TestCase):
         self.assertEqual(len([path for path in paths
                               if path.name.endswith("-recovery.json")]), 4)
 
+    def test_recovery_h48_then_h49_meets_frozen_h47_target(self):
+        heights = [41, 42, 43, 46, 47, 47, 47, 47, 48, 49]
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(len([path for path in paths
+                              if path.name.endswith("-recovery.json")]), 2)
+
+    def test_first_recovery_h49_needs_no_extra_sample(self):
+        heights = [41, 42, 43, 46, 47, 47, 47, 47, 49]
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(len([path for path in paths
+                              if path.name.endswith("-recovery.json")]), 1)
+
+    def test_h42_to_h44_cannot_replace_h47_anchor_and_times_out(self):
+        heights = [41, 42, 43, 46, 47, 47, 47, 47, 42] + [44] * 25
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("180 seconds", result["error"])
+        self.assertGreaterEqual(len([path for path in paths
+                                     if path.name.endswith("-recovery.json")]), 2)
+        self.assertFalse(any(path.name == "verdict.json" for path in paths))
+
     def test_failure_removes_only_installed_rules_and_clsact(self):
         result, cleanup, _paths = self.exercise(fail_at="three_of_four")
         self.assertEqual(result["status"], "failed")

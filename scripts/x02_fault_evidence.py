@@ -943,7 +943,8 @@ def validate_tc_surface(snapshot: dict, policy: dict) -> None:
             actual[pref] = actual.get(pref, 0) + 1
         require(all(count == 1 and actual.get(pref) == 1
                     for pref, count in headers.items())
-                and all(count == 1 for count in actual.values()),
+                and all(count == 1 and headers.get(pref) == 1
+                        for pref, count in actual.items()),
                 "tc flower header lacks one unique authorized handle")
 
 
@@ -1363,7 +1364,9 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
         previous_snap = snap
     require(all(phases[phase] for phase in PHASES), "baseline/fault/recovery phase absent")
     require(len(phases["baseline"]) == 1
-            and all(len(phases[phase]) >= 2 for phase in PHASES[1:]),
+            and all(len(phases[phase]) >= 2
+                    for phase in ("three_of_four", "two_of_four"))
+            and len(phases["recovery"]) >= 1,
             "insufficient phase samples")
     thresholds = policy["thresholds"]
     require(len(phases["two_of_four"]) >= thresholds["halt_tail_samples"],

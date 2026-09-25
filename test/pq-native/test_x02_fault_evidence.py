@@ -133,10 +133,15 @@ def flower(rule, hits):
                                      "stats": {"packets": hits, "drops": hits}}]}}
 
 
+def flower_header(rule):
+    return {"protocol": "ip", "pref": rule["pref"], "kind": "flower", "chain": 0}
+
+
 def tc_state(rules, counts, at, clsact=True):
     return {"lo": {"filters": raw_command(
         ["tc", "-j", "-s", "filter", "show", "dev", "lo", "egress"],
-        [flower(rule, counts.get(rule["id"], 0)) for rule in rules], at),
+        [item for rule in rules for item in
+         (flower_header(rule), flower(rule, counts.get(rule["id"], 0)))], at),
         "qdiscs": raw_command(
             ["tc", "-j", "-s", "qdisc", "show", "dev", "lo"],
             ([{"kind": "clsact", "handle": "ffff:"}] if clsact else
@@ -464,6 +469,21 @@ class X02IsolationTests(unittest.TestCase):
                         snapshots[-3]["common_seqno"])
         self.assertTrue(verify_fixture(pol, snapshots, events)["passed"])
 
+    def test_one_complete_recovery_sample_at_frozen_anchor_plus_two(self):
+        pol, snapshots, events = fixture()
+        snapshots.pop(-2)
+        self.assertEqual(snapshots[-1]["common_seqno"],
+                         snapshots[-2]["common_seqno"] + 2)
+        self.assertTrue(verify_fixture(pol, snapshots, events)["passed"])
+
+    def test_one_recovery_sample_still_obeys_raw_180_second_deadline(self):
+        pol, snapshots, events = fixture()
+        snapshots.pop(-2)
+        shift_times(snapshots[-1], 160 * NS)
+        shift_times(events[-1], 160 * NS)
+        with self.assertRaisesRegex(ValueError, "180-second"):
+            verify_fixture(pol, snapshots, events)
+
     def test_capture_retains_transient_recovery_lag(self):
         pol = policy()
         anchor = {"phase": "two_of_four", "policy_sha256": "p" * 64,
@@ -596,6 +616,7 @@ class X02IsolationTests(unittest.TestCase):
         original = json.loads(raw)
         mutations = (
             [original[0]],                       # unpaired header
+            [original[1]],                       # authorized handle without header
             [original[0], original[0], original[1]],  # duplicate header
             [dict(original[0], extra="bypass"), original[1]],
             [*original, {"protocol": "ip", "pref": 999,
@@ -704,7 +725,7 @@ class X02IsolationTests(unittest.TestCase):
         pol, snapshots, events = fixture()
         row = events[1]["post_tc"]["lo"]["filters"]
         body = json.loads(base64.b64decode(row["stdout_b64"]))
-        body.append(flower(pol["rules"][6], 0))
+        body.extend((flower_header(pol["rules"][6]), flower(pol["rules"][6], 0)))
         rewrite_raw(row, body)
         with self.assertRaisesRegex(ValueError, "post-state has extra"):
             verify_fixture(pol, snapshots, events)
@@ -721,7 +742,8 @@ class X02IsolationTests(unittest.TestCase):
             row = snap["tc"]["lo"]["filters"]
             body = json.loads(base64.b64decode(row["stdout_b64"]))
             for item in body:
-                item["options"]["actions"][0]["stats"] = {"packets": 0, "drops": 0}
+                if "options" in item:
+                    item["options"]["actions"][0]["stats"] = {"packets": 0, "drops": 0}
             rewrite_raw(row, body)
         with self.assertRaisesRegex(ValueError, "no sustained target peer hit/drop"):
             verify_fixture(pol, snapshots, events)
@@ -737,7 +759,8 @@ class X02IsolationTests(unittest.TestCase):
             row = snap["tc"]["lo"]["filters"]
             body = json.loads(base64.b64decode(row["stdout_b64"]))
             for item in body:
-                item["options"]["actions"][0]["stats"]["drops"] = 0
+                if "options" in item:
+                    item["options"]["actions"][0]["stats"]["drops"] = 0
             rewrite_raw(row, body)
         with self.assertRaisesRegex(ValueError, "no sustained target peer hit/drop"):
             verify_fixture(pol, snapshots, events)
@@ -808,7 +831,7 @@ class X02IsolationTests(unittest.TestCase):
         pol, snapshots, events = fixture()
         row = snapshots[1]["tc"]["lo"]["filters"]
         body = json.loads(base64.b64decode(row["stdout_b64"]))
-        body[0]["options"]["keys"]["dst_port"] = 65500
+        body[1]["options"]["keys"]["dst_port"] = 65500
         raw = json.dumps(body).encode()
         row["stdout_b64"] = base64.b64encode(raw).decode()
         row["stdout_sha256"] = x02.digest(raw)

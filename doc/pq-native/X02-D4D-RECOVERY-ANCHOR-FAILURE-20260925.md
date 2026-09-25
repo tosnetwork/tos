@@ -53,16 +53,39 @@ verifier issue: each real flower appears as a no-handle header row immediately
 followed by its handled action row. For `event-01-r1-install.json`, raw stdout
 SHA-256 is `425146c59487044cb9a889d930192a00de7e6cbf6b76f464afd44de2d3fd6588`.
 The d4d `validate_tc_surface()` rejected the authorized header as an
-unaccounted filter. The correction accepts only an exact `protocol=ip`,
-`kind=flower`, `chain=0` header paired with precisely one policy-authorized
-handled row at the same pref; missing/duplicate/malformed headers and extra
-classifiers remain red. In a read-only replay of the d4d raw through the
-corrected parser, samples 00–07 pass and verification next stops at the
-already-retained incomplete sample 08, never a successful verdict.
+unaccounted filter. The first correction accepted a header only when paired
+with a policy-authorized handled row, but did not require the reverse pairing:
+deleting the real header and keeping the handled row was still accepted.
+The follow-up requires an exact `protocol=ip`, `kind=flower`, `chain=0`
+header and authorized handled row one-to-one at the same pref. Missing,
+duplicate or malformed headers and extra classifiers are now rejected.
 
-The isolated repair retains lagged recovery samples and makes the runner wait
-for four-node common >= frozen H47 + 2, rather than +2 from first H42. Both
-old-source capture rejection and old-runner premature-stop controls turn red;
-the corrected targeted suite is green. A new exact committed-tree real run
-and independent review are still required. Partial packet loss is separate;
-X02 remains OPEN.
+The initial repair retained lagged recovery samples, but still derived its
+target from `max(first_recovery, frozen_anchor)+2`, always slept after the
+first recovery sample, and the verifier demanded two recovery samples. The
+follow-up fixes the target at frozen H47+2, permits one complete recovery
+snapshot, and leaves the 180-second verdict tied to the last raw snapshot's
+`completed_ns` minus the last rule-remove command's completed time. H48→H49
+and immediate H49 pass focused offline controls; H42→H44 cannot stand in for
+H47+2 and times out. A single H49 sample after 180 seconds remains red.
+
+Read-only replay on the retained d4d raw is in
+`/datax/tos-x02-d4d-offline-20260925/d4d-replay-final.typescript`. The new parser
+verifies each complete snapshot 00–07 (H41/42/43/46/47/47/47/47), while the
+old d4d parser rejects the first real flower header at sample 01. Sample 08
+remains incomplete and is rejected only for its absent recovery range-header
+set; this replay is **not** a successful fault-window verdict. The separate
+`old-controls-final.typescript` shows two 2e9 runner failures, the old verifier's
+single-recovery rejection, and the real missing-header old false-green/new
+red. `three-mutants-final.typescript` contains three unique source changes, each
+turning one focused control red. The full X02 offline suite is 78/78 green,
+recorded in `x02-78-green-final.typescript`; all four commands exited 0 with
+expected embedded red controls. `SHA256SUMS-final` in that evidence directory
+(SHA-256 `4c8c265cd69ae37321856cf6452b9d74848106185bdd1e29b525bdb10996725e`)
+checks raw outputs, test/replay sources and both Python executable bytes.
+The earlier `SHA256SUMS` and non-`-final` logs are preserved as pre-final
+development evidence, not silently overwritten.
+
+A new exact committed-tree real run and Mac independent review of this
+follow-up are still required. Partial packet loss is separate; X02 remains
+OPEN. The d4d run is never relabeled as passing.
