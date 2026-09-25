@@ -14,7 +14,14 @@ Registry transaction's outgoing bounce and waits for that credit before the
 next operation. A full 10-transaction page without baseline fails closed.
 The script also writes a pre-network manifest with source commit, clean-tree
 flag, command and script/test/validator/DHT/tosctl SHA-256. Its targeted
-non-network suite passes 10/10.
+non-network suite passes 10/10. Deleting only the
+`bounce_hash not in expected_hashes` condition makes the wrong-bounce test
+fail because an unrelated credit is accepted. The retained mutant output is
+`test/integration/.e09-bounce-hash-mutant-e1dd48d6f-20260925.log`
+(SHA-256 `46d7e06c36144a57d3649b75053af4d91bc1b0a4e0bcdbd8524f9c0bc202008b`);
+mutant script SHA-256 is
+`6759a38452e95e30de36f74e31539c2277c4d48298eabd5d946a21cff687de4f`.
+The source was restored and the same 10/10 tests passed before this note.
 
 The exact committed `e1dd48d6ff19a8f48f383c69c88715fb2bb452c4` run used:
 `script -q -e -f -c 'TOS_BUILD_DIR=build PYTHONPATH=test/tostester/src uv run python -u scripts/capability-registry-e2e.py' test/integration/.e09-capability-registry-e1dd48d6f-20260925-console.typescript`.
