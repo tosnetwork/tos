@@ -16,7 +16,7 @@ use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
     DEPLOY_TIMEOUT, SEND_TIMEOUT, calculate_wallet_address, get_wallet_config, load_config_vault,
     load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, save_config,
-    try_create_rpc_client, wait_for_deploy, wait_for_seqno_change, wallet_info,
+    try_create_rpc_client, wait_for_deploy, wallet_info,
 };
 use anyhow::Context;
 use base64::Engine;
@@ -9739,14 +9739,18 @@ pub(crate) async fn send_wallet_message(
     seqno: Option<u32>,
     owner_address: &MsgAddressInt,
 ) -> anyhow::Result<()> {
-    let msg = wallet.build_message(destination, amount, body, bounce, seqno, None, None).await?;
-    rpc_client.send_boc(&write_boc(&msg)?).await?;
-    wait_for_seqno_change(
+    // All retained callers use this shared send path. A short seqno poll can
+    // misreport a successful shard transaction as a failed operation. Sign
+    // once and confirm that exact external message and destination; never
+    // rebroadcast on an ambiguous observation timeout.
+    let boc = build_wallet_message_boc(wallet, destination.clone(), amount, body, bounce, seqno)
+        .await?;
+    confirm_prepared_wallet_message(
         rpc_client,
+        &boc,
         owner_address,
-        seqno,
-        &common::task_cancellation::CancellationCtx::default(),
-        SEND_TIMEOUT,
+        &destination,
+        DEPLOY_TIMEOUT,
     )
     .await
 }
@@ -9985,6 +9989,23 @@ fn exact_deploy_wallet_transaction(
 #[cfg(test)]
 mod exact_deploy_wallet_transaction_tests {
     use super::*;
+
+    #[test]
+    fn shared_task_wallet_send_confirms_one_prepared_boc_by_exact_hash() {
+        let source = include_str!("agent_cmd.rs");
+        let shared = source
+            .split_once("pub(crate) async fn send_wallet_message(")
+            .unwrap()
+            .1
+            .split_once("pub(crate) async fn build_wallet_message_boc(")
+            .unwrap()
+            .0;
+        assert!(shared.find("build_wallet_message_boc(").unwrap()
+            < shared.find("confirm_prepared_wallet_message(").unwrap());
+        assert_eq!(shared.matches("confirm_prepared_wallet_message(").count(), 1);
+        assert!(!shared.contains("wait_for_seqno_change("));
+        assert!(!shared.contains("rpc_client.send_boc("));
+    }
 
     #[test]
     fn agent_account_owner_action_uses_exact_wallet_confirmation_before_effect_poll() {
