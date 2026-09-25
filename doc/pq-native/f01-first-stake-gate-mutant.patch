@@ -1,0 +1,12 @@
+diff --git a/scripts/validator-election-stage-a.py b/scripts/validator-election-stage-a.py
+--- a/scripts/validator-election-stage-a.py
++++ b/scripts/validator-election-stage-a.py
+@@ -3031,7 +3031,7 @@ class ValidatorElectionRehearsal:
+         await self.assert_pq_first_round_negative_cases(self.first_election_id)
+         for index in range(VALIDATOR_COUNT - 1):
+             await self.submit_pq_candidate(index, self.first_election_id)
+-            if index == 0:
++            if index == 1:
+                 # Exercise duplicate-key admission while the same election is
+                 # demonstrably open. The later fourth-node restart can consume
+                 # the remaining window; reason 0 then masks reason 4.

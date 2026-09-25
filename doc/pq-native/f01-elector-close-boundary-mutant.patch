@@ -1,0 +1,12 @@
+diff --git a/scripts/validator-election-stage-a.py b/scripts/validator-election-stage-a.py
+--- a/scripts/validator-election-stage-a.py
++++ b/scripts/validator-election-stage-a.py
+@@ -3530,7 +3530,7 @@ class ValidatorElectionRehearsal:
+             reply_boc=self.file_provenance(receipt_path),
+             opcode=f"0x{opcode:08x}", reason=reason,
+         )
+-        if input_transaction.utime >= elect_close:
++        if input_transaction.utime > elect_close:
+             raise AssertionError(
+                 "PQ duplicate-key control reached Elector after election close: "
+                 f"elector_input_utime={input_transaction.utime} elect_close={elect_close}"
