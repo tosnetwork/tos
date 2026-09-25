@@ -9690,15 +9690,24 @@ async fn run_agent_account_owner_action(
     let wallet = make_wallet(rpc_client.clone(), &agent_wallet.wallet, owner_secret, wallet_name)
         .await
         .context("create Agent Account owner wallet")?;
-    send_wallet_message(
+    // A short seqno poll can expire while the shard is still including this
+    // exact wallet message. Confirm the submitted BOC and destination before
+    // reading the Agent Account effect; never broadcast it a second time.
+    let boc = build_wallet_message_boc(
         &wallet,
-        rpc_client.clone(),
         address.clone(),
         amount_nanotos,
         body,
         true,
         owner_info.seqno,
+    )
+    .await?;
+    confirm_prepared_wallet_message(
+        rpc_client.clone(),
+        &boc,
         &owner_address,
+        &address,
+        DEPLOY_TIMEOUT,
     )
     .await?;
     wait_for_agent_account_match(rpc_client, &address, &init, matches).await?;
@@ -9976,6 +9985,23 @@ fn exact_deploy_wallet_transaction(
 #[cfg(test)]
 mod exact_deploy_wallet_transaction_tests {
     use super::*;
+
+    #[test]
+    fn agent_account_owner_action_uses_exact_wallet_confirmation_before_effect_poll() {
+        let source = include_str!("agent_cmd.rs");
+        let action = source
+            .split_once("async fn run_agent_account_owner_action(")
+            .unwrap()
+            .1
+            .split_once("pub(crate) async fn send_wallet_message(")
+            .unwrap()
+            .0;
+        let built = action.find("build_wallet_message_boc(").unwrap();
+        let confirmed = action.find("confirm_prepared_wallet_message(").unwrap();
+        let effect = action.find("wait_for_agent_account_match(").unwrap();
+        assert!(built < confirmed && confirmed < effect);
+        assert!(!action.contains("send_wallet_message("));
+    }
 
     fn retained_wallet_transaction() -> (RawTransaction, chain_block::UInt256, MsgAddressInt) {
         // Public transaction BOC from the retained E03 6f6 registry deployment.
