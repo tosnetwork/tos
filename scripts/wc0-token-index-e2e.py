@@ -298,6 +298,35 @@ def require_later_same_shard(forged_tx: dict, canary_tx: dict) -> None:
         raise RuntimeError("post-forgery canary is not in a later block of the same shard")
 
 
+def require_forged_block_indexed(victim: str, forged_tx: dict) -> dict:
+    """Require the exact forged transaction, not merely a later shard block, in the index."""
+    tx_id = forged_tx.get("transaction_id") or {}
+    block_id = forged_tx.get("block_id") or {}
+    try:
+        lt = int(tx_id["lt"])
+        tx_hash = base64.b64decode(tx_id["hash"], validate=True)
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("forged transaction lacks an exact LT/hash") from error
+    if (lt <= 0 or len(tx_hash) != 32 or block_id.get("workchain") != 0
+            or not block_id.get("root_hash") or not block_id.get("file_hash")):
+        raise RuntimeError("forged transaction lacks a full wc0 block and hash")
+    event_id = f"{lt}:{tx_hash.hex()}"
+    event = rpc_call("getAccountEvent", address=victim, event_id=event_id)["result"]
+    if (event.get("event_id") != event_id or int(event.get("lt", 0)) != lt
+            or event.get("hash", "").lower() != tx_hash.hex()
+            or event.get("@type") != "wallet.accountEvent"):
+        raise RuntimeError("forged transaction index receipt differs from raw transaction")
+    try:
+        raw_cell = Cell.one_from_boc(base64.b64decode(event["raw_transaction"], validate=True))
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("forged transaction index receipt lacks raw BOC") from error
+    if raw_cell.hash != tx_hash:
+        raise RuntimeError("forged transaction index BOC hash differs from raw transaction")
+    record_jsonl(CHAIN_EVIDENCE, {"label": "forged exact index receipt", "account": victim,
+                 "block_id": block_id, "transaction_id": tx_id, "event": event})
+    return event
+
+
 def load_code(path: Path) -> Cell:
     return Cell.one_from_boc(path.read_bytes())
 
@@ -499,6 +528,7 @@ async def main() -> int:
             require_later_same_shard(forged_target_tx, canary_master_tx)
             canary_entry, victim_js = await victim_index_after_canary(
                 victim_raw, canary_raw, want_master)
+            require_forged_block_indexed(victim_raw, forged_target_tx)
             owner_js = get_jettons(owner.to_str())
             owner_control = any(j.get("jetton_master", "").lower() == want_master.lower()
                                 for j in owner_js)

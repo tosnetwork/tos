@@ -216,6 +216,10 @@ class Wc0EvidenceTests(unittest.TestCase):
                         text.index('observe_edge(\n                "post-forgery canary mint"'))
         self.assertLess(text.index('"post-forgery canary mint"'),
                         text.index('victim_index_after_canary('))
+        self.assertLess(text.index('victim_index_after_canary('),
+                        text.index('require_forged_block_indexed(victim_raw, forged_target_tx)'))
+        self.assertLess(text.index('require_forged_block_indexed(victim_raw, forged_target_tx)'),
+                        text.index('if victim_js:'))
         with patch.object(e14, "poll", new=AsyncMock(return_value=None)), patch.object(
             e14, "get_jettons"
         ) as victim_query:
@@ -239,6 +243,32 @@ class Wc0EvidenceTests(unittest.TestCase):
         for later in (block(10), block(11, "other"), {"block_id": None}):
             with self.subTest(later=later), self.assertRaisesRegex(RuntimeError, "later block"):
                 e14.require_later_same_shard(block(10), later)
+
+    def test_exact_forged_block_index_receipt(self):
+        tx_hash = bytes(range(32))
+        tx = {"transaction_id": {"lt": "49000003", "hash": base64.b64encode(tx_hash).decode()},
+              "block_id": {"workchain": 0, "shard": "-9223372036854775808",
+                           "seqno": 48, "root_hash": "root", "file_hash": "file"}}
+        event_id = f"49000003:{tx_hash.hex()}"
+        event = {"@type": "wallet.accountEvent", "event_id": event_id,
+                 "lt": "49000003", "hash": tx_hash.hex(),
+                 "raw_transaction": base64.b64encode(b"tx-boc").decode()}
+        fake_cell = types.SimpleNamespace(hash=tx_hash)
+        fake_cell_class = types.SimpleNamespace(one_from_boc=lambda raw: fake_cell)
+        with patch.object(e14, "rpc_call", return_value={"result": event}) as rpc, patch.object(
+            e14, "Cell", fake_cell_class
+        ), patch.object(e14, "record_jsonl") as record:
+            self.assertEqual(e14.require_forged_block_indexed("victim", tx), event)
+            rpc.assert_called_once_with("getAccountEvent", address="victim", event_id=event_id)
+            self.assertEqual(record.call_args.args[1]["block_id"]["seqno"], 48)
+        # Skipping only the forged block leaves later canary rows intact, but
+        # the exact event lookup must fail rather than infer completion from them.
+        with patch.object(e14, "rpc_call", side_effect=RuntimeError("Account event not found")):
+            with self.assertRaisesRegex(RuntimeError, "Account event not found"):
+                e14.require_forged_block_indexed("victim", tx)
+        with patch.object(e14, "rpc_call", return_value={"result": dict(event, hash="00" * 32)}):
+            with self.assertRaisesRegex(RuntimeError, "receipt differs"):
+                e14.require_forged_block_indexed("victim", tx)
 
     def test_indexed_wallet_getter_binds_owner_master_and_roundtrip(self):
         data = [["cell", {}], ["slice", {"id": "master"}],
