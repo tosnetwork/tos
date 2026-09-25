@@ -10,6 +10,8 @@ policy SHA-256 is
 The exact directed runner exited 1, result `failed`: its first two-of-four
 sample had common finalized H43, while the next had H46. The four new node3
 rules had positive drop counts (952, 803, 253, 244) at that second sample.
+The retained result JSON SHA-256 is
+`029a32d61078d93ab299ffe1005841b6dac20142885de485d3278e4c09670b1c`.
 The runner restored `lo` to `noqueue` with no egress filters. Its ten
 per-filter fallback deletes nevertheless returned exit 255, because the
 frozen remove argv omitted `flower`; deleting clsact cleared those rules.
@@ -27,7 +29,15 @@ Read-only packet headers after the cut show all three node1 QUIC peer flows
 `a5beb08a47ef5ffe41e0672cef55636179d141b5cdd01a76daec9776f21e6b6d`).
 That capture is **after** cut cleanup; it is not asserted to be a cut-time
 packet receipt. The failed snapshots and full native markers H44–H47 are
-preserved. Stage A's separate reward-allocation report is not an X02 verdict.
+preserved. The enclosing 900-second Stage A ended independently with exit 1
+and eight outstanding reward allocations; its console SHA-256 is
+`32e7e5f60686cd4bf003bf092b79350b8db23b41daf2eeb09f0acabcce0981c4`,
+and report SHA-256 is
+`de5c8fb2f4706a6d5d77c54aa41d8fb455c208a4f8e27a13a4327c8d42d5d713`.
+This settlement failure is not an X02 fault-window verdict. The supervisor's
+49-file raw evidence index is
+`/datax/n6-supervisor-x02-8f6-evidence/SHA256SUMS` (SHA-256
+`52fb509b18766d454ef2c7cf92a8b2761261d5aa3935d367d4d3c16b076e36ef`).
 
 The next fixed policy must cover both UDP transports with exact PID/socket
 ownership and per-direction hit/drop; TCP JSON-RPC must remain untouched.
