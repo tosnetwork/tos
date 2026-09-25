@@ -144,9 +144,28 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
               for (const auto& validator : validators->list) {
                 if (!first) decoded << ",";
                 first = false;
-                decoded << "{\"public_key\":\""
-                        << td::base64_encode(validator.pubkey.as_bits256().as_slice())
-                        << "\",\"adnl_address\":\""
+                // A PQ descriptor's Ed25519 field is a zero placeholder, not
+                // its consensus key. Never expose it as a public key: clients
+                // must be able to distinguish membership, current key, suite,
+                // and transport identity from this decoded view of the BOC.
+                decoded << "{\"public_key\":";
+                if (validator.is_pq()) {
+                  decoded << "null,\"validator_id\":\""
+                          << td::base64_encode(validator.validator_id.value.as_slice())
+                          << "\",\"key_id\":\""
+                          << td::base64_encode(validator.key_id.value.as_slice())
+                          << "\",\"algorithm_id\":" << validator.algorithm_id
+                          << ",\"pq_public_key\":\""
+                          << td::base64_encode(td::Slice(validator.pq_public_key)) << "\"";
+                } else {
+                  decoded << "\"" << td::base64_encode(validator.pubkey.as_bits256().as_slice())
+                          << "\",\"validator_id\":\""
+                          << td::base64_encode(validator.validator_id.value.as_slice())
+                          << "\",\"key_id\":\""
+                          << td::base64_encode(validator.key_id.value.as_slice())
+                          << "\",\"algorithm_id\":0,\"pq_public_key\":null";
+                }
+                decoded << ",\"adnl_address\":\""
                         << td::base64_encode(validator.adnl_addr.as_slice())
                         << "\",\"weight\":\"" << validator.weight
                         << "\",\"cumulative_weight\":\"" << validator.cum_weight << "\"}";

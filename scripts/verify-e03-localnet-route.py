@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -29,10 +30,13 @@ def rpc(rpc_addr, method, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": method, "method": method, "params": params}).encode()
     url = f"http://{rpc_addr}/jsonRPC"
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=8) as response:
-        raw = response.read()
-        return {"url": url, "request_body": body.decode(), "status": response.status,
-                "response_body": raw.decode()}
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            status, raw = response.status, response.read()
+    except urllib.error.HTTPError as error:
+        status, raw = error.code, error.read()
+    return {"url": url, "request_body": body.decode(), "status": status,
+            "response_body": raw.decode()}
 
 
 def wait_for_log(path, pattern, process, timeout):
@@ -95,16 +99,20 @@ def demo(workdir, rpc_port, control_port, base_port):
             wait_for_log(output, r"\[localnet\] resident; press Ctrl-C to exit\.", process, 120)
             masterchain = rpc(f"127.0.0.1:{rpc_port}", "getMasterchainInfo")
             address_info = rpc(f"127.0.0.1:{rpc_port}", "getAddressInformation", address=wallet)
+            (workdir / "external-jsonrpc.json").write_text(json.dumps(
+                {"getMasterchainInfo": masterchain, "getAddressInformation": address_info}, indent=2) + "\n")
             replies = [json.loads(row) for row in transcript.read_text().splitlines()]
             balances = wallet_balances(replies, wallet)
             assert len(balances) >= 2 and balances[-1] > balances[0], (
                 f"demo wallet did not gain balance: {balances}")
-            assert json.loads(masterchain["response_body"]).get("result", {}).get("last", {}).get("seqno", 0) > 0
-            assert int(json.loads(address_info["response_body"])["result"]["balance"]) >= balances[-1]
-            (workdir / "external-jsonrpc.json").write_text(json.dumps(
-                {"getMasterchainInfo": masterchain, "getAddressInformation": address_info}, indent=2) + "\n")
+            masterchain_value = json.loads(masterchain["response_body"])
+            address_value = json.loads(address_info["response_body"])
+            assert masterchain["status"] == 200 and masterchain_value.get("ok") is True
+            assert address_info["status"] == 200 and address_value.get("ok") is True
+            assert masterchain_value.get("result", {}).get("last", {}).get("seqno", 0) > 0
+            assert int(address_value["result"]["balance"]) >= balances[-1]
             result = {"command": command, "wallet": wallet, "balances": balances,
-                      "masterchain_seqno": json.loads(masterchain["response_body"])["result"]["last"]["seqno"]}
+                      "masterchain_seqno": masterchain_value["result"]["last"]["seqno"]}
         finally:
             exit_code = stop(process)
     result["exit_code"] = exit_code

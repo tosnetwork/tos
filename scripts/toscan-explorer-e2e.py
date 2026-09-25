@@ -32,6 +32,7 @@ import urllib.request
 from pathlib import Path
 
 from e03_http_trace import record as record_e03_http
+from e03_config34_identity import decode as decode_e03_config34, verify as verify_e03_config34
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_WORKDIR = REPO / "test/integration/.toscan-explorer-e2e"
@@ -428,8 +429,12 @@ def main():
         assert status == 200
         assert validator_set.get("total") == len(validator_set.get("validators", []))
         assert validator_set.get("total", 0) > 0
-        assert all(item.get("public_key") and item.get("weight") for item in validator_set["validators"])
-        print("PASS: current validator membership and weights decode from proved configuration")
+        decoded_config34 = decode_e03_config34(config_response)
+        (workdir / "config34-identity-from-boc.json").write_text(
+            json.dumps(decoded_config34, indent=2) + "\n"
+        )
+        verify_e03_config34(config_response, decoded_config34)
+        print("PASS: PQ validator identity, key, algorithm, ADNL and weight match Config34 BOC")
 
         if args.browser_command:
             browser_env = dict(os.environ)

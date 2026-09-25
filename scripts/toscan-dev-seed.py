@@ -13,7 +13,10 @@ import os
 import subprocess
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
+
+from e03_http_trace import record as record_e03_http
 
 from pytosiq_core import Address
 
@@ -50,8 +53,15 @@ class Seeder:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            value = json.loads(response.read().decode())
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                raw = response.read()
+                record_e03_http(request.full_url, payload, response.status, raw)
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            record_e03_http(request.full_url, payload, error.code, raw)
+            raise
+        value = json.loads(raw.decode())
         if "error" in value:
             raise RuntimeError(f"{method}: {value['error']}")
         return value["result"]
@@ -132,8 +142,15 @@ class Seeder:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=70) as response:
-            result = json.loads(response.read().decode())
+        try:
+            with urllib.request.urlopen(request, timeout=70) as response:
+                raw = response.read()
+                record_e03_http(request.full_url, payload, response.status, raw)
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            record_e03_http(request.full_url, payload, error.code, raw)
+            raise
+        result = json.loads(raw.decode())
         if "error" in result:
             raise RuntimeError(result["error"])
 
