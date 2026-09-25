@@ -53,6 +53,16 @@ def checked_port(port):
             raise RuntimeError(f"port {port} is already occupied")
 
 
+def wallet_balances(transcript, wallet):
+    balances = []
+    for row in transcript:
+        request = json.loads(row["request_body"])
+        if (row["status"] == 200 and request["method"] == "getAddressInformation"
+                and request["params"].get("address") == wallet):
+            balances.append(int(json.loads(row["response_body"])["result"]["balance"]))
+    return balances
+
+
 def stop(process):
     if process.poll() is None:
         process.send_signal(signal.SIGINT)
@@ -86,9 +96,7 @@ def demo(workdir, rpc_port, control_port, base_port):
             masterchain = rpc(f"127.0.0.1:{rpc_port}", "getMasterchainInfo")
             address_info = rpc(f"127.0.0.1:{rpc_port}", "getAddressInformation", address=wallet)
             replies = [json.loads(row) for row in transcript.read_text().splitlines()]
-            balances = [int(json.loads(row["response_body"])["result"]["balance"])
-                        for row in replies if json.loads(row["request_body"])["method"] == "getAddressInformation"
-                        and json.loads(row["request_body"])["params"].get("address") == wallet]
+            balances = wallet_balances(replies, wallet)
             assert len(balances) >= 2 and balances[-1] > balances[0], (
                 f"demo wallet did not gain balance: {balances}")
             assert json.loads(masterchain["response_body"]).get("result", {}).get("last", {}).get("seqno", 0) > 0
