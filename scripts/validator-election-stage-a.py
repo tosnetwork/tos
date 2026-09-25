@@ -66,6 +66,9 @@ from tosapi import tos_api  # noqa: E402
 from toslib.errors import LocalError, RemoteError  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
+from tostester.f01_stage_a_evidence import (  # noqa: E402
+    config34_hash, extract_finalized_log, locate_transition, write_manifest,
+)
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
 )
@@ -410,6 +413,12 @@ class ValidatorElectionRehearsal:
         self.failures: list[str] = []
         self.metrics_path = run_dir / "metrics.jsonl"
         self.report_path = run_dir / "report.json"
+        self.f01_directory = self.artifacts_dir / "f01-finality"
+        self.f01_segments: dict[str, list[dict[str, Any]]] = {}
+        self.f01_transitions: list[dict[str, Any]] = []
+        self.f01_previous_config_height: int | None = None
+        self.f01_previous_config_hash: str | None = None
+        self.f01_capture_provenance: dict[str, Any] | None = None
         self.lite_config = run_dir / "lite-client.json"
         self.network: Network | None = None
         self.nodes: list[FullNode] = []
@@ -496,6 +505,10 @@ class ValidatorElectionRehearsal:
                 # admin method so the acceptance probe can cross-check nodes for divergence.
                 "--json-rpc-expose-consensus-status",
             ]
+        elif self.pq_full:
+            if validator_index is None or self.base_port + 500 + validator_index > 65_535:
+                raise ValueError("F01 Stage A per-validator RPC port is unavailable")
+            args += ["--json-rpc-address", f"127.0.0.1:{self.base_port + 500 + validator_index}"]
         if self.enable_consensus_cleanup:
             args += ["--enable-validator-consensus-cleanup"]
             if self.consensus_cleanup_state_ttl > 0:
@@ -1372,9 +1385,147 @@ class ValidatorElectionRehearsal:
     async def restart_node(self, index: int, reason: str) -> None:
         self.event("node_restart_begin", node=index + 1, reason=reason)
         await self.nodes[index].stop()
+        if self.pq_full:
+            self.preserve_f01_log(index)
         await asyncio.sleep(1)
         await self.nodes[index].run(self.validator_start_options(index))
         self.event("node_restart_complete", node=index + 1, reason=reason)
+
+    def preserve_f01_log(self, index: int) -> None:
+        """Copy a stopped validator's raw log before the next run truncates it."""
+        node = self.nodes[index]
+        self.f01_directory.mkdir(parents=True, exist_ok=True)
+        segments = self.f01_segments.setdefault(node.name, [])
+        target = self.f01_directory / f"{node.name}-segment-{len(segments):02d}.log"
+        shutil.copyfile(node.log_path, target)
+        segments.append(extract_finalized_log(target))
+
+    def write_f01_capture(self) -> None:
+        """Seal all stopped log segments and the exact harness source snapshot."""
+        if not self.pq_full:
+            return
+        for index in range(len(self.nodes)):
+            self.preserve_f01_log(index)
+        if len(self.f01_transitions) != 3:
+            raise ValueError("F01 Stage A needs three recorded ConfigParam 34 transitions")
+        combined_logs = {}
+        for node in self.nodes:
+            combined = self.f01_directory / f"{node.name}-finalized.log"
+            with combined.open("wb") as output:
+                for segment in self.f01_segments[node.name]:
+                    with Path(segment["path"]).open("rb") as source:
+                        shutil.copyfileobj(source, output)
+            combined_logs[node.name] = extract_finalized_log(combined)
+        source_manifest = self.run_dir / "artifact-snapshot/manifest.json"
+        rpc_transcript = self.f01_directory / "config34-rpc.jsonl"
+        nodes = [
+            {
+                "node_name": node.name,
+                "node_data_dir": str(node.directory.resolve()),
+                "validator_index": index + 1,
+                "controller_id_hex": self.controllers[index].address.hash_part.hex(),
+                "pq_validator_id_hex": node.pq_initial_validator.validator_id.hex(),
+                "pq_key_id_hex": node.pq_initial_validator.key_id.hex(),
+                "adnl_id_hex": node.validator_key.id.hex(),
+                "rpc_address": f"127.0.0.1:{self.base_port + 500 + index}",
+                "log_segments": self.f01_segments[node.name],
+                "combined_log": combined_logs[node.name],
+            }
+            for index, node in enumerate(self.nodes)
+        ]
+        path = self.f01_directory / "capture-manifest.json"
+        write_manifest(
+            path,
+            source={
+                "source_commit": self.provenance["source_commit"],
+                "artifact_snapshot_manifest": self.file_provenance(source_manifest),
+                "harness": self.provenance["harness"],
+                "binaries": self.provenance["binaries"],
+                "config34_raw_rpc_transcript": self.file_provenance(rpc_transcript),
+            },
+            nodes=nodes, transitions=self.f01_transitions,
+        )
+        self.f01_capture_provenance = self.file_provenance(path)
+
+    async def capture_f01_transition(self, label: str) -> None:
+        """Bind the exact Config34 change height to all four local RPC views."""
+        if not self.pq_full:
+            return
+        assert self.client is not None
+        assert self.f01_previous_config_height is not None
+        assert self.f01_previous_config_hash is not None
+        after_hash = (await self.client.get_config_param(34)).hash.hex()
+        upper = await self.masterchain_seqno()
+        self.f01_directory.mkdir(parents=True, exist_ok=True)
+        transcript = self.f01_directory / "config34-rpc.jsonl"
+
+        async def query(index: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+            address = f"127.0.0.1:{self.base_port + 500 + index}"
+
+            def call() -> dict[str, Any]:
+                payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+                request = urllib.request.Request(
+                    f"http://{address}/jsonRPC", data=json.dumps(payload).encode(),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(request, timeout=8) as response:
+                    raw = response.read()
+                    status = response.status
+                document = json.loads(raw)
+                with transcript.open("a") as output:
+                    output.write(json.dumps({
+                        "node_name": self.nodes[index].name, "node_index": index,
+                        "address": address, "request": payload, "http_status": status,
+                        "response_base64": base64.b64encode(raw).decode(),
+                    }, sort_keys=True) + "\n")
+                if status != 200 or document.get("error") is not None or document.get("result") is None:
+                    raise RuntimeError(f"F01 {self.nodes[index].name} {method} failed")
+                return document
+
+            return await asyncio.to_thread(call)
+
+        async def config_at(height: int) -> dict[str, Any]:
+            return await query(0, "getConfigParam", {"param": 34, "seqno": height})
+
+        for index, node in enumerate(self.nodes):
+            await self.retry(
+                lambda index=index: query(index, "getMasterchainInfo", {}),
+                timeout=90, interval=1,
+                description=f"F01 {node.name} reaches Config34 observation height {upper}",
+                predicate=lambda value: int(value["result"]["last"]["seqno"]) >= upper,
+            )
+        height = await locate_transition(
+            config_at, self.f01_previous_config_height, upper,
+            self.f01_previous_config_hash, after_hash,
+        )
+        observations = []
+        for boundary in (height - 1, height):
+            block_ids = []
+            for index, node in enumerate(self.nodes):
+                config = await query(index, "getConfigParam", {"param": 34, "seqno": boundary})
+                observed_hash = config34_hash(config)
+                expected_hash = self.f01_previous_config_hash if boundary < height else after_hash
+                if observed_hash != expected_hash:
+                    raise AssertionError(f"F01 {node.name} Config34 differs at height {boundary}")
+                header = await query(index, "getBlockHeader", {
+                    "workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": boundary,
+                })
+                block_id = header["result"]["id"]
+                if int(block_id["seqno"]) != boundary or int(block_id["workchain"]) != -1:
+                    raise AssertionError(f"F01 {node.name} header has wrong masterchain height")
+                block_ids.append(block_id)
+                observations.append({"node_name": node.name, "height": boundary,
+                                     "block_id": block_id, "config34_cell_hash": observed_hash})
+            if any(block_id != block_ids[0] for block_id in block_ids[1:]):
+                raise AssertionError(f"F01 per-node block IDs disagree at transition height {boundary}")
+        self.f01_transitions.append({
+            "label": label, "height": height,
+            "before_config34_cell_hash": self.f01_previous_config_hash,
+            "after_config34_cell_hash": after_hash,
+            "observations": observations,
+        })
+        self.f01_previous_config_height = height
+        self.f01_previous_config_hash = after_hash
 
     async def chain_time(self) -> int:
         output = await self.lite("time")
@@ -1400,6 +1551,8 @@ class ValidatorElectionRehearsal:
         before = await self.masterchain_seqno()
         self.event("three_of_four_begin", stopped_node=4, seqno=before)
         await self.nodes[3].stop()
+        if self.pq_full:
+            self.preserve_f01_log(3)
         await asyncio.sleep(15)
         after = await self.masterchain_seqno()
         if after <= before:
@@ -1865,6 +2018,9 @@ class ValidatorElectionRehearsal:
         self.event("two_of_four_begin", stopped_nodes=[3, 4])
         await self.nodes[2].stop()
         await self.nodes[3].stop()
+        if self.pq_full:
+            self.preserve_f01_log(2)
+            self.preserve_f01_log(3)
         samples: list[int] = []
         for _ in range(8):
             await asyncio.sleep(5)
@@ -2906,6 +3062,7 @@ class ValidatorElectionRehearsal:
             "pq_first_election_activated", election_id=self.first_election_id,
             controllers=VALIDATOR_COUNT, config34=asdict(self.first_config34),
         )
+        await self.capture_f01_transition("first PQ set")
         await self.verify_three_of_four_liveness()
         await self.assert_pq_early_recovery_no_credit()
 
@@ -2965,6 +3122,7 @@ class ValidatorElectionRehearsal:
                 f"{label} PQ elected set is not four main validators: {asdict(config)}"
             )
         require_pq_config34_associations(config, expected)
+        await self.capture_f01_transition(label)
         self.event(
             "pq_config34_activated", label=label, election_id=election_id,
             total=config.total, main=config.main,
@@ -3407,6 +3565,9 @@ class ValidatorElectionRehearsal:
                 raise AssertionError(f"{self.profile.label} changed the 10,000 TOS minimum stake")
 
             self.initial_config34 = await self.get_config34()
+            if self.pq_full:
+                self.f01_previous_config_height = await self.masterchain_seqno()
+                self.f01_previous_config_hash = (await self.client.get_config_param(34)).hash.hex()
             self.event(
                 "network_ready",
                 initial_config34=asdict(self.initial_config34),
@@ -3466,6 +3627,11 @@ class ValidatorElectionRehearsal:
             self.write_report()
 
     def write_report(self) -> None:
+        if self.pq_full:
+            try:
+                self.write_f01_capture()
+            except Exception as error:
+                self.fail(f"F01 Stage A capture incomplete: {error}")
         report = {
             "status": self.report_status(),
             "generated_at": utc_now(),
@@ -3536,6 +3702,7 @@ class ValidatorElectionRehearsal:
             "events": self.events,
             "failures": self.failures,
             "metrics_file": str(self.metrics_path),
+            "f01_capture_manifest": self.f01_capture_provenance,
         }
         self.report_path.write_text(json.dumps(report, indent=2, sort_keys=True))
         print(f"{self.profile.label} report: {self.report_path}", flush=True)
