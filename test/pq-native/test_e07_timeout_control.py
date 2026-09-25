@@ -1,6 +1,7 @@
 """Control-flow checks for the real-chain timeout route; no chain is simulated."""
 
 import asyncio
+import ast
 import importlib.util
 import os
 from pathlib import Path
@@ -54,6 +55,46 @@ def rpc_reply(method: str, **params) -> dict:
 
 
 class TimeoutControlTests(unittest.TestCase):
+    def test_controller_actions_have_distinct_ids_and_two_observer_configs(self):
+        expected = {
+            ("accept", "e2e-controller"), ("result", "e2e-controller"),
+            ("claim", "e2e-claim"), ("result", "e2e-claim"),
+            ("reject", "e2e-reject"),
+        }
+        tree = ast.parse(SCRIPT.read_text())
+        calls = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id != "tosctl":
+                continue
+            literals = [arg.value for arg in node.args if isinstance(arg, ast.Constant)]
+            if "--via-agent-account" not in literals:
+                continue
+            expanded = [arg.value for arg in node.args if isinstance(arg, ast.Starred)]
+            self.assertEqual(len(expanded), 1)
+            call = expanded[0]
+            self.assertIsInstance(call, ast.Call)
+            self.assertIsInstance(call.func, ast.Name)
+            self.assertEqual(call.func.id, "controller_task_args")
+            self.assertEqual(len(call.args), 2)
+            operation, name = (arg.value for arg in call.args)
+            self.assertEqual(operation, literals[literals.index("--operation") + 1])
+            self.assertEqual(name, literals[literals.index("--name") + 1])
+            calls.add((operation, name))
+        self.assertEqual(calls, expected)
+        ids = set()
+        for operation, name in expected:
+            args = e07.controller_task_args(operation, name)
+            self.assertEqual(args[0], "--controller-action-id")
+            self.assertRegex(args[1], r"^[0-9a-f]{64}$")
+            self.assertEqual(args[2], "--quorum-config")
+            self.assertEqual(args[3:], tuple(map(str, e07.OBSERVER_CONFIGS)))
+            self.assertEqual(len(set(args[3:])), 2)
+            self.assertTrue(all(Path(value).is_absolute() for value in args[3:]))
+            ids.add(args[1])
+        self.assertEqual(len(ids), len(expected))
+
     def test_unrelated_aborted_escrow_transaction_cannot_satisfy_control(self):
         show = AsyncMock(return_value={"address": "0:escrow", "deadline": 175,
                                        "status": "accepted"})

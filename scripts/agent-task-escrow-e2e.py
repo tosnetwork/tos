@@ -65,8 +65,10 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18546"
+OBSERVER_RPCS = ("127.0.0.1:18547", "127.0.0.1:18548")
 WORKDIR = REPO / "test/integration/.task-escrow-e2e"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
+OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
 
 POLICY_HASH = "11" * 32
@@ -88,10 +90,10 @@ def check(label: str, ok: bool, detail: str = ""):
         failures.append(label)
 
 
-def rpc_call(method: str, **params):
+def rpc_call(method: str, *, endpoint: str = RPC, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
-        f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
+        f"http://{endpoint}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=8) as resp:
         return json.loads(resp.read().decode())
@@ -130,6 +132,13 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
+
+
+def controller_task_args(operation: str, name: str) -> tuple[str, ...]:
+    """One stable id per Task action, resolved using two independent RPC nodes."""
+    action_id = hashlib.sha256(f"e07:{name}:{operation}".encode()).hexdigest()
+    return ("--controller-action-id", action_id, "--quorum-config",
+            str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
 
 
 async def tosctl_json(*args: str):
@@ -307,7 +316,7 @@ async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -
 
 
 def write_config():
-    CONFIG.write_text(json.dumps({
+    config = {
         "nodes": {},
         "wallets": {},
         "pools": {},
@@ -317,7 +326,12 @@ def write_config():
         "master_wallet": None,
         "tick_interval": 40,
         "log": None,
-    }, indent=2))
+    }
+    CONFIG.write_text(json.dumps(config, indent=2))
+    for path, endpoint in zip(OBSERVER_CONFIGS, OBSERVER_RPCS, strict=True):
+        observer_config = dict(config)
+        observer_config["chain_rpc"] = {"urls": [f"http://{endpoint}/"]}
+        path.write_text(json.dumps(observer_config, indent=2))
 
 
 async def wallet_address(name: str) -> str:
@@ -360,11 +374,11 @@ async def create_task_with_attestor(name: str, creator: str, agent: str, budget:
     return out["address"]
 
 
-async def wait_rpc_ready(timeout: float = 180.0) -> bool:
+async def wait_rpc_ready(timeout: float = 180.0, endpoint: str = RPC) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if "result" in rpc_call("getMasterchainInfo"):
+            if "result" in rpc_call("getMasterchainInfo", endpoint=endpoint):
                 return True
         except Exception:
             pass
@@ -378,6 +392,15 @@ async def run_checks(faucet) -> None:
         check("json-rpc endpoint ready", False, f"no response from http://{RPC}/jsonRPC")
         return
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
+    primary_chain = rpc_call("getMasterchainInfo")["result"]["init"]
+    for endpoint in OBSERVER_RPCS:
+        ready = await wait_rpc_ready(endpoint=endpoint)
+        check(f"independent observer RPC {endpoint} ready", ready)
+        if not ready:
+            return
+        observer_chain = rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["init"]
+        check(f"observer RPC {endpoint} follows the same zerostate",
+              observer_chain == primary_chain)
     await tosctl("wallet", "create", "-n", "creator", "-v", "V3R2", "-w", "0")
     await tosctl("wallet", "create", "-n", "agent", "-v", "V3R2", "-w", "0")
     await tosctl("wallet", "create", "-n", "verifier", "-v", "V3R2", "-w", "0")
@@ -602,6 +625,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "accept", "--name", "e2e-controller",
         "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("accept", "e2e-controller"),
     )
     check("controller accepted task",
           await wait_status("e2e-controller", "accepted") == "accepted")
@@ -609,6 +633,7 @@ async def run_checks(faucet) -> None:
         "agent", "task", "send", "--operation", "result", "--name", "e2e-controller",
         "--via-agent-account", "runtime-agent", "--amount", "0.1",
         "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+        *controller_task_args("result", "e2e-controller"),
     )
     check("controller submitted result",
           await wait_status("e2e-controller", "result_submitted") == "result_submitted")
@@ -624,6 +649,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "claim", "--name", "e2e-claim",
         "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("claim", "e2e-claim"),
     )
     check("controller claimed open task",
           await wait_status("e2e-claim", "accepted") == "accepted")
@@ -634,6 +660,7 @@ async def run_checks(faucet) -> None:
         "agent", "task", "send", "--operation", "result", "--name", "e2e-claim",
         "--via-agent-account", "runtime-agent", "--amount", "0.1",
         "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+        *controller_task_args("result", "e2e-claim"),
     )
     check("claim winner submitted result",
           await wait_status("e2e-claim", "result_submitted") == "result_submitted")
@@ -715,6 +742,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "reject", "--name", "e2e-reject",
         "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("reject", "e2e-reject"),
     )
     check("controller rejected task",
           await wait_status("e2e-reject", "rejected") == "rejected")
@@ -843,20 +871,42 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=23000) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
+        observers = [network.create_full_node() for _ in OBSERVER_RPCS]
         make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
+        for observer in observers:
+            observer.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        observer_tasks = [
+            asyncio.create_task(observer.run(StartOptions(args=["--json-rpc-address", endpoint])))
+            for observer, endpoint in zip(observers, OBSERVER_RPCS, strict=True)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            process_map = [
+                {"role": role, "pid": process.process_id,
+                 "rpc": endpoint, "directory": str(process.directory)}
+                for role, process, endpoint in (
+                    ("validator", node, RPC),
+                    ("observer-1", observers[0], OBSERVER_RPCS[0]),
+                    ("observer-2", observers[1], OBSERVER_RPCS[1]),
+                )
+            ]
+            (WORKDIR / "process-map.json").write_text(json.dumps(process_map, indent=2) + "\n")
+            print(f"  three-view process map: {process_map}")
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet)
         finally:
-            for t in (node_task, dht_task):
+            for t in (node_task, dht_task, *observer_tasks):
                 t.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            await asyncio.gather(node_task, dht_task, *observer_tasks, return_exceptions=True)
+            await node.stop()
+            for observer in observers:
+                await observer.stop()
+            await dht.stop()
 
     return 1 if failures else 0
 
