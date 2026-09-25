@@ -10,15 +10,19 @@ from pathlib import Path
 def main() -> None:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1])
     source = (root / "scripts/dns-e2e.py").read_text(encoding="utf-8")
-    required = (
-        "Engine_validator_createProposalVoteRequest(",
-        "validator_node.engine_console.request(request)",
-        "Cell.one_from_boc(response.to_send)",
-        'check("ConfigParam 4 appears after the validator vote", activated)',
-    )
-    for marker in required:
-        if source.count(marker) != 1:
-            raise RuntimeError(f"DNS_PQ_VOTE_SOURCE_FAILURE: {marker!r} occurs {source.count(marker)} times, expected 1")
+    required = {
+        "Engine_validator_createProposalVoteRequest(": 1,
+        "validator_node.engine_console.request(request)": 1,
+        "Cell.one_from_boc(response.to_send)": 1,
+        'check("ConfigParam 4 appears after the validator vote", activated)': 1,
+        "prelaunch = await registration_receipt(": 1,
+        "await governance_receipt(": 2,
+    }
+    for marker, expected in required.items():
+        if source.count(marker) != expected:
+            raise RuntimeError(
+                f"DNS_PQ_VOTE_SOURCE_FAILURE: {marker!r} occurs "
+                f"{source.count(marker)} times, expected {expected}")
     if "validator_key.key.sign(" in source:
         raise RuntimeError("DNS_PQ_VOTE_SOURCE_FAILURE: DNS still signs a vote locally")
     for path in (root / "scripts").rglob("*.py"):

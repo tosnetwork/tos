@@ -1,6 +1,7 @@
 """Offline controls for DNS registration delivery and launch-gate evidence."""
 
 import asyncio
+import base64
 import importlib.util
 import json
 import os
@@ -104,6 +105,71 @@ class DnsRegistrationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not observed"):
                 asyncio.run(e15.registration_receipt(
                     "faucet", "collection", 10, 20, {"id": {"seqno": 10}}, 200))
+
+
+class DnsGovernanceReceiptTests(unittest.TestCase):
+    class FakeCell:
+        hash = b"v" * 32
+
+        @classmethod
+        def one_from_boc(cls, _data):
+            return cls()
+
+    def run_case(self, *, config_hash="edge", config_aborted=False,
+                 body_hash=None, incoming_source="faucet"):
+        wallet = wallet_tx()
+        wallet["out_msgs"][0]["destination"] = "config"
+        config = collection_tx(code=0, message_hash=config_hash)
+        config["aborted"] = config_aborted
+        config["in_msg"]["source"] = incoming_source
+        config["in_msg"]["msg_data"] = {
+            "body": base64.b64encode(b"vote body").decode()
+        }
+
+        class ParsedCell(self.FakeCell):
+            hash = body_hash or b"v" * 32
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            e15, "transactions_after", side_effect=[[wallet], [config]]
+        ), patch.object(e15, "same_addr", side_effect=lambda a, b: a == b), patch.object(
+            e15, "finalized_mc_header", side_effect=[
+                {"id": {"seqno": 11}}, {"id": {"seqno": 12}}
+            ]
+        ), patch.object(e15, "Cell", ParsedCell), patch.object(
+            e15, "GOVERNANCE_EVIDENCE", Path(directory) / "receipts.jsonl"
+        ) as evidence_path:
+            receipt = asyncio.run(e15.governance_receipt(
+                "PQ vote", "faucet", "config", 10, 20,
+                {"id": {"seqno": 10}}, self.FakeCell()))
+            stored = json.loads(evidence_path.read_text().splitlines()[0])
+        return receipt, stored
+
+    def test_vote_exact_wallet_config_body_and_two_heads(self):
+        receipt, stored = self.run_case()
+        self.assertEqual(receipt["outgoing"]["hash"], "edge")
+        self.assertEqual(receipt["config_tx"]["in_msg"]["hash"], "edge")
+        self.assertEqual([h["id"]["seqno"] for h in stored["after_heads"]], [11, 12])
+        self.assertEqual(stored["body_hash"], (b"v" * 32).hex())
+
+    def test_wrong_incoming_message_hash_is_not_a_vote_receipt(self):
+        clock = types.SimpleNamespace(monotonic=iter([0, 0, 61]).__next__)
+        with patch.object(e15, "time", clock), patch.object(
+            e15.asyncio, "sleep", new=AsyncMock()
+        ):
+            with self.assertRaisesRegex(RuntimeError, "exact Config receipt not observed"):
+                self.run_case(config_hash="other")
+
+    def test_wrong_body_cannot_substitute_for_node_vote(self):
+        with self.assertRaisesRegex(RuntimeError, "body differs"):
+            self.run_case(body_hash=b"x" * 32)
+
+    def test_config_abort_is_not_success(self):
+        with self.assertRaisesRegex(RuntimeError, "receipt or body differs"):
+            self.run_case(config_aborted=True)
+
+    def test_wrong_sender_is_not_delivery(self):
+        with self.assertRaisesRegex(RuntimeError, "receipt or body differs"):
+            self.run_case(incoming_source="other")
 
 
 if __name__ == "__main__":

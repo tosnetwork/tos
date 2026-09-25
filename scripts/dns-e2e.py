@@ -46,6 +46,7 @@ Exit 0 iff every check passes. Run from the repo root:
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import shutil
@@ -77,6 +78,7 @@ RPC = "127.0.0.1:19667"
 WORKDIR = REPO / "test/integration/.dns-e2e"
 RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 REGISTRATION_EVIDENCE = WORKDIR / "registration-evidence.json"
+GOVERNANCE_EVIDENCE = WORKDIR / "governance-evidence.jsonl"
 DNS_DIR = REPO / "crypto/smartcont/dns"
 VECTORS = json.loads((REPO / "domains/packages/protocol/test/vectors.json").read_text())
 
@@ -147,6 +149,73 @@ def same_addr(left: str, right: str) -> bool:
                 == Address(right).to_str(is_user_friendly=False).lower())
     except Exception:
         return False
+
+
+async def governance_receipt(label: str, faucet_addr: str, config_addr: str,
+                             faucet_lt: int, config_lt: int, before_head: dict,
+                             expected_body: Cell) -> dict:
+    """Bind one locally prepared proposal or node-produced vote to Config execution."""
+    deadline = time.monotonic() + 60
+    wallet_tx = config_tx = outgoing = None
+    scanned_wallet = scanned_config = 0
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(faucet_addr, faucet_lt)
+        config_rows = transactions_after(config_addr, config_lt)
+        scanned_wallet, scanned_config = len(wallet_rows), len(config_rows)
+        if len(wallet_rows) > 1:
+            raise RuntimeError(f"{label}: multiple new faucet transactions")
+        if wallet_rows:
+            wallet_tx = wallet_rows[0]
+            out_msgs = wallet_tx.get("out_msgs") or []
+            matching = [msg for msg in out_msgs
+                        if same_addr(msg.get("destination"), config_addr)]
+            if (wallet_tx.get("aborted") is not False
+                    or (wallet_tx.get("compute") or {}).get("success") is not True
+                    or (wallet_tx.get("action") or {}).get("success") is not True
+                    or len(out_msgs) != 1 or len(matching) != 1
+                    or not matching[0].get("hash")):
+                raise RuntimeError(f"{label}: faucet did not emit one successful Config message")
+            outgoing = matching[0]
+            matches = [tx for tx in config_rows
+                       if (tx.get("in_msg") or {}).get("hash") == outgoing["hash"]]
+            if len(matches) > 1:
+                raise RuntimeError(f"{label}: duplicate Config incoming message hash")
+            if matches:
+                config_tx = matches[0]
+                incoming = config_tx.get("in_msg") or {}
+                encoded_body = (incoming.get("msg_data") or {}).get("body")
+                if (not same_addr(incoming.get("source"), faucet_addr)
+                        or config_tx.get("aborted") is not False
+                        or (config_tx.get("compute") or {}).get("success") is not True
+                        or (config_tx.get("action") or {}).get("success") is not True
+                        or not encoded_body
+                        or Cell.one_from_boc(base64.b64decode(encoded_body)).hash
+                        != expected_body.hash):
+                    raise RuntimeError(f"{label}: Config receipt or body differs from sent authorization")
+                break
+        await asyncio.sleep(1)
+    if config_tx is None:
+        raise RuntimeError(f"{label}: exact Config receipt not observed "
+                           f"(wallet_rows={scanned_wallet}, config_rows={scanned_config})")
+
+    heads = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(heads) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            heads.append(head)
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(heads) != 2:
+        raise RuntimeError(f"{label}: two later finalized masterchain heads not observed")
+    receipt = {"label": label, "faucet_baseline_lt": faucet_lt,
+               "config_baseline_lt": config_lt, "scanned_wallet": scanned_wallet,
+               "scanned_config": scanned_config, "body_hash": expected_body.hash.hex(),
+               "before_head": before_head, "after_heads": heads,
+               "wallet_tx": wallet_tx, "outgoing": outgoing, "config_tx": config_tx}
+    record_jsonl(GOVERNANCE_EVIDENCE, receipt)
+    return receipt
 
 
 async def registration_receipt(faucet_addr: str, collection_addr: str,
@@ -345,6 +414,38 @@ def gen_artifacts() -> dict:
     return addrs
 
 
+def record_provenance(artifacts: dict) -> None:
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    tracked = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True)
+    if tracked.strip():
+        raise RuntimeError("DNS E2E requires a clean committed source tree")
+    paths = {
+        "script": Path(__file__).resolve(),
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "fift": BUILD_DIR / "crypto/fift",
+        "func": BUILD_DIR / "crypto/func",
+        "lite_client": BUILD_DIR / "lite-client/lite-client",
+        "gen_deploy": DNS_DIR / "deploy/gen-deploy.fif",
+        "root_source": DNS_DIR / "func/root-dns.fc",
+        "collection_source": DNS_DIR / "func/nft-collection.fc",
+        "item_source": DNS_DIR / "func/nft-item.fc",
+        "root_code": DNS_DIR / "func/build/root-dns-code.fif",
+        "collection_code": DNS_DIR / "func/build/nft-collection-code.fif",
+        "item_code": DNS_DIR / "func/build/nft-item-code.fif",
+        "root_state_init": DNS_DIR / "func/build/root-state-init.boc",
+        "collection_state_init": DNS_DIR / "func/build/collection-state-init.boc",
+    }
+    hashes = {name: {"path": str(path.resolve()),
+                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+              for name, path in paths.items()}
+    (WORKDIR / "provenance.json").write_text(json.dumps({
+        "source_commit": head, "root": artifacts["root"],
+        "collection": artifacts["collection"], "artifacts": hashes,
+    }, sort_keys=True, indent=2) + "\n")
+
+
 def state_init_of(cell: Cell) -> StateInit:
     """Split a serialized StateInit cell (b{00110} ^code ^data) into parts."""
     refs = cell.refs
@@ -454,7 +555,13 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path, va
             .store_ref(proposal)
             .store_bit(1)
             .end_cell())
+    faucet_addr = faucet.address.to_str(is_user_friendly=False)
+    proposal_faucet_lt, proposal_config_lt = last_lt(faucet_addr), last_lt(config_addr)
+    proposal_before_head = finalized_mc_header()
     await faucet.send(transfer_message(faucet, config_addr, 10 * NANO, body))
+    await governance_receipt("ConfigParam 4 proposal", faucet_addr, config_addr,
+                             proposal_faucet_lt, proposal_config_lt,
+                             proposal_before_head, body)
 
     def proposal_registered() -> bool:
         entries = run_get_method(
@@ -548,7 +655,11 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path, va
     )
     response = request.parse_result(await validator_node.engine_console.request(request))
     vote = Cell.one_from_boc(response.to_send)
+    vote_faucet_lt, vote_config_lt = last_lt(faucet_addr), last_lt(config_addr)
+    vote_before_head = finalized_mc_header()
     await faucet.send(transfer_message(faucet, config_addr, 1 * NANO, vote))
+    await governance_receipt("ConfigParam 4 PQ vote", faucet_addr, config_addr,
+                             vote_faucet_lt, vote_config_lt, vote_before_head, vote)
 
     activated = await async_poll(lambda: param4_root_id() == root_addr.split(":")[1], timeout=120)
     if not activated:
@@ -705,6 +816,7 @@ async def main() -> int:
     WORKDIR.mkdir(parents=True, exist_ok=True)
 
     artifacts = gen_artifacts()
+    record_provenance(artifacts)
     print(f"root:       {artifacts['root']}")
     print(f"collection: {artifacts['collection']}")
     ok = artifacts["collection"] == VECTORS["collection_address"] \
