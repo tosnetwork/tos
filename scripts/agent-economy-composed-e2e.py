@@ -149,11 +149,11 @@ def rpc_call(method: str, *, endpoint: str = RPC, **params):
             raw, status = resp.read(), resp.status
     except urllib.error.HTTPError as error:
         raw, status = error.read(), error.code
-        record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+        record_jsonl(RPC_TRANSCRIPT, {"endpoint": endpoint, "method": method, "params": params,
                      "status": status, "request_base64": base64.b64encode(body).decode(),
                      "response_base64": base64.b64encode(raw).decode()})
         raise
-    record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+    record_jsonl(RPC_TRANSCRIPT, {"endpoint": endpoint, "method": method, "params": params,
                  "status": status, "request_base64": base64.b64encode(body).decode(),
                  "response_base64": base64.b64encode(raw).decode()})
     return json.loads(raw.decode())
@@ -322,13 +322,16 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
     wallet_lt, contract_lt = last_lt(payer), last_lt(address)
     receipt = await send()
     deadline = time.monotonic() + 45
-    wallet_tx = contract_tx = None
+    wallet_tx = contract_tx = bounce_tx = None
     while time.monotonic() < deadline:
         wallet_rows = transactions_after(payer, wallet_lt)
         if wallet_rows:
-            if len(wallet_rows) != 1:
-                raise RuntimeError(f"{label}: multiple new wallet transactions")
-            wallet_tx = wallet_rows[0]
+            sends = [row for row in wallet_rows if any(
+                same_addr(msg.get("destination"), address)
+                for msg in row.get("out_msgs") or [])]
+            if len(sends) != 1:
+                raise RuntimeError(f"{label}: expected exactly one wallet send to target")
+            wallet_tx = sends[0]
             outgoing = wallet_tx.get("out_msgs") or []
             if (wallet_tx.get("aborted") is not False
                     or (wallet_tx.get("compute") or {}).get("success") is not True
@@ -341,12 +344,31 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
                 if len(contract_rows) != 1:
                     raise RuntimeError(f"{label}: multiple new target transactions")
                 contract_tx = contract_rows[0]
-                if (contract_tx.get("in_msg") or {}).get("hash") != outgoing[0].get("hash"):
+                inbound = contract_tx.get("in_msg") or {}
+                if (inbound.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(inbound.get("source"), payer)):
                     raise RuntimeError(f"{label}: target inbound hash differs from wallet outbound")
-                break
+                refunds = contract_tx.get("out_msgs") or []
+                if (len(refunds) != 1 or refunds[0].get("bounced") is not True
+                        or not same_addr(refunds[0].get("source"), address)
+                        or not same_addr(refunds[0].get("destination"), payer)):
+                    raise RuntimeError(f"{label}: target did not emit one exact bounce")
+                other_rows = [row for row in wallet_rows if row is not wallet_tx]
+                if len(other_rows) > 1:
+                    raise RuntimeError(f"{label}: unrelated or duplicate wallet transaction")
+                if other_rows:
+                    bounce_tx = other_rows[0]
+                    bounce_in = bounce_tx.get("in_msg") or {}
+                    if (bounce_in.get("hash") != refunds[0].get("hash")
+                            or bounce_in.get("bounced") is not True
+                            or not same_addr(bounce_in.get("source"), address)
+                            or not same_addr(bounce_in.get("destination"), payer)
+                            or bounce_tx.get("out_msgs")):
+                        raise RuntimeError(f"{label}: wallet credit is not the target's exact bounce")
+                    break
         await asyncio.sleep(1)
-    if wallet_tx is None or contract_tx is None:
-        raise RuntimeError(f"{label}: exact wallet-to-contract transaction not observed")
+    if wallet_tx is None or contract_tx is None or bounce_tx is None:
+        raise RuntimeError(f"{label}: exact wallet-target-bounce chain not observed")
     if (contract_tx.get("aborted") is not True
             or (contract_tx.get("compute") or {}).get("success") is not False
             or (contract_tx.get("compute") or {}).get("exit_code") != expected_exit):
@@ -368,7 +390,8 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
     record_jsonl(CHAIN_EVIDENCE, {"label": label, "kind": "negative", "receipt": receipt,
                  "expected_exit": expected_exit, "before_state": before_state,
                  "before_head": before_head, "wallet_tx": wallet_tx,
-                 "contract_tx": contract_tx, "observations": observations})
+                 "contract_tx": contract_tx, "bounce_tx": bounce_tx,
+                 "observations": observations})
     check(label, True)
 
 

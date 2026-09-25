@@ -1,15 +1,18 @@
 """Offline fail-closed controls for composed workflow rejection and payout edges."""
 
 import asyncio
+import base64
 import hashlib
 import importlib.util
 import json
+import io
 import os
 from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
+import urllib.error
 from unittest.mock import AsyncMock, patch
 
 
@@ -50,7 +53,15 @@ def wallet_tx():
 def rejected_tx(code=9):
     return {"transaction_id": {"lt": "21"}, "aborted": True,
             "compute": {"success": False, "exit_code": code},
-            "in_msg": {"hash": "wallet-edge"}}
+            "in_msg": {"hash": "wallet-edge", "source": "0:payer"},
+            "out_msgs": [{"hash": "bounce-edge", "source": "0:target",
+                          "destination": "0:payer", "bounced": True}]}
+
+
+def bounce_tx(message_hash="bounce-edge"):
+    return {"transaction_id": {"lt": "12"}, "in_msg": {
+        "hash": message_hash, "source": "0:target", "destination": "0:payer",
+        "bounced": True}, "out_msgs": []}
 
 
 def escrow_tx(value=2_600_000_000):
@@ -67,6 +78,48 @@ def worker_tx(value=2_600_000_000, message_hash="payout-edge"):
 
 
 class ComposedEvidenceTests(unittest.TestCase):
+    def test_rpc_transcript_binds_observer_endpoint_and_raw_response(self):
+        class Reply:
+            status = 200
+
+            def __init__(self, raw):
+                self.raw = raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return self.raw
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            e10, "RPC_TRANSCRIPT", Path(directory) / "rpc.jsonl"
+        ), patch.object(e10.urllib.request, "urlopen", side_effect=[
+            Reply(b'{"result":{"node":1}}'), Reply(b'{"result":{"node":2}}')
+        ]):
+            for endpoint in e10.OBSERVER_RPCS:
+                e10.rpc_call("getMasterchainInfo", endpoint=endpoint)
+            rows = [json.loads(line) for line in e10.RPC_TRANSCRIPT.read_text().splitlines()]
+            self.assertEqual([row["endpoint"] for row in rows], list(e10.OBSERVER_RPCS))
+            self.assertEqual([json.loads(base64.b64decode(row["response_base64"]))
+                              for row in rows], [{"result": {"node": 1}}, {"result": {"node": 2}}])
+
+    def test_rpc_http_error_retains_endpoint_and_body(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            e10, "RPC_TRANSCRIPT", Path(directory) / "rpc.jsonl"
+        ):
+            endpoint = e10.OBSERVER_RPCS[1]
+            error = urllib.error.HTTPError(
+                f"http://{endpoint}/jsonRPC", 503, "unavailable", {}, io.BytesIO(b"raw failure"))
+            with patch.object(e10.urllib.request, "urlopen", side_effect=error):
+                with self.assertRaises(urllib.error.HTTPError):
+                    e10.rpc_call("getMasterchainInfo", endpoint=endpoint)
+            row = json.loads(e10.RPC_TRANSCRIPT.read_text())
+            self.assertEqual((row["endpoint"], row["status"]), (endpoint, 503))
+            self.assertEqual(base64.b64decode(row["response_base64"]), b"raw failure")
+
     def test_manifest_binds_clean_source_and_three_binary_hashes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -104,13 +157,16 @@ class ComposedEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "did not cover baseline"):
                 e10.transactions_after("0:payer", 10)
 
-    def negative(self, *, code=9, send_error=None, target=None, wallet=None):
+    def negative(self, *, code=9, send_error=None, target=None, wallet=None,
+                 bounce=None, extra=None):
+        sent = wallet or wallet_tx()
+        wallet_rows = [sent, bounce or bounce_tx(), *(extra or [])]
         with patch.object(e10, "finalized_mc_header",
                           side_effect=[head(10), head(11), head(12)]), patch.object(
             e10, "last_lt", side_effect=[10, 20]
         ), patch.object(e10, "transactions_after", side_effect=[
-            [wallet or wallet_tx()], [target or rejected_tx(code)]
-        ]), patch.object(e10, "same_addr", return_value=True), patch.object(
+            wallet_rows, [target or rejected_tx(code)]
+        ]), patch.object(e10, "same_addr", side_effect=lambda a, b: a == b), patch.object(
             e10, "record_jsonl"
         ) as record, patch.object(e10, "check") as check:
             asyncio.run(e10.rejected_operation(
@@ -145,6 +201,26 @@ class ComposedEvidenceTests(unittest.TestCase):
     def test_wallet_failure_is_not_rejection(self):
         with self.assertRaisesRegex(RuntimeError, "wallet did not submit"):
             self.negative(wallet=dict(wallet_tx(), aborted=True))
+
+    def test_exact_bounce_is_not_a_second_wallet_send(self):
+        record, check = self.negative()
+        self.assertEqual(record.call_args.args[1]["bounce_tx"]["in_msg"]["hash"],
+                         "bounce-edge")
+        check.assert_called_once_with("no signature", True)
+
+    def test_wrong_bounce_hash_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "not the target's exact bounce"):
+            self.negative(bounce=bounce_tx("unrelated"))
+
+    def test_duplicate_bounce_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "unrelated or duplicate"):
+            self.negative(extra=[bounce_tx()])
+
+    def test_additional_wallet_outbound_is_refused(self):
+        other = {"transaction_id": {"lt": "13"}, "out_msgs": [
+            {"destination": "0:other", "hash": "other-send"}]}
+        with self.assertRaisesRegex(RuntimeError, "unrelated or duplicate"):
+            self.negative(extra=[other])
 
     def test_exact_payout_message_passes(self):
         record, check = self.payout()
