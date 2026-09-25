@@ -13,7 +13,8 @@ end to end against a real validator:
 
   agent account deploy / show / status
   agent account native-prepare         (bodyless native TOS Gift profile)
-  exact BOC retry + duplicate submission
+  exact BOC retry from the prepared artifact + duplicate submission; a
+      second preparation is refused once custody releases the signed bytes
   agent account cancel-prepare         (same-seqno finalized invalidation)
   agent account task-send            (controller-signed transfer)
   agent wallet update-policy + agent account update-policy
@@ -313,13 +314,23 @@ async def run_checks(faucet, node) -> None:
         "--unsigned-transfer-digest", "sha256:" + "4" * 64, "--yes",
     )
     prepared = await tosctl_action_json(*native_args)
-    retried = await tosctl_action_json(*native_args)
     exact_boc = prepared.get("exact_signed_boc", "")
     check("native Gift returns the frozen prepared-action schema",
           prepared.get("schema") == "tosctl.agent-account.prepared-action.v1"
           and prepared.get("action") == "agent-native-send" and bool(exact_boc), str(prepared))
-    check("exact native Gift retry returns byte-identical BOC",
-          retried.get("exact_signed_boc") == exact_boc)
+    # native-prepare marks the custody record Broadcasting before its BOC is
+    # released on stdout. Calling it again cannot prove an exact retry: the
+    # second call must refuse until finalized-state reconciliation. The exact
+    # retry is a second submission of the one retained prepared artifact.
+    reprepare_refusal = None
+    try:
+        await tosctl_action_json(*native_args)
+    except RuntimeError as error:
+        reprepare_refusal = str(error)
+    check("repreparing released native Gift is refused as ambiguous",
+          reprepare_refusal is not None
+          and "ambiguous broadcast must be resolved from finalized state" in reprepare_refusal,
+          str(reprepare_refusal))
     first_submit = broadcast_boc(exact_boc)
     duplicate_submit = broadcast_boc(exact_boc, may_fail=True)
     check("node accepts exact BOC submission path",
