@@ -838,7 +838,12 @@ def capture(policy: dict, policy_sha: str, phase: str,
             node["name"]: rpc(node["rpc_url"], "getBlockHeader", previous_params, i * 4 + 3)
             for i, node in enumerate(policy["nodes"]) if node["name"] in live}
         if anchor is not None:
-            require(common >= anchor["common_seqno"], "common height regressed below anchor")
+            # A four-node recovery begins with the previously isolated nodes'
+            # lower tips. This is not a rollback of either live 2/4 node: the
+            # final verdict still requires two *new* common IDs beyond the
+            # frozen 2/4 anchor, within the 180-second recovery window.
+            require(phase == "recovery" or common >= anchor["common_seqno"],
+                    "common height regressed below anchor")
             result["rpc"]["range_headers"] = {
                 node["name"]: {
                     str(height): rpc(node["rpc_url"], "getBlockHeader",

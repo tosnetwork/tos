@@ -20,16 +20,17 @@ def policy():
     edges += [("two_of_four", f"r{i}") for i in range(13, 21)]
     return {"source_commit": "a" * 40, "clsact": {
         "interface": "lo", "cleanup_argv": ["tc", "qdisc", "del", "dev", "lo", "clsact"]},
-        "thresholds": {"two_drain_seconds": 30},
+        "thresholds": {"two_drain_seconds": 30, "recovery_min_delta": 2},
         "rules": [{"id": name, "phase": phase,
                    "remove_argv": ["tc", "filter", "del", name]}
                   for phase, name in edges]}
 
 
 class DirectedRunTests(unittest.TestCase):
-    def exercise(self, fail_at=None, verifier_passed=True, root_qdisc="noqueue"):
+    def exercise(self, fail_at=None, verifier_passed=True, root_qdisc="noqueue",
+                 heights=None):
         current = [0.0]
-        heights = [100, 100, 102, 102, 102, 102, 102, 102, 104]
+        heights = heights or [100, 100, 102, 102, 102, 102, 102, 102, 104]
         index = [0]
 
         def sample(_policy, _sha, phase, _anchor, _previous):
@@ -84,6 +85,17 @@ class DirectedRunTests(unittest.TestCase):
         self.assertEqual(result["snapshots"], 9)
         self.assertIn('"fallback_commands": []', cleanup)
         self.assertEqual(len([path for path in paths if path.name.startswith("event-")]), 42)
+
+    def test_recovery_requires_new_ids_beyond_two_of_four_anchor(self):
+        # Four-node common falls below the 2/4 H102 anchor while isolated
+        # nodes catch up. H100 is not a sufficient recovery, even though it
+        # is two above the initial H98 recovery sample.
+        heights = [100, 100, 102, 102, 102, 102, 102, 98, 100, 102, 104]
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["snapshots"], 11)
+        self.assertEqual(len([path for path in paths
+                              if path.name.endswith("-recovery.json")]), 4)
 
     def test_failure_removes_only_installed_rules_and_clsact(self):
         result, cleanup, _paths = self.exercise(fail_at="three_of_four")

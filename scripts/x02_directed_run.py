@@ -131,12 +131,14 @@ def collect(policy: dict, sha: str, root: Path) -> dict:
         removed_at = time.monotonic()
         first_recovery = sample("recovery", recovery_anchor)
         recovery_height = common_height(first_recovery)
+        recovery_target = (max(recovery_height, common_height(recovery_anchor))
+                           + policy["thresholds"]["recovery_min_delta"])
         while True:
             x02.require(time.monotonic() - removed_at < 180,
                         "recovery did not gain two common IDs within 180 seconds")
             time.sleep(10)
             current = sample("recovery", recovery_anchor)
-            if common_height(current) - recovery_height >= 2:
+            if common_height(current) >= recovery_target:
                 break
         event("clsact", "cleanup")
         clsact = False

@@ -280,7 +280,7 @@ def event(pol, rule, action, at, active):
             "pre_tc": pre, "post_tc": post}
 
 
-def fixture(jump=False, short_drain=False):
+def fixture(jump=False, short_drain=False, recovery_lag=False):
     pol = policy()
     rules3 = [r for r in pol["rules"] if r["phase"] == "three_of_four"]
     rules2 = [r for r in pol["rules"] if r["phase"] == "two_of_four"]
@@ -311,8 +311,11 @@ def fixture(jump=False, short_drain=False):
         events.append(event(pol, rule, "remove", two_base + 70 + i / 4, active[:]))
     for at, height in ((two_base + 85, final_three),
                        (two_base + 105, final_three + 2)):
+        heights = {f"node{i}": height for i in range(1, 5)}
+        if recovery_lag and at == two_base + 85:
+            heights["node4"] = final_three - 2
         snapshots.append(snapshot(pol, "recovery", at,
-                                  {f"node{i}": height for i in range(1, 5)}, [], {}))
+                                  heights, [], {}))
     events.append(event(pol, "clsact", "cleanup", two_base + 107, []))
     link_snapshots(pol, snapshots)
     return pol, snapshots, events
@@ -451,6 +454,35 @@ class X02IsolationTests(unittest.TestCase):
             verify_fixture(pol, snapshots, events)
         pol, snapshots, events = fixture()
         self.assertTrue(verify_fixture(pol, snapshots, events)["passed"])
+
+    def test_first_recovery_sample_may_lag_frozen_two_of_four_anchor(self):
+        pol, snapshots, events = fixture(recovery_lag=True)
+        self.assertLess(snapshots[-2]["common_seqno"],
+                        snapshots[-3]["common_seqno"])
+        self.assertTrue(verify_fixture(pol, snapshots, events)["passed"])
+
+    def test_capture_retains_transient_recovery_lag(self):
+        pol = policy()
+        anchor = {"phase": "two_of_four", "policy_sha256": "p" * 64,
+                  "common_seqno": 47}
+        tips = {"node1": 47, "node2": 47, "node3": 47, "node4": 42}
+
+        def parsed(_row, node, _method):
+            return (-1, x02.SHARD, tips[node["name"]],
+                    block(tips[node["name"]])["root_hash"],
+                    block(tips[node["name"]])["file_hash"])
+
+        with (patch.object(x02, "require_source_commit", return_value={}),
+              patch.object(x02, "capture_tc", return_value={}),
+              patch.object(x02, "capture_process", return_value={}),
+              patch.object(x02, "run_raw", return_value={}),
+              patch.object(x02, "rpc", side_effect=lambda *_args: {}),
+              patch.object(x02, "parse_rpc", side_effect=parsed)):
+            result = x02.capture(pol, "p" * 64, "recovery", anchor)
+        self.assertEqual(result["common_seqno"], 42)
+        self.assertNotIn("capture_error", result)
+        self.assertEqual(set(result["rpc"]["range_headers"]), set(tips))
+        self.assertTrue(all(not value for value in result["rpc"]["range_headers"].values()))
 
     def test_same_cursor_changed_payload_is_rejected(self):
         pol, snapshots, events = fixture()
