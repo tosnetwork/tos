@@ -40,6 +40,7 @@ fault-tolerance test on top of; that remains open, see ROADMAP.md).
 Run from the repository root: uv run python scripts/agent-wallet-account-e2e.py
 """
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -168,37 +169,73 @@ async def poll_predicate(predicate, timeout: float = 60.0) -> bool:
     return False
 
 
-async def predicate_stays_true(predicate, duration: float = 60.0) -> bool:
+async def predicate_stays_true(predicate, duration: float = 60.0,
+                               poll_interval: float = 1.0) -> bool:
     """Continuously disprove a negative invariant over the normal CI window."""
     deadline = time.time() + duration
-    observed = False
+    start = finalized_views()
+    samples = 0
     while time.time() < deadline:
         try:
-            holds = predicate()
-            observed = True
-            if not holds:
+            if not predicate():
                 return False
+            finalized_views()
         except Exception:
-            # A transient RPC failure is not evidence that the invariant held.
-            pass
-        await asyncio.sleep(1)
-    return observed
+            return False
+        samples += 1
+        await asyncio.sleep(poll_interval)
+    end = finalized_views()
+    print(f"  negative window: samples={samples} start={start} end={end}")
+    return samples >= 2 and all(end[i]["seqno"] > start[i]["seqno"] for i in start)
 
 
-async def async_predicate_stays_true(predicate, duration: float = 60.0) -> bool:
+async def async_predicate_stays_true(predicate, duration: float = 60.0,
+                                     poll_interval: float = 1.0) -> bool:
     """Async counterpart for invariants that require a CLI state read."""
     deadline = time.time() + duration
-    observed = False
+    start = finalized_views()
+    samples = 0
     while time.time() < deadline:
         try:
-            holds = await predicate()
-            observed = True
-            if not holds:
+            if not await predicate():
                 return False
+            finalized_views()
         except Exception:
-            pass
-        await asyncio.sleep(1)
-    return observed
+            return False
+        samples += 1
+        await asyncio.sleep(poll_interval)
+    end = finalized_views()
+    print(f"  negative window: samples={samples} start={start} end={end}")
+    return samples >= 2 and all(end[i]["seqno"] > start[i]["seqno"] for i in start)
+
+
+def finalized_views() -> dict[str, dict]:
+    return {endpoint: rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["last"]
+            for endpoint in (RPC, *OBSERVER_RPCS)}
+
+
+def finalized_mc_header() -> dict:
+    block = finalized_views()[RPC]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("masterchain header did not bind to the observed finalized block")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def exact_account_winner(address: str, exact_boc: str, after_lt: int) -> bool:
+    """Require the sole post-baseline inbound to be this signed BOC."""
+    exact_hash = base64.b64encode(Cell.one_from_boc(base64.b64decode(exact_boc)).hash).decode()
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    newer = [row for row in rows if int(row["transaction_id"]["lt"]) > after_lt]
+    if not any(int(row["transaction_id"]["lt"]) <= after_lt for row in rows):
+        raise RuntimeError("account transaction page did not cover the pre-order baseline")
+    if len(newer) != 1 or (newer[0].get("in_msg") or {}).get("hash") != exact_hash:
+        return False
+    row = newer[0]
+    return (not row["aborted"] and row["compute"]["success"]
+            and row["action"]["success"])
 
 
 async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -> bool:
@@ -397,10 +434,15 @@ async def run_checks(faucet, node) -> None:
     cancel_account = norm_addr(cancel_deploy["address"])
     check("cancellation account active on chain", await poll_predicate(
         lambda: rpc_call("getAddressState", address=cancel_account).get("result") == "active"))
-    cancel_target_before = balance(target)
+    await tosctl("wallet", "create", "-n", "cancel-target", "-v", "V3R2", "-w", "0")
+    cancel_target = norm_addr(next(e["address"] for e in
+                                   await tosctl_json("wallet", "ls") if e["name"] == "cancel-target"))
+    cancel_target_before = balance(cancel_target)
+    cancel_baseline = int(rpc_call("getAddressInformation", address=cancel_account)
+                          ["result"]["last_transaction_id"]["lt"])
     cancel_valid_until = int(time.time()) + 300
     cancel_primary = await tosctl_action_json(
-        "agent", "account", "native-prepare", "--wallet", "cancel-agent", "--target", target,
+        "agent", "account", "native-prepare", "--wallet", "cancel-agent", "--target", cancel_target,
         "--amount-nanotos", str(200_000_000), "--fee-reserve-nanotos", str(50_000_000),
         "--valid-until", str(cancel_valid_until), "--action-id", "b" * 64,
         "--request-digest", "sha256:" + "5" * 64,
@@ -415,11 +457,16 @@ async def run_checks(faucet, node) -> None:
         "--valid-until", str(cancel_valid_until), "--yes",
     )
     broadcast_boc(cancellation.get("exact_signed_boc", ""))
-    check("cancellation consumes its account's shared sequence",
-          await wait_account_seqno(cancel_account, 1))
+    check("exact cancellation wins its account's shared sequence",
+          await poll_predicate(lambda: exact_account_winner(
+              cancel_account, cancellation["exact_signed_boc"], cancel_baseline))
+          and await wait_account_seqno(cancel_account, 1))
     broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
     check("finalized cancellation prevents destination credit for the observation window",
-          await predicate_stays_true(lambda: balance(target) == cancel_target_before))
+          await predicate_stays_true(
+              lambda: balance(cancel_target) == cancel_target_before
+              and exact_account_winner(cancel_account, cancellation["exact_signed_boc"],
+                                       cancel_baseline)))
 
     print("\n=== controller-signed transfer (agent account task-send) ===")
     target_before = balance(target)
@@ -499,12 +546,12 @@ async def run_checks(faucet, node) -> None:
     )
     # Cross the validity boundary and then require a new finalized block before
     # submission, so rejection is based on chain time rather than local sleep.
-    await asyncio.sleep(max(0, expiry - int(time.time()) + 1))
-    pre_expiry_seqno = rpc_call("getMasterchainInfo")["result"]["last"]["seqno"]
-    check("chain finalizes a block after the Gift validity boundary",
+    pre_expiry_seqno = finalized_mc_header()["id"]["seqno"]
+    check("finalized block gen_utime exceeds Gift valid_until",
           await poll_predicate(
-              lambda: rpc_call("getMasterchainInfo")["result"]["last"]["seqno"]
-              > pre_expiry_seqno))
+              lambda: (header := finalized_mc_header())["id"]["seqno"] > pre_expiry_seqno
+              and header["gen_utime"] > expiry))
+    print(f"  expiry chain header: {finalized_mc_header()} valid_until={expiry}")
     broadcast_boc(expired.get("exact_signed_boc", ""), may_fail=True)
 
     async def expired_state_unchanged() -> bool:
@@ -545,6 +592,17 @@ async def main() -> int:
         ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            process_map = [
+                {"role": role, "pid": process.process_id,
+                 "rpc": endpoint, "directory": str(process.directory)}
+                for role, process, endpoint in (
+                    ("validator", node, RPC),
+                    ("observer-1", observers[0], OBSERVER_RPCS[0]),
+                    ("observer-2", observers[1], OBSERVER_RPCS[1]),
+                )
+            ]
+            (WORKDIR / "process-map.json").write_text(json.dumps(process_map, indent=2) + "\n")
+            print(f"  three-view process map: {process_map}")
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet, node)

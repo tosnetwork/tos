@@ -36,6 +36,27 @@ message must not be resent on the ambiguous timeout. The shared owner-action
 confirmation should use the exact submitted wallet message and then verify the
 Agent Account effect, rather than treating a short seqno wait as failure.
 
+Commit `55c8b5bea` applies that shared owner-action route change. Its source
+ordering test and the six exact-confirmation tests pass (7/7); restoring the
+single-send/short-seqno-poll structure makes the new routing test fail. This
+is a local gate, **not** a successful E04 runtime rerun.
+
+The subsequent retained-route negative controls now use a separate cancellation
+target and require the cancellation's exact signed BOC to be the sole successful
+post-baseline Agent Account inbound; no unrelated seqno can pass. Both 60-second
+absence windows fail on any RPC read error, retain start/end finalized block IDs
+for all three independent nodes, and require progression. The expiry control
+reads `gen_utime` from the header of an exact finalized masterchain block and
+requires it to exceed `valid_until` before broadcasting. The process map records
+each node PID, RPC port and DB directory. Five short tests pass, including a
+later-RPC-error mutation that makes the old permissive window fail the test.
+The clean and mutant raw logs are in
+`test/integration/.e04-agent-wallet-negative-controls-20260925/` with SHA-256
+`4b9317cbdc17d473ea845a793b568d3ad01a1562c618caa11926795941535830`
+and `e69016396a2008c866051583a6d8e34d3cf654e0e2cda55c01743f2851e9c471`.
+These controls are not yet real-chain E04 evidence; the fixed-tree full run is
+still required before this entry can close.
+
 The first run used committed `a0a9fd52b` with `TOS_BUILD_DIR=build`, `PYTHONPATH=test/tostester/src`, and the retained command `uv run python -u scripts/agent-wallet-account-e2e.py` under `script -q -e -f`. Its full output is `test/integration/.e04-agent-wallet-a0a9fd52b-20260925/console.typescript` (SHA-256 `3476e5dc07228dd9b30d38cda2ec169d51eb5981f656fe78a72a18187d0663c6`); process exit was 1. Six provision/status checks passed. The second invocation of `agent account native-prepare` for the same action failed with `ambiguous broadcast must be resolved from finalized state`. The node directory is preserved under that run directory's `network/`, not deleted.
 
 That refusal follows `AgentAccountNativePrepareCmd::run`: after journaling the exact signed BOC, it calls `begin_broadcast` **before printing the BOC**. `ControllerActionJournal::begin_broadcast` refuses a second call while the record is Broadcasting. The first script assumed that invoking `native-prepare` again was an exact-BOC retry, but the safe retry is reusing the first printed BOC. Commit `be74e9cc6` changes the script accordingly and asserts the second preparation refuses for the precise ambiguity reason; it does not weaken production custody.
