@@ -146,7 +146,8 @@ class DnsGovernanceReceiptTests(unittest.TestCase):
                 e15.exact_config_incoming_body("config", config)
 
     def run_case(self, *, config_hash="edge", config_aborted=False,
-                 body_hash=None, incoming_source="faucet", extra_wallet=None):
+                 body_hash=None, incoming_source="faucet", extra_wallet=None,
+                 transient_timeout=False):
         wallet = wallet_tx()
         wallet["out_msgs"][0]["destination"] = "config"
         config = collection_tx(code=0, message_hash=config_hash)
@@ -157,13 +158,16 @@ class DnsGovernanceReceiptTests(unittest.TestCase):
         class ParsedCell(self.FakeCell):
             hash = body_hash or b"v" * 32
 
+        reads = ([TimeoutError("temporary socket stall")] if transient_timeout else [])
+        reads += [[wallet] + (extra_wallet or []), [config]]
         with tempfile.TemporaryDirectory() as directory, patch.object(
-            e15, "transactions_after", side_effect=[[wallet] + (extra_wallet or []), [config]]
+            e15, "transactions_after", side_effect=reads
         ), patch.object(e15, "same_addr", side_effect=lambda a, b: a == b), patch.object(
             e15, "finalized_mc_header", side_effect=[
                 {"id": {"seqno": 11}}, {"id": {"seqno": 12}}
             ]
-        ), patch.object(e15, "exact_config_incoming_body", return_value=ParsedCell()), patch.object(
+        ), patch.object(e15.asyncio, "sleep", new=AsyncMock()), patch.object(
+            e15, "exact_config_incoming_body", return_value=ParsedCell()), patch.object(
             e15, "GOVERNANCE_EVIDENCE", Path(directory) / "receipts.jsonl"
         ) as evidence_path:
             receipt = asyncio.run(e15.governance_receipt(
@@ -180,7 +184,7 @@ class DnsGovernanceReceiptTests(unittest.TestCase):
         self.assertEqual(stored["body_hash"], (b"v" * 32).hex())
 
     def test_wrong_incoming_message_hash_is_not_a_vote_receipt(self):
-        clock = types.SimpleNamespace(monotonic=iter([0, 0, 61]).__next__)
+        clock = types.SimpleNamespace(monotonic=iter([0, 0, 0, 0, 61]).__next__)
         with patch.object(e15, "time", clock), patch.object(
             e15.asyncio, "sleep", new=AsyncMock()
         ):
@@ -210,6 +214,20 @@ class DnsGovernanceReceiptTests(unittest.TestCase):
             self.run_case(extra_wallet=[dict(credit, out_msgs=[{"destination": "other"}])])
         with self.assertRaisesRegex(RuntimeError, "multiple faucet sends"):
             self.run_case(extra_wallet=[dict(credit, out_msgs=[{"destination": "config"}])])
+
+    def test_one_transport_timeout_retries_without_resending(self):
+        receipt, _ = self.run_case(transient_timeout=True)
+        self.assertEqual(receipt["outgoing"]["hash"], "edge")
+
+    def test_persistent_transport_timeout_does_not_pass(self):
+        clock = types.SimpleNamespace(monotonic=iter([0, 0, 0, 61]).__next__)
+        with patch.object(e15, "time", clock), patch.object(
+            e15, "transactions_after", side_effect=TimeoutError("socket stalled")
+        ), patch.object(e15.asyncio, "sleep", new=AsyncMock()):
+            with self.assertRaisesRegex(RuntimeError, "exact Config receipt not observed"):
+                asyncio.run(e15.governance_receipt(
+                    "PQ vote", "faucet", "config", 10, 20,
+                    {"id": {"seqno": 10}}, self.FakeCell()))
 
 
 if __name__ == "__main__":

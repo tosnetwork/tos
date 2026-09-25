@@ -97,18 +97,23 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def rpc_call(rpc_method: str, **params):
+def rpc_call(rpc_method: str, *, rpc_timeout: float = 10, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=rpc_timeout) as resp:
             raw, status = resp.read(), resp.status
     except urllib.error.HTTPError as error:
         raw, status = error.read(), error.code
         record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
                      "status": status, "request_base64": base64.b64encode(body).decode(),
                      "response_base64": base64.b64encode(raw).decode()})
+        raise
+    except (TimeoutError, urllib.error.URLError) as error:
+        record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
+                     "transport_error": repr(error),
+                     "request_base64": base64.b64encode(body).decode()})
         raise
     record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
                  "status": status, "request_base64": base64.b64encode(body).decode(),
@@ -139,8 +144,9 @@ def last_lt(address: str) -> int:
     return int((info.get("last_transaction_id") or {}).get("lt", 0))
 
 
-def transactions_after(address: str, baseline_lt: int) -> list[dict]:
-    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+def transactions_after(address: str, baseline_lt: int, *, rpc_timeout: float = 10) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10,
+                    rpc_timeout=rpc_timeout)["result"]
     return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
 
 
@@ -178,8 +184,14 @@ async def governance_receipt(label: str, faucet_addr: str, config_addr: str,
     wallet_tx = config_tx = outgoing = None
     scanned_wallet = scanned_config = 0
     while time.monotonic() < deadline:
-        wallet_rows = transactions_after(faucet_addr, faucet_lt)
-        config_rows = transactions_after(config_addr, config_lt)
+        try:
+            wallet_rows = transactions_after(
+                faucet_addr, faucet_lt, rpc_timeout=max(0.1, min(10, deadline - time.monotonic())))
+            config_rows = transactions_after(
+                config_addr, config_lt, rpc_timeout=max(0.1, min(10, deadline - time.monotonic())))
+        except (TimeoutError, urllib.error.URLError):
+            await asyncio.sleep(1)
+            continue
         scanned_wallet, scanned_config = len(wallet_rows), len(config_rows)
         sends = [tx for tx in wallet_rows if any(
             same_addr(msg.get("destination"), config_addr)
