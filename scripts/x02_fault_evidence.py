@@ -34,6 +34,7 @@ SHARD = "8000000000000000"
 RPC_SHARD = str(-(1 << 63))
 PHASES = ("baseline", "three_of_four", "two_of_four", "recovery")
 SOURCE_FILES = ("scripts/x02_fault_evidence.py", "scripts/x02_prepare_policy.py",
+                "scripts/x02_directed_run.py",
                 "scripts/validator-election-stage-a.py",
                 "test/tostester/src/tostester/network.py",
                 "test/tostester/src/tostester/log_streamer.py")
