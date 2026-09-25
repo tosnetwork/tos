@@ -519,6 +519,12 @@ pub struct GetBlockHeaderRes {
     #[serde(rename = "@type")]
     pub r#type: Option<String>,
     #[serde(default)]
+    pub id: Option<BlockIdExt>,
+    /// Exact predecessor identities from the verified block-header proof.
+    /// Absent on older JSON-RPC nodes; ancestry consumers must fail closed.
+    #[serde(default)]
+    pub prev_blocks: Option<Vec<BlockIdExt>>,
+    #[serde(default)]
     pub gen_utime: u32,
 }
 
