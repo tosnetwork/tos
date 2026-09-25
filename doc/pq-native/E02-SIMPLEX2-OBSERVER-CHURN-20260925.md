@@ -1,7 +1,13 @@
 # E02 retained route: Simplex2 observer churn
 
-Status: local route PASS on `c4f381584c163fbbe501764eca44f09dc270a39b`;
+Status: enhanced-route local PASS on
+`446940f187b1f93d276297c514aaeaee3e039111`;
 this is not a release-scale finality, restart-recovery, or fork-identity test.
+The earlier status was "local route PASS on `c4f381584`". That run really did
+pass the then-current script, but its verdict did not enforce each node's
+progress, exact observer lifecycle pairing, or different cc_seqno values. It
+is retained below as historical evidence, not substituted for the enhanced
+rerun.
 The retained raw artifacts are under
 `build/simplex2-release/e02-c4f381584-20260925T0010Z/`.
 
@@ -92,3 +98,64 @@ be inferred from this PASS. Four masterchain heights over the sample are not
 a consensus-cadence measurement: the lite-server observations include local
 application and query/exposure delay. E02 is limited to the advertised
 observer-churn route and its actual assertions.
+
+## Stronger verdict and exact-tree rerun
+
+The original `c4f381584` logs were re-parsed with the new checks before the
+source change: all seven nodes progressed 2→6, all seven had zero lifecycle
+errors, and their created groups covered cc_seqno 1–7. This retrospective
+calculation established that the logs contain the needed observations; it did
+not make the old script's verdict a lasting gate.
+
+Commit `446940f18` changes the route to require **each** of seven nodes to
+progress, to match every local create→start→destroy transition in log order by
+the exact `(shard, cc_seqno, ADNL)` tuple, and to see at least two distinct
+created `cc_seqno` values. Live groups need not be destroyed at the observation
+horizon. ANSI log-color suffixes are removed before parsing. The new summary
+reports per-node lifecycle errors and cc_seqno sets as well as the aggregate.
+Five unit tests plus the startup tests passed 7/7 on committed source (raw
+SHA-256 `229e4533d1597c28d56b8b7c42e076151a9d019effe66ced40bfb2ba3347ae36`).
+Four separate one-change mutations to `446940f18` all made the targeted
+tests red; their unique patches and raw outputs are retained alongside the
+earlier run:
+
+| Mutation | Patch SHA-256 | Red raw SHA-256 |
+| --- | --- | --- |
+| Route no longer consumes integrity verdict | `172c84007df5b3cb72b193d567be716a62ed2c344f50026560082d43f534df51` | `f183cef5318f48d75d3d52c51b5a9e54ec5510b4f419423b672a36b4c9caa24d` |
+| Ignore mismatched lifecycle identities | `55ef0d7cda6ba6bf8bdc552a1945e1424bc02d49e22722466f37a28d999232d1` | `f89a062f770ba4fb902630260eaf09b6058dfb2e04e0faf13e5b2259f76b0863` |
+| Permit a non-progressing node | `1424bdb33e7ec5942d43fffcc8c2cb8cba73c43d123a31792879b50da2950d11` | `fe683e6f75b97591e5602b843f756bd5ed96b7655430e625b7c7c6f2e83132ba` |
+| Accept only one cc_seqno | `c1aa8c355b061a45bb24f18c5fb6c1be0be2fd7c06158a14eb3383c7a38977c3` | `c93590959907ba994c832f7248908006e10037c6990eb08a3f2a0aeefabf2add` |
+
+The rerun from `446940f18` used the same command/options above with
+`--artifact-dir build/simplex2-release/e02-446940f18-20260925T0030Z/run`.
+This directory label was reserved ahead of time; the raw command log records
+the actual run clock. Build raw SHA-256 is
+`fb871222d4002e934edcf914789313fda3667ac819e5a9fa9fe9f0b2195a6f47`;
+route source SHA-256 is
+`da922ed3c42b69b47da136b4fd74e6f55bedc98dd71d0c23f95150059e26cf75`;
+`validator-engine` is
+`5bda7a4d02cdefec7917245887fb2ba9fb7eb702a8329d19ac051d38e9b3d426`
+and `dht-server` is
+`97b7879ae15f8a932a04f1b670f0588537c2b377e981977902b517db76ff0462`.
+The complete stdout/stderr SHA-256 is
+`d1bd80ea4fa99f5865e44a805e82b64a151091cf3ea8677c24dc3ffba5648051`,
+exit code 0; `run/summary.json` SHA-256 is
+`fada237e2d2a3c391f3c5ea4e71750bae1b405bac51df28092518e475d163360`.
+Its own `git_commit` is exactly `446940f18`, verdict `PASS`, failures empty.
+All seven nodes moved 2→6; maximum sampled spread was 1. The route recorded
+18 created, 18 started, 15 destroyed exact groups, zero lifecycle errors,
+and distinct cc_seqno 1–6. The 18 groups versus 21 in the earlier run are
+two observed runs, not a correction of one count. Refusals remained zero.
+The eight raw process logs and node databases remain in the new run directory.
+The stronger verdict still does not assert FinalCert/proof acceptance,
+restart recovery, or equal-height block-hash identity.
+
+One further pairing direction remained after that rerun: a create with no
+matching start was allowed at the observation horizon. The test added for that
+case failed on `446940f18` (raw SHA-256
+`595297bdc276e163b5cb770da9e37f1aa2b568c845e3fdc85882046f00dd494b`).
+Commit `0296e2dd7` rejects that dangling create; all eight targeted tests
+passed (raw SHA-256
+`e8826ddf071536d75e282d791d15a7e1d8c8d6b92c8b22ddeaf8b6d4ea1e8182`).
+The `446940f18` run's logs were retrospectively rechecked and had no dangling
+creates, but its verdict cannot stand in for a fresh run of the final script.
