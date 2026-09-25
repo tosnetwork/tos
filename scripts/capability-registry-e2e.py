@@ -27,9 +27,12 @@ Run from the repository root: uv run python scripts/capability-registry-e2e.py
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -49,6 +52,7 @@ WORKDIR = REPO / "test/integration/.capability-registry-e2e"
 RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000003"
 NANO = 1_000_000_000
@@ -63,6 +67,37 @@ NEW_METADATA_HASH = "77" * 32
 NEW_VERIFICATION_METHOD_HASH = "88" * 32
 
 failures: list[str] = []
+
+
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e09_negative_finality.py").read_bytes()).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+        "rpc_transcript": RPC_TRANSCRIPT.name,
+        "cli_transcript": CLI_TRANSCRIPT.name,
+        "negative_evidence": NEGATIVE_EVIDENCE.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E09 real-chain run requires a clean tracked source tree")
 
 
 def check(label: str, ok: bool, detail: str = ""):
@@ -115,7 +150,74 @@ def last_lt(address: str) -> int:
 
 def transactions_after(address: str, baseline_lt: int) -> list[dict]:
     rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if len(rows) == 10 and all(
+        int(row["transaction_id"]["lt"]) > baseline_lt for row in rows
+    ):
+        raise RuntimeError("registry transaction page did not cover baseline")
     return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+def unique_registry_send(wallet_rows: list[dict], address: str) -> dict | None:
+    sends = [row for row in wallet_rows if any(
+        same_addr(message.get("destination"), address)
+        for message in row.get("out_msgs", []))]
+    if len(sends) > 1:
+        raise RuntimeError("multiple wallet sends to registry")
+    for row in wallet_rows:
+        if sends and row is sends[0]:
+            continue
+        incoming = row.get("in_msg") or {}
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or row.get("out_msgs")):
+            raise RuntimeError("unrelated wallet transaction after registry send")
+    return sends[0] if sends else None
+
+
+def validate_registry_bounces(wallet_rows: list[dict], wallet_tx: dict,
+                              registry_tx: dict, payer: str, address: str) -> None:
+    if len(wallet_tx.get("out_msgs") or []) != 1:
+        raise RuntimeError("registry wallet send has extra outbound messages")
+    bounces = registry_tx.get("out_msgs") or []
+    if len(bounces) > 1 or any(
+        message.get("bounced") is not True
+        or not same_addr(message.get("source"), address)
+        or not same_addr(message.get("destination"), payer)
+        or not message.get("hash") for message in bounces
+    ):
+        raise RuntimeError("registry emitted unexpected bounce messages")
+    expected_hashes = {message["hash"] for message in bounces}
+    observed_hashes: set[str] = set()
+    for row in wallet_rows:
+        if row is wallet_tx:
+            continue
+        incoming = row.get("in_msg") or {}
+        bounce_hash = incoming.get("hash")
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or not same_addr(incoming.get("destination"), payer)
+                or row.get("out_msgs")
+                or not bounce_hash
+                or bounce_hash not in expected_hashes
+                or bounce_hash in observed_hashes):
+            raise RuntimeError("wallet credit is not this registry's bounce")
+        observed_hashes.add(bounce_hash)
+
+
+async def await_registry_bounce(wallet_tx: dict, registry_tx: dict,
+                                payer: str, address: str) -> dict | None:
+    if not registry_tx.get("out_msgs"):
+        return None
+    baseline = int(wallet_tx["transaction_id"]["lt"])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        rows = transactions_after(payer, baseline)
+        if rows:
+            validate_registry_bounces([wallet_tx, *rows], wallet_tx,
+                                      registry_tx, payer, address)
+            return rows[0]
+        await asyncio.sleep(1)
+    raise RuntimeError("exact registry bounce not observed before next operation")
 
 
 def balance(addr: str) -> int:
@@ -264,9 +366,10 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
     while time.monotonic() < deadline:
         wallet_rows = transactions_after(payer, wallet_lt)
         if wallet_rows:
-            if len(wallet_rows) != 1:
-                raise RuntimeError(f"{label}: wallet history contains multiple new transactions")
-            wallet_tx = wallet_rows[0]
+            wallet_tx = unique_registry_send(wallet_rows, address)
+            if wallet_tx is None:
+                await asyncio.sleep(1)
+                continue
             outgoing = wallet_tx.get("out_msgs") or []
             if (wallet_tx.get("aborted") is not False
                     or wallet_tx.get("compute", {}).get("success") is not True
@@ -279,8 +382,11 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
                 if len(registry_rows) != 1:
                     raise RuntimeError(f"{label}: multiple new registry transactions")
                 registry_tx = registry_rows[0]
-                if (registry_tx.get("in_msg") or {}).get("hash") != outgoing[0].get("hash"):
+                incoming = registry_tx.get("in_msg") or {}
+                if (incoming.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(incoming.get("source"), payer)):
                     raise RuntimeError(f"{label}: registry inbound hash differs from wallet outbound")
+                validate_registry_bounces(wallet_rows, wallet_tx, registry_tx, payer, address)
                 break
         await asyncio.sleep(1)
     if registry_tx is None or wallet_tx is None:
@@ -305,10 +411,12 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
             await asyncio.sleep(1)
     if len(observations) != 2:
         raise RuntimeError(f"{label}: finalized masterchain did not advance twice")
+    bounce_tx = await await_registry_bounce(wallet_tx, registry_tx, payer, address)
     record_jsonl(NEGATIVE_EVIDENCE, {"label": label, "expected_exit": expected_exit,
                  "cli_receipt": receipt, "before_state": before_state,
                  "before_head": before_head, "wallet_transaction": wallet_tx,
-                 "registry_transaction": registry_tx, "observations": observations})
+                 "registry_transaction": registry_tx,
+                 "bounce_transaction": bounce_tx, "observations": observations})
     check(label, True)
 
 
@@ -469,6 +577,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging

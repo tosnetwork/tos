@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import io
 import json
@@ -56,6 +57,73 @@ def contract_tx(exit_code: int = 1800) -> dict:
 
 
 class NegativeFinalityTests(unittest.TestCase):
+    def test_manifest_binds_source_binaries_and_refuses_dirty_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            validator = root / "validator-engine/validator-engine"
+            dht = root / "dht-server/dht-server"
+            validator.parent.mkdir()
+            dht.parent.mkdir()
+            validator.write_bytes(b"validator")
+            dht.write_bytes(b"dht")
+            tosctl = root / "tosctl"
+            tosctl.write_bytes(b"tosctl")
+            path = root / "manifest.json"
+            with patch.object(e09, "BUILD_DIR", root), patch.object(e09, "TOSCTL", str(tosctl)), patch.object(
+                e09, "MANIFEST", path
+            ), patch.object(e09.subprocess, "check_output", return_value="fixed-sha\n"), patch.object(
+                e09.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)
+            ):
+                e09.write_manifest()
+            manifest = json.loads(path.read_text())
+            self.assertEqual(manifest["source_commit"], "fixed-sha")
+            self.assertFalse(manifest["source_tracked_dirty"])
+            self.assertEqual(manifest["binaries"]["tosctl"]["sha256"],
+                             hashlib.sha256(b"tosctl").hexdigest())
+            with patch.object(e09, "BUILD_DIR", root), patch.object(e09, "TOSCTL", str(tosctl)), patch.object(
+                e09, "MANIFEST", path
+            ), patch.object(e09.subprocess, "check_output", return_value="fixed-sha\n"), patch.object(
+                e09.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)
+            ):
+                with self.assertRaisesRegex(RuntimeError, "clean tracked source tree"):
+                    e09.write_manifest()
+
+    def test_bounce_matches_exact_registry_output_and_precedes_next_baseline(self):
+        send = wallet_tx()
+        registry = contract_tx()
+        registry["out_msgs"] = [{"source": "0:abc", "destination": "0:payer",
+                                 "bounced": True, "hash": "exact-bounce"}]
+        bounce = {"transaction_id": {"lt": "13"}, "out_msgs": [], "in_msg": {
+            "source": "0:abc", "destination": "0:payer",
+            "bounced": True, "hash": "exact-bounce",
+        }}
+        wrong = dict(bounce, in_msg=dict(bounce["in_msg"], hash="wrong-bounce"))
+        with patch.object(e09, "same_addr", side_effect=lambda left, right: left == right):
+            e09.validate_registry_bounces([bounce, send], send, registry,
+                                          "0:payer", "0:abc")
+            with self.assertRaisesRegex(RuntimeError, "not this registry's bounce"):
+                e09.validate_registry_bounces([wrong, send], send, registry,
+                                              "0:payer", "0:abc")
+            with self.assertRaisesRegex(RuntimeError, "not this registry's bounce"):
+                e09.validate_registry_bounces([bounce, dict(bounce), send], send, registry,
+                                              "0:payer", "0:abc")
+            with patch.object(e09, "transactions_after", side_effect=[[], [bounce]]) as transactions, patch.object(
+                e09.asyncio, "sleep", new=AsyncMock()
+            ):
+                self.assertEqual(asyncio.run(e09.await_registry_bounce(
+                    send, registry, "0:payer", "0:abc")), bounce)
+            self.assertEqual(transactions.call_count, 2)
+            send["out_msgs"].append({"destination": "0:other", "hash": "other"})
+            with self.assertRaisesRegex(RuntimeError, "extra outbound"):
+                e09.validate_registry_bounces([bounce, send], send, registry,
+                                              "0:payer", "0:abc")
+
+    def test_full_transaction_page_without_baseline_is_refused(self):
+        rows = [{"transaction_id": {"lt": str(20 - index)}} for index in range(10)]
+        with patch.object(e09, "rpc_call", return_value={"result": rows}):
+            with self.assertRaisesRegex(RuntimeError, "did not cover baseline"):
+                e09.transactions_after("0:payer", 10)
+
     def run_case(self, *, transaction=None, send_error=None, states=None, heads=None,
                  transaction_rows=None):
         send = AsyncMock(side_effect=send_error, return_value="submitted")
