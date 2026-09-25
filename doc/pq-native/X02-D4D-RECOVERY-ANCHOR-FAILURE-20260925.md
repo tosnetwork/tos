@@ -27,6 +27,16 @@ All 20 exact ADNL+QUIC rules installed and each showed positive drop counts;
 `0296b73923b6129fdb50a4d06d979dbbeee01c0a3899f19a68d5976775bf47a9`;
 `lo` returned to root `noqueue` with no egress filters.
 
+The enclosing Stage A run ended naturally at 22:05:41 UTC with separate
+`RuntimeError: validator experiment ended with 8 outstanding allocations`,
+exit 1. Its console SHA-256 is
+`c95d64faf50b4b6a9c6a6bb22d43f01aa8e4190638fdb6f7866ccfea3e9019d0`;
+report SHA-256 is
+`24133363c7963fa3539ea4cb060b7a56239997d41866c4444f43ed9512fdd098`.
+All validator/runner processes exited and `lo` remained `noqueue` with no
+egress filters. Stage A reward settlement and X02 fault-window verdict are
+separate: neither failure is silently relabeled as a chain safety result.
+
 Raw common heights were baseline H41, 3/4 H42/H43/H46, then four 2/4
 samples all H47 after the frozen 30-second drain. The first recovery raw
 sample (`sample-08-recovery.json`, SHA-256
