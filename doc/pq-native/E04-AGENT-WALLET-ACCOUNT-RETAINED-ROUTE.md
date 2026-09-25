@@ -209,8 +209,9 @@ The clean and mutant raw logs are in
 `test/integration/.e04-agent-wallet-negative-controls-20260925/` with SHA-256
 `4b9317cbdc17d473ea845a793b568d3ad01a1562c618caa11926795941535830`
 and `e69016396a2008c866051583a6d8e34d3cf654e0e2cda55c01743f2851e9c471`.
-These controls are not yet real-chain E04 evidence; the fixed-tree full run is
-still required before this entry can close.
+At that stage these controls were not yet real-chain E04 evidence. The later
+`0e2f4bc90` full run above supplies the local-network route evidence; fixed
+CI and independent signoff remain separate.
 
 The first full run from committed `c951856a6` exited 1 earlier, at `agent
 wallet fund --name agent-1 --from funder --amount 2 --yes`; it never reached
@@ -235,8 +236,8 @@ Again, the CLI's 15-second seqno timeout was a false negative, not a failed
 transfer; no ambiguous funding message was resent. `AgentWalletFundCmd` now
 uses the same single-send exact-hash/destination confirmation. Its routing
 control and six existing exact-confirmation tests pass 8/8, while restoring
-the old one-send/short-seqno structure makes the routing control red. A new
-fixed-tree E04 runtime run is still required.
+the old one-send/short-seqno structure makes the routing control red. The later
+`0e2f4bc90` full run exercises this path.
 
 The next run, from committed `e2e4b2e9a`, exited 1 later. Its complete console
 is `test/integration/.e04-agent-wallet-e2e4b2e9a-20260925-console.typescript`
@@ -263,9 +264,9 @@ The second run used committed `be74e9cc6` with the same command and built binari
 
 The script SHA-256 at `be74e9cc6` is `c4b422a1d2ee962d97428f7aed1ca51bc4f5769e425f761fc1eeb38bbcf3f876`; validator-engine and tosctl binary hashes were `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb38a8` and `5d9a333f927416688d1fc09f89673a2e4a15c8c0e02597d244d78af3fe1fb956`.
 
-## Why a one-line fixture retry cannot clear it
+## Why the earlier one-line fixture retry could not clear it
 
-`ControllerActionJournal::reconcile_finalized_state` rejects a sequence advancing past any unresolved exact action. The product `agent account native-resolve` requires the primary config plus at least two **distinct** single-endpoint RPC configs, compares exact finalized transaction observations by quorum and then records a resolved exact winner. The current E04 network has one node and one JSON-RPC endpoint; copying that endpoint under aliases would not provide independent chain views. The resolver's present search matches the primary submitted BOC and its outbound transfer, so it does not itself establish a cancellation-wins resolution. Clearing or replacing the custody journal to let later commands proceed would erase the protection this route needs to exercise.
+`ControllerActionJournal::reconcile_finalized_state` rejects a sequence advancing past any unresolved exact action. The product `agent account native-resolve` requires the primary config plus at least two **distinct** single-endpoint RPC configs, compares exact finalized transaction observations by quorum and then records a resolved exact winner. At `be74e9cc6` the E04 fixture had one node and one JSON-RPC endpoint; copying that endpoint under aliases would not have provided independent process views. The resolver's present search matches the primary submitted BOC and its outbound transfer, so it does not itself establish a cancellation-wins resolution. Clearing or replacing the custody journal to let later commands proceed would erase the protection this route needs to exercise. The later fixture adds two observer processes and isolates terminal cancellation/expiry accounts while preserving the main account's continuous custody history.
 
 ## Historical scope decision
 
