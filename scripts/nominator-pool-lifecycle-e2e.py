@@ -2665,6 +2665,12 @@ class PoolLifecycle:
         network.config.shard_validators = 4
         network.config.validator_economics_profile = True
         network.config.validator_election_stage_a_profile = True
+        # Funding/deploying the live pool fixture can consume the 600-second
+        # default first set before its initial election accepts a stake. Keep
+        # ConfigParam 15 accelerated, but leave enough first-set time for the
+        # fixture to enter that election before its close; later sets remain
+        # 300 seconds as configured by the production genesis dictionary.
+        network.config.bootstrap_validator_set_valid_for = 1200
         network.config.global_version = 16
         network.config.validator_controller_code_hash = self.controller_code.hash
 

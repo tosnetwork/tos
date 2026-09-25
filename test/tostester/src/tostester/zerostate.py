@@ -74,10 +74,10 @@ class NetworkConfig:
     )  # Simplex enabled
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
     # TEST-ONLY: normally a one-validator local chain uses a one-hour
-    # bootstrap validator set.  Long-running acceptance tests without a
-    # validator-election exercise must opt in to a longer set explicitly;
-    # otherwise their signatures cease to have an active ConfigParam 34
-    # backing after that hour.  None preserves the historical genesis bytes.
+    # bootstrap validator set. Long-running ordinary tests and accelerated
+    # Stage A fixtures may opt in to a different first-set lifetime; this
+    # does not change ConfigParam 15 or subsequent election durations.
+    # None preserves the historical genesis bytes.
     bootstrap_validator_set_valid_for: int | None = None
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
@@ -496,9 +496,9 @@ def create_zerostate(
         raise ValueError("validator election Stage A profile requires validator economics profile")
     bootstrap_valid_for = config.bootstrap_validator_set_valid_for
     if bootstrap_valid_for is not None:
-        if config.validator_economics_profile:
+        if config.validator_economics_profile and not config.validator_election_stage_a_profile:
             raise ValueError(
-                "bootstrap validator-set lifetime override is only for the ordinary local profile"
+                "bootstrap validator-set lifetime override requires the ordinary local or Stage A profile"
             )
         if (
             isinstance(bootstrap_valid_for, bool)
@@ -580,6 +580,8 @@ def create_zerostate(
             # this profile to generate a production zerostate.
             profile["election_params"] = "300 180 60 180"
             profile["original_vset_valid_for"] = 600
+            if bootstrap_valid_for is not None:
+                profile["original_vset_valid_for"] = bootstrap_valid_for
             if experiment_faucet_balance is not None:
                 profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
                 profile["expected_genesis_supply"] = str(

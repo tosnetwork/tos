@@ -298,6 +298,41 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
     ) == (250, 250, 1000, 21)
 
 
+def test_stage_a_can_extend_only_the_bootstrap_set_without_changing_election_params(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        shard_validators=EXPECTED_VALIDATOR_COUNT,
+        validator_economics_profile=True,
+        validator_election_stage_a_profile=True,
+        bootstrap_validator_set_valid_for=1200,
+    )
+    zerostate = create_zerostate(
+        install, tmp_path, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    validator_set = _config(state, 34, ConfigParam34).cur_validators
+    assert validator_set.utime_until - validator_set.utime_since == 1200
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (300, 180, 60, 180)
+
+
+def test_validator_economics_without_stage_a_rejects_bootstrap_lifetime_override(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        validator_economics_profile=True,
+        bootstrap_validator_set_valid_for=1200,
+    )
+    with pytest.raises(ValueError, match="ordinary local or Stage A profile"):
+        create_zerostate(
+            install, tmp_path, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+        )
+
+
 def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path):
     install = Install(BUILD_DIR, REPO)
     keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]

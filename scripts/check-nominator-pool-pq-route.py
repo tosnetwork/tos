@@ -83,6 +83,8 @@ def validate(source: str) -> None:
             "fixture no longer prepares five controller identities")
     require("network.config.validator_controller_code_hash = self.controller_code.hash" in ast.unparse(bring_up),
             "Genesis no longer admits the compiled controller code")
+    require("network.config.bootstrap_validator_set_valid_for = 1200" in ast.unparse(bring_up),
+            "pool fixture no longer leaves a 1200-second first-set stake window")
     provision = one_call(bring_up, "make_deterministic_pq_initial_validator")
     spare = one_call(bring_up, "make_deterministic_pq_spare_validator")
     require(keyword(provision, "validator_id") == "controller.address.hash_part",
