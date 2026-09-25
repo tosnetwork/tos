@@ -1686,7 +1686,16 @@ class ValidatorElectionRehearsal:
         self.x01_trace["recovery_halt_checkpoint"] = checkpoint
         trace_path = self.x01_directory / "trace.json"
         write_json_atomic(trace_path, self.x01_trace)
-        result = validate_x01_window(self.x01_policy, self.x01_trace)
+        generations = {"validators": [
+            {"node_name": node.name,
+             "node_data_dir": self.x01_policy["nodes"][node.name]["node_data_dir"],
+             "pq_key_id_hex": self.x01_policy["nodes"][node.name]["pq_key_id_hex"],
+             "adnl_id_hex": self.x01_policy["nodes"][node.name]["adnl_id_hex"],
+             "rpc_address": self.x01_policy["nodes"][node.name]["endpoint"],
+             "process_generations": self.f01_process_generations[node.name]}
+            for node in self.nodes]}
+        result = validate_x01_window(self.x01_policy, self.x01_trace,
+                                     generation_manifest=generations)
         result.update({"policy_sha256": self.x01_policy_sha256,
                        "trace_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest()})
         write_json_atomic(self.x01_directory / "check.json", result)

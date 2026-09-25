@@ -47,6 +47,104 @@ def utc_time(value: object, label: str) -> datetime:
     return parsed
 
 
+def proc_identity(raw_base64: object, label: str) -> tuple[int, int]:
+    try:
+        raw = base64.b64decode(raw_base64, validate=True)
+        prefix, suffix = raw.rsplit(b") ", 1)
+        pid = int(prefix.split(b" (", 1)[0])
+        fields = suffix.split()
+        start_ticks = int(fields[19])  # /proc/<pid>/stat field 22
+    except (TypeError, ValueError, IndexError) as error:
+        raise ValueError(f"{label}: raw /proc PID/start ticks are malformed") from error
+    if pid <= 0 or start_ticks <= 0 or fields[0] not in (b"R", b"S", b"D", b"I", b"T"):
+        raise ValueError(f"{label}: raw /proc PID/start ticks are invalid")
+    return pid, start_ticks
+
+
+def require_generations(policy: dict, manifest: dict, os_records: list[dict] | None) -> dict[str, list[dict]]:
+    nodes = policy["nodes"]
+    validators = manifest.get("validators") if isinstance(manifest, dict) else None
+    if (not isinstance(validators, list) or len(validators) != 4
+            or {row.get("node_name") for row in validators if isinstance(row, dict)} != set(nodes)):
+        raise ValueError("X01 requires four F01 process-generation identities")
+    result = {}
+    seen_process = set()
+    seen_cwd = {}
+    exe_identity = set()
+    for validator in validators:
+        node = validator["node_name"]
+        fixed = nodes[node]
+        if any(validator.get(key) != fixed.get(policy_key) for key, policy_key in (
+                ("node_data_dir", "node_data_dir"), ("pq_key_id_hex", "pq_key_id_hex"),
+                ("adnl_id_hex", "adnl_id_hex"), ("rpc_address", "endpoint"))):
+            raise ValueError(f"{node}: F01 generation owner/PQ/ADNL/RPC differs from policy")
+        generations = validator.get("process_generations")
+        if not isinstance(generations, list) or not generations:
+            raise ValueError(f"{node}: F01 process generations are absent")
+        previous_ticks = 0
+        previous_time = None
+        for index, row in enumerate(generations):
+            if not isinstance(row, dict):
+                raise ValueError(f"{node}: F01 generation is malformed")
+            pid, ticks = row.get("pid"), row.get("proc_start_ticks")
+            at = utc_time(row.get("recorded_at"), f"{node} generation")
+            cwd = (row.get("proc_cwd_device"), row.get("proc_cwd_inode"))
+            exe = (row.get("exe_device"), row.get("exe_inode"))
+            if (row.get("node_name") != node or type(row.get("generation")) is not int
+                    or row["generation"] != index
+                    or type(pid) is not int or pid <= 0 or type(ticks) is not int or ticks <= previous_ticks
+                    or (pid, ticks) in seen_process or previous_time is not None and at <= previous_time
+                    or row.get("node_data_dir") != fixed["node_data_dir"]
+                    or row.get("proc_cwd_link") != fixed["node_data_dir"]
+                    or row.get("proc_cwd_realpath") != fixed["node_data_dir"]
+                    or any(type(value) is not int or value <= 0 for value in cwd + exe)
+                    or row.get("exe_path") != fixed["validator_engine_exe_path"]):
+                raise ValueError(f"{node}: F01 PID/start/cwd/binary generation is inconsistent")
+            prior_owner = seen_cwd.setdefault(cwd, node)
+            if prior_owner != node:
+                raise ValueError("X01 validator DB cwd inode is shared across nodes")
+            exe_identity.add(exe)
+            seen_process.add((pid, ticks))
+            previous_ticks, previous_time = ticks, at
+        if fixed["initial_pid"] not in [row["pid"] for row in generations]:
+            raise ValueError(f"{node}: frozen policy PID has no F01 generation")
+        result[node] = generations
+    if len(exe_identity) != 1:
+        raise ValueError("X01 validator executable inode changed across generations")
+    if os_records is not None:
+        if not isinstance(os_records, list) or len(os_records) != len(seen_process):
+            raise ValueError("X01 independent OS process generations are incomplete")
+        os_by_process = {}
+        for row in os_records:
+            if not isinstance(row, dict) or (row.get("pid"), row.get("proc_start_ticks")) in os_by_process:
+                raise ValueError("X01 independent OS process generation is duplicated")
+            key = (row.get("pid"), row.get("proc_start_ticks"))
+            if key not in seen_process or proc_identity(row.get("proc_stat_raw_base64"), "OS watcher") != key:
+                raise ValueError("X01 independent OS /proc PID/start ticks differ")
+            os_by_process[key] = row
+        for node, generations in result.items():
+            fixed = nodes[node]
+            for row in generations:
+                witness = os_by_process[(row["pid"], row["proc_start_ticks"])]
+                try:
+                    argv = base64.b64decode(witness["proc_cmdline_raw_base64"], validate=True).rstrip(b"\0").split(b"\0")
+                    args = [arg.decode() for arg in argv]
+                except (KeyError, TypeError, ValueError, UnicodeDecodeError) as error:
+                    raise ValueError(f"{node}: independent OS argv is malformed") from error
+                if (any(witness.get(key) != row.get(key) for key in (
+                        "exe_path", "exe_device", "exe_inode", "proc_cwd_link",
+                        "proc_cwd_realpath", "proc_cwd_device", "proc_cwd_inode"))
+                        or witness.get("exe_sha256") != fixed["validator_engine_exe_sha256"]
+                        or not args or args[0] != fixed["validator_engine_exe_path"]
+                        or not all((flag in args and args.index(flag) + 1 < len(args)
+                                    and args[args.index(flag) + 1] == value) for flag, value in (
+                            ("--db", "."),
+                            ("--local-config", fixed["node_data_dir"] + "/config.json"),
+                            ("--json-rpc-address", fixed["endpoint"])))):
+                    raise ValueError(f"{node}: independent OS cwd/DB/PQ binary or RPC owner differs")
+    return result
+
+
 def require_process_events(trace: dict, collection: str, phase: str,
                            expected: set[str], nodes: dict) -> dict[str, dict]:
     events = trace.get(collection)
@@ -87,14 +185,10 @@ def require_process_events(trace: dict, collection: str, phase: str,
                                  or observation["old_pid"] <= 0
                                  or observation["old_pid"] == observation["pid"])):
             raise ValueError(f"{phase}: process raw evidence did not prove a hit")
-        try:
-            stat = base64.b64decode(observation["proc_stat_base64"], validate=True)
-            stat_pid = int(stat.split(b" (", 1)[0])
-            state = stat.rsplit(b") ", 1)[1].split(b" ", 1)[0]
-        except (KeyError, TypeError, ValueError, IndexError) as error:
-            raise ValueError(f"{phase}: raw /proc PID evidence is malformed") from error
-        if stat_pid != observation["pid"] or state not in (b"R", b"S", b"D", b"I", b"T"):
+        stat_pid, start_ticks = proc_identity(observation.get("proc_stat_base64"), phase)
+        if stat_pid != observation["pid"]:
             raise ValueError(f"{phase}: raw /proc PID evidence disagrees with process event")
+        observation["_start_ticks"] = start_ticks
         observation["_at"] = utc_time(observation.get("at"), f"{phase} process event")
         result[row["node"]] = observation
     return result
@@ -172,7 +266,8 @@ def window_seconds(trace: dict, phase: str) -> float:
     return (last - first).total_seconds()
 
 
-def validate(policy: dict, trace: dict) -> dict:
+def validate(policy: dict, trace: dict, *, generation_manifest: dict | None = None,
+             os_process_generations: list[dict] | None = None) -> dict:
     if policy.get("schema") != "tos.x01.window-policy.v1":
         raise ValueError("X01 policy schema is missing")
     nodes = policy.get("nodes")
@@ -199,6 +294,9 @@ def validate(policy: dict, trace: dict) -> dict:
                    or int(value, 16) == 0 for value in binary_hashes)
             or len(set(binary_hashes)) != 1):
         raise ValueError("X01 validator binary provenance is absent or inconsistent")
+    generations = require_generations(
+        policy, generation_manifest if generation_manifest is not None
+        else trace.get("process_generation_manifest"), os_process_generations)
     thresholds = policy.get("thresholds")
     if not isinstance(thresholds, dict):
         raise ValueError("X01 thresholds are absent")
@@ -258,9 +356,33 @@ def validate(policy: dict, trace: dict) -> dict:
     if last_three >= first_two or last_two >= first_recovery_start:
         raise ValueError("X01 fault windows overlap or are out of order")
     node4 = ordered[3]
+    def generation_index(node: str, event: dict, label: str) -> int:
+        matches = [index for index, row in enumerate(generations[node])
+                   if (row["pid"], row["proc_start_ticks"])
+                   == (event["pid"], event["_start_ticks"])]
+        if len(matches) != 1:
+            raise ValueError(f"{label}: PID/start ticks has no unique F01 generation")
+        recorded = utc_time(generations[node][matches[0]]["recorded_at"], label)
+        if (label.endswith("stop") and recorded > event["_at"]
+                or label in ("3/4 restart", "recovery start") and recorded < event["_at"]):
+            raise ValueError(f"{label}: F01 process generation time contradicts its event")
+        return matches[0]
+    initial_node4_index = next(i for i, row in enumerate(generations[node4])
+                               if row["pid"] == nodes[node4]["initial_pid"])
     if (stop_three[node4]["pid"] != nodes[node4]["initial_pid"]
-            or stop_two[ordered[2]]["pid"] != nodes[ordered[2]]["initial_pid"]):
-        raise ValueError("X01 stopped process differs from pre-fault PID identity")
+            or generation_index(node4, stop_three[node4], "3/4 stop") != initial_node4_index):
+        raise ValueError("X01 3/4 stop differs from frozen process generation")
+    start_three_index = generation_index(node4, start_three[node4], "3/4 restart")
+    stop_two_node4_index = generation_index(node4, stop_two[node4], "2/4 node4 stop")
+    stop_two_node3_index = generation_index(ordered[2], stop_two[ordered[2]], "2/4 node3 stop")
+    if start_three_index != stop_two_node4_index or start_three_index != initial_node4_index + 1:
+        raise ValueError("X01 node4 restarted generation did not reach 2/4 stop")
+    if stop_two_node3_index < next(i for i, row in enumerate(generations[ordered[2]])
+                                   if row["pid"] == nodes[ordered[2]]["initial_pid"]):
+        raise ValueError("X01 node3 stop precedes frozen process generation")
+    for node, stopped_index in ((node4, stop_two_node4_index), (ordered[2], stop_two_node3_index)):
+        if generation_index(node, start_recovery[node], "recovery start") != stopped_index + 1:
+            raise ValueError(f"X01 {node} recovery skipped a process generation")
     if stop_three[node4]["_at"] > first_three:
         raise ValueError("3/4 stop time follows the first sample")
     if (last_three - stop_three[node4]["_at"]).total_seconds() > thresholds["three_max_seconds"]:
@@ -292,6 +414,8 @@ def validate(policy: dict, trace: dict) -> dict:
         "three_first": three[0], "three_last": three[-1],
         "halt_tail_id": halted[-1], "halt_samples": len(halted),
         "recovery_last": recovered[-1], "nodes": ordered,
+        "process_generations": {node: len(rows) for node, rows in generations.items()},
+        "independent_os_checked": os_process_generations is not None,
     }
 
 
@@ -302,15 +426,29 @@ def main() -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--expected-policy-sha256", required=True,
                         help="policy digest recorded before the fault run")
+    parser.add_argument("--f01-manifest", type=Path, required=True)
+    parser.add_argument("--expected-f01-manifest-sha256", required=True)
+    parser.add_argument("--os-process-generations", type=Path, required=True)
+    parser.add_argument("--expected-os-process-generations-sha256", required=True)
     args = parser.parse_args()
     policy_bytes = args.policy.read_bytes()
     policy_digest = hashlib.sha256(policy_bytes).hexdigest()
     if args.expected_policy_sha256 != policy_digest:
         raise ValueError("X01 policy differs from pre-fixed SHA-256")
     trace_bytes = args.trace.read_bytes()
-    report = validate(json.loads(policy_bytes), json.loads(trace_bytes))
+    manifest_bytes = args.f01_manifest.read_bytes()
+    os_bytes = args.os_process_generations.read_bytes()
+    if hashlib.sha256(manifest_bytes).hexdigest() != args.expected_f01_manifest_sha256:
+        raise ValueError("X01 F01 manifest SHA-256 differs")
+    if hashlib.sha256(os_bytes).hexdigest() != args.expected_os_process_generations_sha256:
+        raise ValueError("X01 independent OS process generation SHA-256 differs")
+    report = validate(json.loads(policy_bytes), json.loads(trace_bytes),
+                      generation_manifest=json.loads(manifest_bytes),
+                      os_process_generations=[json.loads(line) for line in os_bytes.splitlines()])
     report["policy_sha256"] = policy_digest
     report["trace_sha256"] = hashlib.sha256(trace_bytes).hexdigest()
+    report["f01_manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
+    report["os_process_generations_sha256"] = hashlib.sha256(os_bytes).hexdigest()
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return 0
 

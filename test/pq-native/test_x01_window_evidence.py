@@ -23,6 +23,37 @@ def block(height, root=None):
     }
 
 
+def stat_bytes(pid):
+    # /proc stat fields 3..22; field 22 is the final token here.
+    return f"{pid} (validator-engine) S " + " ".join(["1"] * 18 + [str(pid * 10)])
+
+
+def generation(policy, node, index, pid, recorded_at):
+    fixed = policy["nodes"][node]
+    return {"node_name": node, "generation": index, "pid": pid,
+            "proc_start_ticks": pid * 10, "node_data_dir": fixed["node_data_dir"],
+            "proc_cwd_link": fixed["node_data_dir"], "proc_cwd_realpath": fixed["node_data_dir"],
+            "proc_cwd_device": 2049, "proc_cwd_inode": int(node[-1]) + 100,
+            "exe_path": fixed["validator_engine_exe_path"], "exe_device": 2049,
+            "exe_inode": 500, "recorded_at": recorded_at}
+
+
+def os_witnesses(policy, trace):
+    witnesses = []
+    for validator in trace["process_generation_manifest"]["validators"]:
+        node = validator["node_name"]
+        fixed = policy["nodes"][node]
+        for row in validator["process_generations"]:
+            args = [fixed["validator_engine_exe_path"], "--db", ".", "--local-config",
+                    fixed["node_data_dir"] + "/config.json", "--json-rpc-address", fixed["endpoint"]]
+            witnesses.append({**row, "exe_sha256": fixed["validator_engine_exe_sha256"],
+                              "proc_stat_raw_base64": base64.b64encode(
+                                  stat_bytes(row["pid"]).encode()).decode(),
+                              "proc_cmdline_raw_base64": base64.b64encode(
+                                  ("\0".join(args) + "\0").encode()).decode()})
+    return witnesses
+
+
 def fixture():
     names = [f"node{i}" for i in range(1, 5)]
     policy = {
@@ -60,7 +91,7 @@ def fixture():
                           "pq_key_id_hex": f"{int(node[-1]):064x}",
                           "adnl_id_hex": f"{int(node[-1]) + 10:064x}",
                           "exe_path": "/tmp/build/validator-engine", "exe_sha256": "a" * 64,
-                          "proc_stat_base64": base64.b64encode(f"{pid} (validator-engine) S 1 1 1".encode()).decode(),
+                          "proc_stat_base64": base64.b64encode(stat_bytes(pid).encode()).decode(),
                           "running_after": False}, sort_keys=True).encode()
         return {"phase": phase, "node": node, "kind": "process_stopped",
                 "hit": True, "raw_evidence_sha256": hashlib.sha256(raw).hexdigest(),
@@ -75,7 +106,7 @@ def fixture():
                           "pq_key_id_hex": f"{int(node[-1]):064x}",
                           "adnl_id_hex": f"{int(node[-1]) + 10:064x}",
                           "exe_path": "/tmp/build/validator-engine", "exe_sha256": "a" * 64,
-                          "proc_stat_base64": base64.b64encode(f"{pid} (validator-engine) S 1 1 1".encode()).decode()},
+                          "proc_stat_base64": base64.b64encode(stat_bytes(pid).encode()).decode()},
                          sort_keys=True).encode()
         return {"phase": phase, "node": node, "kind": "process_started",
                 "hit": True, "raw_evidence_sha256": hashlib.sha256(raw).hexdigest(),
@@ -96,10 +127,58 @@ def fixture():
         },
         "recovery_halt_checkpoint": {name: block(12) for name in names},
     }
+    trace["process_generation_manifest"] = {"validators": [
+        {"node_name": name, "node_data_dir": policy["nodes"][name]["node_data_dir"],
+         "pq_key_id_hex": policy["nodes"][name]["pq_key_id_hex"],
+         "adnl_id_hex": policy["nodes"][name]["adnl_id_hex"],
+         "rpc_address": policy["nodes"][name]["endpoint"],
+         "process_generations": (
+             [generation(policy, name, 0, policy["nodes"][name]["initial_pid"], "2026-09-25T11:59:58Z")]
+             + ([generation(policy, name, 1, 4005, "2026-09-25T12:00:01.300000Z"),
+                 generation(policy, name, 2, 4006, "2026-09-25T12:00:09.700000Z")]
+                if name == "node4" else
+                [generation(policy, name, 1, 3006, "2026-09-25T12:00:09.700000Z")]
+                if name == "node3" else []))}
+        for name in names]}
     return policy, trace
 
 
 class X01WindowTests(unittest.TestCase):
+    def test_planned_node3_generation_is_accepted_only_with_exact_raw_start_ticks(self):
+        policy, trace = fixture()
+        self.rewrite_raw(trace["faults"][1], pid=3005,
+                         proc_stat_base64=base64.b64encode(stat_bytes(3005).encode()).decode())
+        self.rewrite_raw(trace["restarts"][1], old_pid=3005)
+        node3 = trace["process_generation_manifest"]["validators"][2]["process_generations"]
+        node3.insert(1, generation(policy, "node3", 1, 3005, "2026-09-25T12:00:01.300000Z"))
+        node3[2]["generation"] = 2
+        self.assertTrue(x01.validate(policy, trace)["passed"])
+        node3[1]["proc_start_ticks"] += 1
+        with self.assertRaisesRegex(ValueError, "PID/start ticks has no unique F01 generation"):
+            x01.validate(policy, trace)
+
+    def test_generation_cwd_alias_and_missing_witness_fail_closed(self):
+        policy, trace = fixture()
+        del trace["process_generation_manifest"]
+        with self.assertRaisesRegex(ValueError, "requires four F01"):
+            x01.validate(policy, trace)
+        policy, trace = fixture()
+        trace["process_generation_manifest"]["validators"][2]["process_generations"][0]["proc_cwd_inode"] = 101
+        with self.assertRaisesRegex(ValueError, "DB cwd inode is shared"):
+            x01.validate(policy, trace)
+
+    def test_independent_os_watcher_binds_db_binary_and_start_ticks(self):
+        policy, trace = fixture()
+        witnesses = os_witnesses(policy, trace)
+        self.assertTrue(x01.validate(policy, trace, os_process_generations=witnesses)["independent_os_checked"])
+        witnesses[0]["proc_cwd_inode"] = 999
+        with self.assertRaisesRegex(ValueError, "independent OS cwd/DB"):
+            x01.validate(policy, trace, os_process_generations=witnesses)
+        witnesses = os_witnesses(policy, trace)
+        witnesses[0]["proc_stat_raw_base64"] = base64.b64encode(stat_bytes(9999).encode()).decode()
+        with self.assertRaisesRegex(ValueError, "independent OS /proc PID/start ticks"):
+            x01.validate(policy, trace, os_process_generations=witnesses)
+
     def test_good_fault_window(self):
         policy, trace = fixture()
         result = x01.validate(policy, trace)
@@ -253,7 +332,7 @@ class X01WindowTests(unittest.TestCase):
     def test_recovery_start_after_sample_is_rejected(self):
         policy, trace = fixture()
         self.rewrite_raw(trace["restarts"][1], at="2026-09-25T13:00:00Z")
-        with self.assertRaisesRegex(ValueError, "start time"):
+        with self.assertRaisesRegex(ValueError, "start time|generation time"):
             x01.validate(policy, trace)
 
     def test_recovery_wait_before_first_sample_counts_against_window(self):
@@ -302,7 +381,7 @@ class X01WindowTests(unittest.TestCase):
             x01.validate(policy, trace)
         policy, trace = fixture()
         self.rewrite_raw(trace["faults"][0], proc_stat_base64=base64.b64encode(
-            b"9999 (validator-engine) S 1 1 1").decode())
+            stat_bytes(9999).encode()).decode())
         with self.assertRaisesRegex(ValueError, "raw /proc PID evidence disagrees"):
             x01.validate(policy, trace)
         policy, trace = fixture()
