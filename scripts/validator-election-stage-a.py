@@ -1319,6 +1319,14 @@ class ValidatorElectionRehearsal:
         assert self.client is not None
         return (await self.client.raw_get_account_state(address)).balance
 
+    async def wait_pool_capital(self, address: Address, amount: int, label: str) -> int:
+        """Wait for the destination shard to expose a funded pool after wallet seqno advances."""
+        return await self.retry(
+            lambda: self.balance(address), timeout=60,
+            description=f"{label} pool capital at least {amount}",
+            predicate=lambda value: value >= amount,
+        )
+
     async def wallet_seqno(self, wallet: WalletV1) -> int:
         return (await wallet.current).seqno
 
@@ -2818,11 +2826,9 @@ class ValidatorElectionRehearsal:
                     wallet, dest=pool.address, amount=capital_amount,
                     body=Cell.empty(), label=f"validator-{index + 1}-pool-capital",
                 )
-                capital = await self.balance(pool.address)
-                if capital < capital_amount:
-                    raise AssertionError(
-                        f"validator {index + 1} pool capital {capital} is below its stake order"
-                    )
+                await self.wait_pool_capital(
+                    pool.address, capital_amount, f"validator {index + 1}"
+                )
             self.event(
                 "pq_fixture_accounts_deployed",
                 validator=index + 1,

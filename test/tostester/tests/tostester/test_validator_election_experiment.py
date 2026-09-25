@@ -77,6 +77,33 @@ def test_pq_full_genesis_faucet_is_budgeted_and_checked_before_elections(tmp_pat
     assert rehearsal.events[-1]["genesis_budget"] == expected
 
 
+def test_pool_capital_waits_for_destination_balance_after_wallet_seqno(tmp_path, monkeypatch):
+    rehearsal = stage_a.ValidatorElectionRehearsal(
+        run_dir=tmp_path / "pool-capital", base_port=26_000,
+        build_dir=REPO / "build", sample_interval=10,
+        profile=stage_a.PROFILES["a"], pq_election=True, pq_full=True,
+    )
+    address = stage_a.Address((-1, bytes([0x44]) * 32))
+    observations = iter((10 * stage_a.NANO, 11_030 * stage_a.NANO))
+    seen = []
+
+    async def balance(actual):
+        assert actual == address
+        value = next(observations)
+        seen.append(value)
+        return value
+
+    monkeypatch.setattr(rehearsal, "balance", balance)
+    async def no_delay(_):
+        return None
+
+    monkeypatch.setattr(stage_a.asyncio, "sleep", no_delay)
+    result = asyncio.run(rehearsal.wait_pool_capital(
+        address, 11_020 * stage_a.NANO, "validator 2"))
+    assert result == 11_030 * stage_a.NANO
+    assert seen == [10 * stage_a.NANO, 11_030 * stage_a.NANO]
+
+
 def test_pq_stake_reply_queries_are_distinct_across_elections(tmp_path, monkeypatch):
     rehearsal = stage_a.ValidatorElectionRehearsal(
         run_dir=tmp_path / "pq-round-queries", base_port=26_000,
