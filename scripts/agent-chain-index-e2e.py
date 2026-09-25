@@ -237,6 +237,11 @@ async def poll_http_predicate(path: str, predicate, timeout: float) -> tuple[boo
     return False, last_body
 
 
+def indexed_through(body: dict, masterchain_seqno: int) -> bool:
+    indexed = body.get("result", {}).get("masterchain_indexed")
+    return type(indexed) is int and indexed >= masterchain_seqno
+
+
 def prepare_config(config: Path, http_bind: str | None):
     """Generate a base tosctl config and patch it for this run: point
     chain_rpc at the localnet, disable elections/voting so `tosctl service`
@@ -332,6 +337,7 @@ async def run_checks(faucet) -> None:
           config_b_json.get("capability_registries", {}) == {},
           str(config_b_json.get("capability_registries")))
     deployment_mc_seqno = int(rpc_call("getMasterchainInfo")["result"]["last"]["seqno"])
+    print(f"  deployment masterchain anchor: {deployment_mc_seqno}")
 
     print("\n=== start config-b's tosctld HTTP daemon (never ran agent task create) ===")
     env = dict(os.environ)
@@ -344,6 +350,16 @@ async def run_checks(faucet) -> None:
         check("config-b tosctld health endpoint ready", await wait_http_ready())
         check("config-b tosctld process remains alive", service_proc.returncode is None,
               f"returncode={service_proc.returncode}")
+
+        cursor_ready, cursor_body = await poll_http_predicate(
+            "/explorer/status",
+            lambda body: indexed_through(body, deployment_mc_seqno),
+            # The retained failed run indexed MC 30 of 55 in roughly two
+            # minutes; this waits for the named anchor, not a fixed sleep.
+            timeout=240.0,
+        )
+        check("config-b index cursor covers the deployment masterchain anchor",
+              cursor_ready, f"anchor={deployment_mc_seqno} body={cursor_body}")
 
         print("\n=== GET /tasks on config-b discovers config-a's Task Escrow ===")
         found, body = await poll_http_predicate(
@@ -378,10 +394,8 @@ async def run_checks(faucet) -> None:
                   str(entry))
 
         status, index_after = await http_get_async("/explorer/status")
-        progress = index_after.get("result", {})
         check("config-b masterchain index cursor advanced",
-              status == 200 and isinstance(progress.get("masterchain_indexed"), int)
-              and progress["masterchain_indexed"] >= deployment_mc_seqno,
+              status == 200 and indexed_through(index_after, deployment_mc_seqno),
               f"status={status} body={index_after}")
 
         status, body = await http_get_async("/tasks?status=not-a-task-status")

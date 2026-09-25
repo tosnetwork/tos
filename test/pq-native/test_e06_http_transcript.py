@@ -50,6 +50,15 @@ class Response:
 
 
 class HttpTranscriptTests(unittest.TestCase):
+    def test_deployment_anchor_requires_real_index_progress(self):
+        self.assertFalse(e06.indexed_through(
+            {"result": {"masterchain_indexed": 30}}, 31))
+        self.assertTrue(e06.indexed_through(
+            {"result": {"masterchain_indexed": 31}}, 31))
+        self.assertFalse(e06.indexed_through(
+            {"result": {"masterchain_indexed": True}}, 31))
+        self.assertFalse(e06.indexed_through({"result": {}}, 31))
+
     def test_records_exact_success_and_error_bodies(self):
         good = b'{"result":[{"address":"0:abc"}],"ok":true}'
         bad = b'{"error":"invalid query"}\n'
