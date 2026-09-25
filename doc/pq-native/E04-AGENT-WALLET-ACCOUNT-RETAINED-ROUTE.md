@@ -83,6 +83,23 @@ control and six existing exact-confirmation tests pass 8/8, while restoring
 the old one-send/short-seqno structure makes the routing control red. A new
 fixed-tree E04 runtime run is still required.
 
+The next run, from committed `e2e4b2e9a`, exited 1 later. Its complete console
+is `test/integration/.e04-agent-wallet-e2e4b2e9a-20260925-console.typescript`
+(SHA-256 `6a0577f6d595bad7a4ede003fe69e60958d64b5e89e9d623df1f543249a01e0c`);
+its node DB is retained under the same-prefix `-network/` directory. The run
+passes Agent Wallet funding/activation, exact Gift submission and native quorum
+resolution, exact cancellation winner on a separate Agent Account, first
+controller task-send delivery, **and the originally timed-out update-policy
+command plus both live policy-field assertions**. It stops only when the
+post-rotation second task-send is refused with `controller sequence advanced
+while an exact action is unresolved`: the first task-send delivered but its
+custody record had not yet been resolved. This is a correct fail-closed refusal,
+not a stake or consensus failure. The retained route now calls the production
+`task-send-resolve` with the same three distinct RPC configs after each
+delivered task-send and checks the exact source, destination, amount and quorum
+before continuing. The next fixed-tree run must prove that resolution works;
+no custody journal is cleared or rewritten by the fixture.
+
 The first run used committed `a0a9fd52b` with `TOS_BUILD_DIR=build`, `PYTHONPATH=test/tostester/src`, and the retained command `uv run python -u scripts/agent-wallet-account-e2e.py` under `script -q -e -f`. Its full output is `test/integration/.e04-agent-wallet-a0a9fd52b-20260925/console.typescript` (SHA-256 `3476e5dc07228dd9b30d38cda2ec169d51eb5981f656fe78a72a18187d0663c6`); process exit was 1. Six provision/status checks passed. The second invocation of `agent account native-prepare` for the same action failed with `ambiguous broadcast must be resolved from finalized state`. The node directory is preserved under that run directory's `network/`, not deleted.
 
 That refusal follows `AgentAccountNativePrepareCmd::run`: after journaling the exact signed BOC, it calls `begin_broadcast` **before printing the BOC**. `ControllerActionJournal::begin_broadcast` refuses a second call while the record is Broadcasting. The first script assumed that invoking `native-prepare` again was an exact-BOC retry, but the safe retry is reusing the first printed BOC. Commit `be74e9cc6` changes the script accordingly and asserts the second preparation refuses for the precise ambiguity reason; it does not weaken production custody.

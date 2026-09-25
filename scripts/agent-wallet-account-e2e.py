@@ -418,6 +418,7 @@ async def run_checks(faucet, node) -> None:
           and transaction.get("transaction_lt", 0) > 0
           and bool(transaction.get("block_root_hash")),
           str(native_resolution))
+    print("  native three-view resolution:", json.dumps(native_resolution, sort_keys=True))
 
     print("\n=== isolated same-seqno cancellation wins and original Gift stays unpaid ===")
     # A cancellation winner intentionally leaves the primary custody claim
@@ -478,6 +479,19 @@ async def run_checks(faucet, node) -> None:
     )
     check("controller-signed transfer delivered", await wait_balance_at_least(
         target, target_before + int(0.49 * NANO)))
+    first_task_resolution = await tosctl_action_json(
+        "agent", "account", "task-send-resolve", "--wallet", "agent-1",
+        "--action-id", "c" * 64, "--quorum-config",
+        str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
+    check("first task-send exact winner resolved before another controller action",
+          first_task_resolution.get("schema") == "tos.agent-account.task-send-finalized.v1"
+          and first_task_resolution.get("state") == "resolved"
+          and same_addr(first_task_resolution.get("source_account", ""), account)
+          and same_addr(first_task_resolution.get("destination", ""), target)
+          and first_task_resolution.get("amount_nanotos") == 500_000_000
+          and first_task_resolution.get("quorum", {}).get("agreeing", 0) >= 2,
+          str(first_task_resolution))
+    print("  first task three-view resolution:", json.dumps(first_task_resolution, sort_keys=True))
 
     print("\n=== update-policy: push a new policy to the deployed Agent Account ===")
     print("  (this is the exact path a previously-undetected bug broke: an internal")
@@ -504,6 +518,19 @@ async def run_checks(faucet, node) -> None:
     )
     check("post-rotation controller-signed transfer delivered", await wait_balance_at_least(
         target, target_before_2 + int(0.29 * NANO)))
+    second_task_resolution = await tosctl_action_json(
+        "agent", "account", "task-send-resolve", "--wallet", "agent-1",
+        "--action-id", "d" * 64, "--quorum-config",
+        str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
+    check("post-rotation task-send exact winner resolved",
+          second_task_resolution.get("schema") == "tos.agent-account.task-send-finalized.v1"
+          and second_task_resolution.get("state") == "resolved"
+          and same_addr(second_task_resolution.get("source_account", ""), account)
+          and same_addr(second_task_resolution.get("destination", ""), target)
+          and second_task_resolution.get("amount_nanotos") == 300_000_000
+          and second_task_resolution.get("quorum", {}).get("agreeing", 0) >= 2,
+          str(second_task_resolution))
+    print("  second task three-view resolution:", json.dumps(second_task_resolution, sort_keys=True))
 
     print("\n=== owner-authorized transfer (agent wallet send) ===")
     target_before_3 = balance(target)
