@@ -46,6 +46,7 @@ OBSERVER_CANDIDATES = re.compile(
     r"get_observer_adnl_ids size=(?P<count>\d+)"
 )
 OBSERVER_REFUSED = re.compile(r"refusing to create observer groups for (?P<reason>.+)")
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 FATAL_LOG = re.compile(
     r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|"
     r"UndefinedBehaviorSanitizer)\b",
@@ -65,6 +66,8 @@ class NodeEvidence:
     observer_policies: list[dict[str, object]]
     observer_candidate_counts: list[dict[str, object]]
     observer_refusals: list[str]
+    observer_cc_seqnos: list[int]
+    observer_lifecycle_errors: list[str]
     fatal_lines: list[str]
 
 
@@ -131,6 +134,56 @@ def _unique_records(records: list[dict[str, object]]) -> list[dict[str, object]]
             seen.add(key)
             unique.append(record)
     return unique
+
+
+def _observer_lifecycle(text: str) -> tuple[list[str], set[int]]:
+    """Pair each local group transition by shard, cc_seqno and ADNL identity."""
+    state: dict[tuple[str, int, str], str] = {}
+    errors: list[str] = []
+    created_cc_seqnos: set[int] = set()
+    for line in ANSI_ESCAPE.sub("", text).splitlines():
+        for label, pattern, expected, next_state in (
+            ("created", OBSERVER_CREATED, (None, "destroyed"), "created"),
+            ("started", OBSERVER_STARTED, ("created",), "started"),
+            ("destroyed", OBSERVER_DESTROYED, ("started",), "destroyed"),
+        ):
+            match = pattern.search(line)
+            if match is None:
+                continue
+            key = (match.group("shard"), int(match.group("cc_seqno")), match.group("adnl"))
+            prior = state.get(key)
+            if label == "created":
+                created_cc_seqnos.add(key[1])
+            if prior not in expected:
+                action = {
+                    "created": "created before prior group was destroyed",
+                    "started": "started without matching create",
+                    "destroyed": "destroyed without matching start",
+                }[label]
+                errors.append(f"{action}: {key}; prior={prior}")
+            state[key] = next_state
+            break
+    return errors, created_cc_seqnos
+
+
+def _observer_integrity_failures(
+    start_heights: list[int],
+    end_heights: list[int],
+    lifecycle_errors: list[list[str]],
+    cc_seqnos: list[set[int]],
+) -> list[str]:
+    if not (len(start_heights) == len(end_heights) == len(lifecycle_errors) == len(cc_seqnos)):
+        return ["observer evidence does not cover every queried node"]
+    failures = [
+        f"node {index} did not progress: {start} -> {end}"
+        for index, (start, end) in enumerate(zip(start_heights, end_heights), start=1)
+        if end <= start
+    ]
+    for index, errors in enumerate(lifecycle_errors, start=1):
+        failures.extend(f"node {index} observer lifecycle: {error}" for error in errors)
+    if len(set().union(*cc_seqnos)) < 2:
+        failures.append("observer groups did not cover two distinct cc_seqno values")
+    return failures
 
 
 def _fresh_artifact_dir(repo_root: Path, requested: Path | None) -> Path:
@@ -238,10 +291,11 @@ async def _observer_churn(args: argparse.Namespace) -> int:
 
         evidence: list[NodeEvidence] = []
         for index, node in enumerate(nodes):
-            text = node.log_path.read_text(errors="replace")
+            text = ANSI_ESCAPE.sub("", node.log_path.read_text(errors="replace"))
             created = _matches(text, OBSERVER_CREATED)
             started = _matches(text, OBSERVER_STARTED)
             destroyed = _matches(text, OBSERVER_DESTROYED)
+            lifecycle_errors, cc_seqnos = _observer_lifecycle(text)
             policies = _unique_records([
                 {
                     "shard": match.group("shard"),
@@ -283,6 +337,8 @@ async def _observer_churn(args: argparse.Namespace) -> int:
                     observer_policies=policies,
                     observer_candidate_counts=candidate_counts,
                     observer_refusals=refusals,
+                    observer_cc_seqnos=sorted(cc_seqnos),
+                    observer_lifecycle_errors=lifecycle_errors,
                     fatal_lines=fatal_lines,
                 )
             )
@@ -299,6 +355,8 @@ async def _observer_churn(args: argparse.Namespace) -> int:
         }
         fatal_total = sum(len(item.fatal_lines) for item in evidence)
         refusal_total = sum(len(item.observer_refusals) for item in evidence)
+        lifecycle_error_total = sum(len(item.observer_lifecycle_errors) for item in evidence)
+        distinct_cc_seqnos = set().union(*(item.observer_cc_seqnos for item in evidence))
         policy_samples = [
             {"node": item.node, **policy}
             for item in evidence
@@ -316,8 +374,12 @@ async def _observer_churn(args: argparse.Namespace) -> int:
         ]
 
         failures: list[str] = []
-        if min(end_heights) <= min(start_heights):
-            failures.append("masterchain did not progress on every node")
+        failures.extend(_observer_integrity_failures(
+            start_heights,
+            end_heights,
+            [item.observer_lifecycle_errors for item in evidence],
+            [set(item.observer_cc_seqnos) for item in evidence],
+        ))
         if max(end_heights) - min(end_heights) > 12:
             failures.append(f"final masterchain spread is too large: {end_heights}")
         if created_total == 0 or started_total == 0:
@@ -363,6 +425,8 @@ async def _observer_churn(args: argparse.Namespace) -> int:
                 "observer_started": started_total,
                 "observer_destroyed": destroyed_total,
                 "distinct_observer_sessions": len(distinct_sessions),
+                "distinct_observer_cc_seqnos": sorted(distinct_cc_seqnos),
+                "observer_lifecycle_error_count": lifecycle_error_total,
                 "observer_policy_samples": policy_samples,
                 "observer_candidate_samples": candidate_samples,
                 "observer_refusal_count": refusal_total,
@@ -384,6 +448,8 @@ async def _observer_churn(args: argparse.Namespace) -> int:
                     "observer_started": started_total,
                     "observer_destroyed": destroyed_total,
                     "distinct_observer_sessions": len(distinct_sessions),
+                    "distinct_observer_cc_seqnos": sorted(distinct_cc_seqnos),
+                    "observer_lifecycle_error_count": lifecycle_error_total,
                     "observer_policy_samples": policy_samples,
                     "observer_candidate_samples": candidate_samples,
                     "observer_refusal_count": refusal_total,
