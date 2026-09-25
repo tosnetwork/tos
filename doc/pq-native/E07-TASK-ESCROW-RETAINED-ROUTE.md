@@ -50,3 +50,29 @@ record those rows before raising. It therefore cannot yet distinguish a
 lagging baseline/unrelated transaction from a duplicate Task send. The next
 bounded diagnostic must save the exact pages and both baselines on this error
 before changing the acceptance predicate or sending another test message.
+
+The `764f7780901945f6320497eae7b7ae479839ce25` diagnostic rerun also
+exited 1 at that deliberately unchanged guard. Its raw console is
+`test/integration/.e07-task-escrow-764f77809-20260925-console.typescript`
+(SHA-256 `1effcbb0834ac0707717e91051567efdeb8de3390ce14495af59d67b9c5c3914`);
+its node data and the new raw receipt file are retained under
+`test/integration/.e07-task-escrow-764f77809-20260925-network/`.
+The receipt SHA-256 is
+`e28288a8f1afe1d576398c2ae2f45ec117b547d6325db7cab686f56e63997822`.
+It resolves the ambiguity: wallet LT `733000001` sent exactly one message to
+the timeout escrow, hash `WzWjl8j4TNCRAQRnlBqCm55BnmDmCDiZBHl/dXEmMcQ=`;
+escrow LT `733000003` received that same hash at chain time `1790319258`,
+aborted with VM exit 109 before deadline `1790319303`. Wallet LT `733000005`
+was **not another send**: its incoming message was a bounced credit from that
+escrow, with no outbound messages. Both wallet transactions share a block
+timestamp. The old instrument's `len(newer_wallet) > 1` counted the bounce as
+a duplicate send. This was a false negative in the test, not a protocol failure.
+
+The next code unit selects the unique wallet *outbound to this escrow* and
+allows only a same-escrow bounced credit as an additional wallet transaction;
+it still refuses a second outbound to the escrow, an unrelated wallet
+transaction, or a second escrow transaction. A 9/9 targeted unit run covers
+the genuine bounce and both refusal directions. The production code is
+unchanged. This local diagnostic does not yet prove the script's later
+expiry/refund and persisted-record checks, so E07 remains OPEN pending a new
+exact-tree full run, fixed-tree CI and independent review.

@@ -76,7 +76,7 @@ class TimeoutControlTests(unittest.TestCase):
         ), patch.object(e07, "send_op", send), tempfile.TemporaryDirectory() as directory, patch.object(
             e07, "WORKDIR", Path(directory)
         ):
-            with self.assertRaisesRegex(RuntimeError, "multiple new transactions"):
+            with self.assertRaisesRegex(RuntimeError, "unrelated wallet transaction"):
                 asyncio.run(e07.premature_timeout_control("e2e-timeout", 175, "0:wallet"))
             evidence = json.loads((Path(directory) / "e07-premature-timeout-ambiguous.json").read_text())
         self.assertEqual(evidence["newer_wallet_count"], 2)
@@ -85,6 +85,44 @@ class TimeoutControlTests(unittest.TestCase):
         self.assertEqual([row["transaction_id"]["lt"] for row in evidence["wallet_transactions"]],
                          ["12", "11", "10"])
         send.assert_awaited_once()
+
+    def test_same_escrow_bounce_does_not_count_as_second_send(self):
+        show = AsyncMock(return_value={"address": "0:escrow", "deadline": 175,
+                                       "status": "accepted"})
+        send = AsyncMock()
+
+        def bounced_refusal_rpc(method, **params):
+            response = rpc_reply(method, **params)
+            if method == "getTransactions" and params["address"] == "0:wallet":
+                response["result"].insert(0, {
+                    "transaction_id": {"lt": "12"}, "aborted": False,
+                    "in_msg": {"source": "0:escrow", "bounced": True},
+                    "out_msgs": [],
+                })
+            return response
+
+        with patch.object(e07, "task_show", show), patch.object(
+            e07, "finalized_mc_header", side_effect=[header(10, 100), header(11, 108)]
+        ), patch.object(e07, "norm_addr", side_effect=lambda x: x), patch.object(
+            e07, "rpc_call", side_effect=bounced_refusal_rpc
+        ), patch.object(e07, "send_op", send), tempfile.TemporaryDirectory() as directory, patch.object(
+            e07, "WORKDIR", Path(directory)
+        ):
+            asyncio.run(e07.premature_timeout_control("e2e-timeout", 175, "0:wallet"))
+            receipt = json.loads((Path(directory) / "e07-premature-timeout-receipts.json").read_text())
+        self.assertEqual(len(receipt["wallet_transactions"]), 3)
+        self.assertEqual(receipt["wallet_transaction"]["transaction_id"]["lt"], "11")
+        self.assertEqual(receipt["escrow_transaction"]["compute"]["exit_code"], 109)
+        send.assert_awaited_once()
+
+    def test_second_real_wallet_send_to_escrow_is_refused(self):
+        rows = [
+            {"out_msgs": [{"destination": "0:escrow", "hash": "first"}]},
+            {"out_msgs": [{"destination": "0:escrow", "hash": "second"}]},
+        ]
+        with patch.object(e07, "norm_addr", side_effect=lambda value: value):
+            with self.assertRaisesRegex(RuntimeError, "multiple wallet sends to escrow"):
+                e07.timeout_wallet_send(rows, "0:escrow")
 
     def test_controller_actions_have_distinct_ids_and_two_observer_configs(self):
         expected = {

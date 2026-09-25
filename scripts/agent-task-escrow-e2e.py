@@ -189,6 +189,26 @@ def transactions_after(address: str, baseline_lt: int) -> tuple[list[dict], list
     return rows, newer
 
 
+def timeout_wallet_send(newer_wallet: list[dict], escrow_address: str) -> dict | None:
+    """Select the sole send; a same-escrow bounce is a separate wallet credit."""
+    sends = [
+        row for row in newer_wallet
+        if any(same_addr(message.get("destination"), escrow_address)
+               for message in row.get("out_msgs", []))
+    ]
+    if len(sends) > 1:
+        raise RuntimeError("premature timeout control found multiple wallet sends to escrow")
+    for row in newer_wallet:
+        if sends and row is sends[0]:
+            continue
+        incoming = row.get("in_msg") or {}
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), escrow_address)
+                or row.get("out_msgs")):
+            raise RuntimeError("premature timeout control found an unrelated wallet transaction")
+    return sends[0] if sends else None
+
+
 async def premature_timeout_control(name: str, requested_deadline: int,
                                     creator_wallet: str) -> None:
     task = await task_show(name)
@@ -214,7 +234,11 @@ async def premature_timeout_control(name: str, requested_deadline: int,
     while time.monotonic() < until:
         wallet_rows, newer_wallet = transactions_after(creator_wallet, wallet_baseline_lt)
         escrow_rows, newer_escrow = transactions_after(address, baseline_lt)
-        if len(newer_wallet) > 1 or len(newer_escrow) > 1:
+        try:
+            candidate_wallet = timeout_wallet_send(newer_wallet, address)
+            if len(newer_escrow) > 1:
+                raise RuntimeError("premature timeout control found multiple escrow transactions")
+        except RuntimeError:
             (WORKDIR / "e07-premature-timeout-ambiguous.json").write_text(json.dumps({
                 "task": name, "task_address": address, "creator_wallet": creator_wallet,
                 "before_header": before, "deadline": deadline,
@@ -225,9 +249,9 @@ async def premature_timeout_control(name: str, requested_deadline: int,
                 "newer_wallet_count": len(newer_wallet),
                 "newer_escrow_count": len(newer_escrow),
             }, indent=2, sort_keys=True) + "\n")
-            raise RuntimeError("premature timeout control found multiple new transactions")
-        if newer_wallet and newer_escrow:
-            wallet_tx = newer_wallet[0]
+            raise
+        if candidate_wallet and newer_escrow:
+            wallet_tx = candidate_wallet
             tx = newer_escrow[0]
             out = [message for message in wallet_tx.get("out_msgs", [])
                    if same_addr(message.get("destination"), address)]
@@ -238,7 +262,7 @@ async def premature_timeout_control(name: str, requested_deadline: int,
             if wallet_tx["aborted"] or not wallet_tx["compute"]["success"] or not wallet_tx["action"]["success"]:
                 raise RuntimeError("premature timeout wallet message failed before escrow")
             break
-        if newer_escrow and not newer_wallet:
+        if newer_escrow and not candidate_wallet:
             # Both accounts may be read at different visible heads. Do not
             # assign an escrow transaction to a wallet send by timing alone.
             if int(newer_escrow[0]["utime"]) >= deadline:
