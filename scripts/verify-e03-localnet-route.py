@@ -25,9 +25,9 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def rpc(address, method, **params):
+def rpc(rpc_addr, method, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": method, "method": method, "params": params}).encode()
-    url = f"http://{address}/jsonRPC"
+    url = f"http://{rpc_addr}/jsonRPC"
     request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=8) as response:
         raw = response.read()

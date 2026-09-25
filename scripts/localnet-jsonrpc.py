@@ -22,6 +22,7 @@ import json
 import threading
 import time
 import os
+import re
 import urllib.request
 import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -45,14 +46,14 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 
 
-def rpc_call(rpc_addr: str, method: str, **params):
+def rpc_call(rpc_addr: str, method: str, *, timeout: float = 8, **params):
     """Read path identical to the Android wallet: POST http://<rpc>/jsonRPC."""
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{rpc_addr}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
             record_e03_http(req.full_url, body, resp.status, raw)
             return json.loads(raw.decode())
@@ -63,8 +64,8 @@ def rpc_call(rpc_addr: str, method: str, **params):
         raise
 
 
-def rpc_balance_nano(rpc_addr: str, address: str) -> int:
-    r = rpc_call(rpc_addr, "getAddressInformation", address=address)
+def rpc_balance_nano(rpc_addr: str, address: str, *, timeout: float = 8) -> int:
+    r = rpc_call(rpc_addr, "getAddressInformation", address=address, timeout=timeout)
     return int(r["result"]["balance"])
 
 
@@ -77,10 +78,16 @@ async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: fl
     deadline = time.monotonic() + timeout
     while True:
         try:
-            return await asyncio.to_thread(rpc_balance_nano, rpc_addr, address)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("fresh basechain account state was not readable within 40s")
+            return await asyncio.to_thread(rpc_balance_nano, rpc_addr, address,
+                                           timeout=min(8, remaining))
         except urllib.error.HTTPError as error:
             body = getattr(error, "json_rpc_body", b"").decode(errors="replace")
-            if error.code != 500 or "cannot load block" not in body or "not in db" not in body:
+            if error.code != 500 or not re.search(
+                r"cannot load block \(0,8000000000000000,0\):[^\n]+: not in db", body
+            ):
                 raise
             if time.monotonic() >= deadline:
                 raise TimeoutError("fresh basechain account state was not readable within 40s") from error

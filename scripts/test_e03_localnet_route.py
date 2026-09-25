@@ -26,10 +26,10 @@ async def test_missing_fresh_basechain_block_is_retried(monkeypatch):
     localnet = load_localnet()
     calls = []
 
-    def balance(*_):
+    def balance(*_, **__):
         calls.append(1)
         if len(calls) == 1:
-            raise http_error("getAccountState: cannot load block (0,...,0): not in db")
+            raise http_error("getAccountState: cannot load block (0,8000000000000000,0):abc : not in db")
         return 0
 
     monkeypatch.setattr(localnet, "rpc_balance_nano", balance)
@@ -42,7 +42,7 @@ async def test_unrelated_json_rpc_500_is_not_retried(monkeypatch):
     localnet = load_localnet()
     calls = []
 
-    def balance(*_):
+    def balance(*_, **__):
         calls.append(1)
         raise http_error("getAccountState: malformed account proof")
 
@@ -55,7 +55,26 @@ async def test_unrelated_json_rpc_500_is_not_retried(monkeypatch):
 @pytest.mark.asyncio
 async def test_missing_block_has_a_deadline(monkeypatch):
     localnet = load_localnet()
-    monkeypatch.setattr(localnet, "rpc_balance_nano", lambda *_: (_ for _ in ()).throw(
-        http_error("cannot load block (0,...,0): not in db")))
+    monkeypatch.setattr(localnet, "rpc_balance_nano", lambda *_, **__: (_ for _ in ()).throw(
+        http_error("cannot load block (0,8000000000000000,0):abc : not in db")))
     with pytest.raises(TimeoutError, match="not readable"):
-        await localnet.wait_initial_balance_readable("unused", "wallet", timeout=0)
+        await localnet.wait_initial_balance_readable("unused", "wallet", timeout=0.001)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("block", [
+    "(0,8000000000000000,1)",
+    "(-1,8000000000000000,0)",
+])
+async def test_other_missing_blocks_fail_immediately(monkeypatch, block):
+    localnet = load_localnet()
+    calls = []
+
+    def balance(*_, **__):
+        calls.append(1)
+        raise http_error(f"getAccountState: cannot load block {block}:abc : not in db")
+
+    monkeypatch.setattr(localnet, "rpc_balance_nano", balance)
+    with pytest.raises(urllib.error.HTTPError):
+        await localnet.wait_initial_balance_readable("unused", "wallet")
+    assert len(calls) == 1
