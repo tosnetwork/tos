@@ -32,7 +32,10 @@ NATIVE_TIME = re.compile(rb"\[(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\.\d{9})\]")
 PIPE_FD = re.compile(r"pipe:\[(\d+)\]\Z")
 SHARD = "8000000000000000"
 PHASES = ("baseline", "three_of_four", "two_of_four", "recovery")
-SOURCE_FILES = ("scripts/x02_fault_evidence.py", "scripts/validator-election-stage-a.py")
+SOURCE_FILES = ("scripts/x02_fault_evidence.py", "scripts/x02_prepare_policy.py",
+                "scripts/validator-election-stage-a.py",
+                "test/tostester/src/tostester/network.py",
+                "test/tostester/src/tostester/log_streamer.py")
 BOOT_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 BOOT_ID_COMPACT = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -168,7 +171,7 @@ def validate_policy(policy: dict) -> None:
     require(len({node["adnl_id"].lower() for node in nodes}) == 4,
             "ADNL identities are not distinct")
     if policy.get("log_source") == "native-file":
-        log_paths, log_inodes = set(), set()
+        log_paths, log_inodes, db_inodes = set(), set(), set()
         harnesses = set()
         for node in nodes:
             path = Path(node.get("log_path", ""))
@@ -186,7 +189,24 @@ def validate_policy(policy: dict) -> None:
             require(type(node.get("db_dev")) is int and node["db_dev"] > 0
                     and type(node.get("db_ino")) is int and node["db_ino"] > 0,
                     "validator DB device/inode is absent")
+            require((node["db_dev"], node["db_ino"]) not in db_inodes,
+                    "two validators share a DB directory inode")
+            db_inodes.add((node["db_dev"], node["db_ino"]))
             hex64(node.get("harness_exe_sha256"), "harness executable SHA")
+            stream = (manifest_nodes.get(node["name"]) or {}).get("raw_log_stream")
+            require(isinstance(stream, dict)
+                    and stream.get("harness_pid") == pid
+                    and stream.get("harness_start_ticks") == start
+                    and stream.get("input_fd") == node.get("input_fd")
+                    and stream.get("input_link") == node.get("input_link")
+                    and stream.get("output_fd") == node.get("output_fd")
+                    and type(node.get("input_fd")) is int and node["input_fd"] >= 0
+                    and type(node.get("output_fd")) is int and node["output_fd"] >= 0
+                    and stream.get("output_dev") == dev
+                    and stream.get("output_ino") == ino
+                    and isinstance(stream.get("input_link"), str)
+                    and PIPE_FD.fullmatch(stream["input_link"]) is not None,
+                    "Stage A does not bind this stderr pipe to this log writer FD")
             harnesses.add((pid, start))
         require(len(harnesses) == 1, "validators have different log-streamer harnesses")
     else:
@@ -338,19 +358,20 @@ def fault_event(policy: dict, policy_sha: str, rule_id: str, action: str) -> dic
 
 def require_source_commit(policy: dict) -> dict:
     repo = Path(__file__).resolve().parents[1]
-    source = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+    git = ["git", "-c", f"safe.directory={repo}", "-C", str(repo)]
+    source = subprocess.run([*git, "rev-parse", "HEAD"],
                             capture_output=True, text=True, check=True)
     require(source.stdout.strip() == policy["source_commit"],
             "running source commit differs from precommitted policy")
-    status = subprocess.run(["git", "-C", str(repo), "status", "--porcelain",
+    status = subprocess.run([*git, "status", "--porcelain",
                              "--untracked-files=no"], capture_output=True, check=True)
     require(status.stdout == b"", "tracked source tree has uncommitted changes")
     files = {}
     for name in SOURCE_FILES:
-        tracked = subprocess.run(["git", "-C", str(repo), "ls-files", "--error-unmatch", name],
+        tracked = subprocess.run([*git, "ls-files", "--error-unmatch", name],
                                  capture_output=True, check=False)
         require(tracked.returncode == 0, f"{name} is not tracked by fixed commit")
-        frozen = subprocess.run(["git", "-C", str(repo), "show", f"HEAD:{name}"],
+        frozen = subprocess.run([*git, "show", f"HEAD:{name}"],
                                 capture_output=True, check=True).stdout
         current = (repo / name).read_bytes()
         require(current == frozen, f"{name} bytes differ from fixed commit")
@@ -439,9 +460,14 @@ def native_log_origin(node: dict, log_stat: os.stat_result) -> dict:
         harness, (log_stat.st_dev, log_stat.st_ino))
     require(pipe_inode in harness_pipes,
             "harness does not hold the validator stderr pipe")
-    require(any(row["dev"] == log_stat.st_dev and row["ino"] == log_stat.st_ino
+    require(stderr_link == node["input_link"]
+            and any(row["fd"] == node["input_fd"] and row["link"] == stderr_link
+                    for row in harness_fds),
+            "this log streamer's input FD is not the validator stderr pipe")
+    require(any(row["fd"] == node["output_fd"]
+                and row["dev"] == log_stat.st_dev and row["ino"] == log_stat.st_ino
                 and stat.S_ISREG(row["mode"]) for row in harness_fds),
-            "harness does not hold the validator log file")
+            "this log streamer's output FD is not the validator log file")
     child_exe, harness_exe = (child / "exe").resolve(), (harness / "exe").resolve()
     child_cwd = (child / "cwd").resolve()
     require(child_cwd == Path(node["data_dir"]).resolve(),
@@ -586,8 +612,11 @@ def native_log_ids(row: dict, node: dict, previous: dict | None = None) -> dict[
             and _proc_start_ticks(harness) == node["harness_start_ticks"]
             and type(pipe) is int and pipe > 0
             and origin.get("stderr_link") == f"pipe:[{pipe}]"
-            and any(item.get("link") == f"pipe:[{pipe}]" for item in fds)
-            and any((item.get("dev"), item.get("ino")) == (row["dev"], row["ino"])
+            and origin.get("stderr_link") == node["input_link"]
+            and any(item.get("fd") == node["input_fd"]
+                    and item.get("link") == f"pipe:[{pipe}]" for item in fds)
+            and any(item.get("fd") == node["output_fd"]
+                    and (item.get("dev"), item.get("ino")) == (row["dev"], row["ino"])
                     and stat.S_ISREG(item.get("mode", 0)) for item in fds)
             and origin.get("cwd") == node["data_dir"]
             and (origin.get("cwd_dev"), origin.get("cwd_ino")) ==

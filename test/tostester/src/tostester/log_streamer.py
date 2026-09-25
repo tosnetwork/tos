@@ -58,6 +58,16 @@ class LogStreamer:
     async def aclose(self):
         await self._task
 
+    def fd_binding(self) -> dict[str, int]:
+        """Expose this streamer's exact pipe reader and raw-log writer FDs."""
+        transport = self._stream._transport
+        if transport is None:
+            raise RuntimeError("raw log input pipe is not attached")
+        pipe = transport.get_extra_info("pipe")
+        if pipe is None:
+            raise RuntimeError("raw log input pipe is unavailable")
+        return {"input_fd": pipe.fileno(), "output_fd": self._file.fileno()}
+
     async def _stream_log(self):
         leftover = bytearray()
 

@@ -33,6 +33,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import random
 import re
 import shutil
@@ -610,6 +611,27 @@ class ValidatorElectionRehearsal:
         peer_port = node.transport_ports[0]
         if rpc_address is not None and int(rpc_address.rsplit(":", 1)[1]) in node.transport_ports:
             raise ValueError(f"validator {index + 1} RPC port overlaps peer transport")
+        log_binding = None
+        if self.experiment is not None:
+            if node.process_id is None:
+                raise RuntimeError("experiment validator has no process for raw-log binding")
+            fds = node.log_stream_fd_binding
+            input_link = os.readlink(f"/proc/self/fd/{fds['input_fd']}")
+            child_link = os.readlink(f"/proc/{node.process_id}/fd/2")
+            if input_link != child_link or not input_link.startswith("pipe:["):
+                raise RuntimeError("validator stderr is not this log streamer's input pipe")
+            output_stat = os.fstat(fds["output_fd"])
+            log_stat = node.log_path.stat()
+            if (output_stat.st_dev, output_stat.st_ino) != (log_stat.st_dev, log_stat.st_ino):
+                raise RuntimeError("log streamer output FD is not this validator's raw log")
+            harness_stat = Path("/proc/self/stat").read_bytes()
+            log_binding = {
+                "harness_pid": os.getpid(),
+                "harness_start_ticks": int(harness_stat.rsplit(b") ", 1)[1].split()[19]),
+                "input_fd": fds["input_fd"], "input_link": input_link,
+                "output_fd": fds["output_fd"],
+                "output_dev": output_stat.st_dev, "output_ino": output_stat.st_ino,
+            }
         return {
             "validator_index": index + 1,
             "node_name": node.name,
@@ -619,6 +641,7 @@ class ValidatorElectionRehearsal:
             "peer_transport": {"protocol": "udp", "ip": "127.0.0.1", "port": peer_port},
             "node_data_dir": str(node.directory.resolve()),
             "process_id": node.process_id,
+            "raw_log_stream": log_binding,
             "operator_wallet_raw": raw_address(wallet.address),
             "operator_wallet_role": "funds pool capital and sends node-authorized pool orders",
             "pool_stake_owner_raw": raw_address(pool.address),

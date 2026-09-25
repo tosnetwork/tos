@@ -51,7 +51,10 @@ class NativeLogCursorTests(unittest.TestCase):
                      "log_path": str(self.log),
                      "log_dev": log_identity.st_dev, "log_ino": log_identity.st_ino,
                      "exe_sha256": sha(f"/proc/{self.child.pid}/exe"),
-                     "harness_exe_sha256": sha("/proc/self/exe")}
+                     "harness_exe_sha256": sha("/proc/self/exe"),
+                     "input_fd": self.child.stderr.fileno(),
+                     "input_link": os.readlink(f"/proc/self/fd/{self.child.stderr.fileno()}"),
+                     "output_fd": self.writer.fileno()}
 
     def _stop_child(self):
         if self.child.poll() is None:
@@ -107,6 +110,12 @@ class NativeLogCursorTests(unittest.TestCase):
         bad = dict(self.node, harness_pid=1)
         with self.assertRaisesRegex(ValueError, "parent"):
             x02.capture_native_log(bad)
+        wrong_input = dict(self.node, input_fd=self.writer.fileno())
+        with self.assertRaisesRegex(ValueError, "input FD"):
+            x02.capture_native_log(wrong_input)
+        wrong_output = dict(self.node, output_fd=self.child.stderr.fileno())
+        with self.assertRaisesRegex(ValueError, "output FD"):
+            x02.capture_native_log(wrong_output)
 
     def test_cross_node_log_alias_is_rejected_before_capture(self):
         self.append(b"line\n")

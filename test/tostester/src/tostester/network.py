@@ -251,6 +251,12 @@ class Network:
         def process_id(self) -> int | None:
             return None if self.__process is None else self.__process.pid
 
+        @property
+        def log_stream_fd_binding(self) -> dict[str, int]:
+            if self.__log_streamer is None:
+                raise RuntimeError("validator raw log streamer is not running")
+            return self.__log_streamer.fd_binding()
+
         @abstractmethod
         async def run(self, options: StartOptions | None = None):
             pass
