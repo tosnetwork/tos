@@ -26,11 +26,17 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/dispute-e2e.py
 """
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from tostester.install import Install
@@ -43,6 +49,10 @@ BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18946"
 WORKDIR = REPO / "test/integration/.dispute-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
+NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000005"
 NANO = 1_000_000_000
@@ -55,6 +65,35 @@ RULING_HASH = "44" * 32
 failures: list[str] = []
 
 
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e12_dispute_negative_finality.py").read_bytes()
+        ).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E12 real-chain run requires a clean tracked source tree")
+
+
 def check(label: str, ok: bool, detail: str = ""):
     if ok:
         print(f"  PASS: {label}")
@@ -64,16 +103,54 @@ def check(label: str, ok: bool, detail: str = ""):
 
 
 def rpc_call(method: str, **params):
-    import urllib.request
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    return json.loads(raw.decode())
 
 
-async def tosctl(*args: str, may_fail: bool = False) -> str:
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    return int(rpc_call("getAddressInformation", address=address)
+               ["result"]["last_transaction_id"]["lt"])
+
+
+def transactions_after(address: str, baseline_lt: int) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if (len(rows) == 10
+            and all(int(row["transaction_id"]["lt"]) > baseline_lt for row in rows)):
+        raise RuntimeError("dispute transaction page did not cover the pre-operation baseline")
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+async def tosctl(*args: str) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
@@ -84,8 +161,15 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
     except TimeoutError:
         proc.kill()
+        out, err = await proc.communicate()
+        record_jsonl(CLI_TRANSCRIPT, {"args": args, "timeout": True,
+                     "stdout_base64": base64.b64encode(out).decode(),
+                     "stderr_base64": base64.b64encode(err).decode()})
         raise RuntimeError(f"tosctl {' '.join(args)} timed out")
-    if proc.returncode != 0 and not may_fail:
+    record_jsonl(CLI_TRANSCRIPT, {"args": args, "exit_code": proc.returncode,
+                 "stdout_base64": base64.b64encode(out).decode(),
+                 "stderr_base64": base64.b64encode(err).decode()})
+    if proc.returncode != 0:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
@@ -178,11 +262,105 @@ async def dispute_show(name: str):
     return await tosctl_json("agent", "dispute", "show", "--name", name)
 
 
-async def send_op(operation: str, name: str, frm: str, *extra: str, may_fail: bool = False) -> str:
+async def send_op(operation: str, name: str, frm: str, *extra: str) -> str:
     return await tosctl(
         "agent", "dispute", "send", "--operation", operation, "--name", name,
-        "--from", frm, "--yes", *extra, may_fail=may_fail,
+        "--from", frm, "--yes", *extra,
     )
+
+
+async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
+                             operation: str, name: str, frm: str, *extra: str) -> None:
+    """Require wallet submission, the exact Dispute VM error, and finalized unchanged state."""
+    before_state = await dispute_show(name)
+    before_head = finalized_mc_header()
+    wallet_lt = last_lt(payer)
+    contract_lt = last_lt(address)
+    receipt = await send_op(operation, name, frm, *extra)
+    deadline = time.monotonic() + 45
+    wallet_tx = contract_tx = bounce_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(payer, wallet_lt)
+        if wallet_rows:
+            sends = [row for row in wallet_rows if any(
+                same_addr(msg.get("destination"), address)
+                for msg in row.get("out_msgs") or [])]
+            if len(sends) != 1:
+                raise RuntimeError(f"{label}: expected exactly one wallet send to dispute")
+            wallet_tx = sends[0]
+            outgoing = wallet_tx.get("out_msgs") or []
+            if (wallet_tx.get("aborted") is not False
+                    or wallet_tx.get("compute", {}).get("success") is not True
+                    or wallet_tx.get("action", {}).get("success") is not True
+                    or len(outgoing) != 1
+                    or not same_addr(outgoing[0].get("destination"), address)):
+                raise RuntimeError(f"{label}: wallet transaction did not send to dispute")
+            contract_rows = transactions_after(address, contract_lt)
+            if contract_rows:
+                if len(contract_rows) != 1:
+                    raise RuntimeError(f"{label}: multiple new dispute transactions")
+                contract_tx = contract_rows[0]
+                inbound = contract_tx.get("in_msg") or {}
+                if (inbound.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(inbound.get("source"), payer)):
+                    raise RuntimeError(f"{label}: dispute inbound hash differs from wallet outbound")
+                refunds = contract_tx.get("out_msgs") or []
+                if (len(refunds) != 1 or refunds[0].get("bounced") is not True
+                        or not same_addr(refunds[0].get("source"), address)
+                        or not same_addr(refunds[0].get("destination"), payer)):
+                    raise RuntimeError(f"{label}: dispute did not emit one exact bounce")
+                other_rows = [row for row in wallet_rows if row is not wallet_tx]
+                if len(other_rows) > 1:
+                    raise RuntimeError(f"{label}: unrelated or duplicate wallet transaction")
+                if other_rows:
+                    bounce_tx = other_rows[0]
+                    bounced = bounce_tx.get("in_msg") or {}
+                    if (bounced.get("hash") != refunds[0].get("hash")
+                            or bounced.get("bounced") is not True
+                            or not same_addr(bounced.get("source"), address)
+                            or not same_addr(bounced.get("destination"), payer)
+                            or bounce_tx.get("out_msgs")):
+                        raise RuntimeError(f"{label}: wallet credit is not the dispute's exact bounce")
+                    break
+        await asyncio.sleep(1)
+    if contract_tx is None or wallet_tx is None or bounce_tx is None:
+        raise RuntimeError(f"{label}: exact wallet-dispute-bounce chain not observed")
+    compute = contract_tx.get("compute") or {}
+    if (contract_tx.get("aborted") is not True
+            or compute.get("success") is not False
+            or compute.get("exit_code") != expected_exit):
+        raise RuntimeError(f"{label}: expected VM exit {expected_exit}, got {contract_tx}")
+
+    observations = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(observations) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            state = await dispute_show(name)
+            observations.append({"head": head, "state": state})
+            if state != before_state:
+                raise RuntimeError(f"{label}: dispute state changed after rejected transaction")
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(observations) != 2:
+        raise RuntimeError(f"{label}: finalized masterchain did not advance twice")
+    record_jsonl(NEGATIVE_EVIDENCE, {"label": label, "expected_exit": expected_exit,
+                 "cli_receipt": receipt, "before_state": before_state,
+                 "before_head": before_head, "wallet_transaction": wallet_tx,
+                 "dispute_transaction": contract_tx, "bounce_transaction": bounce_tx,
+                 "observations": observations})
+    check(label, True)
+
+
+async def wait_dispute_state(name: str, predicate, timeout: float = 45.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = await dispute_show(name)
+        if predicate(state):
+            return state
+        await asyncio.sleep(1)
+    raise RuntimeError(f"{name}: expected positive state not observed within {timeout}s")
 
 
 async def run_checks(faucet) -> None:
@@ -241,36 +419,32 @@ async def run_checks(faucet) -> None:
     check("subject hash recorded", data["subject_hash"] == SUBJECT_HASH, str(data))
 
     print("\n=== submit-respondent-evidence ===")
-    await send_op("submit-respondent-evidence", "case-1", "outsider",
-                  "--respondent-evidence-hash", RESPONDENT_EVIDENCE_HASH, may_fail=True)
-    data = await dispute_show("case-1")
-    check("outsider submit rejected", data["status"] == "open", str(data))
+    await rejected_operation("outsider submit rejected", address, outsider, 2000,
+                             "submit-respondent-evidence", "case-1", "outsider",
+                             "--respondent-evidence-hash", RESPONDENT_EVIDENCE_HASH)
 
     await send_op("submit-respondent-evidence", "case-1", "respondent",
                   "--respondent-evidence-hash", RESPONDENT_EVIDENCE_HASH)
-    data = await dispute_show("case-1")
+    data = await wait_dispute_state("case-1", lambda d: d["status"] == "evidence_submitted")
     check("respondent evidence recorded", data["status"] == "evidence_submitted", str(data))
     check("respondent evidence hash matches",
           data["respondent_evidence_hash"] == RESPONDENT_EVIDENCE_HASH, str(data))
 
     print("\n=== rule (claimant wins) ===")
-    await send_op("rule", "case-1", "outsider", "--ruling", "claimant",
-                  "--ruling-hash", RULING_HASH, may_fail=True)
-    data = await dispute_show("case-1")
-    check("outsider rule rejected", data["status"] == "evidence_submitted", str(data))
+    await rejected_operation("outsider rule rejected", address, outsider, 2001,
+                             "rule", "case-1", "outsider", "--ruling", "claimant",
+                             "--ruling-hash", RULING_HASH)
 
     await send_op("rule", "case-1", "reviewer", "--ruling", "claimant", "--ruling-hash", RULING_HASH)
-    data = await dispute_show("case-1")
+    data = await wait_dispute_state("case-1", lambda d: d["status"] == "resolved")
     check("resolved with claimant ruling", data["status"] == "resolved", str(data))
     check("ruling is claimant", data["ruling"] == "claimant", str(data))
     check("ruling hash recorded", data["ruling_hash"] == RULING_HASH, str(data))
 
     print("\n=== already-resolved rejection ===")
-    await send_op("submit-respondent-evidence", "case-1", "respondent",
-                  "--respondent-evidence-hash", "55" * 32, may_fail=True)
-    data = await dispute_show("case-1")
-    check("action after resolution rejected",
-          data["respondent_evidence_hash"] == RESPONDENT_EVIDENCE_HASH, str(data))
+    await rejected_operation("action after resolution rejected", address, respondent, 2002,
+                             "submit-respondent-evidence", "case-1", "respondent",
+                             "--respondent-evidence-hash", "55" * 32)
 
     print("\n=== deploy: Dispute case (split ruling) ===")
     deploy2 = await tosctl_json(
@@ -286,7 +460,7 @@ async def run_checks(faucet) -> None:
 
     await send_op("rule", "case-2", "reviewer", "--ruling", "split", "--split-bps", "6500",
                   "--ruling-hash", RULING_HASH)
-    data = await dispute_show("case-2")
+    data = await wait_dispute_state("case-2", lambda d: d["ruling"] == "split")
     check("split ruling recorded", data["ruling"] == "split", str(data))
     check("split bps recorded", data["split_bps"] == 6500, str(data))
 
@@ -307,20 +481,18 @@ async def run_checks(faucet) -> None:
     data = await dispute_show("case-3")
     check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("rule", "case-3", "reviewer", "--ruling", "claimant",
-                  "--ruling-hash", RULING_HASH, may_fail=True)
-    data = await dispute_show("case-3")
-    check("rule without attestation rejected", data["status"] == "open", str(data))
+    await rejected_operation("rule without attestation rejected", address3, reviewer, 9,
+                             "rule", "case-3", "reviewer", "--ruling", "claimant",
+                             "--ruling-hash", RULING_HASH)
 
-    await send_op("rule", "case-3", "reviewer", "--ruling", "claimant",
-                  "--ruling-hash", RULING_HASH,
-                  "--signer-vault-key", "wrong-dispute-attestor-key", may_fail=True)
-    data = await dispute_show("case-3")
-    check("rule with wrong attestor key rejected", data["status"] == "open", str(data))
+    await rejected_operation("rule with wrong attestor key rejected", address3, reviewer, 2006,
+                             "rule", "case-3", "reviewer", "--ruling", "claimant",
+                             "--ruling-hash", RULING_HASH,
+                             "--signer-vault-key", "wrong-dispute-attestor-key")
 
     await send_op("rule", "case-3", "reviewer", "--ruling", "claimant",
                   "--ruling-hash", RULING_HASH, "--signer-vault-key", "dispute-attestor-key")
-    data = await dispute_show("case-3")
+    data = await wait_dispute_state("case-3", lambda d: d["status"] == "resolved")
     check("attestor dispute resolved", data["status"] == "resolved", str(data))
 
     print("\n=== rotate/revoke: reviewer manages the attestor key post-deploy ===")
@@ -338,34 +510,29 @@ async def run_checks(faucet) -> None:
     data = await dispute_show("case-4")
     check("no attestor at deploy", not data.get("attestor_pubkey"), str(data))
 
-    await send_op("rotate-attestor-key", "case-4", "outsider",
-                  "--new-attestor-pubkey", "aa" * 32, may_fail=True)
-    data = await dispute_show("case-4")
-    check("non-reviewer rotate rejected", not data.get("attestor_pubkey"), str(data))
+    await rejected_operation("non-reviewer rotate rejected", address4, outsider, 2001,
+                             "rotate-attestor-key", "case-4", "outsider",
+                             "--new-attestor-pubkey", "aa" * 32)
 
     await send_op("rotate-attestor-key", "case-4", "reviewer",
                   "--signer-vault-key", "rotated-dispute-attestor-key")
-    data = await dispute_show("case-4")
+    data = await wait_dispute_state("case-4", lambda d: bool(d.get("attestor_pubkey")))
     check("reviewer rotate sets attestor pubkey", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("rule", "case-4", "reviewer", "--ruling", "claimant",
-                  "--ruling-hash", RULING_HASH, may_fail=True)
-    data = await dispute_show("case-4")
-    check("rule after rotate still requires attestation", data["status"] == "open", str(data))
+    await rejected_operation("rule after rotate still requires attestation", address4, reviewer, 9,
+                             "rule", "case-4", "reviewer", "--ruling", "claimant",
+                             "--ruling-hash", RULING_HASH)
 
-    await send_op("revoke-attestor", "case-4", "outsider", may_fail=True)
-    data = await dispute_show("case-4")
-    check("non-reviewer revoke rejected", bool(data.get("attestor_pubkey")), str(data))
+    await rejected_operation("non-reviewer revoke rejected", address4, outsider, 2001,
+                             "revoke-attestor", "case-4", "outsider")
 
-    await send_op("revoke-attestor", "case-4", "reviewer", may_fail=True)
-    data = await dispute_show("case-4")
-    check("reviewer cannot revoke configured attestor while open",
-          bool(data.get("attestor_pubkey")), str(data))
+    await rejected_operation("reviewer cannot revoke configured attestor while open",
+                             address4, reviewer, 2007, "revoke-attestor", "case-4", "reviewer")
 
     await send_op("rule", "case-4", "reviewer", "--ruling", "claimant",
                   "--ruling-hash", RULING_HASH,
                   "--signer-vault-key", "rotated-dispute-attestor-key")
-    data = await dispute_show("case-4")
+    data = await wait_dispute_state("case-4", lambda d: d["status"] == "resolved")
     check("rule still requires configured attestor", data["status"] == "resolved", str(data))
 
     print("\n=== rotate/revoke frozen from deployment ===")
@@ -387,24 +554,21 @@ async def run_checks(faucet) -> None:
     data = await dispute_show("case-5")
     check("attestor configured at deploy", bool(data.get("attestor_pubkey")), str(data))
 
-    await send_op("rotate-attestor-key", "case-5", "reviewer",
-                  "--new-attestor-pubkey", "dd" * 32, may_fail=True)
-    data = await dispute_show("case-5")
-    check("rotate already frozen while open", data["attestor_pubkey"] == "cc" * 32, str(data))
+    await rejected_operation("rotate already frozen while open", address5, reviewer, 2007,
+                             "rotate-attestor-key", "case-5", "reviewer",
+                             "--new-attestor-pubkey", "dd" * 32)
 
     await send_op("submit-respondent-evidence", "case-5", "respondent",
                   "--respondent-evidence-hash", RESPONDENT_EVIDENCE_HASH)
-    data = await dispute_show("case-5")
+    data = await wait_dispute_state("case-5", lambda d: d["status"] == "evidence_submitted")
     check("case-5 evidence submitted", data["status"] == "evidence_submitted", str(data))
 
-    await send_op("rotate-attestor-key", "case-5", "reviewer",
-                  "--new-attestor-pubkey", "dd" * 32, may_fail=True)
-    data = await dispute_show("case-5")
-    check("rotate frozen once evidence submitted", data["attestor_pubkey"] == "cc" * 32, str(data))
+    await rejected_operation("rotate frozen once evidence submitted", address5, reviewer, 2007,
+                             "rotate-attestor-key", "case-5", "reviewer",
+                             "--new-attestor-pubkey", "dd" * 32)
 
-    await send_op("revoke-attestor", "case-5", "reviewer", may_fail=True)
-    data = await dispute_show("case-5")
-    check("revoke frozen once evidence submitted", data["attestor_pubkey"] == "cc" * 32, str(data))
+    await rejected_operation("revoke frozen once evidence submitted", address5, reviewer, 2007,
+                             "revoke-attestor", "case-5", "reviewer")
 
     print("\n=== persisted local records ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "dispute", "ls")}
@@ -423,6 +587,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging
