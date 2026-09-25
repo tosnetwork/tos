@@ -1,6 +1,42 @@
 # E04 Agent Wallet / Agent Account retained route: custody boundary
 
-Status: OPEN. The full advertised route has not completed on the current PQ tree. This is an E04 fixture/product-workflow finding, not a consensus failure.
+Status: OPEN for final signoff. The full advertised single-node retained route now
+passes locally at fixed source `fe3918712`; the fixed-head CI and independent
+evidence review are still pending. This is not a multi-validator or Byzantine
+fault-tolerance claim.
+
+## Current fixed-tree result: 33/33 local PASS
+
+Command from repository root:
+`script -q -e -f -c 'TOS_BUILD_DIR=build PYTHONPATH=test/tostester/src uv run --project test/tostester python -u scripts/agent-wallet-account-e2e.py' test/integration/.e04-agent-wallet-fe3918712-20260925-console.typescript`.
+Process exit was 0; the console contains 33 PASS, no FAIL, and `RESULT: ALL
+PASS`. Its SHA-256 is
+`9ae955c0a58d95478843fbcd25abeeb43897b008cf96a18a481458765752a29c`.
+The exact script, built tosctl and validator-engine hashes were respectively
+`e155caef33467bc2b58122f4e43b2c0703413874ec6fea02ce9e2ec1d9decebd`,
+`1574d1fdc2a20f7459d23e6a92d1c42106884f18054b8df5565d8cc3439946b8`,
+and `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb8a8`.
+The node DB and custody journal are preserved at
+`test/integration/.e04-agent-wallet-fe3918712-20260925-network/`; the
+PID/RPC/DB map SHA-256 is
+`9c6dabdec241df175d5f35c984c5ade1d1c1bbad1daf18648f00e2afab102f25`,
+and the terminal custody journal SHA-256 is
+`58a10257cc837d49e05ef44f45110d9b7766044c3fcc6759589dac4153b64a8e`.
+
+The output records a three-independent-RPC majority for the exact native Gift
+and each of two controller task-send actions, with their resolution JSON in the
+console. The isolated cancellation has its exact winning signed BOC/account
+transaction and a distinct unpaid target. Both 60-second negative windows
+sample all three RPC heads continuously and show finalized progression. The
+owner-policy transaction returns successfully and both live policy fields match;
+the controller rotates, a new signed transfer arrives, the validator restarts,
+and the account state survives. The expiry control binds masterchain block 112
+to its header and records `gen_utime=1790308427 > valid_until=1790308426`
+before broadcasting; no seqno or target credit appears through the observation
+window. This is one local chain with two observer processes, not three
+validators. The terminal cancellation/expiry custody records intentionally
+remain unresolved; the positive main account actions were resolved before
+later actions. Neither E03 indexer followup is addressed by this route.
 
 ## Exact runs and observed stop
 
@@ -97,7 +133,7 @@ custody record had not yet been resolved. This is a correct fail-closed refusal,
 not a stake or consensus failure. The retained route now calls the production
 `task-send-resolve` with the same three distinct RPC configs after each
 delivered task-send and checks the exact source, destination, amount and quorum
-before continuing. The next fixed-tree run must prove that resolution works;
+before continuing. The `fe3918712` fixed-tree run above proves that resolution works;
 no custody journal is cleared or rewritten by the fixture.
 
 The first run used committed `a0a9fd52b` with `TOS_BUILD_DIR=build`, `PYTHONPATH=test/tostester/src`, and the retained command `uv run python -u scripts/agent-wallet-account-e2e.py` under `script -q -e -f`. Its full output is `test/integration/.e04-agent-wallet-a0a9fd52b-20260925/console.typescript` (SHA-256 `3476e5dc07228dd9b30d38cda2ec169d51eb5981f656fe78a72a18187d0663c6`); process exit was 1. Six provision/status checks passed. The second invocation of `agent account native-prepare` for the same action failed with `ambiguous broadcast must be resolved from finalized state`. The node directory is preserved under that run directory's `network/`, not deleted.
@@ -112,6 +148,11 @@ The script SHA-256 at `be74e9cc6` is `c4b422a1d2ee962d97428f7aed1ca51bc4f5769e42
 
 `ControllerActionJournal::reconcile_finalized_state` rejects a sequence advancing past any unresolved exact action. The product `agent account native-resolve` requires the primary config plus at least two **distinct** single-endpoint RPC configs, compares exact finalized transaction observations by quorum and then records a resolved exact winner. The current E04 network has one node and one JSON-RPC endpoint; copying that endpoint under aliases would not provide independent chain views. The resolver's present search matches the primary submitted BOC and its outbound transfer, so it does not itself establish a cancellation-wins resolution. Clearing or replacing the custody journal to let later commands proceed would erase the protection this route needs to exercise.
 
-## Minimal next decision and acceptance
+## Historical scope decision
 
-The positive native Gift needs three real node/RPC views in the same local chain and a `native-resolve` call before a new action uses the advanced seqno. The cancellation-wins and expired-Gift negative controls then need either a production-supported exact cancellation resolution or isolation on separate account fixtures so an intentionally unresolved terminal action cannot block unrelated later lifecycle steps. This is a fixture topology and custody-workflow change, not a timeout increase. Before choosing an implementation, confirm whether E04 acceptance requires all controls on **one Agent Account** or allows separate accounts for terminal negative controls. Either way, the completed run must retain exact BOC/transaction evidence, the named custody refusals, controller rotation, policy update, restart and expired-action effects, with old-red/new-green and a source-bound report. Until then E04 remains OPEN.
+The owner permitted separate Agent Accounts for terminal cancellation/expiry
+negative controls, while requiring the positive Gift, task sends, policy,
+rotation and restart to remain on one main account. `fe3918712` implements that
+fixture boundary and retains the exact source-bound evidence above. E04 remains
+OPEN only for fixed-head CI and independent signoff; this local pass is not
+release-scale evidence.
