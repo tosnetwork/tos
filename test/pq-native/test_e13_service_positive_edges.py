@@ -63,6 +63,39 @@ def rows(*, service_hash="send-hash", service_ok=True, action_ok=True,
 
 
 class ServicePositiveEdgesTests(unittest.TestCase):
+    def test_http_state_poll_requires_later_200_after_504(self):
+        unavailable = {"ok": False, "error": {"code": 504, "kind": "timeout"}}
+        pending = {"ok": True, "result": {"status": "pending"}}
+        with (patch.object(e13, "http_get", side_effect=[(504, unavailable),
+                                                       (200, pending)]) as get,
+              patch.object(e13.asyncio, "sleep", new=AsyncMock())):
+            ready, body = asyncio.run(e13.poll_http_predicate(
+                "/services/0:service/requests/0",
+                lambda result: result.get("result", {}).get("status") == "pending"))
+        self.assertTrue(ready)
+        self.assertEqual(body, pending)
+        self.assertEqual(get.call_count, 2)
+
+    def test_http_state_poll_persistent_504_fails_closed(self):
+        unavailable = {"ok": False, "error": {"code": 504, "kind": "timeout"}}
+        with (patch.object(e13, "http_get", return_value=(504, unavailable)),
+              patch.object(e13.asyncio, "sleep", new=AsyncMock())):
+            ready, body = asyncio.run(e13.poll_http_predicate(
+                "/services/0:service/requests/0", lambda _: True, timeout=0.001))
+        self.assertFalse(ready)
+        self.assertEqual(body, unavailable)
+
+    def test_http_state_poll_retries_transport_timeout_not_business_error(self):
+        pending = {"ok": True, "result": {"status": "pending"}}
+        with (patch.object(e13, "http_get", side_effect=[TimeoutError("slow"),
+                                                       (200, pending)]) as get,
+              patch.object(e13.asyncio, "sleep", new=AsyncMock())):
+            ready, _ = asyncio.run(e13.poll_http_predicate(
+                "/services/0:service/requests/0",
+                lambda result: result.get("result", {}).get("status") == "pending"))
+        self.assertTrue(ready)
+        self.assertEqual(get.call_count, 2)
+
     def test_indexer_barrier_uses_indexed_cursor_not_live_head(self):
         behind = {"ok": True, "result": {
             "masterchain_head": 90, "masterchain_indexed": 44}}

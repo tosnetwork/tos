@@ -381,10 +381,17 @@ async def poll_http_predicate(path: str, predicate, timeout: float = 60.0) -> tu
     """Polls GET `path` until `predicate(body)` is true or `timeout` elapses
     -- the indexer catches up asynchronously on its own tick interval, so a
     just-submitted transaction is not expected to be reflected instantly."""
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + timeout
     last_body: dict = {}
-    while time.time() < deadline:
-        status, body = http_get(path)
+    while time.monotonic() < deadline:
+        try:
+            status, body = http_get(path)
+        except (TimeoutError, urllib.error.URLError) as error:
+            # http_get retains the raw transport failure. A later HTTP 200
+            # with the exact expected state is still required for success.
+            last_body = {"transport_error": type(error).__name__, "detail": str(error)}
+            await asyncio.sleep(1)
+            continue
         last_body = body
         if status == 200 and predicate(body):
             return True, body
@@ -872,10 +879,11 @@ async def run_checks(faucet) -> None:
             f"/services/{address}/requests/{request_b}",
             lambda b: b.get("result", {}).get("status") == "responded")
         check("indexer/HTTP classifies request B responded", found, str(body)[:1000])
-        status, body = http_get(f"/services/{address}/requests/{request_a}")
+        found, body = await poll_http_predicate(
+            f"/services/{address}/requests/{request_a}",
+            lambda b: b.get("result", {}).get("status") == "pending")
         check("request A still pending via HTTP while B is responded",
-              status == 200 and body.get("result", {}).get("status") == "pending",
-              f"status={status} body={body}")
+              found, str(body)[:1000])
 
         await successful_operation("respond", "svc-1", "owner", "--request-id", str(request_a),
                       "--response-hash", "11" * 32)

@@ -61,3 +61,23 @@ it contains ten successful `/explorer/status` responses before the unrecorded
 transport timeout. This is neither a completed 300-second cursor timeout nor
 a lifecycle result. A follow-up records each transport error and retries only
 within the original total cursor deadline, with persistent-timeout refusal.
+
+The next exact `b6486b7b3` run exited 1 with 89 PASS and one FAIL. Its
+console is `test/integration/.e13-service-b6486b7b3-20260925-console.typescript`
+(SHA-256 `bd3baa0053346ac8a51d4f2d0077894e2546fe86b74059dc8306744a8ae3e39e`);
+all network artifacts are in the same-stem `-network/` directory. The
+`indexer-evidence.jsonl` SHA-256 is
+`2ea6d03114ffcbdf61bc71d7f9e6617cb461bdb39941fb9e06863b49c8fab9fb`,
+the HTTP transcript SHA-256 is
+`d940f9d86302c6991a8342c5eacd3bb93ab489b228ebd36ff71b4f129c9288da`,
+and the retained SQLite DB SHA-256 is
+`ce5280ea4206ff843e0775082b7f2434184c9d92300623be363e3b313206c58a`.
+The four fixed-height cursor gates passed; both B and A terminal `responded`
+statuses passed. At the intermediate point where B was `responded` and A
+remained pending, the script made one immediate HTTP read of A and received
+504 `get_request query timed out`. That single read was the sole FAIL; the
+on-chain `request_show` had just confirmed A still pending. This is an
+observation failure, not evidence that B's response changed A. The follow-up
+uses the existing bounded state predicate poll for A and makes that poll
+retry only transport errors within its original deadline. It never accepts
+504 as the expected state; persistent 504 remains red.
