@@ -141,6 +141,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
                       << ",\"total_weight\":\"" << validators->total_weight
                       << "\",\"validators\":[";
               bool first = true;
+              std::size_t validator_index = 0;
               for (const auto& validator : validators->list) {
                 if (!first) decoded << ",";
                 first = false;
@@ -148,7 +149,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
                 // its consensus key. Never expose it as a public key: clients
                 // must be able to distinguish membership, current key, suite,
                 // and transport identity from this decoded view of the BOC.
-                decoded << "{\"public_key\":";
+                decoded << "{\"index\":" << validator_index++ << ",\"public_key\":";
                 if (validator.is_pq()) {
                   decoded << "null,\"validator_id\":\""
                           << td::base64_encode(validator.validator_id.value.as_slice())

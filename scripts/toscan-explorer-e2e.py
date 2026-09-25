@@ -32,7 +32,11 @@ import urllib.request
 from pathlib import Path
 
 from e03_http_trace import record as record_e03_http
-from e03_config34_identity import decode as decode_e03_config34, verify as verify_e03_config34
+from e03_config34_identity import (
+    decode as decode_e03_config34,
+    verify as verify_e03_config34,
+    verify_genesis_member as verify_e03_genesis_member,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_WORKDIR = REPO / "test/integration/.toscan-explorer-e2e"
@@ -429,12 +433,20 @@ def main():
         assert status == 200
         assert validator_set.get("total") == len(validator_set.get("validators", []))
         assert validator_set.get("total", 0) > 0
-        decoded_config34 = decode_e03_config34(config_response)
-        (workdir / "config34-identity-from-boc.json").write_text(
-            json.dumps(decoded_config34, indent=2) + "\n"
+        (workdir / "config34-identity-raw.json").write_text(
+            json.dumps(config_response, indent=2) + "\n"
         )
+        decoded_config34 = decode_e03_config34(config_response)
         verify_e03_config34(config_response, decoded_config34)
-        print("PASS: PQ validator identity, key, algorithm, ADNL and weight match Config34 BOC")
+        verify_e03_genesis_member(
+            decoded_config34,
+            workdir / "localnet" / "node1",
+            REPO / "build/crypto/pq/tos-pq-consensus-key",
+        )
+        (workdir / "config34-identity-from-boc.json").write_text(
+            json.dumps({**decoded_config34, "genesis_member_verified": True}, indent=2) + "\n"
+        )
+        print("PASS: PQ Config34 JSON, BOC, and independently provisioned genesis identity match")
 
         if args.browser_command:
             browser_env = dict(os.environ)

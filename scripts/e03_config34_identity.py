@@ -1,6 +1,5 @@
-"""Compare decoded JSON-RPC PQ validator identities with the returned raw BOC.
+"""Check E03 Config34 JSON against its BOC and the separately provisioned genesis node.
 
-This checks the bytes the API actually returned, not a second genesis fixture.
 The BOC parser deliberately supports the PQ descriptor used by E03 only.
 """
 
@@ -9,8 +8,14 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+import re
+import subprocess
 
 from pytosiq_core import Cell
+
+KEY_ID_DOMAIN = b"TOS-PQ-CONSENSUS-KEY-v1"
+INITIAL_VALIDATOR_DOMAIN = b"tos-test-pq-initial-validator-v1\x00"
+ML_DSA_44_PUBLIC_KEY_BYTES = 1312
 
 
 def unpack_pq_bytes(cell):
@@ -41,8 +46,11 @@ def decode(raw_response):
     total_weight = source.load_uint(64)
     entries = source.load_dict(16)
     assert source.remaining_bits == 0 and source.remaining_refs == 0
-    assert len(entries) == total and total > 0
+    assert 0 < main <= total and len(entries) == total
+    assert sorted(entries) == list(range(total)), "Config34 validator indices are not contiguous"
     validators = []
+    seen_ids, seen_keys, seen_adnl = set(), set(), set()
+    weight_sum = 0
     for index, entry in sorted(entries.items()):
         assert entry.load_uint(8) == 0xB3, "E03 expects validator_pq#b3"
         validator_id = entry.load_bytes(32)
@@ -52,6 +60,16 @@ def decode(raw_response):
         adnl = entry.load_bytes(32)
         assert entry.remaining_bits == 0 and entry.remaining_refs == 1
         public_key = unpack_pq_bytes(entry.load_ref())
+        assert algorithm_id == 1 and len(public_key) == ML_DSA_44_PUBLIC_KEY_BYTES
+        assert validator_id != bytes(32) and key_id != bytes(32) and adnl != bytes(32)
+        assert validator_id not in seen_ids and key_id not in seen_keys and adnl not in seen_adnl
+        seen_ids.add(validator_id)
+        seen_keys.add(key_id)
+        seen_adnl.add(adnl)
+        assert key_id == hashlib.sha256(KEY_ID_DOMAIN + algorithm_id.to_bytes(2, "little") + public_key).digest(), (
+            f"Config34 validator {index} key_id does not derive from its PQ public key")
+        weight_sum += weight
+        assert weight > 0
         validators.append({
             "index": index,
             "validator_id": base64.b64encode(validator_id).decode(),
@@ -60,7 +78,9 @@ def decode(raw_response):
             "pq_public_key": base64.b64encode(public_key).decode(),
             "adnl_address": base64.b64encode(adnl).decode(),
             "weight": str(weight),
+            "cumulative_weight": str(weight_sum - weight),
         })
+    assert since < until and weight_sum == total_weight
     return {"boc_sha256": hashlib.sha256(boc).hexdigest(), "utime_since": since,
             "utime_until": until, "total": total, "main": main,
             "total_weight": str(total_weight), "validators": validators}
@@ -71,11 +91,35 @@ def verify(raw_response, decoded):
     for field in ("utime_since", "utime_until", "total", "main", "total_weight"):
         assert str(reported[field]) == str(decoded[field]), f"Config34 {field} differs from BOC"
     assert len(reported["validators"]) == decoded["total"]
+    assert [item["index"] for item in decoded["validators"]] == list(range(decoded["total"]))
     for expected, actual in zip(decoded["validators"], reported["validators"]):
         assert actual.get("public_key") is None, "PQ JSON exposes an Ed25519 placeholder as public_key"
-        for field in ("validator_id", "key_id", "algorithm_id", "pq_public_key", "adnl_address", "weight"):
+        assert actual.get("index") == expected["index"], "Config34 JSON validator index differs from BOC"
+        for field in ("validator_id", "key_id", "algorithm_id", "pq_public_key", "adnl_address",
+                      "weight", "cumulative_weight"):
             assert str(actual.get(field)) == str(expected[field]), (
                 f"Config34 validator {expected['index']} {field} differs from BOC")
+
+
+def verify_genesis_member(decoded, node_dir: Path, key_tool: Path):
+    """Bind the live Config34 member to the independently provisioned node key and ADNL."""
+    assert decoded["total"] == decoded["main"] == 1, "E03 expects one genesis validator"
+    config = json.loads((node_dir / "config.json").read_text())
+    member = decoded["validators"][0]
+    validator_id = base64.b64decode(config["extraconfig"]["pq_consensus"]["validator_id"], validate=True)
+    expected_id = hashlib.sha256(INITIAL_VALIDATOR_DOMAIN + b"validator-id\x00" + bytes(4)).digest()
+    assert validator_id == expected_id, "node PQ identity differs from deterministic genesis identity"
+    assert base64.b64decode(member["validator_id"], validate=True) == expected_id
+    adnl = base64.b64decode(config["validators"][0]["adnl_addrs"][0]["id"], validate=True)
+    assert base64.b64decode(member["adnl_address"], validate=True) == adnl
+    key_file = Path(config["extraconfig"]["pq_consensus"]["consensus_key_file"])
+    assert key_file.resolve() == (node_dir / "pq-consensus.seed").resolve()
+    tool = subprocess.run([str(key_tool), "show", str(key_file)], capture_output=True, text=True, check=True)
+    key_id = re.search(r"^key_id\s+([0-9a-f]{64})$", tool.stdout, re.MULTILINE)
+    public = re.search(r"^public\s+([0-9a-f]{2624})$", tool.stdout, re.MULTILINE)
+    assert key_id is not None and public is not None, "PQ key tool did not report the public identity"
+    assert base64.b64decode(member["key_id"], validate=True) == bytes.fromhex(key_id.group(1))
+    assert base64.b64decode(member["pq_public_key"], validate=True) == bytes.fromhex(public.group(1))
 
 
 def main():
@@ -85,8 +129,8 @@ def main():
     args = parser.parse_args()
     raw = json.loads(args.raw.read_text())
     decoded = decode(raw)
-    args.output.write_text(json.dumps(decoded, indent=2) + "\n")
     verify(raw, decoded)
+    args.output.write_text(json.dumps({**decoded, "json_boc_verified": True}, indent=2) + "\n")
     print(f"E03_CONFIG34_PQ_IDENTITY_OK boc_sha256={decoded['boc_sha256']} total={decoded['total']}")
 
 
