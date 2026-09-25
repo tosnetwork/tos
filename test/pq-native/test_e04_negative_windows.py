@@ -63,6 +63,7 @@ class ExactCancellationTests(unittest.TestCase):
     def test_winner_is_bound_to_exact_boc_and_baseline(self):
         boc = base64.b64encode(Cell.empty().to_boc()).decode()
         inbound_hash = base64.b64encode(Cell.empty().hash).decode()
+        self.assertEqual(e04.exact_boc_hash(boc), "sha256:" + Cell.empty().hash.hex())
         winner = {"transaction_id": {"lt": "2"},
                   "in_msg": {"hash": inbound_hash}, "aborted": False,
                   "compute": {"success": True}, "action": {"success": True}}

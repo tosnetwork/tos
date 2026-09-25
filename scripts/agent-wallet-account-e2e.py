@@ -99,6 +99,10 @@ def broadcast_boc(exact_boc_base64: str, may_fail: bool = False):
         return {"http_status": error.code, "body": error.read().decode(errors="replace")}
 
 
+def exact_boc_hash(exact_boc_base64: str) -> str:
+    return "sha256:" + Cell.one_from_boc(base64.b64decode(exact_boc_base64)).hash.hex()
+
+
 async def tosctl(*args: str, may_fail: bool = False) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
@@ -457,12 +461,20 @@ async def run_checks(faucet, node) -> None:
         "--owner-authorization-digest", "sha256:" + "9" * 64,
         "--valid-until", str(cancel_valid_until), "--yes",
     )
-    broadcast_boc(cancellation.get("exact_signed_boc", ""))
+    cancellation_submit = broadcast_boc(cancellation.get("exact_signed_boc", ""))
+    print("  cancellation submission:", json.dumps({
+        "message_hash": exact_boc_hash(cancellation["exact_signed_boc"]),
+        "response": cancellation_submit}, sort_keys=True))
     check("exact cancellation wins its account's shared sequence",
           await poll_predicate(lambda: exact_account_winner(
               cancel_account, cancellation["exact_signed_boc"], cancel_baseline))
           and await wait_account_seqno(cancel_account, 1))
-    broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
+    losing_gift_submit = broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
+    print("  losing same-seqno Gift submission:", json.dumps({
+        "message_hash": exact_boc_hash(cancel_primary["exact_signed_boc"]),
+        "response": losing_gift_submit}, sort_keys=True))
+    check("losing same-seqno Gift reached the node submission interface",
+          "result" in losing_gift_submit, str(losing_gift_submit))
     check("finalized cancellation prevents destination credit for the observation window",
           await predicate_stays_true(
               lambda: balance(cancel_target) == cancel_target_before
@@ -579,7 +591,12 @@ async def run_checks(faucet, node) -> None:
               lambda: (header := finalized_mc_header())["id"]["seqno"] > pre_expiry_seqno
               and header["gen_utime"] > expiry))
     print(f"  expiry chain header: {finalized_mc_header()} valid_until={expiry}")
-    broadcast_boc(expired.get("exact_signed_boc", ""), may_fail=True)
+    expired_submit = broadcast_boc(expired.get("exact_signed_boc", ""), may_fail=True)
+    print("  expired Gift submission:", json.dumps({
+        "message_hash": exact_boc_hash(expired["exact_signed_boc"]),
+        "response": expired_submit}, sort_keys=True))
+    check("expired Gift reached the node submission interface",
+          "result" in expired_submit, str(expired_submit))
 
     async def expired_state_unchanged() -> bool:
         state = await tosctl_json("agent", "account", "show", "--address", account)

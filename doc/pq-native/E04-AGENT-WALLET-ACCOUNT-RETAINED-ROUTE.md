@@ -48,6 +48,15 @@ validators. The terminal cancellation/expiry custody records intentionally
 remain unresolved; the positive main account actions were resolved before
 later actions. Neither E03 indexer followup is addressed by this route.
 
+One negative-control evidence limit remains in the `fe3918712` raw output:
+the cancellation loser and expired Gift `sendBoc` return bodies were not
+printed. Their absent effects are measured, but the retained artifact cannot
+distinguish RPC admission from an immediate submission error. The next script
+revision records each exact BOC hash and raw `sendBoc` result and requires the
+node to accept both submissions before its no-effect windows can pass. A new
+fixed-source run is necessary for that stronger claim; the 33/33 count above
+must not be retroactively described as covering it.
+
 ## Exact runs and observed stop
 
 The third, three-view run used committed `a778652c7` and exited 1 after 18
