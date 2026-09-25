@@ -108,6 +108,46 @@ def is_not_found(status: int, body: dict) -> bool:
             and error.get("kind") == "not_found")
 
 
+def is_detail_for(status: int, body: dict, address: str) -> bool:
+    result = body.get("result")
+    return (status == 200 and body.get("ok") is True
+            and isinstance(result, dict)
+            and same_addr(result.get("address"), address))
+
+
+def task_list_matches(status: int, body: dict,
+                      expected: dict[str, tuple[str, str]],
+                      creator: str, agent: str) -> bool:
+    """Require complete chain-backed entries, not names of failed RPC reads."""
+    if status != 200 or body.get("ok") is not True:
+        return False
+    rows = body.get("result")
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        return False
+    if body.get("total") != len(expected):
+        return False
+    seen = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            return False
+        name = item.get("name")
+        if name not in expected or name in seen:
+            return False
+        seen.add(name)
+        addr, want_status = expected[name]
+        task = item.get("task")
+        if (item.get("error") is not None or item.get("error_kind") is not None
+                or not isinstance(task, dict)):
+            return False
+        if (not same_addr(item.get("address"), addr)
+                or not same_addr(task.get("address"), addr)
+                or task.get("status") != want_status
+                or not same_addr(task.get("creator"), creator)
+                or not same_addr(task.get("assigned_agent"), agent)):
+            return False
+    return seen == set(expected)
+
+
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
 # the event loop that drains the in-process node's log pipes, deadlocking the
 # chain (and therefore the tosctl call itself) until the subprocess timeout.
@@ -337,9 +377,13 @@ async def run_checks(faucet) -> None:
 
         print("\n=== GET /agents/{address} ===")
         status, body = await http_get_async(f"/agents/{agent_account}")
-        check("get_agent status 200", status == 200, f"status={status} body={body}")
+        check("get_agent response bound to requested address",
+              is_detail_for(status, body, agent_account), f"status={status} body={body}")
+        agent_result = body.get("result")
+        if not isinstance(agent_result, dict):
+            agent_result = {}
         check("get_agent owner matches",
-              same_addr(body.get("result", {}).get("owner"), agent_account_owner), str(body))
+              same_addr(agent_result.get("owner"), agent_account_owner), str(body))
 
         print("\n=== GET /tasks/{address} ===")
         # Contract-level note (not a query API concern): `budget` tracks the
@@ -352,8 +396,11 @@ async def run_checks(faucet) -> None:
             ("q-settled", settled_addr, "settled", 0),
         ):
             status, body = await http_get_async(f"/tasks/{addr}")
-            check(f"get_task {name} status 200", status == 200, f"status={status} body={body}")
-            result = body.get("result", {})
+            check(f"get_task {name} response bound to requested address",
+                  is_detail_for(status, body, addr), f"status={status} body={body}")
+            result = body.get("result")
+            if not isinstance(result, dict):
+                result = {}
             check(f"get_task {name} status field", result.get("status") == want_status,
                   str(result))
             check(f"get_task {name} budget field", result.get("budget") == want_budget,
@@ -362,33 +409,31 @@ async def run_checks(faucet) -> None:
                   str(result))
 
         print("\n=== GET /tasks (listing + filters) ===")
+        all_tasks = {
+            "q-open": (open_addr, "open"),
+            "q-accepted": (accepted_addr, "accepted"),
+            "q-settled": (settled_addr, "settled"),
+        }
+        settled_task = {"q-settled": all_tasks["q-settled"]}
         status, body = await http_get_async("/tasks")
-        check("list_tasks status 200", status == 200, f"status={status}")
-        names = {item["name"] for item in body.get("result", [])}
-        check("list_tasks includes all three", {"q-open", "q-accepted", "q-settled"} <= names,
-              str(names))
-        check("list_tasks total matches", body.get("total") == len(body.get("result", [])),
-              str(body))
+        check("list_tasks exact chain-backed set",
+              task_list_matches(status, body, all_tasks, creator, agent), str(body))
 
         status, body = await http_get_async("/tasks?status=settled")
-        settled_names = {item["name"] for item in body.get("result", [])}
-        check("status filter returns only settled", settled_names == {"q-settled"},
-              str(settled_names))
+        check("status filter returns exact settled task",
+              task_list_matches(status, body, settled_task, creator, agent), str(body))
 
         status, body = await http_get_async(f"/tasks?creator={creator}")
-        creator_names = {item["name"] for item in body.get("result", [])}
-        check("creator filter returns all three", {"q-open", "q-accepted", "q-settled"} <= creator_names,
-              str(creator_names))
+        check("creator filter returns exact chain-backed set",
+              task_list_matches(status, body, all_tasks, creator, agent), str(body))
 
         status, body = await http_get_async(f"/tasks?agent={agent}")
-        agent_names = {item["name"] for item in body.get("result", [])}
-        check("agent filter returns all three (all assigned to the same agent)",
-              {"q-open", "q-accepted", "q-settled"} <= agent_names, str(agent_names))
+        check("agent filter returns exact chain-backed set",
+              task_list_matches(status, body, all_tasks, creator, agent), str(body))
 
         status, body = await http_get_async(f"/tasks?deadline_after={deadline + 15}")
-        after_names = {item["name"] for item in body.get("result", [])}
-        check("deadline_after filter returns only q-settled", after_names == {"q-settled"},
-              str(after_names))
+        check("deadline_after filter returns exact settled task",
+              task_list_matches(status, body, settled_task, creator, agent), str(body))
 
         print("\n=== malformed addresses -> 400 invalid_request ===")
         status, body = await http_get_async("/agents/not-an-address")

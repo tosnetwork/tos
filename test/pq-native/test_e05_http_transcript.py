@@ -34,7 +34,65 @@ class Response:
         return self.raw
 
 
+def task_list_fixture():
+    creator = "0:" + "11" * 32
+    agent = "0:" + "22" * 32
+    open_addr = "0:" + "33" * 32
+    settled_addr = "0:" + "44" * 32
+    expected = {"q-open": (open_addr, "open"),
+                "q-settled": (settled_addr, "settled")}
+
+    def item(name, address, state):
+        return {"name": name, "address": address,
+                "task": {"address": address, "status": state,
+                         "creator": creator, "assigned_agent": agent},
+                "error": None, "error_kind": None}
+
+    rows = [item("q-open", open_addr, "open"),
+            item("q-settled", settled_addr, "settled")]
+    return creator, agent, expected, {"ok": True, "total": 2, "result": rows}
+
+
 class HttpTranscriptTests(unittest.TestCase):
+    def test_detail_must_bind_response_to_requested_address(self):
+        requested = "0:" + "11" * 32
+        wrong = "0:" + "22" * 32
+        self.assertTrue(e05.is_detail_for(
+            200, {"ok": True, "result": {"address": requested}}, requested))
+        self.assertFalse(e05.is_detail_for(
+            200, {"ok": True, "result": {"address": wrong}}, requested))
+        self.assertFalse(e05.is_detail_for(
+            200, {"ok": True, "result": None}, requested))
+
+    def test_task_list_accepts_complete_exact_entries(self):
+        creator, agent, expected, body = task_list_fixture()
+        self.assertTrue(e05.task_list_matches(200, body, expected, creator, agent))
+
+    def test_task_list_rejects_named_rpc_error_item(self):
+        creator, agent, expected, body = task_list_fixture()
+        rows = body["result"]
+        error_item = dict(rows[0], task=None, error="RPC failed", error_kind="timeout")
+        self.assertFalse(e05.task_list_matches(
+            200, dict(body, result=[error_item, rows[1]]), expected, creator, agent))
+
+    def test_task_list_rejects_extra_entry(self):
+        creator, agent, expected, body = task_list_fixture()
+        extra = {"name": "q-extra", "address": "0:" + "55" * 32,
+                 "task": {"address": "0:" + "55" * 32, "status": "open",
+                          "creator": creator, "assigned_agent": agent},
+                 "error": None, "error_kind": None}
+        self.assertFalse(e05.task_list_matches(
+            200, dict(body, total=3, result=body["result"] + [extra]),
+            expected, creator, agent))
+
+    def test_task_list_rejects_bad_status_and_address(self):
+        creator, agent, expected, body = task_list_fixture()
+        rows = body["result"]
+        self.assertFalse(e05.task_list_matches(500, body, expected, creator, agent))
+        self.assertFalse(e05.task_list_matches(
+            200, dict(body, result=[rows[0], dict(rows[1], address=rows[0]["address"])]),
+            expected, creator, agent))
+
     def test_not_found_controls_reject_server_error(self):
         not_found = {"ok": False, "error": {"code": 404, "kind": "not_found"}}
         self.assertTrue(e05.is_not_found(404, not_found))
