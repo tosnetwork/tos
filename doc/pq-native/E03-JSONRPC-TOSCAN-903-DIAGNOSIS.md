@@ -134,3 +134,15 @@ in block 136, first visible through masterchain reference 61/shard 137. The
 next fix needs a bounded, retry-safe *specific-message or deployment-effect*
 confirmation rather than another blind send or an unqualified timeout change.
 E03 remains OPEN until the same-tree demo and full TOSCAN route both pass.
+
+The follow-up CLI change uses the existing 60-second deployment deadline but
+changes the completion condition: it records the wallet cursor before sending,
+matches the exact external-message hash in a later wallet transaction, requires
+successful wallet compute/action, and requires an outgoing message to the
+requested destination. An unrelated seqno increment cannot confirm this
+deployment. If the deadline ends without that transaction, the error names its
+hash and instructs inspection before retry; the CLI does not resend it. The
+unit fixture is the public wallet transaction BOC from this 6f6 run
+(`e03_wallet_deploy_tx.b64`, SHA-256
+`c0f1c81328e17a50cd40a06f5e74a27bf9e99a996e5e5925286a34427ba803ab`).
+This change still needs a new exact-tree full-route run before E03 can close.

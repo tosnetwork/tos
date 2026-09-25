@@ -29,7 +29,8 @@ use chain_rpc_client::v2::client_json_rpc::{
     canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
 };
 use chain_rpc_client::v2::data_models::{
-    AccountState, ExactBocSubmissionResult, ExactBocSubmissionStatus, RelayNetworkDomainPin,
+    AccountState, ExactBocSubmissionResult, ExactBocSubmissionStatus, RawTransaction,
+    RelayNetworkDomainPin,
 };
 use clap::ValueEnum;
 use colored::Colorize;
@@ -9766,18 +9767,124 @@ pub(crate) async fn send_wallet_message_with_state_init(
     owner_address: &MsgAddressInt,
     state_init: chain_block::StateInit,
 ) -> anyhow::Result<()> {
+    // Capture the source cursor before broadcast. A deployment may execute in a shard
+    // after the current masterchain view, so a short seqno poll can report failure
+    // even though the fee-bearing message later lands. Confirmation below names
+    // this exact external message; an unrelated seqno increment is not enough.
+    let before = rpc_client.get_address_information(owner_address).await?;
+    let destination_for_confirmation = destination.clone();
     let msg = wallet
         .build_message(destination, amount, body, false, seqno, None, Some(state_init))
         .await?;
-    rpc_client.send_boc(&write_boc(&msg)?).await?;
-    wait_for_seqno_change(
-        rpc_client,
-        owner_address,
-        seqno,
-        &common::task_cancellation::CancellationCtx::default(),
-        SEND_TIMEOUT,
-    )
-    .await
+    let boc = write_boc(&msg)?;
+    let exact_hash = read_single_root_boc(&boc)?.hash(0);
+    rpc_client.send_boc(&boc).await?;
+    let confirmation = tokio::time::timeout(DEPLOY_TIMEOUT, async {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            let current = rpc_client.get_address_information(owner_address).await?;
+            if current.last_transaction_id.lt <= before.last_transaction_id.lt {
+                continue;
+            }
+            let cursor_hash = base64::engine::general_purpose::STANDARD
+                .encode(&current.last_transaction_id.hash);
+            let page = rpc_client
+                .get_transactions(owner_address, current.last_transaction_id.lt, &cursor_hash, 10)
+                .await?;
+            for raw in &page.transactions {
+                if raw.lt <= before.last_transaction_id.lt {
+                    break;
+                }
+                if exact_deploy_wallet_transaction(raw, &exact_hash, &destination_for_confirmation)? {
+                    return Ok(());
+                }
+            }
+        }
+    })
+    .await;
+    confirmation.map_err(|_| anyhow::anyhow!(
+        "deployment message sha256:{} was submitted but its exact wallet transaction is not visible; inspect it before retrying",
+        hex::encode(exact_hash.as_slice())))?
+}
+
+fn exact_deploy_wallet_transaction(
+    raw: &RawTransaction,
+    expected_external_hash: &chain_block::UInt256,
+    destination: &MsgAddressInt,
+) -> anyhow::Result<bool> {
+    if raw.data.is_empty() {
+        return Ok(false);
+    }
+    let boc = base64::engine::general_purpose::STANDARD.decode(&raw.data)?;
+    let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc)?)?;
+    let Some(inbound) = transaction.in_msg_cell() else {
+        return Ok(false);
+    };
+    if &inbound.hash(0) != expected_external_hash {
+        return Ok(false);
+    }
+    let TransactionDescr::Ordinary(ordinary) = transaction.read_description()? else {
+        anyhow::bail!("exact deployment wallet transaction is not ordinary");
+    };
+    anyhow::ensure!(!ordinary.aborted && ordinary.compute_ph.is_success().is_some(),
+                    "exact deployment wallet transaction aborted or failed compute");
+    anyhow::ensure!(ordinary.action.as_ref().is_some_and(|action| action.success),
+                    "exact deployment wallet transaction did not complete its send action");
+    let mut sent_to_destination = false;
+    transaction.iterate_out_msgs(|message| {
+        if message.dst().as_ref() == Some(destination) {
+            sent_to_destination = true;
+        }
+        Ok(true)
+    })?;
+    anyhow::ensure!(sent_to_destination, "exact deployment wallet transaction omitted the destination message");
+    Ok(true)
+}
+
+#[cfg(test)]
+mod exact_deploy_wallet_transaction_tests {
+    use super::*;
+
+    fn retained_wallet_transaction() -> (RawTransaction, chain_block::UInt256, MsgAddressInt) {
+        // Public transaction BOC from the retained E03 6f6 registry deployment.
+        // The signed external message is already on chain; this fixture contains no secret key.
+        let data = include_str!("fixtures/e03_wallet_deploy_tx.b64").trim().to_owned();
+        let boc = base64::engine::general_purpose::STANDARD.decode(&data).unwrap();
+        let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let hash = transaction.in_msg_cell().unwrap().hash(0);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.encode(hash.as_slice()),
+            "kIx5sD49hxRJWLetkhehLWSqLq8wmnLHVSwoSJm02Wg="
+        );
+        let destination = "EQA10So_O5wULv6_jIzeG63TFAiV3Ebv40vRtfxG6XGVQOrU".parse().unwrap();
+        (RawTransaction { r#type: None, block_id: None, data, lt: 137000001,
+                          utime: 1790299931, hash: String::new() }, hash, destination)
+    }
+
+    #[test]
+    fn exact_broadcast_confirms_only_its_own_successful_destination_send() {
+        let (raw, hash, destination) = retained_wallet_transaction();
+        assert!(exact_deploy_wallet_transaction(&raw, &hash, &destination).unwrap());
+        assert!(!exact_deploy_wallet_transaction(&raw, &chain_block::UInt256::default(), &destination).unwrap());
+        let wrong_destination = "0:1111111111111111111111111111111111111111111111111111111111111111"
+            .parse().unwrap();
+        assert!(exact_deploy_wallet_transaction(&raw, &hash, &wrong_destination).is_err());
+    }
+
+    #[test]
+    fn exact_broadcast_rejects_a_matched_but_aborted_wallet_transaction() {
+        let (mut raw, hash, destination) = retained_wallet_transaction();
+        let boc = base64::engine::general_purpose::STANDARD.decode(&raw.data).unwrap();
+        let mut transaction = Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let TransactionDescr::Ordinary(mut ordinary) = transaction.read_description().unwrap() else {
+            panic!("E03 fixture is not an ordinary wallet transaction");
+        };
+        ordinary.aborted = true;
+        transaction.write_description(&TransactionDescr::Ordinary(ordinary)).unwrap();
+        raw.data = base64::engine::general_purpose::STANDARD
+            .encode(write_boc(&transaction.serialize().unwrap()).unwrap());
+        assert!(exact_deploy_wallet_transaction(&raw, &hash, &destination).is_err());
+    }
 }
 
 async fn wait_for_agent_account_match(
