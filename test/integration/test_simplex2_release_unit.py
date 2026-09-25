@@ -36,6 +36,14 @@ def test_observer_lifecycle_rejects_equal_counts_with_mismatched_identity():
     assert any("destroyed without matching start" in error for error in errors)
 
 
+def test_observer_lifecycle_rejects_a_create_that_never_starts():
+    errors, cc_seqnos = _observer_lifecycle(
+        "Created observer group (0,8000).2 at adnl-A\n"
+    )
+    assert cc_seqnos == {2}
+    assert any("created without matching start" in error for error in errors)
+
+
 def test_observer_integrity_checks_each_node_and_distinct_session_numbers():
     failures = _observer_integrity_failures(
         start_heights=[2, 2],

@@ -163,6 +163,11 @@ def _observer_lifecycle(text: str) -> tuple[list[str], set[int]]:
                 errors.append(f"{action}: {key}; prior={prior}")
             state[key] = next_state
             break
+    errors.extend(
+        f"created without matching start: {key}"
+        for key, current in state.items()
+        if current == "created"
+    )
     return errors, created_cc_seqnos
 
 
