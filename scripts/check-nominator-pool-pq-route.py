@@ -160,6 +160,22 @@ def validate(source: str) -> None:
     require("elect_close - chain_utime > minimum_window_seconds" in parser_text
             and "failed != 0" in parser_text and "finished != 0" in parser_text,
             "final election selector no longer rejects closed or finished windows")
+    first_retries = [
+        call for call in calls(execute, "retry")
+        if keyword(call, "description") == repr("an election has a live stake acceptance window")
+    ]
+    require(len(first_retries) == 1 and len(first_retries[0].args) == 1
+            and ast.unparse(first_retries[0].args[0]) == "self.stakeable_election_id",
+            "first pool stake can select a nonzero but closed active_election_id")
+    primary_rechecks = [
+        node for node in ast.walk(primary)
+        if isinstance(node, ast.If)
+        and ast.unparse(node.test) == "await self.stakeable_election_id() != election_id"
+        and any(isinstance(child, ast.Raise) for child in node.body)
+    ]
+    require(len(primary_rechecks) == 1
+            and primary_rechecks[0].lineno < one_call(primary, "send").lineno,
+            "pool order can be sent after its live election window closes")
     final_retries = [
         call for call in calls(execute, "retry")
         if keyword(call, "description") == repr("an election with an open pool-stake acceptance window")
@@ -274,8 +290,15 @@ def self_test(source: str) -> None:
             ("controller_relay_result(\n                controller_transactions", "ignored_relay(\n                controller_transactions"),
         "history stops after one page":
             ("cursor = previous\n", "return transactions, pages, False, latest_cursor\n"),
-        "closed election selected by nonzero ID":
-            ("                self.stakeable_election_id,\n", "                self.active_election_id,\n"),
+        "first closed election selected by nonzero ID":
+            ("self.stakeable_election_id,\n                timeout=900,\n                description=\"an election has a live stake acceptance window\"",
+             "self.active_election_id,\n                timeout=900,\n                description=\"an election has a live stake acceptance window\""),
+        "first pool order window recheck removed":
+            ("if await self.stakeable_election_id() != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\"",
+             "if False and await self.stakeable_election_id() != election_id:\n            raise RuntimeError(\n                f\"pool stake election window closed or changed before send: {election_id}\""),
+        "final closed election selected by nonzero ID":
+            ("self.stakeable_election_id,\n                timeout=900,\n                description=\"an election with an open pool-stake acceptance window\"",
+             "self.active_election_id,\n                timeout=900,\n                description=\"an election with an open pool-stake acceptance window\""),
         "final election recheck removed":
             ("if await self.stakeable_election_id() != final_election:",
              "if False and await self.stakeable_election_id() != final_election:"),
@@ -325,7 +348,7 @@ def main() -> None:
     source = (root / "scripts/nominator-pool-lifecycle-e2e.py").read_text()
     validate(source)
     self_test(source)
-    print("NOMINATOR_POOL_PQ_ROUTE_OK: fixture identity and PQ pool-order wiring checked; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; final stake selection requires an open window and same-ID recheck; no live second stake is claimed")
+    print("NOMINATOR_POOL_PQ_ROUTE_OK: fixture identity and PQ pool-order wiring checked; support recovery is gated by live Config34, observed retired past-election unfreeze, deleted record, owner credit and exact Elector reply; first and final stake selection require an open window and same-ID recheck; no live second stake is claimed")
 
 
 if __name__ == "__main__":

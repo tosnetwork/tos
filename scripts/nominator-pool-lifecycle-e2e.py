@@ -246,7 +246,12 @@ def _queued_stake_refusal(transactions: list[Any], query_id: int) -> dict[str, A
         description = transaction.description
         compute = getattr(description, "compute_ph", None)
         if getattr(description, "aborted", None) is True and getattr(compute, "exit_code", None) == 85:
-            return {"transaction_lt": str(transaction.lt), "exit_code": 85}
+            return {
+                "transaction_lt": str(transaction.lt),
+                "transaction_boc_base64": base64.b64encode(raw_transaction.data).decode(),
+                "transaction_boc_sha256": hashlib.sha256(raw_transaction.data).hexdigest(),
+                "exit_code": 85,
+            }
     return None
 
 
@@ -3790,7 +3795,7 @@ class PoolLifecycle:
             0, election_id, self.pool_address, query_id=query_id
         )
         cursor_evidence: dict[str, Any] = {}
-        if label in ("pool-stake-after-drain", "stake-blocked-by-queue"):
+        if label in ("pool-stake", "pool-stake-after-drain", "stake-blocked-by-queue"):
             assert self.client is not None
             pool_cursor = (await self.client.raw_get_account_state(
                 self.pool_address
@@ -3807,6 +3812,10 @@ class PoolLifecycle:
                 "controller_pre_order_cursor_lt": str(controller_cursor.lt),
                 "controller_pre_order_cursor_hash": controller_cursor.hash.hex(),
             }
+        if await self.stakeable_election_id() != election_id:
+            raise RuntimeError(
+                f"pool stake election window closed or changed before send: {election_id}"
+            )
         self.event(
             "pool_stake_order", label=label, election_id=election_id,
             query_id=query_id, **cursor_evidence,
@@ -4315,19 +4324,27 @@ class PoolLifecycle:
             upkeep = asyncio.create_task(self.keep_elections_alive())
 
             election_id = await self.retry(
-                self.active_election_id,
+                self.stakeable_election_id,
                 timeout=900,
-                description="an election opens",
+                description="an election has a live stake acceptance window",
                 predicate=lambda value: value > 0,
             )
             self.event("election_open", election_id=election_id)
-            await self.stake_through_pool(election_id, label="pool-stake")
-            data = await self.retry(
-                self.pool_data,
-                timeout=180,
-                description="the Elector accepts the pool's stake",
-                predicate=lambda value: value.state == POOL_STATE_STAKED,
-            )
+            query_id = await self.stake_through_pool(election_id, label="pool-stake")
+            try:
+                data = await self.retry(
+                    self.pool_data,
+                    timeout=180,
+                    description="the Elector accepts the pool's stake",
+                    predicate=lambda value: value.state == POOL_STATE_STAKED,
+                )
+            except Exception:
+                try:
+                    await self.record_pool_stake_feedback(query_id, label="pool-stake")
+                except Exception as evidence_error:  # noqa: BLE001 - preserve stake failure
+                    self.event("pool_stake_feedback_error", error=repr(evidence_error))
+                raise
+            await self.record_pool_stake_feedback(query_id, label="pool-stake")
             self.check(
                 "the pool is a participant in the election",
                 data.state == POOL_STATE_STAKED

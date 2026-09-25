@@ -13,6 +13,7 @@ import asyncio
 import base64
 import copy
 import importlib.util
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -490,6 +491,14 @@ async def test_nonzero_active_id_does_not_override_closed_live_election(tmp_path
     client.chain_utime = 1790213700
     assert await runner.stakeable_election_id() == election_id
 
+
+def test_first_pool_stake_waits_for_the_live_window():
+    source = inspect.getsource(lifecycle.PoolLifecycle.execute)
+    before_first_order = source.split('self.event("election_open"', 1)[0]
+    first_election_retry = before_first_order.rsplit("election_id = await self.retry(", 1)[1]
+    assert first_election_retry.lstrip().startswith("self.stakeable_election_id,")
+
+
 @pytest.mark.asyncio
 async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
     runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-query-test")
@@ -506,6 +515,9 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
 
     runner.authorized_pool_order = build
     runner.send = send
+    async def stakeable():
+        return 123
+    runner.stakeable_election_id = stakeable
     runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
     baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
 
@@ -519,6 +531,36 @@ async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
     assert seen["sent"] == "pool-stake-after-drain"
     assert runner.report.events[-1]["query_id"] == query_id
     assert runner.stake_feedback_baselines[query_id] == (baseline, baseline)
+
+
+@pytest.mark.asyncio
+async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="closed-after-auth-test")
+    runner.pool_address = Address((-1, bytes([0x55]) * 32))
+    runner.wallets = [object()]
+    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
+    baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            return SimpleNamespace(last_transaction_id=baseline)
+
+    async def build(*args, **kwargs):
+        return Cell.empty()
+
+    async def stakeable():
+        return 0
+
+    async def send(*args, **kwargs):
+        raise AssertionError("closed-window stake was sent")
+
+    runner.client = FakeClient()
+    runner.authorized_pool_order = build
+    runner.stakeable_election_id = stakeable
+    runner.send = send
+    with pytest.raises(RuntimeError, match="window closed or changed before send"):
+        await runner.stake_through_pool(123, label="pool-stake")
+    assert not any(event["event"] == "pool_stake_order" for event in runner.report.events)
 
 
 @pytest.mark.asyncio
