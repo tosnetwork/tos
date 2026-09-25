@@ -103,3 +103,48 @@ passed. This is a one-validator plus two independent-observer local PQ-chain
 route, not a multi-validator or release-scale result. E07 remains pending
 independent review and all required fixed-head CI terminal results; it is not
 unilaterally marked complete here.
+
+Mac's independent review found that the `841567229` control would also
+accept an unrelated same-escrow wallet credit: it checked the bounced flag
+and source but did not bind the credit to an actual outgoing message of the
+specific aborted escrow transaction. `f21f0c726` requires the wallet send to
+have exactly one total outbound, every additional wallet credit to match the
+escrow transaction's exact bounce hash/source/destination with no wallet
+outbound, and at most one such bounce. A mismatch preserves both raw transaction
+pages in `e07-premature-timeout-ambiguous.json`. The 11 targeted unit controls
+pass; deleting only the `bounce_hash not in expected_hashes` check makes the
+wrong-hash full-control test fail because it incorrectly accepts the unrelated
+credit. The retained mutant log is
+`test/integration/.e07-bounce-hash-mutant-f21f0c726-20260925.log`, SHA-256
+`5c3e6ee254ca320e6584faae166d7309adf486bcd31603a1846e8bd2ed225779`;
+mutant script SHA-256 is
+`e4a7798a313a0abbcffde3b24d2c891140646d1e06ac545ed470afee59f41ae3`.
+The production source was restored before the full real-chain run.
+
+The exact `f21f0c72606f3866d06b9692c4ab5dd58f141e2a` rerun exited 0
+with 106 PASS, zero FAIL and `RESULT: ALL PASS`. Command:
+`script -q -e -f -c 'TOS_BUILD_DIR=build PYTHONPATH=test/tostester/src uv run python -u scripts/agent-task-escrow-e2e.py' test/integration/.e07-task-escrow-f21f0c726-20260925-console.typescript`.
+Console SHA-256 is
+`9b458d8fe64d8fb70999ae3d1c43e59ab77663547d89ee33e477b4b9f3d37153`;
+node DB/config and receipts are preserved under
+`test/integration/.e07-task-escrow-f21f0c726-20260925-network/`.
+The timeout receipt SHA-256 is
+`8fb33f27128b5f1c74abb7f3dba206d36838f7222b83d206ff5edb6f76baf211`,
+process map SHA-256
+`68f58783032eaa70f29581c783e5dab407705b95dfca5a8c87eb7a37e207915d`.
+Wallet LT `733000001` has the sole outbound hash
+`0+lAhSTHa+Qg471ucnH20cdpWOeiPMBeb0aKdIOIRHc=`; escrow LT `733000003`
+received that same hash, aborted with VM exit 109 at chain time `1790322839`
+before deadline `1790322873`, and emitted bounce hash
+`ptWHebXjimKt1fLlM9E+lBHtT4cd0YwxhwDZ62sS0Ko=`. The only additional
+wallet row, LT `733000005`, receives that exact bounce and emits no message.
+The Task remained accepted until the finalized head crossed the deadline;
+positive expiry/refund and the later persisted-record checks passed. Script
+source SHA-256 is
+`f57ea5b664e6b8041a70016f23b189b0607b42aeb7438b5a75f89d959140f6d6`;
+the targeted-test SHA-256 is
+`730e312d5e0027bec4ab9f2307c37cc86c631c242305ffecc112eae9ce702d20`.
+Validator-engine, DHT and tosctl binary SHA-256 values match the earlier
+`efc0` run. No child network processes remain. This is still a one-validator,
+two-observer local route, pending independent review and fixed-tree CI; E07
+remains OPEN.
