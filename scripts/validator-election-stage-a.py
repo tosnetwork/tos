@@ -1686,19 +1686,6 @@ class ValidatorElectionRehearsal:
         self.x01_trace["recovery_halt_checkpoint"] = checkpoint
         trace_path = self.x01_directory / "trace.json"
         write_json_atomic(trace_path, self.x01_trace)
-        generations = {"validators": [
-            {"node_name": node.name,
-             "node_data_dir": self.x01_policy["nodes"][node.name]["node_data_dir"],
-             "pq_key_id_hex": self.x01_policy["nodes"][node.name]["pq_key_id_hex"],
-             "adnl_id_hex": self.x01_policy["nodes"][node.name]["adnl_id_hex"],
-             "rpc_address": self.x01_policy["nodes"][node.name]["endpoint"],
-             "process_generations": self.f01_process_generations[node.name]}
-            for node in self.nodes]}
-        result = validate_x01_window(self.x01_policy, self.x01_trace,
-                                     generation_manifest=generations)
-        result.update({"policy_sha256": self.x01_policy_sha256,
-                       "trace_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest()})
-        write_json_atomic(self.x01_directory / "check.json", result)
         manifest = {"schema": "tos.x01.stage-a-capture.v1",
                     "source_commit": self.provenance["source_commit"],
                     "harness": self.provenance["harness"],
@@ -1711,6 +1698,28 @@ class ValidatorElectionRehearsal:
                         self.x01_directory.glob("*-process_*.json"))],
                     "f01_capture_manifest": str(self.f01_directory / "capture-manifest.json")}
         manifest_path = self.x01_directory / "capture-manifest.json"
+        write_json_atomic(manifest_path, manifest)
+        self.x01_capture_provenance = self.file_provenance(manifest_path)
+
+    def write_x01_check(self) -> None:
+        """Validate the sealed F01 per-node raw logs before publishing X01 PASS."""
+        assert self.x01_policy is not None and self.x01_policy_sha256 is not None
+        policy_path = self.x01_directory / "policy.json"
+        trace_path = self.x01_directory / "trace.json"
+        f01_path = self.f01_directory / "capture-manifest.json"
+        if hashlib.sha256(policy_path.read_bytes()).hexdigest() != self.x01_policy_sha256:
+            raise ValueError("X01 pre-fault policy changed before final F01 log validation")
+        f01_bytes = f01_path.read_bytes()
+        result = validate_x01_window(self.x01_policy, self.x01_trace,
+                                     generation_manifest=json.loads(f01_bytes))
+        result.update({"policy_sha256": self.x01_policy_sha256,
+                       "trace_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest(),
+                       "f01_capture_manifest_sha256": hashlib.sha256(f01_bytes).hexdigest()})
+        write_json_atomic(self.x01_directory / "check.json", result)
+        manifest_path = self.x01_directory / "capture-manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest["f01_capture_manifest"] = self.file_provenance(f01_path)
+        manifest["check"] = self.file_provenance(self.x01_directory / "check.json")
         write_json_atomic(manifest_path, manifest)
         self.x01_capture_provenance = self.file_provenance(manifest_path)
 
@@ -4119,8 +4128,11 @@ class ValidatorElectionRehearsal:
         if self.pq_full:
             try:
                 self.write_f01_capture()
+                if (self.x01_policy is not None
+                        and (self.x01_directory / "trace.json").is_file()):
+                    self.write_x01_check()
             except Exception as error:
-                self.fail(f"F01 Stage A capture incomplete: {error}")
+                self.fail(f"F01/X01 Stage A capture incomplete: {error}")
         report = {
             "status": self.report_status(),
             "generated_at": utc_now(),

@@ -40,6 +40,17 @@ def raw_id(seqno, root=1):
 
 
 class X01StageACaptureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_final_x01_pass_waits_for_sealed_f01_logs(self):
+        body = methods()
+        report = ast.unparse(body["write_report"])
+        self.assertLess(report.index("self.write_f01_capture()"),
+                        report.index("self.write_x01_check()"))
+        final_check = ast.unparse(body["write_x01_check"])
+        self.assertIn('f01_path.read_bytes()', final_check)
+        self.assertIn('generation_manifest=json.loads(f01_bytes)', final_check)
+        self.assertIn('self.file_provenance(f01_path)', final_check)
+        self.assertNotIn('"check.json"', ast.unparse(body["x01_finish"]))
+
     async def test_x01_restarts_preserve_f01_process_generations(self):
         body = methods()
         for route in ("verify_three_of_four_liveness", "verify_two_of_four_safe_halt"):

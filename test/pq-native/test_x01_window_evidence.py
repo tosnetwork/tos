@@ -1,11 +1,13 @@
 """Synthetic X01 fault-window controls. No node is started."""
 
 import base64
+import copy
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import tempfile
 import unittest
 
 SOURCE = Path(os.environ.get(
@@ -13,6 +15,21 @@ SOURCE = Path(os.environ.get(
 spec = importlib.util.spec_from_file_location("x01_window_evidence", SOURCE)
 x01 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(x01)
+FIXTURE_LOG_ROOT = tempfile.TemporaryDirectory(prefix="x01-f01-fixture-")
+
+
+def seal_fixture_logs(manifest):
+    directory = Path(tempfile.mkdtemp(dir=FIXTURE_LOG_ROOT.name))
+    def log(name):
+        path = directory / name
+        path.write_bytes((name + " native finalized marker\n").encode())
+        return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    for validator in manifest["validators"]:
+        node = validator["node_name"]
+        validator["combined_log"] = log(f"{node}-finalized.log")
+        validator["log_segments"] = [
+            {**log(f"{node}-segment-{index:02d}.log"), "process": generation_row}
+            for index, generation_row in enumerate(validator["process_generations"])]
 
 
 def block(height, root=None):
@@ -127,7 +144,7 @@ def fixture():
         },
         "recovery_halt_checkpoint": {name: block(12) for name in names},
     }
-    trace["process_generation_manifest"] = {"validators": [
+    trace["process_generation_manifest"] = {"schema": "tos.f01.stage-a-capture.v1", "validators": [
         {"node_name": name, "node_data_dir": policy["nodes"][name]["node_data_dir"],
          "pq_key_id_hex": policy["nodes"][name]["pq_key_id_hex"],
          "adnl_id_hex": policy["nodes"][name]["adnl_id_hex"],
@@ -140,6 +157,7 @@ def fixture():
                 [generation(policy, name, 1, 3006, "2026-09-25T12:00:09.700000Z")]
                 if name == "node3" else []))}
         for name in names]}
+    seal_fixture_logs(trace["process_generation_manifest"])
     return policy, trace
 
 
@@ -152,6 +170,7 @@ class X01WindowTests(unittest.TestCase):
         node3 = trace["process_generation_manifest"]["validators"][2]["process_generations"]
         node3.insert(1, generation(policy, "node3", 1, 3005, "2026-09-25T12:00:01.300000Z"))
         node3[2]["generation"] = 2
+        seal_fixture_logs(trace["process_generation_manifest"])
         self.assertTrue(x01.validate(policy, trace)["passed"])
         node3[1]["proc_start_ticks"] += 1
         with self.assertRaisesRegex(ValueError, "PID/start ticks has no unique F01 generation"):
@@ -160,11 +179,50 @@ class X01WindowTests(unittest.TestCase):
     def test_generation_cwd_alias_and_missing_witness_fail_closed(self):
         policy, trace = fixture()
         del trace["process_generation_manifest"]
-        with self.assertRaisesRegex(ValueError, "requires four F01"):
+        with self.assertRaisesRegex(ValueError, "requires the sealed F01"):
             x01.validate(policy, trace)
         policy, trace = fixture()
         trace["process_generation_manifest"]["validators"][2]["process_generations"][0]["proc_cwd_inode"] = 101
         with self.assertRaisesRegex(ValueError, "DB cwd inode is shared"):
+            x01.validate(policy, trace)
+        policy, trace = fixture()
+        node3 = trace["process_generation_manifest"]["validators"][2]["process_generations"]
+        node3[1]["proc_cwd_inode"] = 999999
+        # Recompute the independent witness from the altered manifest. Matching
+        # F01/OS labels must not hide a new DB inode at the same path.
+        with self.assertRaisesRegex(ValueError, "changed DB cwd inode"):
+            x01.validate(policy, trace, os_process_generations=os_witnesses(policy, trace))
+
+    def test_f01_combined_and_segment_log_aliases_fail_even_with_fresh_hashes(self):
+        policy, trace = fixture()
+        manifest = copy.deepcopy(trace["process_generation_manifest"])
+        manifest["schema"] = "tos.f01.stage-a-capture.v1"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def log(name):
+                path = root / name
+                path.write_bytes((name + " original native marker\n").encode())
+                return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for validator in manifest["validators"]:
+                node = validator["node_name"]
+                validator["combined_log"] = log(f"{node}-finalized.log")
+                validator["log_segments"] = [
+                    {**log(f"{node}-segment-{index:02d}.log"), "process": generation_row}
+                    for index, generation_row in enumerate(validator["process_generations"])]
+            self.assertTrue(x01.validate(policy, trace, generation_manifest=manifest)["passed"])
+            manifest["validators"][2]["combined_log"] = copy.deepcopy(
+                manifest["validators"][1]["combined_log"])
+            manifest["validators"][2]["log_segments"] = copy.deepcopy(
+                manifest["validators"][1]["log_segments"])
+            with self.assertRaisesRegex(ValueError, "raw log owner/path/SHA"):
+                x01.validate(policy, trace, generation_manifest=manifest)
+
+    def test_single_combined_log_alias_fails_with_other_segments_intact(self):
+        policy, trace = fixture()
+        manifest = trace["process_generation_manifest"]
+        manifest["validators"][2]["combined_log"] = copy.deepcopy(
+            manifest["validators"][1]["combined_log"])
+        with self.assertRaisesRegex(ValueError, "raw log owner/path/SHA"):
             x01.validate(policy, trace)
 
     def test_independent_os_watcher_binds_db_binary_and_start_ticks(self):

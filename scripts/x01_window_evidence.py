@@ -63,6 +63,9 @@ def proc_identity(raw_base64: object, label: str) -> tuple[int, int]:
 
 def require_generations(policy: dict, manifest: dict, os_records: list[dict] | None) -> dict[str, list[dict]]:
     nodes = policy["nodes"]
+    schema = manifest.get("schema") if isinstance(manifest, dict) else None
+    if schema != "tos.f01.stage-a-capture.v1":
+        raise ValueError("X01 requires the sealed F01 capture manifest")
     validators = manifest.get("validators") if isinstance(manifest, dict) else None
     if (not isinstance(validators, list) or len(validators) != 4
             or {row.get("node_name") for row in validators if isinstance(row, dict)} != set(nodes)):
@@ -71,6 +74,29 @@ def require_generations(policy: dict, manifest: dict, os_records: list[dict] | N
     seen_process = set()
     seen_cwd = {}
     exe_identity = set()
+    seen_log_paths = {}
+    seen_log_hashes = {}
+    seen_log_inodes = {}
+
+    def log_identity(log: object, basename: str, label: str, node: str) -> None:
+        if not isinstance(log, dict):
+            raise ValueError(f"{label}: F01 raw log provenance is absent")
+        path, digest = log.get("path"), log.get("sha256")
+        if (not isinstance(path, str) or Path(path).name != basename
+                or not isinstance(digest, str) or not HEX.fullmatch(digest)
+                or int(digest, 16) == 0):
+            raise ValueError(f"{label}: F01 raw log owner/path/SHA is malformed")
+        source = Path(path).resolve(strict=True)
+        inode = (source.stat().st_dev, source.stat().st_ino)
+        if (seen_log_paths.get(source, node) != node
+                or seen_log_inodes.get(inode, node) != node
+                or seen_log_hashes.get(digest.lower(), node) != node
+                or not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != digest.lower()):
+            raise ValueError(f"{label}: F01 raw log aliases another node or differs from bytes")
+        seen_log_paths[source] = node
+        seen_log_inodes[inode] = node
+        seen_log_hashes[digest.lower()] = node
+
     for validator in validators:
         node = validator["node_name"]
         fixed = nodes[node]
@@ -83,6 +109,7 @@ def require_generations(policy: dict, manifest: dict, os_records: list[dict] | N
             raise ValueError(f"{node}: F01 process generations are absent")
         previous_ticks = 0
         previous_time = None
+        owner_cwd = None
         for index, row in enumerate(generations):
             if not isinstance(row, dict):
                 raise ValueError(f"{node}: F01 generation is malformed")
@@ -103,11 +130,22 @@ def require_generations(policy: dict, manifest: dict, os_records: list[dict] | N
             prior_owner = seen_cwd.setdefault(cwd, node)
             if prior_owner != node:
                 raise ValueError("X01 validator DB cwd inode is shared across nodes")
+            if owner_cwd is not None and cwd != owner_cwd:
+                raise ValueError(f"{node}: F01 process generations changed DB cwd inode")
+            owner_cwd = cwd
             exe_identity.add(exe)
             seen_process.add((pid, ticks))
             previous_ticks, previous_time = ticks, at
         if fixed["initial_pid"] not in [row["pid"] for row in generations]:
             raise ValueError(f"{node}: frozen policy PID has no F01 generation")
+        log_identity(validator.get("combined_log"), f"{node}-finalized.log", node, node)
+        segments = validator.get("log_segments")
+        if not isinstance(segments, list) or len(segments) != len(generations):
+            raise ValueError(f"{node}: F01 log segments omit a process generation")
+        for index, segment in enumerate(segments):
+            if not isinstance(segment, dict) or segment.get("process") != generations[index]:
+                raise ValueError(f"{node}: F01 log segment differs from process generation")
+            log_identity(segment, f"{node}-segment-{index:02d}.log", f"{node} segment {index}", node)
         result[node] = generations
     if len(exe_identity) != 1:
         raise ValueError("X01 validator executable inode changed across generations")
