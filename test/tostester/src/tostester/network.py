@@ -30,7 +30,7 @@ l = logging.getLogger(__name__)
 
 
 def _retryable_startup_lite_error(error: BaseException) -> bool:
-    """Only the known 500-class transport races while the first node starts."""
+    """Only known 500-class transport and unsynced-node startup responses."""
     return (
         isinstance(error, ToslibError)
         and error.result.code == 500
@@ -38,6 +38,7 @@ def _retryable_startup_lite_error(error: BaseException) -> bool:
             "LITE_SERVER_NETWORKtimeout for adnl query query",
             "LITE_SERVER_NETWORK",
             "LITE_SERVER_NETWORKconn not ready",
+            "LITE_SERVER_NOTREADY: node not synced",
         }
     )
 

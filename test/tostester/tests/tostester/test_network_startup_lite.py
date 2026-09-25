@@ -19,7 +19,10 @@ def test_startup_recognizes_real_no_connection_status_without_widening_other_err
     assert _retryable_startup_lite_error(
         _error(500, "LITE_SERVER_NETWORKtimeout for adnl query query")
     )
+    assert _retryable_startup_lite_error(_error(500, "LITE_SERVER_NOTREADY: node not synced"))
     assert not _retryable_startup_lite_error(_error(400, "LITE_SERVER_NETWORKconn not ready"))
+    assert not _retryable_startup_lite_error(_error(400, "LITE_SERVER_NOTREADY: node not synced"))
+    assert not _retryable_startup_lite_error(_error(500, "LITE_SERVER_NOTREADY: different failure"))
     assert not _retryable_startup_lite_error(_error(500, "NO_LITE_SERVERS"))
     assert not _retryable_startup_lite_error(RuntimeError("LITE_SERVER_NETWORKconn not ready"))
 
