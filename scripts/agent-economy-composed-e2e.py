@@ -45,7 +45,9 @@ import base64
 import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -67,6 +69,7 @@ WORKDIR = REPO / "test/integration/.agent-economy-composed-e2e"
 RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 CHAIN_EVIDENCE = WORKDIR / "chain-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000008"
@@ -93,6 +96,39 @@ RESPONDENT_EVIDENCE_HASH = "ff" * 32
 RULING_HASH = "01" * 32
 
 failures: list[str] = []
+
+
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "evidence_test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e10_composed_evidence.py").read_bytes()).hexdigest(),
+        "quorum_test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e10_controller_quorum.py").read_bytes()).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+        "rpc_transcript": RPC_TRANSCRIPT.name,
+        "cli_transcript": CLI_TRANSCRIPT.name,
+        "chain_evidence": CHAIN_EVIDENCE.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E10 real-chain run requires a clean tracked source tree")
 
 
 def check(label: str, ok: bool, detail: str = ""):
@@ -145,6 +181,10 @@ def last_lt(address: str) -> int:
 
 def transactions_after(address: str, baseline_lt: int) -> list[dict]:
     rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if len(rows) == 10 and all(
+        int(row["transaction_id"]["lt"]) > baseline_lt for row in rows
+    ):
+        raise RuntimeError("composed-route transaction page did not cover baseline")
     return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
 
 
@@ -714,6 +754,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     write_config()
     install = Install(BUILD_DIR, REPO)
 

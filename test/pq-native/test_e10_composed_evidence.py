@@ -1,10 +1,13 @@
 """Offline fail-closed controls for composed workflow rejection and payout edges."""
 
 import asyncio
+import hashlib
 import importlib.util
+import json
 import os
 from pathlib import Path
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -64,6 +67,43 @@ def worker_tx(value=2_600_000_000, message_hash="payout-edge"):
 
 
 class ComposedEvidenceTests(unittest.TestCase):
+    def test_manifest_binds_clean_source_and_three_binary_hashes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            validator = root / "validator-engine/validator-engine"
+            dht = root / "dht-server/dht-server"
+            validator.parent.mkdir()
+            dht.parent.mkdir()
+            validator.write_bytes(b"validator")
+            dht.write_bytes(b"dht")
+            tosctl = root / "tosctl"
+            tosctl.write_bytes(b"tosctl")
+            path = root / "manifest.json"
+            with patch.object(e10, "BUILD_DIR", root), patch.object(e10, "TOSCTL", str(tosctl)), patch.object(
+                e10, "MANIFEST", path
+            ), patch.object(e10.subprocess, "check_output", return_value="fixed-sha\n"), patch.object(
+                e10.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)
+            ):
+                e10.write_manifest()
+            manifest = json.loads(path.read_text())
+            self.assertEqual(manifest["source_commit"], "fixed-sha")
+            self.assertFalse(manifest["source_tracked_dirty"])
+            self.assertEqual(manifest["binaries"]["tosctl"]["sha256"],
+                             hashlib.sha256(b"tosctl").hexdigest())
+            with patch.object(e10, "BUILD_DIR", root), patch.object(e10, "TOSCTL", str(tosctl)), patch.object(
+                e10, "MANIFEST", path
+            ), patch.object(e10.subprocess, "check_output", return_value="fixed-sha\n"), patch.object(
+                e10.subprocess, "run", return_value=types.SimpleNamespace(returncode=1)
+            ):
+                with self.assertRaisesRegex(RuntimeError, "clean tracked source tree"):
+                    e10.write_manifest()
+
+    def test_full_transaction_page_without_baseline_is_refused(self):
+        rows = [{"transaction_id": {"lt": str(20 - index)}} for index in range(10)]
+        with patch.object(e10, "rpc_call", return_value={"result": rows}):
+            with self.assertRaisesRegex(RuntimeError, "did not cover baseline"):
+                e10.transactions_after("0:payer", 10)
+
     def negative(self, *, code=9, send_error=None, target=None, wallet=None):
         with patch.object(e10, "finalized_mc_header",
                           side_effect=[head(10), head(11), head(12)]), patch.object(
