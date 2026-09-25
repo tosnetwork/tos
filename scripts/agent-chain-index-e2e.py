@@ -104,6 +104,11 @@ def http_get(path: str) -> tuple[int, dict]:
         return status, {}
 
 
+async def http_get_async(path: str) -> tuple[int, dict]:
+    # This event loop also drains the node and service subprocess pipes.
+    return await asyncio.to_thread(http_get, path)
+
+
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
 # the event loop that drains the in-process node's log pipes, deadlocking the
 # chain (and therefore the tosctl call itself) until the subprocess timeout.
@@ -208,7 +213,7 @@ async def wait_http_ready(timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            status, _ = http_get("/health")
+            status, _ = await http_get_async("/health")
             if status == 200:
                 return True
         except Exception:
@@ -224,7 +229,7 @@ async def poll_http_predicate(path: str, predicate, timeout: float) -> tuple[boo
     deadline = time.time() + timeout
     last_body: dict = {}
     while time.time() < deadline:
-        status, body = http_get(path)
+        status, body = await http_get_async(path)
         last_body = body
         if status == 200 and predicate(body):
             return True, body
@@ -372,28 +377,28 @@ async def run_checks(faucet) -> None:
             check("discovered registry status is active", entry.get("status") == "active",
                   str(entry))
 
-        status, index_after = http_get("/explorer/status")
+        status, index_after = await http_get_async("/explorer/status")
         progress = index_after.get("result", {})
         check("config-b masterchain index cursor advanced",
               status == 200 and isinstance(progress.get("masterchain_indexed"), int)
               and progress["masterchain_indexed"] >= deployment_mc_seqno,
               f"status={status} body={index_after}")
 
-        status, body = http_get("/tasks?status=not-a-task-status")
+        status, body = await http_get_async("/tasks?status=not-a-task-status")
         check("invalid task status returns HTTP 400", status == 400,
               f"status={status} body={body}")
-        status, body = http_get("/registry?limit=not-a-number")
+        status, body = await http_get_async("/registry?limit=not-a-number")
         check("invalid registry limit returns HTTP 400", status == 400,
               f"status={status} body={body}")
 
         print("\n=== GET /registry/{address} direct lookup on config-b ===")
-        status, body = http_get(f"/registry/{registry_address}")
+        status, body = await http_get_async(f"/registry/{registry_address}")
         check("get_registry status 200", status == 200, f"status={status} body={body}")
         check("get_registry owner matches",
               same_addr(body.get("result", {}).get("owner", ""), owner), str(body))
 
         print("\n=== GET /disputes on config-b (no disputes deployed -- empty, not an error) ===")
-        status, body = http_get("/disputes")
+        status, body = await http_get_async("/disputes")
         check("list_disputes status 200", status == 200, f"status={status} body={body}")
         check("list_disputes total is zero", body.get("total") == 0, str(body))
 

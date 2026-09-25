@@ -1,12 +1,14 @@
 """Retain exact HTTP success and error replies from the E06 index route."""
 
 import base64
+import asyncio
 import importlib.util
 import io
 import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import types
 import unittest
 import urllib.error
@@ -70,6 +72,26 @@ class HttpTranscriptTests(unittest.TestCase):
         self.assertEqual([row["response"]["status"] for row in rows], [200, 400])
         self.assertEqual([base64.b64decode(row["response"]["body_base64"])
                           for row in rows], [good, bad])
+
+
+class HttpEventLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_http_wait_does_not_block_node_log_drain(self):
+        released = threading.Event()
+        released_before_http_return = []
+
+        def delayed_http(_path):
+            released_before_http_return.append(released.wait(timeout=0.2))
+            return 200, {"ok": True}
+
+        async def drain_task():
+            await asyncio.sleep(0.01)
+            released.set()
+
+        with patch.object(e06, "http_get", side_effect=delayed_http):
+            result, _ = await asyncio.gather(
+                e06.http_get_async("/health"), drain_task())
+        self.assertEqual(result, (200, {"ok": True}))
+        self.assertEqual(released_before_http_return, [True])
 
 
 if __name__ == "__main__":
