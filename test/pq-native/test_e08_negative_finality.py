@@ -130,6 +130,28 @@ class NegativeFinalityTests(unittest.TestCase):
                 e08.validate_attestation_bounces([bounce, send], send, contract,
                                                  "0:payer", "0:abc")
 
+    def test_previous_refusal_bounce_is_observed_before_next_baseline(self):
+        send = wallet_tx()
+        contract = contract_tx()
+        contract["out_msgs"] = [{"source": "0:abc", "destination": "0:payer",
+                                 "bounced": True, "hash": "exact-bounce"}]
+        bounce = {"transaction_id": {"lt": "13"}, "out_msgs": [], "in_msg": {
+            "source": "0:abc", "destination": "0:payer",
+            "bounced": True, "hash": "exact-bounce",
+        }}
+        with patch.object(e08, "same_addr", side_effect=lambda left, right: left == right), patch.object(
+            e08, "transactions_after", side_effect=[[], [bounce]]
+        ) as transactions, patch.object(e08.asyncio, "sleep", new=AsyncMock()):
+            self.assertEqual(asyncio.run(e08.await_attestation_bounce(
+                send, contract, "0:payer", "0:abc")), bounce)
+        self.assertEqual(transactions.call_count, 2)
+        wrong = dict(bounce, in_msg=dict(bounce["in_msg"], hash="other-bounce"))
+        with patch.object(e08, "same_addr", side_effect=lambda left, right: left == right), patch.object(
+            e08, "transactions_after", return_value=[wrong]
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not this attestation's bounce"):
+                asyncio.run(e08.await_attestation_bounce(send, contract, "0:payer", "0:abc"))
+
     def test_full_transaction_page_without_baseline_is_refused(self):
         rows = [{"transaction_id": {"lt": str(20 - index)}} for index in range(10)]
         with patch.object(e08, "rpc_call", return_value={"result": rows}):

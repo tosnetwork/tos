@@ -205,6 +205,23 @@ def validate_attestation_bounces(wallet_rows: list[dict], wallet_tx: dict,
         observed_hashes.add(bounce_hash)
 
 
+async def await_attestation_bounce(wallet_tx: dict, contract_tx: dict,
+                                   payer: str, address: str) -> dict | None:
+    """Make the next operation's wallet baseline include this exact refund."""
+    if not contract_tx.get("out_msgs"):
+        return None
+    baseline = int(wallet_tx["transaction_id"]["lt"])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        rows = transactions_after(payer, baseline)
+        if rows:
+            validate_attestation_bounces([wallet_tx, *rows], wallet_tx,
+                                         contract_tx, payer, address)
+            return rows[0]
+        await asyncio.sleep(1)
+    raise RuntimeError("exact attestation bounce not observed before next operation")
+
+
 async def tosctl(*args: str) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
@@ -382,10 +399,12 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
             await asyncio.sleep(1)
     if len(observations) != 2:
         raise RuntimeError(f"{label}: finalized masterchain did not advance twice")
+    bounce_tx = await await_attestation_bounce(wallet_tx, contract_tx, payer, address)
     record_jsonl(NEGATIVE_EVIDENCE, {"label": label, "expected_exit": expected_exit,
                  "cli_receipt": receipt, "before_state": before_state,
                  "before_head": before_head, "wallet_transaction": wallet_tx,
-                 "attestation_transaction": contract_tx, "observations": observations})
+                 "attestation_transaction": contract_tx,
+                 "bounce_transaction": bounce_tx, "observations": observations})
     check(label, True)
 
 
