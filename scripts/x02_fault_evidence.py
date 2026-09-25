@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import argparse
 import base64
+import calendar
 import hashlib
 import ipaddress
 import json
 import os
 import re
+import stat
 import subprocess
 import time
 import urllib.parse
@@ -26,6 +28,8 @@ MARKER = re.compile(
     r"BlockFinalizedInMasterchain.*?\{block=\(-1,8000000000000000,(\d+)\):"
     r"([0-9A-Fa-f]{64}):([0-9A-Fa-f]{64})\}"
 )
+NATIVE_TIME = re.compile(rb"\[(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\.\d{9})\]")
+PIPE_FD = re.compile(r"pipe:\[(\d+)\]\Z")
 SHARD = "8000000000000000"
 PHASES = ("baseline", "three_of_four", "two_of_four", "recovery")
 SOURCE_FILES = ("scripts/x02_fault_evidence.py", "scripts/validator-election-stage-a.py")
@@ -163,6 +167,31 @@ def validate_policy(policy: dict) -> None:
         endpoints.add((node["peer_ip"], node["peer_port"]))
     require(len({node["adnl_id"].lower() for node in nodes}) == 4,
             "ADNL identities are not distinct")
+    if policy.get("log_source") == "native-file":
+        log_paths, log_inodes = set(), set()
+        harnesses = set()
+        for node in nodes:
+            path = Path(node.get("log_path", ""))
+            require(path.is_absolute() and path == Path(node["data_dir"]) / "log",
+                    "native log is not the validator data-dir log")
+            dev, ino = node.get("log_dev"), node.get("log_ino")
+            require(type(dev) is int and dev > 0 and type(ino) is int and ino > 0,
+                    "native log device/inode is absent")
+            require(str(path) not in log_paths and (dev, ino) not in log_inodes,
+                    "native log aliases another validator")
+            log_paths.add(str(path)); log_inodes.add((dev, ino))
+            pid, start = node.get("harness_pid"), node.get("harness_start_ticks")
+            require(type(pid) is int and pid > 0 and type(start) is int and start > 0,
+                    "harness process identity is absent")
+            require(type(node.get("db_dev")) is int and node["db_dev"] > 0
+                    and type(node.get("db_ino")) is int and node["db_ino"] > 0,
+                    "validator DB device/inode is absent")
+            hex64(node.get("harness_exe_sha256"), "harness executable SHA")
+            harnesses.add((pid, start))
+        require(len(harnesses) == 1, "validators have different log-streamer harnesses")
+    else:
+        require(policy.get("log_source", "journald") == "journald",
+                "unknown native marker source")
     rpc_ports = {urllib.parse.urlparse(node["rpc_url"]).port for node in nodes}
     require(not ({node["peer_port"] for node in nodes} & rpc_ports),
             "validator peer transport overlaps RPC control port")
@@ -262,6 +291,8 @@ def read_policy(path: Path, expected_sha: str) -> dict:
     require(digest(data) == expected_sha, "policy bytes differ from precommitted SHA")
     policy = json.loads(data)
     validate_policy(policy)
+    require(policy.get("log_source") == "native-file",
+            "real X02 CLI requires PID-bound native node-log bytes")
     return policy
 
 
@@ -356,6 +387,256 @@ def capture_process(node: dict) -> dict:
             "udp_table_sha256": digest(udp.encode())}
 
 
+def _proc_start_ticks(raw: bytes) -> int:
+    """Linux /proc/PID/stat field 22, without splitting the parenthesized comm."""
+    try:
+        return int(raw.rsplit(b") ", 1)[1].split()[19])
+    except (IndexError, ValueError) as error:
+        raise ValueError("process start ticks are malformed") from error
+
+
+def _proc_parent_pid(raw: bytes) -> int:
+    try:
+        return int(raw.rsplit(b") ", 1)[1].split()[1])
+    except (IndexError, ValueError) as error:
+        raise ValueError("process parent PID is malformed") from error
+
+
+def _fd_identity(proc: Path, target: tuple[int, int] | None = None) -> tuple[list[dict], set[int]]:
+    rows, pipes = [], set()
+    for fd in (proc / "fd").iterdir():
+        try:
+            link = os.readlink(fd)
+            metadata = fd.stat()
+        except OSError:
+            continue
+        match = PIPE_FD.fullmatch(link)
+        if match:
+            pipes.add(int(match.group(1)))
+        if match or (target is not None and
+                     (metadata.st_dev, metadata.st_ino) == target):
+            rows.append({"fd": int(fd.name), "link": link,
+                         "dev": metadata.st_dev, "ino": metadata.st_ino,
+                         "mode": metadata.st_mode})
+    return sorted(rows, key=lambda row: row["fd"]), pipes
+
+
+def native_log_origin(node: dict, log_stat: os.stat_result) -> dict:
+    """Prove the child stderr pipe is held by the harness writing this DB log."""
+    pid, harness_pid = node["pid"], node["harness_pid"]
+    child, harness = Path(f"/proc/{pid}"), Path(f"/proc/{harness_pid}")
+    child_stat, harness_stat = (child / "stat").read_bytes(), (harness / "stat").read_bytes()
+    require(_proc_start_ticks(child_stat) == node["pid_start_ticks"]
+            and _proc_parent_pid(child_stat) == harness_pid,
+            "native log child PID/start/parent differs")
+    require(_proc_start_ticks(harness_stat) == node["harness_start_ticks"],
+            "native log harness generation differs")
+    stderr_link = os.readlink(child / "fd/2")
+    match = PIPE_FD.fullmatch(stderr_link)
+    require(match is not None, "validator stderr is not the harness pipe")
+    pipe_inode = int(match.group(1))
+    harness_fds, harness_pipes = _fd_identity(
+        harness, (log_stat.st_dev, log_stat.st_ino))
+    require(pipe_inode in harness_pipes,
+            "harness does not hold the validator stderr pipe")
+    require(any(row["dev"] == log_stat.st_dev and row["ino"] == log_stat.st_ino
+                and stat.S_ISREG(row["mode"]) for row in harness_fds),
+            "harness does not hold the validator log file")
+    child_exe, harness_exe = (child / "exe").resolve(), (harness / "exe").resolve()
+    child_cwd = (child / "cwd").resolve()
+    require(child_cwd == Path(node["data_dir"]).resolve(),
+            "validator cwd is not the bound DB directory")
+    require(digest(child_exe.read_bytes()) == node["exe_sha256"]
+            and digest(harness_exe.read_bytes()) == node["harness_exe_sha256"],
+            "native log child or harness executable differs")
+    cwd_stat = child_cwd.stat()
+    require((cwd_stat.st_dev, cwd_stat.st_ino)
+            == (node["db_dev"], node["db_ino"]),
+            "validator DB directory device/inode differs")
+    return {"child_stat_b64": base64.b64encode(child_stat).decode(),
+            "child_stat_sha256": digest(child_stat),
+            "harness_stat_b64": base64.b64encode(harness_stat).decode(),
+            "harness_stat_sha256": digest(harness_stat),
+            "stderr_pipe_inode": pipe_inode, "stderr_link": stderr_link,
+            "harness_fds": harness_fds,
+            "child_exe": str(child_exe), "harness_exe": str(harness_exe),
+            "cwd": str(child_cwd), "cwd_dev": cwd_stat.st_dev,
+            "cwd_ino": cwd_stat.st_ino}
+
+
+def capture_native_log(node: dict, previous: dict | None = None) -> dict:
+    """Read one immutable, complete-line byte range from Stage A's real log."""
+    path = Path(node["log_path"])
+    require(path == Path(node["data_dir"]) / "log" and path.is_absolute(),
+            "native log path is not the node DB log")
+    linked = path.lstat()
+    require(stat.S_ISREG(linked.st_mode) and
+            (linked.st_dev, linked.st_ino) == (node["log_dev"], node["log_ino"]),
+            "native log was replaced, rotated or aliased")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        before = os.fstat(fd)
+        require((before.st_dev, before.st_ino) == (linked.st_dev, linked.st_ino),
+                "native log changed between path and FD lookup")
+        origin = native_log_origin(node, before)
+        start = 0 if previous is None else previous["end_offset"]
+        require(previous is None or
+                (previous["source_kind"] == "validator_stderr_file"
+                 and previous["pid"] == node["pid"]
+                 and previous["pid_start_ticks"] == node["pid_start_ticks"]
+                 and (previous["dev"], previous["ino"]) ==
+                     (before.st_dev, before.st_ino)),
+                "native log process generation or inode changed without a sealed restart")
+        require(before.st_size >= start, "native log shrank within one process generation")
+        prior_prefix = os.pread(fd, start, 0)
+        require(previous is None or digest(prior_prefix) == previous["end_prefix_sha256"],
+                "native log prefix changed at the prior cursor")
+        mono_before, real_before = time.monotonic_ns(), time.time_ns()
+        available = os.pread(fd, before.st_size - start, start)
+        complete = available.rfind(b"\n") + 1
+        consumed = available[:complete]
+        mono_after, real_after = time.monotonic_ns(), time.time_ns()
+        after = os.fstat(fd)
+        require((after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+                and after.st_size >= before.st_size,
+                "native log rotated or truncated during read")
+        require(path.lstat().st_ino == before.st_ino
+                and path.lstat().st_dev == before.st_dev,
+                "native log path changed during read")
+        end = start + len(consumed)
+        end_prefix = os.pread(fd, end, 0)
+        require(end_prefix == prior_prefix + consumed,
+                "native log bytes changed during incremental read")
+        require(abs((real_before - mono_before) - (real_after - mono_after))
+                <= 5_000_000, "native log clock calibration jumped")
+        return {"source_kind": "validator_stderr_file", "path": str(path),
+                "pid": node["pid"], "pid_start_ticks": node["pid_start_ticks"],
+                "dev": before.st_dev, "ino": before.st_ino,
+                "start_offset": start, "end_offset": end,
+                "prior_prefix_sha256": digest(prior_prefix),
+                "end_prefix_sha256": digest(end_prefix),
+                "bytes_b64": base64.b64encode(consumed).decode(),
+                "bytes_sha256": digest(consumed),
+                "partial_tail_bytes": len(available) - complete,
+                "partial_tail_b64": base64.b64encode(available[complete:]).decode(),
+                "started_ns": mono_before, "completed_ns": mono_after,
+                "read_started_ns": mono_before, "read_completed_ns": mono_after,
+                "realtime_started_ns": real_before,
+                "realtime_completed_ns": real_after,
+                "origin": origin}
+    finally:
+        os.close(fd)
+
+
+def native_log_ids(row: dict, node: dict, previous: dict | None = None) -> dict[int, tuple[str, str, int, str]]:
+    """Verify actual DB log bytes; return native full IDs with conservative event times.
+
+    The fourth tuple field is an opaque file-offset cursor, never a journald cursor.
+    """
+    require(row.get("source_kind") == "validator_stderr_file"
+            and row.get("path") == node["log_path"]
+            and row.get("pid") == node["pid"]
+            and row.get("pid_start_ticks") == node["pid_start_ticks"]
+            and (row.get("dev"), row.get("ino")) ==
+                (node["log_dev"], node["log_ino"]),
+            "native log source, process generation or file identity differs")
+    start, end = row.get("start_offset"), row.get("end_offset")
+    require(type(start) is int and type(end) is int and 0 <= start <= end,
+            "native log byte cursor is malformed")
+    require((previous is None and start == 0) or
+            (previous is not None and start == previous.get("end_offset")
+             and row.get("prior_prefix_sha256") == previous.get("end_prefix_sha256")
+             and (row["pid"], row["pid_start_ticks"], row["dev"], row["ino"])
+                 == (previous.get("pid"), previous.get("pid_start_ticks"),
+                     previous.get("dev"), previous.get("ino"))),
+            "native log cursor gap, overlap or generation change")
+    try:
+        raw = base64.b64decode(row["bytes_b64"], validate=True)
+        partial = base64.b64decode(row["partial_tail_b64"], validate=True)
+    except (KeyError, ValueError) as error:
+        raise ValueError("native log raw bytes are absent") from error
+    require(len(raw) == end - start and digest(raw) == row.get("bytes_sha256")
+            and (not raw or raw.endswith(b"\n")) and b"\n" not in partial
+            and len(partial) == row.get("partial_tail_bytes"),
+            "native log range SHA, length or complete-line boundary differs")
+    path = Path(node["log_path"])
+    metadata = path.lstat()
+    require(stat.S_ISREG(metadata.st_mode)
+            and (metadata.st_dev, metadata.st_ino) == (row["dev"], row["ino"]),
+            "native log path was rotated or aliased")
+    with path.open("rb") as source:
+        prefix = source.read(end)
+        tail = source.read(len(partial))
+    require(len(prefix) == end and digest(prefix) == row.get("end_prefix_sha256")
+            and prefix[start:end] == raw and tail == partial
+            and digest(prefix[:start]) == row.get("prior_prefix_sha256"),
+            "native log retained prefix changed, replayed or was truncated")
+    origin = row.get("origin") or {}
+    try:
+        child = base64.b64decode(origin["child_stat_b64"], validate=True)
+        harness = base64.b64decode(origin["harness_stat_b64"], validate=True)
+    except (KeyError, ValueError) as error:
+        raise ValueError("native log raw process receipt is absent") from error
+    pipe = origin.get("stderr_pipe_inode")
+    fds = origin.get("harness_fds") or []
+    require(digest(child) == origin.get("child_stat_sha256")
+            and digest(harness) == origin.get("harness_stat_sha256")
+            and _proc_start_ticks(child) == node["pid_start_ticks"]
+            and _proc_parent_pid(child) == node["harness_pid"]
+            and _proc_start_ticks(harness) == node["harness_start_ticks"]
+            and type(pipe) is int and pipe > 0
+            and origin.get("stderr_link") == f"pipe:[{pipe}]"
+            and any(item.get("link") == f"pipe:[{pipe}]" for item in fds)
+            and any((item.get("dev"), item.get("ino")) == (row["dev"], row["ino"])
+                    and stat.S_ISREG(item.get("mode", 0)) for item in fds)
+            and origin.get("cwd") == node["data_dir"]
+            and (origin.get("cwd_dev"), origin.get("cwd_ino")) ==
+                (node["db_dev"], node["db_ino"]),
+            "native log child pipe, harness writer or DB receipt differs")
+    begin_mono, end_mono = row.get("read_started_ns"), row.get("read_completed_ns")
+    begin_real, end_real = row.get("realtime_started_ns"), row.get("realtime_completed_ns")
+    require(all(type(value) is int and value > 0 for value in
+                (begin_mono, end_mono, begin_real, end_real))
+            and begin_mono <= end_mono and begin_real <= end_real
+            and row.get("started_ns") == begin_mono
+            and row.get("completed_ns") == end_mono,
+            "native log paired clock sample differs")
+    before_offset, after_offset = begin_real - begin_mono, end_real - end_mono
+    require(abs(before_offset - after_offset) <= 5_000_000,
+            "native log wall/monotonic clock calibration jumped")
+    offset_upper = max(before_offset, after_offset) + 5_000_000
+    ids: dict[int, tuple[str, str, int, str]] = {}
+    byte_offset = start
+    for line in raw.splitlines(keepends=True):
+        line_end = byte_offset + len(line)
+        decoded = line.decode("utf-8", errors="replace")
+        for match in MARKER.finditer(decoded):
+            stamp = NATIVE_TIME.search(line)
+            require(stamp is not None, "native finalized marker lacks UTC event time")
+            timestamp = stamp.group(1).decode()
+            try:
+                wall_ns = calendar.timegm(time.strptime(timestamp[:19], "%Y-%m-%d %H:%M:%S")) * 1_000_000_000 + int(timestamp[20:])
+            except ValueError as error:
+                raise ValueError("native finalized marker UTC time is malformed") from error
+            height = int(match.group(1))
+            root, file_hash = match.group(2).lower(), match.group(3).lower()
+            require(int(root, 16) != 0 and int(file_hash, 16) != 0,
+                    "native finalized marker has zero block hash")
+            lower_mono = wall_ns - offset_upper
+            require(lower_mono > 0 and wall_ns <= end_real + 5_000_000
+                    and lower_mono <= end_mono,
+                    "native marker event time is after read or outside host clock")
+            value = (root, file_hash, lower_mono,
+                     f"file:{row['dev']}:{row['ino']}:{line_end}")
+            require(height not in ids or ids[height][:2] == value[:2],
+                    "native log has conflicting finalized IDs at one height")
+            if height not in ids or lower_mono < ids[height][2]:
+                ids[height] = value
+        byte_offset = line_end
+    require(byte_offset == end, "native log parsed cursor differs")
+    return ids
+
+
 def rpc(url: str, method: str, params: dict | None, query_id: int) -> dict:
     request = json.dumps({"jsonrpc": "2.0", "id": query_id, "method": method,
                           "params": params or {}}, separators=(",", ":")).encode()
@@ -430,13 +711,16 @@ def capture(policy: dict, policy_sha: str, phase: str,
     journals = {}
     for node in policy["nodes"]:
         prior = ((previous or {}).get("journals") or {}).get(node["name"])
-        prior_cursor = journal_end_cursor(prior, node) if prior is not None else None
-        require(previous is None or prior_cursor is not None,
-                "previous journal cursor is absent")
-        argv = ["journalctl", "-u", node["service"], "--no-pager", "-o", "json"]
-        if prior_cursor is not None:
-            argv += ["--cursor", prior_cursor]
-        journals[node["name"]] = run_raw(argv)
+        if policy.get("log_source") == "native-file":
+            journals[node["name"]] = capture_native_log(node, prior)
+        else:
+            prior_cursor = journal_end_cursor(prior, node) if prior is not None else None
+            require(previous is None or prior_cursor is not None,
+                    "previous journal cursor is absent")
+            argv = ["journalctl", "-u", node["service"], "--no-pager", "-o", "json"]
+            if prior_cursor is not None:
+                argv += ["--cursor", prior_cursor]
+            journals[node["name"]] = run_raw(argv)
     first = {node["name"]: rpc(node["rpc_url"], "getMasterchainInfo", None, i * 3 + 1)
              for i, node in enumerate(policy["nodes"])}
     result = {"schema": "tos.x02.raw-snapshot.v1", "policy_sha256": policy_sha,
@@ -653,7 +937,8 @@ def verify_snapshot(snapshot: dict, policy: dict, policy_sha: str,
                     seen_journal: dict[str, dict[int, tuple[str, str, int, str, str, int]]],
                     global_ids: dict[int, tuple[str, str]],
                     generations: dict[str, bytes],
-                    last_tip_heights: dict[str, int]) -> dict:
+                    last_tip_heights: dict[str, int],
+                    previous_journals: dict | None = None) -> dict:
     require(snapshot.get("schema") == "tos.x02.raw-snapshot.v1"
             and snapshot.get("policy_sha256") == policy_sha
             and snapshot.get("source_commit") == policy["source_commit"]
@@ -706,7 +991,11 @@ def verify_snapshot(snapshot: dict, policy: dict, policy_sha: str,
         require(snapshot["started_ns"] <= journal_row["started_ns"]
                 <= journal_row["completed_ns"] <= first_rpc_start,
                 "journal was read after RPC observation")
-        local = journal_ids(journal_row, node, boot_id)
+        if policy.get("log_source") == "native-file":
+            local = native_log_ids(journal_row, node,
+                                   (previous_journals or {}).get(name))
+        else:
+            local = journal_ids(journal_row, node, boot_id)
         journals[name] = local
         for height, block in local.items():
             require(height not in seen_ids[name] or seen_ids[name][height] == block[:2],
@@ -920,12 +1209,16 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
         if previous_snap is not None:
             for node in policy["nodes"]:
                 name = node["name"]
-                require(snap["journals"][name]["argv"][-2:] == [
-                    "--cursor", journal_end_cursor(previous_snap["journals"][name], node)],
-                    "journal segment lost previous cursor")
-                require(journal_entries(snap["journals"][name], node)[0]
-                        == journal_entries(previous_snap["journals"][name], node)[-1],
-                        "journal cursor payload changed across segments")
+                if policy.get("log_source") == "native-file":
+                    native_log_ids(snap["journals"][name], node,
+                                   previous_snap["journals"][name])
+                else:
+                    require(snap["journals"][name]["argv"][-2:] == [
+                        "--cursor", journal_end_cursor(previous_snap["journals"][name], node)],
+                        "journal segment lost previous cursor")
+                    require(journal_entries(snap["journals"][name], node)[0]
+                            == journal_entries(previous_snap["journals"][name], node)[-1],
+                            "journal cursor payload changed across segments")
         phase = snap.get("phase")
         require(phase in PHASES, "unknown phase")
         index = PHASES.index(phase)
@@ -933,7 +1226,8 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
                 "phase order or sample is missing")
         phase_index = index
         row = verify_snapshot(snap, policy, policy_sha, seen_ids, seen_journal, global_ids,
-                              generations, last_tip_heights)
+                              generations, last_tip_heights,
+                              previous_snap["journals"] if previous_snap is not None else None)
         require(has_clsact(snap, policy["clsact"]["interface"]),
                 "clsact egress filter attachment is absent during observation")
         require(row["start"] >= previous_end, "snapshots overlap or time regressed")
