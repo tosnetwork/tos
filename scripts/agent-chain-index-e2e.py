@@ -27,8 +27,11 @@ happens to know about an address.
 Run from the repository root: uv run python scripts/agent-chain-index-e2e.py
 """
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -48,6 +51,8 @@ TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19446"
 HTTP_B = "127.0.0.1:19447"
 WORKDIR = REPO / "test/integration/.agent-chain-index-e2e"
+HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG_A = WORKDIR / "tosctl-config-a.json"
 CONFIG_B = WORKDIR / "tosctl-config-b.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000009"
@@ -87,6 +92,11 @@ def http_get(path: str) -> tuple[int, dict]:
     except urllib.error.HTTPError as e:
         raw = e.read()
         status = e.code
+    with HTTP_TRANSCRIPT.open("a", encoding="utf-8") as transcript:
+        transcript.write(json.dumps({
+            "request": {"method": "GET", "path": path},
+            "response": {"status": status, "body_base64": base64.b64encode(raw).decode()},
+        }, sort_keys=True) + "\n")
     try:
         return status, json.loads(raw.decode())
     except json.JSONDecodeError:
@@ -241,6 +251,24 @@ def prepare_config(config: Path, http_bind: str | None):
     config.write_text(json.dumps(cfg, indent=2))
 
 
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binary = Path(TOSCTL).resolve()
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "tosctl_binary": str(binary),
+        "tosctl_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "build_dir": str(BUILD_DIR.resolve()),
+        "http_transcript": HTTP_TRANSCRIPT.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
 async def run_checks(faucet) -> None:
     print("\n=== provision: config-a wallets ===")
     if not await wait_rpc_ready():
@@ -298,6 +326,7 @@ async def run_checks(faucet) -> None:
     check("config-b capability_registries is empty",
           config_b_json.get("capability_registries", {}) == {},
           str(config_b_json.get("capability_registries")))
+    deployment_mc_seqno = int(rpc_call("getMasterchainInfo")["result"]["last"]["seqno"])
 
     print("\n=== start config-b's tosctld HTTP daemon (never ran agent task create) ===")
     env = dict(os.environ)
@@ -308,6 +337,8 @@ async def run_checks(faucet) -> None:
     )
     try:
         check("config-b tosctld health endpoint ready", await wait_http_ready())
+        check("config-b tosctld process remains alive", service_proc.returncode is None,
+              f"returncode={service_proc.returncode}")
 
         print("\n=== GET /tasks on config-b discovers config-a's Task Escrow ===")
         found, body = await poll_http_predicate(
@@ -341,6 +372,20 @@ async def run_checks(faucet) -> None:
             check("discovered registry status is active", entry.get("status") == "active",
                   str(entry))
 
+        status, index_after = http_get("/explorer/status")
+        progress = index_after.get("result", {})
+        check("config-b masterchain index cursor advanced",
+              status == 200 and isinstance(progress.get("masterchain_indexed"), int)
+              and progress["masterchain_indexed"] >= deployment_mc_seqno,
+              f"status={status} body={index_after}")
+
+        status, body = http_get("/tasks?status=not-a-task-status")
+        check("invalid task status returns HTTP 400", status == 400,
+              f"status={status} body={body}")
+        status, body = http_get("/registry?limit=not-a-number")
+        check("invalid registry limit returns HTTP 400", status == 400,
+              f"status={status} body={body}")
+
         print("\n=== GET /registry/{address} direct lookup on config-b ===")
         status, body = http_get(f"/registry/{registry_address}")
         check("get_registry status 200", status == 200, f"status={status} body={body}")
@@ -369,6 +414,9 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    check("config-b index database absent before service",
+          not (WORKDIR / "tosctl-indexer.db").exists())
+    write_manifest()
     prepare_config(CONFIG_A, http_bind=None)
     prepare_config(CONFIG_B, http_bind=HTTP_B)
     install = Install(BUILD_DIR, REPO)
