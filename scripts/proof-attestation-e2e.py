@@ -112,7 +112,31 @@ def last_lt(address: str) -> int:
 
 def transactions_after(address: str, baseline_lt: int) -> list[dict]:
     rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if len(rows) == 10 and all(
+        int(row["transaction_id"]["lt"]) > baseline_lt for row in rows
+    ):
+        raise RuntimeError("attestation transaction page did not cover baseline")
     return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+def unique_attestation_send(wallet_rows: list[dict], address: str) -> dict | None:
+    """Select one outbound; the refused message may separately bounce to its payer."""
+    sends = [
+        row for row in wallet_rows
+        if any(same_addr(message.get("destination"), address)
+               for message in row.get("out_msgs", []))
+    ]
+    if len(sends) > 1:
+        raise RuntimeError("multiple wallet sends to attestation")
+    for row in wallet_rows:
+        if sends and row is sends[0]:
+            continue
+        incoming = row.get("in_msg") or {}
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or row.get("out_msgs")):
+            raise RuntimeError("unrelated wallet transaction after attestation send")
+    return sends[0] if sends else None
 
 
 async def tosctl(*args: str) -> str:
@@ -246,14 +270,16 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
     while time.monotonic() < deadline:
         wallet_rows = transactions_after(payer, wallet_lt)
         if wallet_rows:
-            if len(wallet_rows) != 1:
-                raise RuntimeError(f"{label}: wallet history contains multiple new transactions")
-            wallet_tx = wallet_rows[0]
+            wallet_tx = unique_attestation_send(wallet_rows, address)
+            if wallet_tx is None:
+                await asyncio.sleep(1)
+                continue
             outgoing = wallet_tx.get("out_msgs") or []
             if (wallet_tx.get("aborted") is not False
                     or wallet_tx.get("compute", {}).get("success") is not True
                     or wallet_tx.get("action", {}).get("success") is not True
                     or len(outgoing) != 1
+                    or not outgoing[0].get("hash")
                     or not same_addr(outgoing[0].get("destination"), address)):
                 raise RuntimeError(f"{label}: wallet transaction did not send to attestation")
             contract_rows = transactions_after(address, contract_lt)
@@ -261,7 +287,9 @@ async def rejected_operation(label: str, address: str, payer: str, expected_exit
                 if len(contract_rows) != 1:
                     raise RuntimeError(f"{label}: multiple new attestation transactions")
                 contract_tx = contract_rows[0]
-                if (contract_tx.get("in_msg") or {}).get("hash") != outgoing[0].get("hash"):
+                incoming = contract_tx.get("in_msg") or {}
+                if (incoming.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(incoming.get("source"), payer)):
                     raise RuntimeError(f"{label}: attestation inbound hash differs from wallet outbound")
                 break
         await asyncio.sleep(1)

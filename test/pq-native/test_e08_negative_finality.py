@@ -52,10 +52,33 @@ def wallet_tx() -> dict:
 def contract_tx(exit_code: int = 2101) -> dict:
     return {"transaction_id": {"lt": "21"}, "aborted": True,
             "compute": {"success": False, "exit_code": exit_code},
-            "in_msg": {"hash": "message-hash"}}
+            "in_msg": {"source": "0:payer", "hash": "message-hash"}}
 
 
 class NegativeFinalityTests(unittest.TestCase):
+    def test_bounced_refund_does_not_count_as_second_wallet_send(self):
+        bounce = {"transaction_id": {"lt": "15"}, "out_msgs": [],
+                  "in_msg": {"source": "0:abc", "bounced": True}}
+        with patch.object(e08, "same_addr", side_effect=lambda left, right: left == right):
+            self.assertEqual(e08.unique_attestation_send([bounce, wallet_tx()], "0:abc")["out_msgs"][0]["hash"],
+                             wallet_tx()["out_msgs"][0]["hash"])
+
+    def test_duplicate_send_and_unrelated_wallet_transaction_are_refused(self):
+        duplicate = dict(wallet_tx(), transaction_id={"lt": "15"})
+        unrelated = {"transaction_id": {"lt": "15"}, "out_msgs": [],
+                     "in_msg": {"source": "0:other", "bounced": True}}
+        with patch.object(e08, "same_addr", side_effect=lambda left, right: left == right):
+            with self.assertRaisesRegex(RuntimeError, "multiple wallet sends"):
+                e08.unique_attestation_send([duplicate, wallet_tx()], "0:abc")
+            with self.assertRaisesRegex(RuntimeError, "unrelated wallet transaction"):
+                e08.unique_attestation_send([unrelated, wallet_tx()], "0:abc")
+
+    def test_full_transaction_page_without_baseline_is_refused(self):
+        rows = [{"transaction_id": {"lt": str(20 - index)}} for index in range(10)]
+        with patch.object(e08, "rpc_call", return_value={"result": rows}):
+            with self.assertRaisesRegex(RuntimeError, "did not cover baseline"):
+                e08.transactions_after("0:payer", 10)
+
     def run_case(self, *, transaction=None, send_error=None, states=None, heads=None):
         send = AsyncMock(side_effect=send_error, return_value="submitted")
         snapshots = states or [STATE, STATE, STATE]
