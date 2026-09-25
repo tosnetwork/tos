@@ -148,6 +148,18 @@ def task_list_matches(status: int, body: dict,
     return seen == set(expected)
 
 
+async def check_task_filter_exclusion(creator: str, agent: str) -> None:
+    """Make ignored creator/agent filters observable with real nonmatching wallets."""
+    for label, path in (
+        ("creator", f"/tasks?creator={agent}"),
+        ("agent", f"/tasks?agent={creator}"),
+    ):
+        status, body = await http_get_async(path)
+        check(f"{label} filter excludes opposite wallet's tasks",
+              task_list_matches(status, body, {}, creator, agent),
+              f"status={status} body={body}")
+
+
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
 # the event loop that drains the in-process node's log pipes, deadlocking the
 # chain (and therefore the tosctl call itself) until the subprocess timeout.
@@ -317,6 +329,8 @@ async def run_checks(faucet) -> None:
     await tosctl("wallet", "create", "-n", "agent", "-v", "V3R2", "-w", "0")
     creator = await wallet_address("creator")
     agent = await wallet_address("agent")
+    if same_addr(creator, agent):
+        raise RuntimeError("creator and agent filter control wallets must differ")
     print(f"  creator: {creator}\n  agent:   {agent}")
 
     await faucet.send(faucet_transfer(faucet, creator, 50))
@@ -430,6 +444,8 @@ async def run_checks(faucet) -> None:
         status, body = await http_get_async(f"/tasks?agent={agent}")
         check("agent filter returns exact chain-backed set",
               task_list_matches(status, body, all_tasks, creator, agent), str(body))
+
+        await check_task_filter_exclusion(creator, agent)
 
         status, body = await http_get_async(f"/tasks?deadline_after={deadline + 15}")
         check("deadline_after filter returns exact settled task",

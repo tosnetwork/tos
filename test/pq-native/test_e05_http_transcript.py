@@ -2,9 +2,12 @@
 
 import base64
 import asyncio
+import ast
 import importlib.util
 import io
 import json
+import os
+from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
 import threading
@@ -13,7 +16,10 @@ import urllib.error
 from unittest.mock import patch
 
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts/agent-query-api-e2e.py"
+SCRIPT = Path(os.environ.get(
+    "E05_ROUTE_SOURCE",
+    Path(__file__).resolve().parents[2] / "scripts/agent-query-api-e2e.py",
+))
 SPEC = importlib.util.spec_from_file_location("e05_agent_query_api", SCRIPT)
 e05 = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(e05)
@@ -121,6 +127,36 @@ class HttpTranscriptTests(unittest.TestCase):
 
 
 class HttpEventLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_inverse_filters_reject_ignored_filter_responses(self):
+        creator, agent, _, full = task_list_fixture()
+        empty = {"ok": True, "total": 0, "result": []}
+        expected_paths = [f"/tasks?creator={agent}", f"/tasks?agent={creator}"]
+        with patch.object(e05, "failures", []), patch.object(
+            e05, "http_get_async", side_effect=[(200, empty), (200, empty)]
+        ) as get:
+            with redirect_stdout(io.StringIO()):
+                await e05.check_task_filter_exclusion(creator, agent)
+            self.assertEqual(e05.failures, [])
+            self.assertEqual([call.args[0] for call in get.call_args_list], expected_paths)
+        with patch.object(e05, "failures", []), patch.object(
+            e05, "http_get_async", side_effect=[(200, full), (200, full)]
+        ):
+            with redirect_stdout(io.StringIO()):
+                await e05.check_task_filter_exclusion(creator, agent)
+            self.assertEqual(len(e05.failures), 2)
+
+    async def test_real_route_calls_inverse_filter_control(self):
+        source = ast.parse(SCRIPT.read_text())
+        route = next(node for node in source.body
+                     if isinstance(node, ast.AsyncFunctionDef) and node.name == "run_checks")
+        self.assertTrue(any(
+            isinstance(node, ast.Await)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "check_task_filter_exclusion"
+            for node in ast.walk(route)
+        ))
+
     async def test_http_wait_does_not_block_node_log_drain(self):
         released = threading.Event()
         finished = threading.Event()
