@@ -41,12 +41,14 @@ transaction LT 134,000,001 at chain time 1790298431 (01:07:11 UTC) had the
 action success/result 0. Its sole 1.2 TOS outgoing message hash was
 `NV5VQhq7NW4h8JN4EWOaaethobmWdqIs6xFUqq7tUfw=`. The registry account's
 transaction LT 134,000,003 at the same chain time had that exact inbound
-hash, activated the account and also completed without abort. The CLI failure
-log was finalized at 01:07:24 UTC, after the chain transaction's recorded
-time. This proves the message executed, not merely that the server accepted a
-broadcast. It does **not** identify whether the stale polling view arose in
-lite-server, masterchain-to-shard exposure, or client caching; the proxy did
-not timestamp each individual HTTP exchange.
+hash, activated the account and also completed without abort. This proves
+the message **eventually executed**, not merely that the server accepted a
+broadcast. The 01:07:11 `utime` is a chain timestamp; it does not prove the
+transaction was readable from this JSON-RPC server's selected head before the
+CLI failed at about 01:07:24. The seven poll responses report neither the
+masterchain nor shard block they referenced, and the proxy did not timestamp
+each exchange. The failure could therefore be a lagging referenced block or
+another observation/cache issue; the evidence does not choose between them.
 
 The production CLI waits 15 seconds for `getWalletInformation.seqno` to differ
 from its initial value (`nodectl/utils.rs:29,239`), then returns failure before
@@ -57,8 +59,20 @@ message or deterministic deployment effect before recording success, and make
 timeout recovery safe against a second fee-bearing send. Until that is tested,
 the complete E03 route remains OPEN.
 
-Separately, the Config34 JSON/BOC gate is being tightened to require contiguous
+Separately, the Config34 JSON/BOC gate was tightened to require contiguous
 indices, both members of a two-entry control, weights/cumulative weights,
 ML-DSA-44 public-key length and key-ID derivation, unique identities/ADNL, and
 one-to-one agreement with the independently provisioned genesis node. The
 earlier one-member JSON/BOC result alone was insufficient to sign off TOSCAN.
+At committed source `98373ef5f`, a separate one-validator localnet captured
+`test/integration/.e03-config34-98373ef5f-20260925/config34-raw.json`
+(SHA-256 `153518692c477716bf715afedaac408d63c02f09506ed4b915959f812fde7791`)
+and the verified result (SHA-256
+`5c567497a25c04e6ed8ac807fa0c088eb82aa772f92f6e97171f73e9be89dd6e`).
+The live response has index 0, cumulative weight 0, weight 17, algorithm 1,
+`public_key:null`; BOC hash
+`ed5d1f900702c9e99518f4e3ee6e3b6029c53bf80a658af0a1daf36bdd53de77`
+matched the JSON and the separately provisioned node identity/ADNL/key tool.
+The validator-engine binary SHA-256 was
+`d862c6ad1dacd40e5214a05aaf4990947515eb015f3820294e2eead13cb9ca87`.
+This is a direct Config34 check, **not** a TOSCAN seed or explorer PASS.

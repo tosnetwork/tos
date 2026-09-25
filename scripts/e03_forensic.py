@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--captured", type=Path,
                         help="re-evaluate already captured raw replies without reopening the network")
+    parser.add_argument("--require-block-context", action="store_true",
+                        help="refuse a poll lacking its exact masterchain and shard references")
     args = parser.parse_args()
     rows = [json.loads(line) for line in args.trace.read_text().splitlines()]
     requests = [json.loads(row["request_body"]) for row in rows]
@@ -61,6 +63,12 @@ def main():
     post_send_seqnos = [row.get("seqno") for index, row in wallet_rows if index > send_index]
     pre_send_balances = [row.get("balance") for index, row in wallet_rows if index < send_index]
     post_send_balances = [row.get("balance") for index, row in wallet_rows if index > send_index]
+    post_send_observed_blocks = [{"masterchain": row.get("observed_masterchain_block"),
+                                  "shard": row.get("observed_shard_block")}
+                                 for index, row in wallet_rows if index > send_index]
+    if args.require_block_context:
+        assert all(item["masterchain"] is not None and item["shard"] is not None
+                   for item in post_send_observed_blocks), "a wallet poll omitted its block references"
     raw = (json.loads(args.captured.read_text())["raw"] if args.captured else {
         "wallet_info": rpc(args.origin, "getWalletInformation", address=args.wallet),
         "wallet_transactions": rpc(args.origin, "getTransactions", address=args.wallet, limit=10),
@@ -90,12 +98,15 @@ def main():
                "external_message_hash": message_hash, "wallet": args.wallet,
                "pre_send_seqnos": pre_send_seqnos, "post_send_seqnos": post_send_seqnos,
                "pre_send_balances": pre_send_balances, "post_send_balances": post_send_balances,
+               "post_send_observed_blocks": post_send_observed_blocks,
                "reopened_seqno": result(raw["wallet_info"])["seqno"],
                "reopened_balance": result(raw["wallet_info"])["balance"],
                "wallet_transaction_id": wallet_tx["transaction_id"],
+               "wallet_transaction_block_id": wallet_tx.get("block_id"),
                "wallet_transaction_utime": wallet_tx["utime"],
                "wallet_outgoing_hash": outgoing["hash"], "destination": destination,
                "destination_transaction_id": target_tx["transaction_id"],
+               "destination_transaction_block_id": target_tx.get("block_id"),
                "destination_transaction_utime": target_tx["utime"]}
     args.output.write_text(json.dumps({"summary": summary, "raw": raw}, indent=2) + "\n")
     print("E03_CAPTURED_SEND_EXECUTED", message_hash, wallet_tx["transaction_id"]["lt"],

@@ -18,7 +18,11 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
     for method, params, response in [
         ("getWalletInformation", {"address": "wallet"}, {"result": {"seqno": 1, "balance": "120"}}),
         ("sendBoc", {"boc": base64.b64encode(message.to_boc()).decode()}, {"ok": True}),
-        ("getWalletInformation", {"address": "wallet"}, {"result": {"seqno": 1, "balance": "120"}}),
+        ("getWalletInformation", {"address": "wallet"}, {"result": {
+            "seqno": 1, "balance": "120",
+            "observed_masterchain_block": {"seqno": 5},
+            "observed_shard_block": {"seqno": 7},
+        }}),
     ]:
         rows.append(json.dumps({"request_body": json.dumps({"id": method, "method": method, "params": params}),
                                 "response_body": json.dumps(response), "status": 200}))
@@ -40,7 +44,7 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
     def run():
         monkeypatch.setattr(sys, "argv", ["e03_forensic.py", "--trace", str(trace),
                                              "--wallet", "wallet", "--captured", str(captured),
-                                             "--output", str(output)])
+                                             "--output", str(output), "--require-block-context"])
         e03_forensic.main()
 
     captured.write_text(json.dumps({"raw": {
@@ -58,6 +62,16 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
     assert summary["post_send_balances"] == ["120"]
     assert summary["reopened_balance"] == "90"
     assert summary["external_message_hash"] == sent_hash
+    assert summary["post_send_observed_blocks"] == [
+        {"masterchain": {"seqno": 5}, "shard": {"seqno": 7}}]
+
+    missing_context = json.loads(trace.read_text().splitlines()[-1])
+    missing_context["response_body"] = json.dumps({"result": {"seqno": 1, "balance": "120"}})
+    original_trace = trace.read_text()
+    trace.write_text("\n".join([*original_trace.splitlines()[:-1], json.dumps(missing_context)]) + "\n")
+    with pytest.raises(AssertionError, match="omitted its block references"):
+        run()
+    trace.write_text(original_trace)
 
     target_tx["in_msg"]["hash"] = "different"
     captured.write_text(json.dumps({"raw": {
