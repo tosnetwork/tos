@@ -40,3 +40,45 @@ not the E14 chain route. A new committed-tree run is required.
 The `-network/` artifacts live under
 `test/integration/.e14-wc0-token-index-386a4ce1b-20260925-network/`.
 The failed network exited; no validator or DHT process was left running.
+
+## Corrected committed-tree run
+
+The next serial run used exact committed source
+`65b0c0cb58358fbcf0886707a2da37fdb09401de` and the same command.
+`cmake --build build --target slice1_gas_parity_contracts` completed first;
+Fift, Func, validator-engine and both Jetton BOCs were copied *before* network
+startup into `test/integration/.e14-wc0-token-index-65b0c0cb5-binaries/`.
+The script's own in-run build/provenance hashes equal those retained copies.
+The wrapper exited **0** with `RESULT: ALL PASS`.
+
+The genuine mint's indexed row identified the deployed master and an active
+wallet; the route actually called `runGetMethodStd` for `get_wallet_data` and
+`get_wallet_address`, and checked the wallet owner/master plus reverse
+resolution. The forged notification's exact target transaction was in wc0
+shard `-9223372036854775808` seqno **48**. A subsequent genuine canary mint
+landed in the same shard at seqno **63**, and its wallet entry was indexed
+before the victim list was checked. The victim list and the attacker's
+self-claim list were empty. The chain evidence retains sender/target message
+hashes and transaction IDs, final heads, both block IDs and the two lists.
+This is a local single-validator route; the later same-shard canary is a
+coverage control, not a public per-block index-writer cursor or a reorg proof.
+
+| Corrected-run artifact | SHA-256 |
+| --- | --- |
+| `test/integration/.e14-wc0-token-index-65b0c0cb5-20260925-console.typescript` | `7b37d44fa5a840bee07422d9248e45d1563fc3c61f2266d0e6c5512cc745e6ca` |
+| `-network/provenance.json` | `936255aff90bfef544007940a6a3cc487e9ee53922cab049f6847034decd9dee` |
+| `-network/boc-build.json` | `021288dd856fe6f0c6d1e3953ee127b0b0a32d142e47a5f207d4f01be3ee708c` |
+| `-network/rpc-transcript.jsonl` | `20b05f4d9abba48de7b3cab539586f9c988d5fb9c557f71e89084112c00486af` |
+| `-network/chain-evidence.jsonl` | `a2c2907aeee79914efab74f9f9d64b6e381710338cac785539e4463f02171c36` |
+| `test/integration/.e14-wc0-token-index-65b0c0cb5-prebuild.typescript` | `a9095c158fd06a281d8d8d045f32882ec40c53bc72e159e7d606e5bf9091315b` |
+
+The `-network/` files are under
+`test/integration/.e14-wc0-token-index-65b0c0cb5-20260925-network/`.
+The retained execution hashes are Fift
+`cea26978924adf793b778505cb3befabd1c34c0d0e319776b2d9e35a1b16a8b5`,
+Func `48b01ebc9410a672f684d588c3503393138e2f33346f3e47c601a66e5a58520a`,
+validator-engine `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb38a8`,
+minter BOC `86c39a4617dd924ea246fd0d30668e5704351a04156c40c67a6450da88ae16c2`,
+and wallet BOC `8261ef2f1dc066fe103d100f2d274ee8a1b7eced3425f6ee5829068ee5277625`.
+The validator and DHT processes exited. E14 remains OPEN for independent
+raw review and the owner's scoped signoff.
