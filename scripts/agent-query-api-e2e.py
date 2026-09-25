@@ -22,6 +22,7 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/agent-query-api-e2e.py
 """
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -42,6 +43,7 @@ TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18647"
 HTTP = "127.0.0.1:18648"
 WORKDIR = REPO / "test/integration/.agent-query-api-e2e"
+HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000002"
 POLICY_HASH = "22" * 32
@@ -80,6 +82,11 @@ def http_get(path: str) -> tuple[int, dict]:
     except urllib.error.HTTPError as e:
         raw = e.read()
         status = e.code
+    with HTTP_TRANSCRIPT.open("a", encoding="utf-8") as transcript:
+        transcript.write(json.dumps({
+            "request": {"method": "GET", "path": path},
+            "response": {"status": status, "body_base64": base64.b64encode(raw).decode()},
+        }, sort_keys=True) + "\n")
     try:
         return status, json.loads(raw.decode())
     except json.JSONDecodeError:
