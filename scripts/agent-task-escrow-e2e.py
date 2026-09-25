@@ -209,6 +209,38 @@ def timeout_wallet_send(newer_wallet: list[dict], escrow_address: str) -> dict |
     return sends[0] if sends else None
 
 
+def validate_timeout_bounces(wallet_rows: list[dict], wallet_send: dict,
+                             escrow_tx: dict, wallet_address: str,
+                             escrow_address: str) -> None:
+    """Only this escrow transaction's exact bounce may add a wallet credit."""
+    if len(wallet_send.get("out_msgs") or []) != 1:
+        raise RuntimeError("premature timeout wallet send has extra outbound messages")
+    escrow_bounces = escrow_tx.get("out_msgs") or []
+    if any(message.get("bounced") is not True
+           or not same_addr(message.get("source"), escrow_address)
+           or not same_addr(message.get("destination"), wallet_address)
+           or not message.get("hash") for message in escrow_bounces):
+        raise RuntimeError("premature timeout escrow emitted an unrelated message")
+    if len(escrow_bounces) > 1:
+        raise RuntimeError("premature timeout escrow emitted multiple bounces")
+    expected_hashes = {message["hash"] for message in escrow_bounces}
+    observed_hashes: set[str] = set()
+    for row in wallet_rows:
+        if row is wallet_send:
+            continue
+        incoming = row.get("in_msg") or {}
+        bounce_hash = incoming.get("hash")
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), escrow_address)
+                or not same_addr(incoming.get("destination"), wallet_address)
+                or row.get("out_msgs")
+                or not bounce_hash
+                or bounce_hash not in expected_hashes
+                or bounce_hash in observed_hashes):
+            raise RuntimeError("premature timeout wallet credit is not this escrow's bounce")
+        observed_hashes.add(bounce_hash)
+
+
 async def premature_timeout_control(name: str, requested_deadline: int,
                                     creator_wallet: str) -> None:
     task = await task_show(name)
@@ -255,10 +287,24 @@ async def premature_timeout_control(name: str, requested_deadline: int,
             tx = newer_escrow[0]
             out = [message for message in wallet_tx.get("out_msgs", [])
                    if same_addr(message.get("destination"), address)]
-            if (len(out) != 1 or out[0].get("hash") is None
-                    or (tx.get("in_msg") or {}).get("hash") != out[0]["hash"]
-                    or not same_addr((tx.get("in_msg") or {}).get("source"), creator_wallet)):
-                raise RuntimeError("premature timeout escrow inbound does not match wallet outbound")
+            try:
+                if (len(out) != 1 or out[0].get("hash") is None
+                        or (tx.get("in_msg") or {}).get("hash") != out[0]["hash"]
+                        or not same_addr((tx.get("in_msg") or {}).get("source"), creator_wallet)):
+                    raise RuntimeError("premature timeout escrow inbound does not match wallet outbound")
+                validate_timeout_bounces(newer_wallet, wallet_tx, tx, creator_wallet, address)
+            except RuntimeError:
+                (WORKDIR / "e07-premature-timeout-ambiguous.json").write_text(json.dumps({
+                    "task": name, "task_address": address, "creator_wallet": creator_wallet,
+                    "before_header": before, "deadline": deadline,
+                    "wallet_baseline_lt": wallet_baseline_lt,
+                    "escrow_baseline_lt": baseline_lt,
+                    "wallet_transactions": wallet_rows,
+                    "escrow_transactions": escrow_rows,
+                    "newer_wallet_count": len(newer_wallet),
+                    "newer_escrow_count": len(newer_escrow),
+                }, indent=2, sort_keys=True) + "\n")
+                raise
             if wallet_tx["aborted"] or not wallet_tx["compute"]["success"] or not wallet_tx["action"]["success"]:
                 raise RuntimeError("premature timeout wallet message failed before escrow")
             break

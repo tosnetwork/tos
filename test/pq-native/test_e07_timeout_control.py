@@ -70,7 +70,7 @@ class TimeoutControlTests(unittest.TestCase):
             return response
 
         with patch.object(e07, "task_show", show), patch.object(
-            e07, "finalized_mc_header", side_effect=[header(10, 100)]
+            e07, "finalized_mc_header", side_effect=[header(10, 100), header(11, 108)]
         ), patch.object(e07, "norm_addr", side_effect=lambda x: x), patch.object(
             e07, "rpc_call", side_effect=extra_wallet_row_rpc
         ), patch.object(e07, "send_op", send), tempfile.TemporaryDirectory() as directory, patch.object(
@@ -96,9 +96,15 @@ class TimeoutControlTests(unittest.TestCase):
             if method == "getTransactions" and params["address"] == "0:wallet":
                 response["result"].insert(0, {
                     "transaction_id": {"lt": "12"}, "aborted": False,
-                    "in_msg": {"source": "0:escrow", "bounced": True},
+                    "in_msg": {"source": "0:escrow", "destination": "0:wallet",
+                               "hash": "bounce-hash", "bounced": True},
                     "out_msgs": [],
                 })
+            if method == "getTransactions" and params["address"] == "0:escrow":
+                response["result"][0]["out_msgs"] = [{
+                    "source": "0:escrow", "destination": "0:wallet",
+                    "hash": "bounce-hash", "bounced": True,
+                }]
             return response
 
         with patch.object(e07, "task_show", show), patch.object(
@@ -114,6 +120,67 @@ class TimeoutControlTests(unittest.TestCase):
         self.assertEqual(receipt["wallet_transaction"]["transaction_id"]["lt"], "11")
         self.assertEqual(receipt["escrow_transaction"]["compute"]["exit_code"], 109)
         send.assert_awaited_once()
+
+    def test_wrong_same_escrow_bounce_hash_fails_full_control(self):
+        show = AsyncMock(return_value={"address": "0:escrow", "deadline": 175,
+                                       "status": "accepted"})
+        send = AsyncMock()
+
+        def unrelated_bounce_rpc(method, **params):
+            response = rpc_reply(method, **params)
+            if method == "getTransactions" and params["address"] == "0:wallet":
+                response["result"].insert(0, {
+                    "transaction_id": {"lt": "12"}, "out_msgs": [],
+                    "in_msg": {"source": "0:escrow", "destination": "0:wallet",
+                               "bounced": True, "hash": "wrong-bounce"},
+                })
+            if method == "getTransactions" and params["address"] == "0:escrow":
+                response["result"][0]["out_msgs"] = [{
+                    "source": "0:escrow", "destination": "0:wallet",
+                    "bounced": True, "hash": "actual-bounce",
+                }]
+            return response
+
+        with patch.object(e07, "task_show", show), patch.object(
+            e07, "finalized_mc_header", side_effect=[header(10, 100), header(11, 108)]
+        ), patch.object(e07, "norm_addr", side_effect=lambda value: value), patch.object(
+            e07, "rpc_call", side_effect=unrelated_bounce_rpc
+        ), patch.object(e07, "send_op", send), tempfile.TemporaryDirectory() as directory, patch.object(
+            e07, "WORKDIR", Path(directory)
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not this escrow's bounce"):
+                asyncio.run(e07.premature_timeout_control("e2e-timeout", 175, "0:wallet"))
+            evidence = json.loads((Path(directory) / "e07-premature-timeout-ambiguous.json").read_text())
+        self.assertEqual(evidence["wallet_transactions"][0]["in_msg"]["hash"], "wrong-bounce")
+        self.assertEqual(evidence["escrow_transactions"][0]["out_msgs"][0]["hash"], "actual-bounce")
+        send.assert_awaited_once()
+
+    def test_two_wallet_bounce_credits_and_extra_outbound_are_refused(self):
+        send = {"out_msgs": [{"destination": "0:escrow", "hash": "send-hash"}]}
+        bounce = {"out_msgs": [], "in_msg": {
+            "source": "0:escrow", "destination": "0:wallet",
+            "bounced": True, "hash": "bounce-hash",
+        }}
+        escrow = {"out_msgs": [{"source": "0:escrow", "destination": "0:wallet",
+                                "bounced": True, "hash": "bounce-hash"}]}
+        with patch.object(e07, "norm_addr", side_effect=lambda value: value):
+            with self.assertRaisesRegex(RuntimeError, "not this escrow's bounce"):
+                e07.validate_timeout_bounces([send, bounce, dict(bounce)], send, escrow,
+                                              "0:wallet", "0:escrow")
+            other = {"out_msgs": [], "in_msg": {
+                "source": "0:escrow", "destination": "0:wallet",
+                "bounced": True, "hash": "other-bounce",
+            }}
+            escrow["out_msgs"].append({"source": "0:escrow", "destination": "0:wallet",
+                                         "bounced": True, "hash": "other-bounce"})
+            with self.assertRaisesRegex(RuntimeError, "multiple bounces"):
+                e07.validate_timeout_bounces([send, bounce, other], send, escrow,
+                                              "0:wallet", "0:escrow")
+            escrow["out_msgs"].pop()
+            send["out_msgs"].append({"destination": "0:other", "hash": "extra"})
+            with self.assertRaisesRegex(RuntimeError, "extra outbound"):
+                e07.validate_timeout_bounces([send], send, escrow,
+                                              "0:wallet", "0:escrow")
 
     def test_second_real_wallet_send_to_escrow_is_refused(self):
         rows = [
