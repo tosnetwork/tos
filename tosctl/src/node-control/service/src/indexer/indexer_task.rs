@@ -10,8 +10,10 @@
 //!
 //! There is no chain primitive to "list every Task Escrow"; the only
 //! enumeration primitive is per-block ("which accounts had a transaction in
-//! this block"). This task walks every shard block by block from its own
-//! checkpoint -- the masterchain itself (some actors deploy there directly)
+//! this block"). This task walks masterchain blocks sequentially and follows
+//! each referenced shard head's proof-derived predecessor IDs back to an
+//! indexed ancestor -- including split and merge branches. It covers the
+//! masterchain itself (some actors deploy there directly)
 //! plus every other workchain's current shard(s), since that is where
 //! almost every contract actually lives -- and for every account it hasn't
 //! seen before, checks its code hash against the recognized contract codes
@@ -32,6 +34,7 @@ use base64::Engine;
 use chain_block::{
     Cell, Deserializable, MsgAddressInt, SliceData, UInt256, read_single_root_boc, write_boc,
 };
+use chain_rpc_client::v2::data_models::BlockIdExt;
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
@@ -55,6 +58,7 @@ use crate::runtime_config::RuntimeConfig;
 /// long-idle indexer catching up on history doesn't stall the tick loop
 /// indefinitely -- the next tick picks up where this one left off.
 const MAX_BLOCKS_PER_TICK: u32 = 200;
+const MAX_SHARD_ANCESTORS_PER_HEAD: usize = 4096;
 /// Max transactions requested per `getBlockTransactions` page.
 const TRANSACTIONS_PAGE_SIZE: u32 = 256;
 /// Upper bound on how many *new* service-request ids one visit to a Service
@@ -264,18 +268,17 @@ async fn scan_masterchain_history(
 
     if last_scanned > 0 {
         if let Some(expected_hash) = store.checkpoint_block_hash(&master_key)? {
-            if let Ok(Some(actual_hash)) =
-                fetch_block_hash(chain_provider, -1, master_shard, last_scanned).await
-            {
-                if actual_hash != expected_hash {
-                    tracing::warn!(
-                        target: "indexer",
-                        seqno = last_scanned,
-                        "masterchain reorg detected; rebuilding canonical explorer index",
-                    );
-                    store.reset_canonical_index()?;
-                    next = 1;
-                }
+            let actual_hash = fetch_block_hash(chain_provider, -1, master_shard, last_scanned)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("masterchain checkpoint probe omitted block id"))?;
+            if actual_hash != expected_hash {
+                tracing::warn!(
+                    target: "indexer",
+                    seqno = last_scanned,
+                    "masterchain reorg detected; rebuilding canonical explorer index",
+                );
+                store.reset_canonical_index()?;
+                next = 1;
             }
         }
     }
@@ -294,6 +297,7 @@ async fn scan_masterchain_history(
             next,
             next,
             probe_budget,
+            None,
         )
         .await?;
 
@@ -307,21 +311,28 @@ async fn scan_masterchain_history(
             if shard.seqno == 0 {
                 continue;
             }
-            let root_hash = hex::encode(&shard.root_hash);
-            let stored = store.explorer_block_root(shard.workchain, shard.shard, shard.seqno)?;
-            if stored.as_deref() != Some(root_hash.as_str()) {
+            let ancestry =
+                collect_unindexed_shard_ancestry(chain_provider, store, shard.clone()).await?;
+            let NewShardHistory::Blocks(blocks) = ancestry else {
+                tracing::warn!(target: "indexer", "shard history changed at an indexed coordinate; rebuilding canonical explorer index");
+                store.reset_canonical_index()?;
+                anyhow::bail!("shard reorganization requires canonical index replay");
+            };
+            for block in blocks {
                 scan_one_seqno(
                     chain_provider,
                     store,
                     known,
-                    shard.workchain,
-                    shard.shard,
-                    shard.seqno,
+                    block.workchain,
+                    block.shard,
+                    block.seqno,
                     next,
                     probe_budget,
+                    Some(&block),
                 )
                 .await?;
             }
+            let root_hash = hex::encode(&shard.root_hash);
             let shard_key = format!("{}:{}", shard.workchain, shard.shard);
             if shard.seqno >= store.checkpoint(&shard_key)? {
                 store.set_checkpoint(&shard_key, shard.seqno)?;
@@ -338,6 +349,57 @@ async fn scan_masterchain_history(
         next += 1;
     }
     Ok(())
+}
+
+enum NewShardHistory {
+    Blocks(Vec<BlockIdExt>),
+    Reorg,
+}
+
+/// Walk proof-derived predecessor IDs backwards, including both branches of
+/// a merge and the parent shard of a split, then scan forward. A masterchain
+/// shard descriptor names only its head; its numeric seqno is not a history.
+async fn collect_unindexed_shard_ancestry(
+    chain_provider: &Arc<dyn ChainProvider>,
+    store: &IndexerStore,
+    head: BlockIdExt,
+) -> anyhow::Result<NewShardHistory> {
+    let mut stack = vec![(head, false)];
+    let mut seen = HashSet::new();
+    let mut ordered = Vec::new();
+    while let Some((id, expanded)) = stack.pop() {
+        if id.seqno == 0 {
+            continue;
+        }
+        if expanded {
+            ordered.push(id);
+            continue;
+        }
+        let key = (id.workchain, id.shard, id.seqno, id.root_hash.clone(), id.file_hash.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        anyhow::ensure!(
+            seen.len() <= MAX_SHARD_ANCESTORS_PER_HEAD,
+            "shard ancestry exceeds the bounded per-head scan"
+        );
+        if let Some((root, file)) = store.explorer_block_hashes(id.workchain, id.shard, id.seqno)? {
+            if root == hex::encode(&id.root_hash) && file == hex::encode(&id.file_hash) {
+                continue;
+            }
+            return Ok(NewShardHistory::Reorg);
+        }
+        let parents = chain_provider.get_block_parents(&id).await?;
+        stack.push((id.clone(), true));
+        for parent in parents.into_iter().rev() {
+            anyhow::ensure!(
+                parent.workchain == id.workchain && parent.seqno < id.seqno,
+                "shard header has an invalid predecessor coordinate"
+            );
+            stack.push((parent, false));
+        }
+    }
+    Ok(NewShardHistory::Blocks(ordered))
 }
 
 #[cfg(test)]
@@ -394,6 +456,7 @@ async fn scan_shard(
             next,
             next,
             probe_budget,
+            None,
         )
         .await?;
         store.set_checkpoint(&shard_key, next)?;
@@ -428,6 +491,7 @@ async fn scan_one_seqno(
     seqno: u32,
     observed_mc_seqno: u32,
     probe_budget: &ProbeBudget,
+    expected_id: Option<&BlockIdExt>,
 ) -> anyhow::Result<Option<String>> {
     let mut addresses: HashSet<String> = HashSet::new();
     let mut block_hash: Option<String> = None;
@@ -495,6 +559,19 @@ async fn scan_one_seqno(
                 )
             }
         };
+        if let Some(expected) = expected_id {
+            let actual = id
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("block transaction page omitted exact block id"))?;
+            anyhow::ensure!(
+                actual.workchain == expected.workchain
+                    && actual.shard == expected.shard
+                    && actual.seqno == expected.seqno
+                    && actual.root_hash == expected.root_hash
+                    && actual.file_hash == expected.file_hash,
+                "block transaction page differs from canonical shard ancestor"
+            );
+        }
         if block_hash.is_none() {
             block_hash = id.as_ref().map(|id| hex::encode(&id.root_hash));
         }
@@ -1701,6 +1778,9 @@ mod tests {
         fail_after_calls: std::sync::Mutex<Option<usize>>,
         masterchain_info: std::sync::Mutex<Option<contracts::chain_provider::MasterchainInfo>>,
         shards: std::sync::Mutex<Option<contracts::chain_provider::ShardsInfo>>,
+        shards_by_mc:
+            std::sync::Mutex<std::collections::HashMap<u32, contracts::chain_provider::ShardsInfo>>,
+        parents: std::sync::Mutex<std::collections::HashMap<(i32, i64, u32), Vec<BlockIdExt>>>,
     }
 
     /// Default (workchain, shard) pair most tests scan; matches the id
@@ -1716,6 +1796,8 @@ mod tests {
                 fail_after_calls: std::sync::Mutex::new(None),
                 masterchain_info: std::sync::Mutex::new(None),
                 shards: std::sync::Mutex::new(None),
+                shards_by_mc: std::sync::Mutex::new(std::collections::HashMap::new()),
+                parents: std::sync::Mutex::new(std::collections::HashMap::new()),
             }
         }
 
@@ -1779,22 +1861,54 @@ mod tests {
         }
 
         fn set_shards(&self, entries: &[(i32, i64, u32)]) {
+            let blocks = self.by_seqno.lock().unwrap();
             *self.shards.lock().unwrap() = Some(contracts::chain_provider::ShardsInfo {
                 r#type: None,
                 shards: entries
                     .iter()
                     .map(|&(workchain, shard, seqno)| {
-                        chain_rpc_client::v2::data_models::BlockIdExt {
-                            r#type: "tos.blockIdExt".to_owned(),
-                            workchain,
-                            shard,
-                            seqno,
-                            root_hash: vec![0; 32],
-                            file_hash: vec![0; 32],
-                        }
+                        blocks
+                            .get(&(workchain, shard, seqno))
+                            .and_then(|page| page.id.clone())
+                            .unwrap_or_else(|| BlockIdExt {
+                                r#type: "tos.blockIdExt".to_owned(),
+                                workchain,
+                                shard,
+                                seqno,
+                                root_hash: vec![0; 32],
+                                file_hash: vec![0; 32],
+                            })
                     })
                     .collect(),
             });
+        }
+
+        fn set_shards_at(&self, mc_seqno: u32, entries: &[(i32, i64, u32)]) {
+            self.set_shards(entries);
+            self.shards_by_mc
+                .lock()
+                .unwrap()
+                .insert(mc_seqno, self.shards.lock().unwrap().clone().unwrap());
+        }
+
+        fn set_transaction_on(&self, key: (i32, i64, u32), account: &str, hash: &str) {
+            self.by_seqno.lock().unwrap().get_mut(&key).unwrap().transactions.push(
+                chain_rpc_client::v2::data_models::ShortTxId {
+                    r#type: None,
+                    account: account.to_owned(),
+                    lt: 4000003,
+                    hash: hash.to_owned(),
+                },
+            );
+        }
+
+        fn set_parents(&self, id: (i32, i64, u32), parents: Vec<(i32, i64, u32)>) {
+            let blocks = self.by_seqno.lock().unwrap();
+            let ids = parents
+                .into_iter()
+                .map(|key| blocks.get(&key).unwrap().id.clone().unwrap())
+                .collect();
+            self.parents.lock().unwrap().insert(id, ids);
         }
     }
 
@@ -1824,7 +1938,7 @@ mod tests {
             &self,
             _address: &MsgAddressInt,
         ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
-            unimplemented!()
+            anyhow::bail!("no scripted account state")
         }
         async fn get_extended_address_info(
             &self,
@@ -1849,9 +1963,30 @@ mod tests {
         }
         async fn get_shards(
             &self,
-            _seqno: u32,
+            seqno: u32,
         ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            if let Some(shards) = self.shards_by_mc.lock().unwrap().get(&seqno) {
+                return Ok(shards.clone());
+            }
             self.shards.lock().unwrap().clone().ok_or_else(|| anyhow::anyhow!("no scripted shards"))
+        }
+        async fn get_block_parents(&self, id: &BlockIdExt) -> anyhow::Result<Vec<BlockIdExt>> {
+            if let Some(parents) =
+                self.parents.lock().unwrap().get(&(id.workchain, id.shard, id.seqno))
+            {
+                return Ok(parents.clone());
+            }
+            if id.seqno == 1 {
+                return Ok(vec![BlockIdExt {
+                    r#type: "tos.blockIdExt".to_owned(),
+                    workchain: id.workchain,
+                    shard: id.shard,
+                    seqno: 0,
+                    root_hash: vec![0; 32],
+                    file_hash: vec![0; 32],
+                }]);
+            }
+            anyhow::bail!("no proof-derived predecessor for scripted block")
         }
         async fn get_block_transactions_page(
             &self,
@@ -2096,28 +2231,121 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn newly_split_shard_is_indexed_from_its_masterchain_reported_head() {
+    async fn newly_reported_shard_is_indexed_from_its_exact_parent() {
         let provider = Arc::new(ScriptedBlocksProvider::new());
         let mc_shard = i64::MIN;
         let child_shard = 4_611_686_018_427_387_904i64;
 
         provider.set_on(-1, mc_shard, 1, &"aa".repeat(32));
-        provider.set_on(0, child_shard, 900, &"bb".repeat(32));
+        provider.set_on(0, child_shard, 1, &"bb".repeat(32));
         provider.set_masterchain_info(1, mc_shard);
-        provider.set_shards(&[(0, child_shard, 900)]);
+        provider.set_shards(&[(0, child_shard, 1)]);
 
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
         scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
 
-        assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 900);
-        assert!(store.explorer_block_root(0, child_shard, 900).unwrap().is_some());
+        assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 1);
+        assert!(store.explorer_block_root(0, child_shard, 1).unwrap().is_some());
         assert_eq!(
             provider.calls_made(),
             2,
-            "only the masterchain block and the reported child head may be fetched"
+            "only the masterchain block and its child head need transaction pages"
         );
+    }
+
+    #[tokio::test]
+    async fn masterchain_head_jump_indexes_intermediate_deployment_block() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let shard = i64::MIN;
+        provider.set_on(-1, shard, 1, &"a1".repeat(32));
+        provider.set_on(-1, shard, 2, &"a2".repeat(32));
+        for seqno in 1..=5 {
+            provider.set_on(0, shard, seqno, &format!("{seqno:064x}"));
+            if seqno > 1 {
+                provider.set_parents((0, shard, seqno), vec![(0, shard, seqno - 1)]);
+            }
+        }
+        let deployment = "de".repeat(32);
+        provider.set_transaction_on((0, shard, 4), &"ab".repeat(32), &deployment);
+        provider.set_shards_at(1, &[(0, shard, 2)]);
+        provider.set_shards_at(2, &[(0, shard, 5)]);
+        provider.set_masterchain_info(2, shard);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider;
+        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        assert_eq!(store.checkpoint(&format!("0:{shard}")).unwrap(), 5);
+        assert!(store.explorer_block_root(0, shard, 3).unwrap().is_some());
+        assert!(store.explorer_block_root(0, shard, 4).unwrap().is_some());
+        assert_eq!(store.explorer_transaction(&deployment).unwrap().unwrap().seqno, 4);
+    }
+
+    #[tokio::test]
+    async fn shard_ancestry_follows_split_and_both_merge_parents() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let root = i64::MIN;
+        let left = 4_611_686_018_427_387_904i64;
+        let right = -4_611_686_018_427_387_904i64;
+        provider.set_on(-1, root, 1, &"a1".repeat(32));
+        for (shard, seqno, tag) in
+            [(root, 1, "11"), (root, 2, "22"), (left, 3, "33"), (right, 3, "44"), (root, 4, "55")]
+        {
+            provider.set_on(0, shard, seqno, &tag.repeat(32));
+        }
+        provider.set_parents((0, root, 2), vec![(0, root, 1)]);
+        provider.set_parents((0, left, 3), vec![(0, root, 2)]);
+        provider.set_parents((0, right, 3), vec![(0, root, 2)]);
+        provider.set_parents((0, root, 4), vec![(0, left, 3), (0, right, 3)]);
+        provider.set_masterchain_info(1, root);
+        provider.set_shards(&[(0, root, 4)]);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let dyn_provider: Arc<dyn ChainProvider> = provider;
+        scan_new_blocks(&dyn_provider, &store, &known_code_hashes_for_test(), &ProbeBudget::new())
+            .await
+            .unwrap();
+        for (shard, seqno) in [(root, 1), (root, 2), (left, 3), (right, 3), (root, 4)] {
+            assert!(
+                store.explorer_block_root(0, shard, seqno).unwrap().is_some(),
+                "missing exact ancestor {shard}:{seqno}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_shard_parent_at_an_indexed_coordinate_requires_replay() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let shard = i64::MIN;
+        provider.set_on(-1, shard, 1, &"a1".repeat(32));
+        provider.set_on(0, shard, 1, &"11".repeat(32));
+        provider.set_on(0, shard, 2, &"22".repeat(32));
+        provider.set_parents((0, shard, 2), vec![(0, shard, 1)]);
+        provider.set_masterchain_info(1, shard);
+        provider.set_shards_at(1, &[(0, shard, 2)]);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        scan_new_blocks(&dyn_provider, &store, &known_code_hashes_for_test(), &ProbeBudget::new())
+            .await
+            .unwrap();
+        provider.set_on(-1, shard, 2, &"a2".repeat(32));
+        provider.set_on(0, shard, 2, &"99".repeat(32));
+        provider.set_shards_at(2, &[(0, shard, 2)]);
+        provider.set_masterchain_info(2, shard);
+        let err = scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("reorganization requires canonical index replay"),
+            "{err}"
+        );
+        assert_eq!(store.checkpoint(&format!("0:{shard}")).unwrap(), 0);
+        assert!(store.explorer_block_root(0, shard, 2).unwrap().is_none());
     }
 
     #[tokio::test]

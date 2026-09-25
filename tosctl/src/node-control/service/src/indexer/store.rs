@@ -30,7 +30,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 10;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -114,6 +114,18 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     // gen_utime 0, now ordered by their own seqno). Within any single shard
     // chain the order is unchanged.
     |conn| conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA),
+    // v10 replays block identities because older indexers scanned only shard
+    // heads and skipped their parents. Preserve independently accumulated
+    // contract/ledger state: historical account reads are current-state reads
+    // and cannot reconstruct prior economic deltas from scratch.
+    |conn| {
+        conn.execute_batch(
+            "DELETE FROM explorer_transactions;
+             DELETE FROM explorer_blocks;
+             DELETE FROM indexer_meta
+               WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%';",
+        )
+    },
 ];
 
 fn migrate_dns_checkpoint_hashes(conn: &Connection) -> rusqlite::Result<()> {
@@ -835,6 +847,23 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
+    pub fn explorer_block_hashes(
+        &self,
+        workchain: i32,
+        shard: i64,
+        seqno: u32,
+    ) -> anyhow::Result<Option<(String, String)>> {
+        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        conn.query_row(
+            "SELECT root_hash, file_hash FROM explorer_blocks
+             WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
+            params![workchain, shard, seqno],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn explorer_transaction(
         &self,
         hash: &str,
@@ -1512,6 +1541,50 @@ mod tests {
             })
             .unwrap();
         assert_eq!(version, CURRENT_SCHEMA_VERSION.to_string());
+    }
+
+    #[test]
+    fn v9_head_only_index_is_replayed_instead_of_trusting_its_checkpoint() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE indexer_meta SET value = '9' WHERE key = 'schema_version';
+             INSERT INTO indexer_meta(key,value) VALUES('checkpoint:-1:-9223372036854775808','136');
+             INSERT INTO indexer_meta(key,value) VALUES('checkpoint:0:-9223372036854775808','313');
+             INSERT INTO indexer_meta(key,value) VALUES('svc-scan:0:old','42');
+             INSERT INTO nominator_ledger(pool_address,nominator_address,first_seen_at,updated_at)
+               VALUES('0:pool','0:owner',1,2);
+             INSERT INTO explorer_blocks(workchain,shard,seqno,root_hash,file_hash,gen_utime,indexed_at,observed_mc_seqno)
+               VALUES(0,-9223372036854775808,124,'old-root','old-file',1,1,57);
+             INSERT INTO explorer_transactions(hash,account,lt,workchain,shard,seqno,indexed_at)
+               VALUES('old-tx','0:old','1',0,-9223372036854775808,124,1);",
+        ).unwrap();
+        IndexerStore::ensure_schema_version(&conn).unwrap();
+        for table in ["explorer_blocks", "explorer_transactions"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "stale {table} must be replayed from genesis");
+        }
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM indexer_meta WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(remaining, 0);
+        let retained: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM nominator_ledger WHERE pool_address='0:pool'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, 1, "block replay cannot reconstruct historical ledger deltas");
+        let service_cursor: String = conn
+            .query_row("SELECT value FROM indexer_meta WHERE key='svc-scan:0:old'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(service_cursor, "42");
     }
 
     #[test]
