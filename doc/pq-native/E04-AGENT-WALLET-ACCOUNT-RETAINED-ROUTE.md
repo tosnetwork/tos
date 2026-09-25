@@ -24,10 +24,15 @@ process map SHA-256 is
 `c26b812bd4ade9271a74a5a6a5267e6e196606a61acf91390ad006a8d6fd752a`,
 and its custody journal SHA-256 is
 `cd8fdde44a9c813e92b9ce6c93cf68d42f4ccba17f899fde853b4cc9f558eaa8`.
-The rerun exercised the same exact bad-seqno refusal, three-view cancellation
-absence, two task-send majority resolutions, owner transfer, policy,
-rotation, restart and expiry controls as the previous 640 run. This is local
+The rerun exercised the same exact bad-seqno refusal, primary-view cancellation
+absence with three-view head progression, two task-send majority resolutions,
+owner transfer, policy, rotation, restart and expiry controls as the previous
+640 run. This is local
 single-validator evidence only; fixed-head CI and independent signoff remain.
+The cancellation/expiry account state and destination balances are read from
+the **primary RPC**. Three distinct processes supply finalized-head progression
+and the product's positive native-action quorum, not three-way negative account
+state agreement; the latter is outside the agreed E04 closure condition.
 
 The branch workflow now names two fast E04 gates explicitly: the six Python
 negative-window/refusal tests and nine Rust exact-wallet-confirmation tests.
