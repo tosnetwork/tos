@@ -270,6 +270,34 @@ class Wc0EvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "receipt differs"):
                 e14.require_forged_block_indexed("victim", tx)
 
+    def test_skipped_forgery_block_cannot_pass_on_later_canary_and_empty_lists(self):
+        """A later indexed block does not prove the forged transaction was indexed."""
+        tx_hash = bytes(range(32))
+        forged_tx = {"transaction_id": {
+            "lt": "49000003", "hash": base64.b64encode(tx_hash).decode()},
+            "block_id": {"workchain": 0, "shard": "-9223372036854775808",
+                         "seqno": 48, "root_hash": "forged-root", "file_hash": "forged-file"}}
+        canary_tx = {"block_id": {"workchain": 0,
+                     "shard": "-9223372036854775808", "seqno": 63,
+                     "root_hash": "canary-root", "file_hash": "canary-file"}}
+        with patch.object(e14, "poll", new=AsyncMock(return_value={"jetton_wallet": "canary"})), patch.object(
+            e14, "get_jettons", return_value=[]
+        ) as lists, patch.object(
+            e14, "rpc_call", side_effect=RuntimeError("Account event not found")
+        ) as rpc:
+            e14.require_later_same_shard(forged_tx, canary_tx)
+            canary, victim = asyncio.run(
+                e14.victim_index_after_canary("victim", "canary-owner", "master"))
+            self.assertEqual(canary["jetton_wallet"], "canary")
+            self.assertEqual(victim, [])
+            self.assertEqual(e14.get_jettons("attacker"), [])
+            with self.assertRaisesRegex(RuntimeError, "Account event not found"):
+                e14.require_forged_block_indexed("victim", forged_tx)
+            rpc.assert_called_once_with(
+                "getAccountEvent", address="victim",
+                event_id=f"49000003:{tx_hash.hex()}")
+            self.assertEqual(lists.call_count, 2)
+
     def test_indexed_wallet_getter_binds_owner_master_and_roundtrip(self):
         data = [["cell", {}], ["slice", {"id": "master"}],
                 ["slice", {"id": "owner"}], ["num", "1000"]]
