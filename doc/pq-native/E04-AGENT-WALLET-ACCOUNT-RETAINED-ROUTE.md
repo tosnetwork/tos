@@ -1,9 +1,46 @@
 # E04 Agent Wallet / Agent Account retained route: custody boundary
 
-Status: OPEN for final signoff. The full advertised single-node retained route now
-passes locally at fixed source `fe3918712`; the fixed-head CI and independent
+Status: OPEN for final signoff. The full advertised single-node retained route
+passes locally at fixed source `640ecfe11`; its fixed-head CI and independent
 evidence review are still pending. This is not a multi-validator or Byzantine
 fault-tolerance claim.
+
+## Repaired exact-tree result: 35/35 local PASS
+
+From clean tracked source `640ecfe11`, the command was
+`script -q -e -f -c 'TOS_BUILD_DIR=build PYTHONPATH=test/tostester/src uv run
+--project test/tostester python -u scripts/agent-wallet-account-e2e.py'
+test/integration/.e04-agent-wallet-640ecfe11-20260925-console.typescript`.
+Process exit was 0, with 35 PASS, no FAIL, and `RESULT: ALL PASS`. The
+complete console SHA-256 is
+`14f943899b3df074cbcd0ca5c193e1984d142f354d0251444dc182cb02523532`.
+The script, tosctl and validator-engine SHA-256 values are respectively
+`464e2551f416b1d8bdae7352a26940249b756f45426be26700e370b9de7cdbc5`,
+`e133b281d00911a5d2fc97ad85ecf0b50eef13a9968f12b677beb056abc0337d`,
+and `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb8a8`.
+The node DB, custody journal and RPC process map are preserved in
+`test/integration/.e04-agent-wallet-640ecfe11-20260925-network/`.
+The journal SHA-256 is
+`b4b5875655c41f30e245e068247a456aa174b416cda7da72129a7472ca1f657f`;
+the process-map SHA-256 is
+`912a89392486850342e3ffe24c4a4c11c375522231f930b4371661d642393068`.
+
+The cancellation winner's `sendBoc` returned status 1. The exact losing Gift
+hash `sha256:1f9230e5ffe61fdd845eb0adfba5ce75f88ddc30768ec2f2dd021702e8c1ae3b`
+received the contract's `1705 bad_seqno` refusal, not a generic HTTP error;
+the three-view finalized observation window showed no loser credit. The
+owner-authorized transfer completed on the repaired exact-confirmation path.
+The expired Gift hash
+`sha256:69a9de513f14ae33f2ba3df83344fe77d03a03895f11b0214d9a305c7f45de5a`
+was admitted with status 1 after the exact finalized header's `gen_utime`
+exceeded its `valid_until`, then produced no seqno or destination credit in
+the observation window. The main account's two task-send actions each resolved
+through the native three-distinct-process RPC majority before later actions;
+policy, rotation, restart and retained state also passed. Six negative-window
+tests and nine exact wallet confirmation tests passed on this source tree.
+This is one validator with two independent observer processes, not three
+independently operated validators or a Byzantine/release-scale result. The
+two E03 indexer follow-ups remain separate and OPEN.
 
 ## Post-pass negative-submission and owner-transfer boundary
 
@@ -87,14 +124,14 @@ validators. The terminal cancellation/expiry custody records intentionally
 remain unresolved; the positive main account actions were resolved before
 later actions. Neither E03 indexer followup is addressed by this route.
 
-One negative-control evidence limit remains in the `fe3918712` raw output:
+One historical negative-control evidence limit remains in the `fe3918712` raw output:
 the cancellation loser and expired Gift `sendBoc` return bodies were not
 printed. Their absent effects are measured, but the retained artifact cannot
-distinguish RPC admission from an immediate submission error. The next script
-revision records each exact BOC hash and raw `sendBoc` result and requires the
-node to accept both submissions before its no-effect windows can pass. A new
-fixed-source run is necessary for that stronger claim; the 33/33 count above
-must not be retroactively described as covering it.
+distinguish RPC admission from an immediate submission error. The later
+`640ecfe11` revision records each exact BOC hash and raw `sendBoc` result,
+accepting only admission or the named contract refusal before its no-effect
+windows can pass. Its 35/35 result above closes this measurement gap; the
+historical 33/33 count must not be retroactively described as covering it.
 
 ## Exact runs and observed stop
 
@@ -212,5 +249,5 @@ The owner permitted separate Agent Accounts for terminal cancellation/expiry
 negative controls, while requiring the positive Gift, task sends, policy,
 rotation and restart to remain on one main account. `fe3918712` implements that
 fixture boundary and retains the exact source-bound evidence above. E04 remains
-OPEN for a repaired exact-tree full-route rerun, fixed-head CI and independent
-signoff; the earlier local pass is not release-scale evidence.
+OPEN for fixed-head CI and independent signoff; neither local pass is
+release-scale evidence.

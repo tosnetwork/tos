@@ -63,10 +63,13 @@ class NegativeWindowTests(unittest.IsolatedAsyncioTestCase):
 class ExactCancellationTests(unittest.TestCase):
     def test_only_precise_bad_seqno_submission_error_is_accepted(self):
         body = {"code": -32603, "error":
-                "sendBoc failed: cannot apply external message to current state; exitcode=1705"}
+                "sendBoc failed: cannot apply external message to current state\nexitcode=1705, steps=124"}
         self.assertTrue(e04.explicit_contract_refusal(
             {"http_status": 500, "body": json.dumps(body)}, 1705))
-        body["error"] = body["error"].replace("1705", "1706")
+        body["error"] = body["error"].replace("1705", "17050")
+        self.assertFalse(e04.explicit_contract_refusal(
+            {"http_status": 500, "body": json.dumps(body)}, 1705))
+        body["error"] = body["error"].replace("17050", "1706")
         self.assertFalse(e04.explicit_contract_refusal(
             {"http_status": 500, "body": json.dumps(body)}, 1705))
         self.assertTrue(e04.explicit_contract_refusal(

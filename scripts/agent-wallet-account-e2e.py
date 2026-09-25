@@ -43,6 +43,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -114,7 +115,7 @@ def explicit_contract_refusal(response: dict, exit_code: int) -> bool:
     text = error.get("error", "")
     return (error.get("code") == -32603
             and "cannot apply external message to current state" in text
-            and f"exitcode={exit_code}" in text)
+            and re.search(rf"(?m)^exitcode={exit_code}(?:,|$)", text) is not None)
 
 
 async def tosctl(*args: str, may_fail: bool = False) -> str:
