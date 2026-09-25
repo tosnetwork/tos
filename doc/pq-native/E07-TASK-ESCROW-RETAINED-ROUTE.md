@@ -76,3 +76,30 @@ the genuine bounce and both refusal directions. The production code is
 unchanged. This local diagnostic does not yet prove the script's later
 expiry/refund and persisted-record checks, so E07 remains OPEN pending a new
 exact-tree full run, fixed-tree CI and independent review.
+
+The exact `841567229f442a7b39c7c8d53a385459a793f9f8` full rerun exited
+0 at 07:17:36 UTC: 106 PASS, zero FAIL, `RESULT: ALL PASS`. Command:
+`script -q -e -f -c 'TOS_BUILD_DIR=build PYTHONPATH=test/tostester/src uv run python -u scripts/agent-task-escrow-e2e.py' test/integration/.e07-task-escrow-841567229-20260925-console.typescript`.
+The console SHA-256 is
+`feaf2ff1b19e068b5c95fcd6ec362bece6c69b2c9e1a6eea36112fdf39960f97`.
+Original node DB/config/process map and receipts are retained under
+`test/integration/.e07-task-escrow-841567229-20260925-network/`; receipt
+SHA-256 `a956eec46198b7095d738bb721b8dc69890f801f5ec80bd1eb32e26415ff6906`,
+process-map SHA-256 `eb14ea3d3c611fc964a79984c53992e416487ecb4673b8bc6b7e92a227ac2bdc`.
+The script and targeted test SHA-256 values are
+`362c65db71a08a46c50c1858e24fbe63015032e3f885c24076f8b72d67a6dd8b`
+and `3a0fbb65f3f45de5f6a9d24dfd1ce4a698982b40d5f715b662102da84a2ee455`.
+The built validator-engine/DHT/tosctl SHA-256 values are the same as the efc0
+run above; no production binary changed. All local child processes exited.
+
+The premature control records wallet LT `723000001` outbound hash
+`qbzJEObFiYe4PaBRr+s1gX6oSoZOx/kAANIOh7827X0=` and escrow LT
+`723000003` inbound with the *same* hash, `aborted=true`, VM exit 109,
+chain utime `1790320594` before deadline `1790320623`; the Task remained
+`accepted`. A finalized masterchain header then crossed the deadline at
+seqno 315 / chain time `1790320628`; the positive timeout, creator refund,
+escrow drain, ten persisted records, and on-chain status/filter checks all
+passed. This is a one-validator plus two independent-observer local PQ-chain
+route, not a multi-validator or release-scale result. E07 remains pending
+independent review and all required fixed-head CI terminal results; it is not
+unilaterally marked complete here.
