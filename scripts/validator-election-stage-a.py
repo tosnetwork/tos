@@ -1416,6 +1416,18 @@ class ValidatorElectionRehearsal:
         stat_fields = (proc / "stat").read_text().rsplit(") ", 1)[1].split()
         executable = (proc / "exe").resolve(strict=True)
         executable_stat = executable.stat()
+        proc_cwd = proc / "cwd"
+        cwd_link = proc_cwd.readlink()
+        cwd = proc_cwd.resolve(strict=True)
+        cwd_stat = proc_cwd.stat()
+        node_dir = node.directory.resolve(strict=True)
+        node_dir_stat = node_dir.stat()
+        stat_fields_after = (proc / "stat").read_text().rsplit(") ", 1)[1].split()
+        if stat_fields_after[19] != stat_fields[19]:
+            raise RuntimeError(f"F01 {node.name} validator PID changed during cwd capture")
+        if (cwd != node_dir or (cwd_stat.st_dev, cwd_stat.st_ino)
+                != (node_dir_stat.st_dev, node_dir_stat.st_ino)):
+            raise RuntimeError(f"F01 {node.name} validator process cwd differs from its DB root")
         generations = self.f01_process_generations.setdefault(node.name, [])
         generations.append({
             "node_name": node.name,
@@ -1425,7 +1437,11 @@ class ValidatorElectionRehearsal:
             "exe_path": str(executable),
             "exe_device": executable_stat.st_dev,
             "exe_inode": executable_stat.st_ino,
-            "node_data_dir": str(node.directory.resolve(strict=True)),
+            "node_data_dir": str(node_dir),
+            "proc_cwd_link": str(cwd_link),
+            "proc_cwd_realpath": str(cwd),
+            "proc_cwd_device": cwd_stat.st_dev,
+            "proc_cwd_inode": cwd_stat.st_ino,
             "recorded_at": utc_now(),
         })
 

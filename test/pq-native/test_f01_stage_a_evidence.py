@@ -56,6 +56,9 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(calls("write_report", "write_f01_capture"))
         self.assertTrue(calls("execute", "record_f01_process"))
         self.assertIn("node_data_dir", ast.unparse(methods["write_f01_capture"]))
+        process_capture = ast.unparse(methods["record_f01_process"])
+        self.assertIn("proc / 'cwd'", process_capture)
+        self.assertIn("proc_cwd_realpath", process_capture)
         capture = ast.unparse(methods["capture_f01_transition"])
         self.assertIn("height + 1", capture)
         self.assertIn("(height - 1, height, height + 1)", capture)
@@ -115,6 +118,10 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
                     "proc_start_ticks": 20000 + index,
                     "exe_path": "/build/validator-engine", "exe_device": 1,
                     "exe_inode": 5000, "recorded_at": "2026-09-25T10:00:00Z",
+                    "proc_cwd_link": str(node_dir),
+                    "proc_cwd_realpath": str(node_dir.resolve()),
+                    "proc_cwd_device": node_dir.stat().st_dev,
+                    "proc_cwd_inode": node_dir.stat().st_ino,
                 }
                 nodes.append({
                     "node_name": f"node{index}", "node_data_dir": str(node_dir),
@@ -134,6 +141,22 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
             f01.write_manifest(target, source={"source_commit": "a" * 40},
                                nodes=nodes, transitions=[{"height": 7}])
             self.assertEqual(len(json.loads(target.read_text())["validators"]), 4)
+            restarted = [dict(node) for node in nodes]
+            restarted[0] = dict(restarted[0])
+            second = dict(restarted[0]["process_generations"][0],
+                          generation=1, pid=20001, proc_start_ticks=30001)
+            second_log = root / "node1" / "second-segment.log"
+            second_log.write_text("node1 restarted segment\n")
+            restarted[0]["process_generations"] = [
+                restarted[0]["process_generations"][0], second]
+            restarted[0]["log_segments"] = [
+                restarted[0]["log_segments"][0],
+                {"path": str(second_log),
+                 "sha256": hashlib.sha256(second_log.read_bytes()).hexdigest(),
+                 "process": dict(second)},
+            ]
+            f01.write_manifest(target, source={}, nodes=restarted,
+                               transitions=[{"height": 7}])
             copied = [dict(node) for node in nodes]
             copied[-1]["process_generations"] = [dict(copied[0]["process_generations"][0])]
             copied[-1]["log_segments"] = [dict(copied[-1]["log_segments"][0],
@@ -149,6 +172,28 @@ class F01CaptureTests(unittest.IsolatedAsyncioTestCase):
             copied[-1]["log_segments"] = [dict(copied[-1]["log_segments"][0],
                                               process=dict(duplicate))]
             with self.assertRaisesRegex(ValueError, "aliases a validator process"):
+                f01.write_manifest(target, source={}, nodes=copied,
+                                   transitions=[{"height": 7}])
+            copied = [dict(node) for node in nodes]
+            duplicate_cwd = dict(copied[-1]["process_generations"][0])
+            first_cwd = copied[0]["process_generations"][0]
+            for field in ("proc_cwd_link", "proc_cwd_realpath",
+                          "proc_cwd_device", "proc_cwd_inode"):
+                duplicate_cwd[field] = first_cwd[field]
+            copied[-1]["process_generations"] = [duplicate_cwd]
+            copied[-1]["log_segments"] = [dict(copied[-1]["log_segments"][0],
+                                              process=dict(duplicate_cwd))]
+            with self.assertRaisesRegex(ValueError, "process cwd differs|aliases a validator process cwd"):
+                f01.write_manifest(target, source={}, nodes=copied,
+                                   transitions=[{"height": 7}])
+            copied = [dict(node) for node in nodes]
+            same_path_wrong_inode = dict(copied[-1]["process_generations"][0])
+            same_path_wrong_inode["proc_cwd_inode"] = (
+                copied[0]["process_generations"][0]["proc_cwd_inode"])
+            copied[-1]["process_generations"] = [same_path_wrong_inode]
+            copied[-1]["log_segments"] = [dict(copied[-1]["log_segments"][0],
+                                              process=dict(same_path_wrong_inode))]
+            with self.assertRaisesRegex(ValueError, "process cwd differs|aliases a validator process cwd"):
                 f01.write_manifest(target, source={}, nodes=copied,
                                    transitions=[{"height": 7}])
             for field in ("node_data_dir", "pq_validator_id_hex", "pq_key_id_hex",

@@ -98,6 +98,7 @@ def write_manifest(path: Path, *, source: dict, nodes: list[dict],
     log_paths = set()
     log_hashes = set()
     process_ids = set()
+    cwd_owners = {}
     for node in nodes:
         combined = node.get("combined_log")
         segments = node.get("log_segments")
@@ -121,6 +122,22 @@ def write_manifest(path: Path, *, source: dict, nodes: list[dict],
             if identity in process_ids:
                 raise ValueError("F01 capture aliases a validator process identity")
             process_ids.add(identity)
+            node_dir = Path(node["node_data_dir"]).resolve(strict=True)
+            node_dir_stat = node_dir.stat()
+            cwd_identity = (generation.get("proc_cwd_device"),
+                            generation.get("proc_cwd_inode"))
+            if (not isinstance(generation.get("proc_cwd_link"), str)
+                    or not generation["proc_cwd_link"]
+                    or not Path(generation["proc_cwd_link"]).is_absolute()
+                    or Path(generation["proc_cwd_link"]).resolve(strict=True) != node_dir
+                    or generation.get("proc_cwd_realpath") != str(node_dir)
+                    or any(type(value) is not int or value <= 0 for value in cwd_identity)
+                    or cwd_identity != (node_dir_stat.st_dev, node_dir_stat.st_ino)):
+                raise ValueError("F01 process cwd differs from its node DB directory")
+            if (cwd_identity in cwd_owners
+                    and cwd_owners[cwd_identity] != node["node_name"]):
+                raise ValueError("F01 capture aliases a validator process cwd")
+            cwd_owners[cwd_identity] = node["node_name"]
         for log in [combined, *segments]:
             if (not isinstance(log, dict) or not log.get("path")
                     or not isinstance(log.get("sha256"), str)
