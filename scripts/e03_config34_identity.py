@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import urllib.request
 
 from pytosiq_core import Cell
 
@@ -126,11 +127,26 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--rpc", help="capture the live getConfigParam 34 reply before verification")
+    parser.add_argument("--node-dir", type=Path)
+    parser.add_argument("--key-tool", type=Path)
     args = parser.parse_args()
+    if args.rpc:
+        request_body = json.dumps({"jsonrpc": "2.0", "id": "e03-config34", "method": "getConfigParam",
+                                   "params": {"param": 34}}).encode()
+        request = urllib.request.Request(args.rpc.rstrip("/") + "/jsonRPC", data=request_body,
+                                         headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            raw_body = response.read()
+            args.raw.write_bytes(raw_body + b"\n")
     raw = json.loads(args.raw.read_text())
     decoded = decode(raw)
     verify(raw, decoded)
-    args.output.write_text(json.dumps({**decoded, "json_boc_verified": True}, indent=2) + "\n")
+    assert (args.node_dir is None) == (args.key_tool is None), "genesis check needs both node and key tool"
+    if args.node_dir is not None:
+        verify_genesis_member(decoded, args.node_dir, args.key_tool)
+    args.output.write_text(json.dumps({**decoded, "json_boc_verified": True,
+                                       "genesis_member_verified": args.node_dir is not None}, indent=2) + "\n")
     print(f"E03_CONFIG34_PQ_IDENTITY_OK boc_sha256={decoded['boc_sha256']} total={decoded['total']}")
 
 
