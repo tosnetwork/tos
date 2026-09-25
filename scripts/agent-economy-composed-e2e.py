@@ -41,12 +41,14 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/agent-economy-composed-e2e.py
 """
 import asyncio
+import base64
 import hashlib
 import json
 import os
 import shutil
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -61,6 +63,9 @@ BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19246"
 WORKDIR = REPO / "test/integration/.agent-economy-composed-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
+CHAIN_EVIDENCE = WORKDIR / "chain-evidence.jsonl"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000008"
 NANO = 1_000_000_000
@@ -101,15 +106,51 @@ def rpc_call(method: str, **params):
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    return json.loads(raw.decode())
+
+
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    return int(rpc_call("getAddressInformation", address=address)
+               ["result"]["last_transaction_id"]["lt"])
+
+
+def transactions_after(address: str, baseline_lt: int) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
 
 
 def balance(addr: str) -> int:
     return int(rpc_call("getAddressInformation", address=addr)["result"]["balance"])
 
 
-async def tosctl(*args: str, may_fail: bool = False) -> str:
+async def tosctl(*args: str) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
@@ -120,8 +161,15 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
     except TimeoutError:
         proc.kill()
+        out, err = await proc.communicate()
+        record_jsonl(CLI_TRANSCRIPT, {"args": args, "timeout": True,
+                     "stdout_base64": base64.b64encode(out).decode(),
+                     "stderr_base64": base64.b64encode(err).decode()})
         raise RuntimeError(f"tosctl {' '.join(args)} timed out")
-    if proc.returncode != 0 and not may_fail:
+    record_jsonl(CLI_TRANSCRIPT, {"args": args, "exit_code": proc.returncode,
+                 "stdout_base64": base64.b64encode(out).decode(),
+                 "stderr_base64": base64.b64encode(err).decode()})
+    if proc.returncode != 0:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
@@ -218,11 +266,117 @@ async def wait_task_status(name: str, want: str, timeout: float = 90.0) -> str:
     return last
 
 
-async def send_task_op(operation: str, name: str, *extra: str, may_fail: bool = False) -> str:
+async def send_task_op(operation: str, name: str, *extra: str) -> str:
     return await tosctl(
         "agent", "task", "send", "--operation", operation, "--name", name,
-        "--yes", *extra, may_fail=may_fail,
+        "--yes", *extra,
     )
+
+
+async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
+                             show_state, send) -> None:
+    before_state = await show_state()
+    before_head = finalized_mc_header()
+    wallet_lt, contract_lt = last_lt(payer), last_lt(address)
+    receipt = await send()
+    deadline = time.monotonic() + 45
+    wallet_tx = contract_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(payer, wallet_lt)
+        if wallet_rows:
+            if len(wallet_rows) != 1:
+                raise RuntimeError(f"{label}: multiple new wallet transactions")
+            wallet_tx = wallet_rows[0]
+            outgoing = wallet_tx.get("out_msgs") or []
+            if (wallet_tx.get("aborted") is not False
+                    or (wallet_tx.get("compute") or {}).get("success") is not True
+                    or (wallet_tx.get("action") or {}).get("success") is not True
+                    or len(outgoing) != 1
+                    or not same_addr(outgoing[0].get("destination"), address)):
+                raise RuntimeError(f"{label}: wallet did not submit to target contract")
+            contract_rows = transactions_after(address, contract_lt)
+            if contract_rows:
+                if len(contract_rows) != 1:
+                    raise RuntimeError(f"{label}: multiple new target transactions")
+                contract_tx = contract_rows[0]
+                if (contract_tx.get("in_msg") or {}).get("hash") != outgoing[0].get("hash"):
+                    raise RuntimeError(f"{label}: target inbound hash differs from wallet outbound")
+                break
+        await asyncio.sleep(1)
+    if wallet_tx is None or contract_tx is None:
+        raise RuntimeError(f"{label}: exact wallet-to-contract transaction not observed")
+    if (contract_tx.get("aborted") is not True
+            or (contract_tx.get("compute") or {}).get("success") is not False
+            or (contract_tx.get("compute") or {}).get("exit_code") != expected_exit):
+        raise RuntimeError(f"{label}: expected VM exit {expected_exit}, got {contract_tx}")
+    observations = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(observations) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            state = await show_state()
+            observations.append({"head": head, "state": state})
+            if state != before_state:
+                raise RuntimeError(f"{label}: contract state changed after VM rejection")
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(observations) != 2:
+        raise RuntimeError(f"{label}: two later finalized heads not observed")
+    record_jsonl(CHAIN_EVIDENCE, {"label": label, "kind": "negative", "receipt": receipt,
+                 "expected_exit": expected_exit, "before_state": before_state,
+                 "before_head": before_head, "wallet_tx": wallet_tx,
+                 "contract_tx": contract_tx, "observations": observations})
+    check(label, True)
+
+
+async def verify_payout_edge(label: str, escrow: str, recipient: str,
+                             escrow_lt: int, recipient_lt: int, amount: int,
+                             before_head: dict) -> None:
+    """Tie one successful Escrow action to its exact Agent Account credit message."""
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        source_rows = transactions_after(escrow, escrow_lt)
+        recipient_rows = transactions_after(recipient, recipient_lt)
+        if source_rows and recipient_rows:
+            if len(source_rows) != 1:
+                raise RuntimeError(f"{label}: multiple new escrow transactions")
+            source_tx = source_rows[0]
+            if (source_tx.get("aborted") is not False
+                    or (source_tx.get("compute") or {}).get("success") is not True
+                    or (source_tx.get("action") or {}).get("success") is not True):
+                raise RuntimeError(f"{label}: escrow payout transaction failed")
+            outgoing = [msg for msg in source_tx.get("out_msgs") or []
+                        if same_addr(msg.get("destination"), recipient)]
+            if len(outgoing) != 1 or int(outgoing[0]["value"]) != amount:
+                raise RuntimeError(f"{label}: exact payout message and amount not found")
+            matching = [row for row in recipient_rows
+                        if (row.get("in_msg") or {}).get("hash") == outgoing[0].get("hash")]
+            if len(matching) != 1:
+                raise RuntimeError(f"{label}: recipient inbound hash did not match payout")
+            inbound = matching[0]["in_msg"]
+            if (not same_addr(inbound.get("source"), escrow)
+                    or int(inbound["value"]) != amount
+                    or matching[0].get("aborted") is not False):
+                raise RuntimeError(f"{label}: recipient did not accept exact escrow payout")
+            heads = []
+            last_seqno = before_head["id"]["seqno"]
+            while time.monotonic() < deadline and len(heads) < 2:
+                head = finalized_mc_header()
+                if head["id"]["seqno"] > last_seqno:
+                    heads.append(head)
+                    last_seqno = head["id"]["seqno"]
+                else:
+                    await asyncio.sleep(1)
+            if len(heads) != 2:
+                raise RuntimeError(f"{label}: two later finalized heads not observed")
+            record_jsonl(CHAIN_EVIDENCE, {"label": label, "kind": "payout",
+                         "escrow_tx": source_tx, "recipient_tx": matching[0],
+                         "amount": amount, "before_head": before_head, "final_heads": heads})
+            check(label, True)
+            return
+        await asyncio.sleep(1)
+    raise RuntimeError(f"{label}: exact escrow-to-agent-account payout not observed")
 
 
 async def run_checks(faucet) -> None:
@@ -383,19 +537,23 @@ async def run_checks(faucet) -> None:
     check("worker Agent Account submitted the task result",
           await wait_task_status("workflow-happy", "result_submitted") == "result_submitted")
 
-    await send_task_op("settle", "workflow-happy", "--from", "verifier", "--payout", "5",
-                       may_fail=True)
-    await asyncio.sleep(5)
-    check("settle without attestation rejected",
-          (await task_show("workflow-happy"))["status"] == "result_submitted")
+    await rejected_operation(
+        "settle without attestation rejected", happy_escrow, verifier, 9,
+        lambda: task_show("workflow-happy"),
+        lambda: send_task_op("settle", "workflow-happy", "--from", "verifier", "--payout", "5"))
 
     worker_before = balance(worker_account)
+    happy_escrow_lt, worker_lt = last_lt(happy_escrow), last_lt(worker_account)
+    payout_before_head = finalized_mc_header()
     await send_task_op("settle", "workflow-happy", "--from", "verifier", "--payout", "5",
                        "--signer-vault-key", "task-attestor-key")
     check("happy task settled with attestation",
           await wait_task_status("workflow-happy", "settled") == "settled")
-    await asyncio.sleep(5)
-    check("worker Agent Account received the payout", balance(worker_account) > worker_before)
+    await verify_payout_edge("worker Agent Account received the payout", happy_escrow,
+                             worker_account, happy_escrow_lt, worker_lt, 5 * NANO,
+                             payout_before_head)
+    check("worker Agent Account balance rose after exact payout",
+          balance(worker_account) > worker_before)
 
     # ---------------- CONTESTED PATH ----------------
     print("\n=== contested path: dispute -> attested ruling -> Task Escrow resolve ===")
@@ -462,16 +620,13 @@ async def run_checks(faucet) -> None:
     check("worker submitted respondent evidence",
           dispute_data["status"] == "evidence_submitted", str(dispute_data))
 
-    await tosctl(
-        "agent", "dispute", "send", "--operation", "rule",
-        "--name", "workflow-contested-dispute", "--from", "reviewer",
-        "--ruling", "split", "--split-bps", "6500", "--ruling-hash", RULING_HASH,
-        may_fail=True,
-    )
-    dispute_data = await tosctl_json(
-        "agent", "dispute", "show", "--name", "workflow-contested-dispute")
-    check("rule without attestation rejected",
-          dispute_data["status"] == "evidence_submitted", str(dispute_data))
+    await rejected_operation(
+        "rule without attestation rejected", dispute_address, reviewer, 9,
+        lambda: tosctl_json("agent", "dispute", "show", "--name", "workflow-contested-dispute"),
+        lambda: tosctl("agent", "dispute", "send", "--operation", "rule",
+                       "--name", "workflow-contested-dispute", "--from", "reviewer",
+                       "--ruling", "split", "--split-bps", "6500",
+                       "--ruling-hash", RULING_HASH, "--yes"))
 
     await tosctl(
         "agent", "dispute", "send", "--operation", "rule",
@@ -488,12 +643,16 @@ async def run_checks(faucet) -> None:
 
     # 4 TOS budget * 6500 bps / 10000 = 2.6 TOS to the worker.
     worker_before = balance(worker_account)
+    contested_escrow_lt, worker_lt = last_lt(contested_escrow), last_lt(worker_account)
+    payout_before_head = finalized_mc_header()
     await send_task_op("resolve", "workflow-contested", "--from", "verifier", "--payout", "2.6")
     check("verifier resolved the contested task per the ruling",
           await wait_task_status("workflow-contested", "settled") == "settled")
-    await asyncio.sleep(5)
+    await verify_payout_edge("worker Agent Account received the split-translated payout",
+                             contested_escrow, worker_account, contested_escrow_lt, worker_lt,
+                             26 * NANO // 10, payout_before_head)
     worker_delta = balance(worker_account) - worker_before
-    check("worker Agent Account received the split-translated payout",
+    check("worker Agent Account balance reflects the split-translated payout",
           abs(worker_delta - int(2.6 * NANO)) <= NANO // 100, f"delta={worker_delta}")
 
 
