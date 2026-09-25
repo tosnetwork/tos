@@ -16,6 +16,16 @@ The exact script, built tosctl and validator-engine hashes were respectively
 `e155caef33467bc2b58122f4e43b2c0703413874ec6fea02ce9e2ec1d9decebd`,
 `1574d1fdc2a20f7459d23e6a92d1c42106884f18054b8df5565d8cc3439946b8`,
 and `2b9c840dd17c00190774416c75061b9f6720a63f4f523ab9d1a88aa38abb8a8`.
+The committed-tree negative-window and exact-confirmation test commands were
+`PYTHONPATH=test/tostester/src uv run --project test/tostester python -m
+unittest discover -s test/pq-native -p test_e04_negative_windows.py -v`
+(5/5, exit 0) and `cargo test --manifest-path tosctl/src/Cargo.toml -p
+commands --lib exact_deploy_wallet_transaction_tests --locked
+--no-default-features` (8/8, exit 0). Their raw logs are in the retained
+`-network/` directory as `negative-controls-ctest.log` (SHA-256
+`6c7f3f03b0e2c0623575cddd787f2187f28adce78d1fe54f0b7ae30eceecb156`)
+and `exact-confirmation-ctest.log` (SHA-256
+`c539354591f79d5d1e1c97c884b2e33945cf66a6da922a46b824c068247368b7`).
 The node DB and custody journal are preserved at
 `test/integration/.e04-agent-wallet-fe3918712-20260925-network/`; the
 PID/RPC/DB map SHA-256 is
