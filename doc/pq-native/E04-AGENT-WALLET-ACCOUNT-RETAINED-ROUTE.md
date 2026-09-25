@@ -4,6 +4,38 @@ Status: OPEN. The full advertised route has not completed on the current PQ tree
 
 ## Exact runs and observed stop
 
+The third, three-view run used committed `a778652c7` and exited 1 after 18
+checks. Its full console is
+`test/integration/.e04-agent-wallet-a778652c7-20260925-console.typescript`
+(SHA-256 `b22947ef98857cf1d29fd5aff925f0d0b4de802bc98fccb5357f1024f19ffe00`).
+The positive account completed exact-Gift winner resolution by three distinct
+RPC views and task-send; a separate cancellation account exercised its negative
+control. The next command, `agent account update-policy --wallet agent-1
+--amount 0.05 --yes`, printed query ID `7689306359782703105` and failed at the
+wallet's 15-second seqno poll. The later policy-effect wait was never reached.
+This is not an E04 PASS.
+
+Read-only forensics on a **copy** of that run's retained node DB bind this
+query ID to the wallet's outgoing message by decoding the transaction BOC:
+opcode `0x41475001`, query ID `7689306359782703105`, outgoing hash
+`5Ra5HKXrRwbbmM7/ImED0zLD8VO99F3eHRJvfyGQdmg=`. The wallet transaction
+is `lt=182000001` in shard block 181, with compute exit 0 and successful action.
+The Agent Account's `lt=182000003` inbound hash is the same; its compute exit 0
+and action also succeeded. A subsequent chain read gives account seqno 2 and
+the requested policy, `max_per_tx=1000000000` and `daily_limit=5000000000`
+nanotos. The raw RPC exchanges and transaction BOCs are in
+`test/integration/.e04-agent-wallet-a778652c7-forensic/capture-policy/raw.json`
+(SHA-256 `72fbd9cf62bc8a15d51a043a16665717902352cbf80b99b5aca3c9a4449238ed`);
+the decoded summary is `summary.json` in the same directory (SHA-256
+`6f18ecd68f49700a1e2fece5309434db0c3a7da7b8b0e18f75a8ded6bf90617a`).
+`scripts/e04_policy_forensic.py` reproduces the read-only query-ID/hash join.
+This proves eventual execution and policy effect, **not** that the transaction
+was visible to the CLI before its 15-second deadline. The run has no retained
+per-poll RPC transcript capable of making that timing distinction. The exact
+message must not be resent on the ambiguous timeout. The shared owner-action
+confirmation should use the exact submitted wallet message and then verify the
+Agent Account effect, rather than treating a short seqno wait as failure.
+
 The first run used committed `a0a9fd52b` with `TOS_BUILD_DIR=build`, `PYTHONPATH=test/tostester/src`, and the retained command `uv run python -u scripts/agent-wallet-account-e2e.py` under `script -q -e -f`. Its full output is `test/integration/.e04-agent-wallet-a0a9fd52b-20260925/console.typescript` (SHA-256 `3476e5dc07228dd9b30d38cda2ec169d51eb5981f656fe78a72a18187d0663c6`); process exit was 1. Six provision/status checks passed. The second invocation of `agent account native-prepare` for the same action failed with `ambiguous broadcast must be resolved from finalized state`. The node directory is preserved under that run directory's `network/`, not deleted.
 
 That refusal follows `AgentAccountNativePrepareCmd::run`: after journaling the exact signed BOC, it calls `begin_broadcast` **before printing the BOC**. `ControllerActionJournal::begin_broadcast` refuses a second call while the record is Broadcasting. The first script assumed that invoking `native-prepare` again was an exact-BOC retry, but the safe retry is reusing the first printed BOC. Commit `be74e9cc6` changes the script accordingly and asserts the second preparation refuses for the precise ambiguity reason; it does not weaken production custody.
