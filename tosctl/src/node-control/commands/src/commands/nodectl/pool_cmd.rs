@@ -1345,9 +1345,7 @@ impl PoolNominatorDepositCmd {
         use chain_block::{BuilderData, IBitstring, MsgAddressInt, write_boc};
         use chain_rpc_client::v2::data_models::AccountState;
         use colored::Colorize;
-        use common::{
-            app_config::PoolConfig, chain_utils::tos_to_nanotos, task_cancellation::CancellationCtx,
-        };
+        use common::{app_config::PoolConfig, chain_utils::tos_to_nanotos};
         use contracts::Wallet;
         use std::path::Path;
         use std::str::FromStr;
@@ -1435,15 +1433,12 @@ impl PoolNominatorDepositCmd {
         let msg = wallet.message(pool_addr.clone(), amount_nanotos, body).await?;
 
         let boc = write_boc(&msg)?;
-        rpc_client.send_boc(&boc).await?;
-
-        let cancellation_ctx = CancellationCtx::default();
-        super::utils::wait_for_seqno_change(
+        super::agent_cmd::confirm_prepared_wallet_message(
             rpc_client.clone(),
+            &boc,
             &wallet_addr,
-            wallet_info.seqno,
-            &cancellation_ctx,
-            super::utils::SEND_TIMEOUT,
+            &pool_addr,
+            super::utils::DEPLOY_TIMEOUT,
         )
         .await?;
 

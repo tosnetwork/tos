@@ -9767,27 +9767,50 @@ pub(crate) async fn send_wallet_message_with_state_init(
     owner_address: &MsgAddressInt,
     state_init: chain_block::StateInit,
 ) -> anyhow::Result<()> {
-    // Capture the source cursor before broadcast. A deployment may execute in a shard
-    // after the current masterchain view, so a short seqno poll can report failure
-    // even though the fee-bearing message later lands. Confirmation below names
-    // this exact external message; an unrelated seqno increment is not enough.
-    let before = rpc_client.get_address_information(owner_address).await?;
     let destination_for_confirmation = destination.clone();
     let msg = wallet
         .build_message(destination, amount, body, false, seqno, None, Some(state_init))
         .await?;
     let boc = write_boc(&msg)?;
-    let exact_hash = read_single_root_boc(&boc)?.hash(0);
-    rpc_client.send_boc(&boc).await.map_err(|error| anyhow::anyhow!(
-        "deployment message sha256:{} may have been submitted: {error}; inspect it before retrying",
-        hex::encode(exact_hash.as_slice())))?;
-    await_deploy_confirmation(
+    confirm_prepared_wallet_message(
+        rpc_client,
+        &boc,
+        owner_address,
+        &destination_for_confirmation,
         DEPLOY_TIMEOUT,
+    )
+    .await
+}
+
+/// Confirm a fee-bearing wallet send by its exact external-message hash and
+/// destination, not by an unrelated seqno increment. This also serves the
+/// Nominator Pool deposit path, whose shard inclusion can outlast the old
+/// 15-second seqno poll. It never rebroadcasts the prepared BOC.
+pub(crate) async fn confirm_prepared_wallet_message(
+    rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    boc: &Vec<u8>,
+    owner_address: &MsgAddressInt,
+    destination: &MsgAddressInt,
+    deadline: tokio::time::Duration,
+) -> anyhow::Result<()> {
+    // Capture the source cursor before broadcast. A message can execute in a
+    // shard after the current masterchain view; a short seqno poll would be
+    // an ambiguous negative. Keep the exact hash on every error path.
+    let before = rpc_client.get_address_information(owner_address).await?;
+    let exact_hash = read_single_root_boc(boc)?.hash(0);
+    rpc_client.send_boc(boc).await.map_err(|error| {
+        anyhow::anyhow!(
+            "wallet message sha256:{} may have been submitted: {error}; inspect it before retrying",
+            hex::encode(exact_hash.as_slice())
+        )
+    })?;
+    await_deploy_confirmation(
+        deadline,
         tokio::time::Duration::from_secs(2),
         || {
             let rpc_client = rpc_client.clone();
             let exact_hash = exact_hash.clone();
-            let destination_for_confirmation = destination_for_confirmation.clone();
+            let destination_for_confirmation = destination.clone();
             async move {
                 let current = rpc_client.get_address_information(owner_address).await?;
                 if current.last_transaction_id.lt <= before.last_transaction_id.lt {
@@ -9812,7 +9835,7 @@ pub(crate) async fn send_wallet_message_with_state_init(
             }
         },
     ).await.map_err(|last_error| anyhow::anyhow!(
-        "deployment message sha256:{} was submitted but its exact wallet transaction is not visible; last read error: {last_error}; inspect it before retrying",
+        "wallet message sha256:{} was submitted but its exact wallet transaction is not visible; last read error: {last_error}; inspect it before retrying",
         hex::encode(exact_hash.as_slice())))
 }
 
@@ -9831,11 +9854,12 @@ where
             tokio::time::sleep(poll_interval).await;
             match observe().await {
                 Ok(true) => return,
-                Ok(false) => {},
+                Ok(false) => {}
                 Err(error) => last_error = Some(error.to_string()),
             }
         }
-    }).await;
+    })
+    .await;
     match result {
         Ok(()) => Ok(()),
         Err(_) => Err(last_error.unwrap_or_else(|| "none".to_owned())),
@@ -9893,15 +9917,18 @@ fn scan_deploy_wallet_page(
     let last = transactions.last().unwrap();
     let boc = base64::engine::general_purpose::STANDARD.decode(&last.data)?;
     let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc)?)?;
-    anyhow::ensure!(transaction.logical_time() == last.lt,
-                    "wallet transaction page identity differs from its BOC");
+    anyhow::ensure!(
+        transaction.logical_time() == last.lt,
+        "wallet transaction page identity differs from its BOC"
+    );
     let next_lt = transaction.prev_trans_lt();
     if next_lt <= baseline_lt {
         return Ok(DeployWalletPage::ReachedBaseline);
     }
     Ok(DeployWalletPage::Next {
         lt: next_lt,
-        hash: base64::engine::general_purpose::STANDARD.encode(transaction.prev_trans_hash().as_slice()),
+        hash: base64::engine::general_purpose::STANDARD
+            .encode(transaction.prev_trans_hash().as_slice()),
     })
 }
 
@@ -9924,10 +9951,14 @@ fn exact_deploy_wallet_transaction(
     let TransactionDescr::Ordinary(ordinary) = transaction.read_description()? else {
         anyhow::bail!("exact deployment wallet transaction is not ordinary");
     };
-    anyhow::ensure!(!ordinary.aborted && ordinary.compute_ph.is_success().is_some(),
-                    "exact deployment wallet transaction aborted or failed compute");
-    anyhow::ensure!(ordinary.action.as_ref().is_some_and(|action| action.success),
-                    "exact deployment wallet transaction did not complete its send action");
+    anyhow::ensure!(
+        !ordinary.aborted && ordinary.compute_ph.is_success().is_some(),
+        "exact deployment wallet transaction aborted or failed compute"
+    );
+    anyhow::ensure!(
+        ordinary.action.as_ref().is_some_and(|action| action.success),
+        "exact deployment wallet transaction did not complete its send action"
+    );
     let mut sent_to_destination = false;
     transaction.iterate_out_msgs(|message| {
         if message.dst().as_ref() == Some(destination) {
@@ -9935,7 +9966,10 @@ fn exact_deploy_wallet_transaction(
         }
         Ok(true)
     })?;
-    anyhow::ensure!(sent_to_destination, "exact deployment wallet transaction omitted the destination message");
+    anyhow::ensure!(
+        sent_to_destination,
+        "exact deployment wallet transaction omitted the destination message"
+    );
     Ok(true)
 }
 
@@ -9948,33 +9982,91 @@ mod exact_deploy_wallet_transaction_tests {
         // The signed external message is already on chain; this fixture contains no secret key.
         let data = include_str!("fixtures/e03_wallet_deploy_tx.b64").trim().to_owned();
         let boc = base64::engine::general_purpose::STANDARD.decode(&data).unwrap();
-        let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let transaction =
+            Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
         let hash = transaction.in_msg_cell().unwrap().hash(0);
         assert_eq!(
             base64::engine::general_purpose::STANDARD.encode(hash.as_slice()),
             "kIx5sD49hxRJWLetkhehLWSqLq8wmnLHVSwoSJm02Wg="
         );
         let destination = "EQA10So_O5wULv6_jIzeG63TFAiV3Ebv40vRtfxG6XGVQOrU".parse().unwrap();
-        (RawTransaction { r#type: None, block_id: None, data, lt: 137000001,
-                          utime: 1790299931, hash: String::new() }, hash, destination)
+        (
+            RawTransaction {
+                r#type: None,
+                block_id: None,
+                data,
+                lt: 137000001,
+                utime: 1790299931,
+                hash: String::new(),
+            },
+            hash,
+            destination,
+        )
     }
 
     #[test]
     fn exact_broadcast_confirms_only_its_own_successful_destination_send() {
         let (raw, hash, destination) = retained_wallet_transaction();
         assert!(exact_deploy_wallet_transaction(&raw, &hash, &destination).unwrap());
-        assert!(!exact_deploy_wallet_transaction(&raw, &chain_block::UInt256::default(), &destination).unwrap());
-        let wrong_destination = "0:1111111111111111111111111111111111111111111111111111111111111111"
-            .parse().unwrap();
+        assert!(
+            !exact_deploy_wallet_transaction(&raw, &chain_block::UInt256::default(), &destination)
+                .unwrap()
+        );
+        let wrong_destination =
+            "0:1111111111111111111111111111111111111111111111111111111111111111".parse().unwrap();
         assert!(exact_deploy_wallet_transaction(&raw, &hash, &wrong_destination).is_err());
+    }
+
+    #[test]
+    fn retained_pool_deposit_uses_the_same_exact_confirmation_gate() {
+        // E03 75eaae8ab: seven legacy seqno polls saw 2 through shard 187;
+        // this wallet transaction appeared in shard 189 and sent to the pool.
+        let data = include_str!("fixtures/e03_pool_deposit_tx.b64").trim().to_owned();
+        let boc = base64::engine::general_purpose::STANDARD.decode(&data).unwrap();
+        let transaction =
+            Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let hash = transaction.in_msg_cell().unwrap().hash(0);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.encode(hash.as_slice()),
+            "whMwAX/fDlc6OpkJfkz/fH2ePi6wKWCC/PbwjUl1zoU="
+        );
+        let destination =
+            "-1:9f95d890f745a6ad6b87144d57f6b07b144ca9451a6229dd62d7d9a389d5b011".parse().unwrap();
+        let raw = RawTransaction {
+            r#type: None,
+            block_id: None,
+            data,
+            lt: 190000001,
+            utime: 1790303930,
+            hash: String::new(),
+        };
+        assert_eq!(
+            scan_deploy_wallet_page(&[raw.clone()], 189000000, &hash, &destination).unwrap(),
+            DeployWalletPage::Confirmed
+        );
+        assert_eq!(
+            scan_deploy_wallet_page(
+                &[raw.clone()],
+                189000000,
+                &chain_block::UInt256::default(),
+                &destination
+            )
+            .unwrap(),
+            DeployWalletPage::ReachedBaseline
+        );
+        let wrong_destination =
+            "-1:1111111111111111111111111111111111111111111111111111111111111111".parse().unwrap();
+        assert!(scan_deploy_wallet_page(&[raw], 189000000, &hash, &wrong_destination).is_err());
     }
 
     #[test]
     fn exact_broadcast_rejects_a_matched_but_aborted_wallet_transaction() {
         let (mut raw, hash, destination) = retained_wallet_transaction();
         let boc = base64::engine::general_purpose::STANDARD.decode(&raw.data).unwrap();
-        let mut transaction = Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
-        let TransactionDescr::Ordinary(mut ordinary) = transaction.read_description().unwrap() else {
+        let mut transaction =
+            Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let TransactionDescr::Ordinary(mut ordinary) = transaction.read_description().unwrap()
+        else {
             panic!("E03 fixture is not an ordinary wallet transaction");
         };
         ordinary.aborted = true;
@@ -9987,8 +10079,7 @@ mod exact_deploy_wallet_transaction_tests {
     #[tokio::test]
     async fn exact_broadcast_pages_past_ten_newer_wallet_transactions() {
         let (target, hash, destination) = retained_wallet_transaction();
-        let target_boc = base64::engine::general_purpose::STANDARD
-            .decode(&target.data).unwrap();
+        let target_boc = base64::engine::general_purpose::STANDARD.decode(&target.data).unwrap();
         let target_cell = read_single_root_boc(&target_boc).unwrap();
         let target_transaction = Transaction::construct_from_cell(target_cell.clone()).unwrap();
         let mut decoys = Vec::new();
@@ -10008,28 +10099,37 @@ mod exact_deploy_wallet_transaction_tests {
                 ..target.clone()
             });
         }
-        assert_eq!(scan_deploy_wallet_page(&decoys, 69_000_003, &hash, &destination).unwrap(),
-                   DeployWalletPage::Next {
-                       lt: target.lt,
-                       hash: base64::engine::general_purpose::STANDARD.encode(target_cell.hash(0).as_slice()),
-                   });
-        assert_eq!(scan_deploy_wallet_page(&[target], 69_000_003, &hash, &destination).unwrap(),
-                   DeployWalletPage::Confirmed);
+        assert_eq!(
+            scan_deploy_wallet_page(&decoys, 69_000_003, &hash, &destination).unwrap(),
+            DeployWalletPage::Next {
+                lt: target.lt,
+                hash: base64::engine::general_purpose::STANDARD
+                    .encode(target_cell.hash(0).as_slice()),
+            }
+        );
+        assert_eq!(
+            scan_deploy_wallet_page(&[target], 69_000_003, &hash, &destination).unwrap(),
+            DeployWalletPage::Confirmed
+        );
         let (target, hash, destination) = retained_wallet_transaction();
         let page_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let visited = page_count.clone();
-        assert!(scan_deploy_wallet_history(
-            decoys[0].lt,
-            "newest-hash".to_owned(),
-            69_000_003,
-            &hash,
-            &destination,
-            move |_lt, _hash| {
-                let index = visited.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let page = if index == 0 { decoys.clone() } else { vec![target.clone()] };
-                async move { Ok(page) }
-            },
-        ).await.unwrap());
+        assert!(
+            scan_deploy_wallet_history(
+                decoys[0].lt,
+                "newest-hash".to_owned(),
+                69_000_003,
+                &hash,
+                &destination,
+                move |_lt, _hash| {
+                    let index = visited.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let page = if index == 0 { decoys.clone() } else { vec![target.clone()] };
+                    async move { Ok(page) }
+                },
+            )
+            .await
+            .unwrap()
+        );
         assert_eq!(page_count.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
@@ -10039,8 +10139,10 @@ mod exact_deploy_wallet_transaction_tests {
         let mut invalid = raw.clone();
         invalid.data = "not a BOC".to_owned();
         assert!(scan_deploy_wallet_page(&[invalid], 69_000_003, &hash, &destination).is_err());
-        assert_eq!(scan_deploy_wallet_page(&[raw], 69_000_003, &hash, &destination).unwrap(),
-                   DeployWalletPage::Confirmed);
+        assert_eq!(
+            scan_deploy_wallet_page(&[raw], 69_000_003, &hash, &destination).unwrap(),
+            DeployWalletPage::Confirmed
+        );
     }
 
     #[tokio::test]
@@ -10053,17 +10155,23 @@ mod exact_deploy_wallet_transaction_tests {
             move || {
                 let attempt = observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 async move {
-                    if attempt == 0 { anyhow::bail!("temporary RPC read error") }
+                    if attempt == 0 {
+                        anyhow::bail!("temporary RPC read error")
+                    }
                     Ok(true)
                 }
             },
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
         let error = await_deploy_confirmation(
             tokio::time::Duration::from_millis(10),
             tokio::time::Duration::from_millis(1),
             || async { anyhow::bail!("persistent BOC read error") },
-        ).await.unwrap_err();
+        )
+        .await
+        .unwrap_err();
         assert_eq!(error, "persistent BOC read error");
     }
 }
