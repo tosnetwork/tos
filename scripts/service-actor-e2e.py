@@ -127,8 +127,13 @@ def write_provenance() -> None:
         [sys.executable, str(REPO / "scripts/check-service-actor-bytecode.py")],
         cwd=REPO, env=compiler_env, check=True, capture_output=True, text=True,
     ).stdout.strip()
-    if not re.fullmatch(r"Service Actor bytecode synchronized \(repr_hash=[0-9a-fA-F]{64}\)",
-                        bytecode_check):
+    match = re.fullmatch(
+        r"Service Actor bytecode synchronized \(repr_hash=([0-9]{1,78})\)",
+        bytecode_check,
+    )
+    # The production checker prints Fift `hashu .` as an unsigned decimal
+    # 256-bit integer, not as a hexadecimal digest.
+    if not match or not 0 < int(match.group(1)) < 1 << 256:
         raise RuntimeError(f"Service Actor bytecode identity missing: {bytecode_check}")
     paths = {
         "script": Path(__file__),

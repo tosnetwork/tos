@@ -179,7 +179,7 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(bytes([index + 1]))
             manifest = root / "provenance.json"
-            bytecode = "Service Actor bytecode synchronized (repr_hash=" + "a" * 64 + ")"
+            bytecode = "Service Actor bytecode synchronized (repr_hash=" + str(2**255) + ")"
             run = [Mock(returncode=0), Mock(stdout=bytecode + "\n")] * 2
             with patch.object(e13, "REPO", root), patch.object(e13, "BUILD_DIR", build), patch.object(
                 e13, "TOSCTL", str(paths[-1])
@@ -196,6 +196,13 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                 e13.subprocess, "check_output", return_value="a" * 40
             ), patch.object(e13.subprocess, "run", side_effect=[
                 Mock(returncode=0), Mock(stdout="stale bytecode")
+            ]):
+                with self.assertRaisesRegex(RuntimeError, "bytecode identity missing"):
+                    e13.write_provenance()
+            with patch.object(e13, "REPO", root), patch.object(
+                e13.subprocess, "check_output", return_value="a" * 40
+            ), patch.object(e13.subprocess, "run", side_effect=[
+                Mock(returncode=0), Mock(stdout="Service Actor bytecode synchronized (repr_hash=0)")
             ]):
                 with self.assertRaisesRegex(RuntimeError, "bytecode identity missing"):
                     e13.write_provenance()
