@@ -250,7 +250,7 @@ class Wc0EvidenceTests(unittest.TestCase):
               "block_id": {"workchain": 0, "shard": "-9223372036854775808",
                            "seqno": 48, "root_hash": "root", "file_hash": "file"}}
         event_id = f"49000003:{tx_hash.hex()}"
-        event = {"@type": "wallet.accountEvent", "event_id": event_id,
+        event = {"@type": "wallet.accountEvent", "event_id": event_id.upper(),
                  "lt": "49000003", "hash": tx_hash.hex(),
                  "raw_transaction": base64.b64encode(b"tx-boc").decode()}
         fake_cell = types.SimpleNamespace(hash=tx_hash)

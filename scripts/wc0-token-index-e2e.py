@@ -312,7 +312,7 @@ def require_forged_block_indexed(victim: str, forged_tx: dict) -> dict:
         raise RuntimeError("forged transaction lacks a full wc0 block and hash")
     event_id = f"{lt}:{tx_hash.hex()}"
     event = rpc_call("getAccountEvent", address=victim, event_id=event_id)["result"]
-    if (event.get("event_id") != event_id or int(event.get("lt", 0)) != lt
+    if (str(event.get("event_id", "")).lower() != event_id or int(event.get("lt", 0)) != lt
             or event.get("hash", "").lower() != tx_hash.hex()
             or event.get("@type") != "wallet.accountEvent"):
         raise RuntimeError("forged transaction index receipt differs from raw transaction")
