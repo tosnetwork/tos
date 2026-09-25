@@ -1,5 +1,6 @@
 """Live local-process controls for X02's validator stderr-file cursor."""
 
+import copy
 import hashlib
 import importlib.util
 import os
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 SOURCE = Path(__file__).resolve().parents[2] / "scripts/x02_fault_evidence.py"
@@ -144,6 +146,54 @@ class NativeLogCursorTests(unittest.TestCase):
         marker = x02.native_log_ids(row, self.node)[12]
         self.assertLess(marker[2], cut_finished_ns)
         self.assertGreater(row["read_started_ns"], cut_finished_ns)
+
+    def test_capture_retains_separate_pre_and_post_rpc_native_bytes(self):
+        node = dict(self.node, name="node1", rpc_url="http://127.0.0.1:1/jsonRPC")
+        policy = {"source_commit": "a" * 40, "log_source": "native-file",
+                  "nodes": [node], "live_nodes": {}}
+
+        def observed_rpc(_url, method, _params, _query_id):
+            started = time.monotonic_ns()
+            if method == "getBlockHeader":
+                self.append(self.marker(11))
+            return {"method": method, "started_ns": started,
+                    "completed_ns": time.monotonic_ns()}
+
+        with (patch.object(x02, "require_source_commit", return_value={}),
+              patch.object(x02, "capture_tc", return_value={}),
+              patch.object(x02, "capture_process", return_value={}),
+              patch.object(x02, "rpc", side_effect=observed_rpc),
+              patch.object(x02, "parse_rpc", return_value=(-1, x02.SHARD, 11,
+                                                            "1" * 64, "2" * 64))):
+            row = x02.capture(policy, "b" * 64, "baseline")
+        self.assertEqual(x02.native_log_ids(row["journals"]["node1"], node), {})
+        post = row["post_journals"]["node1"]
+        self.assertIn(11, x02.native_log_ids(post, node,
+                                             row["journals"]["node1"]))
+        self.assertLess(row["journals"]["node1"]["completed_ns"],
+                        row["rpc"]["first"]["node1"]["started_ns"])
+        self.assertLess(row["rpc"]["last"]["node1"]["completed_ns"],
+                        post["started_ns"])
+        verified = x02.verified_native_segments(row, node, None)
+        self.assertEqual(len(verified), 2)
+        self.assertIn(11, verified[1][1])
+        missing_post = copy.deepcopy(row)
+        missing_post["post_journals"].pop("node1")
+        with self.assertRaises(KeyError):
+            x02.verified_native_segments(missing_post, node, None)
+        replayed_post = copy.deepcopy(row)
+        replayed_post["post_journals"]["node1"]["start_offset"] = 1
+        with self.assertRaisesRegex(ValueError, "cursor gap"):
+            x02.verified_native_segments(replayed_post, node, None)
+        late_post = copy.deepcopy(row)
+        late_post["post_journals"]["node1"]["started_ns"] = (
+            row["rpc"]["last"]["node1"]["completed_ns"] - 1)
+        with self.assertRaisesRegex(ValueError, "post-RPC"):
+            x02.verified_native_segments(late_post, node, None)
+        next_pre = x02.capture_native_log(node, post)
+        self.assertEqual(x02.native_log_ids(next_pre, node, post), {})
+        with self.assertRaisesRegex(ValueError, "cursor gap"):
+            x02.native_log_ids(next_pre, node, row["journals"]["node1"])
 
 
 if __name__ == "__main__":

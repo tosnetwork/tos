@@ -637,6 +637,24 @@ def native_log_ids(row: dict, node: dict, previous: dict | None = None) -> dict[
     return ids
 
 
+def verified_native_segments(snapshot: dict, node: dict,
+                             previous_post: dict | None) -> list[tuple[dict, dict]]:
+    """Join previous post -> current pre -> current post around real RPC bytes."""
+    name = node["name"]
+    pre = snapshot["journals"][name]
+    post = snapshot["post_journals"][name]
+    first_rpc = snapshot["rpc"]["first"][name]
+    last_rpc = snapshot["rpc"]["last"][name]
+    require(snapshot["started_ns"] <= pre["started_ns"]
+            <= pre["completed_ns"] <= first_rpc["started_ns"],
+            "pre-RPC native log was not read before the node's RPC observation")
+    require(last_rpc["completed_ns"] <= post["started_ns"]
+            <= post["completed_ns"] <= snapshot["completed_ns"],
+            "post-RPC native log was not read after the node's RPC observation")
+    return [(pre, native_log_ids(pre, node, previous_post)),
+            (post, native_log_ids(post, node, pre))]
+
+
 def rpc(url: str, method: str, params: dict | None, query_id: int) -> dict:
     request = json.dumps({"jsonrpc": "2.0", "id": query_id, "method": method,
                           "params": params or {}}, separators=(",", ":")).encode()
@@ -710,7 +728,10 @@ def capture(policy: dict, policy_sha: str, phase: str,
             processes[node["name"]] = {"error": repr(error), "pid": node["pid"]}
     journals = {}
     for node in policy["nodes"]:
-        prior = ((previous or {}).get("journals") or {}).get(node["name"])
+        prior_source = ((previous or {}).get("post_journals")
+                        if policy.get("log_source") == "native-file"
+                        else (previous or {}).get("journals"))
+        prior = (prior_source or {}).get(node["name"])
         if policy.get("log_source") == "native-file":
             journals[node["name"]] = capture_native_log(node, prior)
         else:
@@ -762,6 +783,10 @@ def capture(policy: dict, policy_sha: str, phase: str,
             for i, node in enumerate(policy["nodes"])}
     except (ValueError, KeyError, TypeError) as error:
         result["capture_error"] = repr(error)
+    if policy.get("log_source") == "native-file":
+        result["post_journals"] = {
+            node["name"]: capture_native_log(node, journals[node["name"]])
+            for node in policy["nodes"]}
     result["completed_ns"] = time.monotonic_ns()
     return result
 
@@ -955,6 +980,10 @@ def verify_snapshot(snapshot: dict, policy: dict, policy_sha: str,
     require(set(snapshot.get("processes") or {}) == set(nodes)
             and set(snapshot.get("journals") or {}) == set(nodes),
             "four process/journal captures are absent")
+    native_file = policy.get("log_source") == "native-file"
+    if native_file:
+        require(set(snapshot.get("post_journals") or {}) == set(nodes),
+                "four post-RPC native log captures are absent")
     first_rpc_start = min(snapshot["rpc"]["first"][name]["started_ns"] for name in nodes)
     for iface, raw in (snapshot.get("tc") or {}).items():
         for kind in ("filters", "qdiscs"):
@@ -991,26 +1020,31 @@ def verify_snapshot(snapshot: dict, policy: dict, policy_sha: str,
         require(snapshot["started_ns"] <= journal_row["started_ns"]
                 <= journal_row["completed_ns"] <= first_rpc_start,
                 "journal was read after RPC observation")
-        if policy.get("log_source") == "native-file":
-            local = native_log_ids(journal_row, node,
-                                   (previous_journals or {}).get(name))
+        if native_file:
+            segments = verified_native_segments(
+                snapshot, node, (previous_journals or {}).get(name))
         else:
-            local = journal_ids(journal_row, node, boot_id)
-        journals[name] = local
-        for height, block in local.items():
-            require(height not in seen_ids[name] or seen_ids[name][height] == block[:2],
-                    f"{name} finalized conflicting IDs across snapshots")
-            require(height not in global_ids or global_ids[height] == block[:2],
-                    f"validators disagree on full ID at height {height}")
-            seen_ids[name][height] = block[:2]
-            if height not in seen_journal[name]:
-                seen_journal[name][height] = (*block[:3], snapshot["phase"],
-                                              block[3], journal_row["completed_ns"])
-            elif block[2] < seen_journal[name][height][2]:
-                prior = seen_journal[name][height]
-                seen_journal[name][height] = (*prior[:2], block[2], prior[3],
-                                              prior[4], prior[5])
-            global_ids[height] = block[:2]
+            segments = [(journal_row, journal_ids(journal_row, node, boot_id))]
+        journals[name] = {}
+        for segment_row, local in segments:
+            for height, block in local.items():
+                require(height not in journals[name]
+                        or journals[name][height][:2] == block[:2],
+                        f"{name} native segments conflict at height {height}")
+                journals[name][height] = block
+                require(height not in seen_ids[name] or seen_ids[name][height] == block[:2],
+                        f"{name} finalized conflicting IDs across snapshots")
+                require(height not in global_ids or global_ids[height] == block[:2],
+                        f"validators disagree on full ID at height {height}")
+                seen_ids[name][height] = block[:2]
+                if height not in seen_journal[name]:
+                    seen_journal[name][height] = (*block[:3], snapshot["phase"],
+                                                  block[3], segment_row["completed_ns"])
+                elif block[2] < seen_journal[name][height][2]:
+                    prior = seen_journal[name][height]
+                    seen_journal[name][height] = (*prior[:2], block[2], prior[3],
+                                                  prior[4], prior[5])
+                global_ids[height] = block[:2]
         rpc_rows = snapshot["rpc"]
         first_row, last_row = rpc_rows["first"][name], rpc_rows["last"][name]
         first[name] = parse_rpc(first_row, node, "getMasterchainInfo",
@@ -1211,7 +1245,7 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
                 name = node["name"]
                 if policy.get("log_source") == "native-file":
                     native_log_ids(snap["journals"][name], node,
-                                   previous_snap["journals"][name])
+                                   previous_snap["post_journals"][name])
                 else:
                     require(snap["journals"][name]["argv"][-2:] == [
                         "--cursor", journal_end_cursor(previous_snap["journals"][name], node)],
@@ -1227,7 +1261,10 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
         phase_index = index
         row = verify_snapshot(snap, policy, policy_sha, seen_ids, seen_journal, global_ids,
                               generations, last_tip_heights,
-                              previous_snap["journals"] if previous_snap is not None else None)
+                              ((previous_snap.get("post_journals")
+                                if policy.get("log_source") == "native-file"
+                                else previous_snap["journals"])
+                               if previous_snap is not None else None))
         require(has_clsact(snap, policy["clsact"]["interface"]),
                 "clsact egress filter attachment is absent during observation")
         require(row["start"] >= previous_end, "snapshots overlap or time regressed")
