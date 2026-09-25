@@ -3,6 +3,7 @@
 import base64
 import asyncio
 import ast
+import hashlib
 import importlib.util
 import io
 import json
@@ -11,6 +12,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -60,6 +62,37 @@ def task_list_fixture():
 
 
 class HttpTranscriptTests(unittest.TestCase):
+    def test_manifest_binds_binaries_and_refuses_dirty_tracked_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for relative, content in (
+                ("build/validator-engine/validator-engine", b"validator"),
+                ("build/dht-server/dht-server", b"dht"),
+                ("tosctl", b"client"),
+                ("test/pq-native/test_e05_http_transcript.py", b"test"),
+            ):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+            manifest_path = root / "manifest.json"
+            with patch.object(e05, "REPO", root), patch.object(
+                e05, "BUILD_DIR", root / "build"
+            ), patch.object(e05, "TOSCTL", str(root / "tosctl")), patch.object(
+                e05, "MANIFEST", manifest_path
+            ), patch.object(e05.subprocess, "check_output", return_value="fixedsha\n"), patch.object(
+                e05.subprocess, "run", return_value=SimpleNamespace(returncode=0)
+            ) as git_diff:
+                e05.write_manifest()
+                clean = json.loads(manifest_path.read_text())
+                self.assertEqual(clean["source_commit"], "fixedsha")
+                self.assertFalse(clean["source_tracked_dirty"])
+                self.assertEqual(clean["binaries"]["tosctl"]["sha256"],
+                                 hashlib.sha256(b"client").hexdigest())
+                git_diff.return_value.returncode = 1
+                with self.assertRaisesRegex(RuntimeError, "clean tracked source tree"):
+                    e05.write_manifest()
+                self.assertTrue(json.loads(manifest_path.read_text())["source_tracked_dirty"])
+
     def test_detail_must_bind_response_to_requested_address(self):
         requested = "0:" + "11" * 32
         wrong = "0:" + "22" * 32

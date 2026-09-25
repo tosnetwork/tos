@@ -23,9 +23,12 @@ Run from the repository root: uv run python scripts/agent-query-api-e2e.py
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -44,6 +47,7 @@ RPC = "127.0.0.1:18647"
 HTTP = "127.0.0.1:18648"
 WORKDIR = REPO / "test/integration/.agent-query-api-e2e"
 HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000002"
 POLICY_HASH = "22" * 32
@@ -58,6 +62,35 @@ def check(label: str, ok: bool, detail: str = ""):
     else:
         print(f"  FAIL: {label}  {detail}")
         failures.append(label)
+
+
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e05_http_transcript.py").read_bytes()).hexdigest(),
+        "http_transcript": HTTP_TRANSCRIPT.name,
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E05 real-chain run requires a clean tracked source tree")
 
 
 def rpc_call(method: str, **params):
@@ -499,6 +532,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging
