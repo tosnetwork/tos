@@ -1409,6 +1409,11 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
     require(all(last_three <= event_rows[(r["id"], "install")][0]
                 < event_rows[(r["id"], "install")][1] <= first_two
                 for r in two_rules), "node3 cut was not installed before 2/4 samples")
+    node3_cut_installed_at = max(event_rows[(r["id"], "install")][1]
+                                  for r in two_rules)
+    require(first_two - node3_cut_installed_at
+            >= thresholds["two_drain_seconds"] * 1_000_000_000,
+            "first 2/4 sample lacks the frozen 30-second post-cut drain")
     require(all(last_two <= event_rows[(r["id"], "remove")][0]
                 < event_rows[(r["id"], "remove")][1] <= first_recovery
                 for r in policy["rules"]), "all peer rules were not removed before recovery")

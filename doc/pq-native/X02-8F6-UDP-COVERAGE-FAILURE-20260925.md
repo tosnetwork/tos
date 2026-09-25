@@ -45,6 +45,14 @@ The next runner pre-refuses any initial root qdisc other than loopback
 `noqueue`, uses typed `flower` deletion, and fixes a 30-second post-cut drain
 *before* its 60-second two-of-four no-progress observation. The drain limit is
 precommitted, and its native bytes remain in the first observation sample;
-no failed sample may be skipped after inspection. These are offline controls
-only until a new exact-tree real run and independent review. X02 remains OPEN;
+the standalone verifier also checks that the first 2/4 snapshot starts at
+least 30 seconds after the last node3 rule install completes. A synthetic
+1.99-second gap is rejected; removing only that verifier guard lets the same
+short-gap fixture pass. A separate network-namespace `tc` control retained at
+`/datax/n6-supervisor-x02-8f6-evidence/tc-flower-delete-netns.raw`
+(SHA-256 `46c4e16f70d00a62c1eb5dd6efaea0a15ad35fd923ec9e3c44a665e354486d30`)
+proves the typed `flower` delete succeeds and leaves no filter, but not that
+all 20 rules can be removed after a real fault run. No failed sample may be
+skipped after inspection. These are offline controls only until a new
+exact-tree real run and independent review. X02 remains OPEN;
 partial packet loss is a separate unsatisfied slice.

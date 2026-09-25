@@ -192,7 +192,7 @@ def snapshot(pol, phase, at, heights, active, counts, journal_overrides=None):
         entries = [{"__CURSOR": f"{name}-{at}-{j}", "_PID": str(node["pid"]),
                     "_BOOT_ID": BOOT.replace("-", ""),
                     "__MONOTONIC_TIMESTAMP": str(int((
-                        144 if phase == "recovery" and at >= 145
+                        at - 1 if phase == "recovery" and at >= 145
                         and j - 1 > heights[name] - 2 else
                         .1 if j - 1 <= 10 else 19 if j - 1 == 11 else 29
                     ) * 1_000_000)),
@@ -280,7 +280,7 @@ def event(pol, rule, action, at, active):
             "pre_tc": pre, "post_tc": post}
 
 
-def fixture(jump=False):
+def fixture(jump=False, short_drain=False):
     pol = policy()
     rules3 = [r for r in pol["rules"] if r["phase"] == "three_of_four"]
     rules2 = [r for r in pol["rules"] if r["phase"] == "two_of_four"]
@@ -299,7 +299,8 @@ def fixture(jump=False):
     for i, rule in enumerate(rules2, start=31):
         active.append(rule)
         events.append(event(pol, rule, "install", i, active[:]))
-    for at, hits in ((40, 1), (75, 2), (105, 3)):
+    two_base = 40 if short_drain else 70
+    for at, hits in ((two_base, 1), (two_base + 35, 2), (two_base + 65, 3)):
         snapshots.append(snapshot(pol, "two_of_four", at,
                                   {"node1": final_three, "node2": final_three,
                                    "node3": final_three, "node4": 10},
@@ -307,11 +308,12 @@ def fixture(jump=False):
                                               for r in active}))
     for i, rule in enumerate(pol["rules"]):
         active.remove(rule)
-        events.append(event(pol, rule, "remove", 110 + i / 4, active[:]))
-    for at, height in ((125, final_three), (145, final_three + 2)):
+        events.append(event(pol, rule, "remove", two_base + 70 + i / 4, active[:]))
+    for at, height in ((two_base + 85, final_three),
+                       (two_base + 105, final_three + 2)):
         snapshots.append(snapshot(pol, "recovery", at,
                                   {f"node{i}": height for i in range(1, 5)}, [], {}))
-    events.append(event(pol, "clsact", "cleanup", 147, []))
+    events.append(event(pol, "clsact", "cleanup", two_base + 107, []))
     link_snapshots(pol, snapshots)
     return pol, snapshots, events
 
@@ -440,6 +442,15 @@ class X02IsolationTests(unittest.TestCase):
         self.assertEqual(x02.normalize_boot_id(entry["_BOOT_ID"]),
                          x02.normalize_boot_id(snapshots[0]["boot_id"]))
         self.assertTrue(x02.verify(pol, "p" * 64, snapshots, events)["passed"])
+
+    def test_two_of_four_drain_is_bound_to_last_install_completion(self):
+        pol, snapshots, events = fixture(short_drain=True)
+        # The last node3 rule completes at 38.01 s; the first 2/4 sample
+        # starts at 40 s. Source-side sleep alone must not certify this trace.
+        with self.assertRaisesRegex(ValueError, "30-second post-cut drain"):
+            verify_fixture(pol, snapshots, events)
+        pol, snapshots, events = fixture()
+        self.assertTrue(verify_fixture(pol, snapshots, events)["passed"])
 
     def test_same_cursor_changed_payload_is_rejected(self):
         pol, snapshots, events = fixture()
@@ -675,7 +686,7 @@ class X02IsolationTests(unittest.TestCase):
         rewrite_raw(row, body)
         node = pol["nodes"][1]
         snapshots[5]["rpc"]["last"]["node2"] = rpc_row(
-            node, "getMasterchainInfo", 13, 75.402, 8)
+            node, "getMasterchainInfo", 13, 105.402, 8)
         with self.assertRaisesRegex(ValueError, "counters reset|tip regressed|lost a target peer hit"):
             verify_fixture(pol, snapshots, events)
 
@@ -792,7 +803,7 @@ class X02IsolationTests(unittest.TestCase):
 
     def test_recovery_needs_two_new_full_ids(self):
         pol, snapshots, events = fixture()
-        snapshots[-1] = snapshot(pol, "recovery", 145,
+        snapshots[-1] = snapshot(pol, "recovery", 175,
                                  {f"node{i}": 13 for i in range(1, 5)}, [], {})
         with self.assertRaisesRegex(ValueError, "two newly common"):
             verify_fixture(pol, snapshots, events)
@@ -810,9 +821,9 @@ class X02IsolationTests(unittest.TestCase):
         pol, snapshots, events = fixture()
         node = pol["nodes"][1]
         row = snapshots[6]["rpc"]["last"]["node2"]
-        replacement = rpc_row(node, "getMasterchainInfo", 13, 105.402, 8)
+        replacement = rpc_row(node, "getMasterchainInfo", 13, 135.402, 8)
         row.update(replacement)
-        snapshots[7] = snapshot(pol, "recovery", 125,
+        snapshots[7] = snapshot(pol, "recovery", 155,
                                 {"node1": 12, "node2": 13, "node3": 12, "node4": 12}, [], {})
         with self.assertRaisesRegex(ValueError, "2/4 live node advanced"):
             verify_fixture(pol, snapshots, events)
@@ -821,19 +832,19 @@ class X02IsolationTests(unittest.TestCase):
         pol, snapshots, events = fixture()
         node = pol["nodes"][2]
         snapshots[4]["rpc"]["first"]["node3"] = rpc_row(
-            node, "getMasterchainInfo", 11, 40.103, 10)
+            node, "getMasterchainInfo", 11, 70.103, 10)
         snapshots[4]["rpc"]["last"]["node3"] = rpc_row(
-            node, "getMasterchainInfo", 11, 40.403, 12)
+            node, "getMasterchainInfo", 11, 70.403, 12)
         with self.assertRaisesRegex(ValueError, "tip regressed across samples"):
             verify_fixture(pol, snapshots, events)
 
     def test_short_common_halt_interval_is_rejected(self):
         pol, snapshots, events = fixture()
         # Each node individually spans >=60s, but their common overlap is 59s.
-        snapshots[4]["rpc"]["last"]["node2"]["completed_ns"] = int(46.4 * NS)
-        snapshots[4]["completed_ns"] = int(46.5 * NS)
-        snapshots[6]["rpc"]["last"]["node2"]["completed_ns"] = int(106.4 * NS)
-        snapshots[6]["completed_ns"] = int(106.5 * NS)
+        snapshots[4]["rpc"]["last"]["node2"]["completed_ns"] = int(76.4 * NS)
+        snapshots[4]["completed_ns"] = int(76.5 * NS)
+        snapshots[6]["rpc"]["last"]["node2"]["completed_ns"] = int(136.4 * NS)
+        snapshots[6]["completed_ns"] = int(136.5 * NS)
         with self.assertRaisesRegex(ValueError, "60 seconds"):
             verify_fixture(pol, snapshots, events)
 
