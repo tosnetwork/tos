@@ -21,7 +21,8 @@ spec = importlib.util.spec_from_file_location("e15_dns", SOURCE)
 e15 = importlib.util.module_from_spec(spec)
 stubs = {name: types.ModuleType(name) for name in (
     "pytosiq_core", "pytosiq_core.boc", "pytosiq_core.tlb",
-    "pytosiq_core.tlb.account", "tosapi", "tostester", "tostester.install",
+    "pytosiq_core.tlb.account", "pytosiq_core.tlb.transaction",
+    "tosapi", "tostester", "tostester.install",
     "tostester.network", "tostester.pq_initial_validator",
 )}
 for name in ("Address", "Cell", "CurrencyCollection", "InternalMsgInfo", "MessageAny",
@@ -29,6 +30,7 @@ for name in ("Address", "Cell", "CurrencyCollection", "InternalMsgInfo", "Messag
     setattr(stubs["pytosiq_core"], name, object)
 stubs["pytosiq_core.boc"].begin_cell = object
 stubs["pytosiq_core.tlb.account"].StateInit = object
+stubs["pytosiq_core.tlb.transaction"].Transaction = object
 stubs["tosapi"].tos_api = object
 stubs["tostester.install"].Install = object
 stubs["tostester.network"].Network = object
@@ -115,27 +117,53 @@ class DnsGovernanceReceiptTests(unittest.TestCase):
         def one_from_boc(cls, _data):
             return cls()
 
+    def test_raw_config_transaction_binds_tx_message_and_body(self):
+        tx_hash, msg_hash, body_hash = b"t" * 32, b"m" * 32, b"b" * 32
+        tx_id = {"lt": "21", "hash": base64.b64encode(tx_hash).decode()}
+        config = {"transaction_id": tx_id,
+                  "in_msg": {"hash": base64.b64encode(msg_hash).decode()}}
+        parsed = types.SimpleNamespace(
+            cell=types.SimpleNamespace(hash=tx_hash),
+            in_msg=types.SimpleNamespace(cell=types.SimpleNamespace(hash=msg_hash),
+                                         body=types.SimpleNamespace(hash=body_hash)))
+        cell_class = types.SimpleNamespace(one_from_boc=lambda _: types.SimpleNamespace(
+            begin_parse=lambda: object()))
+        parser = types.SimpleNamespace(deserialize=lambda _: parsed)
+        page = {"result": {"transactions": [{"transaction_id": tx_id,
+                                               "data": base64.b64encode(b"raw BOC").decode()}]}}
+        with patch.object(e15, "rpc_call", return_value=page) as rpc, patch.object(
+            e15, "Cell", cell_class
+        ), patch.object(e15, "Transaction", parser):
+            self.assertEqual(e15.exact_config_incoming_body("config", config).hash, body_hash)
+            rpc.assert_called_once_with("getTransactionsStd", address="config", limit=1,
+                                        lt="21", hash=tx_id["hash"])
+            parsed.in_msg.cell.hash = b"x" * 32
+            with self.assertRaisesRegex(RuntimeError, "inbound message hash differs"):
+                e15.exact_config_incoming_body("config", config)
+            parsed.in_msg.cell.hash = msg_hash
+            parsed.cell.hash = b"x" * 32
+            with self.assertRaisesRegex(RuntimeError, "raw transaction or inbound message hash differs"):
+                e15.exact_config_incoming_body("config", config)
+
     def run_case(self, *, config_hash="edge", config_aborted=False,
-                 body_hash=None, incoming_source="faucet"):
+                 body_hash=None, incoming_source="faucet", extra_wallet=None):
         wallet = wallet_tx()
         wallet["out_msgs"][0]["destination"] = "config"
         config = collection_tx(code=0, message_hash=config_hash)
         config["aborted"] = config_aborted
         config["in_msg"]["source"] = incoming_source
-        config["in_msg"]["msg_data"] = {
-            "body": base64.b64encode(b"vote body").decode()
-        }
+        config["out_msgs"] = [{"destination": "faucet", "hash": "return"}]
 
         class ParsedCell(self.FakeCell):
             hash = body_hash or b"v" * 32
 
         with tempfile.TemporaryDirectory() as directory, patch.object(
-            e15, "transactions_after", side_effect=[[wallet], [config]]
+            e15, "transactions_after", side_effect=[[wallet] + (extra_wallet or []), [config]]
         ), patch.object(e15, "same_addr", side_effect=lambda a, b: a == b), patch.object(
             e15, "finalized_mc_header", side_effect=[
                 {"id": {"seqno": 11}}, {"id": {"seqno": 12}}
             ]
-        ), patch.object(e15, "Cell", ParsedCell), patch.object(
+        ), patch.object(e15, "exact_config_incoming_body", return_value=ParsedCell()), patch.object(
             e15, "GOVERNANCE_EVIDENCE", Path(directory) / "receipts.jsonl"
         ) as evidence_path:
             receipt = asyncio.run(e15.governance_receipt(
@@ -170,6 +198,18 @@ class DnsGovernanceReceiptTests(unittest.TestCase):
     def test_wrong_sender_is_not_delivery(self):
         with self.assertRaisesRegex(RuntimeError, "receipt or body differs"):
             self.run_case(incoming_source="other")
+
+    def test_config_return_credit_is_not_a_second_faucet_send(self):
+        credit = {"transaction_id": {"lt": "12"},
+                  "in_msg": {"source": "config", "hash": "return"}, "out_msgs": []}
+        receipt, _ = self.run_case(extra_wallet=[credit])
+        self.assertEqual(receipt["scanned_wallet"], 2)
+        with self.assertRaisesRegex(RuntimeError, "unrelated faucet transaction"):
+            self.run_case(extra_wallet=[dict(credit, in_msg={"source": "other", "hash": "return"})])
+        with self.assertRaisesRegex(RuntimeError, "unrelated faucet transaction"):
+            self.run_case(extra_wallet=[dict(credit, out_msgs=[{"destination": "other"}])])
+        with self.assertRaisesRegex(RuntimeError, "multiple faucet sends"):
+            self.run_case(extra_wallet=[dict(credit, out_msgs=[{"destination": "config"}])])
 
 
 if __name__ == "__main__":

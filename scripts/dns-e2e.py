@@ -67,6 +67,7 @@ from pytosiq_core import (
 )
 from pytosiq_core.boc import begin_cell
 from pytosiq_core.tlb.account import StateInit
+from pytosiq_core.tlb.transaction import Transaction
 from tosapi import tos_api
 from tostester.install import Install
 from tostester.network import Network, StartOptions
@@ -151,6 +152,24 @@ def same_addr(left: str, right: str) -> bool:
         return False
 
 
+def exact_config_incoming_body(config_addr: str, config_tx: dict) -> Cell:
+    """Decode the inbound body from the exact raw transaction, not its summary."""
+    tx_id = config_tx["transaction_id"]
+    raw_page = rpc_call("getTransactionsStd", address=config_addr, limit=1,
+                        lt=str(tx_id["lt"]), hash=tx_id["hash"])["result"]
+    rows = raw_page.get("transactions") or []
+    if len(rows) != 1 or rows[0].get("transaction_id") != tx_id or not rows[0].get("data"):
+        raise RuntimeError("Config raw transaction did not match the exact receipt")
+    raw = Transaction.deserialize(Cell.one_from_boc(
+        base64.b64decode(rows[0]["data"], validate=True)).begin_parse())
+    if (raw.cell.hash != base64.b64decode(tx_id["hash"], validate=True)
+            or raw.in_msg is None
+            or raw.in_msg.cell.hash != base64.b64decode(
+                (config_tx.get("in_msg") or {})["hash"], validate=True)):
+        raise RuntimeError("Config raw transaction or inbound message hash differs")
+    return raw.in_msg.body
+
+
 async def governance_receipt(label: str, faucet_addr: str, config_addr: str,
                              faucet_lt: int, config_lt: int, before_head: dict,
                              expected_body: Cell) -> dict:
@@ -162,10 +181,13 @@ async def governance_receipt(label: str, faucet_addr: str, config_addr: str,
         wallet_rows = transactions_after(faucet_addr, faucet_lt)
         config_rows = transactions_after(config_addr, config_lt)
         scanned_wallet, scanned_config = len(wallet_rows), len(config_rows)
-        if len(wallet_rows) > 1:
-            raise RuntimeError(f"{label}: multiple new faucet transactions")
-        if wallet_rows:
-            wallet_tx = wallet_rows[0]
+        sends = [tx for tx in wallet_rows if any(
+            same_addr(msg.get("destination"), config_addr)
+            for msg in tx.get("out_msgs") or [])]
+        if len(sends) > 1:
+            raise RuntimeError(f"{label}: multiple faucet sends to Config")
+        if sends:
+            wallet_tx = sends[0]
             out_msgs = wallet_tx.get("out_msgs") or []
             matching = [msg for msg in out_msgs
                         if same_addr(msg.get("destination"), config_addr)]
@@ -183,14 +205,21 @@ async def governance_receipt(label: str, faucet_addr: str, config_addr: str,
             if matches:
                 config_tx = matches[0]
                 incoming = config_tx.get("in_msg") or {}
-                encoded_body = (incoming.get("msg_data") or {}).get("body")
+                # The summary RPC omits msg_data. The exact raw transaction
+                # carries the representation-level inbound message and body.
+                body = exact_config_incoming_body(config_addr, config_tx)
+                return_hashes = {msg.get("hash") for msg in config_tx.get("out_msgs") or []
+                                 if same_addr(msg.get("destination"), faucet_addr)}
+                other_wallet_rows = [tx for tx in wallet_rows if tx is not wallet_tx]
+                if any((tx.get("in_msg") or {}).get("hash") not in return_hashes
+                       or not same_addr((tx.get("in_msg") or {}).get("source"), config_addr)
+                       or tx.get("out_msgs") for tx in other_wallet_rows):
+                    raise RuntimeError(f"{label}: unrelated faucet transaction after Config send")
                 if (not same_addr(incoming.get("source"), faucet_addr)
                         or config_tx.get("aborted") is not False
                         or (config_tx.get("compute") or {}).get("success") is not True
                         or (config_tx.get("action") or {}).get("success") is not True
-                        or not encoded_body
-                        or Cell.one_from_boc(base64.b64decode(encoded_body)).hash
-                        != expected_body.hash):
+                        or body.hash != expected_body.hash):
                     raise RuntimeError(f"{label}: Config receipt or body differs from sent authorization")
                 break
         await asyncio.sleep(1)
