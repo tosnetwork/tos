@@ -1,0 +1,9 @@
+# F01 OS cwd identity follow-up — 2026-09-25
+
+The d75987ad8 Stage A run retains twelve accepted Elector BOCs, three Config34 transitions, and 36 native-finalization-ID/raw-header joins. Mac's independent review found one narrower identity gap: the ten retained `/proc` generations did not include `/proc/<pid>/cwd`, while validator-engine used `--db .`. F01 remains OPEN; the old run cannot be retroactively treated as four independently proven DB roots.
+
+The next F01 capture records each live process's raw `/proc/<pid>/cwd` symlink target, canonical cwd path, and cwd device/inode beside PID/start ticks and executable identity. At capture time it requires the OS cwd path and device/inode to equal that node's DB directory. The manifest rejects a cwd device/inode shared across different nodes, while permitting the same node to retain its DB cwd across restarts. It retains these fields in each raw-log process generation; the capture manifest itself is SHA-256 indexed by the run.
+
+Offline control: `PYTHONPATH=test/tostester/src uv run python -m unittest test/pq-native/test_f01_stage_a_evidence.py test/pq-native/test_f01_finalized_ids.py` exits 0 (14 tests); `PYTHONPATH=test/tostester/src uv run python -m pytest -q test/tostester/tests/tostester/test_validator_election_experiment.py` exits 0 (38 tests). The fixture accepts a second PID/start-tick generation with the same node cwd; copying another node's cwd or inode into a different node's generation raises an error. The capture rereads process start ticks after the cwd observation to reject PID turnover. `git diff --check` exits 0.
+
+No new network has run with this capture yet. Closure requires one fixed-commit four-node Stage A rerun with three transitions, retained per-generation OS cwd evidence and distinct DB roots, the existing H−1/H/H+1 joins, and independent review. The d759 run and its original artifacts remain unchanged.

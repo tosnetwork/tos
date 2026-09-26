@@ -547,6 +547,7 @@ mod tests {
             NodeBinding {
                 wallet: "missing_wallet".to_string(),
                 pool: Some("pool1".to_string()),
+                controller_birth_state_init_boc: None,
                 enable: false,
                 status: BindingStatus::default(),
             },
@@ -653,6 +654,7 @@ mod tests {
             NodeBinding {
                 wallet: "wallet1".to_string(),
                 pool: Some("pool1".to_string()),
+                controller_birth_state_init_boc: None,
                 enable: false,
                 status: BindingStatus::default(),
             },

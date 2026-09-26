@@ -48,6 +48,47 @@ constexpr const char *pending_finality_rejection_name(PendingFinalityRejection r
 }
 enum class PendingFinalityCapacity { Shared, ValidatorReserved };
 enum class PendingFinalityFailureAction { Retry, DiscardPermanent, DiscardExpired };
+// Proof construction combines independently received block bytes, finality
+// evidence, and a locally available validator-set context. An error code alone
+// cannot identify which cached input should be retired.
+enum class PendingBlockProofFailureSource { BlockBytes, FinalityEvidence, TrustedContext };
+enum class PendingBlockProofFailureAction { Retry, DiscardEvidence, DiscardBlockBytes };
+enum class PendingBlockProofIdentityVerdict { Match, ContextMismatch, EvidenceMismatch };
+
+struct PendingBlockProofIdentity {
+  std::uint32_t catchain_seqno;
+  std::uint32_t validator_set_hash;
+
+  friend constexpr bool operator==(PendingBlockProofIdentity, PendingBlockProofIdentity) = default;
+};
+
+// Check the block's signed context against the locally computed set before
+// blaming independently received evidence. A stale local key-block context
+// can make an honest carrier disagree with the locally computed set.
+constexpr PendingBlockProofIdentityVerdict pending_block_proof_identity_verdict(PendingBlockProofIdentity header,
+                                                                                PendingBlockProofIdentity trusted,
+                                                                                PendingBlockProofIdentity evidence) {
+  if (trusted != header) {
+    return PendingBlockProofIdentityVerdict::ContextMismatch;
+  }
+  if (evidence != header) {
+    return PendingBlockProofIdentityVerdict::EvidenceMismatch;
+  }
+  return PendingBlockProofIdentityVerdict::Match;
+}
+
+constexpr PendingBlockProofFailureAction pending_block_proof_failure_action(PendingBlockProofFailureSource source,
+                                                                           int error_code) {
+  if (source == PendingBlockProofFailureSource::TrustedContext) {
+    return PendingBlockProofFailureAction::Retry;
+  }
+  if (error_code == ErrorCode::notready || error_code == ErrorCode::timeout) {
+    return PendingBlockProofFailureAction::Retry;
+  }
+  return source == PendingBlockProofFailureSource::FinalityEvidence
+             ? PendingBlockProofFailureAction::DiscardEvidence
+             : PendingBlockProofFailureAction::DiscardBlockBytes;
+}
 struct PendingFinalityAttemptToken {
   std::uint64_t queue_generation{0};
   std::uint64_t attempt_generation{0};

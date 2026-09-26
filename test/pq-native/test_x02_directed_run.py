@@ -1,0 +1,153 @@
+"""No-network controls for X02's exact-rule orchestration and cleanup."""
+
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+
+REPO = Path(__file__).resolve().parents[2]
+spec = importlib.util.spec_from_file_location("x02_directed_run",
+                                              REPO / "scripts/x02_directed_run.py")
+import sys
+sys.path.insert(0, str(REPO / "scripts"))
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+
+
+def policy():
+    edges = [("three_of_four", f"r{i}") for i in range(1, 13)]
+    edges += [("two_of_four", f"r{i}") for i in range(13, 21)]
+    return {"source_commit": "a" * 40, "clsact": {
+        "interface": "lo", "cleanup_argv": ["tc", "qdisc", "del", "dev", "lo", "clsact"]},
+        "thresholds": {"two_drain_seconds": 30, "recovery_min_delta": 2},
+        "rules": [{"id": name, "phase": phase,
+                   "remove_argv": ["tc", "filter", "del", name]}
+                  for phase, name in edges]}
+
+
+class DirectedRunTests(unittest.TestCase):
+    def exercise(self, fail_at=None, verifier_passed=True, root_qdisc="noqueue",
+                 heights=None):
+        current = [0.0]
+        heights = heights or [100, 100, 102, 102, 102, 102, 102, 102, 104]
+        index = [0]
+
+        def sample(_policy, _sha, phase, _anchor, _previous):
+            index[0] += 1
+            if phase == fail_at:
+                raise RuntimeError("injected sample failure")
+            return {"phase": phase, "common_seqno": heights[index[0] - 1]}
+
+        def event(_policy, _sha, rule_id, action):
+            if (rule_id, action) == fail_at:
+                raise RuntimeError("injected post-command receipt failure")
+            return {"rule_id": rule_id, "action": action, "command": {"exit": 0}}
+
+        def tc(_policy):
+            return {"lo": {"filters": {}, "qdiscs": {}}}
+
+        def tc_json(_row, argv):
+            if "qdisc" in argv:
+                return [{"kind": root_qdisc, "root": True}]
+            return []
+
+        def sleep(seconds):
+            current[0] += seconds
+
+        with tempfile.TemporaryDirectory(prefix="x02-directed-") as directory:
+            root = Path(directory) / "run"
+            with (patch.object(runner.x02, "require_source_commit"),
+                  patch.object(runner.os, "geteuid", return_value=0),
+                  patch.object(runner.x02, "capture_tc", side_effect=tc),
+                  patch.object(runner.x02, "command_json", side_effect=tc_json),
+                  patch.object(runner.x02, "has_clsact", return_value=False),
+                  patch.object(runner.x02, "fault_event", side_effect=event) as fault_mock,
+                  patch.object(runner.x02, "capture", side_effect=sample),
+                  patch.object(runner.x02, "verify",
+                               return_value={"passed": verifier_passed}),
+                  patch.object(runner.x02, "run_raw", return_value={"exit": 0}),
+                  patch.object(runner.time, "sleep", side_effect=sleep),
+                  patch.object(runner.time, "monotonic", side_effect=lambda: current[0])):
+                if root_qdisc != "noqueue":
+                    with self.assertRaisesRegex(ValueError, "pre-existing root qdisc"):
+                        runner.collect(policy(), "b" * 64, root)
+                    fault_mock.assert_not_called()
+                    return None, None, sorted(root.iterdir())
+                result = runner.collect(policy(), "b" * 64, root)
+            self.assertTrue((root / "result.json").exists())
+            return result, root.joinpath("cleanup.json").read_text(), sorted(root.iterdir())
+
+    def test_complete_twenty_rule_run_retains_all_events_and_samples(self):
+        result, cleanup, paths = self.exercise()
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["events"], 42)
+        self.assertEqual(result["snapshots"], 9)
+        self.assertIn('"fallback_commands": []', cleanup)
+        self.assertEqual(len([path for path in paths if path.name.startswith("event-")]), 42)
+
+    def test_recovery_requires_new_ids_beyond_two_of_four_anchor(self):
+        # Four-node common falls below the 2/4 H102 anchor while isolated
+        # nodes catch up. H100 is not a sufficient recovery, even though it
+        # is two above the initial H98 recovery sample.
+        heights = [100, 100, 102, 102, 102, 102, 102, 98, 100, 102, 104]
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["snapshots"], 11)
+        self.assertEqual(len([path for path in paths
+                              if path.name.endswith("-recovery.json")]), 4)
+
+    def test_recovery_h48_then_h49_meets_frozen_h47_target(self):
+        heights = [41, 42, 43, 46, 47, 47, 47, 47, 48, 49]
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(len([path for path in paths
+                              if path.name.endswith("-recovery.json")]), 2)
+
+    def test_first_recovery_h49_needs_no_extra_sample(self):
+        heights = [41, 42, 43, 46, 47, 47, 47, 47, 49]
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(len([path for path in paths
+                              if path.name.endswith("-recovery.json")]), 1)
+
+    def test_h42_to_h44_cannot_replace_h47_anchor_and_times_out(self):
+        heights = [41, 42, 43, 46, 47, 47, 47, 47, 42] + [44] * 25
+        result, _cleanup, paths = self.exercise(heights=heights)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("180 seconds", result["error"])
+        self.assertGreaterEqual(len([path for path in paths
+                                     if path.name.endswith("-recovery.json")]), 2)
+        self.assertFalse(any(path.name == "verdict.json" for path in paths))
+
+    def test_failure_removes_only_installed_rules_and_clsact(self):
+        result, cleanup, _paths = self.exercise(fail_at="three_of_four")
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("injected sample failure", result["error"])
+        self.assertIn('"rule_id": "r12"', cleanup)
+        self.assertIn('"rule_id": "clsact"', cleanup)
+        self.assertNotIn('"rule_id": "r13"', cleanup)
+
+    def test_preexisting_netem_or_tbf_refuses_before_any_fault(self):
+        for kind in ("netem", "tbf"):
+            _, _, paths = self.exercise(root_qdisc=kind)
+            self.assertFalse(any(path.name.startswith("event-") for path in paths))
+
+    def test_missing_install_receipt_still_removes_attempted_rule(self):
+        result, cleanup, _paths = self.exercise(fail_at=("r2", "install"))
+        self.assertEqual(result["status"], "failed")
+        self.assertIn('"rule_id": "r2"', cleanup)
+        self.assertNotIn('"rule_id": "r3"', cleanup)
+
+    def test_missing_clsact_receipt_still_attempts_cleanup(self):
+        result, cleanup, _paths = self.exercise(fail_at=("clsact", "setup"))
+        self.assertEqual(result["status"], "failed")
+        self.assertIn('"rule_id": "clsact"', cleanup)
+
+    def test_verifier_must_explicitly_pass(self):
+        result, _cleanup, _paths = self.exercise(verifier_passed=False)
+        self.assertEqual(result["status"], "failed")
+
+
+if __name__ == "__main__":
+    unittest.main()

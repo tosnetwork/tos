@@ -17,7 +17,7 @@ use crate::v2::data_models::{
 };
 use anyhow::Context;
 use base64::Engine;
-use chain_block::{ConfigParamEnum, MsgAddressInt, read_boc, write_boc};
+use chain_block::{Cell, ConfigParamEnum, MsgAddressInt, read_boc, write_boc};
 use chain_rpc_rs::client::{ApiClientV2, ApiKey, Network};
 use chain_rpc_rs::error::ToscenterError;
 use std::{
@@ -266,6 +266,16 @@ impl ClientJsonRpc {
             .with_context(|| format!("getConfigParam({})", param_id))?;
 
         decode_config_param(config_info, param_id)
+    }
+
+    /// Return the exact on-chain value cell. Pool maintenance compares its
+    /// representation hash, so decoding and reserializing is not sufficient.
+    pub async fn get_config_param_cell(&self, param_id: u32) -> anyhow::Result<Cell> {
+        let config_info = self
+            .json_rpc_read("getConfigParam", serde_json::json!({"config_id": param_id}))
+            .await
+            .with_context(|| format!("getConfigParam({param_id})"))?;
+        decode_config_param_cell(config_info)
     }
 
     /// Reads an optional configuration parameter without conflating an
@@ -1092,6 +1102,11 @@ fn decode_config_param(
     config_info: serde_json::Value,
     param_id: u32,
 ) -> anyhow::Result<ConfigParamEnum> {
+    let cell = decode_config_param_cell(config_info)?;
+    ConfigParamEnum::construct_from_cell_and_number(cell, param_id).map_err(anyhow::Error::from)
+}
+
+fn decode_config_param_cell(config_info: serde_json::Value) -> anyhow::Result<Cell> {
     let b64 = config_info
         .get("config")
         .and_then(|config| config.get("bytes"))
@@ -1104,8 +1119,7 @@ fn decode_config_param(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!(r#"missing "config.bytes" string"#))?;
     let boc = base64::engine::general_purpose::STANDARD.decode(b64)?;
-    let cell = read_boc(boc)?.withdraw_single_root()?;
-    ConfigParamEnum::construct_from_cell_and_number(cell, param_id).map_err(anyhow::Error::from)
+    Ok(read_boc(boc)?.withdraw_single_root()?)
 }
 
 /// Maximum exact external-message BOC accepted by custody and either relay
@@ -1263,8 +1277,8 @@ mod get_transactions_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientJsonRpc, canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
-        validate_relay_network_domain_pin,
+        ClientJsonRpc, canonicalize_chain_rpc_endpoint, decode_config_param_cell,
+        validate_exact_boc_before_broadcast, validate_relay_network_domain_pin,
     };
     use crate::v2::data_models::{ExactBocSubmissionStatus, RelayNetworkDomainPin};
     use base64::Engine;
@@ -1478,6 +1492,19 @@ mod tests {
         let cell = Cell::default();
         let hash = base64::engine::general_purpose::STANDARD.encode(cell.repr_hash().as_slice());
         (write_boc(&cell).expect("write test BOC"), hash)
+    }
+
+    #[test]
+    fn config_param_cell_keeps_the_raw_value_hash() {
+        let mut builder = BuilderData::new();
+        builder.append_u32(0x1234_5678).unwrap();
+        let cell = builder.into_cell().unwrap();
+        let boc = write_boc(&cell).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(boc);
+        let decoded =
+            decode_config_param_cell(serde_json::json!({"config": {"bytes": encoded}})).unwrap();
+        assert_eq!(decoded.repr_hash(), cell.repr_hash());
+        assert_eq!(decoded, cell);
     }
 
     fn relay_network_pin(global_id: i32, root: [u8; 32], file: [u8; 32]) -> RelayNetworkDomainPin {

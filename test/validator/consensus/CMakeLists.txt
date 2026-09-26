@@ -64,6 +64,50 @@ if(Python3_Interpreter_FOUND)
                      $<TARGET_FILE:test-certificate-conformance>)
 endif()
 
+# One validator node running the production Pool, CandidateResolver, StateResolver and Db,
+# fed real quorum certificates in a controlled order: NotarCert(P) held in its database write
+# while SkipCert(P.slot) and NotarCert(C) are installed and a leader window opens on C.
+add_executable(test-merkle-prospective-notar test-merkle-prospective-notar.cpp)
+target_link_libraries(test-merkle-prospective-notar PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+
+# A controlled transient ResolveState failure inside the production Consensus actor.
+add_executable(test-notarize-after-transient-resolve test-notarize-after-transient-resolve.cpp)
+target_link_libraries(test-notarize-after-transient-resolve PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode control genesis-notready genesis-timeout ancestor-notready permanent cancelled skip-before-recovery
+             conflict-during-retry conflicting-cert-during-retry exhausted-notready)
+    add_test(NAME c05-notarize-${mode} COMMAND test-notarize-after-transient-resolve ${mode})
+endforeach()
+
 add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
 target_link_libraries(test-validator-manager-resource-policy PRIVATE
     adnl
@@ -140,8 +184,8 @@ add_test(
     COMMAND test-consensus --state-resolver-inflight-admission-unit-test
 )
 add_test(
-    NAME test-consensus-simplex2-skipped-slot-resolution-unit
-    COMMAND test-consensus --skipped-slot-resolution-unit-test
+    NAME test-consensus-simplex2-merkle-exact-parent-height-control
+    COMMAND test-consensus --merkle-exact-parent-height-control-test
 )
 add_test(
     NAME test-consensus-simplex2-candidate-resolver-retention-unit
@@ -347,8 +391,35 @@ add_test(
 # a legacy carrier built and thrown away, and a keyring signature produced and discarded.
 # They are checked where they exist, in the code.
 if(Python3_Interpreter_FOUND)
+    # The exact-ancestor resolver under a controlled certificate order. The pre-fix
+    # resolver fails the `green` expectation with the N/N-1 Merkle abort; see
+    # doc/pq-native/N6-MERKLE-REPRO-20260923.md for the recorded old-RED runs.
+    set(MERKLE_PROSPECTIVE_NOTAR_CHECK ${CMAKE_CURRENT_SOURCE_DIR}/check-merkle-prospective-notar.py)
+    add_test(NAME test-consensus-simplex2-merkle-prospective-notar-exact-ancestor
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> green --n 5 --n 23)
+    add_test(NAME test-consensus-simplex2-merkle-prospective-notar-bounded-refusal
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> bounded --n 5)
+    set_tests_properties(test-consensus-simplex2-merkle-prospective-notar-bounded-refusal
+                         PROPERTIES ENVIRONMENT "TOS_SIMPLEX_CANDIDATE_RESOLVE_MAX_ATTEMPTS=2")
+    add_test(NAME test-consensus-simplex2-merkle-prospective-notar-control
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> control --n 5 --n 23)
+    # NotarCert(P) only on a peer node without a Pool; the node under test resolves C from
+    # the real Consensus::start_generation after Pool opens its leader window on C.
+    add_test(NAME test-consensus-simplex2-merkle-peer-notar-leader-path
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> peer-green --n 5 --n 23)
+    add_test(NAME test-consensus-simplex2-merkle-prospective-notar-gate-control
+             COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
+                     $<TARGET_FILE:test-merkle-prospective-notar> gate --n 5)
+    add_test(NAME simplex-exact-ancestor-source-guard
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check-simplex-exact-ancestor-resolution.py ${CMAKE_SOURCE_DIR})
+    set_tests_properties(simplex-exact-ancestor-source-guard PROPERTIES LABELS "source-guard")
     add_test(NAME consensus-no-fallback
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check-no-fallback.py)
+    set_tests_properties(consensus-no-fallback PROPERTIES LABELS "source-guard")
 endif()
 
 # The two-phase own-vote journal: signed records replay byte for byte, an
@@ -365,6 +436,55 @@ add_test(
             --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
             --pq-finality-e2e-test
 )
+# SR1: a restarted session may start at the latest accepted tip while its
+# persisted candidate chain reaches back to genesis. A temporarily unavailable
+# finalized anchor must not make the resolver replay an old update on that tip.
+add_test(
+    NAME test-consensus-simplex2-pq-restart-transient-anchor
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-transient-anchor PROPERTIES
+    ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2")
+add_test(
+    NAME test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control PROPERTIES
+    ENVIRONMENT "TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2")
+add_test(
+    NAME test-consensus-simplex2-pq-restart-transient-origin
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-transient-origin PROPERTIES
+    ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ANCHOR_TRANSIENT_FAILURES=2;TOS_TEST_ORIGIN_TRANSIENT_FAILURES=2")
+add_test(
+    NAME test-consensus-simplex2-pq-restart-permanent-origin
+    COMMAND test-consensus --duration 110 --n-nodes 1 --target-rate-ms 1
+            --net-ping 0:0 --empty-chain-restart-test --min-finalized-blocks 1
+            --pq-finality-e2e-test
+)
+set_tests_properties(test-consensus-simplex2-pq-restart-permanent-origin PROPERTIES
+    ENVIRONMENT "TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK=1;TOS_TEST_ORIGIN_PERMANENTLY_UNAVAILABLE=1")
+add_test(
+    NAME c05-notarize-simultaneous-recovery
+    COMMAND test-consensus --duration 8 --n-nodes 4 --target-rate-ms 400
+            --net-ping 0:0 --pq-finality-e2e-test --min-finalized-blocks 3
+)
+set_tests_properties(c05-notarize-simultaneous-recovery PROPERTIES
+    ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS=3")
+add_test(
+    NAME c05-notarize-simultaneous-overbudget
+    COMMAND test-consensus --duration 16 --n-nodes 4 --target-rate-ms 400
+            --net-ping 0:0 --pq-finality-e2e-test --min-finalized-blocks 3
+)
+set_tests_properties(c05-notarize-simultaneous-overbudget PROPERTIES
+    ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS=24")
 add_test(
     NAME test-consensus-simplex2-query-abuse
     COMMAND test-consensus --duration 5 --n-nodes 5 --target-rate-ms 100

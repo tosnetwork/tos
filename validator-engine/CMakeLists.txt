@@ -53,8 +53,11 @@ target_include_directories(json-rpc-account-model PUBLIC ${CMAKE_CURRENT_SOURCE_
 
 target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model)
 if (JEMALLOC_FOUND)
-  target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
-  target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)
+  # Name the jemalloc header by full path instead of adding JEMALLOC_INCLUDE_DIR to the
+  # search path: that directory is often a shared prefix (e.g. /opt/homebrew/include)
+  # whose other libraries would shadow the vendored headers this target is built against.
+  target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1
+                             TOS_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
 endif()
 
 install(TARGETS validator-engine RUNTIME DESTINATION bin)

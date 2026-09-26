@@ -18,7 +18,7 @@
 //! messages, so it is driven the way the chain drives it.
 
 use chain_block::{Account, ConfigParams, MsgAddressInt, ShardStateUnsplit, TransactionTickTock};
-use tos_sandbox::{Blockchain, generate_zerostate_state};
+use tos_sandbox::{generate_zerostate_state, Blockchain};
 
 /// The zerostate is generated rather than fixtured, so these tests run against the
 /// contracts and the configuration the chain would actually launch with.
@@ -274,6 +274,16 @@ fn parameter_present(config: &ConfigParams, index: u32) -> bool {
     config.config_present(index).expect("parameter lookup")
 }
 
+fn configuration_parameters_hash(chain: &Chain) -> [u8; 32] {
+    let account = chain
+        .blockchain
+        .get_account(&chain.config_contract)
+        .expect("the configuration contract is deployed");
+    let data = account.get_data().expect("the configuration contract has storage");
+    let mut slice = chain_block::SliceData::load_cell(data).expect("storage");
+    *slice.checked_drain_reference().expect("the parameter dictionary").repr_hash().as_array()
+}
+
 /// Everything a reply from either contract carries, by the address that sent it, so a
 /// cascade can be read rather than guessed at.
 fn replies(result: &tos_sandbox::SendResult) -> Vec<u32> {
@@ -446,6 +456,53 @@ fn a_closed_election_sends_its_set_to_the_configuration_contract() {
     );
     let next = installed.next_validator_set().expect("the stored set parses");
     assert_eq!(next.list().len(), validators.len(), "every staking validator should be elected");
+}
+
+/// The Elector itself can produce a set with two distinct signing identities but one
+/// transport identity: a stake signature binds the claimed ADNL, not ownership of it.
+/// The config contract must reject that elected set before it becomes ConfigParam 36.
+#[test]
+fn an_elected_set_with_duplicate_adnl_is_refused_before_installation() {
+    let (mut chain, _treasury, election) = open_election("duplicate-adnl-election", 200_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let mut first_adnl = None;
+    for index in 0..4u8 {
+        let mut validator = PqValidator::new(0x60 + index);
+        if index == 0 {
+            first_adnl = Some(validator.adnl);
+        } else if index == 1 {
+            validator.adnl = first_adnl.expect("the first validator has an ADNL");
+        }
+        let account = chain
+            .blockchain
+            .treasury(&format!("duplicate-adnl-validator-{index}"), 40_000 * TOS)
+            .expect("a funded account");
+        let result =
+            pq_stake(&mut chain, &account, &validator, election, 30 + index as u64, 11_000 * TOS);
+        assert_eq!(
+            reply(&result),
+            (STAKE_ACCEPTED, 0),
+            "the Elector refused stake {index} before set construction"
+        );
+    }
+
+    chain.blockchain.set_now(election - chain.elect_end_before);
+    let result =
+        chain.blockchain.tick_tock(&chain.elector, TransactionTickTock::Tick).expect("tick runs");
+    result.expect_success();
+    let tags = replies(&result);
+    assert!(
+        tags.contains(&VALIDATOR_SET_REFUSED),
+        "the Elector's duplicate-ADNL set was not refused: {tags:02x?}"
+    );
+    assert!(
+        !tags.contains(&VALIDATOR_SET_INSTALLED),
+        "the Elector's duplicate-ADNL set was installed: {tags:02x?}"
+    );
+    assert!(
+        !parameter_present(&configuration_from_contract(&chain), 36),
+        "a duplicate-ADNL ConfigParam 36 was stored"
+    );
 }
 
 #[test]
@@ -708,27 +765,42 @@ fn elect_install_and_rotate() -> (Chain, Vec<PqValidator>, u32) {
 }
 
 /// `cfg_proposal#f3 param_id:int32 param_value:(Maybe ^Cell) if_hash_equal:(Maybe uint256)`
-fn proposal_cell(param_id: i32, value: chain_block::Cell) -> chain_block::Cell {
-    use chain_block::IBitstring;
+fn proposal_cell(chain: &Chain, param_id: i32, value: chain_block::Cell) -> chain_block::Cell {
+    use chain_block::{GetRepresentationHash, IBitstring};
     let mut proposal = chain_block::BuilderData::new();
     proposal.append_u8(0xf3).expect("tag");
     proposal.append_i32(param_id).expect("parameter");
     proposal.append_bit_one().expect("a value is present");
     proposal.checked_append_reference(value).expect("value");
-    proposal.append_bit_zero().expect("no expected current value");
+    if let Some(current) = raw_parameter(chain, param_id) {
+        proposal.append_bit_one().expect("an expected current value is present");
+        proposal.append_raw(current.repr_hash().as_slice(), 256).expect("current value hash");
+    } else {
+        proposal.append_bit_zero().expect("no expected current value");
+    }
     proposal.into_cell().expect("proposal")
 }
 
 /// The cell a configuration parameter holds, as the contract stores it.
 fn raw_parameter(chain: &Chain, index: i32) -> Option<chain_block::Cell> {
+    parameter_from_config(&configuration_from_contract(chain), index)
+}
+
+fn parameter_from_config(config: &ConfigParams, index: i32) -> Option<chain_block::Cell> {
     use chain_block::IBitstring;
     let mut key = chain_block::BuilderData::new();
     key.append_i32(index).expect("the parameter index");
-    configuration_from_contract(chain)
+    config
         .config_params
         .get(chain_block::SliceData::load_builder(key).expect("a key slice"))
         .expect("lookup")
         .and_then(|slice| slice.reference_opt(0))
+}
+
+/// The VM's configuration view for the next message, as opposed to the
+/// configuration contract's stored dictionary.
+fn vm_parameter(chain: &Chain, index: i32) -> Option<chain_block::Cell> {
+    parameter_from_config(chain.blockchain.config_params(), index)
 }
 
 /// Whether a parameter is one the configuration marks critical. A proposal for one has
@@ -859,7 +931,7 @@ fn propose_cell(
     query_id: u64,
 ) -> [u8; 32] {
     use chain_block::{GetRepresentationHash, IBitstring};
-    let proposal = proposal_cell(param_id, value);
+    let proposal = proposal_cell(chain, param_id, value);
     let hash: [u8; 32] =
         proposal.hash(0).as_slice()[..32].try_into().expect("a proposal hash is 32 bytes");
 
@@ -878,12 +950,15 @@ fn propose_cell(
         body.append_bit_zero().expect("not a critical parameter");
     }
 
-    let proposer = chain.blockchain.treasury("proposer", 1_000 * TOS).expect("a funded account");
+    // A whole PQ validator set is much larger than the small scalar proposals this
+    // fixture originally carried. Fund the storage price for the largest launch-sized
+    // proposal so a cap refusal cannot be confused with an underfunded proposal.
+    let proposer = chain.blockchain.treasury("proposer", 20_000 * TOS).expect("a funded account");
     let result = chain
         .blockchain
         .send_message(proposer.build_message(
             &chain.config_contract,
-            100 * TOS,
+            10_000 * TOS,
             true,
             Some(body.into_cell().expect("proposal body")),
         ))
@@ -1157,6 +1232,18 @@ fn govern_install_with(
     value: chain_block::Cell,
     query_base: u64,
 ) -> Governed {
+    use chain_block::{GetRepresentationHash, Serializable};
+    let z01_capture = matches!(query_base, 0x1600 | 0x1601 | 0x2800 | 0x2801 | 0x3700 | 0x3701);
+    let z01_dir = std::env::var_os("Z01_GOVERNANCE_TX_DIR").map(std::path::PathBuf::from);
+    if z01_capture {
+        if let Some(dir) = &z01_dir {
+            std::fs::create_dir_all(dir).expect("Z01 raw transaction directory");
+            let raw = chain_block::write_boc(&proposal_cell(chain, param_id, value.clone()))
+                .expect("Z01 proposal BOC");
+            std::fs::write(dir.join(format!("proposal-{query_base:04x}.boc")), raw)
+                .expect("save Z01 proposal BOC");
+        }
+    }
     let proposal = propose_cell(chain, param_id, value, query_base);
     let sender =
         chain.blockchain.treasury(&format!("govern-{query_base}"), 500 * TOS).expect("an account");
@@ -1174,6 +1261,25 @@ fn govern_install_with(
                 Some(vote_body(query_base + round as u64, &signature, idx, &proposal)),
             ))
             .expect("the vote is delivered");
+        if z01_capture {
+            for (tx_index, (_, transaction)) in result.transactions.iter().enumerate() {
+                if let Some(dir) = &z01_dir {
+                    let raw = chain_block::write_boc(&transaction.serialize().expect("Z01 transaction cell"))
+                        .expect("Z01 transaction BOC");
+                    std::fs::write(
+                        dir.join(format!("vote-{query_base:04x}-{round}-{tx_index}.boc")), raw,
+                    ).expect("save Z01 transaction BOC");
+                }
+                eprintln!(
+                    "z01_governance_vote param={param_id} query={} account={} lt={} tx_hash={} first_tx_compute_exit={}",
+                    query_base + round as u64,
+                    hex::encode(transaction.account_id().get_bytestring(0)),
+                    transaction.logical_time(),
+                    hex::encode(transaction.hash().expect("transaction hash").as_slice()),
+                    exit_code_of(&result),
+                );
+            }
+        }
         assert_eq!(exit_code_of(&result), 0, "a validator's vote was refused");
         // The contract drops a proposal's status once it has decided it, so the vote it
         // was recorded in disappearing is how a decision is visible from outside.
@@ -1182,8 +1288,129 @@ fn govern_install_with(
             break;
         }
     }
+    // Sandbox transactions do not automatically refresh their VM config from the
+    // configuration contract. Model the next masterchain block before a later
+    // proposal reads config_param(current), or its conditional hash is stale.
+    chain
+        .blockchain
+        .set_config(configuration_from_contract(chain))
+        .expect("the chain adopts a governed configuration change");
     let installed = parameter_present(&configuration_from_contract(chain), param_id as u32);
     Governed { decided, installed }
+}
+
+fn validator_count_limits(maximum: u16, main: u16, minimum: u16) -> chain_block::Cell {
+    use chain_block::IBitstring;
+    let mut value = chain_block::BuilderData::new();
+    value.append_u16(maximum).expect("max validators");
+    value.append_u16(main).expect("max main validators");
+    value.append_u16(minimum).expect("min validators");
+    value.into_cell().expect("validator-count limits")
+}
+
+fn catchain_limits(shard_validators: u32) -> chain_block::Cell {
+    use chain_block::IBitstring;
+    let mut value = chain_block::BuilderData::new();
+    value.append_u8(0xc2).expect("catchain config tag");
+    value.append_u8(1).expect("flags plus shuffle bit");
+    value.append_u32(250).expect("masterchain lifetime");
+    value.append_u32(250).expect("shard lifetime");
+    value.append_u32(1000).expect("validator lifetime");
+    value.append_u32(shard_validators).expect("shard validator count");
+    value.into_cell().expect("catchain limits")
+}
+
+#[test]
+fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
+    fn governed_change(param: i32, value: chain_block::Cell, query: u64) -> (Governed, bool) {
+        use chain_block::GetRepresentationHash;
+        let (mut chain, validators, _election) = elect_install_and_rotate();
+        require_one_winning_round(&mut chain);
+        if param == 28 {
+            assert_eq!(
+                raw_parameter(&chain, 28),
+                Some(catchain_limits(21)),
+                "the Genesis Param28 fixture changed"
+            );
+            // Genesis already has the exact 21 boundary. Start each governance
+            // proposal at a valid 20 so acceptance must change the stored cell.
+            set_contract_parameter(&mut chain, 28, catchain_limits(20));
+            chain.blockchain.set_config(configuration_from_contract(&chain))
+                .expect("the VM adopts the Param28 test baseline");
+        }
+        let before = configuration_parameters_hash(&chain);
+        let raw_dir = std::env::var_os("Z01_GOVERNANCE_TX_DIR").map(std::path::PathBuf::from);
+        if let (Some(dir), Some(cell)) = (&raw_dir, raw_parameter(&chain, param)) {
+            std::fs::create_dir_all(dir).expect("Z01 raw config directory");
+            std::fs::write(
+                dir.join(format!("config-before-{query:04x}.boc")),
+                chain_block::write_boc(&cell).expect("Z01 before config BOC"),
+            ).expect("save Z01 before config BOC");
+        }
+        let value_hash = value.repr_hash();
+        let expected = value.clone();
+        let outcome = govern_install(&mut chain, &validators, param, value, query);
+        let after = configuration_parameters_hash(&chain);
+        let actual = raw_parameter(&chain, param);
+        if let (Some(dir), Some(cell)) = (&raw_dir, &actual) {
+            std::fs::write(
+                dir.join(format!("config-after-{query:04x}.boc")),
+                chain_block::write_boc(cell).expect("Z01 after config BOC"),
+            ).expect("save Z01 after config BOC");
+        }
+        if query == 0x2800 {
+            assert_eq!(actual, Some(expected), "governance did not store the exact Param28=21 cell");
+        } else if query == 0x2801 {
+            assert_eq!(actual, Some(catchain_limits(20)), "governance changed Param28 after the 22 proposal");
+        }
+        eprintln!(
+            "z01_governance param={param} query={query} value_hash={} actual_hash={} before={} after={} decided={} installed={}",
+            hex::encode(value_hash.as_slice()),
+            hex::encode(actual.as_ref().map(|cell| cell.repr_hash().as_slice().to_vec()).unwrap_or_default()),
+            hex::encode(before), hex::encode(after),
+            outcome.decided, outcome.installed,
+        );
+        let changed = after != before;
+        (outcome, changed)
+    }
+
+    let (valid_counts, valid_counts_changed) =
+        governed_change(16, validator_count_limits(21, 21, 3), 0x1600);
+    assert!(
+        valid_counts.decided && valid_counts_changed,
+        "the exact Param16 launch boundary was refused"
+    );
+    let (invalid_counts, invalid_counts_changed) =
+        governed_change(16, validator_count_limits(22, 21, 3), 0x1601);
+    assert!(
+        invalid_counts.decided && !invalid_counts_changed,
+        "governance installed ConfigParam16.max_validators=22"
+    );
+
+    let (valid_catchain, valid_catchain_changed) = governed_change(28, catchain_limits(21), 0x2800);
+    assert!(
+        valid_catchain.decided && valid_catchain_changed,
+        "the exact Param28 shard committee launch boundary was refused"
+    );
+    let (invalid_catchain, invalid_catchain_changed) =
+        governed_change(28, catchain_limits(22), 0x2801);
+    assert!(
+        invalid_catchain.decided && !invalid_catchain_changed,
+        "governance installed ConfigParam28.shard_validators_num=22"
+    );
+
+    let valid_set = synthetic_set(1_000_000, 21);
+    let (valid_live_set, valid_live_set_changed) = governed_change(37, valid_set, 0x3700);
+    assert!(
+        valid_live_set.decided && valid_live_set_changed,
+        "governance refused a 21-validator ConfigParam37"
+    );
+    let invalid_set = synthetic_set(1_000_000, 22);
+    let (invalid_live_set, invalid_live_set_changed) = governed_change(37, invalid_set, 0x3701);
+    assert!(
+        invalid_live_set.decided && !invalid_live_set_changed,
+        "governance installed a 22-validator ConfigParam37"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,11 +1500,22 @@ fn a_set_the_node_would_refuse_is_refused_before_it_is_installed() {
         "the fixture's own set was refused: {tags:02x?}"
     );
 
+    // Equality is allowed by the node. This control catches an off-by-one
+    // rejection while the over-cap negative below catches a missing bound.
+    let at_cap = validator_set_cell(&chain, &validators, Flaw::WeightAtProtocolCap);
+    let tags = offer(&mut chain, at_cap, 8);
+    assert!(
+        tags.contains(&VALIDATOR_SET_INSTALLED),
+        "a set at UINT64_MAX/3 was refused: {tags:02x?}"
+    );
+
     for (query, flaw, what) in [
         (2, Flaw::DuplicateValidator, "naming one validator twice"),
         (3, Flaw::DuplicateKey, "holding one consensus key twice"),
         (4, Flaw::WeightSumDisagrees, "stating a total weight its descriptors do not sum to"),
         (5, Flaw::CountDisagrees, "stating a count its list does not hold"),
+        (6, Flaw::WeightOverProtocolCap, "exceeding the validator-weight protocol cap"),
+        (7, Flaw::DuplicateAdnl, "assigning one ADNL identity to two validators"),
     ] {
         let set = validator_set_cell(&chain, &validators, flaw);
         let tags = offer(&mut chain, set, query);
@@ -1285,6 +1523,118 @@ fn a_set_the_node_would_refuse_is_refused_before_it_is_installed() {
         assert!(
             !tags.contains(&VALIDATOR_SET_INSTALLED),
             "a set {what} was both refused and installed: {tags:02x?}"
+        );
+    }
+}
+
+/// Governance uses install_param, not the Elector's set_next_validators branch.
+/// A set rejected on the latter path must not become authoritative by a vote.
+#[test]
+fn a_governed_next_set_obeys_the_node_descriptor_rules() {
+    let (mut honest_chain, honest_validators, _election) = elect_install_and_rotate();
+    require_one_winning_round(&mut honest_chain);
+    let honest = validator_set_cell(&honest_chain, &honest_validators, Flaw::None);
+    let control = govern_install(&mut honest_chain, &honest_validators, 36, honest, 800);
+    assert_eq!(
+        control,
+        Governed { decided: true, installed: true },
+        "the honest governed set was not installed"
+    );
+
+    for (flaw, name, query) in [
+        (Flaw::DuplicateAdnl, "duplicate-ADNL", 900),
+        (Flaw::WeightOverProtocolCap, "overweight", 1000),
+    ] {
+        let (mut bad_chain, bad_validators, _election) = elect_install_and_rotate();
+        require_one_winning_round(&mut bad_chain);
+        let invalid = validator_set_cell(&bad_chain, &bad_validators, flaw);
+        let result = govern_install(&mut bad_chain, &bad_validators, 36, invalid, query);
+        assert_eq!(
+            result,
+            Governed { decided: true, installed: false },
+            "a governed {name} set reached ConfigParam 36"
+        );
+    }
+}
+
+/// The C++ node decoder reads this same BOC table. Keep both contract entry points
+/// on those exact bytes, rather than building a second set of near-identical flaws.
+/// Each BOC carries four members and a future interval, so the honest row reaches
+/// both installation paths under the unchanged launch ConfigParam 16. Without that
+/// positive control every malformed row could be refused for an unrelated fixture rule.
+fn node_validator_set_cases() -> Vec<(&'static str, bool, chain_block::Cell)> {
+    let source = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../test/pq-native/validator-set-cases.txt"
+    ));
+    source
+        .lines()
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            let name = fields.next().expect("case name");
+            let expected = match fields.next().expect("node verdict") {
+                "accept" => true,
+                "reject" => false,
+                other => panic!("unknown node verdict for {name}: {other}"),
+            };
+            let boc = fields.next().expect("validator-set BOC");
+            assert!(fields.next().is_none(), "extra fields in node vector {name}");
+            let cell = chain_block::read_single_root_boc(hex::decode(boc).expect("hex BOC"))
+                .unwrap_or_else(|error| panic!("invalid node vector {name}: {error}"));
+            (name, expected, cell)
+        })
+        .collect()
+}
+
+#[test]
+fn node_validator_set_vectors_match_the_elector_install_path() {
+    let cases = node_validator_set_cases();
+    assert_eq!(cases.len(), 22, "the node's validator-set vector inventory changed");
+    assert!(cases.iter().any(|(name, accepts, _)| *name == "valid" && *accepts));
+    for (index, (name, node_accepts, set)) in cases.into_iter().enumerate() {
+        // Each verdict starts without ConfigParam 36, so a rejection cannot be
+        // attributed to a previous row having installed a next set.
+        let mut chain = launch();
+        let result = chain
+            .blockchain
+            .send_message(
+                tos_sandbox::MessageBuilder::internal(
+                    &chain.elector.clone(),
+                    &chain.config_contract.clone(),
+                    10 * TOS,
+                )
+                .body(set_next_validators_body(1000 + index as u64, set))
+                .build(),
+            )
+            .expect("the Elector's set-next message is delivered");
+        let tags = replies(&result);
+        let expected = if node_accepts { VALIDATOR_SET_INSTALLED } else { VALIDATOR_SET_REFUSED };
+        assert!(tags.contains(&expected), "Elector install of node vector {name}: {tags:02x?}");
+        assert_eq!(
+            tags.contains(&VALIDATOR_SET_INSTALLED),
+            node_accepts,
+            "Elector install disagrees with node decoder for {name}: {tags:02x?}"
+        );
+        assert_eq!(
+            parameter_present(&configuration_from_contract(&chain), 36),
+            node_accepts,
+            "Elector storage disagrees with node decoder for {name}"
+        );
+    }
+}
+
+#[test]
+fn node_validator_set_vectors_match_the_governance_install_path() {
+    let cases = node_validator_set_cases();
+    assert_eq!(cases.len(), 22, "the node's validator-set vector inventory changed");
+    for (index, (name, node_accepts, set)) in cases.into_iter().enumerate() {
+        let (mut chain, validators, _election) = elect_install_and_rotate();
+        require_one_winning_round(&mut chain);
+        let result = govern_install(&mut chain, &validators, 36, set, 2000 + index as u64 * 10);
+        assert!(result.decided, "governance did not decide node vector {name}");
+        assert_eq!(
+            result.installed, node_accepts,
+            "governance install disagrees with node decoder for {name}: {result:?}"
         );
     }
 }
@@ -1310,6 +1660,12 @@ enum Flaw {
     DuplicateValidator,
     /// Two accounts holding one consensus key, which the node cannot tell apart.
     DuplicateKey,
+    /// Two distinct validators with distinct keys but the same transport identity.
+    DuplicateAdnl,
+    /// The largest total weight the node accepts; an accepted boundary control.
+    WeightAtProtocolCap,
+    /// The node caps total weight at UINT64_MAX/3 to keep quorum arithmetic safe.
+    WeightOverProtocolCap,
     /// The header's total weight is not the weight the descriptors carry.
     WeightSumDisagrees,
     /// The header states a count the list does not hold.
@@ -1323,7 +1679,17 @@ fn validator_set_cell(chain: &Chain, validators: &[PqValidator], flaw: Flaw) -> 
     let mut list = chain_block::HashmapE::with_bit_len(16);
     let mut total_weight = 0u64;
     for (index, validator) in validators.iter().enumerate() {
-        let weight = 1u64 << 40;
+        let weight = match flaw {
+            Flaw::WeightAtProtocolCap => {
+                if index == 0 {
+                    u64::MAX / 3 - (validators.len() as u64 - 1)
+                } else {
+                    1
+                }
+            }
+            Flaw::WeightOverProtocolCap => 1u64 << 61,
+            _ => 1u64 << 40,
+        };
 
         // The account this descriptor names, and the key it holds. Only the stated flaw
         // makes either of them repeat.
@@ -1347,7 +1713,12 @@ fn validator_set_cell(chain: &Chain, validators: &[PqValidator], flaw: Flaw) -> 
             .expect("key identity");
         descr.checked_append_reference(stored_bytes(key)).expect("the key");
         descr.append_u64(weight).expect("weight");
-        descr.append_raw(&validator.adnl, 256).expect("transport identity");
+        let adnl = if flaw == Flaw::DuplicateAdnl && index == 1 {
+            &validators[0].adnl
+        } else {
+            &validator.adnl
+        };
+        descr.append_raw(adnl, 256).expect("transport identity");
 
         let mut key_bits = chain_block::BuilderData::new();
         key_bits.append_u16(index as u16).expect("the index");
@@ -1574,6 +1945,70 @@ fn deploy_single_nominator(
         )
         .expect("the pool deploys")
         .expect_success();
+    address
+}
+
+/// The multi-nominator contract used by the lifecycle script, with its real
+/// storage layout and the same 5,100 TOS validator contribution. No controller
+/// or Elector is stubbed: the caller supplies the deployed controller.
+fn deploy_multi_nominator(
+    chain: &mut Chain,
+    operator: &MsgAddressInt,
+    controller: &MsgAddressInt,
+) -> MsgAddressInt {
+    use chain_block::{Coins, IBitstring, Serializable};
+    let root = std::env::var("TOS_ROOT").map(std::path::PathBuf::from).unwrap_or_else(|_| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .expect("repository root")
+            .to_path_buf()
+    });
+    let dir = root.join("crypto/smartcont/nominator-pool");
+    let code = tos_sandbox::compile_func(&[dir.join("stdlib.fc"), dir.join("pool.fc")])
+        .expect("the multi-nominator pool compiles");
+
+    let mut config = chain_block::BuilderData::new();
+    config.append_raw(&operator.address().get_bytestring(0), 256).expect("operator");
+    config.append_raw(&controller.address().get_bytestring(0), 256).expect("controller");
+    config.append_u16(4_000).expect("reward share");
+    config.append_u16(40).expect("maximum nominators");
+    Coins::new(5_000 * TOS).write_to(&mut config).expect("minimum validator stake");
+    Coins::new(100 * TOS).write_to(&mut config).expect("minimum nominator stake");
+
+    let mut data = chain_block::BuilderData::new();
+    data.append_u8(0).expect("idle");
+    data.append_u16(0).expect("no nominators");
+    Coins::new(0).write_to(&mut data).expect("no sent stake");
+    Coins::new(5_100 * TOS).write_to(&mut data).expect("validator contribution");
+    data.checked_append_reference(config.into_cell().expect("pool config")).expect("config");
+    data.append_bit_zero().expect("no nominators dictionary");
+    data.append_bit_zero().expect("no withdraw requests");
+    data.append_u32(0).expect("no stake election");
+    data.append_raw(&[0; 32], 256).expect("no saved set hash");
+    data.append_u8(0).expect("no set changes");
+    data.append_u32(0).expect("no set change time");
+    data.append_u32(0).expect("no stake hold period");
+    data.append_bit_zero().expect("no proposal votes");
+
+    let state =
+        chain_block::StateInit::with_code_and_data(code, data.into_cell().expect("pool data"));
+    let address = MsgAddressInt::with_params(
+        -1,
+        state.write_to_new_cell().expect("state").into_cell().expect("state cell").hash(0),
+    )
+    .expect("multi-nominator address");
+    let funder = chain.blockchain.treasury("multi-pool-funder", 100_000 * TOS).expect("funder");
+    let deployment =
+        tos_sandbox::MessageBuilder::internal(funder.address(), &address, 13_120 * TOS)
+            .bounce(false)
+            .state_init(state)
+            .body(chain_block::Cell::default())
+            .build();
+    chain.blockchain.set_account(
+        address.clone(),
+        Account::from_message(&deployment).expect("the pool deployment account"),
+    );
     address
 }
 
@@ -2269,6 +2704,7 @@ fn complaint_voters(chain: &Chain, election: u32, complaint: &[u8; 32]) -> Vec<u
 #[test]
 fn a_pools_money_reaches_an_election_through_a_real_controller() {
     use chain_block::IBitstring;
+    use contracts::nominator::{new_stake_with_witness, NewStakeParams};
 
     let (mut chain, _treasury, election) = open_election("pool-e2e", 200_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
@@ -2304,34 +2740,26 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
         &validators[0].consensus.key_id(),
         &validators[0].consensus.adnl,
     );
+    // This Rust preimage routine is pinned to the node's C++ stake-preimage
+    // vectors; the production message builder below supplies the pool body.
+    // Neither the test nor the operator constructs an elector-directed body.
     let signature = validators[0].consensus.sign(&preimage);
+    let witness = birth_witness(&chain, &controller);
 
-    // The operator's order to the pool, carrying those terms and the controller's proof
-    // of what it was deployed as.
-    let mut order = chain_block::BuilderData::new();
-    order.append_u32(0x4e73_744b).expect("operation");
-    order.append_u64(1).expect("query id");
-    chain_block::Serializable::write_to(&chain_block::Coins::new(11_000 * TOS), &mut order)
-        .expect("stake amount");
-    order.append_u32(election).expect("election");
-    order.append_u32(0x10000).expect("max factor");
-    order.append_raw(&validators[0].consensus.adnl, 256).expect("transport address");
-    order.append_u16(1).expect("algorithm");
-    order
-        .checked_append_reference(stored_bytes(&validators[0].consensus.public_key))
-        .expect("the key");
-    order.checked_append_reference(stored_bytes(&signature)).expect("the signature");
-    order.append_bit_one().expect("a witness is present");
-    order.checked_append_reference(birth_witness(&chain, &controller)).expect("the proof");
+    let params = NewStakeParams {
+        query_id: 1,
+        stake_amount: 11_000 * TOS,
+        validator_pubkey: &validators[0].consensus.public_key,
+        stake_at: election,
+        max_factor: 0x10000,
+        adnl_addr: &validators[0].consensus.adnl,
+        signature: &signature,
+    };
+    let order = new_stake_with_witness(&params, Some(&witness)).expect("production pool order");
 
     let result = chain
         .blockchain
-        .send_message(operator.build_message(
-            &pool,
-            2 * TOS,
-            true,
-            Some(order.into_cell().expect("an order")),
-        ))
+        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
         .expect("the order is delivered");
     result.expect_success();
 
@@ -2412,6 +2840,180 @@ fn a_pools_money_reaches_an_election_through_a_real_controller() {
         0,
         "the controller was repaid money it never put up"
     );
+}
+
+/// The pool's idle state alone cannot say whether its relay bounced or the
+/// Elector returned the stake. Keep the two transfers, both compute outcomes,
+/// and the exact reply in the result of a real three-contract cascade.
+struct MultiNominatorStakeProbe {
+    pool_to_controller: Option<u128>,
+    controller_to_elector: Option<u128>,
+    controller_aborted: Option<bool>,
+    controller_bounced_to_pool: bool,
+    elector_aborted: Option<bool>,
+    elector_reply: Option<(u32, u32)>,
+    pool_state: u8,
+    controller_registered: bool,
+}
+
+fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakeProbe {
+    use contracts::nominator::{new_stake_with_witness, NewStakeParams};
+
+    fn amount_sent(
+        result: &tos_sandbox::SendResult,
+        from: &MsgAddressInt,
+        to: &MsgAddressInt,
+    ) -> Option<u128> {
+        let mut values = Vec::new();
+        for transaction in result.transactions_for(from) {
+            transaction
+                .iterate_out_msgs(|message| {
+                    if message.dst() == Some(to.clone()) {
+                        values.push(
+                            message.get_value().expect("internal transfer value").coins.as_u128(),
+                        );
+                    }
+                    Ok(true)
+                })
+                .expect("out messages");
+        }
+        assert!(values.len() <= 1, "more than one transfer from {from} to {to}: {values:?}");
+        values.pop()
+    }
+
+    let (mut chain, _treasury, election) = open_election("multi-pool-first-stake", 200_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    let validator = deploy_rooted_validator(&mut chain, 0x31);
+    admit_code_of(&mut chain, &validator.address);
+    let operator = chain.blockchain.treasury("multi-pool-operator", 100_000 * TOS).expect("wallet");
+    let controller = validator.address.clone();
+    let pool = deploy_multi_nominator(&mut chain, operator.address(), &controller);
+
+    let pool_id = chain_block::UInt256::from_slice(&pool.address().get_bytestring(0));
+    let preimage = pq_stake_preimage_for(
+        global_id(&chain),
+        election,
+        0x10000,
+        &validator.id(),
+        &pool_id,
+        1,
+        &validator.consensus.key_id(),
+        &validator.consensus.adnl,
+    );
+    let signature = validator.consensus.sign(&preimage);
+    let witness = birth_witness(&chain, &controller);
+    let order = new_stake_with_witness(
+        &NewStakeParams {
+            query_id: 1,
+            stake_amount,
+            validator_pubkey: &validator.consensus.public_key,
+            stake_at: election,
+            max_factor: 0x10000,
+            adnl_addr: &validator.consensus.adnl,
+            signature: &signature,
+        },
+        Some(&witness),
+    )
+    .expect("production multi-pool stake order");
+    let result = chain
+        .blockchain
+        .send_message(operator.build_message(&pool, 2 * TOS, true, Some(order)))
+        .expect("order delivered");
+    result.expect_success();
+
+    let pool_to_controller = amount_sent(&result, &pool, &controller);
+    let controller_to_elector = amount_sent(&result, &controller, &chain.elector);
+    let controller_aborted = result.transactions_for(&controller).first().map(|transaction| {
+        transaction.read_description().expect("controller description").is_aborted()
+    });
+    let elector_aborted = result.transactions_for(&chain.elector).first().map(|transaction| {
+        transaction.read_description().expect("Elector description").is_aborted()
+    });
+    let controller_bounced_to_pool = result.transactions_for(&pool).iter().any(|transaction| {
+        transaction.read_in_msg().expect("pool inbound message").is_some_and(|message| {
+            message.is_bounced() && message.src() == Some(controller.clone())
+        })
+    });
+    let mut elector_reply = None;
+    for transaction in result.transactions_for(&chain.elector) {
+        transaction
+            .iterate_out_msgs(|message| {
+                if message.dst() == Some(pool.clone()) {
+                    let mut body = message.body().expect("Elector reply body").clone();
+                    let tag = body.get_next_u32().expect("reply opcode");
+                    body.get_next_u64().expect("reply query id");
+                    elector_reply = Some((tag, body.get_next_u32().expect("reply reason")));
+                }
+                Ok(true)
+            })
+            .expect("Elector out messages");
+    }
+    let state =
+        chain.blockchain.run_get_method(&pool, "get_pool_data", vec![]).expect("the pool answers");
+    assert_eq!(state.exit_code, 0, "get_pool_data failed");
+    let pool_state: u8 = state.stack[0]
+        .as_integer()
+        .expect("pool state")
+        .to_string()
+        .parse()
+        .expect("numeric pool state");
+    let (members, _) = pq_book(&chain);
+    let controller_registered =
+        members.get(controller.address().clone()).expect("member lookup").is_some();
+    eprintln!(
+        "multi-pool stake order={stake_amount}: pool_to_controller={pool_to_controller:?} \
+         controller_to_elector={controller_to_elector:?} controller_aborted={controller_aborted:?} \
+         controller_bounced_to_pool={controller_bounced_to_pool} elector_aborted={elector_aborted:?} \
+         elector_reply={elector_reply:?} pool_state={pool_state} controller_registered={controller_registered}"
+    );
+
+    MultiNominatorStakeProbe {
+        pool_to_controller,
+        controller_to_elector,
+        controller_aborted,
+        controller_bounced_to_pool,
+        elector_aborted,
+        elector_reply,
+        pool_state,
+        controller_registered,
+    }
+}
+
+/// The old 10,001 TOS order reaches the Elector, but its mode-64 forwarding
+/// fee leaves less than 10,001 TOS there. After the Elector's one-TOS reply
+/// reserve it is below the 10,000 TOS minimum: reason 5, not a relay bounce.
+#[test]
+fn a_multi_nominator_first_stake_exposes_the_exact_refusal() {
+    let probe = multi_nominator_first_stake_probe(10_001 * TOS);
+    assert_eq!(probe.pool_to_controller, Some(u128::from(10_001 * TOS)));
+    assert!(probe.controller_to_elector.is_some_and(|value| value < u128::from(10_001 * TOS)));
+    assert_eq!(probe.controller_aborted, Some(false));
+    assert!(!probe.controller_bounced_to_pool);
+    assert_eq!(probe.elector_aborted, Some(false));
+    assert_eq!(probe.elector_reply, Some((STAKE_RETURNED, REASON_BELOW_MINIMUM)));
+    assert_eq!(probe.pool_state, 0);
+    assert!(!probe.controller_registered);
+}
+
+/// One additional TOS is an explicit forwarding-fee allowance, rather than
+/// pretending the Elector's one-TOS confirmation reserve also covers relay
+/// fees. The same production builder and three compiled contracts must now
+/// reach the acceptance reply and pool state 2.
+#[test]
+fn a_multi_nominator_first_stake_with_forwarding_allowance_is_accepted() {
+    let probe = multi_nominator_first_stake_probe(10_002 * TOS);
+    assert_eq!(
+        probe.elector_reply,
+        Some((STAKE_ACCEPTED, 0)),
+        "Elector must accept the forwarded amount"
+    );
+    assert_eq!(probe.pool_state, 2, "the pool must receive and record acceptance");
+    assert_eq!(probe.pool_to_controller, Some(u128::from(10_002 * TOS)));
+    assert!(probe.controller_to_elector.is_some_and(|value| value >= u128::from(10_001 * TOS)));
+    assert_eq!(probe.controller_aborted, Some(false));
+    assert!(!probe.controller_bounced_to_pool);
+    assert_eq!(probe.elector_aborted, Some(false));
+    assert!(probe.controller_registered);
 }
 
 #[test]
@@ -2669,9 +3271,9 @@ fn post_quantum_authority_holds_from_the_controller_to_the_governed_change() {
 // ---------------------------------------------------------------------------
 // What the cutover costs at the sizes the chain is configured for
 //
-// The configuration allows up to four hundred validators. Every rule the cutover added
-// runs once per descriptor, so the figures that matter are not the ones measured on the
-// four-member fixture the behavioural tests use.
+// The PQ launch configuration admits at most 21 validators. Measure the four-member
+// fixture and that actual ceiling; 100/400-member elections are invalid inputs, not
+// performance targets. Separate refusal tests pin the 22-member boundary.
 //
 // The sets here are synthesised rather than elected, because what is being measured is
 // the contract's work over a set of a given size and not the election that produced it.
@@ -2727,18 +3329,19 @@ fn synthetic_set(now: u32, count: u16) -> chain_block::Cell {
     set.into_cell().expect("a validator set")
 }
 
-/// What the configuration contract spends checking a set before it installs it.
+/// What the configuration contract spends checking a set before it installs it,
+/// at every representative size the enforced launch range can actually reach.
 ///
 /// This runs once per elected set, over every descriptor, and it is the only thing
 /// standing between an election and a Config36 the node would refuse to start from.
 #[test]
-fn the_pre_install_check_is_measured_at_the_sizes_the_chain_allows() {
+fn the_pre_install_check_is_measured_at_the_enforced_launch_sizes() {
     let (mut chain, _treasury, _election) = open_election("preinstall-scale", 200_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
-    raise_validator_ceiling(&mut chain, 400);
+    raise_validator_ceiling(&mut chain, 21);
 
     let mut measured = Vec::new();
-    for (query, count) in [(1u64, 21u16), (2, 100), (3, 400)] {
+    for (query, count) in [(1u64, 4u16), (2, 12), (3, 21)] {
         let set = synthetic_set(chain.blockchain.now(), count);
         let result = chain
             .blockchain
@@ -2775,17 +3378,36 @@ fn the_pre_install_check_is_measured_at_the_sizes_the_chain_allows() {
          transaction may spend"
     );
 
-    // And the cost has to follow the count rather than jump: a check that stopped looking
-    // at every descriptor would flatten here, and nothing else would say so.
+    // And the cost has to follow the count: a check that stopped looking at every
+    // descriptor would flatten here, and nothing else would say so.
     let (small, small_gas) = measured[0];
     assert!(
-        cost > &(small_gas * 8),
+        *cost > small_gas,
         "checking {largest} validators costs {cost} gas against {small_gas} for {small}, so \
          the check is not running over every descriptor"
     );
+
+    let oversized = synthetic_set(chain.blockchain.now(), 22);
+    let refused = chain
+        .blockchain
+        .send_message(
+            tos_sandbox::MessageBuilder::internal(
+                &chain.elector.clone(),
+                &chain.config_contract.clone(),
+                10 * TOS,
+            )
+            .body(set_next_validators_body(4, oversized))
+            .build(),
+        )
+        .expect("the oversized set message is delivered");
+    let tags = replies(&refused);
+    assert!(
+        tags.contains(&VALIDATOR_SET_REFUSED) && !tags.contains(&VALIDATOR_SET_INSTALLED),
+        "a 22-validator set crossed the enforced launch cap: {tags:02x?}"
+    );
 }
 
-/// Raise the validator count the configuration allows, so the sizes above are reachable.
+/// Select a validator ceiling within the compiled launch cap for a focused fixture.
 fn raise_validator_ceiling(chain: &mut Chain, max: u16) {
     use chain_block::IBitstring;
     let mut value = chain_block::BuilderData::new();
@@ -2799,8 +3421,8 @@ fn raise_validator_ceiling(chain: &mut Chain, max: u16) {
 /// share.
 ///
 /// Written into storage rather than staked for, because what the measurement below is
-/// about is the selection over a book of a given size. Placing four hundred stakes would
-/// mean four hundred signatures and would measure the fixture rather than the contract.
+/// about is selection over an admitted book. Placing even 21 signed stakes would
+/// mostly measure the fixture rather than the contract.
 /// Every member is distinct in both identities, as a staked one would be.
 fn install_synthetic_book(chain: &mut Chain, count: u16, stake_each: u64) {
     install_synthetic_book_over(chain, count, stake_each, 1)
@@ -2992,11 +3614,11 @@ fn install_synthetic_book_full(
 #[test]
 fn an_election_is_measured_at_the_sizes_the_chain_allows() {
     let mut measured = Vec::new();
-    for count in [21u16, 100, 400] {
+    for count in [4u16, 21] {
         let (mut chain, _treasury, election) =
             open_election(&format!("election-scale-{count}"), 200_000 * TOS);
         raise_to_post_quantum_version(&mut chain);
-        raise_validator_ceiling(&mut chain, 400);
+        raise_validator_ceiling(&mut chain, 21);
         install_synthetic_book(&mut chain, count, 11_000 * TOS);
 
         chain.blockchain.set_now(election - chain.elect_end_before);
@@ -3030,9 +3652,9 @@ fn an_election_is_measured_at_the_sizes_the_chain_allows() {
     );
     let (small, small_gas) = measured[0];
     assert!(
-        cost > &(small_gas * 8),
+        cost > &small_gas,
         "electing {largest} members costs {cost} gas against {small_gas} for {small}, so the \
-         selection is not running over every member"
+         measurement did not retain the member-dependent selection cost"
     );
 }
 
@@ -3335,8 +3957,8 @@ fn the_effective_total_is_measured_over_one_profile_and_over_eight() {
         let (mut chain, _treasury, election) =
             open_election(&format!("profiles-{profiles}"), 200_000 * TOS);
         raise_to_post_quantum_version(&mut chain);
-        raise_validator_ceiling(&mut chain, 400);
-        install_synthetic_book_over(&mut chain, 100, 11_000 * TOS, profiles);
+        raise_validator_ceiling(&mut chain, 21);
+        install_synthetic_book_over(&mut chain, 21, 11_000 * TOS, profiles);
 
         chain.blockchain.set_now(election - chain.elect_end_before);
         let result = chain
@@ -3352,15 +3974,17 @@ fn the_effective_total_is_measured_over_one_profile_and_over_eight() {
     }
 
     for (profiles, gas) in &measured {
-        eprintln!("election over {profiles} controller profiles, 100 members: {gas} gas");
+        eprintln!("election over {profiles} controller profiles, 21 members: {gas} gas");
     }
 
     let (_, one) = measured[0];
     let (_, eight) = measured[1];
-    // Eight profiles is the ceiling, and the sum runs over the admitted codes rather than
-    // over the members, so the difference must be a rounding error against an election.
+    // Eight profiles is the ceiling. At the admitted 21-member limit its measured
+    // 7,753-gas increment is small beside the 660,399-gas election, but is not
+    // below one percent as it was in the now-invalid 100-member measurement.
+    assert!(eight > one, "eight profiles cost no more than one; the profile walk was not measured");
     assert!(
-        eight < one + one / 100,
+        eight < one + one / 50,
         "an election over eight profiles costs {eight} gas against {one} over one, so the \
          effective total is being summed over the members rather than over the codes"
     );
@@ -3744,8 +4368,24 @@ fn controller_policy(count: usize) -> chain_block::Cell {
 /// A hashmap carries no cardinality, so a bound that lives only in prose is a bound that
 /// is never reached by anything. This is the configuration contract refusing the ninth.
 #[test]
+fn controller_policy_proposal_reads_the_current_vm_config_value() {
+    let (mut chain, validators, _election) = elect_install_and_rotate();
+    require_one_winning_round(&mut chain);
+    let eight = controller_policy(8);
+    assert!(govern_install(&mut chain, &validators, 47, eight.clone(), 100).decided);
+    assert_eq!(raw_parameter(&chain, 47), Some(eight));
+    let stored = raw_parameter(&chain, 47).expect("contract stores updated Param 47");
+    let active = vm_parameter(&chain, 47).expect("VM exposes updated Param 47");
+    assert_eq!(
+        stored.repr_hash(),
+        active.repr_hash(),
+        "proposal current hash came from contract storage but VM config_param(47) differs"
+    );
+}
+
+/// An eight-code policy is admissible, but a ninth code is not.
+#[test]
 fn the_controller_policy_cannot_grow_past_its_ceiling() {
-    use chain_block::GetRepresentationHash;
     let (mut chain, validators, _election) = elect_install_and_rotate();
     require_one_winning_round(&mut chain);
 
@@ -6549,6 +7189,33 @@ fn the_operator_tools_carry_a_validator_from_no_key_to_a_governed_change() {
         .expect("the vote is delivered");
     assert_eq!(exit_code_of(&result), 0, "the node's own vote was refused");
     assert_eq!(proposal_voters(&chain, &proposal), vec![idx], "the node's vote was not counted");
+
+    // A body signed for another ConfigParam 34 cell must not count on this
+    // chain. The signer receives a deliberately different set hash; the
+    // contract independently hashes the actual cell it holds.
+    let mut other_set_id = current_set_id(&chain);
+    other_set_id[0] ^= 1;
+    let wrong_set_vote = run_vote_tool(&[
+        "config".to_string(),
+        seed_file_for(&voter.consensus).to_str().expect("path").to_string(),
+        global_id(&chain).to_string(),
+        hex::encode(other_set_id),
+        hex::encode(voter.id().as_slice()),
+        idx.to_string(),
+        hex::encode(proposal),
+    ]);
+    chain
+        .blockchain
+        .send_message(relay.build_message(
+            &chain.config_contract,
+            VOTE_VALUE,
+            true,
+            Some(wrong_set_vote),
+        ))
+        .expect("the wrong-set vote is delivered")
+        .expect_aborted()
+        .expect_exit_code(ERROR_BAD_VOTE_SIGNATURE);
+    assert_eq!(proposal_voters(&chain, &proposal), vec![idx], "a wrong-set vote was counted");
 
     // --- and complains about a validator of the closed election ---------------------
     let accused = validator_id_at(&chain, index_of_pq(&chain, &validators[3].consensus));

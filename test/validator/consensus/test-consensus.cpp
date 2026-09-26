@@ -5,6 +5,8 @@
  */
 
 #include <atomic>
+#include <array>
+#include <cstdio>
 
 #include "adnl/utils.hpp"
 #include "auto/tl/tos_api.h"
@@ -33,6 +35,7 @@
 #include "validator/manager-resource-policy.h"
 #include "vm/boc-compression.h"
 #include "vm/boc.h"
+#include "vm/cells/MerkleUpdate.h"
 
 #include "block-auto.h"
 
@@ -154,6 +157,35 @@ bool PQ_FINALITY_E2E_TEST = false;
 // deterministically produce that class of failure.
 bool PERMANENT_FINALIZATION_TEST = false;
 std::atomic<bool> EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE = false;
+// Model cold-start replay: the first N manager anchor reads time out, then recover.
+std::atomic<size_t> EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES = 0;
+// The session origin is a separate dependency from a finalized nonzero anchor.
+std::atomic<size_t> EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = 0;
+std::atomic<size_t> EMPTY_CHAIN_ORIGIN_FAILURES = 0;
+bool EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = false;
+size_t C05_GENESIS_FAULT_BUDGET = 0;
+std::array<std::atomic<size_t>, 4> C05_GENESIS_FAULTS{};
+std::array<std::atomic<double>, 4> C05_LAST_FAULT_TIME{};
+struct C05FaultObservation {
+  CandidateId candidate;
+  ParentId signed_parent;
+  BlockIdExt requested_block;
+  size_t read;
+};
+struct C05SimultaneousObservation {
+  std::mutex mutex;
+  std::optional<CandidateId> first_candidate;
+  ParentId first_candidate_parent;
+  BlockIdExt first_block;
+  double candidate_time = 0;
+  std::array<std::optional<CandidateId>, 4> received_candidate;
+  std::array<std::vector<C05FaultObservation>, 4> fault_reads;
+  simplex::NotarCertRef notar_cert;
+  double notar_cert_time = 0;
+};
+C05SimultaneousObservation C05_SIMULTANEOUS_OBSERVATION;
+// Production restarts an active group from its current accepted chain tip.
+bool RESTART_FROM_LAST_ACCEPTED_BLOCK = false;
 
 // Adversity that was configured but never fired turns a scenario into a quiet no-op: the
 // post-quantum gate finishes in well under a second, sooner than a gremlin period. These
@@ -360,6 +392,15 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   }
 
   void receive_candidate(CandidateRef candidate) {
+    if (C05_GENESIS_FAULT_BUDGET != 0 && candidate->block_id().seqno() == 1) {
+      auto node = owning_bus()->local_id->idx.value();
+      if (node > 0 && node < 4) {
+        std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+        if (C05_SIMULTANEOUS_OBSERVATION.first_candidate == candidate->id) {
+          C05_SIMULTANEOUS_OBSERVATION.received_candidate[node] = candidate->id;
+        }
+      }
+    }
     owning_bus().publish<CandidateReceived>(candidate);
     if (RELAY_LOOP_TEST) {
       // Model a candidate returning through a second transport/relay path.
@@ -568,7 +609,8 @@ class TestManagerFacade : public ManagerFacade {
                                  int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
                                  bool apply) override;
 
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override;
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
+      BlockIdExt block_id, td::Timestamp timeout, std::optional<CandidateId> requesting_candidate) override;
   td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) override;
   void send_block_candidate_broadcast(BlockIdExt id, td::BufferSlice data, int mode) override;
 
@@ -636,10 +678,33 @@ class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public 
   // gate can say that collation stopped, rather than that no further block was accepted --
   // which would be true of a build that never had a carrier whether it stopped or not.
   template <>
-  void handle(simplex::BusHandle, std::shared_ptr<const CandidateGenerated>) {
+  void handle(simplex::BusHandle, std::shared_ptr<const CandidateGenerated> event) {
     ++CANDIDATES_GENERATED;
+    if (C05_GENESIS_FAULT_BUDGET != 0 && !event->candidate->is_empty() &&
+        event->candidate->block_id().seqno() == 1) {
+      std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+      if (!C05_SIMULTANEOUS_OBSERVATION.first_candidate) {
+        C05_SIMULTANEOUS_OBSERVATION.first_candidate = event->candidate->id;
+        C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent = event->candidate->parent_id;
+        C05_SIMULTANEOUS_OBSERVATION.first_block = event->candidate->block_id();
+        C05_SIMULTANEOUS_OBSERVATION.candidate_time = td::Time::now();
+      }
+    }
     if (backlogged_) {
       ++CANDIDATES_WHILE_BACKLOGGED;
+    }
+  }
+
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const simplex::NotarizationObserved> event) {
+    if (C05_GENESIS_FAULT_BUDGET == 0) {
+      return;
+    }
+    std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+    if (C05_SIMULTANEOUS_OBSERVATION.first_candidate == event->id &&
+        C05_SIMULTANEOUS_OBSERVATION.notar_cert.is_null()) {
+      C05_SIMULTANEOUS_OBSERVATION.notar_cert = event->certificate;
+      C05_SIMULTANEOUS_OBSERVATION.notar_cert_time = td::Time::now();
     }
   }
 
@@ -1077,8 +1142,19 @@ class TestConsensus : public td::actor::Actor {
                              PSTRING() << "consensus." << node_idx << "." << instance_idx);
     inst.status = Instance::Running;
     inst.bus.publish<BlockFinalizedInMasterchain>(last_accepted_block_);
-    inst.bus.publish<Start>(
-        td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+    if (RESTART_FROM_LAST_ACCEPTED_BLOCK && inst.started_before) {
+      CHECK(!accepted_blocks_.empty());
+      const auto& [seqno, block] = *accepted_blocks_.rbegin();
+      CHECK(seqno > FIRST_PARENT.seqno());
+      LOG(WARNING) << "Restarting node #" << node_idx << "." << instance_idx << " from last accepted block "
+                   << block->block_id().to_str();
+      inst.bus.publish<Start>(
+          td::make_ref<ChainState>(ChainState::NormalTip{block, gen_shard_state(seqno)}, MIN_MC_BLOCK_ID));
+    } else {
+      inst.bus.publish<Start>(
+          td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+    }
+    inst.started_before = true;
     LOG(ERROR) << "Starting node #" << node_idx << "." << instance_idx;
   }
 
@@ -1633,6 +1709,183 @@ class TestConsensus : public td::actor::Actor {
                     "BlockProof; carrier-missing count=0; longest consecutive accepted run="
                  << consecutive_accepted_blocks
                  << "; independently verified accepted proofs=" << independently_verified_proofs;
+    if (C05_GENESIS_FAULT_BUDGET != 0) {
+      if (N_NODES != 4 || (C05_GENESIS_FAULT_BUDGET != 3 && C05_GENESIS_FAULT_BUDGET != 24) ||
+          NewConsensusConfig{}.noncritical_params.first_block_timeout != std::chrono::milliseconds(1000)) {
+        fail("C05 simultaneous control is not a four-node, three/24-fault, one-second-timeout run");
+        co_return td::Unit{};
+      }
+      std::optional<CandidateId> target;
+      ParentId target_parent;
+      BlockIdExt target_block;
+      std::array<std::vector<C05FaultObservation>, 4> fault_reads;
+      simplex::NotarCertRef notar_cert;
+      double candidate_time = 0;
+      double cert_time = 0;
+      {
+        std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+        target = C05_SIMULTANEOUS_OBSERVATION.first_candidate;
+        target_parent = C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent;
+        target_block = C05_SIMULTANEOUS_OBSERVATION.first_block;
+        fault_reads = C05_SIMULTANEOUS_OBSERVATION.fault_reads;
+        notar_cert = C05_SIMULTANEOUS_OBSERVATION.notar_cert;
+        candidate_time = C05_SIMULTANEOUS_OBSERVATION.candidate_time;
+        cert_time = C05_SIMULTANEOUS_OBSERVATION.notar_cert_time;
+      }
+      if (!target || target->slot != 0 || target_parent || target_block.seqno() != 1 ||
+          !accepted_blocks_.contains(1)) {
+        fail("C05 injected first candidate or later recovery block was not observed");
+        co_return td::Unit{};
+      }
+      for (size_t node = 1; node < 4; ++node) {
+        if (fault_reads[node].empty() || fault_reads[node].size() > C05_GENESIS_FAULT_BUDGET ||
+            C05_GENESIS_FAULTS[node].load() != fault_reads[node].size() ||
+            (C05_GENESIS_FAULT_BUDGET == 3 && fault_reads[node].size() != 3)) {
+          fail(PSTRING() << "C05 node " << node << " recorded " << fault_reads[node].size()
+                         << " requester-bound parent-state faults under cap " << C05_GENESIS_FAULT_BUDGET);
+          co_return td::Unit{};
+        }
+        for (size_t read = 0; read < fault_reads[node].size(); ++read) {
+          const auto& observed = fault_reads[node][read];
+          if (observed.candidate != *target || observed.candidate.slot != target->slot || observed.signed_parent ||
+              observed.requested_block != FIRST_PARENT || observed.read != read + 1) {
+            fail(PSTRING() << "C05 node " << node << " fault read " << read + 1
+                           << " is not bound to the first candidate's signed parent and slot");
+            co_return td::Unit{};
+          }
+        }
+      }
+      if (C05_GENESIS_FAULT_BUDGET == 24) {
+        if (!notar_cert.is_null() || accepted_blocks_.at(1)->block_id() == target_block) {
+          fail("C05 over-budget first candidate was notarized or accepted after its skip window");
+          co_return td::Unit{};
+        }
+        for (const auto& item : accepted_carriers_) {
+          if (item.block_id == target_block) {
+            fail("C05 over-budget first candidate reached an accepted finality carrier");
+            co_return td::Unit{};
+          }
+        }
+        for (const auto& observed : read_finality_log()) {
+          if (observed.id == *target) {
+            fail("C05 over-budget first candidate received a late FinalCert");
+            co_return td::Unit{};
+          }
+        }
+        auto wanted_vote = serialize_tl_object(simplex::Vote{simplex::NotarizeVote{*target}}.to_tl(), true);
+        for (size_t node = 1; node < 4; ++node) {
+          if (fault_reads[node].size() < 4 ||
+              C05_LAST_FAULT_TIME[node].load() - candidate_time <= 1.0) {
+            fail(PSTRING() << "C05 node " << node << " did not remain unavailable beyond the one-second window");
+            co_return td::Unit{};
+          }
+          for (const auto& entry : own_vote_journal(nodes_[node].instances[0])) {
+            if (entry.is_signed && serialize_tl_object(entry.vote, true).as_slice() == wanted_vote.as_slice()) {
+              fail(PSTRING() << "C05 node " << node << " signed a late vote for the over-budget first candidate");
+              co_return td::Unit{};
+            }
+          }
+        }
+        LOG(WARNING) << "C05_SIMULTANEOUS_OVER_BUDGET_OK: first-candidate requester reads per node="
+                     << fault_reads[1].size() << "," << fault_reads[2].size() << "," << fault_reads[3].size()
+                     << " under a 24-read cap; all remained unavailable beyond the one-second first-block window; "
+                        "original candidate had no late vote, NotarCert, FinalCert or acceptance; a later "
+                        "candidate was accepted";
+        pq_finality_completed_ = true;
+        co_return td::Unit{};
+      }
+      if (notar_cert.is_null() || accepted_blocks_.at(1)->block_id() != target_block) {
+        fail("C05 recovered first candidate did not reach a NotarCert and accepted block");
+        co_return td::Unit{};
+      }
+      if (notar_cert->vote.id != *target) {
+        fail("C05 first NotarCert vote ID differs from the injected candidate");
+        co_return td::Unit{};
+      }
+      if (cert_time <= candidate_time || cert_time - candidate_time >= 1.0) {
+        fail(PSTRING() << "C05 first candidate's NotarCert was not observed inside the one-second window: "
+                       << (cert_time - candidate_time));
+        co_return td::Unit{};
+      }
+      auto wanted_vote = serialize_tl_object(simplex::Vote{notar_cert->vote}.to_tl(), true);
+      size_t faulted_signers_in_cert = 0;
+      for (const auto& [signer, signature] : notar_cert->signatures) {
+        (void)signature;
+        faulted_signers_in_cert += signer.value() > 0 && signer.value() < 4;
+      }
+      if (faulted_signers_in_cert < 2) {
+        fail("C05 first NotarCert did not include a quorum contribution from faulted nodes");
+        co_return td::Unit{};
+      }
+      for (size_t node = 1; node < 4; ++node) {
+        if (C05_GENESIS_FAULTS[node].load() != 3) {
+          fail(PSTRING() << "C05 node " << node << " did not exhaust its three injected parent-state misses");
+          co_return td::Unit{};
+        }
+        size_t signed_votes = 0;
+        for (const auto& entry : own_vote_journal(nodes_[node].instances[0])) {
+          if (!entry.is_signed || serialize_tl_object(entry.vote, true).as_slice() != wanted_vote.as_slice()) {
+            continue;
+          }
+          ++signed_votes;
+          for (const auto& [signer, signature] : notar_cert->signatures) {
+            if (signer.value() == node && signature.as_slice() != entry.signature.as_slice()) {
+              fail(PSTRING() << "C05 node " << node << " NotarCert signature differs from its signed vote journal");
+              co_return td::Unit{};
+            }
+          }
+        }
+        if (signed_votes != 1) {
+          fail(PSTRING() << "C05 node " << node << " had " << signed_votes
+                         << " signed notarize votes for the recovered candidate, expected one");
+          co_return td::Unit{};
+        }
+      }
+      bool exact_target_carrier = false;
+      for (const auto& item : accepted_carriers_) {
+        if (item.block_id != target_block) {
+          continue;
+        }
+        auto slot = item.signatures->pq_slot();
+        auto candidate_data = item.signatures->pq_candidate_data();
+        auto pairs = item.signatures->export_pq_signatures();
+        if (slot.is_error() || candidate_data.is_error() || pairs.is_error() || slot.ok() != target->slot ||
+            td::sha256_bits256(candidate_data.ok().as_slice()) != target->hash) {
+          continue;
+        }
+        std::map<ValidatorId, td::Slice> carrier_by_id;
+        for (const auto& pair : pairs.ok()) {
+          carrier_by_id.emplace(pair.validator_id, pair.signature.as_slice());
+        }
+        for (const auto& observed : read_finality_log()) {
+          if (observed.id != *target || observed.cert->vote.id != *target ||
+              observed.cert->signatures.size() != carrier_by_id.size()) {
+            continue;
+          }
+          bool bytes_match = true;
+          for (const auto& [signer_index, signature] : observed.cert->signatures) {
+            auto index = signer_index.value();
+            if (index >= validators_.size()) {
+              bytes_match = false;
+              break;
+            }
+            auto carried = carrier_by_id.find(validators_[index].validator_id);
+            if (carried == carrier_by_id.end() || carried->second != signature.as_slice()) {
+              bytes_match = false;
+              break;
+            }
+          }
+          exact_target_carrier |= bytes_match;
+        }
+      }
+      if (!exact_target_carrier) {
+        fail("C05 first candidate's FinalCert vote ID, signature bytes and accepted block carrier diverged");
+        co_return td::Unit{};
+      }
+      LOG(WARNING) << "C05_SIMULTANEOUS_RECOVERY_OK: three nodes each exhausted three parent-state reads; "
+                      "each persisted one signed notarize vote; first NotarCert after "
+                   << (cert_time - candidate_time) * 1000.0 << " ms; first FinalCert and block accepted";
+    }
     pq_finality_completed_ = true;
     co_return td::Unit{};
   }
@@ -2282,6 +2535,44 @@ class TestConsensus : public td::actor::Actor {
     auto stopped_count = candidate_record_count(instance);
     start_instance(0, 0);
 
+    if (EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE) {
+      // A missing exact predecessor is an unavailable session, not a usable
+      // restart tip. Require the real resolver to reach its third read, then
+      // observe a stable no-production window. This is deliberately a
+      // fail-closed assertion; it does not claim eventual liveness.
+      auto origin_deadline = td::Timestamp::in(DURATION * 0.2);
+      while (EMPTY_CHAIN_ORIGIN_FAILURES < 3 && !origin_deadline.is_in_past()) {
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+      }
+      if (EMPTY_CHAIN_ORIGIN_FAILURES < 3 || EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES == 0) {
+        empty_chain_restart_error_ = PSTRING() << "permanent origin injection did not reach replay: origin reads="
+                                               << EMPTY_CHAIN_ORIGIN_FAILURES
+                                               << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
+        co_return td::Unit{};
+      }
+      if (candidate_record_count(instance) != stopped_count) {
+        empty_chain_restart_error_ = "candidate production resumed with the exact origin unavailable";
+        co_return td::Unit{};
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
+      auto after_window = candidate_record_count(instance);
+      if (after_window != stopped_count) {
+        empty_chain_restart_error_ = PSTRING() << "candidate production resumed with the exact origin unavailable: "
+                                               << stopped_count << " -> " << after_window;
+        co_return td::Unit{};
+      }
+      LOG(WARNING) << "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=" << EMPTY_CHAIN_ORIGIN_FAILURES
+                   << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES
+                   << " candidate records=" << stopped_count << " -> " << after_window;
+      std::fprintf(stderr,
+                   "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=%zu anchor failures=%zu candidate records=%zu -> %zu\n",
+                   EMPTY_CHAIN_ORIGIN_FAILURES.load(), EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load(), stopped_count,
+                   after_window);
+      std::fflush(stderr);
+      empty_chain_restart_completed_ = true;
+      co_return td::Unit{};
+    }
+
     const size_t RECOVERY_CANDIDATES = SLOTS_PER_LEADER_WINDOW * 2;
     auto recovery_deadline = td::Timestamp::in(DURATION * 0.25);
     while (candidate_record_count(instance) < stopped_count + RECOVERY_CANDIDATES && !recovery_deadline.is_in_past()) {
@@ -2323,10 +2614,22 @@ class TestConsensus : public td::actor::Actor {
 
     co_await td::actor::coro_sleep(td::Timestamp::in(0.25));
     auto final_anchor_failures = EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load();
+    if (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES != 0 &&
+        final_anchor_failures != EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES) {
+      empty_chain_restart_error_ = PSTRING() << "expected exactly " << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES
+                                             << " transient manager-anchor failures, observed " << final_anchor_failures;
+      co_return td::Unit{};
+    }
     if (final_anchor_failures != settled_anchor_failures) {
       empty_chain_restart_error_ =
           PSTRING() << "manager anchor failures increased after startup requests settled: " << settled_anchor_failures
                     << " -> " << final_anchor_failures << "; completed-ancestor cache was not reused";
+      co_return td::Unit{};
+    }
+    if (EMPTY_CHAIN_ORIGIN_FAILURES != EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES) {
+      empty_chain_restart_error_ = PSTRING() << "expected " << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES
+                                             << " transient session-origin failures, observed "
+                                             << EMPTY_CHAIN_ORIGIN_FAILURES;
       co_return td::Unit{};
     }
     LOG(WARNING) << "Long empty-chain restart recovered after " << empty_chain_length
@@ -2450,6 +2753,7 @@ class TestConsensus : public td::actor::Actor {
     td::actor::Runtime runtime;
     td::actor::ActorOwn<TestManagerFacade> manager_facade;
     simplex::BusHandle bus;
+    bool started_before = false;
 
     BlockSeqno last_accepted_block = FIRST_PARENT.seqno();
     std::shared_ptr<TestDbImpl::DbInner> db_inner;
@@ -2583,8 +2887,35 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
 }
 
 td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
-                                                                            td::Timestamp timeout) {
-  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0) {
+                                                                            td::Timestamp timeout,
+                                                                            std::optional<CandidateId> requesting_candidate) {
+  if (C05_GENESIS_FAULT_BUDGET != 0 && block_id == FIRST_PARENT && node_idx_ > 0 && node_idx_ < 4) {
+    std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+    const auto& target = C05_SIMULTANEOUS_OBSERVATION.first_candidate;
+    // Only try_notarize supplies this requester. Leader-base ResolveState has no requester
+    // and cannot consume the fault budget, even after the next leader window begins.
+    if (target && requesting_candidate == target && !C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent &&
+        C05_SIMULTANEOUS_OBSERVATION.received_candidate[node_idx_] == target &&
+        C05_GENESIS_FAULTS[node_idx_].load() < C05_GENESIS_FAULT_BUDGET) {
+      auto failure = ++C05_GENESIS_FAULTS[node_idx_];
+      C05_SIMULTANEOUS_OBSERVATION.fault_reads[node_idx_].push_back(
+          {*requesting_candidate, C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent, block_id, failure});
+      C05_LAST_FAULT_TIME[node_idx_] = td::Time::now();
+      LOG(WARNING) << "C05_SIMULTANEOUS_STATE_FAULT node=" << node_idx_ << " requester=" << *requesting_candidate
+                   << " slot=" << requesting_candidate->slot << " parent=" << FIRST_PARENT.to_str()
+                   << " read=" << failure;
+      co_return td::Status::Error(ErrorCode::notready, "injected simultaneous parent-state miss");
+    }
+  }
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() == 0 &&
+      (EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE ||
+       EMPTY_CHAIN_ORIGIN_FAILURES < EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES)) {
+    ++EMPTY_CHAIN_ORIGIN_FAILURES;
+    co_return td::Status::Error(ErrorCode::notready, "simulated session origin not ready");
+  }
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0 &&
+      (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES == 0 ||
+       EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES < EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES)) {
     ++EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
     co_return td::Status::Error(ErrorCode::timeout, "simulated missing finalized anchor state");
   }
@@ -2592,7 +2923,9 @@ td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(Bloc
 }
 
 td::actor::Task<td::Ref<BlockData>> TestManagerFacade::wait_block_data(BlockIdExt block_id, td::Timestamp timeout) {
-  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0) {
+  if (EMPTY_CHAIN_MANAGER_ANCHOR_UNAVAILABLE && block_id.seqno() != 0 &&
+      (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES == 0 ||
+       EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES < EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES)) {
     ++EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
     co_return td::Status::Error(ErrorCode::timeout, "simulated missing finalized anchor data");
   }
@@ -2782,19 +3115,21 @@ void test_state_resolver_inflight_admission() {
   CHECK(admission.count() == 2);
 }
 
-void test_skipped_slot_resolution_policy() {
-  CandidateId requested{.slot = 411,
-                        .hash = from_hex("1111111111111111111111111111111111111111111111111111111111111111")};
-  CandidateId conflicting{.slot = 411,
-                          .hash = from_hex("2222222222222222222222222222222222222222222222222222222222222222")};
+void test_merkle_exact_parent_height_control() {
+  // The recovered failures expected old state N but applied the update to
+  // N-1. An exact ancestor supplies N; omitting its transition supplies N-1.
+  for (BlockSeqno expected : {BlockSeqno{5}, BlockSeqno{23}}) {
+    auto exact_parent_state = gen_shard_state(expected);
+    auto skipped_base_state = gen_shard_state(expected - 1);
+    auto next_state = gen_shard_state(expected + 1);
+    auto update = vm::CellBuilder::create_merkle_update(exact_parent_state, next_state);
 
-  CHECK(simplex::select_skipped_slot_resolution(requested, false, std::nullopt).move_as_ok() ==
-        simplex::SkippedSlotResolution::ResolveCandidate);
-  CHECK(simplex::select_skipped_slot_resolution(requested, true, std::nullopt).move_as_ok() ==
-        simplex::SkippedSlotResolution::UseAvailableBase);
-  CHECK(simplex::select_skipped_slot_resolution(requested, true, requested).move_as_ok() ==
-        simplex::SkippedSlotResolution::ResolveCandidate);
-  CHECK(simplex::select_skipped_slot_resolution(requested, true, conflicting).is_error());
+    auto correct = vm::MerkleUpdate::apply(exact_parent_state, update);
+    CHECK(correct.is_ok());
+    CHECK(correct.move_as_ok()->get_hash() == next_state->get_hash());
+
+    CHECK(vm::MerkleUpdate::apply(skipped_base_state, update).is_error());
+  }
 }
 
 void test_candidate_resolver_retention() {
@@ -3346,7 +3681,7 @@ int main(int argc, char* argv[]) {
   bool run_candidate_relay_eviction_test = false;
   bool run_state_resolver_cache_unit_test = false;
   bool run_state_resolver_inflight_admission_unit_test = false;
-  bool run_skipped_slot_resolution_unit_test = false;
+  bool run_merkle_exact_parent_height_control_test = false;
   bool run_candidate_resolver_retention_unit_test = false;
   bool run_candidate_resolver_interleaving_unit_test = false;
   bool run_simplex_db_finalized_slot_dedup_unit_test = false;
@@ -3525,9 +3860,9 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "state-resolver-inflight-admission-unit-test",
                "verify in-flight resolution admission control bounds concurrent pending entries",
                [&]() { run_state_resolver_inflight_admission_unit_test = true; });
-  p.add_option('\0', "skipped-slot-resolution-unit-test",
-               "verify skip-only and simultaneous skip/notar candidate resolution",
-               [&]() { run_skipped_slot_resolution_unit_test = true; });
+  p.add_option('\0', "merkle-exact-parent-height-control-test",
+               "verify the recovered N/N-1 Merkle base-state mismatch shape",
+               [&]() { run_merkle_exact_parent_height_control_test = true; });
   p.add_option('\0', "candidate-resolver-retention-unit-test",
                "verify finalized-window pruning and in-flight retention",
                [&]() { run_candidate_resolver_retention_unit_test = true; });
@@ -3574,6 +3909,33 @@ int main(int argc, char* argv[]) {
                        });
 
   p.run(argc, argv).ensure();
+  if (const char* value = std::getenv("TOS_TEST_RESTART_FROM_LAST_ACCEPTED_BLOCK");
+      value != nullptr && std::string_view(value) == "1") {
+    RESTART_FROM_LAST_ACCEPTED_BLOCK = true;
+  }
+  if (const char* value = std::getenv("TOS_TEST_ANCHOR_TRANSIENT_FAILURES"); value != nullptr) {
+    auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
+    LOG_CHECK(parsed.is_ok() && parsed.ok() > 0) << "TOS_TEST_ANCHOR_TRANSIENT_FAILURES must be a positive integer";
+    EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES = parsed.ok();
+  }
+  if (const char* value = std::getenv("TOS_TEST_ORIGIN_TRANSIENT_FAILURES"); value != nullptr) {
+    auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
+    LOG_CHECK(parsed.is_ok() && parsed.ok() > 0) << "TOS_TEST_ORIGIN_TRANSIENT_FAILURES must be a positive integer";
+    EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = parsed.ok();
+  }
+  if (const char* value = std::getenv("TOS_TEST_ORIGIN_PERMANENTLY_UNAVAILABLE");
+      value != nullptr && std::string_view(value) == "1") {
+    EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = true;
+  }
+  if (const char* value = std::getenv("TOS_TEST_C05_SIMULTANEOUS_FAULTS"); value != nullptr) {
+    auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
+    LOG_CHECK(parsed.is_ok() && parsed.ok() > 0) << "TOS_TEST_C05_SIMULTANEOUS_FAULTS must be positive";
+    C05_GENESIS_FAULT_BUDGET = parsed.ok();
+  }
+  LOG(WARNING) << "C03 harness switches: restart_from_last_accepted_block=" << RESTART_FROM_LAST_ACCEPTED_BLOCK
+               << " anchor_transient_failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES.load()
+               << " origin_transient_failures=" << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES.load()
+               << " origin_permanently_unavailable=" << EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE;
   if (run_configured_maximum_candidate_test) {
     test_configured_maximum_candidate();
     return 0;
@@ -3590,8 +3952,8 @@ int main(int argc, char* argv[]) {
     test_state_resolver_inflight_admission();
     return 0;
   }
-  if (run_skipped_slot_resolution_unit_test) {
-    test_skipped_slot_resolution_policy();
+  if (run_merkle_exact_parent_height_control_test) {
+    test_merkle_exact_parent_height_control();
     return 0;
   }
   if (run_candidate_resolver_retention_unit_test) {

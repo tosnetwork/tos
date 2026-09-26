@@ -127,20 +127,23 @@ class PqConsensusCustody {
 // its identity is unrelated, so owning network or operator keys does not make a node a
 // consensus validator. A classical member is still matched by its key, whose identity
 // is what the set records for it.
+inline bool local_consensus_descriptor(const tos::ValidatorDescr& descr, const std::set<PublicKeyHash>& temp_keys,
+                                       const std::set<PublicKeyHash>& permanent_keys,
+                                       const PqConsensusCustody& pq_custody) {
+  if (descr.is_pq()) {
+    auto held = pq_custody.held_key_id(descr.validator_id);
+    return held && *held == descr.key_id;
+  }
+  const auto classical = PublicKeyHash{descr.validator_id.value};
+  return temp_keys.count(classical) != 0 || permanent_keys.count(classical) != 0;
+}
+
 inline std::optional<tos::ValidatorId> local_consensus_member(const block::ValidatorSet& set,
                                                               const std::set<PublicKeyHash>& temp_keys,
                                                               const std::set<PublicKeyHash>& permanent_keys,
                                                               const PqConsensusCustody& pq_custody) {
   for (const auto& descr : set.export_vector()) {
-    if (descr.is_pq()) {
-      auto held = pq_custody.held_key_id(descr.validator_id);
-      if (held && *held == descr.key_id) {
-        return descr.validator_id;
-      }
-      continue;
-    }
-    const auto classical = PublicKeyHash{descr.validator_id.value};
-    if (temp_keys.count(classical) != 0 || permanent_keys.count(classical) != 0) {
+    if (local_consensus_descriptor(descr, temp_keys, permanent_keys, pq_custody)) {
       return descr.validator_id;
     }
   }

@@ -16,6 +16,7 @@
 */
 #pragma once
 #include "auto/tl/tos_api.h"
+#include "measurement/measurement-contract.h"
 #include "tos/tos-types.h"
 #include "vm/cells.h"
 
@@ -38,6 +39,7 @@ td::Result<BlockBroadcast> get_block_broadcast_without_data(const tos_api::tosNo
 
 td::BufferSlice serialize_block_finality_broadcast(const BlockFinalityBroadcast& broadcast);
 td::Bits256 block_finality_broadcast_transport_id(const BlockFinalityBroadcast& broadcast);
+measurement::TraceId block_finality_broadcast_trace_id(const BlockFinalityBroadcast& broadcast);
 td::Result<BlockFinalityBroadcast> deserialize_block_finality_broadcast(
     tos_api::tosNode_blockFinalityBroadcast& broadcast);
 

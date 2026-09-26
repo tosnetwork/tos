@@ -13,7 +13,10 @@ import os
 import subprocess
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
+
+from e03_http_trace import record as record_e03_http
 
 from pytosiq_core import Address
 
@@ -50,8 +53,15 @@ class Seeder:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=10) as response:
-            value = json.loads(response.read().decode())
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                raw = response.read()
+                record_e03_http(request.full_url, payload, response.status, raw)
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            record_e03_http(request.full_url, payload, error.code, raw)
+            raise
+        value = json.loads(raw.decode())
         if "error" in value:
             raise RuntimeError(f"{method}: {value['error']}")
         return value["result"]
@@ -91,7 +101,10 @@ class Seeder:
                 env=self.env,
             )
         config = self.config_data()
-        config["chain_rpc"] = {"urls": [f"{self.rpc}/"], "api_key": None}
+        # E03 alone routes tosctl through a loopback recorder. Seeder's own
+        # observations still query the node directly and remain independent.
+        tosctl_rpc = os.environ.get("E03_TOSCTL_RPC_ORIGIN", self.rpc).rstrip("/")
+        config["chain_rpc"] = {"urls": [f"{tosctl_rpc}/"], "api_key": None}
         config["elections"] = None
         config["voting"] = None
         config["master_wallet"] = None
@@ -132,8 +145,15 @@ class Seeder:
             data=payload,
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=70) as response:
-            result = json.loads(response.read().decode())
+        try:
+            with urllib.request.urlopen(request, timeout=70) as response:
+                raw = response.read()
+                record_e03_http(request.full_url, payload, response.status, raw)
+        except urllib.error.HTTPError as error:
+            raw = error.read()
+            record_e03_http(request.full_url, payload, error.code, raw)
+            raise
+        result = json.loads(raw.decode())
         if "error" in result:
             raise RuntimeError(result["error"])
 
@@ -173,8 +193,7 @@ class Seeder:
                 owner_name,
                 "--validator",
                 validator_name,
-                "--controller",
-                controller,
+                f"--controller={controller}",
                 "--validator-reward-share",
                 "4000",
                 "--max-nominators",

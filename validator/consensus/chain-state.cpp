@@ -15,11 +15,13 @@ namespace tos::validator::consensus {
 
 td::actor::Task<td::Ref<ChainState>> ChainState::from_manager(td::actor::ActorId<ManagerFacade> manager,
                                                               ShardIdFull shard, std::vector<BlockIdExt> blocks,
-                                                              BlockIdExt min_mc_block_id) {
+                                                              BlockIdExt min_mc_block_id,
+                                                              std::optional<CandidateId> requesting_candidate) {
   if (blocks.size() == 1 && blocks[0].seqno() == 0) {
     CHECK(blocks[0].shard_full() == shard);
     auto state =
-        co_await td::actor::ask(manager, &ManagerFacade::wait_block_state_root, blocks[0], td::Timestamp::in(10.0));
+        co_await td::actor::ask(manager, &ManagerFacade::wait_block_state_root, blocks[0], td::Timestamp::in(10.0),
+                                requesting_candidate);
     co_return td::make_ref<ChainState>(ZerostateTip{blocks[0], state}, min_mc_block_id);
   }
 
@@ -27,7 +29,8 @@ td::actor::Task<td::Ref<ChainState>> ChainState::from_manager(td::actor::ActorId
   std::vector<td::actor::StartedTask<td::Ref<BlockData>>> wait_block_data;
   for (auto block : blocks) {
     wait_state_root.push_back(
-        td::actor::ask(manager, &ManagerFacade::wait_block_state_root, block, td::Timestamp::in(10.0)));
+        td::actor::ask(manager, &ManagerFacade::wait_block_state_root, block, td::Timestamp::in(10.0),
+                       requesting_candidate));
     if (block.seqno() != 0) {
       wait_block_data.push_back(
           td::actor::ask(manager, &ManagerFacade::wait_block_data, block, td::Timestamp::in(10.0)));

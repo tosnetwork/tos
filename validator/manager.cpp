@@ -34,6 +34,7 @@
 #include "block/workchain-execution-dispatch.h"
 #include "common/delay.h"
 #include "common/stats.h"
+#include "crypto/pq/pq-launch-limits.h"
 #include "db/celldb.hpp"
 #include "db/fileref.hpp"
 #include "downloaders/wait-block-data.hpp"
@@ -65,6 +66,7 @@
 #include "checksum.h"
 #include "fabric.h"
 #include "finality-cache-policy.h"
+#include "full-node-serializer.hpp"
 #include "get-next-key-blocks.h"
 #include "import-db-slice-local.hpp"
 #include "import-db-slice.hpp"
@@ -997,26 +999,14 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
     return;
   }
   const auto attempt_token = finality.token;
+  PendingBlockProofFailureSource proof_failure_source = PendingBlockProofFailureSource::BlockBytes;
   td::Result<td::BufferSlice> proof =
       block_id.is_masterchain() ? WaitBlockData::generate_proof(block_id, block.ok()->root_cell(),
-                                                                finality->evidence.sig_set, last_masterchain_state_)
+                                                                finality->evidence.sig_set, last_masterchain_state_,
+                                                                proof_failure_source)
                                 : WaitBlockData::generate_proof_link(block_id, block.ok()->root_cell());
   if (proof.is_error()) {
-    auto error = proof.move_as_error();
-    if (error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout) {
-      failed_pending_block_finality(block_id, attempt_token, std::move(error), "create block proof");
-    } else {
-      // A proof-construction failure describes the cached block bytes, not the
-      // independently received finality evidence. Retain the latter for a
-      // correct block arrival, but remove the bad block candidate.
-      pending->cancel_processing(attempt_token);
-      VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
-      if (block_id.is_masterchain()) {
-        cached_masterchain_block_candidates_.erase(block_id);
-      } else {
-        cached_block_data_.erase(block_id);
-      }
-    }
+    failed_pending_block_proof(block_id, attempt_token, proof_failure_source, proof.move_as_error());
     return;
   }
 
@@ -1026,6 +1016,12 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
   BlockBroadcast broadcast{block_id, std::move(sig_set), std::move(data), proof.move_as_ok()};
   const bool signatures_checked = finality->verified || !broadcast.sig_set->is_pq();
   if (!signatures_checked) {
+    measurement::record_trace_lazy(
+        [&] {
+          return fullnode::block_finality_broadcast_trace_id(
+              BlockFinalityBroadcast{block_id, finality->evidence.sig_set});
+        },
+        measurement::TraceStage::peer_finality_verification_started);
     auto broadcast_for_validation = broadcast.clone();
     validate_block_broadcast_signatures(
         std::move(broadcast_for_validation),
@@ -1042,6 +1038,38 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
         td::actor::send_closure(SelfId, &ValidatorManagerImpl::processed_pending_block_finality, block_id, was_final,
                                 attempt_token, std::move(result));
       });
+}
+
+void ValidatorManagerImpl::failed_pending_block_proof(BlockIdExt block_id,
+                                                       PendingFinalityAttemptToken attempt_token,
+                                                       PendingBlockProofFailureSource source, td::Status error) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr || !pending->is_processing(attempt_token)) {
+    return;
+  }
+  auto action = pending_block_proof_failure_action(source, error.code());
+  if (action != PendingBlockProofFailureAction::DiscardBlockBytes) {
+    if (source == PendingBlockProofFailureSource::TrustedContext && error.code() != ErrorCode::notready &&
+        error.code() != ErrorCode::timeout) {
+      // Context can be temporarily behind a valid block. Retain both inputs
+      // within the pending-evidence deadline rather than deleting either.
+      error = td::Status::Error(ErrorCode::notready, PSTRING() << "masterchain proof context: " << error);
+    }
+    failed_pending_block_finality(block_id, attempt_token, std::move(error),
+                                  action == PendingBlockProofFailureAction::DiscardEvidence
+                                      ? "check finality evidence for block proof"
+                                      : "create block proof with current context");
+    return;
+  }
+  // Only an error attributed to the cached candidate bytes retires those
+  // bytes while preserving independently received finality evidence.
+  pending->cancel_processing(attempt_token);
+  VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
+  if (block_id.is_masterchain()) {
+    cached_masterchain_block_candidates_.erase(block_id);
+  } else {
+    cached_block_data_.erase(block_id);
+  }
 }
 
 void ValidatorManagerImpl::schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at) {
@@ -1104,6 +1132,9 @@ void ValidatorManagerImpl::checked_pending_block_finality(BlockIdExt block_id, B
   if (!pending->mark_front_verified(attempt_token)) {
     return;
   }
+  measurement::record_trace_lazy(
+      [&] { return fullnode::block_finality_broadcast_trace_id(BlockFinalityBroadcast{block_id, broadcast.sig_set}); },
+      measurement::TraceStage::peer_finality_broadcast_verified);
   new_block_broadcast(
       std::move(broadcast), true, source,
       [SelfId = actor_id(this), block_id, was_final, attempt_token](td::Result<td::Unit> apply_result) mutable {
@@ -1191,6 +1222,17 @@ void ValidatorManagerImpl::created_ext_server(td::actor::ActorOwn<adnl::AdnlExtS
 
 void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data,
                                          td::Promise<td::BufferSlice> promise) {
+  // This is already inside the liteServer_query contract. An early failure
+  // must be an answer, not a failed ADNL promise that leaves the client
+  // waiting for its ten-second transport deadline.
+  promise = td::PromiseCreator::lambda([reply = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
+    if (result.is_error()) {
+      auto status = result.move_as_error();
+      reply.set_value(create_serialize_tl_object<lite_api::liteServer_error>(status.code(), status.message().c_str()));
+    } else {
+      reply.set_value(result.move_as_ok());
+    }
+  });
   if (!started_ && !opts_->get_unsynced_liteserver()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not synced"));
     return;
@@ -2860,7 +2902,7 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
         run_hardfork_accept_block_query(b, dataR.move_as_ok(), SelfId, std::move(P));
       });
       td::actor::send_closure(db_, &Db::try_get_static_file, b.file_hash, std::move(P));
-      co_return {};
+      co_return td::Unit{};
     }
   }
 
@@ -2873,7 +2915,7 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
   } else {
     prestart_sync();
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
@@ -2891,7 +2933,7 @@ td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
     co_await std::move(task);
     VLOG(VALIDATOR_INFO) << "Initial advancing mc to seqno " << next_handle->id().seqno();
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ValidatorManagerImpl::applied_hardfork() {
@@ -3112,6 +3154,15 @@ void ValidatorManagerImpl::update_shards() {
       opts_->get_last_fork_masterchain_seqno() <= last_masterchain_seqno_) {
     allow_validate_ = true;
   }
+  auto config_holder = last_masterchain_state_->get_config_holder();
+  auto launch_config = config_holder.is_error()
+                           ? config_holder.move_as_error_prefix("failed to extract launch resource configuration: ")
+                           : config_holder.ok()->validate_pq_launch_resource_config();
+  if (launch_config.is_error()) {
+    LOG(ERROR) << "refusing validator and observer groups for an unsafe launch resource configuration: "
+               << launch_config;
+    allow_validate_ = false;
+  }
   auto exp_vec = last_masterchain_state_->get_shards();
   auto config = last_masterchain_state_->get_consensus_config();
   consensus::ValidatorSessionOptions opts{config};
@@ -3259,6 +3310,20 @@ void ValidatorManagerImpl::update_shards() {
                         "validation for this shard is disabled until the node is upgraded or the config is fixed";
           continue;
         }
+        // A local recovery tag is not part of the chain-derived PQ signing
+        // session. The old path hashed it into val_group_id, then handed that
+        // ID to Bridge as bus->session_id; trusted validation then logged a
+        // carried-session mismatch against the chain-derived ID. Do not
+        // create an active group until storage incarnation and
+        // consensus identity have been safely split, including old DB votes.
+        if (auto rotation_tag =
+                opts_->check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno());
+            rotation_tag != 0) {
+          LOG(ERROR) << "refusing to create PQ Simplex validator group for " << shard.to_str()
+                     << ": --unsafe-catchain-rotate=" << rotation_tag
+                     << " cannot alter the canonical PQ ValidatorSessionId";
+          continue;
+        }
         ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
         auto val_group_id =
             block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
@@ -3275,19 +3340,6 @@ void ValidatorManagerImpl::update_shards() {
                 .session_id;
         if (destroyed_validator_sessions_.contains(val_group_id)) {
           continue;
-        }
-
-        if (force_recover) {
-          auto r = opts_->check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno());
-          if (r) {
-            td::uint8 b[36];
-            td::MutableSlice x{b, 36};
-            x.copy_from(val_group_id.as_slice());
-            x.remove_prefix(32);
-            CHECK(x.size() == 4);
-            x.copy_from(td::Slice(reinterpret_cast<const td::uint8 *>(&r), 4));
-            val_group_id = sha256_bits256(td::Slice(b, 36));
-          }
         }
 
         auto find_or_create_validator_group = [&] {
@@ -3327,40 +3379,42 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
-  for (auto &shard : future_shards) {
-    auto val_set = last_masterchain_state_->get_next_validator_set(shard);
-    if (val_set.is_null()) {
-      continue;
-    }
+  if (allow_validate_) {
+    for (auto &shard : future_shards) {
+      auto val_set = last_masterchain_state_->get_next_validator_set(shard);
+      if (val_set.is_null()) {
+        continue;
+      }
 
-    auto validator_id = get_validator_id(shard, val_set);
-    if (!validator_id.is_zero()) {
-      auto selected_config = last_masterchain_state_->get_selected_new_consensus_config(shard.workchain);
-      if (!selected_config || !selected_config.value().config.protocol_version_supported()) {
-        LOG(ERROR) << "refusing to create future validator group for " << shard.to_str()
-                   << ": consensus config is missing or its protocol version is not supported by this build";
-        continue;
-      }
-      auto val_group_id =
-          block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
-                                                       .global_id = global_id,
-                                                       .validator_options_hash = opts_hash,
-                                                       .simplex_config_cell_hash = selected_config.value().cell_hash,
-                                                       .shard = shard,
-                                                       .catchain_seqno = val_set->get_catchain_seqno(),
-                                                       .validators = val_set->export_vector(),
-                                                       .vertical_seqno = opts_->get_maximal_vertical_seqno(),
-                                                       .last_key_block_seqno = key_seqno,
-                                                       .new_catchain_ids = opts.new_catchain_ids,
-                                                   })
-              .session_id;
-      if (destroyed_validator_sessions_.contains(val_group_id)) {
-        continue;
-      }
-      get_or_make_next_group(shard, val_group_id, val_set, selected_config.value().config);
-      if (shard.is_masterchain() && mc_validator_adnl_id.is_zero()) {
-        mc_validator_adnl_id =
-            adnl::AdnlNodeIdShort{block::validator_adnl_identity(*val_set->get_validator(validator_id))};
+      auto validator_id = get_validator_id(shard, val_set);
+      if (!validator_id.is_zero()) {
+        auto selected_config = last_masterchain_state_->get_selected_new_consensus_config(shard.workchain);
+        if (!selected_config || !selected_config.value().config.protocol_version_supported()) {
+          LOG(ERROR) << "refusing to create future validator group for " << shard.to_str()
+                     << ": consensus config is missing or its protocol version is not supported by this build";
+          continue;
+        }
+        auto val_group_id =
+            block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
+                                                         .global_id = global_id,
+                                                         .validator_options_hash = opts_hash,
+                                                         .simplex_config_cell_hash = selected_config.value().cell_hash,
+                                                         .shard = shard,
+                                                         .catchain_seqno = val_set->get_catchain_seqno(),
+                                                         .validators = val_set->export_vector(),
+                                                         .vertical_seqno = opts_->get_maximal_vertical_seqno(),
+                                                         .last_key_block_seqno = key_seqno,
+                                                         .new_catchain_ids = opts.new_catchain_ids,
+                                                     })
+                .session_id;
+        if (destroyed_validator_sessions_.contains(val_group_id)) {
+          continue;
+        }
+        get_or_make_next_group(shard, val_group_id, val_set, selected_config.value().config);
+        if (shard.is_masterchain() && mc_validator_adnl_id.is_zero()) {
+          mc_validator_adnl_id =
+              adnl::AdnlNodeIdShort{block::validator_adnl_identity(*val_set->get_validator(validator_id))};
+        }
       }
     }
   }
@@ -3375,13 +3429,32 @@ void ValidatorManagerImpl::update_shards() {
         continue;
       }
       auto config = selected_config.value().config;
-      if (!config.enable_block_sync() && !config.observers_in_private_overlay()) {
+      const auto enable_block_sync = config.enable_block_sync();
+      const auto observers_in_private_overlay = config.observers_in_private_overlay();
+      auto record_observer_diagnostics = [&](std::optional<std::size_t> candidate_count) {
+        auto state = std::make_tuple(enable_block_sync, observers_in_private_overlay, candidate_count);
+        auto it = observer_group_diagnostic_states_.find(shard);
+        if (it != observer_group_diagnostic_states_.end() && it->second == state) {
+          return;
+        }
+        observer_group_diagnostic_states_.insert_or_assign(shard, state);
+        LOG(INFO) << "Observer group policy for " << shard.to_str() << ": enable_block_sync=" << enable_block_sync
+                  << ", observers_in_private_overlay=" << observers_in_private_overlay;
+        if (candidate_count) {
+          LOG(INFO) << "Observer group candidates for " << shard.to_str()
+                    << ": get_observer_adnl_ids size=" << *candidate_count;
+        }
+      };
+      if (!enable_block_sync && !observers_in_private_overlay) {
+        record_observer_diagnostics(std::nullopt);
         continue;
       }
       auto val_set = last_masterchain_state_->get_validator_set(shard);
       if (val_set.is_null()) {
         continue;
       }
+      auto observer_adnl_ids = get_observer_adnl_ids(val_set);
+      record_observer_diagnostics(observer_adnl_ids.size());
       // An observer verifies peers with the same post-quantum keys a validator does, so a
       // set it could not verify must not get an observer group either. Decided here, before
       // any actor is created, for the same reason as the validator path.
@@ -3402,7 +3475,7 @@ void ValidatorManagerImpl::update_shards() {
                                                        .new_catchain_ids = opts.new_catchain_ids,
                                                    })
               .session_id;
-      for (auto local_adnl_id : get_observer_adnl_ids(val_set)) {
+      for (auto local_adnl_id : observer_adnl_ids) {
         ObserverGroupId observer_id{session_id, local_adnl_id};
         ValidatorGroupEntry entry;
         if (auto it = observer_groups_.find(observer_id); it != observer_groups_.end()) {
@@ -3636,6 +3709,15 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   CHECK(descr);
   auto adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(*descr)};
 
+  const auto committee_ceiling = shard.is_masterchain() ? tos::pq::launch_limits::max_masterchain_committee
+                                                        : tos::pq::launch_limits::max_shard_committee;
+  const auto committee_size = validator_set->export_vector().size();
+  if (committee_size > committee_ceiling) {
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str() << ": committee has " << committee_size
+               << " members, above launch ceiling " << committee_ceiling;
+    return {};
+  }
+
   if (!config.protocol_version_supported()) {
     // Fail closed. A missing or unrecognized consensus config (absent
     // parameter, unpack failure, reserved flag bits), or one whose protocol
@@ -3685,6 +3767,14 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group(
     ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
     td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config) {
+  const auto committee_ceiling = shard.is_masterchain() ? tos::pq::launch_limits::max_masterchain_committee
+                                                        : tos::pq::launch_limits::max_shard_committee;
+  const auto committee_size = validator_set->export_vector().size();
+  if (committee_size > committee_ceiling) {
+    LOG(ERROR) << "refusing to create observer group for " << shard.to_str() << ": committee has " << committee_size
+               << " members, above launch ceiling " << committee_ceiling;
+    return {};
+  }
   return IValidatorGroup::create_bridge_observer(
       PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
       std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
@@ -3694,20 +3784,19 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group
 std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
     td::Ref<block::ValidatorSet> validator_set) const {
   std::set<adnl::AdnlNodeIdShort> result;
-  for (const auto &key : temp_keys_) {
-    if (validator_set->is_validator(tos::ValidatorId{key.bits256_value()})) {
+  for (int offset = -1; offset <= 1; ++offset) {
+    auto total_set = last_masterchain_state_->get_total_validator_set(offset);
+    if (total_set.is_null()) {
       continue;
     }
-    for (int offset = -1; offset <= 1; ++offset) {
-      auto total_set = last_masterchain_state_->get_total_validator_set(offset);
-      if (total_set.is_null()) {
+    for (const auto &descr : total_set->export_vector()) {
+      if (validator_set->is_validator(descr.validator_id)) {
         continue;
       }
-      auto descr = total_set->get_validator(tos::ValidatorId{key.bits256_value()});
-      if (!descr) {
+      if (!local_consensus_descriptor(descr, temp_keys_, permanent_keys_, pq_custody_)) {
         continue;
       }
-      result.emplace(block::validator_adnl_identity(*descr));
+      result.emplace(block::validator_adnl_identity(descr));
     }
   }
   return result;

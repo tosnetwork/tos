@@ -39,6 +39,7 @@
 #include "common/bitstring.h"
 #include "crypto/pq/pq-bytes.h"
 #include "crypto/pq/pq-consensus.h"
+#include "crypto/pq/pq-launch-limits.h"
 #include "openssl/digest.hpp"
 #include "td/utils/bits.h"
 #include "td/utils/uint128.h"
@@ -305,19 +306,34 @@ td::Status Config::unpack() {
 }
 
 td::Status Config::visit_validator_params() const {
-  {
-    // current validator set
-    TRY_RESULT(vset, unpack_validator_set(get_config_param(34)));
-  }
-  for (int i = 32; i < 38; i++) {
-    // prev/current/next persistent and temporary validator sets
-    auto vs = get_config_param(i);
-    if (vs.not_null()) {
-      TRY_RESULT(vset, unpack_validator_set(std::move(vs)));
+  try {
+    {
+      // current validator set
+      TRY_RESULT(vset, unpack_validator_set(get_config_param(34)));
     }
+    for (int i = 32; i < 38; i++) {
+      // prev/current/next persistent and temporary validator sets
+      auto vs = get_config_param(i);
+      if (vs.not_null()) {
+        TRY_RESULT(vset, unpack_validator_set(std::move(vs)));
+      }
+    }
+    get_catchain_validators_config();
+    // A key-block proof is also used as the trusted PQ finality context. The
+    // verifier reads these parameters through that virtualized proof; visiting
+    // them here keeps their dictionary paths and value cells in the proof.
+    // The three consensus calls intentionally overlap: either selected-config
+    // call currently visits Param29 and both Param30 branches while unpacking.
+    // Keep the explicit general/MC/shard reads so a change in that traversal
+    // does not silently narrow what the proof retains.
+    static_cast<void>(get_config_param(19));
+    get_consensus_config();
+    get_selected_new_consensus_config(tos::masterchainId);
+    get_selected_new_consensus_config(tos::basechainId);  // the shared shard branch for all non-MC workchains
+    return td::Status::OK();
+  } catch (vm::VmVirtError& error) {
+    return error.as_status("key-block validator and PQ finality parameters are unavailable: ");
   }
-  get_catchain_validators_config();
-  return td::Status::OK();
 }
 
 tos::ValidatorSessionConfig Config::get_consensus_config() const {
@@ -797,9 +813,8 @@ td::Result<std::shared_ptr<TotalValidatorSet>> Config::unpack_validator_set(Ref<
       // A classical validator's membership identity and key identity are both the one
       // derived from its Ed25519 key. Settling that here means every consumer of a
       // decoded set sees populated identities, including the ones that hash them.
-      auto classical_id = tos::PublicKey{tos::pubkeys::Ed25519{pubkey}}.compute_short_id().bits256_value();
-      validator_id = tos::ValidatorId{classical_id};
-      key_id = tos::ConsensusKeyId{classical_id};
+      validator_id = classical_validator_id(pubkey);
+      key_id = tos::ConsensusKeyId{validator_id.value};
       adnl_addr = descr.adnl_addr;
       weight = descr.weight;
     }
@@ -1063,6 +1078,72 @@ CatchainValidatorsConfig Config::unpack_catchain_validators_config(Ref<vm::Cell>
 
 CatchainValidatorsConfig Config::get_catchain_validators_config() const {
   return unpack_catchain_validators_config(get_config_param(28));
+}
+
+td::Status Config::validate_pq_launch_resource_config() const {
+  auto limits_cell = get_config_param(16);
+  if (limits_cell.is_null()) {
+    return td::Status::Error("ConfigParam16 is missing");
+  }
+  auto limits = vm::load_cell_slice(limits_cell);
+  if (limits.size() != 48 || limits.size_refs() != 0) {
+    return td::Status::Error("ConfigParam16 has an invalid shape");
+  }
+  const auto max_validators = limits.fetch_ulong(16);
+  const auto max_main_validators = limits.fetch_ulong(16);
+  const auto min_validators = limits.fetch_ulong(16);
+  if (min_validators < 1 || max_main_validators < min_validators || max_validators < max_main_validators) {
+    return td::Status::Error("ConfigParam16 validator-count ordering is invalid");
+  }
+  if (max_validators > tos::pq::launch_limits::max_total_validators) {
+    return td::Status::Error(PSLICE() << "ConfigParam16.max_validators " << max_validators
+                                      << " exceeds the launch ceiling "
+                                      << tos::pq::launch_limits::max_total_validators);
+  }
+  if (max_main_validators > tos::pq::launch_limits::max_masterchain_committee) {
+    return td::Status::Error(PSLICE() << "ConfigParam16.max_main_validators " << max_main_validators
+                                      << " exceeds the launch ceiling "
+                                      << tos::pq::launch_limits::max_masterchain_committee);
+  }
+
+  auto catchain_cell = get_config_param(28);
+  if (catchain_cell.is_null()) {
+    return td::Status::Error("ConfigParam28 is missing");
+  }
+  td::uint32 shard_validators_num = 0;
+  block::gen::CatchainConfig::Record_catchain_config legacy;
+  block::gen::CatchainConfig::Record_catchain_config_new current;
+  if (tlb::unpack_cell(catchain_cell, legacy)) {
+    shard_validators_num = legacy.shard_validators_num;
+  } else if (tlb::unpack_cell(std::move(catchain_cell), current)) {
+    shard_validators_num = current.shard_validators_num;
+  } else {
+    return td::Status::Error("ConfigParam28 has an invalid shape");
+  }
+  if (shard_validators_num < 1 || shard_validators_num > tos::pq::launch_limits::max_shard_committee) {
+    return td::Status::Error(PSLICE() << "ConfigParam28.shard_validators_num " << shard_validators_num
+                                      << " is outside the launch range 1.."
+                                      << tos::pq::launch_limits::max_shard_committee);
+  }
+
+  for (int param : {34, 35, 36, 37}) {
+    auto cell = get_config_param(param);
+    if (cell.is_null()) {
+      continue;
+    }
+    TRY_RESULT(set, unpack_validator_set(std::move(cell), true));
+    if (set->total > static_cast<int>(max_validators) ||
+        set->total > static_cast<int>(tos::pq::launch_limits::max_total_validators)) {
+      return td::Status::Error(PSLICE() << "ConfigParam" << param << ".total " << set->total
+                                        << " exceeds the admitted validator limit");
+    }
+    if (set->main > static_cast<int>(max_main_validators) ||
+        set->main > static_cast<int>(tos::pq::launch_limits::max_masterchain_committee)) {
+      return td::Status::Error(PSLICE() << "ConfigParam" << param << ".main " << set->main
+                                        << " exceeds the admitted masterchain committee limit");
+    }
+  }
+  return td::Status::OK();
 }
 
 // compares all fields except fsm*, before_merge_, nx_cc_updated_, next_catchain_seqno_

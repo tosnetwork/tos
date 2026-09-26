@@ -27,8 +27,11 @@ happens to know about an address.
 Run from the repository root: uv run python scripts/agent-chain-index-e2e.py
 """
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -39,6 +42,7 @@ from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
 REPO = Path(__file__).resolve().parents[1]
@@ -47,6 +51,8 @@ TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19446"
 HTTP_B = "127.0.0.1:19447"
 WORKDIR = REPO / "test/integration/.agent-chain-index-e2e"
+HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG_A = WORKDIR / "tosctl-config-a.json"
 CONFIG_B = WORKDIR / "tosctl-config-b.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000009"
@@ -86,11 +92,21 @@ def http_get(path: str) -> tuple[int, dict]:
     except urllib.error.HTTPError as e:
         raw = e.read()
         status = e.code
+    with HTTP_TRANSCRIPT.open("a", encoding="utf-8") as transcript:
+        transcript.write(json.dumps({
+            "request": {"method": "GET", "path": path},
+            "response": {"status": status, "body_base64": base64.b64encode(raw).decode()},
+        }, sort_keys=True) + "\n")
     try:
         return status, json.loads(raw.decode())
     except json.JSONDecodeError:
         print(f"  DEBUG non-JSON response: status={status} raw={raw!r}")
         return status, {}
+
+
+async def http_get_async(path: str) -> tuple[int, dict]:
+    # This event loop also drains the node and service subprocess pipes.
+    return await asyncio.to_thread(http_get, path)
 
 
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
@@ -197,7 +213,7 @@ async def wait_http_ready(timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            status, _ = http_get("/health")
+            status, _ = await http_get_async("/health")
             if status == 200:
                 return True
         except Exception:
@@ -213,12 +229,17 @@ async def poll_http_predicate(path: str, predicate, timeout: float) -> tuple[boo
     deadline = time.time() + timeout
     last_body: dict = {}
     while time.time() < deadline:
-        status, body = http_get(path)
+        status, body = await http_get_async(path)
         last_body = body
         if status == 200 and predicate(body):
             return True, body
         await asyncio.sleep(1)
     return False, last_body
+
+
+def indexed_through(body: dict, masterchain_seqno: int) -> bool:
+    indexed = body.get("result", {}).get("masterchain_indexed")
+    return type(indexed) is int and indexed >= masterchain_seqno
 
 
 def prepare_config(config: Path, http_bind: str | None):
@@ -238,6 +259,24 @@ def prepare_config(config: Path, http_bind: str | None):
     cfg.pop("voting", None)
     cfg["tick_interval"] = 2
     config.write_text(json.dumps(cfg, indent=2))
+
+
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binary = Path(TOSCTL).resolve()
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "tosctl_binary": str(binary),
+        "tosctl_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+        "build_dir": str(BUILD_DIR.resolve()),
+        "http_transcript": HTTP_TRANSCRIPT.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
 async def run_checks(faucet) -> None:
@@ -297,6 +336,8 @@ async def run_checks(faucet) -> None:
     check("config-b capability_registries is empty",
           config_b_json.get("capability_registries", {}) == {},
           str(config_b_json.get("capability_registries")))
+    deployment_mc_seqno = int(rpc_call("getMasterchainInfo")["result"]["last"]["seqno"])
+    print(f"  deployment masterchain anchor: {deployment_mc_seqno}")
 
     print("\n=== start config-b's tosctld HTTP daemon (never ran agent task create) ===")
     env = dict(os.environ)
@@ -307,6 +348,18 @@ async def run_checks(faucet) -> None:
     )
     try:
         check("config-b tosctld health endpoint ready", await wait_http_ready())
+        check("config-b tosctld process remains alive", service_proc.returncode is None,
+              f"returncode={service_proc.returncode}")
+
+        cursor_ready, cursor_body = await poll_http_predicate(
+            "/explorer/status",
+            lambda body: indexed_through(body, deployment_mc_seqno),
+            # The retained failed run indexed MC 30 of 55 in roughly two
+            # minutes; this waits for the named anchor, not a fixed sleep.
+            timeout=240.0,
+        )
+        check("config-b index cursor covers the deployment masterchain anchor",
+              cursor_ready, f"anchor={deployment_mc_seqno} body={cursor_body}")
 
         print("\n=== GET /tasks on config-b discovers config-a's Task Escrow ===")
         found, body = await poll_http_predicate(
@@ -340,14 +393,26 @@ async def run_checks(faucet) -> None:
             check("discovered registry status is active", entry.get("status") == "active",
                   str(entry))
 
+        status, index_after = await http_get_async("/explorer/status")
+        check("config-b masterchain index cursor advanced",
+              status == 200 and indexed_through(index_after, deployment_mc_seqno),
+              f"status={status} body={index_after}")
+
+        status, body = await http_get_async("/tasks?status=not-a-task-status")
+        check("invalid task status returns HTTP 400", status == 400,
+              f"status={status} body={body}")
+        status, body = await http_get_async("/registry?limit=not-a-number")
+        check("invalid registry limit returns HTTP 400", status == 400,
+              f"status={status} body={body}")
+
         print("\n=== GET /registry/{address} direct lookup on config-b ===")
-        status, body = http_get(f"/registry/{registry_address}")
+        status, body = await http_get_async(f"/registry/{registry_address}")
         check("get_registry status 200", status == 200, f"status={status} body={body}")
         check("get_registry owner matches",
               same_addr(body.get("result", {}).get("owner", ""), owner), str(body))
 
         print("\n=== GET /disputes on config-b (no disputes deployed -- empty, not an error) ===")
-        status, body = http_get("/disputes")
+        status, body = await http_get_async("/disputes")
         check("list_disputes status 200", status == 200, f"status={status} body={body}")
         check("list_disputes total is zero", body.get("total") == 0, str(body))
 
@@ -368,6 +433,9 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    check("config-b index database absent before service",
+          not (WORKDIR / "tosctl-indexer.db").exists())
+    write_manifest()
     prepare_config(CONFIG_A, http_bind=None)
     prepare_config(CONFIG_B, http_bind=HTTP_B)
     install = Install(BUILD_DIR, REPO)
@@ -375,7 +443,7 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=23900) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())

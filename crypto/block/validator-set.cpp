@@ -26,6 +26,10 @@
 namespace block {
 using td::Ref;
 
+tos::ValidatorId classical_validator_id(const tos::Ed25519_PublicKey &key) {
+  return tos::ValidatorId{tos::PublicKey{tos::pubkeys::Ed25519{key}}.compute_short_id().bits256_value()};
+}
+
 const tos::ValidatorDescr *ValidatorSet::get_validator(const tos::ValidatorId &id) const {
   auto it =
       std::lower_bound(ids_map_.begin(), ids_map_.end(), id, [](const auto &p, const auto &x) { return p.first < x; });
@@ -63,8 +67,7 @@ ValidatorSet::ValidatorSet(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from, s
     // directly by tests and tooling, which would otherwise carry zero identities into
     // the set commitment.
     if (!ids_[i].is_pq() && ids_[i].validator_id.is_zero()) {
-      auto derived = tos::ValidatorId{
-          tos::PublicKey{tos::pubkeys::Ed25519{ids_[i].classical_key()}}.compute_short_id().bits256_value()};
+      auto derived = classical_validator_id(ids_[i].classical_key());
       ids_[i].validator_id = derived;
       ids_[i].key_id = tos::ConsensusKeyId{derived.value};
     }

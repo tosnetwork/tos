@@ -370,6 +370,15 @@ add_library(tos_db STATIC ${TOS_DB_SOURCE})
 target_include_directories(tos_db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto ${JEMALLOC_LIBRARIES})
+if (JEMALLOC_FOUND)
+  # Every tos_db consumer links jemalloc when it is found, so the allocator trim can
+  # reference mallctl directly on platforms whose linker has no usable weak symbols.
+  # The header is named by full path rather than adding JEMALLOC_INCLUDE_DIR to the
+  # search path: that directory is often a shared prefix (e.g. /opt/homebrew/include)
+  # whose other libraries would shadow the vendored headers tos_db is built against.
+  target_compile_definitions(tos_db PRIVATE TOS_DB_LINKS_JEMALLOC=1
+                             TOS_DB_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
+endif()
 
 add_library(fift-lib STATIC ${FIFT_SOURCE})
 target_include_directories(fift-lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
@@ -455,7 +464,8 @@ add_executable(mintless-proof-generator util/mintless-proof-generator.cpp)
 target_link_libraries(mintless-proof-generator PRIVATE tos_crypto git ${JEMALLOC_LIBRARIES})
 
 if (JEMALLOC_FOUND)
-  target_include_directories(mintless-proof-generator PRIVATE ${JEMALLOC_INCLUDE_DIR})
+  # The source includes no jemalloc header, so the shared jemalloc prefix is kept off
+  # the search path where it could shadow vendored headers.
   target_compile_definitions(mintless-proof-generator PRIVATE -DTOS_USE_JEMALLOC=1)
 endif()
 

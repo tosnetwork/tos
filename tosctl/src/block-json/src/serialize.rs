@@ -2498,6 +2498,11 @@ pub fn db_serialize_block_proof_ex(
     serialize_cell(&mut map, "proof", Some(&proof.root), false)?;
 
     if let Some(signatures) = proof.signatures.as_ref() {
+        // The common CryptoSignature fields below do not exist for a PQ set.
+        // Refuse before attempting that classical-only view.
+        if matches!(signatures, BlockSignaturesVariant::SimplexPq(_)) {
+            fail!("post-quantum block-proof JSON serialization is not available");
+        }
         let pure_signatures = signatures.pure_signatures()?;
         // Serialize common fields
         map.insert(

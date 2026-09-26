@@ -28,15 +28,22 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/proof-attestation-e2e.py
 """
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
 REPO = Path(__file__).resolve().parents[1]
@@ -44,6 +51,10 @@ BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19146"
 WORKDIR = REPO / "test/integration/.proof-attestation-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
+NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000007"
 NANO = 1_000_000_000
@@ -55,6 +66,37 @@ ATTESTED_HASH_2 = "33" * 32
 failures: list[str] = []
 
 
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e08_negative_finality.py").read_bytes()).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+        "rpc_transcript": RPC_TRANSCRIPT.name,
+        "cli_transcript": CLI_TRANSCRIPT.name,
+        "negative_evidence": NEGATIVE_EVIDENCE.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E08 real-chain run requires a clean tracked source tree")
+
+
 def check(label: str, ok: bool, detail: str = ""):
     if ok:
         print(f"  PASS: {label}")
@@ -64,16 +106,123 @@ def check(label: str, ok: bool, detail: str = ""):
 
 
 def rpc_call(method: str, **params):
-    import urllib.request
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    return json.loads(raw.decode())
 
 
-async def tosctl(*args: str, may_fail: bool = False) -> str:
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    return int(rpc_call("getAddressInformation", address=address)
+               ["result"]["last_transaction_id"]["lt"])
+
+
+def transactions_after(address: str, baseline_lt: int) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if len(rows) == 10 and all(
+        int(row["transaction_id"]["lt"]) > baseline_lt for row in rows
+    ):
+        raise RuntimeError("attestation transaction page did not cover baseline")
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+def unique_attestation_send(wallet_rows: list[dict], address: str) -> dict | None:
+    """Select one outbound; the refused message may separately bounce to its payer."""
+    sends = [
+        row for row in wallet_rows
+        if any(same_addr(message.get("destination"), address)
+               for message in row.get("out_msgs", []))
+    ]
+    if len(sends) > 1:
+        raise RuntimeError("multiple wallet sends to attestation")
+    for row in wallet_rows:
+        if sends and row is sends[0]:
+            continue
+        incoming = row.get("in_msg") or {}
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or row.get("out_msgs")):
+            raise RuntimeError("unrelated wallet transaction after attestation send")
+    return sends[0] if sends else None
+
+
+def validate_attestation_bounces(wallet_rows: list[dict], wallet_tx: dict,
+                                 contract_tx: dict, payer: str, address: str) -> None:
+    """Additional payer credits must be exact bounces emitted by this refusal."""
+    if len(wallet_tx.get("out_msgs") or []) != 1:
+        raise RuntimeError("attestation wallet send has extra outbound messages")
+    bounces = contract_tx.get("out_msgs") or []
+    if len(bounces) > 1 or any(
+        message.get("bounced") is not True
+        or not same_addr(message.get("source"), address)
+        or not same_addr(message.get("destination"), payer)
+        or not message.get("hash") for message in bounces
+    ):
+        raise RuntimeError("attestation emitted unexpected bounce messages")
+    expected_hashes = {message["hash"] for message in bounces}
+    observed_hashes: set[str] = set()
+    for row in wallet_rows:
+        if row is wallet_tx:
+            continue
+        incoming = row.get("in_msg") or {}
+        bounce_hash = incoming.get("hash")
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or not same_addr(incoming.get("destination"), payer)
+                or row.get("out_msgs")
+                or not bounce_hash
+                or bounce_hash not in expected_hashes
+                or bounce_hash in observed_hashes):
+            raise RuntimeError("wallet credit is not this attestation's bounce")
+        observed_hashes.add(bounce_hash)
+
+
+async def await_attestation_bounce(wallet_tx: dict, contract_tx: dict,
+                                   payer: str, address: str) -> dict | None:
+    """Make the next operation's wallet baseline include this exact refund."""
+    if not contract_tx.get("out_msgs"):
+        return None
+    baseline = int(wallet_tx["transaction_id"]["lt"])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        rows = transactions_after(payer, baseline)
+        if rows:
+            validate_attestation_bounces([wallet_tx, *rows], wallet_tx,
+                                         contract_tx, payer, address)
+            return rows[0]
+        await asyncio.sleep(1)
+    raise RuntimeError("exact attestation bounce not observed before next operation")
+
+
+async def tosctl(*args: str) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
@@ -84,8 +233,15 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
     except TimeoutError:
         proc.kill()
+        out, err = await proc.communicate()
+        record_jsonl(CLI_TRANSCRIPT, {"args": args, "timeout": True,
+                     "stdout_base64": base64.b64encode(out).decode(),
+                     "stderr_base64": base64.b64encode(err).decode()})
         raise RuntimeError(f"tosctl {' '.join(args)} timed out")
-    if proc.returncode != 0 and not may_fail:
+    record_jsonl(CLI_TRANSCRIPT, {"args": args, "exit_code": proc.returncode,
+                 "stdout_base64": base64.b64encode(out).decode(),
+                 "stderr_base64": base64.b64encode(err).decode()})
+    if proc.returncode != 0:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
@@ -178,11 +334,78 @@ async def attestation_show(name: str):
     return await tosctl_json("agent", "attestation", "show", "--name", name)
 
 
-async def send_op(operation: str, name: str, frm: str, *extra: str, may_fail: bool = False) -> str:
+async def send_op(operation: str, name: str, frm: str, *extra: str) -> str:
     return await tosctl(
         "agent", "attestation", "send", "--operation", operation, "--name", name,
-        "--from", frm, "--yes", *extra, may_fail=may_fail,
+        "--from", frm, "--yes", *extra,
     )
+
+
+async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
+                             operation: str, name: str, frm: str, *extra: str) -> None:
+    before_state = await attestation_show(name)
+    before_head = finalized_mc_header()
+    wallet_lt = last_lt(payer)
+    contract_lt = last_lt(address)
+    receipt = await send_op(operation, name, frm, *extra)
+    deadline = time.monotonic() + 45
+    wallet_tx = contract_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(payer, wallet_lt)
+        if wallet_rows:
+            wallet_tx = unique_attestation_send(wallet_rows, address)
+            if wallet_tx is None:
+                await asyncio.sleep(1)
+                continue
+            outgoing = wallet_tx.get("out_msgs") or []
+            if (wallet_tx.get("aborted") is not False
+                    or wallet_tx.get("compute", {}).get("success") is not True
+                    or wallet_tx.get("action", {}).get("success") is not True
+                    or len(outgoing) != 1
+                    or not outgoing[0].get("hash")
+                    or not same_addr(outgoing[0].get("destination"), address)):
+                raise RuntimeError(f"{label}: wallet transaction did not send to attestation")
+            contract_rows = transactions_after(address, contract_lt)
+            if contract_rows:
+                if len(contract_rows) != 1:
+                    raise RuntimeError(f"{label}: multiple new attestation transactions")
+                contract_tx = contract_rows[0]
+                incoming = contract_tx.get("in_msg") or {}
+                if (incoming.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(incoming.get("source"), payer)):
+                    raise RuntimeError(f"{label}: attestation inbound hash differs from wallet outbound")
+                validate_attestation_bounces(wallet_rows, wallet_tx, contract_tx, payer, address)
+                break
+        await asyncio.sleep(1)
+    if contract_tx is None or wallet_tx is None:
+        raise RuntimeError(f"{label}: exact wallet-to-attestation transaction not observed")
+    compute = contract_tx.get("compute") or {}
+    if (contract_tx.get("aborted") is not True
+            or compute.get("success") is not False
+            or compute.get("exit_code") != expected_exit):
+        raise RuntimeError(f"{label}: expected VM exit {expected_exit}, got {contract_tx}")
+
+    observations = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(observations) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            state = await attestation_show(name)
+            observations.append({"head": head, "state": state})
+            if state != before_state:
+                raise RuntimeError(f"{label}: attestation state changed after rejected transaction")
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(observations) != 2:
+        raise RuntimeError(f"{label}: finalized masterchain did not advance twice")
+    bounce_tx = await await_attestation_bounce(wallet_tx, contract_tx, payer, address)
+    record_jsonl(NEGATIVE_EVIDENCE, {"label": label, "expected_exit": expected_exit,
+                 "cli_receipt": receipt, "before_state": before_state,
+                 "before_head": before_head, "wallet_transaction": wallet_tx,
+                 "attestation_transaction": contract_tx,
+                 "bounce_transaction": bounce_tx, "observations": observations})
+    check(label, True)
 
 
 async def run_checks(faucet) -> None:
@@ -239,18 +462,14 @@ async def run_checks(faucet) -> None:
     check("attested_at is set", data["attested_at"] > 0, str(data))
 
     print("\n=== attest: wrong key rejected on-chain ===")
-    await send_op("attest", "case-1", "outsider",
-                  "--attested-hash", ATTESTED_HASH_2, "--signer-vault-key", "wrong-key",
-                  may_fail=True)
-    data = await attestation_show("case-1")
-    check("wrong-key attestation did not overwrite state",
-          data["attested_hash"] == ATTESTED_HASH_1, str(data))
+    await rejected_operation("wrong-key attestation rejected", address, outsider, 2101,
+                             "attest", "case-1", "outsider", "--attested-hash",
+                             ATTESTED_HASH_2, "--signer-vault-key", "wrong-key")
 
     print("\n=== rotate-key: owner only, resets attestation ===")
-    await send_op("rotate-key", "case-1", "outsider",
-                  "--new-signer-vault-key", "new-reviewer-key", may_fail=True)
-    data = await attestation_show("case-1")
-    check("non-owner rotate-key rejected", data["public_key"] == reviewer_key_pub, str(data))
+    await rejected_operation("non-owner rotate-key rejected", address, outsider, 2102,
+                             "rotate-key", "case-1", "outsider",
+                             "--new-signer-vault-key", "new-reviewer-key")
 
     await send_op("rotate-key", "case-1", "owner",
                   "--new-signer-vault-key", "new-reviewer-key")
@@ -259,11 +478,9 @@ async def run_checks(faucet) -> None:
     check("attestation reset by rotation", data["has_attestation"] is False, str(data))
 
     print("\n=== attest after rotation: old key rejected, new key accepted ===")
-    await send_op("attest", "case-1", "outsider",
-                  "--attested-hash", ATTESTED_HASH_1, "--signer-vault-key", "reviewer-key",
-                  may_fail=True)
-    data = await attestation_show("case-1")
-    check("stale old-key attestation rejected", data["has_attestation"] is False, str(data))
+    await rejected_operation("stale old-key attestation rejected", address, outsider, 2101,
+                             "attest", "case-1", "outsider", "--attested-hash",
+                             ATTESTED_HASH_1, "--signer-vault-key", "reviewer-key")
 
     await send_op("attest", "case-1", "outsider",
                   "--attested-hash", ATTESTED_HASH_2, "--signer-vault-key", "new-reviewer-key")
@@ -272,20 +489,16 @@ async def run_checks(faucet) -> None:
     check("new attested hash matches", data["attested_hash"] == ATTESTED_HASH_2, str(data))
 
     print("\n=== revoke: owner only, permanent ===")
-    await send_op("revoke", "case-1", "outsider", may_fail=True)
-    data = await attestation_show("case-1")
-    check("non-owner revoke rejected", data["revoked"] is False, str(data))
+    await rejected_operation("non-owner revoke rejected", address, outsider, 2102,
+                             "revoke", "case-1", "outsider")
 
     await send_op("revoke", "case-1", "owner")
     data = await attestation_show("case-1")
     check("revoked", data["revoked"] is True, str(data))
 
-    await send_op("attest", "case-1", "outsider",
-                  "--attested-hash", ATTESTED_HASH_1, "--signer-vault-key", "new-reviewer-key",
-                  may_fail=True)
-    data = await attestation_show("case-1")
-    check("attestation after revoke rejected",
-          data["attested_hash"] == ATTESTED_HASH_2, str(data))
+    await rejected_operation("attestation after revoke rejected", address, outsider, 2100,
+                             "attest", "case-1", "outsider", "--attested-hash",
+                             ATTESTED_HASH_1, "--signer-vault-key", "new-reviewer-key")
 
     print("\n=== persisted local record ===")
     records = {r["name"]: r for r in await tosctl_json("agent", "attestation", "ls")}
@@ -303,6 +516,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging
@@ -311,7 +525,7 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=23700) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())

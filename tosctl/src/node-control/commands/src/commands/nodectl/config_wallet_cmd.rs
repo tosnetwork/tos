@@ -20,13 +20,14 @@ use chain_rpc_client::v2::{client_json_rpc::ClientJsonRpc, data_models::AccountS
 use colored::Colorize;
 use common::{
     WalletVersion,
-    app_config::{AppConfig, KeyConfig, PoolConfig, WalletConfig},
+    app_config::{AppConfig, KeyConfig, NodeBinding, PoolConfig, WalletConfig},
     chain_utils::{display_tos, tos_to_nanotos},
     task_cancellation::CancellationCtx,
     time_format,
 };
 use contracts::{
-    ElectorWrapper, ElectorWrapperImpl, NominatorWrapperImpl, Wallet, contract_provider, nominator,
+    DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, NominatorWrapper,
+    NominatorWrapperImpl, Wallet, contract_provider, nominator, nominator::NominatorRoles,
 };
 use elections::providers::{DefaultElectionsProvider, ElectionsProvider};
 use secrets_vault::{errors::error::VaultError, vault::SecretVault};
@@ -464,15 +465,26 @@ impl WalletStakeCmd {
         if wallet_info_res.account_state != AccountState::Active {
             anyhow::bail!("Wallet '{}' is {}", binding.wallet, wallet_info_res.account_state);
         }
+        let initial_seqno =
+            require_observable_wallet_seqno(wallet_info_res.wallet, wallet_info_res.seqno)?;
         let pool_address = resolve_pool_address(pool_cfg, &wallet_address)?;
         let pool_addr_bytes = pool_address.address().clone().storage().to_vec();
+        let live_roles =
+            NominatorWrapperImpl::new(contract_provider!(rpc_client.clone()), pool_address.clone())
+                .get_roles()
+                .await
+                .context("read live single-nominator pool roles")?;
+        verify_live_pool_roles(pool_cfg, &wallet_address, &live_roles)?;
 
         // Connect to validator node via control protocol
         let adnl_client_cfg = adnl_cfg
             .to_node_adnl_config(Some(vault.clone()))
             .await
             .context("ADNL client config")?;
-        let mut provider = DefaultElectionsProvider::new(adnl_client_cfg);
+        let mut provider = DefaultElectionsProvider::new(
+            adnl_client_cfg,
+            Arc::new(DefaultChainProvider::new(rpc_client.clone())),
+        );
 
         // Get active election ID from elector via RPC
         let elector = ElectorWrapperImpl::new(contract_provider!(rpc_client.clone()));
@@ -504,7 +516,7 @@ impl WalletStakeCmd {
         let validator_config = provider.validator_config().await.context("validator_config")?;
         let existing_key = validator_config.find(election_id);
 
-        let (key_id, pub_key, adnl_addr) = match existing_key {
+        let (_key_id, _pub_key, adnl_addr) = match existing_key {
             Some(entry) => {
                 let pub_key =
                     provider.export_public_key(&entry.key_id).await.context("export_public_key")?;
@@ -547,8 +559,30 @@ impl WalletStakeCmd {
             }
         };
 
-        // Check if already participating
-        if let Some(p) = elections_info.participants.iter().find(|p| p.pub_key == pub_key) {
+        // The node's custodied PQ signer binds the pool owner, identity, key,
+        // algorithm and signature as one authorization. The operator never
+        // signs an election preimage through the generic Ed25519 keyring.
+
+        let max_factor_raw = (self.max_factor * 65536.0) as u32;
+        let authorization = provider
+            .create_pq_stake_authorization(
+                election_id as u32,
+                max_factor_raw,
+                &adnl_addr,
+                &pool_addr_bytes,
+            )
+            .await
+            .context("create PQ stake authorization")?;
+        anyhow::ensure!(
+            authorization.algorithm_id == 1,
+            "node returned unsupported PQ stake algorithm {}",
+            authorization.algorithm_id
+        );
+        // The PQ elector indexes participants by validator identity, not by
+        // the Ed25519 transport key generated above for ADNL.
+        if let Some(p) =
+            elections_info.participants.iter().find(|p| p.pub_key == authorization.validator_id)
+        {
             println!(
                 "\n{} Already participating with stake {:.4} TOS",
                 "Warning:".yellow().bold(),
@@ -556,28 +590,22 @@ impl WalletStakeCmd {
             );
         }
 
-        // Build election bid: sign data with validator key
-
-        let max_factor_raw = (self.max_factor * 65536.0) as u32;
-
-        let mut sign_data = 0x654C5074u32.to_be_bytes().to_vec();
-        sign_data.extend_from_slice(&(election_id as u32).to_be_bytes());
-        sign_data.extend_from_slice(&max_factor_raw.to_be_bytes());
-        sign_data.extend_from_slice(&pool_addr_bytes);
-        sign_data.extend_from_slice(&adnl_addr);
-
-        let signature = provider.sign(key_id, sign_data).await.context("sign election bid")?;
-
-        // Build NEW_STAKE payload for nominator pool
-        let payload = nominator::new_stake(&nominator::NewStakeParams {
-            query_id: time_format::now(),
-            stake_amount: stake_nanotos,
-            validator_pubkey: &pub_key,
-            stake_at: election_id as u32,
-            max_factor: max_factor_raw,
-            adnl_addr: &adnl_addr,
-            signature: &signature,
-        })?;
+        // The public birth artifact is separate from the node authorization:
+        // the node signs with its custodied key, while live Param47 admits the
+        // controller's deploy code. Refuse before constructing a wallet send.
+        let live_policy = provider.live_controller_policy().await?;
+        let payload = build_verified_manual_pool_stake(
+            binding,
+            &self.binding,
+            pool_cfg,
+            &authorization,
+            &live_policy,
+            time_format::now(),
+            stake_nanotos,
+            election_id as u32,
+            max_factor_raw,
+            &adnl_addr,
+        )?;
 
         // Build wallet message to nominator pool (wallet sends only gas, pool has the stake)
         let wallet =
@@ -614,13 +642,13 @@ impl WalletStakeCmd {
         }
 
         println!("{} Sending message to wallet...", "DOING".blue().bold());
-        // Send via control protocol
+        // Broadcast through chain RPC; validator control is only for node authorization.
         provider.send_boc(&msg_boc).await.context("send stake message")?;
 
         wait_for_seqno_change(
             rpc_client.clone(),
             &wallet_address,
-            wallet_info_res.seqno,
+            Some(initial_seqno),
             &cancellation_ctx,
             SEND_TIMEOUT,
         )
@@ -634,7 +662,7 @@ impl WalletStakeCmd {
         let previous_stake = elections_info
             .participants
             .iter()
-            .find(|p| p.pub_key == pub_key)
+            .find(|p| p.pub_key == authorization.validator_id)
             .map(|p| p.stake)
             .unwrap_or(0);
         let expected_stake = previous_stake + stake_nanotos;
@@ -642,7 +670,7 @@ impl WalletStakeCmd {
         let stake_timeout = tokio::time::Duration::from_secs(60);
         wait_for_stake_accepted(
             &elector,
-            &pub_key,
+            &authorization.validator_id,
             expected_stake,
             &cancellation_ctx,
             stake_timeout,
@@ -655,11 +683,21 @@ impl WalletStakeCmd {
     }
 }
 
+fn require_observable_wallet_seqno(wallet: bool, seqno: Option<u32>) -> anyhow::Result<u32> {
+    anyhow::ensure!(
+        wallet,
+        "active operator account is not recognized as a wallet by chain RPC; stake not sent"
+    );
+    seqno.ok_or_else(|| {
+        anyhow::anyhow!("active operator wallet has no observable seqno; stake not sent")
+    })
+}
+
 const STAKE_POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(3);
 
 async fn wait_for_stake_accepted(
     elector: &ElectorWrapperImpl,
-    pub_key: &[u8],
+    validator_id: &[u8],
     expected_stake: u64,
     cancellation_ctx: &CancellationCtx,
     max_wait: tokio::time::Duration,
@@ -671,7 +709,7 @@ async fn wait_for_stake_accepted(
             }
             tokio::time::sleep(STAKE_POLL_INTERVAL).await;
             let info = elector.elections_info().await.context("elections_info")?;
-            if let Some(p) = info.participants.iter().find(|p| p.pub_key == pub_key) {
+            if let Some(p) = info.participants.iter().find(|p| p.pub_key == validator_id) {
                 if p.stake >= expected_stake {
                     return Ok(());
                 }
@@ -689,6 +727,95 @@ fn confirm(prompt: &str) -> anyhow::Result<bool> {
     let mut answer = String::new();
     std::io::stdin().read_line(&mut answer)?;
     Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "Yes"))
+}
+
+fn configured_birth_artifact_path<'a>(
+    binding: &'a NodeBinding,
+    name: &str,
+) -> anyhow::Result<&'a Path> {
+    let configured = binding.controller_birth_state_init_boc.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("binding '{name}' has no controller birth StateInit BOC configured; first PQ stake refused locally")
+    })?;
+    let path = Path::new(configured);
+    anyhow::ensure!(
+        path.is_absolute(),
+        "binding '{name}' controller birth StateInit BOC path must be absolute; first PQ stake refused locally"
+    );
+    Ok(path)
+}
+
+fn verify_live_pool_roles(
+    pool_cfg: &PoolConfig,
+    wallet_address: &MsgAddressInt,
+    roles: &NominatorRoles,
+) -> anyhow::Result<()> {
+    let configured_controller = match pool_cfg {
+        PoolConfig::SNP { controller, .. } => controller
+            .parse::<MsgAddressInt>()
+            .context("invalid configured validator controller address")?,
+        _ => anyhow::bail!("manual PQ stake requires a single-nominator pool"),
+    };
+    anyhow::ensure!(
+        roles.controller_address == configured_controller,
+        "live pool controller differs from the configured validator controller"
+    );
+    anyhow::ensure!(
+        &roles.validator_address == wallet_address,
+        "stake wallet is not the live pool validator/operator"
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_verified_manual_pool_stake(
+    binding: &NodeBinding,
+    binding_name: &str,
+    pool_cfg: &PoolConfig,
+    authorization: &control_client::client_api::PqStakeAuthorization,
+    live_policy: &Cell,
+    query_id: u64,
+    stake_amount: u64,
+    stake_at: u32,
+    max_factor: u32,
+    adnl_addr: &[u8],
+) -> anyhow::Result<Cell> {
+    let artifact_path = configured_birth_artifact_path(binding, binding_name)?;
+    let controller = match pool_cfg {
+        PoolConfig::SNP { controller, .. } => controller
+            .parse::<MsgAddressInt>()
+            .context("invalid configured validator controller address")?,
+        _ => anyhow::bail!("manual PQ stake requires a single-nominator pool"),
+    };
+    anyhow::ensure!(
+        controller.workchain_id() == -1,
+        "configured pool validator controller must be a masterchain account"
+    );
+    let node_id_bytes: [u8; 32] = authorization
+        .validator_id
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("node PQ stake validator_id is not 32 bytes"))?;
+    let pool_id_bytes: [u8; 32] = controller
+        .address()
+        .get_bytestring(0)
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("pool validator controller ID is not 32 bytes"))?;
+    nominator::new_stake_from_birth_artifact(
+        &nominator::NewStakeParams {
+            query_id,
+            stake_amount,
+            validator_pubkey: &authorization.public_key,
+            stake_at,
+            max_factor,
+            adnl_addr,
+            signature: &authorization.signature,
+        },
+        artifact_path,
+        &node_id_bytes,
+        &pool_id_bytes,
+        live_policy,
+    )
 }
 
 fn resolve_pool_address(
@@ -714,5 +841,188 @@ fn resolve_pool_address(
             (None, None) => anyhow::bail!("Pool has neither address nor owner configured"),
         },
         _ => anyhow::bail!("Unsupported pool kind for manual stake"),
+    }
+}
+
+#[cfg(test)]
+mod birth_artifact_tests {
+    use super::*;
+    use chain_block::{
+        BuilderData, Coins, Deserializable, HashmapE, HashmapType, IBitstring, Serializable,
+        SliceData, StateInit,
+    };
+    use std::io::Write;
+
+    #[test]
+    fn operator_wallet_must_have_a_trackable_seqno_before_stake_send() {
+        assert_eq!(require_observable_wallet_seqno(true, Some(7)).unwrap(), 7);
+        let not_wallet = require_observable_wallet_seqno(false, None).unwrap_err().to_string();
+        assert!(not_wallet.contains("not recognized as a wallet"), "wrong refusal: {not_wallet}");
+        let no_seqno = require_observable_wallet_seqno(true, None).unwrap_err().to_string();
+        assert!(no_seqno.contains("no observable seqno"), "wrong refusal: {no_seqno}");
+    }
+
+    fn binding(path: Option<&str>) -> NodeBinding {
+        NodeBinding {
+            wallet: "wallet".into(),
+            pool: Some("pool".into()),
+            controller_birth_state_init_boc: path.map(str::to_string),
+            enable: true,
+            status: Default::default(),
+        }
+    }
+
+    #[test]
+    fn wallet_stake_refuses_missing_or_relative_birth_artifact_locator() {
+        let missing = binding(None);
+        let error = configured_birth_artifact_path(&missing, "node-1").unwrap_err().to_string();
+        assert!(error.contains("no controller birth StateInit BOC"), "wrong refusal: {error}");
+        let relative = binding(Some("controller.boc"));
+        let error = configured_birth_artifact_path(&relative, "node-1").unwrap_err().to_string();
+        assert!(error.contains("must be absolute"), "wrong refusal: {error}");
+        let absolute = binding(Some("/var/lib/tos/controller.boc"));
+        assert_eq!(
+            configured_birth_artifact_path(&absolute, "node-1").unwrap(),
+            Path::new("/var/lib/tos/controller.boc")
+        );
+    }
+
+    #[test]
+    fn manual_pool_stake_requires_matching_birth_and_live_admission_before_wallet_send() {
+        let code = BuilderData::with_raw(vec![0x11], 8).unwrap().into_cell().unwrap();
+        let data = BuilderData::with_raw(vec![0x22], 8).unwrap().into_cell().unwrap();
+        let state = StateInit::with_code_and_data(code.clone(), data);
+        let state_cell = state.write_to_new_cell().unwrap().into_cell().unwrap();
+        let controller_id = *state_cell.repr_hash().as_slice();
+        let artifact_path = std::env::temp_dir().join(format!(
+            "tosctl-manual-pool-birth-{}-{}.boc",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let mut artifact = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&artifact_path)
+            .expect("unique test-only birth artifact");
+        let _artifact_cleanup = scopeguard::guard(artifact_path.clone(), |path| {
+            let _ = std::fs::remove_file(path);
+        });
+        artifact.write_all(&write_boc(&state_cell).unwrap()).unwrap();
+        drop(artifact);
+
+        let mut admitted = HashmapE::with_bit_len(256);
+        let code_key = SliceData::load_builder(
+            BuilderData::with_raw(code.repr_hash().as_slice().to_vec(), 256).unwrap(),
+        )
+        .unwrap();
+        admitted.set(code_key, &SliceData::default()).unwrap();
+        let mut policy_builder = BuilderData::new();
+        policy_builder
+            .append_bit_one()
+            .unwrap()
+            .checked_append_reference(HashmapType::data(&admitted).unwrap().clone())
+            .unwrap();
+        let live_policy = policy_builder.into_cell().unwrap();
+        let artifact_name = artifact_path.to_str().unwrap();
+        let configured_binding = binding(Some(artifact_name));
+        let controller = MsgAddressInt::standard(-1, controller_id);
+        let pool = PoolConfig::SNP {
+            address: Some(MsgAddressInt::standard(-1, [0x44; 32]).to_string()),
+            owner: None,
+            controller: controller.to_string(),
+        };
+        let operator = MsgAddressInt::standard(-1, [0x55; 32]);
+        let mut roles = NominatorRoles {
+            owner_address: MsgAddressInt::standard(-1, [0x66; 32]),
+            validator_address: operator.clone(),
+            controller_address: controller.clone(),
+        };
+        verify_live_pool_roles(&pool, &operator, &roles).expect("matching live pool roles");
+        roles.controller_address = MsgAddressInt::standard(-1, [0x77; 32]);
+        let error = verify_live_pool_roles(&pool, &operator, &roles).unwrap_err().to_string();
+        assert!(error.contains("live pool controller differs"), "wrong refusal: {error}");
+        roles.controller_address = controller;
+        roles.validator_address = MsgAddressInt::standard(-1, [0x88; 32]);
+        let error = verify_live_pool_roles(&pool, &operator, &roles).unwrap_err().to_string();
+        assert!(error.contains("not the live pool validator/operator"), "wrong refusal: {error}");
+        let authorization = control_client::client_api::PqStakeAuthorization {
+            validator_id: controller_id.to_vec(),
+            key_id: vec![0x33; 32],
+            algorithm_id: 1,
+            public_key: vec![0x55; 1312],
+            signature: vec![0x66; 2420],
+        };
+        let make = |binding: &NodeBinding,
+                    pool: &PoolConfig,
+                    authorization: &control_client::client_api::PqStakeAuthorization,
+                    policy: &Cell| {
+            build_verified_manual_pool_stake(
+                binding,
+                "node-1",
+                pool,
+                authorization,
+                policy,
+                77,
+                10_000_000_000_000,
+                1_700_000_000,
+                65_536,
+                &[0x22; 32],
+            )
+        };
+        let body = make(&configured_binding, &pool, &authorization, &live_policy)
+            .expect("admitted controller produces a witnessed pool order");
+        let mut fields = SliceData::load_cell(body).unwrap();
+        assert_eq!(fields.get_next_u32().unwrap(), nominator::opcodes::NEW_STAKE);
+        assert_eq!(fields.get_next_u64().unwrap(), 77);
+        assert_eq!(Coins::construct_from(&mut fields).unwrap().as_u128(), 10_000_000_000_000);
+        assert_eq!(fields.get_next_u32().unwrap(), 1_700_000_000);
+        assert_eq!(fields.get_next_u32().unwrap(), 65_536);
+        assert_eq!(fields.get_next_bytes(32).unwrap(), [0x22; 32]);
+        assert_eq!(fields.get_next_u16().unwrap(), 1);
+        fields.checked_drain_reference().unwrap();
+        fields.checked_drain_reference().unwrap();
+        assert!(fields.get_next_bit().unwrap(), "first stake lost its birth witness");
+        assert_eq!(fields.checked_drain_reference().unwrap().bit_length(), 544);
+        assert_eq!(fields.remaining_bits(), 0);
+        assert_eq!(fields.remaining_references(), 0);
+
+        let error =
+            make(&binding(None), &pool, &authorization, &live_policy).unwrap_err().to_string();
+        assert!(error.contains("no controller birth StateInit BOC"), "wrong refusal: {error}");
+        let mut wrong_authorization = authorization.clone();
+        wrong_authorization.validator_id[0] ^= 1;
+        let error = make(&configured_binding, &pool, &wrong_authorization, &live_policy)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("node PQ stake identity does not match"), "wrong refusal: {error}");
+        let other_pool = PoolConfig::SNP {
+            address: Some(MsgAddressInt::standard(-1, [0x44; 32]).to_string()),
+            owner: None,
+            controller: MsgAddressInt::standard(-1, [0x77; 32]).to_string(),
+        };
+        let error = make(&configured_binding, &other_pool, &authorization, &live_policy)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("node PQ stake identity does not match"), "wrong refusal: {error}");
+        let empty_policy = BuilderData::with_raw(vec![0], 1).unwrap().into_cell().unwrap();
+        let error = make(&configured_binding, &pool, &authorization, &empty_policy)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("live ConfigParam 47"), "wrong refusal: {error}");
+        let mut wrong_admission = HashmapE::with_bit_len(256);
+        let wrong_code_key =
+            SliceData::load_builder(BuilderData::with_raw(vec![0x77; 32], 256).unwrap()).unwrap();
+        wrong_admission.set(wrong_code_key, &SliceData::default()).unwrap();
+        let mut wrong_policy_builder = BuilderData::new();
+        wrong_policy_builder
+            .append_bit_one()
+            .unwrap()
+            .checked_append_reference(HashmapType::data(&wrong_admission).unwrap().clone())
+            .unwrap();
+        let wrong_policy = wrong_policy_builder.into_cell().unwrap();
+        let error = make(&configured_binding, &pool, &authorization, &wrong_policy)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not admitted by live ConfigParam 47"), "wrong refusal: {error}");
     }
 }

@@ -1881,6 +1881,7 @@ mod tests {
             NodeBinding {
                 wallet: "w1".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: true,
                 status: Default::default(),
             },
@@ -1890,6 +1891,7 @@ mod tests {
             NodeBinding {
                 wallet: "w2".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: true,
                 status: Default::default(),
             },
@@ -1954,6 +1956,7 @@ mod tests {
             NodeBinding {
                 wallet: "w1".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: false,
                 status: Default::default(),
             },
@@ -1963,6 +1966,7 @@ mod tests {
             NodeBinding {
                 wallet: "w2".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: false,
                 status: Default::default(),
             },

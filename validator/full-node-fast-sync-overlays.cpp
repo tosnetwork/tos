@@ -106,6 +106,8 @@ void FullNodeFastSyncOverlay::process_block_finality_broadcast(PublicKeyHash src
   }
   auto parsed_finality = finality.move_as_ok();
   parsed_finality.received_bytes = received_bytes;
+  measurement::record_trace_lazy([&] { return block_finality_broadcast_trace_id(parsed_finality); },
+                                 measurement::TraceStage::peer_finality_broadcast_received, received_bytes);
   VLOG(FULL_NODE_DEBUG) << "Received blockFinalityBroadcast in fast sync overlay from " << src << ": "
                         << parsed_finality.block_id.to_str();
   td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(parsed_finality), src,
@@ -343,6 +345,8 @@ void FullNodeFastSyncOverlay::send_block_finality_broadcast(BlockFinalityBroadca
                         << finality.block_id.to_str();
   auto broadcast_id = block_finality_broadcast_transport_id(finality);
   auto B = serialize_block_finality_broadcast(finality);
+  measurement::record_trace_lazy([&] { return block_finality_broadcast_trace_id(finality); },
+                                 measurement::TraceStage::finality_broadcast_sent, B.size());
   td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree, local_id_, overlay_id_,
                           local_id_.pubkey_hash(), overlay::Overlays::BroadcastFlagAnySender(), broadcast_id,
                           std::move(B));

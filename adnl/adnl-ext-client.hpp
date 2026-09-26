@@ -33,6 +33,7 @@ namespace tos {
 namespace adnl {
 
 class AdnlExtClientImpl;
+td::int32 traced_lite_function_id(td::Slice data);
 
 class AdnlOutboundConnection : public AdnlExtConnection {
  private:
@@ -107,11 +108,33 @@ class AdnlExtClientImpl : public AdnlExtClient {
       td::actor::send_closure(SelfId, &AdnlExtClientImpl::destroy_query, id);
     };
     auto q_id = generate_next_query_id();
-    out_queries_.emplace(q_id, AdnlQuery::create(std::move(promise), std::move(P), name, timeout, q_id));
-    if (!conn_.empty()) {
-      auto obj = create_tl_object<lite_api::adnl_message_query>(q_id, std::move(data));
-      td::actor::send_closure(conn_, &AdnlOutboundConnection::send, serialize_tl_object(obj, true));
+    // Log a bounded caller correlation token only; arbitrary query names may
+    // contain whitespace or private data and must not enter structured traces.
+    bool has_nonce = name.size() == 64;
+    if (has_nonce) {
+      for (char c : name) {
+        has_nonce = has_nonce && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'));
+      }
     }
+    LOG(DEBUG) << "ADNL_EXT_QUERY client_create id=" << q_id.to_hex() << " server=" << dst_addr_
+               << " request_nonce=" << (has_nonce ? name : "-")
+               << " function_id=" << traced_lite_function_id(data.as_slice())
+               << " connection_present=" << !conn_.empty()
+               << " connection_alive=" << (!conn_.empty() && conn_.is_alive())
+               << " deadline_monotonic=" << timeout.at();
+    // The outer lite client may still consider this server alive after this
+    // inner connection has stopped. It already retries cancelled queries on
+    // another server; retaining an unsent timed query here only loses ten seconds.
+    if (conn_.empty() || !conn_.is_alive()) {
+      LOG(DEBUG) << "ADNL_EXT_QUERY client_refuse id=" << q_id.to_hex()
+                 << " reason=no-live-connection pending_queries=" << out_queries_.size();
+      promise.set_error(td::Status::Error(ErrorCode::cancelled, "conn not ready"));
+      return;
+    }
+    out_queries_.emplace(q_id, AdnlQuery::create(std::move(promise), std::move(P), name, timeout, q_id));
+    auto obj = create_tl_object<lite_api::adnl_message_query>(q_id, std::move(data));
+    LOG(DEBUG) << "ADNL_EXT_QUERY client_transmit id=" << q_id.to_hex() << " server=" << dst_addr_;
+    td::actor::send_closure(conn_, &AdnlOutboundConnection::send, serialize_tl_object(obj, true));
   }
   void destroy_query(AdnlQueryId id) {
     out_queries_.erase(id);

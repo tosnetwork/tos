@@ -11,7 +11,7 @@ use crate::client_api::{
     AddValidatorPermKeyRq, AddValidatorTempKeyRq, BlockchainConfigInfo, ClientAPI, CollatorEntry,
     CollatorNodeWhitelist, CollatorNodeWhitelistRq, CollatorsList, CollatorsListShard,
     CustomOverlayConfig, CustomOverlayNode, CustomOverlaysConfig, EngineValidatorConfig, NodeStats,
-    ShardAccountState, ShardDescriptor, Shutdown, SignRq,
+    PqStakeAuthorization, ShardAccountState, ShardDescriptor, Shutdown, SignRq,
 };
 use adnl::client::{AdnlClient, AdnlClientConfig, AdnlClientConfigJson};
 use anyhow::Context;
@@ -154,6 +154,45 @@ impl ToFromTL for SignRqRs {
         let signature = answer.signature().clone();
 
         Ok(signature)
+    }
+}
+
+struct CreatePqStakeAuthorizationRqRs {}
+
+#[derive(Clone)]
+struct CreatePqStakeAuthorizationRq {
+    election_date: u32,
+    max_factor: u32,
+    adnl_addr: Vec<u8>,
+    stake_owner: Vec<u8>,
+}
+
+impl ToFromTL for CreatePqStakeAuthorizationRqRs {
+    type Rq = CreatePqStakeAuthorizationRq;
+    type Rs = PqStakeAuthorization;
+
+    fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
+        anyhow::ensure!(rq.adnl_addr.len() == 32, "PQ stake ADNL address must be 32 bytes");
+        anyhow::ensure!(rq.stake_owner.len() == 32, "PQ stake owner must be 32 bytes");
+        Ok(tos::rpc::engine::validator::CreatePqStakeAuthorization {
+            election_date: i32::try_from(rq.election_date)?,
+            max_factor: i32::try_from(rq.max_factor)?,
+            adnl_addr: UInt256::from_raw(rq.adnl_addr.clone(), 256),
+            stake_owner: UInt256::from_raw(rq.stake_owner.clone(), 256),
+        }
+        .into_tl_object())
+    }
+
+    fn deserialize(rs: TLObject) -> anyhow::Result<Self::Rs> {
+        let answer = downcast::<tl_api::tos::engine::validator::PqStakeAuthorization>(rs)?;
+        let answer = answer.only();
+        Ok(PqStakeAuthorization {
+            validator_id: answer.validator_id.as_slice().to_vec(),
+            key_id: answer.key_id.as_slice().to_vec(),
+            algorithm_id: answer.algorithm_id,
+            public_key: answer.public_key.clone(),
+            signature: answer.signature.clone(),
+        })
     }
 }
 
@@ -830,6 +869,22 @@ impl ClientAPI for ControlClientAdnl {
 
     async fn sign(&mut self, rq: &SignRq) -> anyhow::Result<Vec<u8>> {
         self.do_rq::<SignRqRs>(rq).await
+    }
+
+    async fn create_pq_stake_authorization(
+        &mut self,
+        election_date: u32,
+        max_factor: u32,
+        adnl_addr: &[u8],
+        stake_owner: &[u8],
+    ) -> anyhow::Result<PqStakeAuthorization> {
+        self.do_rq::<CreatePqStakeAuthorizationRqRs>(&CreatePqStakeAuthorizationRq {
+            election_date,
+            max_factor,
+            adnl_addr: adnl_addr.to_vec(),
+            stake_owner: stake_owner.to_vec(),
+        })
+        .await
     }
 
     async fn generate_key_pair(&mut self) -> anyhow::Result<Vec<u8>> {

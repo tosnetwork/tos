@@ -701,6 +701,9 @@ fn test_parse_block_proof_legacy_format_without_signature_type() {
         BlockSignaturesVariant::Simplex(_) => {
             panic!("Legacy format should parse as Ordinary, not Simplex");
         }
+        BlockSignaturesVariant::SimplexPq(_) => {
+            panic!("Legacy format should parse as Ordinary, not SimplexPq");
+        }
     }
 
     // Verify proof_for matches
@@ -727,10 +730,49 @@ fn test_parse_block_proof_explicit_ordinary_signature_type() {
         BlockSignaturesVariant::Simplex(_) => {
             panic!("Explicit ordinary should parse as Ordinary, not Simplex");
         }
+        BlockSignaturesVariant::SimplexPq(_) => {
+            panic!("Explicit ordinary should parse as Ordinary, not SimplexPq");
+        }
     }
 
     // Binary roundtrip should match original
     assert_eq!(boc.as_slice(), &parsed_proof.write_to_bytes().unwrap());
+}
+
+#[test]
+fn test_parse_block_proof_refuses_unsupported_signature_types() {
+    let boc = include_bytes!("data/block_proof");
+    let proof = chain_block::BlockProof::construct_from_bytes(boc).unwrap();
+    let mut json =
+        serde_json::from_str::<Map<String, Value>>(include_str!("data/proof-ethalon.json"))
+            .unwrap();
+
+    // The serializer cannot emit PQ proof JSON. The deserializer must not
+    // turn a supplied PQ document into an ordinary Ed25519 signature set.
+    for name in ["simplex-pq", "future-signature-kind"] {
+        json.insert("signature_type".into(), name.into());
+        let error = parse_block_proof(&json, proof.proof_for.file_hash.clone()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("unsupported block-proof JSON signature_type: {name}")),
+            "unexpected refusal for {name}: {error}"
+        );
+    }
+
+    // Even without a classical signatures array, an explicit PQ type must
+    // not be mistaken for an unsigned proof.
+    json.remove("signatures");
+    json.insert("signature_type".into(), "simplex-pq".into());
+    let error = parse_block_proof(&json, proof.proof_for.file_hash.clone()).unwrap_err();
+    assert!(
+        error.to_string().contains("unsupported block-proof JSON signature_type: simplex-pq"),
+        "unexpected refusal without signatures: {error}"
+    );
+
+    json.insert("signature_type".into(), 7.into());
+    let error = parse_block_proof(&json, proof.proof_for.file_hash.clone()).unwrap_err();
+    assert!(error.to_string().contains("signature_type must be the string"), "{error}");
 }
 
 #[test]
@@ -791,6 +833,9 @@ fn test_parse_block_proof_with_simplex_signatures() {
         }
         BlockSignaturesVariant::Ordinary(_) => {
             panic!("Expected Simplex signatures, got Ordinary");
+        }
+        BlockSignaturesVariant::SimplexPq(_) => {
+            panic!("Expected Simplex signatures, got SimplexPq");
         }
     }
 

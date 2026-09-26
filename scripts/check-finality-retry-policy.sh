@@ -46,11 +46,26 @@ require_marker validator/manager.cpp \
   'pending->erase_expired(td::Time::now())' \
   'manager expiry callback no longer frees expired sender slots'
 require_marker validator/manager.cpp \
-  'error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout' \
-  'proof-creation failures no longer distinguish transient local state from bad block bytes'
+  'failed_pending_block_proof(block_id, attempt_token, proof_failure_source, proof.move_as_error())' \
+  'proof-construction failure no longer reaches the manager proof-failure handler'
 require_marker validator/manager.cpp \
-  'failed_pending_block_finality(block_id, attempt_token, std::move(error), "create block proof")' \
-  'transient proof-creation failure no longer uses the bounded retry decision'
+  'pending_block_proof_failure_action(source, error.code())' \
+  'manager no longer classifies proof failure by its input source'
+require_marker validator/manager.cpp \
+  'action != PendingBlockProofFailureAction::DiscardBlockBytes' \
+  'manager can again erase block bytes for finality-evidence proof failure'
+require_marker validator/manager.cpp \
+  'failed_pending_block_finality(block_id, attempt_token, std::move(error),' \
+  'evidence/context proof failure no longer uses the bounded retry decision'
+require_marker validator/downloaders/wait-block-data.cpp \
+  'failure_source = PendingBlockProofFailureSource::FinalityEvidence;' \
+  'signature-set proof failures no longer identify the evidence input'
+require_marker validator/downloaders/wait-block-data.cpp \
+  'failure_source = PendingBlockProofFailureSource::TrustedContext;' \
+  'context proof failures no longer identify the trusted-state input'
+require_marker validator/downloaders/wait-block-data.cpp \
+  'pending_block_proof_identity_verdict(' \
+  'proof construction no longer compares block-header, trusted-set and evidence identities'
 require_marker validator/manager.cpp \
   'failed_pending_block_finality(block_id, attempt_token, result.move_as_error(), "verify signatures")' \
   'signature-check failure no longer uses the bounded retry decision'
@@ -64,8 +79,8 @@ require_marker validator/manager.cpp \
   'const auto attempt_token = finality.token;' \
   'manager no longer captures the immutable processing-attempt token'
 token_checks=$(grep -cF 'pending->is_processing(attempt_token)' "$root/validator/manager.cpp")
-if [ "$token_checks" -ne 3 ]; then
-  echo "PENDING_FINALITY_RETRY_SOURCE_FAILURE: expected 3 callback attempt-token guards, found $token_checks (validator/manager.cpp)" >&2
+if [ "$token_checks" -ne 4 ]; then
+  echo "PENDING_FINALITY_RETRY_SOURCE_FAILURE: expected 4 proof/callback attempt-token guards, found $token_checks (validator/manager.cpp)" >&2
   failed=1
 fi
 require_marker validator/manager.cpp \
@@ -97,4 +112,4 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "PENDING_FINALITY_RETRY_SOURCE_OK: transient evidence uses bounded retries and permanent mismatches are classified at creation"
+echo "PENDING_FINALITY_RETRY_SOURCE_OK: proof failure reaches the manager handler, which classifies source and guards the attempt token; bounded retry markers remain"

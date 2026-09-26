@@ -22,6 +22,7 @@
 #include "auto/tl/lite_api.hpp"
 #include "tl/tl_object_parse.h"
 #include "block/block-auto.h"
+#include "block/block.h"
 #include "block/block-parse.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
@@ -479,6 +480,8 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
         auto lb = lb_r.move_as_ok();
         auto resolved_id = std::move(lb->id_);
         auto resolved_id_json = format_block_id_json(*resolved_id);
+        auto exact_id = tos::BlockIdExt(resolved_id->workchain_, resolved_id->shard_, resolved_id->seqno_,
+                                        resolved_id->root_hash_, resolved_id->file_hash_);
 
         // Step 2: getBlockHeader
         auto inner = tos::serialize_tl_object(
@@ -492,6 +495,7 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
             std::move(query),
             td::PromiseCreator::lambda(
                 [cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
+                 exact_id = std::move(exact_id),
                  promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
@@ -553,6 +557,24 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
                << ",\"start_lt\":\"" << info.start_lt << "\""
                << ",\"end_lt\":\"" << info.end_lt << "\""
                << ",\"gen_utime\":" << info.gen_utime;
+            std::vector<tos::BlockIdExt> previous;
+            tos::BlockIdExt master_ref;
+            bool after_split = false;
+            auto previous_status = block::unpack_block_prev_blk_try(virt_root, exact_id, previous,
+                                                                     master_ref, after_split);
+            if (previous_status.is_ok()) {
+              sb << ",\"prev_blocks\":[";
+              bool first = true;
+              for (const auto& parent : previous) {
+                if (!first) sb << ",";
+                first = false;
+                sb << "{\"@type\":\"tos.blockIdExt\",\"workchain\":" << parent.id.workchain
+                   << ",\"shard\":\"" << static_cast<td::int64>(parent.id.shard) << "\",\"seqno\":" << parent.id.seqno
+                   << ",\"root_hash\":\"" << td::base64_encode(parent.root_hash.as_slice())
+                   << "\",\"file_hash\":\"" << td::base64_encode(parent.file_hash.as_slice()) << "\"}";
+              }
+              sb << "]";
+            }
           }
           sb << "}";
           promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));

@@ -683,6 +683,7 @@ class Config {
   static td::Result<MsgPrices> do_get_msg_prices(vm::CellSlice cs, int id);
   static CatchainValidatorsConfig unpack_catchain_validators_config(Ref<vm::Cell> cell);
   CatchainValidatorsConfig get_catchain_validators_config() const;
+  td::Status validate_pq_launch_resource_config() const;
   td::Status visit_validator_params() const;
   td::Result<std::unique_ptr<BlockLimits>> get_block_limits(bool is_masterchain = false) const;
   auto get_mc_block_limits() const {

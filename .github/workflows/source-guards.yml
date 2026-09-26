@@ -18,6 +18,13 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up repository Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
 
       - name: Install configure-time tools
         run: |
@@ -26,6 +33,11 @@ jobs:
 
       - name: Configure the CTest registry
         run: cmake -S . -B build-source-guards -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Verify the complete source-guard inventory
+        run: >-
+          python3 scripts/check-source-guard-inventory.py
+          --build-dir build-source-guards
 
       - name: Run every registered source guard
         working-directory: build-source-guards

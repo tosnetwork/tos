@@ -14,9 +14,12 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <cstring>
+
 #include "auto/tl/tos_api.hpp"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "measurement/measurement-contract.h"
 #include "td/utils/Time.h"
 #include "td/utils/lz4.h"
 #include "td/utils/overloaded.h"
@@ -187,8 +190,10 @@ td::Result<BlockBroadcast> get_block_broadcast_without_data(const tos_api::tosNo
 }
 
 td::BufferSlice serialize_block_finality_broadcast(const BlockFinalityBroadcast& broadcast) {
-  return create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(create_tl_block_id(broadcast.block_id),
-                                                                             broadcast.sig_set->tl());
+  auto serialized = create_serialize_tl_object<tos_api::tosNode_blockFinalityBroadcast>(
+      create_tl_block_id(broadcast.block_id), broadcast.sig_set->tl());
+  measurement::record_serialized_size(measurement::SerializedArtifact::block_finality_broadcast, serialized.size());
+  return serialized;
 }
 
 td::Bits256 block_finality_broadcast_transport_id(const BlockFinalityBroadcast& broadcast) {
@@ -200,6 +205,13 @@ td::Bits256 block_finality_broadcast_transport_id(const BlockFinalityBroadcast& 
   destination.substr(0, block_identity.size()).copy_from(block_identity.as_slice());
   destination.substr(block_identity.size()).copy_from(signature_set_hash.as_slice());
   return td::sha256_bits256(identity.as_slice());
+}
+
+measurement::TraceId block_finality_broadcast_trace_id(const BlockFinalityBroadcast& broadcast) {
+  const auto transport_id = block_finality_broadcast_transport_id(broadcast);
+  measurement::TraceId result{};
+  std::memcpy(result.data(), transport_id.as_slice().data(), result.size());
+  return result;
 }
 
 td::Result<BlockFinalityBroadcast> deserialize_block_finality_broadcast(

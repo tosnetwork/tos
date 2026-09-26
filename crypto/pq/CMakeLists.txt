@@ -67,7 +67,9 @@ target_link_libraries(tos_pq_controller_root PUBLIC tos_pq_consensus PRIVATE tos
 # the key with, so the two cannot disagree about what a valid key file is.
 add_executable(tos-pq-consensus-key "${CMAKE_CURRENT_SOURCE_DIR}/consensus-key-tool.cpp")
 set_target_properties(tos-pq-consensus-key PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus)
+# The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
+# headers come from the library it links, not from whatever the system search path holds.
+target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus OpenSSL::Crypto)
 add_test(NAME consensus-key-tool
          COMMAND "${CMAKE_COMMAND}" -E env python3
                  "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/consensus_key_tool_test.py"
@@ -274,6 +276,7 @@ if(TARGET tos_crypto)
   add_test(NAME pq-finality-boundary-source
     COMMAND "${CMAKE_COMMAND}" -E env python3
             ${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/check-pq-finality-boundary.py)
+  set_tests_properties(pq-finality-boundary-source PROPERTIES LABELS "source-guard")
   add_executable(test-pq-block-signature-no-legacy
     "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/pq-block-signature-no-legacy-test.cpp")
   set_target_properties(test-pq-block-signature-no-legacy PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)

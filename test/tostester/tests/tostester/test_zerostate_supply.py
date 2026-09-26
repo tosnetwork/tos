@@ -24,7 +24,12 @@ from pytosiq_core.tlb.config import (
 from tostester.install import Install
 from tostester.key import Key
 from tostester.network import NetworkConfig
-from tostester.zerostate import SimplexConsensusConfig, create_zerostate
+from tostester.zerostate import (
+    PqInitialValidator,
+    SimplexConsensusConfig,
+    _launch_validator_counts,
+    create_zerostate,
+)
 
 REPO = Path(__file__).resolve().parents[4]
 # Matches test/integration/test_basic.py's convention: CI's build step
@@ -44,6 +49,67 @@ DNS_VECTORS = json.loads(
     (REPO / "domains/packages/protocol/test/vectors.json").read_text()
 )
 EXPECTED_DNS_ROOT_ID = DNS_VECTORS["root_address"].removeprefix("-1:")
+
+
+def test_launch_validator_count_boundary_is_explicit():
+    assert _launch_validator_counts(21, 21) == {
+        "max_validators": 21,
+        "max_main_validators": 21,
+        "min_validators": 21,
+    }
+    with pytest.raises(ValueError, match="genesis validator count 22 exceeds.*cap 21"):
+        _launch_validator_counts(22, 21)
+
+
+def test_controller_policy_uses_genesis_config_dictionary(tmp_path):
+    code_hash = bytes(range(32))
+    zerostate = create_zerostate(
+        Install(BUILD_DIR, REPO),
+        tmp_path,
+        NetworkConfig(validator_controller_code_hash=code_hash),
+        [Key()],
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    policy = state.custom.config.config[47].copy()
+    admitted = policy.load_dict(256)
+    assert admitted is not None
+    assert set(admitted) == {int.from_bytes(code_hash, "big")}, (
+        "genesis ConfigParam 47 did not admit exactly the controller code hash"
+    )
+    assert policy.remaining_bits == 0 and policy.remaining_refs == 0, (
+        "genesis ConfigParam 47 has trailing data"
+    )
+
+    with pytest.raises(ValueError, match="controller code hash must be 32 bytes"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path / "invalid",
+            NetworkConfig(validator_controller_code_hash=b"short"),
+            [Key()],
+        )
+
+
+def test_local_genesis_builds_21_validators_and_refuses_22_before_fift(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    keys = [Key() for _ in range(21)]
+    config = NetworkConfig(shard_validators=21)
+    accepted_dir = tmp_path / "accepted-21"
+    accepted_dir.mkdir()
+    state = _load_masterchain_state(
+        create_zerostate(install, accepted_dir, config, keys).masterchain.file
+    )
+    limits = _config(state, 16, ConfigParam16)
+    validators = _config(state, 34, ConfigParam34).cur_validators
+    assert (limits.max_validators, limits.max_main_validators) == (21, 21)
+    assert (validators.total, validators.main) == (21, 21)
+
+    with pytest.raises(ValueError, match="genesis validator count 22 exceeds.*cap 21"):
+        create_zerostate(
+            install,
+            tmp_path / "refused-22",
+            NetworkConfig(shard_validators=21),
+            [Key() for _ in range(22)],
+        )
 
 
 def _load_masterchain_state(path: Path) -> ShardStateUnsplit:
@@ -153,6 +219,17 @@ def test_validator_economics_profile_requires_exactly_four_keys(tmp_path):
     with pytest.raises(ValueError, match="unique genesis validator keys"):
         create_zerostate(install, tmp_path, config, [duplicate] * 4)
 
+    pq_validator = PqInitialValidator(
+        validator_id=b"v" * 32,
+        key_id=b"k" * 32,
+        public_key=b"p" * 1312,
+        adnl_id=b"a" * 32,
+    )
+    with pytest.raises(ValueError, match="exactly four genesis validators"):
+        create_zerostate(install, tmp_path, config, [], [pq_validator] * 3)
+    with pytest.raises(ValueError, match="unique genesis validator keys"):
+        create_zerostate(install, tmp_path, config, [], [pq_validator] * 4)
+
 
 def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path):
     install = Install(BUILD_DIR, REPO)
@@ -218,7 +295,136 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
         catchain.shard_catchain_lifetime,
         catchain.shard_validators_lifetime,
         catchain.shard_validators_num,
-    ) == (250, 250, 1000, 23)
+    ) == (250, 250, 1000, 21)
+
+
+def test_stage_a_can_extend_only_the_bootstrap_set_without_changing_election_params(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        shard_validators=EXPECTED_VALIDATOR_COUNT,
+        validator_economics_profile=True,
+        validator_election_stage_a_profile=True,
+        bootstrap_validator_set_valid_for=1200,
+    )
+    zerostate = create_zerostate(
+        install, tmp_path, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    validator_set = _config(state, 34, ConfigParam34).cur_validators
+    assert validator_set.utime_until - validator_set.utime_since == 1200
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (300, 180, 60, 180)
+
+
+def test_f01_stage_a_start_override_is_encoded_in_genesis_param15(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        shard_validators=EXPECTED_VALIDATOR_COUNT,
+        validator_economics_profile=True,
+        validator_election_stage_a_profile=True,
+        validator_election_stage_a_start_before=240,
+    )
+    genesis_dir = tmp_path / "f01-extended"
+    genesis_dir.mkdir()
+    zerostate = create_zerostate(
+        install, genesis_dir, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (300, 240, 60, 180)
+    assert _config(state, 34, ConfigParam34).cur_validators.utime_until - (
+        _config(state, 34, ConfigParam34).cur_validators.utime_since
+    ) == 600
+    for start in (False, 60, 300, 301):
+        with pytest.raises(ValueError, match="Stage A election start"):
+            create_zerostate(
+                install, tmp_path / f"bad-{start}",
+                NetworkConfig(
+                    validator_economics_profile=True,
+                    validator_election_stage_a_profile=True,
+                    validator_election_stage_a_start_before=start,
+                ), [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+            )
+    with pytest.raises(ValueError, match="requires the Stage A profile"):
+        create_zerostate(
+            install, tmp_path / "not-stage-a",
+            NetworkConfig(validator_election_stage_a_start_before=240), [Key()]
+        )
+
+
+def test_stage_a_lifecycle_can_extend_elected_sets_without_changing_other_params(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        shard_validators=EXPECTED_VALIDATOR_COUNT,
+        validator_economics_profile=True,
+        validator_election_stage_a_profile=True,
+        bootstrap_validator_set_valid_for=1200,
+        validator_election_stage_a_elected_for=600,
+    )
+    zerostate = create_zerostate(
+        install, tmp_path, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+    )
+    state = _load_masterchain_state(zerostate.masterchain.file)
+    validator_set = _config(state, 34, ConfigParam34).cur_validators
+    assert validator_set.utime_until - validator_set.utime_since == 1200
+    param15 = _config(state, 15, ConfigParam15)
+    assert (
+        param15.validators_elected_for,
+        param15.elections_start_before,
+        param15.elections_end_before,
+        param15.stake_held_for,
+    ) == (600, 180, 60, 180)
+
+
+@pytest.mark.parametrize("duration", [False, 0, 240, 0x1_0000_0000])
+def test_stage_a_elected_set_override_rejects_invalid_duration(tmp_path, duration):
+    with pytest.raises(ValueError, match="Stage A elected-set duration"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(
+                shard_validators=EXPECTED_VALIDATOR_COUNT,
+                validator_economics_profile=True,
+                validator_election_stage_a_profile=True,
+                validator_election_stage_a_elected_for=duration,
+            ),
+            [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+        )
+
+
+def test_elected_set_override_is_rejected_outside_stage_a(tmp_path):
+    with pytest.raises(ValueError, match="requires the Stage A profile"):
+        create_zerostate(
+            Install(BUILD_DIR, REPO),
+            tmp_path,
+            NetworkConfig(
+                validator_economics_profile=True,
+                validator_election_stage_a_elected_for=600,
+            ),
+            [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+        )
+
+
+def test_validator_economics_without_stage_a_rejects_bootstrap_lifetime_override(tmp_path):
+    install = Install(BUILD_DIR, REPO)
+    config = NetworkConfig(
+        validator_economics_profile=True,
+        bootstrap_validator_set_valid_for=1200,
+    )
+    with pytest.raises(ValueError, match="ordinary local or Stage A profile"):
+        create_zerostate(
+            install, tmp_path, config, [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
+        )
 
 
 def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path):
@@ -328,7 +534,7 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
         param16.max_validators,
         param16.max_main_validators,
         param16.min_validators,
-    ) == (400, 100, 4)
+    ) == (21, 21, 4)
 
     param17 = _config(state, 17, ConfigParam17)
     assert (
@@ -349,7 +555,7 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
         param28.shard_catchain_lifetime,
         param28.shard_validators_lifetime,
         param28.shard_validators_num,
-    ) == (250, 250, 1000, 23)
+    ) == (250, 250, 1000, 21)
 
     validator_set = _config(state, 34, ConfigParam34).cur_validators
     assert validator_set.total == EXPECTED_VALIDATOR_COUNT
@@ -517,7 +723,7 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         canonical_catchain.shard_catchain_lifetime,
         canonical_catchain.shard_validators_lifetime,
         canonical_catchain.shard_validators_num,
-    ) == (250, 250, 1000, 23)
+    ) == (250, 250, 1000, 21)
     validator_set = _config(state, 34, ConfigParam34).cur_validators
     assert validator_set.total == EXPECTED_VALIDATOR_COUNT
     assert [

@@ -878,6 +878,8 @@ void FullNodeShardImpl::process_broadcast(PublicKeyHash src, tos_api::tosNode_bl
   }
   auto parsed_finality = finality.move_as_ok();
   parsed_finality.received_bytes = received_bytes;
+  measurement::record_trace_lazy([&] { return block_finality_broadcast_trace_id(parsed_finality); },
+                                 measurement::TraceStage::peer_finality_broadcast_received, received_bytes);
   VLOG(FULL_NODE_DEBUG) << "Received blockFinalityBroadcast in public overlay from " << src << ": "
                         << parsed_finality.block_id.to_str();
   td::actor::send_closure(full_node_, &FullNode::process_block_finality_broadcast, std::move(parsed_finality), src,
@@ -1079,6 +1081,8 @@ void FullNodeShardImpl::send_block_finality_broadcast(BlockFinalityBroadcast fin
   VLOG(FULL_NODE_DEBUG) << "Sending Plumtree blockFinalityBroadcast in public overlay: " << finality.block_id.to_str();
   auto broadcast_id = block_finality_broadcast_transport_id(finality);
   auto payload = serialize_block_finality_broadcast(finality);
+  measurement::record_trace_lazy([&] { return block_finality_broadcast_trace_id(finality); },
+                                 measurement::TraceStage::finality_broadcast_sent, payload.size());
   auto source = choose_outbound_source(static_cast<td::uint32>(payload.size()), true);
   td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_plumtree, adnl_id_, overlay_id_, source,
                           overlay::Overlays::BroadcastFlagAnySender(), broadcast_id, std::move(payload));

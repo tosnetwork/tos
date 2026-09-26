@@ -300,7 +300,7 @@ impl BlockSignaturesPure {
         }
 
         // Check signatures
-        let mut weight = 0;
+        let mut weight = 0u64;
         let mut used_keys = HashSet::new();
         self.signatures().iterate_slices(|ref mut _key, ref mut slice| {
             let sign = CryptoSignaturePair::construct_from(slice)?;
@@ -311,7 +311,9 @@ impl BlockSignaturesPure {
                 if !vd.verify_signature(data, &sign.sign) {
                     fail!(BlockError::BadSignature)
                 }
-                weight += vd.weight;
+                weight = weight.checked_add(vd.weight).ok_or_else(|| {
+                    BlockError::InvalidData("signature weight overflow".into())
+                })?;
             }
             Ok(true)
         })?;
@@ -857,7 +859,12 @@ fn validate_candidate_tl(bytes: &[u8]) -> Result<()> {
 }
 
 impl BlockSignaturesSimplexPq {
-    pub fn validate_weights(&self, validators: &[PqBlockValidatorWeight]) -> Result<u64> {
+    /// Check signer membership, algorithm ids, and declared weight only.
+    /// This does not cryptographically verify any signature.
+    pub fn check_structural_membership_and_weight(
+        &self,
+        validators: &[PqBlockValidatorWeight],
+    ) -> Result<u64> {
         let mut total = 0u64;
         for signature in &self.signatures {
             let Some(validator) = validators
@@ -889,6 +896,9 @@ impl BlockSignaturesSimplexPq {
         Ok(total)
     }
 
+    /// Parse and structurally check a PQ #13 carrier. No cryptographic
+    /// signature verification occurs here; do not use this result to decide
+    /// whether a proof establishes validator authority or finality.
     pub fn construct_from_pq_boc(
         bytes: &[u8],
         validators: &[PqBlockValidatorWeight],
@@ -909,7 +919,7 @@ impl BlockSignaturesSimplexPq {
                 )
             }
         };
-        parsed.validate_weights(validators)?;
+        parsed.check_structural_membership_and_weight(validators)?;
         Ok(parsed)
     }
 }
@@ -1018,11 +1028,11 @@ impl Deserializable for BlockSignaturesSimplexPq {
     }
 }
 
-/// Unified block signatures - either ordinary (catchain) or simplex
+/// Block-signature carrier variants: ordinary, Simplex, and Simplex PQ.
 ///
-/// This enum allows code to handle both signature formats uniformly,
-/// with `check_signatures()` automatically using the appropriate
-/// verification scheme.
+/// The PQ variant provides structural decoding and declared-weight checks in
+/// this crate, not cryptographic verification. In particular, it has no
+/// `check_signatures()` path here and cannot establish authority or finality.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockSignaturesVariant {
     /// Catchain/validator-session signatures (tag 0x11)
@@ -1040,7 +1050,7 @@ impl Default for BlockSignaturesVariant {
 }
 
 impl BlockSignaturesVariant {
-    /// Get pure signatures (common to both types)
+    /// Get pure signatures from either pre-PQ variant; the PQ variant has no CryptoSignature view.
     pub fn pure_signatures(&self) -> Result<&BlockSignaturesPure> {
         match self {
             Self::Ordinary(s) => Ok(&s.pure_signatures),
@@ -1058,7 +1068,7 @@ impl BlockSignaturesVariant {
         }
     }
 
-    /// Get validator info (common to both types)
+    /// Get validator info (common to all three variants)
     pub fn validator_info(&self) -> &ValidatorBaseInfo {
         match self {
             Self::Ordinary(s) => &s.validator_info,

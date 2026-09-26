@@ -754,6 +754,7 @@ engine.validator.time time:int = engine.validator.Time;
 engine.validator.success = engine.validator.Success;
 
 engine.validator.jsonConfig data:string = engine.validator.JsonConfig;
+engine.validator.pqStakeAuthorization validator_id:int256 key_id:int256 algorithm_id:int public_key:bytes signature:bytes = engine.validator.PqStakeAuthorization;
 
 engine.validator.electionBid election_date:int perm_key:int256 adnl_addr:int256 to_send_payload:bytes = engine.validator.ElectionBid;
 engine.validator.proposalVote perm_key:int256 to_send:bytes = engine.validator.ProposalVote;
@@ -830,6 +831,7 @@ engine.validator.getConfig = engine.validator.JsonConfig;
 engine.validator.setVerbosity verbosity:int = engine.validator.Success;
 
 engine.validator.createElectionBid election_date:int election_addr:string wallet:string = engine.validator.ElectionBid;
+engine.validator.createPqStakeAuthorization election_date:int max_factor:int adnl_addr:int256 stake_owner:int256 = engine.validator.PqStakeAuthorization;
 engine.validator.createProposalVote vote:bytes = engine.validator.ProposalVote;
 engine.validator.createComplaintVote election_id:int vote:bytes = engine.validator.ProposalVote;
 

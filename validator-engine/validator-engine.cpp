@@ -72,6 +72,7 @@
 #include "overlay-manager.h"
 #include "overlays.h"
 #include "validator/impl/config.hpp"
+#include "validator/measurement/measurement-contract.h"
 #include "validator/state-download-buffer.h"
 #include "validator-engine.hpp"
 
@@ -99,7 +100,7 @@
 #include "git.h"
 
 #if TOS_USE_JEMALLOC
-#include <jemalloc/jemalloc.h>
+#include TOS_JEMALLOC_HEADER
 #endif
 
 static constexpr size_t k_ed25519_signature_size = 64;
@@ -991,8 +992,9 @@ td::Result<bool> Config::config_del_gc(tos::PublicKeyHash key) {
 //
 // What a node can do is say, with the one key it holds, that this validator agrees to
 // stand in this election with this money behind it. That is what this returns: a
-// signature, over the bytes the elector will rebuild, and nothing else. It signs one
-// tuple rather than bytes it is handed, so the key cannot be asked to sign anything else.
+// signature, over the bytes the elector will rebuild, together with the exact
+// algorithm and public key held by the signer. It signs one tuple rather than
+// bytes it is handed, so the key cannot be asked to sign anything else.
 class PqStakeAuthorizationCreator : public td::actor::Actor {
  public:
   PqStakeAuthorizationCreator(td::uint32 election_date, td::uint32 max_factor, td::Bits256 adnl_addr,
@@ -1045,8 +1047,10 @@ class PqStakeAuthorizationCreator : public td::actor::Actor {
       return;
     }
 
+    const auto &held_key = self.signer->consensus_key();
     promise_.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_pqStakeAuthorization>(
-        self.validator_id.value, authorization->key_id, td::BufferSlice(authorization->signature.signature)));
+        self.validator_id.value, authorization->key_id, static_cast<td::int32>(held_key.algorithm_id),
+        td::BufferSlice(held_key.public_key), td::BufferSlice(authorization->signature.signature)));
     stop();
   }
 
@@ -6003,6 +6007,8 @@ int main(int argc, char *argv[]) {
   LOG_STATUS(td::change_maximize_rlimit(td::RlimitType::nofile, 1572864));
 
   std::vector<std::function<void()>> acts;
+  std::string measurement_jsonl;
+  std::string measurement_node_id;
 
   td::OptionParser p;
   p.set_description("validator or full node for TOS network");
@@ -6015,6 +6021,10 @@ int main(int argc, char *argv[]) {
               << ", Date: " << GitMetadata::CommitDate() << "]\n";
     std::exit(0);
   });
+  p.add_option('\0', "measurement-jsonl", "write bounded-vocabulary N6 trace events to this JSONL file",
+               [&](td::Slice path) { measurement_jsonl = path.str(); });
+  p.add_option('\0', "measurement-node-id", "stable node name written into N6 trace events",
+               [&](td::Slice value) { measurement_node_id = value.str(); });
   p.add_option('h', "help", "prints_help", [&]() {
     char b[10240];
     td::StringBuilder sb(td::MutableSlice{b, 10000});
@@ -6139,7 +6149,8 @@ int main(int argc, char *argv[]) {
         acts.push_back([&x, seq]() { td::actor::send_closure(x, &ValidatorEngine::add_unsafe_catchain, seq); });
         return td::Status::OK();
       });
-  p.add_checked_option('F', "unsafe-catchain-rotate", "use forceful and DANGEROUS catchain rotation",
+  p.add_checked_option('F', "unsafe-catchain-rotate",
+                       "forceful DANGEROUS classical catchain rotation; PQ rejects a nonzero tag before group creation",
                        [&](td::Slice params) {
                          auto pos1 = params.find(':');
                          TRY_RESULT(b_seq, td::to_integer_safe<tos::BlockSeqno>(params.substr(0, pos1)));
@@ -6754,6 +6765,14 @@ int main(int argc, char *argv[]) {
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
     std::_Exit(2);
+  }
+  if (!measurement_jsonl.empty() || !measurement_node_id.empty()) {
+    if (measurement_jsonl.empty() || measurement_node_id.empty()) {
+      LOG(ERROR) << "--measurement-jsonl and --measurement-node-id must be supplied together";
+      std::_Exit(2);
+    }
+    tos::validator::measurement::install_sink(
+        tos::validator::measurement::create_jsonl_file_sink(measurement_jsonl, measurement_node_id).move_as_ok());
   }
 
   // H-03 startup invariant: log the effective persistent-state budget

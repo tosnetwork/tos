@@ -4,8 +4,11 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <cstring>
+
 #include "td/actor/coro_utils.h"
 #include "tos/quorum.h"
+#include "validator/measurement/measurement-contract.h"
 
 #include "bus.h"
 #include "misbehavior.h"
@@ -15,6 +18,12 @@
 namespace tos::validator::consensus::simplex {
 
 namespace {
+
+measurement::TraceId measurement_trace_id(const CandidateId &id) {
+  measurement::TraceId result{};
+  std::memcpy(result.data(), id.hash.data(), result.size());
+  return result;
+}
 
 template <typename T>
 struct Proven {
@@ -551,27 +560,6 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   td::actor::Task<QueryVoteIngress::Result> process(BusHandle, std::shared_ptr<QueryVoteIngress>) {
     co_return QueryVoteIngress::Result{.accepted = votes_accepted_,
                                        .refused_bad_signature = votes_refused_bad_signature_};
-  }
-
-  template <>
-  td::actor::Task<std::optional<ParentId>> process(BusHandle, std::shared_ptr<QuerySlotSkipped> query) {
-    auto slot = state_->slot_at(query->id.slot);
-    if (!slot.has_value()) {
-      co_return std::nullopt;
-    }
-    auto action = select_skipped_slot_resolution(query->id, slot->state->is_skipped(), slot->state->notarized_block());
-    if (action.is_error()) {
-      co_return action.move_as_error();
-    }
-    if (action.move_as_ok() == SkippedSlotResolution::ResolveCandidate) {
-      co_return std::nullopt;
-    }
-    // Skip-only slots have no candidate to resolve. available_base already
-    // accounts for any run of skips leading up to this slot, so jump directly
-    // to the real ancestor. Do not take this path for a dual-certified slot:
-    // its notarized candidate is part of the state chain even though a SkipCert
-    // was also observed.
-    co_return slot->state->available_base;
   }
 
   template <>
@@ -1113,6 +1101,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   void handle_typed_saved_certificate(State::SlotRef &slot, NotarCertRef cert) {
     auto id = cert->vote.id;
 
+    measurement::record_trace_lazy([&] { return measurement_trace_id(id); },
+                                   measurement::TraceStage::notarization_certificate_observed);
     owning_bus().publish<NotarizationObserved>(id, cert);
 
     next_nonskipped_slot_after(id.slot).state->add_available_base(id);
@@ -1149,6 +1139,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     last_finalized_block_ = id;
     last_final_cert_ = cert;
     first_nonfinalized_slot_ = id.slot + 1;
+    measurement::record_trace_lazy([&] { return measurement_trace_id(id); },
+                                   measurement::TraceStage::finalization_certificate_observed);
     owning_bus().publish<FinalizationObserved>(id, cert);
 
     if (now_ <= id.slot) {

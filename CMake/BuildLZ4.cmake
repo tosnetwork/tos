@@ -231,7 +231,7 @@ else()
           -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY=${LZ4_BINARY_DIR}/lib
           -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE=${LZ4_BINARY_DIR}/lib
           -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG=${LZ4_BINARY_DIR}/lib
-        COMMAND ${CMAKE_COMMAND} --build ${LZ4_BUILD_DIR} --config Release --parallel 16
+        COMMAND ${CMAKE_COMMAND} --build ${LZ4_BUILD_DIR} --config Release --parallel 2
         COMMENT "Build lz4"
         DEPENDS ${LZ4_SOURCE_DIR}
         OUTPUT ${LZ4_LIBRARY}

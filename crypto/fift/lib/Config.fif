@@ -18,6 +18,15 @@ library Config  // ConfigParam builders and validator set helpers
 // max-validators masterchain-validators min-validators --
 { swap rot <b swap 16 u, swap 16 u, swap 16 u, b> 16 config! } : config.validator_num!
 
+// One admitted Validator Controller code hash for ConfigParam 47. The value is
+// HashmapE 256 True, not a bare hash: the elector and configuration contract
+// both parse its dictionary and refuse an absent or malformed policy.
+// ( code-hash:uint256 -- )
+{ dup 256 ufits not abort"controller code hash must fit uint256"
+  <b b> <s swap dictnew 256 udict! not abort"cannot admit controller code"
+  <b swap dict, b> 47 config!
+} : config.validator_controller_code!
+
 // min-stake max-stake min-total-stake max-factor --
 { 4 0 reverse <b swap Tomi, swap Tomi, swap Tomi, swap 32 u, b>
   17 config!

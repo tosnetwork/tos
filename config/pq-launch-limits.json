@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "decision_status": "OWNER_ACCEPTED",
+  "enforcement": "REJECT_NOT_CLAMP",
+  "rationale": "At 21 signers ML-DSA-44 uses 50,820 signature bytes, ML-DSA-87 uses 97,167, and SLH-DSA-256s uses 625,632; all fit the 984,260-byte structural carrier while preserving algorithm-change headroom. The 400-signer N5 retention sizing is a separate rotation/resource bound and is not reduced by this launch cap.",
+  "max_total_validators": 21,
+  "max_masterchain_committee": 21,
+  "max_shard_committee": 21
+}

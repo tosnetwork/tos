@@ -628,6 +628,49 @@ fn terms_that_are_not_a_stake_are_refused_before_anything_is_sent() {
     assert_eq!(staking.state(), (STATE_REST, false), "a refused order moved the contract");
 }
 
+/// The retired liquid-controller Fift command wrote Validator.fif's classical
+/// body: a raw Ed25519 key before the election terms and a 64-byte signature
+/// reference. The compiled controller must reject the complete old body before
+/// sending `RELAY_STAKE`; a truncated-body control alone cannot establish that.
+#[test]
+fn classical_liquid_controller_order_is_refused_before_controller_relay() {
+    let mut staking = launch(100_000 * TOS);
+    let election = staking.election();
+    let mut body = BuilderData::new();
+    body.append_u32(NEW_STAKE).expect("operation");
+    body.append_u64(7).expect("query id");
+    Coins::new(60_000 * TOS).write_to(&mut body).expect("stake amount");
+    body.append_raw(&[0x11; 32], 256).expect("classical public key");
+    body.append_u32(election).expect("election");
+    body.append_u32(0x10000).expect("max factor");
+    body.append_raw(&[0xa5; 32], 256).expect("adnl address");
+    let mut signature = BuilderData::new();
+    signature.append_raw(&[0x33; 64], 512).expect("Ed25519 signature");
+    body.checked_append_reference(signature.into_cell().expect("signature cell"))
+        .expect("classical signature reference");
+
+    let sender = staking.validator.clone();
+    let target = staking.controller.clone();
+    let result = staking
+        .chain
+        .send_message(
+            MessageBuilder::internal(&sender, &target, 2 * TOS)
+                .body(body.into_cell().expect("complete classical stake order"))
+                .build(),
+        )
+        .expect("delivered");
+    let transaction = &result.transactions.first().expect("controller transaction").1;
+    assert!(
+        transaction.read_description().expect("description").is_aborted(),
+        "the PQ-shaped controller accepted a classical Ed25519 stake body",
+    );
+    assert!(
+        !reply_tags(&result).contains(&RELAY_STAKE),
+        "the liquid controller relayed a classical Ed25519 stake body",
+    );
+    assert_eq!(staking.state(), (STATE_REST, false), "a rejected order moved the controller");
+}
+
 /// Told the stake was taken, the contract says so; told it was refused, it goes back to
 /// rest and can try again. Those are the two answers it knows, and the Validator
 /// Controller is between it and the elector precisely so that it gets one of them.

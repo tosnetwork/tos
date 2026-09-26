@@ -849,6 +849,10 @@ pub struct NodeBinding {
     pub wallet: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pool: Option<String>,
+    /// Absolute path to the controller's original, public deployment StateInit BOC.
+    /// Old bindings remain readable; a missing artifact refuses first PQ stake locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_birth_state_init_boc: Option<String>,
     /// Whether this binding participates in elections. Defaults to `false`.
     #[serde(default)]
     pub enable: bool,
@@ -1443,10 +1447,17 @@ mod tests {
         let binding = NodeBinding {
             wallet: "w1".to_string(),
             pool: Some("p1".to_string()),
+            controller_birth_state_init_boc: None,
             enable: true,
             status: BindingStatus::Validating,
         };
         let json = serde_json::to_value(&binding).unwrap();
+        assert!(json.get("controller_birth_state_init_boc").is_none());
+        let old: NodeBinding = serde_json::from_value(serde_json::json!({
+            "wallet": "w1", "pool": "p1", "enable": true, "status": "validating"
+        }))
+        .unwrap();
+        assert!(old.controller_birth_state_init_boc.is_none());
         assert_eq!(json["enable"], true);
         assert_eq!(json["status"], "validating");
         assert_eq!(json["wallet"], "w1");

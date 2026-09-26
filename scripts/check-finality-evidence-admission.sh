@@ -8,11 +8,24 @@ set -euo pipefail
 root="${1:-.}"
 failed=0
 
-require_marker() {
+# Match a source fragment after removing all whitespace from both the source
+# and the marker. This keeps line wrapping out of the security contract while
+# retaining every non-whitespace token in the guarded property.
+require_whitespace_insensitive_marker() {
   local file="$1"
   local marker="$2"
   local description="$3"
-  if ! grep -qF "$marker" "$root/$file"; then
+  if ! awk -v marker="$marker" '
+      BEGIN {
+        gsub(/[[:space:]]+/, "", marker)
+      }
+      {
+        line = $0
+        gsub(/[[:space:]]+/, "", line)
+        source = source line
+      }
+      END { exit(index(source, marker) ? 0 : 1) }
+    ' "$root/$file"; then
     echo "FINALITY_ADMISSION_SOURCE_FAILURE: $description ($file)" >&2
     failed=1
   fi
@@ -44,10 +57,10 @@ require_statement_marker() {
   fi
 }
 
-require_marker validator/full-node-shard.cpp \
+require_whitespace_insensitive_marker validator/full-node-shard.cpp \
   'block_finality_broadcast_transport_id(finality)' \
   'public Plumtree finality route lost its evidence-aware transport id'
-require_marker validator/full-node-fast-sync-overlays.cpp \
+require_whitespace_insensitive_marker validator/full-node-fast-sync-overlays.cpp \
   'block_finality_broadcast_transport_id(finality)' \
   'fast-sync Plumtree finality route lost its evidence-aware transport id'
 require_statement_marker validator/full-node-shard.cpp \
@@ -70,35 +83,35 @@ require_statement_marker validator/manager.cpp \
   'prepare_pending_finality_ingress(' ');' \
   'source_peer ? &*source_peer : nullptr, finality.received_bytes, local_signature_bytes' \
   'manager admission no longer applies its checked accounting and sender decision'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'if (!ingress.admitted()) {' \
   'manager no longer fails closed when ingress accounting rejects evidence'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'pending_finality_ingress_rejection_name(ingress.rejection)' \
   'manager ingress rejection log no longer names its reason'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'if (!admission.admitted()) {' \
   'manager no longer stops after the pending store rejects evidence'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'pending_finality_rejection_name(admission.rejection)' \
   'manager pending-store rejection log no longer names its reason'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'pending_finality_authority_memo_.get({shard, claimed_catchain_seqno}' \
   'manager no longer shares memoized validator sets between authority classification and classical verification'
 require_statement_marker validator/manager.cpp \
   'pending_finality_coordinate_is_admissible(' ')) {' \
   'state->get_shard_from_config(shard, true).not_null(), current_catchain_seqno, claimed_catchain_seqno' \
   'manager authority classification no longer requires an exact configured shard before set computation'
-require_marker validator/pending-finality-ingress.h \
+require_whitespace_insensitive_marker validator/pending-finality-ingress.h \
   'pending_finality_catchain_is_current_or_next(current, claimed)' \
   'manager authority classification no longer rejects implausible catchain claims before set computation'
-require_marker validator/pending-finality-ingress.h \
+require_whitespace_insensitive_marker validator/pending-finality-ingress.h \
   'set.validator_set_hash == claimed_validator_set_hash' \
   'authority memo no longer compares the claimed set hash with the locally computed hash'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'pending_finality_authority_memo_.clear()' \
   'manager no longer invalidates authority classifications when trusted state changes'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   '*pending_finality_authority_memo_state_ != last_masterchain_block_id_' \
   'manager no longer keys authority-memo lifetime to the trusted masterchain state'
 require_statement_marker validator/manager.cpp \
@@ -114,7 +127,7 @@ require_statement_marker validator/manager.cpp \
   'pending_block_finality_.admit(' ');' \
   'ingress.accounted_bytes, capacity, signatures_verified' \
   'manager no longer passes the authority capacity class into the pending store'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'new_block_finality_broadcast(finality.clone(), BroadcastSource::consensus_overlay)' \
   'locally originated finality no longer uses the explicit local-source path'
 
@@ -127,16 +140,16 @@ if [ "$caller_sites" -ne 5 ]; then
   echo "FINALITY_ADMISSION_SOURCE_FAILURE: new_block_finality_broadcast has $caller_sites declaration/call sites, expected 5 classified sites" >&2
   failed=1
 fi
-require_marker validator/full-node-shard.cpp \
+require_whitespace_insensitive_marker validator/full-node-shard.cpp \
   'parsed_finality.received_bytes = received_bytes' \
   'public finality ingress no longer records the received payload size'
-require_marker validator/full-node-fast-sync-overlays.cpp \
+require_whitespace_insensitive_marker validator/full-node-fast-sync-overlays.cpp \
   'parsed_finality.received_bytes = received_bytes' \
   'fast-sync finality ingress no longer records the received payload size'
-require_marker validator/full-node-custom-overlays.cpp \
+require_whitespace_insensitive_marker validator/full-node-custom-overlays.cpp \
   'parsed_finality.received_bytes = received_bytes' \
   'custom-overlay finality ingress no longer records the received payload size'
-require_marker validator/manager.cpp \
+require_whitespace_insensitive_marker validator/manager.cpp \
   'finality.received_bytes' \
   'manager admission no longer charges the received payload bytes'
 

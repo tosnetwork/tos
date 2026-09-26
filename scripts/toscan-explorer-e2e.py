@@ -31,6 +31,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from e03_http_trace import record as record_e03_http
+from e03_config34_identity import (
+    decode as decode_e03_config34,
+    verify as verify_e03_config34,
+    verify_genesis_member as verify_e03_genesis_member,
+)
+
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_WORKDIR = REPO / "test/integration/.toscan-explorer-e2e"
 CONTRACT_KINDS = {
@@ -52,9 +59,12 @@ def request_json(url: str, body=None, timeout=15):
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read().decode())
+            raw = response.read()
+            record_e03_http(url, data, response.status, raw)
+            return response.status, json.loads(raw.decode())
     except urllib.error.HTTPError as error:
         raw = error.read()
+        record_e03_http(url, data, error.code, raw)
         return error.code, json.loads(raw.decode()) if raw else {}
 
 
@@ -423,8 +433,20 @@ def main():
         assert status == 200
         assert validator_set.get("total") == len(validator_set.get("validators", []))
         assert validator_set.get("total", 0) > 0
-        assert all(item.get("public_key") and item.get("weight") for item in validator_set["validators"])
-        print("PASS: current validator membership and weights decode from proved configuration")
+        (workdir / "config34-identity-raw.json").write_text(
+            json.dumps(config_response, indent=2) + "\n"
+        )
+        decoded_config34 = decode_e03_config34(config_response)
+        verify_e03_config34(config_response, decoded_config34)
+        verify_e03_genesis_member(
+            decoded_config34,
+            workdir / "localnet" / "node1",
+            REPO / "build/crypto/pq/tos-pq-consensus-key",
+        )
+        (workdir / "config34-identity-from-boc.json").write_text(
+            json.dumps({**decoded_config34, "genesis_member_verified": True}, indent=2) + "\n"
+        )
+        print("PASS: PQ Config34 JSON, BOC, and independently provisioned genesis identity match")
 
         if args.browser_command:
             browser_env = dict(os.environ)

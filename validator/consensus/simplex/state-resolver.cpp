@@ -5,6 +5,7 @@
  */
 
 #include "consensus/utils.h"
+#include "crypto/block/block.h"
 #include "td/actor/SharedFuture.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/ScopeGuard.h"
@@ -220,7 +221,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   template <>
   td::actor::Task<ResolvedState> process(BusHandle, std::shared_ptr<ResolveState> request) {
-    co_return co_await resolve_state(request->id);
+    co_return co_await resolve_state(request->id, request->requesting_candidate);
   }
 
   template <>
@@ -263,7 +264,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   size_t state_admission_rejections_ = 0;
   std::optional<td::uint32> latest_finalized_slot_;
 
-  td::actor::Task<ResolvedState> resolve_state(ParentId id) {
+  td::actor::Task<ResolvedState> resolve_state(ParentId id, std::optional<CandidateId> requesting_candidate) {
     if (!state_cache_.contains(id) && !state_inflight_.try_admit()) {
       ++state_admission_rejections_;
       co_return td::Status::Error(
@@ -282,7 +283,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       SCOPE_EXIT {
         state_inflight_.release();
       };
-      auto result = co_await resolve_state_inner(id).wrap();
+      auto result = co_await resolve_state_inner(id, requesting_candidate).wrap();
       for (auto& p : entry.promises) {
         p.set_result(result.clone());
       }
@@ -372,10 +373,12 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     co_return Finalization::Finalized;
   }
 
-  td::actor::Task<ResolvedState> resolve_state_inner(ParentId id) {
+  td::actor::Task<ResolvedState> resolve_state_inner(ParentId id,
+                                                     std::optional<CandidateId> requesting_candidate) {
     std::vector<CandidateRef> candidates_to_apply;
     std::optional<double> gen_utime_exact;
     std::optional<ChainStateRef> state;
+    std::optional<BlockIdExt> empty_reference;
     bool reconstruct_from_candidate_data = false;
 
     // Resolve the whole ancestor walk inside one admitted operation. Empty
@@ -403,16 +406,29 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         break;
       }
 
-      // A skip-only slot never had a Candidate object. Pool's available_base
-      // jumps directly past the skip run. Query the exact CandidateId so Pool
-      // can reject the shortcut when the slot also has a NotarCert.
-      if (auto skip_base = co_await owning_bus().publish<QuerySlotSkipped>(*id)) {
-        id = *skip_base;
-        continue;
+      // An already-signed candidate names this exact parent CandidateId.
+      // Local skip-certificate visibility cannot replace that ancestry.
+      // Resolve the exact candidate or fail closed; a missing ancestor must
+      // never silently omit a full state transition.
+      auto resolved_candidate = co_await owning_bus().publish<ResolveCandidate>(*id).wrap();
+      if (resolved_candidate.is_error()) {
+        co_return td::Status::Error(resolved_candidate.error().code(),
+                                    PSTRING() << "Simplex state-resolver: cannot resolve exact ancestor " << *id
+                                              << ": " << resolved_candidate.error().message());
       }
-
-      auto candidate = (co_await owning_bus().publish<ResolveCandidate>(*id)).candidate;
+      auto candidate = resolved_candidate.move_as_ok().candidate;
+      if (candidate->id != *id) {
+        co_return td::Status::Error(ErrorCode::protoviolation,
+                                    PSTRING() << "Simplex state-resolver: resolver returned candidate " << candidate->id
+                                              << " for exact ancestor " << *id);
+      }
       if (candidate->is_empty()) {
+        // If this walk contains no full candidate, the exact empty candidate
+        // still names the block whose state it preserves. A restarted Start
+        // may point at a later local tip and is not this session's origin.
+        if (!empty_reference.has_value()) {
+          empty_reference = candidate->block_id();
+        }
         id = candidate->parent_id;
         continue;
       }
@@ -432,7 +448,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         auto genesis = co_await genesis_.get();
         auto manager_state =
             co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                              {candidate->block_id()}, genesis->state->min_mc_block_id())
+                                              {candidate->block_id()}, genesis->state->min_mc_block_id(),
+                                              requesting_candidate)
                 .wrap();
         if (manager_state.is_ok()) {
           state = manager_state.move_as_ok();
@@ -460,8 +477,57 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
     if (!state.has_value()) {
       auto genesis = co_await genesis_.get();
-      state = co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                               genesis->state->block_ids(), genesis->state->min_mc_block_id());
+      std::vector<BlockIdExt> base_blocks;
+      if (!candidates_to_apply.empty()) {
+        // The oldest full candidate carries the exact predecessor block IDs
+        // its Merkle update was built from. On restart, Start can be a newer
+        // local tip; using that tip as the replay base applies old updates to
+        // the wrong state and aborts. Derive the base from the candidate's
+        // validated block header instead, including split/merge predecessors.
+        const auto& oldest = std::get<BlockCandidate>(candidates_to_apply.back()->block);
+        auto block_result = create_block(oldest.id, oldest.data.clone());
+        if (block_result.is_error()) {
+          co_return block_result.move_as_error_prefix("Simplex state-resolver: cannot read oldest candidate block: ");
+        }
+        BlockIdExt mc_block_id;
+        bool after_split = false;
+        auto unpack_status = block::unpack_block_prev_blk_try(block_result.move_as_ok()->root_cell(), oldest.id,
+                                                               base_blocks, mc_block_id, after_split);
+        if (unpack_status.is_error() || base_blocks.empty() || base_blocks.size() > 2) {
+          co_return td::Status::Error(ErrorCode::protoviolation,
+                                      PSTRING() << "Simplex state-resolver: oldest candidate " << oldest.id.to_str()
+                                                << " has unusable predecessor IDs: " << unpack_status);
+        }
+      } else if (empty_reference.has_value()) {
+        base_blocks.push_back(*empty_reference);
+      } else {
+        // Resolving the null parent for fresh production still starts from
+        // Start. No historical candidate is being replayed in this case.
+        base_blocks = genesis->state->block_ids();
+      }
+      // The exact predecessor can still be coming online after restart. Retry
+      // only its read-only manager lookup, for a bounded number of attempts;
+      // never substitute the newer Start tip when it remains unavailable.
+      for (unsigned attempt = 0; attempt < 3; ++attempt) {
+        auto manager_state =
+            co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
+                                              base_blocks, genesis->state->min_mc_block_id(), requesting_candidate)
+                .wrap();
+        if (manager_state.is_ok()) {
+          state = manager_state.move_as_ok();
+          break;
+        }
+        auto error = manager_state.move_as_error();
+        if (error.code() != ErrorCode::notready && error.code() != ErrorCode::timeout) {
+          co_return error;
+        }
+        if (attempt == 2) {
+          co_return td::Status::Error(ErrorCode::notready,
+                                      PSTRING() << "Simplex state-resolver: exact predecessor state unavailable after 3 attempts: "
+                                                << error.message());
+        }
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
     }
     for (auto it = candidates_to_apply.rbegin(); it != candidates_to_apply.rend(); ++it) {
       state = (*state)->apply(std::get<BlockCandidate>((*it)->block));

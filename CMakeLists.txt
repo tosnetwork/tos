@@ -799,15 +799,71 @@ target_link_libraries(test-validator-transport-authority PRIVATE overlay tos_blo
 add_executable(test-pending-finality-cache test/pq-native/pending-finality-cache-test.cpp)
 target_include_directories(test-pending-finality-cache PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-pending-finality-cache PRIVATE full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer
-                      tos_pq_consensus tl_lite_api tdutils)
+target_link_libraries(test-pending-finality-cache PRIVATE validator full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer
+                      tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-pending-finality-cache PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+add_executable(test-c04-real-state-proof test/pq-native/c04-real-state-proof-test.cpp)
+target_include_directories(test-c04-real-state-proof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-c04-real-state-proof PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-c04-real-state-proof PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+add_executable(test-n5-manager-db-fixture test/pq-native/n5-manager-db-fixture-test.cpp)
+target_include_directories(test-n5-manager-db-fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-n5-manager-db-fixture PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-n5-manager-db-fixture PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+add_executable(test-pq-launch-cap test/pq-native/pq-launch-cap-test.cpp)
+target_link_libraries(test-pq-launch-cap PRIVATE tos_block)
+
+add_executable(z01-config-proof-check test/pq-native/z01-config-proof-check.cpp)
+target_link_libraries(z01-config-proof-check PRIVATE tos_block)
+
+add_executable(z01-chain-proof-check test/pq-native/z01-chain-proof-check.cpp)
+target_include_directories(z01-chain-proof-check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(z01-chain-proof-check PRIVATE tos_block lite-client-common)
+
+add_executable(test-measurement-contract test/test-td-main.cpp test/pq-native/measurement-contract-test.cpp)
+target_include_directories(test-measurement-contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-measurement-contract PRIVATE full-node validator-measurement tos_block tos_crypto
+                      tos_pq_consensus tl_api tl_lite_api tdutils)
+
+# The benchmark records the process's sched_getaffinity CPU mask, which only Linux
+# provides. Its source is pinned byte-for-byte to the measured result, so it is
+# registered only where that measurement is meaningful.
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(n6-microbench test/pq-native/n6-microbench.cpp)
+  target_include_directories(n6-microbench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                             ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+  target_link_libraries(n6-microbench PRIVATE validator tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus
+                        tl_api tl_lite_api tl-lite-utils tdutils tdactor)
+  target_compile_definitions(n6-microbench PRIVATE
+    N6_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+    N6_COMPILER="${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}")
+endif()
+
+add_executable(n6-microbench-smoke test/pq-native/n6-microbench-smoke.cpp)
+target_include_directories(n6-microbench-smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(n6-microbench-smoke PRIVATE validator tos_block tos_crypto tos_pq_consensus_signer
+                      tos_pq_consensus tl_api tl_lite_api tl-lite-utils tdutils tdactor)
 
 add_executable(test-pq-lite-forward-proof test/pq-native/pq-lite-forward-proof-test.cpp)
 target_include_directories(test-pq-lite-forward-proof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-pq-lite-forward-proof PRIVATE lite-client-common tos_block tos_pq_consensus_signer
                       tos_pq_consensus tos_crypto tl_api tl_lite_api tl-lite-utils tdutils tdactor adnl keys dht)
+
+add_executable(test-adnl-ext-query-closure test/pq-native/adnl-ext-query-closure-test.cpp)
+target_include_directories(test-adnl-ext-query-closure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-query-closure PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
+                      tdutils tdactor)
 
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1202,13 +1258,186 @@ tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)
 tos_test(test-pending-finality-cache)
+tos_test(test-c04-real-state-proof ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N01's short production AcceptBlock/#13/RootDb cut uses C04's exact PQ
+# seq0→seq1 fixture, but runs as a separate CTest from C04's 60-second
+# finality-retention control.
+add_test(NAME test-n5-accept-block COMMAND test-c04-real-state-proof --n5-accept
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# One verified FinalCert passes through the real Simplex Pool, StateResolver,
+# BlockAccepter and Manager/RootDb, then both DB roots are cold-read.
+add_test(NAME test-n5-joined-finalcert COMMAND test-c04-real-state-proof --n5-joined
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N02 controlled write-after cut: stop with only Pool's production FinalCert
+# journal, cold restart the same session via Db/Pool bootstrap, then cold-read
+# the recovered Manager proof/state and exact finalized marker.
+add_test(NAME test-n5-cut1-finalcert-recovery COMMAND test-c04-real-state-proof --n5-cut1
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N03 cold-reads #13 after the production signatures write but before the
+# separately gated BlockProof write, then resumes from the same FinalCert.
+add_test(NAME test-n5-cut2-signatures-recovery COMMAND test-c04-real-state-proof --n5-cut2
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N04 holds the test facade's response after production AcceptBlock has
+# written BlockProof, before StateResolver can write its finalized marker.
+add_test(NAME test-n5-cut3-proof-recovery COMMAND test-c04-real-state-proof --n5-cut3
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N05 cold-replays the exact journaled FinalCert after its marker and accepted
+# BlockProof/state exist; neither AcceptBlock nor the persisted bytes may change.
+add_test(NAME test-n5-cut4-finalized-replay COMMAND test-c04-real-state-proof --n5-cut4
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N06 builds a fresh process from only the retained DB/archive roots. The
+# expected hashes are comparison metadata, never replacement evidence bytes.
+add_test(NAME test-n5-cut5-full-root-rebuild COMMAND test-c04-real-state-proof --n5-cut5
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N07 reads the same persisted PQ BlockProof into a fresh genesis-only
+# consumer RootDb and exercises real CheckProof for valid/tampered signatures.
+add_test(NAME test-n5-cut6-check-proof COMMAND test-c04-real-state-proof --n5-cut6
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+# N01 continuation: a cold-restored seq1 session accepts a new seq2 FinalCert,
+# then a third process reads both DB roots and the monotonic Pool anchor.
+add_test(NAME test-n5-cold-continuation COMMAND test-c04-real-state-proof --n5-continue
+         ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+tos_test(test-pq-launch-cap)
+add_dependencies(all-tests test-measurement-contract)
+add_test(NAME n6-metric-schema COMMAND test-measurement-contract --filter MetricSchema)
+add_test(NAME n6-monotonic-timestamps COMMAND test-measurement-contract --filter MonotonicTimestamps)
+add_test(NAME n6-low-cardinality COMMAND test-measurement-contract --filter LowCardinality)
+add_test(NAME n6-size-accounting COMMAND test-measurement-contract --filter SizeAccounting)
+add_test(NAME n6-instrumentation-byte-equivalence
+  COMMAND test-measurement-contract --filter InstrumentationByteEquivalence)
+add_test(NAME n6-disabled-instrumentation-cost
+  COMMAND test-measurement-contract --filter DisabledTraceIdProviderIsLazy)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME n6-manifest-completeness
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/measurement-manifest-test.py)
+set_tests_properties(n6-manifest-completeness PROPERTIES LABELS "source-guard")
+add_test(NAME n6-acceptance-criteria
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/measurement-acceptance-criteria-test.py)
+set_tests_properties(n6-acceptance-criteria PROPERTIES LABELS "source-guard")
+add_test(NAME n6-threshold-proposal
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-threshold-proposal.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(n6-threshold-proposal PROPERTIES LABELS "source-guard")
+add_test(NAME pq-launch-cap-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-launch-cap.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-launch-cap-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-launch-cap-mutations
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/pq-launch-cap-mutations.py)
+set_tests_properties(pq-launch-cap-mutations PROPERTIES LABELS "source-guard" RUN_SERIAL TRUE)
+add_test(NAME n6-microbench-results
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-microbench-results.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(n6-microbench-results PROPERTIES LABELS "source-guard")
+add_test(NAME n6-microbench-smoke
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-microbench-smoke.py
+          --binary $<TARGET_FILE:n6-microbench-smoke>
+          --baseline ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-microbench-smoke-baseline.json
+          --vectors ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/block-signature-carrier-measurements.tsv)
+set_tests_properties(n6-microbench-smoke PROPERTIES LABELS "n6-microbench-smoke")
+add_test(NAME n6-cluster-runner
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-cluster-runner-test.py)
+set_tests_properties(n6-cluster-runner PROPERTIES
+  ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/test/tostester/src"
+  LABELS "source-guard")
+add_test(NAME branch-chain-python-ci-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
+set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
+add_test(NAME n6-diagnostic-observations
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-diagnostic-observations.py)
+set_tests_properties(n6-diagnostic-observations PROPERTIES LABELS "source-guard")
+add_test(NAME n6-skip-vote-semantics
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/audit-n6-skip-vote-semantics.py --self-test)
+set_tests_properties(n6-skip-vote-semantics PROPERTIES LABELS "source-guard")
+add_test(NAME lite-query-error-response-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-lite-query-error-response.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(lite-query-error-response-source PROPERTIES LABELS "source-guard")
+add_test(NAME adnl-query-id-trace-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-adnl-query-id-trace.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(adnl-query-id-trace-source PROPERTIES LABELS "source-guard")
+add_test(NAME adnl-query-id-analysis
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/analyze-adnl-query-id-trace.py --self-test)
+set_tests_properties(adnl-query-id-analysis PROPERTIES LABELS "source-guard")
+add_test(NAME pq-stake-auth-response-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-stake-auth-response.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-stake-auth-response-source PROPERTIES LABELS "source-guard")
+add_test(NAME tosctl-pq-stake-builder-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-pq-stake-builder.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(tosctl-pq-stake-builder-source PROPERTIES LABELS "source-guard")
+add_test(NAME tosctl-election-chain-reads-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-election-chain-reads.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(tosctl-election-chain-reads-source PROPERTIES LABELS "source-guard")
+add_test(NAME dns-pq-vote-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(dns-pq-vote-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-e2e-initial-validators-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-e2e-initial-validators.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-e2e-initial-validators-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-election-fixture-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-election-fixture-source.py
+    ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-election-fixture-source PROPERTIES LABELS "source-guard")
+add_test(NAME classical-stake-callers-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-classical-stake-callers.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(classical-stake-callers-source PROPERTIES LABELS "source-guard")
+add_test(NAME nominator-pool-pq-route-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-nominator-pool-pq-route.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(nominator-pool-pq-route-source PROPERTIES LABELS "source-guard")
+add_test(NAME config-genesis-data-layout-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-config-genesis-data-layout.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(config-genesis-data-layout-source PROPERTIES LABELS "source-guard")
+add_test(NAME config-validator-set-parity-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-config-validator-set-parity.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(config-validator-set-parity-source PROPERTIES LABELS "source-guard")
+add_test(NAME validator-id-key-hash-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-id-key-hash.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(validator-id-key-hash-source PROPERTIES LABELS "source-guard")
+add_test(NAME n6-scale-sweep-cardinality
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-scale-sweep-cardinality-test.py)
+set_tests_properties(n6-scale-sweep-cardinality PROPERTIES
+  ENVIRONMENT "PYTHONPATH=${CMAKE_CURRENT_SOURCE_DIR}/test/tostester/src"
+  LABELS "source-guard")
+add_test(NAME n6-live-finality-overlay
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-n6-cluster-gate.sh
+          ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} live-finality 29400)
+add_test(NAME n6-lite-framed-tcp
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-n6-cluster-gate.sh
+          ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} lite-framed-tcp 29600)
+set_tests_properties(n6-live-finality-overlay n6-lite-framed-tcp PROPERTIES
+  LABELS "n6-cluster"
+  TIMEOUT 240)
+add_test(NAME n6-scale-sweep-minimum-bft
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-n6-scale-sweep-gate.sh
+          ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
+          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-scale-profiles/no-simulated-latency.json 29800)
+set_tests_properties(n6-scale-sweep-minimum-bft PROPERTIES
+  LABELS "n6-scale-sweep"
+  TIMEOUT 240)
+add_dependencies(all-tests validator-engine lite-client tos-pq-consensus-key)
 add_test(NAME finality-evidence-admission-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-evidence-admission.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(finality-evidence-admission-source PROPERTIES LABELS "source-guard")
+add_test(NAME finality-evidence-admission-marker-mutations
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/finality-evidence-admission-marker-test.py)
+set_tests_properties(finality-evidence-admission-marker-mutations PROPERTIES LABELS "source-guard")
 add_test(NAME pending-finality-retry-policy-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-retry-policy.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pending-finality-retry-policy-source PROPERTIES LABELS "source-guard")
 tos_test(test-pq-lite-forward-proof)
+tos_test(test-adnl-ext-query-closure)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
@@ -1272,6 +1501,14 @@ set_tests_properties(quic-ctest-isolation-source PROPERTIES LABELS "source-guard
 add_test(NAME validator-session-assembly-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-session-assembly.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(validator-session-assembly-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-unsafe-rotation-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-unsafe-rotation.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-unsafe-rotation-source PROPERTIES LABELS "source-guard")
+add_test(NAME pq-unsafe-rotation-source-mutations
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/pq-unsafe-rotation-source-mutations.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(pq-unsafe-rotation-source-mutations PROPERTIES LABELS "source-guard" RUN_SERIAL TRUE)
 add_test(NAME regression-fixture-concurrency
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
           ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

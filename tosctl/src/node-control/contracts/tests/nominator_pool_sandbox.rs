@@ -20,6 +20,7 @@ use chain_block::{
     Account, BuilderData, Cell, Coins, ConfigParams, IBitstring, MsgAddressInt, Serializable,
     ShardStateUnsplit, StateInit, TransactionTickTock,
 };
+use contracts::nominator::{NewStakeParams, new_stake};
 use tos_sandbox::{Blockchain, MessageBuilder, compile_func, generate_zerostate_state};
 
 const TOS: u64 = 1_000_000_000;
@@ -192,36 +193,21 @@ fn launch(validator_amount: u64, pool_balance: u64) -> Pooled {
 
 /// The order an operator gives the pool: stake this much, on these terms.
 ///
-/// After the value, the body carries the classical stake payload the pool forwards
-/// unchanged, in the shape its own `check_new_stake_msg` parses: four fields and a
-/// reference holding the signature. The payload is built into this body rather than into
-/// a cell of its own, because the pool reads it as a continuation of the same slice --
-/// and a reference does not survive being appended as bits, which is how this first
-/// failed with a cell underflow the contract never reached its own checks to report.
-///
-/// The signature is a pattern. Nothing on this path verifies it: the pool does not, and
-/// the elector no longer reaches the code that would.
+/// Use the production builder for the exact PQ body the multi-nominator
+/// pool's `check_new_stake_msg` parses and relays unchanged. The deliberately
+/// truncated negative order below remains hand-built so it can be malformed.
+/// These pattern bytes exercise pool routing, not signature verification.
 fn stake_order(query_id: u64, value: u64, election: u32) -> Cell {
-    let mut key = BuilderData::new();
-    key.append_u32(1312).expect("declared length");
-    key.checked_append_reference(Cell::default()).expect("the key's bytes");
-    let mut signature = BuilderData::new();
-    signature.append_u32(2420).expect("declared length");
-    signature.checked_append_reference(Cell::default()).expect("the signature's bytes");
-
-    let mut body = BuilderData::new();
-    body.append_u32(NEW_STAKE).expect("operation");
-    body.append_u64(query_id).expect("query id");
-    Coins::new(value).write_to(&mut body).expect("value");
-    body.append_u32(election).expect("election");
-    body.append_u32(0x10000).expect("max factor");
-    body.append_raw(&[0xa5; 32], 256).expect("adnl address");
-    body.append_u16(1).expect("algorithm");
-    body.checked_append_reference(key.into_cell().expect("key cell")).expect("the key");
-    body.checked_append_reference(signature.into_cell().expect("signature cell"))
-        .expect("the signature");
-    body.append_bit_zero().expect("no birth witness");
-    body.into_cell().expect("stake order")
+    new_stake(&NewStakeParams {
+        query_id,
+        stake_amount: value,
+        validator_pubkey: &[0x11; 1312],
+        stake_at: election,
+        max_factor: 0x10000,
+        adnl_addr: &[0xa5; 32],
+        signature: &[0x33; 2420],
+    })
+    .expect("production PQ stake order for multi-nominator pool")
 }
 
 impl Pooled {

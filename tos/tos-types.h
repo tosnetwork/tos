@@ -33,6 +33,8 @@
 
 namespace tos {
 
+class PublicKeyHash;
+
 using WorkchainId = td::int32;
 constexpr WorkchainId workchainIdNotYet = (1U << 31);
 using ShardId = td::uint64;  // prefix a of length l encoded as ((2 * a + 1) << (63 - l))
@@ -468,6 +470,10 @@ struct ValidatorId {
   // would otherwise make ValidatorId{some_key} compile and manufacture an identity out
   // of a key -- the exact confusion these types exist to prevent.
   ValidatorId(const Ed25519_PublicKey&) = delete;
+  // A hashed transport/public key is still a key, not a stable validator identity.
+  // Without this deletion ValidatorId{some_key_hash} compiles through the Bits256
+  // payload and recreates the same identity/key confusion one layer later.
+  ValidatorId(const PublicKeyHash&) = delete;
   bool is_zero() const {
     return value.is_zero();
   }

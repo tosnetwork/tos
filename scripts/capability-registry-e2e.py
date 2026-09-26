@@ -26,15 +26,22 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/capability-registry-e2e.py
 """
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
 REPO = Path(__file__).resolve().parents[1]
@@ -42,6 +49,10 @@ BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18746"
 WORKDIR = REPO / "test/integration/.capability-registry-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
+NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000003"
 NANO = 1_000_000_000
@@ -58,6 +69,37 @@ NEW_VERIFICATION_METHOD_HASH = "88" * 32
 failures: list[str] = []
 
 
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e09_negative_finality.py").read_bytes()).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+        "rpc_transcript": RPC_TRANSCRIPT.name,
+        "cli_transcript": CLI_TRANSCRIPT.name,
+        "negative_evidence": NEGATIVE_EVIDENCE.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E09 real-chain run requires a clean tracked source tree")
+
+
 def check(label: str, ok: bool, detail: str = ""):
     if ok:
         print(f"  PASS: {label}")
@@ -67,20 +109,122 @@ def check(label: str, ok: bool, detail: str = ""):
 
 
 def rpc_call(method: str, **params):
-    import urllib.request
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"method": method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    return json.loads(raw.decode())
+
+
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    return int(rpc_call("getAddressInformation", address=address)
+               ["result"]["last_transaction_id"]["lt"])
+
+
+def transactions_after(address: str, baseline_lt: int) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if len(rows) == 10 and all(
+        int(row["transaction_id"]["lt"]) > baseline_lt for row in rows
+    ):
+        raise RuntimeError("registry transaction page did not cover baseline")
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+def unique_registry_send(wallet_rows: list[dict], address: str) -> dict | None:
+    sends = [row for row in wallet_rows if any(
+        same_addr(message.get("destination"), address)
+        for message in row.get("out_msgs", []))]
+    if len(sends) > 1:
+        raise RuntimeError("multiple wallet sends to registry")
+    for row in wallet_rows:
+        if sends and row is sends[0]:
+            continue
+        incoming = row.get("in_msg") or {}
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or row.get("out_msgs")):
+            raise RuntimeError("unrelated wallet transaction after registry send")
+    return sends[0] if sends else None
+
+
+def validate_registry_bounces(wallet_rows: list[dict], wallet_tx: dict,
+                              registry_tx: dict, payer: str, address: str) -> None:
+    if len(wallet_tx.get("out_msgs") or []) != 1:
+        raise RuntimeError("registry wallet send has extra outbound messages")
+    bounces = registry_tx.get("out_msgs") or []
+    if len(bounces) > 1 or any(
+        message.get("bounced") is not True
+        or not same_addr(message.get("source"), address)
+        or not same_addr(message.get("destination"), payer)
+        or not message.get("hash") for message in bounces
+    ):
+        raise RuntimeError("registry emitted unexpected bounce messages")
+    expected_hashes = {message["hash"] for message in bounces}
+    observed_hashes: set[str] = set()
+    for row in wallet_rows:
+        if row is wallet_tx:
+            continue
+        incoming = row.get("in_msg") or {}
+        bounce_hash = incoming.get("hash")
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), address)
+                or not same_addr(incoming.get("destination"), payer)
+                or row.get("out_msgs")
+                or not bounce_hash
+                or bounce_hash not in expected_hashes
+                or bounce_hash in observed_hashes):
+            raise RuntimeError("wallet credit is not this registry's bounce")
+        observed_hashes.add(bounce_hash)
+
+
+async def await_registry_bounce(wallet_tx: dict, registry_tx: dict,
+                                payer: str, address: str) -> dict | None:
+    if not registry_tx.get("out_msgs"):
+        return None
+    baseline = int(wallet_tx["transaction_id"]["lt"])
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        rows = transactions_after(payer, baseline)
+        if rows:
+            validate_registry_bounces([wallet_tx, *rows], wallet_tx,
+                                      registry_tx, payer, address)
+            return rows[0]
+        await asyncio.sleep(1)
+    raise RuntimeError("exact registry bounce not observed before next operation")
 
 
 def balance(addr: str) -> int:
     return int(rpc_call("getAddressInformation", address=addr)["result"]["balance"])
 
 
-async def tosctl(*args: str, may_fail: bool = False) -> str:
+async def tosctl(*args: str) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
@@ -91,8 +235,15 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
     except TimeoutError:
         proc.kill()
+        out, err = await proc.communicate()
+        record_jsonl(CLI_TRANSCRIPT, {"args": args, "timeout": True,
+                     "stdout_base64": base64.b64encode(out).decode(),
+                     "stderr_base64": base64.b64encode(err).decode()})
         raise RuntimeError(f"tosctl {' '.join(args)} timed out")
-    if proc.returncode != 0 and not may_fail:
+    record_jsonl(CLI_TRANSCRIPT, {"args": args, "exit_code": proc.returncode,
+                 "stdout_base64": base64.b64encode(out).decode(),
+                 "stderr_base64": base64.b64encode(err).decode()})
+    if proc.returncode != 0:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
@@ -185,11 +336,88 @@ async def registry_show(name: str):
     return await tosctl_json("agent", "registry", "show", "--name", name)
 
 
-async def send_op(operation: str, name: str, frm: str, *extra: str, may_fail: bool = False) -> str:
+async def wait_registry_state(name: str, predicate, label: str, timeout: float = 45.0) -> dict:
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = await registry_show(name)
+        if predicate(last):
+            return last
+        await asyncio.sleep(1)
+    raise RuntimeError(f"{label}: registry state not observed before deadline; last={last}")
+
+
+async def send_op(operation: str, name: str, frm: str, *extra: str) -> str:
     return await tosctl(
         "agent", "registry", "send", "--operation", operation, "--name", name,
-        "--from", frm, "--yes", *extra, may_fail=may_fail,
+        "--from", frm, "--yes", *extra,
     )
+
+
+async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
+                             operation: str, name: str, frm: str, *extra: str) -> None:
+    before_state = await registry_show(name)
+    before_head = finalized_mc_header()
+    wallet_lt = last_lt(payer)
+    registry_lt = last_lt(address)
+    receipt = await send_op(operation, name, frm, *extra)
+    deadline = time.monotonic() + 45
+    wallet_tx = registry_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(payer, wallet_lt)
+        if wallet_rows:
+            wallet_tx = unique_registry_send(wallet_rows, address)
+            if wallet_tx is None:
+                await asyncio.sleep(1)
+                continue
+            outgoing = wallet_tx.get("out_msgs") or []
+            if (wallet_tx.get("aborted") is not False
+                    or wallet_tx.get("compute", {}).get("success") is not True
+                    or wallet_tx.get("action", {}).get("success") is not True
+                    or len(outgoing) != 1
+                    or not same_addr(outgoing[0].get("destination"), address)):
+                raise RuntimeError(f"{label}: wallet transaction did not send to registry")
+            registry_rows = transactions_after(address, registry_lt)
+            if registry_rows:
+                if len(registry_rows) != 1:
+                    raise RuntimeError(f"{label}: multiple new registry transactions")
+                registry_tx = registry_rows[0]
+                incoming = registry_tx.get("in_msg") or {}
+                if (incoming.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(incoming.get("source"), payer)):
+                    raise RuntimeError(f"{label}: registry inbound hash differs from wallet outbound")
+                validate_registry_bounces(wallet_rows, wallet_tx, registry_tx, payer, address)
+                break
+        await asyncio.sleep(1)
+    if registry_tx is None or wallet_tx is None:
+        raise RuntimeError(f"{label}: exact wallet-to-registry transaction not observed")
+    compute = registry_tx.get("compute") or {}
+    if (registry_tx.get("aborted") is not True
+            or compute.get("success") is not False
+            or compute.get("exit_code") != expected_exit):
+        raise RuntimeError(f"{label}: expected VM exit {expected_exit}, got {registry_tx}")
+
+    observations = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(observations) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            state = await registry_show(name)
+            observations.append({"head": head, "state": state})
+            if state != before_state:
+                raise RuntimeError(f"{label}: registry state changed after rejected transaction")
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(observations) != 2:
+        raise RuntimeError(f"{label}: finalized masterchain did not advance twice")
+    bounce_tx = await await_registry_bounce(wallet_tx, registry_tx, payer, address)
+    record_jsonl(NEGATIVE_EVIDENCE, {"label": label, "expected_exit": expected_exit,
+                 "cli_receipt": receipt, "before_state": before_state,
+                 "before_head": before_head, "wallet_transaction": wallet_tx,
+                 "registry_transaction": registry_tx,
+                 "bounce_transaction": bounce_tx, "observations": observations})
+    check(label, True)
 
 
 async def run_checks(faucet) -> None:
@@ -241,16 +469,14 @@ async def run_checks(faucet) -> None:
     check("task_categories_hash recorded", data["task_categories_hash"] == TASK_CATEGORIES_HASH, str(data))
 
     print("\n=== update-metadata (owner only) ===")
-    await send_op(
+    await rejected_operation(
+        "non-owner update-metadata rejected", address, outsider, 1800,
         "update-metadata", "svc-1", "outsider",
         "--task-categories-hash", NEW_TASK_CATEGORIES_HASH,
         "--pricing-hash", NEW_PRICING_HASH,
         "--metadata-hash", NEW_METADATA_HASH,
         "--verification-method-hash", NEW_VERIFICATION_METHOD_HASH,
-        may_fail=True,
     )
-    data = await registry_show("svc-1")
-    check("non-owner update-metadata rejected", data["task_categories_hash"] == TASK_CATEGORIES_HASH, str(data))
 
     await send_op(
         "update-metadata", "svc-1", "owner",
@@ -259,41 +485,53 @@ async def run_checks(faucet) -> None:
         "--metadata-hash", NEW_METADATA_HASH,
         "--verification-method-hash", NEW_VERIFICATION_METHOD_HASH,
     )
-    data = await registry_show("svc-1")
+    data = await wait_registry_state(
+        "svc-1", lambda row: row["task_categories_hash"] == NEW_TASK_CATEGORIES_HASH
+        and row["pricing_hash"] == NEW_PRICING_HASH, "owner metadata update")
     check("task_categories_hash updated", data["task_categories_hash"] == NEW_TASK_CATEGORIES_HASH, str(data))
     check("pricing_hash updated", data["pricing_hash"] == NEW_PRICING_HASH, str(data))
+    check("metadata_hash updated", data["metadata_hash"] == NEW_METADATA_HASH, str(data))
+    check("verification_method_hash updated",
+          data["verification_method_hash"] == NEW_VERIFICATION_METHOD_HASH, str(data))
 
     print("\n=== stake (owner only) ===")
     # Previously permissionless, but only the owner can ever withdraw the
     # bond (withdraw-bond/deactivate) -- a non-owner staker had no way to
     # reclaim their own contribution, so stake is owner-gated now.
     bond_before = float((await registry_show("svc-1"))["bond"])
-    await send_op("stake", "svc-1", "outsider", "--amount", "1", may_fail=True)
-    data = await registry_show("svc-1")
-    check("non-owner stake rejected, bond unchanged", float(data["bond"]) == bond_before, str(data))
+    await rejected_operation("non-owner stake rejected", address, outsider, 1800,
+                             "stake", "svc-1", "outsider", "--amount", "1")
 
     await send_op("stake", "svc-1", "owner", "--amount", "1")
-    data = await registry_show("svc-1")
+    data = await wait_registry_state(
+        "svc-1", lambda row: float(row["bond"]) > bond_before + 0.9,
+        "owner stake")
     check("bond increased after owner stake", float(data["bond"]) > bond_before + 0.9, str(data))
 
     print("\n=== update-reputation (verifier only) ===")
-    await send_op("update-reputation", "svc-1", "outsider", "--delta", "10", may_fail=True)
-    data = await registry_show("svc-1")
-    check("non-verifier reputation update rejected", data["reputation_score"] == 0, str(data))
+    await rejected_operation("non-verifier reputation update rejected", address, outsider, 1801,
+                             "update-reputation", "svc-1", "outsider", "--delta", "10")
 
     await send_op("update-reputation", "svc-1", "verifier", "--delta", "10")
-    data = await registry_show("svc-1")
+    data = await wait_registry_state(
+        "svc-1", lambda row: row["reputation_score"] == 10,
+        "verifier reputation update")
     check("verifier reputation update applied", data["reputation_score"] == 10, str(data))
 
     print("\n=== withdraw-bond (owner only, bounded) ===")
-    await send_op("withdraw-bond", "svc-1", "owner", "--withdraw-amount", "100", may_fail=True)
+    await rejected_operation("over-bond withdrawal rejected", address, owner, 1805,
+                             "withdraw-bond", "svc-1", "owner", "--withdraw-amount", "100")
     data = await registry_show("svc-1")
     bond_before_withdraw = float(data["bond"])
     owner_before = balance(owner)
     await send_op("withdraw-bond", "svc-1", "owner", "--withdraw-amount", "1")
-    data = await registry_show("svc-1")
+    data = await wait_registry_state(
+        "svc-1", lambda row: abs(float(row["bond"]) - (bond_before_withdraw - 1)) < 1e-6,
+        "owner bond withdrawal")
     check("bond decreased by withdrawal", abs(float(data["bond"]) - (bond_before_withdraw - 1)) < 1e-6, str(data))
-    check("owner balance increased", balance(owner) > owner_before, "")
+    check("owner balance increased by withdrawal",
+          await wait_balance_at_least(owner, owner_before + int(0.9 * NANO)),
+          f"before={owner_before} after={balance(owner)}")
 
     print("\n=== deactivate / reactivate ===")
     await send_op(
@@ -304,22 +542,24 @@ async def run_checks(faucet) -> None:
         "--verification-method-hash", NEW_VERIFICATION_METHOD_HASH,
     )
     await send_op("deactivate", "svc-1", "owner")
-    data = await registry_show("svc-1")
+    data = await wait_registry_state(
+        "svc-1", lambda row: row["active"] is False and float(row["bond"]) == 0.0,
+        "deactivate")
     check("deactivated", data["active"] is False, str(data))
     check("bond swept on deactivate", float(data["bond"]) == 0.0, str(data))
 
-    await send_op(
+    await rejected_operation(
+        "update-metadata rejected while inactive", address, owner, 1803,
         "update-metadata", "svc-1", "owner",
-        "--task-categories-hash", NEW_TASK_CATEGORIES_HASH,
-        "--pricing-hash", NEW_PRICING_HASH,
-        "--metadata-hash", NEW_METADATA_HASH,
-        "--verification-method-hash", NEW_VERIFICATION_METHOD_HASH,
-        may_fail=True,
+        "--task-categories-hash", TASK_CATEGORIES_HASH,
+        "--pricing-hash", PRICING_HASH,
+        "--metadata-hash", METADATA_HASH,
+        "--verification-method-hash", VERIFICATION_METHOD_HASH,
     )
-    check("update-metadata rejected while inactive", (await registry_show("svc-1"))["active"] is False, "")
 
     await send_op("reactivate", "svc-1", "owner")
-    data = await registry_show("svc-1")
+    data = await wait_registry_state("svc-1", lambda row: row["active"] is True,
+                                     "reactivate")
     check("reactivated", data["active"] is True, str(data))
 
     print("\n=== persisted local record ===")
@@ -337,6 +577,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging
@@ -345,7 +586,7 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=23300) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())

@@ -13,6 +13,7 @@
 #include <string_view>
 
 #include "mldsa44.h"
+#include "pq-launch-limits.h"
 
 namespace tos::pq {
 
@@ -39,11 +40,11 @@ struct PQConsensusLimits {
   PQAlgorithmId algorithm_id = PQAlgorithmId::mldsa44;
   std::size_t public_key_bytes = mldsa44_public_key_bytes;  // 1312
   std::size_t signature_bytes = mldsa44_signature_bytes;    // 2420
-  // Provisional structural ceiling for sizing only: 21 is the launch committee,
-  // 100/400 are the provisional main/total ceilings. Not a frozen protocol maximum;
-  // the binding value comes from ConfigParam16 once the validator-set encoding lands.
+  // The carrier remains structurally capable of 400 signers for overlapping
+  // governing sets during rotation.  The separately enforced launch committee
+  // is smaller and does not shrink that retention/resource bound.
   std::size_t max_certificate_signers = 400;
-  std::size_t max_main_validators = 100;
+  std::size_t max_main_validators = launch_limits::max_masterchain_committee;
   // Framing allowance per signer (validator_id + algorithm_id + cell overhead). This is
   // a generous guess, NOT a measurement of the final encoding.
   std::size_t framing_bytes_per_signer = 64;

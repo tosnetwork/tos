@@ -795,7 +795,7 @@ engine.validator.success = engine.validator.Success;
 
 engine.validator.jsonConfig data:string = engine.validator.JsonConfig;
 
-engine.validator.pqStakeAuthorization validator_id:int256 key_id:int256 signature:bytes = engine.validator.PqStakeAuthorization;
+engine.validator.pqStakeAuthorization validator_id:int256 key_id:int256 algorithm_id:int public_key:bytes signature:bytes = engine.validator.PqStakeAuthorization;
 engine.validator.proposalVote perm_key:int256 to_send:bytes = engine.validator.ProposalVote;
 
 engine.validator.dhtServerStatus id:int256 status:int = engine.validator.DhtServerStatus;

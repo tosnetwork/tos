@@ -38,6 +38,8 @@
 
 using namespace tos;
 
+static_assert(!std::is_constructible_v<ValidatorId, PublicKeyHash>);
+
 namespace {
 Bits256 bits_with_first_byte(td::uint8 b) {
   Bits256 x;

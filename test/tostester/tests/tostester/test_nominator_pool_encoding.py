@@ -9,9 +9,12 @@ without saying why. So the encodings are pinned on both sides against the same
 constants.
 """
 
+import asyncio
 import base64
 import copy
+import hashlib
 import importlib.util
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -19,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 from pytosiq_core import Address, Builder, Cell, CurrencyCollection, InternalMsgInfo, MessageAny
+from tosapi import toslib_api
 from tostester.zerostate import NetworkConfig
 
 REPO = Path(__file__).resolve().parents[4]
@@ -47,6 +51,34 @@ def _lifecycle_module():
 
 
 lifecycle = _lifecycle_module()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_shutdown_closes_the_whole_network(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="dht-shutdown-test")
+    stopped = []
+
+    class FakeNetwork:
+        async def aclose(self):
+            stopped.extend(["dht", "validator"])
+
+    runner.network = FakeNetwork()
+    await runner.shutdown()
+    assert stopped == ["dht", "validator"], "DHT and validator ownership must close together"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_shutdown_failure_is_reported(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="dht-shutdown-error")
+
+    class FailingNetwork:
+        async def aclose(self):
+            raise RuntimeError("DHT did not stop")
+
+    runner.network = FailingNetwork()
+    await runner.shutdown()
+    assert runner.failures == ["network shutdown failed: RuntimeError('DHT did not stop')"]
+    assert any(event["event"] == "network_shutdown_error" for event in runner.report.events)
 
 
 requires_code = pytest.mark.skipif(
@@ -85,29 +117,751 @@ def test_a_withdrawal_request_uses_the_same_shape():
     assert body.load_uint(8) == ord("w")
 
 
-def test_stake_body_carries_the_amount_before_the_elector_fields():
-    # pool.fc reads the value it should forward, then hands the rest to the
-    # Elector untouched. Getting that field's position wrong would corrupt the
-    # signed payload rather than fail cleanly.
-    body = lifecycle.build_pool_stake_body(
-        query_id=7,
-        stake_value=10_001_000_000_000,
-        validator_pubkey=bytes(range(32)),
-        election_id=1234,
-        max_factor=1 << 16,
-        adnl_id=bytes(range(32, 64)),
-        signature=bytes(64),
-    ).begin_parse()
+def _relay_message(source, target, query_id, *, bounced):
+    body = Builder()
+    if bounced:
+        body.store_uint(0xFFFFFFFF, 32)
+    body.store_uint(0x5051726C, 32).store_uint(query_id, 64)
+    return MessageAny(
+        info=InternalMsgInfo(
+            ihr_disabled=True, bounce=True, bounced=bounced,
+            src=source, dest=target, value=CurrencyCollection(tomis=1),
+            ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+        ),
+        init=None, body=body.end_cell(),
+    )
 
-    assert body.load_uint(32) == 0x4E73744B
-    assert body.load_uint(64) == 7
-    length = body.load_uint(4)
-    assert body.load_uint(length * 8) == 10_001_000_000_000
-    assert body.load_bytes(32) == bytes(range(32))
-    assert body.load_uint(32) == 1234
-    assert body.load_uint(32) == 1 << 16
-    assert body.load_bytes(32) == bytes(range(32, 64))
-    assert body.refs
+
+def test_second_stake_feedback_distinguishes_exact_controller_bounce_from_relay_abort(monkeypatch):
+    pool = Address((-1, bytes([0x31]) * 32))
+    controller = Address((-1, bytes([0x42]) * 32))
+    query_id = 123456
+    bounce = SimpleNamespace(
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(controller.to_str())),
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=77, in_msg=_relay_message(controller, pool, query_id, bounced=True),
+            description=SimpleNamespace(aborted=False),
+        ),
+    )
+    aborted = SimpleNamespace(
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=78, in_msg=_relay_message(pool, controller, query_id, bounced=False),
+            description=SimpleNamespace(aborted=True),
+        ),
+    )
+    monkeypatch.setattr(lifecycle, "_decoded_transaction", lambda raw: raw.decoded)
+    assert lifecycle.pool_controller_bounce([bounce], controller, query_id) == {
+        "transaction_lt": "77", "bounced": True,
+    }
+    assert lifecycle.controller_relay_result([aborted], pool, query_id) == {
+        "transaction_lt": "78", "aborted": True,
+    }
+    assert lifecycle.pool_controller_bounce([bounce], controller, query_id + 1) is None
+    assert lifecycle.controller_relay_result([aborted], pool, query_id + 1) is None
+    assert lifecycle.pool_controller_bounce([aborted], controller, query_id) is None
+    assert lifecycle.controller_relay_result([bounce], pool, query_id) is None
+
+
+@pytest.mark.asyncio
+async def test_stake_history_page_containing_baseline_covers_a_crossing_previous_cursor():
+    """The retained e48 raw page includes baseline LT+hash, then previous jumps earlier."""
+    pool = Address((-1, bytes([0x31]) * 32))
+    baseline = toslib_api.Internal_transactionId(
+        lt=2964000001,
+        hash=bytes.fromhex("2470dd98843d4bc6c4b73be3d1815fe168bd47a9c63458289057c1da24308251"),
+    )
+    latest = toslib_api.Internal_transactionId(lt=3000000001, hash=bytes([0x30]) * 32)
+    earlier = toslib_api.Internal_transactionId(lt=2710000001, hash=bytes([0x27]) * 32)
+    order = SimpleNamespace(transaction_id=latest)
+    old = SimpleNamespace(transaction_id=baseline)
+
+    class FakeHistory:
+        def __init__(self, page):
+            self.page = page
+            self.queries = 0
+
+        async def raw_get_account_state(self, address):
+            assert address == pool
+            return SimpleNamespace(last_transaction_id=latest)
+
+        async def raw_get_transactions(self, address, cursor):
+            assert address == pool and cursor is latest
+            self.queries += 1
+            return SimpleNamespace(transactions=self.page, previous_transaction_id=earlier)
+
+    history = FakeHistory([order, old])
+    seen, pages, covered, start = await lifecycle._transactions_since(history, pool, baseline)
+    assert seen == [order] and pages == 1 and covered and start is latest
+    assert history.queries == 1, "the exact baseline in this page must stop pagination"
+
+    history = FakeHistory([order])
+    with pytest.raises(RuntimeError, match="crossed the pre-order cursor without its exact transaction"):
+        await lifecycle._transactions_since(history, pool, baseline)
+
+    wrong_hash = SimpleNamespace(transaction_id=toslib_api.Internal_transactionId(
+        lt=baseline.lt, hash=bytes([0xFF]) * 32,
+    ))
+    history = FakeHistory([order, wrong_hash])
+    with pytest.raises(RuntimeError, match="pre-order transaction hash changed in history page"):
+        await lifecycle._transactions_since(history, pool, baseline)
+
+
+def test_retained_e48_elector_reply_boc_names_the_second_order_and_reason():
+    # Exact 33-byte msg_dataRaw.body from e48-feedback.typescript at the pool's
+    # transaction LT 2973000009; the report's old paginator missed this page.
+    raw_boc = bytes.fromhex(
+        "B5EE9C72410101010012000020EE6F454C18D81E04FD033C07000000000F0F0726"
+    )
+    body = Cell.one_from_boc(raw_boc).begin_parse()
+    assert body.load_uint(32) == 0xEE6F454C, "Elector returned new_stake_error"
+    assert body.load_uint(64) == 1790213858653322247, "reply belongs to the second order"
+    assert body.load_uint(32) == 0, "Elector refused the closed election window"
+    assert body.remaining_bits == 0 and body.remaining_refs == 0
+
+
+def test_support_credit_reuse_requires_retired_chain_record_and_exact_owner_credit():
+    election_id = 1790215703
+    set_hash = 0x1234
+    recorded = {"unfreeze_at": 1790216500, "vset_hash": set_hash, "stake_held": 180}
+    common = dict(
+        submitted={election_id}, recovered=set(), current_set_id=election_id,
+        current_set_hash=set_hash, known_set_hashes={election_id: set_hash},
+        retired_past={election_id: recorded}, live_past={election_id: recorded},
+        chain_utime=1790216800, credit=lifecycle.NETWORK_MIN_STAKE,
+    )
+    eligible = lifecycle.recoverable_support_election_ids
+    assert eligible(**common) == [], "an active set remains retained past an estimated expiry"
+    retired = {**common, "current_set_id": election_id + 300, "current_set_hash": 0x5678}
+    assert eligible(**{**retired, "chain_utime": recorded["unfreeze_at"] - 1}) == [], (
+        "actual unfreeze time, not the election schedule, controls maturity"
+    )
+    assert eligible(retired_past={}, **{k: v for k, v in retired.items() if k != "retired_past"}) == [], (
+        "a never-observed retired record cannot be inferred from absence"
+    )
+    assert eligible(**retired) == [], "a still-listed past election has not created credit"
+    mature = {**retired, "live_past": {}}
+    assert eligible(**{**mature, "current_set_id": election_id}) == [], (
+        "the live Config34 ID alone keeps an active rollover retained"
+    )
+    assert eligible(**{**mature, "current_set_hash": set_hash}) == [], (
+        "a reused active Config34 hash also prevents an inconsistent maturity claim"
+    )
+    assert eligible(**{**mature, "credit": 0}) == [], "absence without owner credit is not recovery"
+    assert eligible(**{**mature, "known_set_hashes": {election_id: 0x9999}}) == [], (
+        "a credit cannot be attributed to a mismatched validator-set hash"
+    )
+    assert eligible(**mature) == [election_id]
+    assert eligible(**{**mature, "recovered": {election_id}}) == [], (
+        "one matured credit is never recovered twice"
+    )
+
+
+def test_support_keeper_shortens_poll_near_actual_unfreeze_only_while_recovery_pending():
+    election_id = 1790219476
+    status = dict(
+        retired_past={election_id: {"unfreeze_at": 1790219956}},
+        submitted={1: {election_id}, 2: {election_id}},
+        recovered={1: set(), 2: set()},
+    )
+    poll = lifecycle.support_keeper_poll_seconds
+    assert poll(chain_utime=1790219895, **status) == 20
+    assert poll(chain_utime=1790219896, **status) == 5, (
+        "within 60 seconds of the chain-reported unfreeze, do not miss the next stake window"
+    )
+    assert poll(chain_utime=1790219970, **status) == 5, (
+        "keep looking for credit after unfreeze until both support pools recover"
+    )
+    one_recovered = {**status, "recovered": {1: {election_id}, 2: set()}}
+    assert poll(chain_utime=1790219970, **one_recovered) == 5
+    both_recovered = {**status, "recovered": {1: {election_id}, 2: {election_id}}}
+    assert poll(chain_utime=1790219970, **both_recovered) == 20
+    no_chain_record = {**status, "retired_past": {}}
+    assert poll(chain_utime=1790219970, **no_chain_record) == 20, (
+        "an estimated election schedule must not substitute for the retired chain record"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_opcode", [0xF96F7324, 0xFFFFFFFE])
+async def test_support_recovery_requires_exact_elector_reply_and_pool_balance(
+    tmp_path, monkeypatch, reply_opcode
+):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="support-recovery")
+    pool = Address((-1, bytes([0x71]) * 32))
+    runner.support_pools[1] = SimpleNamespace(address=pool)
+    runner.wallets = [None, object()]
+    baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x10]) * 32)
+    before_balance = 20 * lifecycle.NANO
+    credit = lifecycle.NETWORK_MIN_STAKE
+    state = {"sent": False, "query_id": None}
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            assert address == pool
+            return SimpleNamespace(last_transaction_id=baseline)
+
+    runner.client = FakeClient()
+
+    async def send(wallet, *, dest, amount, body, label):
+        assert wallet is runner.wallets[1] and dest == pool
+        assert amount == lifecycle.NANO and label == "support-pool-1-recover-stake"
+        view = body.begin_parse()
+        assert view.load_uint(32) == 0x47657424
+        state["query_id"] = view.load_uint(64)
+        assert view.remaining_bits == 0 and view.remaining_refs == 0
+        state["sent"] = True
+
+    async def transactions_since(client, address, cursor):
+        assert state["sent"] and client is runner.client and address == pool and cursor == baseline
+        body = Builder().store_uint(reply_opcode, 32).store_uint(state["query_id"], 64)
+        if reply_opcode != 0xF96F7324:
+            body.store_uint(2, 32)
+        message = SimpleNamespace(
+            source=toslib_api.AccountAddress(lifecycle.ELECTOR.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=body.end_cell().to_boc()),
+        )
+        return [SimpleNamespace(in_msg=message)], 1, True, baseline
+
+    async def credit_after(address):
+        assert address == pool and state["sent"]
+        return 0
+
+    async def balance_after(address):
+        assert address == pool and state["sent"]
+        return before_balance + credit
+
+    async def after_snapshot(label):
+        assert label == "support-1-recovered"
+        return {}
+
+    monkeypatch.setattr(runner, "send", send)
+    monkeypatch.setattr(lifecycle, "_transactions_since", transactions_since)
+    monkeypatch.setattr(runner, "elector_returned_stake_for", credit_after)
+    monkeypatch.setattr(runner, "balance", balance_after)
+    monkeypatch.setattr(runner, "support_chain_snapshot", after_snapshot)
+    snapshot = {"pools": {1: {
+        "balance_nanotos": before_balance, "elector_credit_nanotos": credit,
+    }}}
+    if reply_opcode != 0xF96F7324:
+        with pytest.raises(AssertionError, match="recovery refused: opcode=0xfffffffe"):
+            await runner.recover_support_pool(1, [123], snapshot)
+        assert runner.support_recovered[1] == set()
+        assert runner.support_recovery_attempted[1] == {123}, (
+            "a fee-bearing refusal must not be sent again on the next keeper tick"
+        )
+    else:
+        await runner.recover_support_pool(1, [123], snapshot)
+        assert runner.support_recovered[1] == {123}
+        replies = [event for event in runner.report.events if event["event"] == "support_recovery_reply"]
+        assert replies[0]["query_id"] == state["query_id"]
+        assert replies[0]["opcode"] == "0xf96f7324"
+        assert replies[0]["reply_boc_hex"] is not None
+        assert replies[0]["baseline_covered"] is True
+
+
+@pytest.mark.asyncio
+async def test_support_snapshot_preserves_reset_unfreeze_before_elector_deletes_record(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="support-snapshot")
+    runner.artifacts_dir.mkdir()
+    pool = Address((-1, bytes([0x72]) * 32))
+    runner.support_pools[1] = SimpleNamespace(address=pool)
+    runner.support_submitted[1].add(100)
+    phase = {"set_id": 100, "hash": 0x1234, "utime": 190, "credit": 0}
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            assert address in (lifecycle.ELECTOR, pool)
+            return SimpleNamespace(sync_utime=phase["utime"], balance=20 * lifecycle.NANO)
+
+        async def get_config_param(self, number):
+            assert number == 34
+            return SimpleNamespace(hash=phase["hash"].to_bytes(32, "big"))
+
+    async def lite(*commands):
+        assert commands == ("time", "getconfig 34")
+        return f"config: (utime_since:{phase['set_id']} utime_until:700)\n"
+
+    async def runmethod(address, method, *args):
+        if method == "past_elections_list":
+            if phase["credit"]:
+                return "result: [ () ] remote result: []"
+            unfreeze = 250 if phase["set_id"] == 100 else 500
+            return f"result: [ ( [ 100 {unfreeze} 4660 180 ] ) ] remote result: []"
+        if method == "participant_list_extended":
+            return "result: [ 600 590 ( [ 9 [ 1 2 ] ] ) 0 0 ] remote result: []"
+        if method == "get_pool_data":
+            assert address == lifecycle.raw_address(pool)
+            return "result: [ 2 0 0 ] remote result: []"
+        if method == "compute_returned_stake":
+            assert address == lifecycle.raw_address(lifecycle.ELECTOR)
+            assert args == ("0x" + pool.hash_part.hex(),)
+            return f"result: [ {phase['credit']} ] remote result: []"
+        raise AssertionError(method)
+
+    runner.client = FakeClient()
+    runner.lite = lite
+    runner.runmethod = runmethod
+    active = await runner.support_chain_snapshot("active")
+    assert active["current_config34_since"] == 100
+    assert active["pools"][1]["election_retention"][100] == "active-retained"
+    assert runner.support_retired_past == {}, "the active record is not a mature-time witness"
+    phase.update(set_id=300, hash=0x5678, utime=400)
+    retired = await runner.support_chain_snapshot("retired")
+    assert retired["past_elections"][100]["unfreeze_at"] == 500
+    assert retired["pools"][1]["election_retention"][100] == "retired-frozen"
+    assert runner.support_retired_past[100]["unfreeze_at"] == 500
+    assert runner.support_set_hashes[100] == 0x1234
+    phase.update(utime=501, credit=lifecycle.NETWORK_MIN_STAKE)
+    credited = await runner.support_chain_snapshot("credited")
+    assert credited["past_elections"] == {}
+    assert credited["pools"][1]["election_retention"][100] == "matured-owner-credit"
+    assert lifecycle.recoverable_support_election_ids(
+        submitted=runner.support_submitted[1], recovered=set(),
+        current_set_id=credited["current_config34_since"],
+        current_set_hash=credited["current_config34_hash"],
+        known_set_hashes=runner.support_set_hashes,
+        retired_past=runner.support_retired_past,
+        live_past=credited["past_elections"], chain_utime=credited["chain_utime"],
+        credit=credited["pools"][1]["elector_credit_nanotos"],
+    ) == [100]
+    for snapshot in (active, retired, credited):
+        for key in ("config34_raw", "past_elections_raw", "participant_list_raw"):
+            assert Path(snapshot[key]).read_text(), key
+        for key in ("pool_data_raw", "credit_raw"):
+            assert Path(snapshot["pools"][1][key]).read_text(), key
+
+
+def test_stakeable_election_uses_retained_nested_lite_result_and_chain_time():
+    # The result line is from the retained Stage A
+    # pq-first-three-participants.txt lite-client artifact. In particular the
+    # participant field is a nested list, not a flat or synthetic scalar.
+    output = (
+        "latest masterchain block known to server is (...) created at 1790167863 (0 seconds ago)\n"
+        "result:  [ 1790168036 1790167976 10000000000000 33002996815200 "
+        "([55392454601739683101030057185327320091104615244476379864841778615102464643493 "
+        "[11000998938400 65536 55392454601739683101030057185327320091104615244476379864841778615102464643493 "
+        "10283624232448845151441132844116982100985049163861272061177687486932267280526 1 "
+        "14925801811550709604792904528259573664636697764697987786843027814863549428870]] "
+        "[63010924172525535203294055080544777106932079563086164000710734919987150757014 "
+        "[11000998938400 65536 63010924172525535203294055080544777106932079563086164000710734919987150757014 "
+        "47147084184177998116520657006052665219782500765440204427466007507775635949696 1 "
+        "59543992462595740249799304067798352916495611302171032631772060641303919675445]] "
+        "[99015643309189529179487703194031552256490370530619076264926756871097233987544 "
+        "[11000998938400 65536 99015643309189529179487703194031552256490370530619076264926756871097233987544 "
+        "72573946950039640214173829320371631433146214514938492398138548629191990669208 1 "
+        "26441272602624862153025102099042242420141956466890100754248526485588422033076]]) 0 0 ] \n"
+        "remote result (not to be trusted): [ 999 999 0 0 () 0 0 ]\n"
+    )
+    election_id = 1790168036
+    assert lifecycle.stakeable_election_id_from_live_status(output, 1790167900) == election_id
+    assert lifecycle.stakeable_election_id_from_live_status(output, 1790167976) == 0
+    assert lifecycle.stakeable_election_id_from_live_status(output, 1790167950) == 0
+    wrapped = output.replace("]]) 0 0 ]", "]])\n0 0 ]")
+    assert lifecycle.stakeable_election_id_from_live_status(wrapped, 1790167900) == election_id
+    finished = output.replace("]]) 0 0 ]", "]]) 0 -1 ]")
+    assert lifecycle.stakeable_election_id_from_live_status(finished, 1790167900) == 0
+    with pytest.raises(ValueError, match="unterminated result stack"):
+        lifecycle.stakeable_election_id_from_live_status(output.replace("]]) 0 0 ]", "]]) 0 0 "), 1790167900)
+
+
+@pytest.mark.asyncio
+async def test_nonzero_active_id_does_not_override_closed_live_election(tmp_path, monkeypatch):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="closed-election-test")
+    election_id = 1790213868
+
+    async def fake_runmethod(address, method):
+        assert address == lifecycle.raw_address(lifecycle.ELECTOR)
+        if method == "active_election_id":
+            return f"result: [ {election_id} ]"
+        assert method == "participant_list_extended"
+        return "result: [ 1790213868 1790213808 1 1 () 0 0 ]"
+
+    class FakeClient:
+        chain_utime = 1790213858
+
+        async def raw_get_account_state(self, address):
+            assert address == lifecycle.ELECTOR
+            return SimpleNamespace(sync_utime=self.chain_utime)
+
+    client = FakeClient()
+    runner.client = client
+    monkeypatch.setattr(runner, "runmethod", fake_runmethod)
+    assert await runner.active_election_id() == election_id
+    assert await runner.stakeable_election_id() == 0, "nonzero ID is not an accepting window"
+    client.chain_utime = 1790213700
+    assert await runner.stakeable_election_id() == election_id
+    runner.artifacts_dir.mkdir()
+    assert await runner.stakeable_election_id(capture_query_id=7001) == election_id
+    raw_path = runner.artifacts_dir / "pool-stake-pre-send-window-7001.json"
+    raw = raw_path.read_bytes()
+    captured = json.loads(raw)
+    assert captured["query_id"] == "7001"
+    assert captured["chain_utime"] == 1790213700
+    assert captured["stakeable_election_id"] == election_id
+    assert "1790213808" in captured["participant_list_extended"]
+    assert runner.report.events[-1]["raw_sha256"] == hashlib.sha256(raw).hexdigest()
+
+
+def test_first_pool_stake_waits_for_the_live_window():
+    source = inspect.getsource(lifecycle.PoolLifecycle.execute)
+    before_first_order = source.split('self.event("election_open"', 1)[0]
+    first_election_retry = before_first_order.rsplit("election_id = await self.retry(", 1)[1]
+    assert first_election_retry.lstrip().startswith("self.stakeable_election_id,")
+
+
+def test_queued_stake_refusal_waits_for_a_new_live_window():
+    source = inspect.getsource(lifecycle.PoolLifecycle.execute)
+    before_refusal = source.split("await self.stake_must_be_refused(next_election)", 1)[0]
+    next_election_retry = before_refusal.rsplit("next_election = await self.retry(", 1)[1]
+    assert next_election_retry.lstrip().startswith("self.stakeable_election_id,")
+    assert 'description="the next election has a live stake acceptance window"' in next_election_retry
+    assert "value > 0 and value != election_id" in next_election_retry
+
+
+@pytest.mark.asyncio
+async def test_queued_stake_wait_skips_a_closed_nonzero_active_id(tmp_path, monkeypatch):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="queued-window-test")
+    old_election = 1790346016
+    closed_election = 1790346616
+    next_election = 1790346916
+    observations = [
+        (closed_election, 1790346556, 1790346669),
+        (closed_election, 1790346556, 1790346680),
+        (next_election, 1790346856, 1790346750),
+    ]
+    current = observations[0]
+    calls = 0
+
+    async def fake_runmethod(address, method):
+        nonlocal current, calls
+        assert address == lifecycle.raw_address(lifecycle.ELECTOR)
+        if method == "active_election_id":
+            return f"result: [ {closed_election} ]"
+        assert method == "participant_list_extended"
+        current = observations[min(calls, len(observations) - 1)]
+        calls += 1
+        return f"result: [ {current[0]} {current[1]} 10000000000000 0 () 0 0 ]"
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            assert address == lifecycle.ELECTOR
+            return SimpleNamespace(sync_utime=current[2])
+
+    runner.client = FakeClient()
+    monkeypatch.setattr(runner, "runmethod", fake_runmethod)
+    predicate = lambda value: value > 0 and value != old_election
+    # The old selector falsely declares the already-closed third election ready.
+    assert await runner.retry(
+        runner.active_election_id, timeout=1, description="old selector",
+        predicate=predicate, interval=0,
+    ) == closed_election
+    assert await runner.retry(
+        runner.stakeable_election_id, timeout=1, description="live selector",
+        predicate=predicate, interval=0,
+    ) == next_election
+    assert calls == 3
+
+
+@pytest.mark.asyncio
+async def test_second_stake_query_id_is_bound_to_builder_and_report(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-query-test")
+    runner.pool_address = Address((-1, bytes([0x55]) * 32))
+    runner.wallets = [object()]
+    seen = {}
+
+    async def build(index, election_id, pool_address, *, query_id):
+        seen["built"] = query_id
+        return Cell.empty()
+
+    async def send(*args, **kwargs):
+        seen["sent"] = kwargs["label"]
+
+    runner.authorized_pool_order = build
+    runner.send = send
+    async def stakeable(*, capture_query_id=None):
+        assert capture_query_id is not None
+        return 123
+    runner.stakeable_election_id = stakeable
+    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
+    baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            return SimpleNamespace(last_transaction_id=baseline)
+
+    runner.client = FakeClient()
+    query_id = await runner.stake_through_pool(123, label="pool-stake-after-drain")
+    assert query_id == seen["built"]
+    assert seen["sent"] == "pool-stake-after-drain"
+    assert runner.report.events[-1]["query_id"] == query_id
+    assert runner.stake_feedback_baselines[query_id] == (baseline, baseline)
+
+
+@pytest.mark.asyncio
+async def test_pool_stake_refuses_if_window_closes_after_authorization(tmp_path):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="closed-after-auth-test")
+    runner.pool_address = Address((-1, bytes([0x55]) * 32))
+    runner.wallets = [object()]
+    runner.controllers = [SimpleNamespace(address=Address((-1, bytes([0x56]) * 32)))]
+    baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x11]) * 32)
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            return SimpleNamespace(last_transaction_id=baseline)
+
+    async def build(*args, **kwargs):
+        return Cell.empty()
+
+    async def stakeable(*, capture_query_id=None):
+        assert capture_query_id is not None
+        return 0
+
+    async def send(*args, **kwargs):
+        raise AssertionError("closed-window stake was sent")
+
+    runner.client = FakeClient()
+    runner.authorized_pool_order = build
+    runner.stakeable_election_id = stakeable
+    runner.send = send
+    with pytest.raises(RuntimeError, match="window closed or changed before send"):
+        await runner.stake_through_pool(123, label="pool-stake")
+    assert not any(event["event"] == "pool_stake_order" for event in runner.report.events)
+
+
+@pytest.mark.asyncio
+async def test_second_stake_feedback_records_exact_elector_reason_and_relay_result(
+    tmp_path, monkeypatch
+):
+    runner = lifecycle.PoolLifecycle(None, tmp_path, 0, campaign_run_id="stake-feedback-test")
+    pool = Address((-1, bytes([0x51]) * 32))
+    controller = Address((-1, bytes([0x52]) * 32))
+    runner.pool_address = pool
+    runner.controllers = [SimpleNamespace(address=controller)]
+    query_id = 7001
+    elector_body = (
+        Builder().store_uint(0xEE6F454C, 32).store_uint(query_id, 64)
+        .store_uint(5, 32).end_cell().to_boc()
+    )
+    elector_transaction = SimpleNamespace(
+        data=b"recorded", decoded=SimpleNamespace(lt=90, in_msg=None),
+        transaction_id=toslib_api.Internal_transactionId(lt=90, hash=bytes([0x90]) * 32),
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(lifecycle.ELECTOR.to_str()),
+            msg_data=toslib_api.Msg_dataRaw(body=elector_body),
+        ),
+    )
+    wallet = Address((-1, bytes([0x53]) * 32))
+    order_body = Builder().store_uint(0x4E73744B, 32).store_uint(query_id, 64).end_cell()
+    order_transaction = SimpleNamespace(
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=70,
+            in_msg=MessageAny(
+                info=InternalMsgInfo(
+                    ihr_disabled=True, bounce=True, bounced=False,
+                    src=wallet, dest=pool, value=CurrencyCollection(tomis=1),
+                    ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+                ), init=None, body=order_body,
+            ),
+        ),
+        transaction_id=toslib_api.Internal_transactionId(lt=70, hash=bytes([0x70]) * 32),
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(wallet.to_str())),
+    )
+    relay_transaction = SimpleNamespace(
+        transaction_id=toslib_api.Internal_transactionId(lt=80, hash=bytes([0x80]) * 32),
+        data=b"recorded", decoded=SimpleNamespace(
+            lt=80, in_msg=_relay_message(pool, controller, query_id, bounced=False),
+            description=SimpleNamespace(aborted=False),
+        ),
+        in_msg=SimpleNamespace(source=toslib_api.AccountAddress(pool.to_str())),
+    )
+    baseline = toslib_api.Internal_transactionId(lt=40, hash=bytes([0x40]) * 32)
+    cursors = {
+        pool: toslib_api.Internal_transactionId(lt=90, hash=bytes([0x90]) * 32),
+        controller: toslib_api.Internal_transactionId(lt=80, hash=bytes([0x80]) * 32),
+    }
+    pool_second_page = toslib_api.Internal_transactionId(lt=75, hash=bytes([0x75]) * 32)
+    transactions = {controller: [relay_transaction]}
+    runner.stake_feedback_baselines[query_id] = (baseline, baseline)
+
+    class FakeClient:
+        async def raw_get_account_state(self, address):
+            return SimpleNamespace(last_transaction_id=cursors[address])
+
+        async def raw_get_transactions(self, address, cursor):
+            if address == pool:
+                if cursor is cursors[pool]:
+                    return SimpleNamespace(
+                        transactions=[elector_transaction],
+                        previous_transaction_id=pool_second_page,
+                    )
+                assert cursor is pool_second_page
+                return SimpleNamespace(
+                    transactions=[order_transaction], previous_transaction_id=baseline
+                )
+            assert cursor is cursors[controller]
+            return SimpleNamespace(
+                transactions=transactions[address], previous_transaction_id=baseline
+            )
+
+    runner.client = FakeClient()
+    monkeypatch.setattr(lifecycle, "_decoded_transaction", lambda raw: raw.decoded)
+    await runner.record_pool_stake_feedback(query_id, label="pool-stake-after-drain")
+    event = runner.report.events[-1]
+    assert event["event"] == "pool_stake_feedback"
+    assert event["query_id"] == query_id
+    assert event["elector_reply"] == (0xEE6F454C, 5)
+    assert event["controller_bounce"] is None
+    assert event["controller_relay"] == {"transaction_lt": "80", "aborted": False}
+    assert event["pool_transactions_scanned"] == 2
+    assert event["pool_pages_scanned"] == 2
+    assert event["pool_window_complete"] is True
+    assert event["controller_window_complete"] is True
+    assert event["pool_order_transaction_lt"] == "70"
+    assert event["classification"] == "ELECTOR_REPLY_OBSERVED"
+
+    class MissingOrder(FakeClient):
+        async def raw_get_transactions(self, address, cursor):
+            if address == pool and cursor is pool_second_page:
+                return SimpleNamespace(transactions=[], previous_transaction_id=baseline)
+            return await super().raw_get_transactions(address, cursor)
+
+    runner.client = MissingOrder()
+    await runner.record_pool_stake_feedback(query_id, label="pool-stake-after-drain")
+    uncovered = runner.report.events[-1]
+    assert uncovered["elector_reply"] == (0xEE6F454C, 5)
+    assert uncovered["pool_order_transaction_lt"] is None
+    assert uncovered["classification"] == "INCONCLUSIVE"
+
+    class PoolQueryFails(FakeClient):
+        async def raw_get_transactions(self, address, cursor):
+            if address == pool:
+                raise RuntimeError("pool lite query unavailable")
+            return await super().raw_get_transactions(address, cursor)
+
+    runner.client = PoolQueryFails()
+    await runner.record_pool_stake_feedback(query_id, label="pool-stake-after-drain")
+    partial = runner.report.events[-1]
+    assert partial["elector_reply"] is None
+    assert partial["collection_errors"]["pool"] == "RuntimeError('pool lite query unavailable')"
+    assert partial["controller_relay"] == {"transaction_lt": "80", "aborted": False}
+
+
+def test_config34_pq_identity_and_adnl_stay_in_one_record():
+    controller_a = "11" * 32
+    controller_b = "22" * 32
+    adnl_a = "33" * 32
+    adnl_b = "44" * 32
+    text = (
+        f"validator_pq validator_id:x{controller_a} adnl_addr:x{adnl_a} weight:7\n"
+        f"validator_pq validator_id:x{controller_b} adnl_addr:x{adnl_b} weight:9"
+    )
+    assert lifecycle.parse_pq_validator_adnl_pairs(text) == [
+        (controller_a, adnl_a), (controller_b, adnl_b)
+    ]
+    with pytest.raises(ValueError, match="ADNL IDs"):
+        lifecycle.parse_pq_validator_adnl_pairs(
+            f"validator_pq validator_id:x{controller_a} weight:7"
+        )
+
+
+def test_multi_nominator_stake_order_uses_bound_node_authorization_and_birth_witness(monkeypatch):
+    controller_address = Address((-1, bytes([0x11]) * 32))
+    pool_address = Address((-1, bytes([0x22]) * 32))
+    adnl = bytes([0x33]) * 32
+    key_id = bytes([0x44]) * 32
+    public_key = bytes([0x55]) * 1312
+    signature = bytes([0x66]) * 2420
+    witness = Builder().store_uint(47, 16).end_cell()
+    authorization = SimpleNamespace(
+        validator_id=controller_address.hash_part,
+        key_id=key_id,
+        algorithm_id=1,
+        public_key=public_key,
+        signature=signature,
+    )
+    seen = {}
+
+    class FakeRequest:
+        def __init__(self, **kwargs):
+            seen["request"] = kwargs
+
+        def parse_result(self, response):
+            assert response is authorization
+            return response
+
+    async def request(_request):
+        return authorization
+
+    def fake_builder(_executable, **kwargs):
+        seen["builder"] = kwargs
+        return Cell.empty()
+
+    monkeypatch.setattr(
+        lifecycle.tos_api, "Engine_validator_createPqStakeAuthorizationRequest", FakeRequest
+    )
+    monkeypatch.setattr(lifecycle, "build_production_pool_stake_order", fake_builder)
+    subject = object.__new__(lifecycle.PoolLifecycle)
+    subject.nodes = [SimpleNamespace(
+        validator_key=SimpleNamespace(id=adnl),
+        engine_console=SimpleNamespace(request=request),
+    )]
+    subject.controllers = [SimpleNamespace(
+        address=controller_address,
+        consensus=SimpleNamespace(key_id=key_id, public_key=public_key),
+        birth_witness=witness,
+    )]
+    assert asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address)) == Cell.empty()
+    assert seen["request"] == {
+        "election_date": 1_700_000_000,
+        "max_factor": lifecycle.MAX_FACTOR,
+        "adnl_addr": adnl,
+        "stake_owner": pool_address.hash_part,
+    }
+    assert seen["builder"]["public_key"] == public_key
+    assert seen["builder"]["signature"] == signature
+    assert seen["builder"]["witness"] == witness
+    assert seen["builder"]["adnl_addr"] == adnl
+
+    authorization.validator_id = bytes([0x77]) * 32
+    with pytest.raises(AssertionError, match="wrong controller"):
+        asyncio.run(subject.authorized_pool_order(0, 1_700_000_000, pool_address))
+
+
+def test_lifecycle_budget_covers_genesis_and_two_support_principals(monkeypatch):
+    assert lifecycle.CONTROLLER_FORWARDING_ALLOWANCE == lifecycle.NANO
+    assert lifecycle.POOL_STAKE_VALUE == (
+        lifecycle.NETWORK_MIN_STAKE
+        + lifecycle.ELECTOR_CONFIRMATION_ALLOWANCE
+        + lifecycle.CONTROLLER_FORWARDING_ALLOWANCE
+    )
+    ordinary = lifecycle.require_lifecycle_funding_budget(
+        integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+    )
+    assert ordinary["faucet_nanotos"] == 100_000 * lifecycle.NANO
+    assert ordinary["committed_nanotos"] == 96_400 * lifecycle.NANO
+    assert ordinary["faucet_uncommitted_nanotos"] == 3_600 * lifecycle.NANO
+    assert ordinary["support_pool_capital_nanotos"] == (
+        2 * lifecycle.POOL_STAKE_VALUE + 20 * lifecycle.NANO
+    )
+    assert ordinary["support_wallet_nanotos"] >= ordinary["support_wallet_required_nanotos"]
+
+    integrated = lifecycle.require_lifecycle_funding_budget(
+        integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+    )
+    assert integrated["faucet_nanotos"] == 2_000_000 * lifecycle.NANO
+    assert integrated["committed_nanotos"] == 1_211_387 * lifecycle.NANO
+
+    monkeypatch.setattr(lifecycle, "DIRECT_VALIDATOR_FUNDING", 20_000 * lifecycle.NANO)
+    with pytest.raises(ValueError, match="support wallet cannot fund"):
+        lifecycle.require_lifecycle_funding_budget(
+            integrated=False, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+        )
+    monkeypatch.setattr(lifecycle, "INTEGRATED_FAUCET_FUNDING", 1_000_000 * lifecycle.NANO)
+    with pytest.raises(ValueError, match="Genesis faucet cannot fund"):
+        lifecycle.require_lifecycle_funding_budget(
+            integrated=True, agent_count=lifecycle.OPENFOX_AGENT_COUNT
+        )
 
 
 @pytest.mark.parametrize(

@@ -95,7 +95,7 @@ void DownloadNextBlocks::start_up() {
       self->promise_.set_error(R.move_as_error());
     }
     self->stop();
-    co_return {};
+    co_return td::Unit{};
   }(this)
                                       .start()
                                       .detach();
@@ -115,7 +115,7 @@ td::actor::Task<> DownloadNextBlocks::run() {
       handle_ =
           co_await td::actor::ask(validator_manager_, &ValidatorManagerInterface::validate_block, std::move(result));
       success_ = success_local_ = true;
-      co_return {};
+      co_return td::Unit{};
     }
   }
 
@@ -170,7 +170,7 @@ td::actor::Task<> DownloadNextBlocks::run() {
     co_await process_block(std::move(obj));
   }
   VLOG(FULL_NODE_DEBUG) << "Done";
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> DownloadNextBlocks::process_block(tl_object_ptr<tos_api::tosNode_DataFull> obj) {
@@ -209,7 +209,7 @@ td::actor::Task<> DownloadNextBlocks::process_block(tl_object_ptr<tos_api::tosNo
   handle_ = co_await td::actor::ask(validator_manager_, &ValidatorManagerInterface::validate_block, std::move(result));
   success_ = true;
   VLOG(FULL_NODE_DEBUG) << "Downloaded block " << id;
-  co_return {};
+  co_return td::Unit{};
 }
 
 }  // namespace fullnode

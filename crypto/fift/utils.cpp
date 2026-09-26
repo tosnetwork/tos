@@ -91,9 +91,6 @@ td::Result<std::string> load_Assert_fif(std::string dir = "") {
 td::Result<std::string> load_Test_fif(std::string dir = "") {
   return load_source("Test.fif", dir);
 }
-td::Result<std::string> load_Validator_fif(std::string dir = "") {
-  return load_source("Validator.fif", dir);
-}
 td::Result<std::string> load_Proposal_fif(std::string dir = "") {
   return load_source("Proposal.fif", dir);
 }
@@ -226,10 +223,6 @@ td::Result<fift::SourceLookup> create_source_lookup(std::string&& main, bool nee
     {
       TRY_RESULT(f, load_Test_fif(dir));
       loader->add_file("/Test.fif", std::move(f));
-    }
-    {
-      TRY_RESULT(f, load_Validator_fif(dir));
-      loader->add_file("/Validator.fif", std::move(f));
     }
     {
       TRY_RESULT(f, load_Proposal_fif(dir));

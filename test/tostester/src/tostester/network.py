@@ -23,9 +23,24 @@ from toslib import EngineConsoleClient, ToslibClient, ToslibError, ToslibEventLo
 from .install import Install
 from .key import Key
 from .log_streamer import LogStreamer
+from .process_backend import LocalProcessBackend, ProcessBackend
 from .zerostate import NetworkConfig, PqInitialValidator, Zerostate, create_zerostate
 
 l = logging.getLogger(__name__)
+
+
+def _retryable_startup_lite_error(error: BaseException) -> bool:
+    """Only known 500-class transport and unsynced-node startup responses."""
+    return (
+        isinstance(error, ToslibError)
+        and error.result.code == 500
+        and error.result.message in {
+            "LITE_SERVER_NETWORKtimeout for adnl query query",
+            "LITE_SERVER_NETWORK",
+            "LITE_SERVER_NETWORKconn not ready",
+            "LITE_SERVER_NOTREADY: node not synced",
+        }
+    )
 
 
 @dataclass
@@ -199,23 +214,21 @@ class Network:
 
             match start_options.debug:
                 case None:
-                    self.__process = await asyncio.create_subprocess_exec(
+                    self.__process = await self._network.process_backend.spawn(
+                        self.name,
                         executable,
-                        *cmd_flags,
-                        cwd=self._directory,
-                        env=process_env,
-                        stderr=asyncio.subprocess.PIPE,
+                        cmd_flags,
+                        self._directory,
+                        process_env,
                     )
                 case "rr":
                     l.info(f"Recording {self.name} with rr")
-                    self.__process = await asyncio.create_subprocess_exec(
+                    self.__process = await self._network.process_backend.spawn(
+                        self.name,
                         "rr",
-                        "record",
-                        executable,
-                        *cmd_flags,
-                        cwd=self._directory,
-                        env=process_env,
-                        stderr=asyncio.subprocess.PIPE,
+                        ["record", str(executable), *cmd_flags],
+                        self._directory,
+                        process_env,
                     )
 
             assert self.__process.stderr is not None  # to placate pyright
@@ -229,6 +242,20 @@ class Network:
 
         def announce_to(self, dht: "DHTNode"):
             self._static_nodes.append(dht)
+
+        @property
+        def directory(self) -> Path:
+            return self._directory
+
+        @property
+        def process_id(self) -> int | None:
+            return None if self.__process is None else self.__process.pid
+
+        @property
+        def log_stream_fd_binding(self) -> dict[str, int]:
+            if self.__log_streamer is None:
+                raise RuntimeError("validator raw log streamer is not running")
+            return self.__log_streamer.fd_binding()
 
         @abstractmethod
         async def run(self, options: StartOptions | None = None):
@@ -263,12 +290,14 @@ class Network:
         event_loop: asyncio.AbstractEventLoop | None = None,
         *,
         base_port: int = 2000,
+        process_backend: ProcessBackend | None = None,
     ):
         self._install = install
         self._directory = directory.absolute()
         self._port = base_port
         self._node_idx = 0
         self._status = _Status.INITED
+        self._process_backend = process_backend or LocalProcessBackend()
 
         self._toslib = install.toslibjson
         self._event_loop = ToslibEventLoop(self._toslib, event_loop)
@@ -291,6 +320,10 @@ class Network:
     @property
     def install(self):
         return self._install
+
+    @property
+    def process_backend(self) -> ProcessBackend:
+        return self._process_backend
 
     def create_dht_node(self) -> "DHTNode":
         assert self._status < _Status.CLOSED
@@ -362,20 +395,9 @@ class Network:
                 mc_info = await client.get_masterchain_info()
             except ToslibError as e:
                 # FIXME: We should really let node notify us that it is ready.
-                try:
-                    if (
-                        e.result.code == 500
-                        and (
-                            e.result.message
-                            == "LITE_SERVER_NETWORKtimeout for adnl query query"  # node is not synced yet
-                            or e.result.message
-                            == "LITE_SERVER_NETWORK"  # node is not listening the socket
-                        )
-                    ):
-                        await asyncio.sleep(0.2)
-                        continue
-                except Exception:
-                    pass
+                if _retryable_startup_lite_error(e):
+                    await asyncio.sleep(0.2)
+                    continue
                 raise
 
             assert mc_info.last is not None
@@ -557,6 +579,16 @@ class FullNode(Network.Node):
         self._is_initial_validator = True
 
     def make_initial_pq_validator(self, validator_id: bytes, seed: bytes):
+        self._provision_pq_validator(validator_id, seed)
+        self._is_initial_validator = True
+
+    def make_noninitial_pq_validator(self, validator_id: bytes, seed: bytes):
+        """Custody a future candidate without putting it in the Genesis set."""
+        if self._is_initial_validator:
+            raise ValueError("an initial validator cannot become a noninitial PQ candidate")
+        self._provision_pq_validator(validator_id, seed)
+
+    def _provision_pq_validator(self, validator_id: bytes, seed: bytes):
         self._ensure_no_zerostate_yet()
         if len(validator_id) != 32 or len(seed) != 32:
             raise ValueError("post-quantum validator id and seed must each be 32 bytes")
@@ -593,7 +625,6 @@ class FullNode(Network.Node):
                 consensus_key_file=str(key_file),
             ),
         )
-        self._is_initial_validator = True
 
     @property
     def is_initial_validator(self):
@@ -606,6 +637,14 @@ class FullNode(Network.Node):
     @property
     def validator_key(self):
         return self._validator_key
+
+    @property
+    def adnl_identity(self) -> bytes:
+        return self._validator_key.id
+
+    @property
+    def transport_ports(self) -> tuple[int, int, int]:
+        return (self._addr.port, self._liteserver_addr.port, self._engine_console_addr.port)
 
     @override
     async def run(self, options: StartOptions | None = None):
@@ -736,13 +775,18 @@ class FullNode(Network.Node):
     @override
     async def stop(self):
         if self._client:
-            await self._client.aclose()
+            client = self._client
+            self._client = None
+            await client.aclose()
         if self._engine_console:
-            self._engine_console.close()
+            console = self._engine_console
+            self._engine_console = None
+            console.close()
         if self._blockchain_explorer:
             _ = self._blockchain_explorer.cancel()
             try:
                 await self._blockchain_explorer
             except asyncio.CancelledError:
                 pass
+            self._blockchain_explorer = None
         await super().stop()

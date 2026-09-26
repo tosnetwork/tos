@@ -136,6 +136,17 @@ pub struct SignRq {
     pub data: Vec<u8>,
 }
 
+/// A complete stake authorization returned by the node's custodied PQ signer.
+/// The key identity and public key must be consumed together with its signature.
+#[derive(Debug, Clone)]
+pub struct PqStakeAuthorization {
+    pub validator_id: Vec<u8>,
+    pub key_id: Vec<u8>,
+    pub algorithm_id: i32,
+    pub public_key: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AddValidatorPermKeyRq {
     #[serde(with = "serde_utils::hex_string")]
@@ -237,6 +248,13 @@ pub trait ClientAPI: Send + Sync {
     async fn get_config_param(&mut self, id: u32) -> anyhow::Result<Vec<u8>>;
 
     async fn sign(&mut self, rq: &SignRq) -> anyhow::Result<Vec<u8>>;
+    async fn create_pq_stake_authorization(
+        &mut self,
+        election_date: u32,
+        max_factor: u32,
+        adnl_addr: &[u8],
+        stake_owner: &[u8],
+    ) -> anyhow::Result<PqStakeAuthorization>;
     async fn generate_key_pair(&mut self) -> anyhow::Result<Vec<u8>>;
     async fn export_key_pub(&mut self, key_hash: &[u8]) -> anyhow::Result<Vec<u8>>;
     async fn add_validator_perm_key(&mut self, rq: &AddValidatorPermKeyRq) -> anyhow::Result<()>;

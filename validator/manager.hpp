@@ -21,8 +21,10 @@
 
 #include <list>
 #include <map>
+#include <optional>
 #include <queue>
 #include <set>
+#include <tuple>
 
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
@@ -69,6 +71,8 @@ class WaitZeroState;
 class WaitShardState;
 class WaitBlockData;
 class AppliedExtMessageCleanupActor;
+class PendingFinalityManagerActorProbe;
+class N5ManagerDbFixture;
 
 struct PendingBlockFinalityCandidate {
   td::Ref<block::BlockSignatureSet> sig_set;
@@ -91,6 +95,8 @@ class BlockHandleLru : public td::ListNode {
 };
 
 class ValidatorManagerImpl : public ValidatorManager {
+  friend class PendingFinalityManagerActorProbe;
+  friend class N5ManagerDbFixture;
  private:
   // WAITERS
   //
@@ -263,6 +269,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<ValidatorSessionId, ValidatorGroupEntry> next_validator_groups_;
   using ObserverGroupId = std::pair<ValidatorSessionId, adnl::AdnlNodeIdShort>;
   std::map<ObserverGroupId, ValidatorGroupEntry> observer_groups_;
+  std::map<ShardIdFull, std::tuple<bool, bool, std::optional<std::size_t>>> observer_group_diagnostic_states_;
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<CollationManager>> collation_managers_;
   std::set<ValidatorSessionId> destroyed_validator_sessions_;
   // Exact directory names of retired consensus groups whose per-group RocksDB
@@ -618,6 +625,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void add_shard_block_description(td::Ref<ShardTopBlockDescription> desc);
   void add_cached_block_data(BlockIdExt block_id, td::BufferSlice data);
   void try_process_pending_block_finality(BlockIdExt block_id);
+  void failed_pending_block_proof(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token,
+                                  PendingBlockProofFailureSource source, td::Status error);
   void failed_pending_block_finality(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token, td::Status error,
                                      td::Slice operation);
   void schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at);

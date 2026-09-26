@@ -24,6 +24,10 @@ namespace block {
 class Config;
 struct TotalValidatorSet;
 
+// The one protocol-defined conversion from a classical Ed25519 key to its legacy
+// membership identity. Runtime membership code must never recreate this conversion.
+tos::ValidatorId classical_validator_id(const tos::Ed25519_PublicKey& key);
+
 class ValidatorSet : public td::CntObject {
  public:
   // Membership is asked by stable validator identity, never by an ADNL identity and

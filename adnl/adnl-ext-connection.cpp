@@ -28,12 +28,12 @@ void AdnlExtConnection::send_uninit(td::BufferSlice data) {
   yield();
 }
 
-void AdnlExtConnection::send(td::BufferSlice data) {
+bool AdnlExtConnection::send(td::BufferSlice data) {
   LOG(DEBUG) << "sending packet of size " << data.size();
   auto size_status = check_adnl_ext_payload_size(data.size());
   if (size_status.is_error()) {
     LOG(WARNING) << size_status;
-    return;
+    return false;
   }
   auto data_size = td::narrow_cast<td::uint32>(data.size() + adnl_ext_packet_framing_bytes);
 
@@ -56,6 +56,7 @@ void AdnlExtConnection::send(td::BufferSlice data) {
 
   buffered_fd_.output_buffer().append(std::move(e));
   yield();
+  return true;
 }
 
 td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_loop) {

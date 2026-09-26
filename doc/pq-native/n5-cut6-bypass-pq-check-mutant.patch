@@ -1,0 +1,13 @@
+diff --git a/validator/impl/check-proof.cpp b/validator/impl/check-proof.cpp
+index 753fe4a5c..0051118d6 100644
+--- a/validator/impl/check-proof.cpp
++++ b/validator/impl/check-proof.cpp
+@@ -466,7 +466,7 @@ void CheckProof::check_signatures() {
+       abort_query(context.move_as_error());
+       return;
+     }
+-    result = verify_pq_proof_signatures(context.ok(), *sig_set_, sig_weight_);
++    result = sig_weight_;  // N5 Cut6 diagnostic mutation: bypass PQ verification.
+   } else {
+     result = sig_set_->check_signatures(vset_, id_);
+   }

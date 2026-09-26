@@ -4,10 +4,13 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <cstring>
+
 #include "td/actor/SharedFuture.h"
 #include "td/actor/coro_task.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/CancellationToken.h"
+#include "validator/measurement/measurement-contract.h"
 
 #include "bus.h"
 #include "stats.h"
@@ -15,6 +18,12 @@
 namespace tos::validator::consensus {
 
 namespace {
+
+measurement::TraceId measurement_trace_id(const CandidateId& id) {
+  measurement::TraceId result{};
+  std::memcpy(result.data(), id.hash.data(), result.size());
+  return result;
+}
 
 class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
  public:
@@ -241,6 +250,8 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         // draining.
         break;
       }
+      measurement::record_trace_lazy([&] { return measurement_trace_id(candidate->id); },
+                                     measurement::TraceStage::candidate_generated);
       owning_bus().publish<CandidateGenerated>(candidate, collator);
       owning_bus().publish<CandidateReceived>(candidate);
       owning_bus().publish<TraceEvent>(stats::CandidateReceived::create(candidate, true));

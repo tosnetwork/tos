@@ -63,6 +63,14 @@
 
 #include "git.h"
 
+namespace {
+td::Status write_chain_original(const std::string& path, td::Slice bytes) {
+  TRY_RESULT(file, td::FileFd::open(path, td::FileFd::Write | td::FileFd::CreateNew, 0600));
+  TRY_STATUS(file.write_all(bytes));
+  return file.sync();
+}
+}  // namespace
+
 using namespace std::literals::string_literals;
 using td::Ref;
 
@@ -929,6 +937,7 @@ bool TestNode::show_help(std::string command) {
          "getkeyconfig <block-id-ext> [<param>...]\tShows specified or all configuration parameters from the "
          "previous key block with respect to <block-id-ext>\n"
          "saveconfig <filename> [<block-id-ext>]\tSaves all configuration parameters into specified file\n"
+         "saveblkproofchain <prefix> <from-id> <target-id>\tRetains raw PQ chain requests/responses for offline replay\n"
          "gethead <block-id-ext>\tShows block header for <block-id-ext>\n"
          "getblock <block-id-ext>\tDownloads block\n"
          "dumpblock <block-id-ext>\tDownloads and dumps specified block\n"
@@ -1075,6 +1084,11 @@ bool TestNode::do_parse_line() {
     return parse_block_id_ext(blkid) && parse_uint32(count) &&
            (seekeoln() || (parse_hash(hash) && parse_lt(lt) && (mode |= 128) && seekeoln())) &&
            get_block_transactions(blkid, mode, count, hash, lt);
+  } else if (word == "saveblkproofchain") {
+    std::string prefix;
+    tos::BlockIdExt target{};
+    return get_word_to(prefix) && parse_block_id_ext(blkid) && parse_block_id_ext(target) && seekeoln() &&
+           get_block_proof(blkid, target, 0x1001, std::move(prefix));
   } else if (word == "blkproofchain" || word == "blkproofchainstep") {
     tos::BlockIdExt blkid2{};
     return parse_block_id_ext(blkid) && (seekeoln() || parse_block_id_ext(blkid2)) && seekeoln() &&
@@ -3394,7 +3408,11 @@ void TestNode::got_block_header(tos::BlockIdExt blkid, td::BufferSlice data, int
   show_new_blkids();
 }
 
-bool TestNode::get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode) {
+bool TestNode::get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode,
+                              std::string capture_prefix, unsigned capture_index) {
+  if (!capture_prefix.empty() && (capture_index >= 32 || !(mode & 1) || to.seqno() <= from.seqno())) {
+    return set_error("Z01 chain capture needs an advancing exact target and at most32responses");
+  }
   if (!(mode & 1)) {
     to.invalidate_clear();
   }
@@ -3417,17 +3435,37 @@ bool TestNode::get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mod
       tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getBlockProof>(
                                    mode & 0xfff, tos::create_tl_lite_block_id(from), tos::create_tl_lite_block_id(to)),
                                true);
-  return envelope_send_query(std::move(b), [Self = actor_id(this), from, to, mode](td::Result<td::BufferSlice> res) {
+  if (!capture_prefix.empty()) {
+    auto saved = write_chain_original(capture_prefix + "-" + std::to_string(capture_index) + ".request.tl",
+                                      b.as_slice());
+    if (saved.is_error()) return set_error(saved.move_as_error());
+  }
+  return envelope_send_query(std::move(b), [Self = actor_id(this), from, to, mode, capture_prefix,
+                                          capture_index](td::Result<td::BufferSlice> res) {
     if (res.is_error()) {
       LOG(ERROR) << "cannot obtain block proof for " << ((mode & 1) ? to.to_str() : "last masterchain block")
                  << " starting from " << from.to_str() << " from server : " << res.move_as_error().to_string();
     } else {
-      td::actor::send_closure_later(Self, &TestNode::got_block_proof, from, to, mode, res.move_as_ok());
+      td::actor::send_closure_later(Self, &TestNode::got_block_proof, from, to, mode, res.move_as_ok(),
+                                  capture_prefix, capture_index);
     }
   });
 }
 
-void TestNode::got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode, td::BufferSlice pchain) {
+void TestNode::got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode, td::BufferSlice pchain,
+                              std::string capture_prefix, unsigned capture_index) {
+  if (!capture_prefix.empty()) {
+    if (capture_index >= 32 || pchain.size() > 16 * 1024 * 1024) {
+      LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: response count or size limit exceeded";
+      return;
+    }
+    auto saved = write_chain_original(capture_prefix + "-" + std::to_string(capture_index) + ".response.tl",
+                                      pchain.as_slice());
+    if (saved.is_error()) {
+      LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: raw response write failed: " << saved;
+      return;
+    }
+  }
   LOG(INFO) << "got block proof from " << from.to_str() << " to "
             << ((mode & 1) ? to.to_str() : "last masterchain block") << " with mode=" << mode << " (" << pchain.size()
             << " bytes)";
@@ -3448,6 +3486,19 @@ void TestNode::got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mod
                << from.to_str();
     return;
   }
+  if (!capture_prefix.empty()) {
+    if (!chain->link_count() || chain->to.seqno() <= from.seqno() || chain->to.seqno() > to.seqno() ||
+        (chain->complete && chain->to != to) || (!chain->complete && chain->to.seqno() >= to.seqno())) {
+      LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: empty/nonadvancing chain or wrong exact destination";
+      return;
+    }
+    for (const auto& link : chain->links) {
+      if (!link.is_fwd || link.to.seqno() <= link.from.seqno() || link.sig_set.is_null() || !link.sig_set->is_pq()) {
+        LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: proof link is not strictly forward with PQ signatures";
+        return;
+      }
+    }
+  }
   auto err = chain->validate();
   if (err.is_error()) {
     LOG(ERROR) << "block proof chain is invalid: " << err;
@@ -3458,8 +3509,18 @@ void TestNode::got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mod
     LOG(INFO) << "valid " << (chain->complete ? "" : "in") << "complete proof chain: last block is "
               << chain->to.to_str() << ", last key block is "
               << (chain->has_key_block ? chain->key_blkid.to_str() : "(undefined)");
-    get_block_proof(chain->to, to, mode | 0x2000);
+    get_block_proof(chain->to, to, mode | 0x2000, capture_prefix, capture_index + 1);
     return;
+  }
+  if (!capture_prefix.empty()) {
+    const auto receipt = "Z01_CHAIN_CAPTURE_OK segments=" + std::to_string(capture_index + 1) +
+                         " target=" + to.to_str() + "\n";
+    auto saved = write_chain_original(capture_prefix + ".complete", receipt);
+    if (saved.is_error()) {
+      LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: completion receipt write failed: " << saved;
+      return;
+    }
+    td::TerminalIO::out() << receipt;
   }
   td::TerminalIO::out() << "valid " << (chain->complete ? "" : "in") << "complete proof chain: last block is "
                         << chain->to.to_str() << ", last key block is "

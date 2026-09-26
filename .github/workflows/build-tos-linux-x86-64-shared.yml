@@ -57,6 +57,11 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Trust this checkout for repository tests
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
     # test-quorum-static-grep is part of the full CTest registry and fails
     # closed when its search tool is absent. Keep that dependency explicit
@@ -106,6 +111,13 @@ jobs:
       run: |
         uv sync --no-dev
         uv run test/tostester/generate_tl.py
+
+    - name: Run Q01 and Z01 targeted Python tests
+      run: |
+        PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest \
+          test/pq-native/test_n6_startup_not_synced.py \
+          test/pq-native/test_z01_final_capture.py \
+          test/pq-native/test_z01_proof_controls.py
 
     - name: Run tostester tests
       run: |

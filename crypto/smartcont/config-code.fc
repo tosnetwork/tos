@@ -6,6 +6,94 @@
 #include "pq.fc";
 #include "pq-bytes.fc";
 #include "pq-validator.fc";
+#include "pq-launch-limits.fc";
+
+int validator_set_counts_fit?(cell vset, int max_validators, int max_main_validators,
+                              int min_validators) inline_ref {
+  if (cell_null?(vset)) {
+    return true;
+  }
+  slice cs = vset.begin_parse();
+  if (cs.slice_bits() < 104) {
+    return false;
+  }
+  if (cs~load_uint(8) != 0x12) {
+    return false;
+  }
+  cs~skip_bits(64);
+  int total = cs~load_uint(16);
+  int main = cs~load_uint(16);
+  return (total <= max_validators) & (main <= max_main_validators)
+      & (total >= min_validators) & (main > 0) & (main <= total);
+}
+
+int valid_validator_limits?(cell cfg_dict, cell value) inline_ref {
+  if (cell_null?(value)) {
+    return false;
+  }
+  slice cs = value.begin_parse();
+  if ((cs.slice_bits() != 48) | (cs.slice_refs() != 0)) {
+    return false;
+  }
+  int max_validators = cs~load_uint(16);
+  int max_main_validators = cs~load_uint(16);
+  int min_validators = cs~load_uint(16);
+  if ((min_validators < 1) | (max_main_validators < min_validators)
+      | (max_validators < max_main_validators)
+      | (max_validators > pq_launch::max_total_validators)
+      | (max_main_validators > pq_launch::max_masterchain_committee)) {
+    return false;
+  }
+  return validator_set_counts_fit?(cfg_dict.idict_get_ref(32, 34), max_validators, max_main_validators, min_validators)
+      & validator_set_counts_fit?(cfg_dict.idict_get_ref(32, 35), max_validators, max_main_validators, min_validators)
+      & validator_set_counts_fit?(cfg_dict.idict_get_ref(32, 36), max_validators, max_main_validators, min_validators)
+      & validator_set_counts_fit?(cfg_dict.idict_get_ref(32, 37), max_validators, max_main_validators, min_validators);
+}
+
+int valid_catchain_limits?(cell value) inline_ref {
+  if (cell_null?(value)) {
+    return false;
+  }
+  slice cs = value.begin_parse();
+  int bits = cs.slice_bits();
+  if ((bits < 8) | (cs.slice_refs() != 0)) {
+    return false;
+  }
+  int tag = cs~load_uint(8);
+  if ((tag == 0xc1) & (bits == 136)) {
+    cs~skip_bits(96);
+  } elseif ((tag == 0xc2) & (bits == 144)) {
+    if (cs~load_uint(7) != 0) {
+      return false;
+    }
+    cs~load_uint(1);
+    cs~skip_bits(96);
+  } else {
+    return false;
+  }
+  int shard_validators_num = cs~load_uint(32);
+  cs.end_parse();
+  return (shard_validators_num >= 1)
+      & (shard_validators_num <= pq_launch::max_shard_committee);
+}
+
+int valid_live_validator_set_limits?(cell cfg_dict, cell value) inline_ref {
+  cell limits_cell = cfg_dict.idict_get_ref(32, 16);
+  if (cell_null?(limits_cell)) {
+    return false;
+  }
+  slice limits = limits_cell.begin_parse();
+  if ((limits.slice_bits() != 48) | (limits.slice_refs() != 0)) {
+    return false;
+  }
+  int max_validators = limits~load_uint(16);
+  int max_main_validators = limits~load_uint(16);
+  int min_validators = limits~load_uint(16);
+  limits.end_parse();
+  return validator_set_counts_fit?(value, min(max_validators, pq_launch::max_total_validators),
+                                   min(max_main_validators, pq_launch::max_masterchain_committee),
+                                   max(min_validators, 1));
+}
 
 () set_conf_param(int index, cell value) impure {
   var cs = get_data().begin_parse();
@@ -77,22 +165,26 @@ _ get_vote_config(int critical?) inline {
   cell list = cs~load_dict();
   cs.end_parse();
   throw_if(9, total_weight == 0);
+  ;; The node applies checked_add_validator_weight() with UINT64_MAX/3. Do not
+  ;; install a set as ConfigParam 36 that the node will then refuse to load.
+  throw_if(9, total_weight > 6148914691236517205);
 
   ;; The count the header states must be the count the list holds, and both must be
   ;; within what the configuration allows a set to be.
   var limits = config_param(16).begin_parse();
   int max_validators = limits~load_uint(16);
-  limits~skip_bits(16);
+  int max_main_validators = limits~load_uint(16);
   int min_validators = limits~load_uint(16);
   limits.end_parse();
-  throw_if(9, total > max_validators);
+  throw_if(9, total > min(max_validators, pq_launch::max_total_validators));
+  throw_if(9, main > min(max_main_validators, pq_launch::max_masterchain_committee));
   throw_if(9, total < max(min_validators, 1));
 
-  ;; Walk every descriptor. Two identities must each be unique across the set: the
-  ;; validator, because two entries for one account would be counted twice, and the
-  ;; consensus key, because the node cannot tell two holders of one key apart.
+  ;; Walk every descriptor. Validator, consensus-key and ADNL transport identities
+  ;; must each be unique, as in Config::unpack_validator_set().
   cell seen_validators = new_dict();
   cell seen_keys = new_dict();
+  cell seen_adnl = new_dict();
   int weight_sum = 0;
   int index = -1;
   int counted = 0;
@@ -100,13 +192,16 @@ _ get_vote_config(int critical?) inline {
     (index, slice descr, int found) = list.udict_get_next?(16, index);
     if (found) {
       throw_if(9, index >= total);
-      (int validator_id, _, int key_id, _, int weight, _) = pq::parse_descriptor(descr);
+      (int validator_id, _, int key_id, _, int weight, int adnl_addr) = pq::parse_descriptor(descr);
       (_, int duplicate_validator) = seen_validators.udict_get?(256, validator_id);
       throw_if(9, duplicate_validator);
       (_, int duplicate_key) = seen_keys.udict_get?(256, key_id);
       throw_if(9, duplicate_key);
+      (_, int duplicate_adnl) = seen_adnl.udict_get?(256, adnl_addr);
+      throw_if(9, duplicate_adnl);
       seen_validators~udict_set_builder(256, validator_id, begin_cell());
       seen_keys~udict_set_builder(256, key_id, begin_cell());
+      seen_adnl~udict_set_builder(256, adnl_addr, begin_cell());
       weight_sum += weight;
       counted += 1;
     }
@@ -220,6 +315,32 @@ int valid_controller_policy?(cell value) inline_ref {
   if (param_id == config::validator_controller_policy) {
     ifnot (valid_controller_policy?(param_val)) {
       return (cfg_dict, false);
+    }
+  }
+  if ((param_id == 16) & (~ valid_validator_limits?(cfg_dict, param_val))) {
+    return (cfg_dict, false);
+  }
+  if ((param_id == 28) & (~ valid_catchain_limits?(param_val))) {
+    return (cfg_dict, false);
+  }
+  if ((param_id >= 34) & (param_id <= 37)) {
+    ifnot (valid_live_validator_set_limits?(cfg_dict, param_val)) {
+      return (cfg_dict, false);
+    }
+    ;; Governance installs through this route, not through the Elector's
+    ;; set_next_validators handler. A count-only check would let a valid vote
+    ;; install a set the node cannot decode. Preserve optional-set deletion.
+    ifnot (cell_null?(param_val)) {
+      int valid = true;
+      try {
+        (int t_since, int t_until) = check_validator_set(param_val);
+        valid = t_until > t_since;
+      } catch (_, _) {
+        valid = false;
+      }
+      ifnot (valid) {
+        return (cfg_dict, false);
+      }
     }
   }
   cfg_dict~idict_set_ref(32, param_id, param_val);
