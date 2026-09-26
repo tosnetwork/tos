@@ -114,7 +114,7 @@ jobs:
 
     - name: Run Q01 and Z01 targeted Python tests
       run: |
-        PYTHONDONTWRITEBYTECODE=1 uv run pytest \
+        PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest \
           test/pq-native/test_n6_startup_not_synced.py \
           test/pq-native/test_z01_final_capture.py \
           test/pq-native/test_z01_proof_controls.py
