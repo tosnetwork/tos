@@ -45,12 +45,14 @@ class Proxy final : public liteclient::ExtClient {
     forward(nonce, std::move(bytes), deadline,
       td::Promise<td::BufferSlice>([prefix, decoder_negative = context.decoder_negative, promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
         if (result.is_ok()) {
+          CHECK(result.ok().size() <= 1024 * 1024);
           td::write_file(prefix + ".answer.bin", result.ok().as_slice()).ensure();
           if (decoder_negative) result = td::BufferSlice(td::Slice("\0", 1));
           td::write_file(prefix + ".decoder-input.bin", result.ok().as_slice()).ensure();
         }
         else td::write_file(prefix + ".transport-error.txt", result.error().to_string()).ensure();
-        // Same original result is returned to ExtClient queries_ and its real decoder.
+        // Normal mode forwards the original result. The explicit decoder control
+        // alone forwards the retained one-byte derived input to the same decoder.
         promise.set_result(std::move(result));
       }));
   }
@@ -165,6 +167,13 @@ int main(int argc, char** argv) {
       response.object->get_id() != toslib_api::blocks_masterchainInfo::ID) return 6;
   std::cout << to_string(response.object) << std::endl;
   bool error = response.object->get_id() == toslib_api::error::ID;
+  int code = 0;
+  if (error) {
+    const auto& e = static_cast<const toslib_api::error&>(*response.object);
+    code = e.code_;
+    td::write_file(out + "/" + nonce + ".public-error.txt", e.message_).ensure();
+  }
+  td::write_file(out + "/" + nonce + ".public-code.txt", std::to_string(code)).ensure();
   if (error != (mode != "normal")) return 8;
   std::cout << "Q01_PUBLIC_TERMINAL id=" << id << " nonce=" << nonce << " mode=" << mode << " error="
             << (response.object->get_id() == toslib_api::error::ID) << std::endl;
