@@ -1,0 +1,49 @@
+{
+  "schema": "a03.partial-reconciliation.v1",
+  "accepted_ids": [],
+  "role": "typed inventory pointer and explicit gaps, not a retrospective run receipt or development gate",
+  "inventory": {
+    "commit": "c02775d1c4d875b018dd231321551f0be4f63f70",
+    "path": "doc/pq-native/a03-first-batch.json",
+    "binding": "immutable git blob at named commit; artifact SHA values are inside each entry and must be rechecked under a ticket"
+  },
+  "units": {
+    "E16": {
+      "delivery_type": "runtime-route",
+      "inventory_entry": "E16",
+      "executed_source": "84a30e4268f94e894497e402d97058cadcbb876d",
+      "scope": "local accelerated single network, Config15 elected_for600 and bootstrap1200; not default timings or multi-host",
+      "known": ["unique original console exit0", "original report and same-query VM85 BOC", "two later full heads visible in original node logs", "Genesis/live Config readback", "10 binary snapshots", "fixed independent raw review", "three exact-source CI records"],
+      "unproven": ["original launch argv", "contemporaneous per-run receipt", "same-run first positive five-hop raw BOC join", "OS PID/exe inode mapping", "complete prior red/control source-applicability and unique mutation mapping"],
+      "invalidation": ["route source or bytecode changes", "different selection window or timing profile", "different raw/binary bytes or account/query identity"]
+    },
+    "F01": {
+      "delivery_type": "runtime-route",
+      "inventory_entry": "F01",
+      "executed_source": "2e1a51ad9f3be29c783aed3f8cff65abbb0dec08",
+      "scope": "local accelerated four-process Stage A, three Config34 transitions and per-node H-1/H/H+1 joins",
+      "known": ["unique original console exit0", "report/capture manifest", "three fixed H89/H131/H172 check outputs", "four independent DBs and ten OS process generations in retained watcher", "12 binary snapshots", "fixed independent review", "CI on docs-only38440 descendant; exact2e1 query empty"],
+      "unproven": ["original complete launch argv", "contemporaneous per-run receipt", "per-control source applicability for predecessor H+1/cwd/capital mutants", "multi-host or power-loss recovery"],
+      "invalidation": ["native/header capture or identity guards change", "log/OS/RPC bytes change", "fixture or process/DB generation mapping change"]
+    },
+    "X01": {
+      "delivery_type": "runtime-route",
+      "inventory_entry": "X01",
+      "executed_source": "6e863142be50976b998572249fc7fb62a980b808",
+      "scope": "Ubuntu local four-process stop/restart windows; not packet loss or multi-host",
+      "known": ["unique original console exit0", "policy/trace/RPC/check original artifacts", "independent OS generations and old PID absences", "12 binary snapshots", "fixed independent native/header/RPC review", "CI on docs-only262f descendant"],
+      "unproven": ["original complete launch argv", "contemporaneous per-run receipt", "complete predecessor source/patch/control applicability mapping", "externally pre-signed policy", "X02 transport isolation or power-loss recovery"],
+      "invalidation": ["fault window, generation, timing or log guards change", "policy/OS/RPC/native bytes change", "process or DB identity changes"]
+    },
+    "F02": {
+      "delivery_type": "independent-audit",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-F02-2E1-PER-NODE-INTERSECTION-20260925.md",
+      "scope": "independent audit of fixed F01 local raw log intersections through H211; not another runtime",
+      "known": ["fixed task-table row cites independent ten-segment full-ID intersection review", "audit distinguishes restart duplicate markers from conflicts"],
+      "unproven": ["machine receipt/index for the independent audit command and natural exit", "report/raw/source SHA reconciliation under this new typed mapping", "unique audit-checker red controls where required"],
+      "invalidation": ["audited raw segment bytes or fixed audit source change", "different height interval or review scope"],
+      "forbidden_substitution": "Do not copy F01 runtime argv, binary or three control receipts as an F02 audit execution."
+    }
+  }
+}
