@@ -79,8 +79,12 @@ class QueueBackend:
         require(self.sock.sendto(raw, (0, 0)) == len(raw), "short netlink send")
         deadline, acknowledged = time.monotonic() + 2, False
         while not acknowledged:
-            require(time.monotonic() < deadline, "kernel ACK deadline exceeded")
-            for kind, seq, body in self.receive():
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, "kernel ACK deadline exceeded")
+            self.sock.settimeout(remaining)
+            messages = self.receive()
+            require(time.monotonic() < deadline, "late kernel ACK or packet batch")
+            for kind, seq, body in messages:
                 if kind == 0x300:
                     require(len(self.buffer) < 256, "userspace queue backlog exceeded")
                     self.buffer.append(body)
@@ -94,6 +98,7 @@ class QueueBackend:
                     require(original_kind == 0x300 | operation and original_seq == self.seq
                             and original_pid == self.portid, "ACK request identity differs")
                     acknowledged = True
+        self.sock.settimeout(2)
 
     def bind(self) -> None:
         try:

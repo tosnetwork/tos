@@ -12,6 +12,7 @@ import json
 import os
 import struct
 import time
+import threading
 from pathlib import Path
 
 import x02_partial_sequence as sequence
@@ -39,6 +40,7 @@ class DurableLedger:
     """Exclusive new file; persist intent before attempting a kernel verdict."""
 
     def __init__(self, path: Path):
+        self.lock = threading.Lock()
         self.stream = path.open("xb", buffering=0)
         try:
             directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -52,12 +54,13 @@ class DurableLedger:
 
     def append(self, row: dict) -> None:
         payload = json.dumps(row, sort_keys=True, separators=(",", ":")).encode() + b"\n"
-        view = memoryview(payload)
-        while view:
-            written = self.stream.write(view)
-            sequence.require(written is not None and written > 0, "ledger write stalled")
-            view = view[written:]
-        os.fsync(self.stream.fileno())
+        with self.lock:
+            view = memoryview(payload)
+            while view:
+                written = self.stream.write(view)
+                sequence.require(written is not None and written > 0, "ledger write stalled")
+                view = view[written:]
+            os.fsync(self.stream.fileno())
 
     def close(self) -> None:
         self.stream.close()
