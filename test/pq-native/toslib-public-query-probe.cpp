@@ -47,7 +47,15 @@ class Proxy final : public liteclient::ExtClient {
         if (result.is_ok()) {
           CHECK(result.ok().size() <= 1024 * 1024);
           td::write_file(prefix + ".answer.bin", result.ok().as_slice()).ensure();
-          if (decoder_negative) result = td::BufferSlice(td::Slice("\0", 1));
+          if (decoder_negative) {
+            auto original = tos::fetch_result<tos::lite_api::liteServer_getMasterchainInfo>(result.ok());
+            if (original.is_error()) {
+              td::write_file(prefix + ".original-decoder-error.txt", original.error().to_string()).ensure();
+              return promise.set_error(td::Status::Error("Q01 original answer failed production decoder"));
+            }
+            td::write_file(prefix + ".original-decoded.txt", to_string(original.ok())).ensure();
+            result = td::BufferSlice(td::Slice("\0", 1));
+          }
           td::write_file(prefix + ".decoder-input.bin", result.ok().as_slice()).ensure();
         }
         else {
