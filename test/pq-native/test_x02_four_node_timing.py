@@ -2,7 +2,8 @@
 """Constructed chain timing controls, not live RPC/native/socket evidence."""
 import unittest
 
-from x02_four_node import ChainCapture, recovery_target_met, fresh_observer_epoch, distinct_db_inodes
+from x02_four_node import (ChainCapture, recovery_target_met, fresh_observer_epoch,
+                           distinct_db_inodes, declared_node_mapping, config34_pairs)
 
 
 class FourNodeTimingControls(unittest.TestCase):
@@ -62,6 +63,27 @@ class FourNodeTimingControls(unittest.TestCase):
         self.assertFalse(distinct_db_inodes(alias))
         alias[3]['db_ino'] = True
         self.assertFalse(distinct_db_inodes(alias))
+
+    def test_declared_public_row_swap_rejects_before_fault(self):
+        keys = ('controller_id_hex', 'consensus_key_id_hex', 'adnl_id_hex')
+        rows = [dict(validator_index=i, node_name=f'node{i}',
+                     **{key: f'{i:064x}' for key in keys}) for i in range(1, 5)]
+        nodes = [dict(name=f'node{i}', validator_index=i, controller_id=f'{i:064x}',
+                      consensus_key_id=f'{i:064x}', adnl_id=f'{i:064x}')
+                 for i in range(1, 5)]
+        self.assertEqual(declared_node_mapping(nodes, {'validators': rows}), rows)
+        swapped = [dict(row) for row in rows]
+        swapped[0]['controller_id_hex'], swapped[1]['controller_id_hex'] = (
+            swapped[1]['controller_id_hex'], swapped[0]['controller_id_hex'])
+        with self.assertRaisesRegex(ValueError, 'declared controller/key/ADNL row differs'):
+            declared_node_mapping(nodes, {'validators': swapped})
+
+    def test_raw_config34_pairs_bind_controller_and_adnl(self):
+        controller, adnl = 'a' * 64, 'b' * 64
+        raw = f'validator_pq validator_id:x{controller} weight:1 adnl_addr:x{adnl}'
+        self.assertEqual(config34_pairs(raw), [(controller, adnl)])
+        with self.assertRaisesRegex(ValueError, 'Config34 PQ identities alias'):
+            config34_pairs(raw + ' ' + raw)
 
 
 if __name__ == '__main__':
