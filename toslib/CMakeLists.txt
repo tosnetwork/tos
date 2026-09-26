@@ -206,3 +206,18 @@ install(FILES "ToslibConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/ToslibConfigVers
 )
 
 install(TARGETS toslib-cli RUNTIME DESTINATION bin)
+
+# Explicit opt-in; normal toslib ABI and targets do not see the Q01 test macro.
+option(TOSLIB_Q01_PUBLIC_PROBE "Build test-only real public caller probe" OFF)
+if(TOSLIB_Q01_PUBLIC_PROBE)
+  add_library(toslib-q01-public-test STATIC ${TOSLIB_SOURCE})
+  target_compile_definitions(toslib-q01-public-test PRIVATE TOSLIB_Q01_TEST_NETWORK=1)
+  target_include_directories(toslib-q01-public-test PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/.. ${OPENSSL_INCLUDE_DIR})
+  target_link_libraries(toslib-q01-public-test PRIVATE adnllite tl_lite_api tl-lite-utils
+    tos_crypto lite-client-common smc-envelope emulator_static)
+  target_link_libraries(toslib-q01-public-test PUBLIC tdactor tdutils tl_toslib_api)
+  add_executable(test-toslib-public-query-probe ../test/pq-native/toslib-public-query-probe.cpp)
+  target_compile_definitions(test-toslib-public-query-probe PRIVATE TOSLIB_Q01_TEST_NETWORK=1)
+  target_link_libraries(test-toslib-public-query-probe PRIVATE toslib-q01-public-test dht)
+endif()
