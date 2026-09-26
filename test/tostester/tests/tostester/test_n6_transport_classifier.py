@@ -13,6 +13,16 @@ from tostester.n6_cluster import _is_lite_transport_error
         (500, "NOT_ENOUGH_FUNDS", False),
         (651, "not in db", False),
         (400, "LITE_SERVER_NETWORKtimeout for adnl query query", False),
+        # toslib's last-block synchronisation wraps the transport error it hit.
+        (
+            500,
+            "INTERNAL: get last block failed LITE_SERVER_NETWORKtimeout for adnl query query",
+            True,
+        ),
+        (500, "INTERNAL: get last block failed NO_LITE_SERVERS", False),
+        (500, "INTERNAL: get last block failed LITE_SERVER_NOTREADY: node not synced", False),
+        (500, "INTERNAL: LITE_SERVER_NETWORKtimeout for adnl query query", False),
+        (400, "INTERNAL: get last block failed LITE_SERVER_NETWORKtimeout", False),
     ],
 )
 def test_real_toslib_transport_error_classifier(code: int, message: str, expected: bool) -> None:

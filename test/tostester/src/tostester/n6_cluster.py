@@ -12,6 +12,7 @@ import re
 import subprocess
 import time
 from bisect import bisect_right
+from collections import deque
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypeVar
@@ -25,6 +26,24 @@ SUSTAINED_TRANSPORT_RETRY_DELAY_SECONDS = 0.1
 LITE_STARTUP_NOT_SYNCED = "LITE_SERVER_NOTREADY: node not synced"
 STARTUP_NOT_SYNCED_DELAY_SECONDS = 0.25
 SUSTAINED_SESSION_LOG_FLUSH_SECONDS = 5.1
+# toslib reports a failed last-block synchronisation as its own code-500 INTERNAL error with
+# the underlying error appended verbatim (ToslibClient: Internal("get last block failed ")).
+LITE_LAST_BLOCK_SYNC_FAILED = "INTERNAL: get last block failed "
+LITE_TRANSPORT_FAILURE = "LITE_SERVER_NETWORK"
+# Each liteserver connection admits a bounded number of queries per window and silently
+# drops the rest (AdnlInboundConnection::process_packet). The budget is read from that
+# declaration so an observer never paces against a copy that has drifted from the server.
+LITE_CONNECTION_LIMITS_SOURCE = Path("adnl/adnl-ext-server.hpp")
+LITE_CONNECTION_LIMITS = re.compile(
+    r"ExtConnectionQueryLimits\s+query_limits_\{\s*([0-9.]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*\}"
+)
+# A lookup_block is lookupBlockWithProof plus getBlockProof, and toslib may first refresh
+# its last block with one getMasterchainInfo; a height poll is one getMasterchainInfo.
+LITE_QUERIES_PER_LOOKUP = 3
+LITE_QUERIES_PER_HEIGHT_POLL = 1
+# The server logs the first drop on each connection at warning level, which nodes started at
+# the default verbosity keep; later drops on the same connection are debug-only.
+LITE_ADMISSION_DROP_MARKER = "Dropping external query from "
 T = TypeVar("T")
 
 
@@ -299,12 +318,102 @@ def _is_lite_transport_error(error: BaseException) -> bool:
     # Keep this source-only gate importable without loading toslib's optional
     # runtime dependencies, while still matching the exact production error
     # type rather than treating arbitrary exceptions as transport failures.
-    return (
+    if not (
         type(error).__module__ == "toslib.toslibjson"
         and type(error).__qualname__ == "ToslibError"
         and getattr(error, "code", None) == 500
-        and str(error).startswith("LITE_SERVER_NETWORK")
+    ):
+        return False
+    message = str(error)
+    return message.startswith(LITE_TRANSPORT_FAILURE) or message.startswith(
+        LITE_LAST_BLOCK_SYNC_FAILED + LITE_TRANSPORT_FAILURE
     )
+
+
+@dataclass(frozen=True)
+class LiteConnectionBudget:
+    window_seconds: float
+    max_queries_per_window: int
+    max_inflight: int
+
+
+def lite_connection_budget(source_dir: Path | None = None) -> LiteConnectionBudget:
+    root = source_dir if source_dir is not None else Path(__file__).resolve().parents[4]
+    path = root / LITE_CONNECTION_LIMITS_SOURCE
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(
+            f"N6_LITE_BUDGET_FAILURE: cannot read the liteserver connection limits: {error}"
+        ) from error
+    declarations = LITE_CONNECTION_LIMITS.findall(text)
+    if len(declarations) != 1:
+        raise RuntimeError(
+            "N6_LITE_BUDGET_FAILURE: expected exactly one per-connection query limit in "
+            f"{path}, found {len(declarations)}"
+        )
+    window, per_window, inflight = declarations[0]
+    budget = LiteConnectionBudget(float(window), int(per_window), int(inflight))
+    if (
+        not math.isfinite(budget.window_seconds)
+        or budget.window_seconds <= 0
+        or budget.max_queries_per_window < 2 * LITE_QUERIES_PER_LOOKUP
+        or budget.max_inflight < LITE_QUERIES_PER_LOOKUP
+    ):
+        raise RuntimeError(f"N6_LITE_BUDGET_FAILURE: unusable per-connection limits {budget}")
+    return budget
+
+
+class LiteQueryPacer:
+    """Keeps an observer inside half of each liteserver connection's admission budget.
+
+    Every paced call queries each client once, and each client owns its own connection, so
+    one sliding window bounds every connection. The other half of the budget is headroom for
+    toslib's own background refreshes and for retries.
+    """
+
+    def __init__(
+        self,
+        budget: LiteConnectionBudget,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[Any]] = asyncio.sleep,
+    ) -> None:
+        self.window_seconds = budget.window_seconds
+        self.capacity = budget.max_queries_per_window // 2
+        self.waited_seconds = 0.0
+        self._spent: deque[tuple[float, int]] = deque()
+        self._clock = clock
+        self._sleep = sleep
+
+    async def acquire(self, cost: int) -> None:
+        if not 0 < cost <= self.capacity:
+            raise ValueError(
+                f"N6_LITE_BUDGET_FAILURE: query cost {cost} is outside 1..{self.capacity}"
+            )
+        while True:
+            now = self._clock()
+            while self._spent and self._spent[0][0] <= now - self.window_seconds:
+                self._spent.popleft()
+            if sum(spent for _, spent in self._spent) + cost <= self.capacity:
+                self._spent.append((now, cost))
+                return
+            wait = self._spent[0][0] + self.window_seconds - now
+            self.waited_seconds += wait
+            await self._sleep(wait)
+
+
+def lite_admission_drop_warnings(log_paths: dict[str, Path]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for name, path in log_paths.items():
+        try:
+            data = Path(path).read_bytes()
+        except OSError as error:
+            raise RuntimeError(
+                f"N6_LITE_ADMISSION_CHECK_FAILURE: cannot read the log of {name}: {error}"
+            ) from error
+        counts[name] = data.count(LITE_ADMISSION_DROP_MARKER.encode())
+    return counts
 
 
 def _is_lite_startup_not_synced(error: BaseException) -> bool:
@@ -1328,6 +1437,7 @@ async def observe_sustained_consensus(
     *,
     simplex_validator_names: list[str] | None = None,
     wall_clocks_comparable: bool = True,
+    lite_budget: LiteConnectionBudget | None = None,
 ) -> dict[str, Any]:
     if (config.blocks is None) == (config.seconds is None):
         raise ValueError(
@@ -1342,12 +1452,14 @@ async def observe_sustained_consensus(
             "N6_SUSTAINED_CONSENSUS_FAILURE: target rate and slow-interval factor are invalid"
         )
 
+    pacer = LiteQueryPacer(lite_budget if lite_budget is not None else lite_connection_budget())
     clients = {node.name: await node.toslib_client() for node in nodes}
     transport_retry_counts = {
         name: {"get_masterchain_info": 0, "lookup_block": 0} for name in clients
     }
     query_events: list[dict[str, Any]] = []
     common_height_barriers: list[dict[str, Any]] = []
+    await pacer.acquire(LITE_QUERIES_PER_HEIGHT_POLL)
     heights = await _masterchain_heights(
         clients, transport_retry_counts=transport_retry_counts, query_events=query_events
     )
@@ -1365,7 +1477,10 @@ async def observe_sustained_consensus(
     if not zerostate_block_id:
         raise ValueError("N6_SUSTAINED_CONSENSUS_FAILURE: zerostate block id is missing")
     block_ids: dict[int, str] = {0: zerostate_block_id}
+    # Every earlier height is checked for agreement too; paced, because this catch-up is the
+    # one place the observer would otherwise issue lookups back to back.
     for height in range(1, start_height + 1):
+        await pacer.acquire(LITE_QUERIES_PER_LOOKUP)
         block_ids[height] = await require_agreed_masterchain_block(
             clients,
             height,
@@ -1387,6 +1502,7 @@ async def observe_sustained_consensus(
     final_heights = heights
 
     while True:
+        await pacer.acquire(LITE_QUERIES_PER_HEIGHT_POLL)
         final_heights = await _masterchain_heights(
             clients,
             transport_retry_counts=transport_retry_counts,
@@ -1404,6 +1520,7 @@ async def observe_sustained_consensus(
             }
         )
         while next_height <= common_height:
+            await pacer.acquire(LITE_QUERIES_PER_LOOKUP)
             block_id = await require_agreed_masterchain_block(
                 clients,
                 next_height,
@@ -1453,7 +1570,7 @@ async def observe_sustained_consensus(
     if not consensus_by_height:
         timing_split["reason"] = "structured Simplex finalization timestamps were not available"
 
-    return summarize_sustained_observation(
+    summary = summarize_sustained_observation(
         config=config,
         start_height=start_height,
         observed=observed,
@@ -1465,6 +1582,12 @@ async def observe_sustained_consensus(
         simplex_skip_evidence=skip_evidence,
         timing_split=timing_split,
     )
+    summary["lite_query_pacing"] = {
+        "window_seconds": pacer.window_seconds,
+        "observer_queries_per_window": pacer.capacity,
+        "waited_seconds": pacer.waited_seconds,
+    }
+    return summary
 
 
 async def run_cluster(
