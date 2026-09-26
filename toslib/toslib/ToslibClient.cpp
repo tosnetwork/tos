@@ -2678,7 +2678,8 @@ void ToslibClient::request(td::uint64 id, toslib_api::object_ptr<toslib_api::Fun
         function->get_id() != toslib_api::blocks_getMasterchainInfo::ID) {
       return promise.set_error(td::Status::Error("Q01 public request context differs"));
     }
-    auto typed = promise.wrap([](object_ptr<toslib_api::blocks_masterchainInfo> value) -> Object {
+    td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>> typed =
+        promise.wrap([](object_ptr<toslib_api::blocks_masterchainInfo> value) -> Object {
       return std::move(value);
     });
     auto status = do_request(static_cast<const toslib_api::blocks_getMasterchainInfo&>(*function),
