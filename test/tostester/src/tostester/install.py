@@ -1,6 +1,8 @@
 import os
+import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import final
 
@@ -76,7 +78,8 @@ class Install:
         return self._toslibjson
 
 
-def run_fift(install: Install, code: str, working_dir: Path):
+def run_fift(install: Install, code: str, working_dir: Path, *,
+             env: dict[str, str] | None = None, retain_script: bool = False):
     script_file = working_dir / "script.fif"
     _ = script_file.write_text(code)
 
@@ -85,6 +88,20 @@ def run_fift(install: Install, code: str, working_dir: Path):
         args += ["-I", include_dir]
     args += ["-s", "script.fif"]
 
-    _ = subprocess.run(args, cwd=working_dir, check=True)
+    if retain_script:
+        (working_dir / "generation.command.json").write_text(json.dumps({
+            "argv": [str(arg) for arg in args], "cwd": str(working_dir.resolve()),
+            "source_date_epoch": None if env is None else env.get("SOURCE_DATE_EPOCH"),
+            "started_wall_ns": time.time_ns(),
+        }, sort_keys=True, indent=2) + "\n")
+        result = subprocess.run(args, cwd=working_dir, check=False, env=env,
+                                capture_output=True)
+        (working_dir / "generation.stdout.raw").write_bytes(result.stdout)
+        (working_dir / "generation.stderr.raw").write_bytes(result.stderr)
+        (working_dir / "generation.exit.raw").write_text(f"{result.returncode}\n")
+        result.check_returncode()
+    else:
+        _ = subprocess.run(args, cwd=working_dir, check=True, env=env)
 
-    os.remove(script_file)
+    if not retain_script:
+        os.remove(script_file)

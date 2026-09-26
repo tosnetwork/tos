@@ -1232,6 +1232,18 @@ fn govern_install_with(
     value: chain_block::Cell,
     query_base: u64,
 ) -> Governed {
+    use chain_block::{GetRepresentationHash, Serializable};
+    let z01_capture = matches!(query_base, 0x1600 | 0x1601 | 0x2800 | 0x2801 | 0x3700 | 0x3701);
+    let z01_dir = std::env::var_os("Z01_GOVERNANCE_TX_DIR").map(std::path::PathBuf::from);
+    if z01_capture {
+        if let Some(dir) = &z01_dir {
+            std::fs::create_dir_all(dir).expect("Z01 raw transaction directory");
+            let raw = chain_block::write_boc(&proposal_cell(chain, param_id, value.clone()))
+                .expect("Z01 proposal BOC");
+            std::fs::write(dir.join(format!("proposal-{query_base:04x}.boc")), raw)
+                .expect("save Z01 proposal BOC");
+        }
+    }
     let proposal = propose_cell(chain, param_id, value, query_base);
     let sender =
         chain.blockchain.treasury(&format!("govern-{query_base}"), 500 * TOS).expect("an account");
@@ -1249,6 +1261,25 @@ fn govern_install_with(
                 Some(vote_body(query_base + round as u64, &signature, idx, &proposal)),
             ))
             .expect("the vote is delivered");
+        if z01_capture {
+            for (tx_index, (_, transaction)) in result.transactions.iter().enumerate() {
+                if let Some(dir) = &z01_dir {
+                    let raw = chain_block::write_boc(&transaction.serialize().expect("Z01 transaction cell"))
+                        .expect("Z01 transaction BOC");
+                    std::fs::write(
+                        dir.join(format!("vote-{query_base:04x}-{round}-{tx_index}.boc")), raw,
+                    ).expect("save Z01 transaction BOC");
+                }
+                eprintln!(
+                    "z01_governance_vote param={param_id} query={} account={} lt={} tx_hash={} first_tx_compute_exit={}",
+                    query_base + round as u64,
+                    hex::encode(transaction.account_id().get_bytestring(0)),
+                    transaction.logical_time(),
+                    hex::encode(transaction.hash().expect("transaction hash").as_slice()),
+                    exit_code_of(&result),
+                );
+            }
+        }
         assert_eq!(exit_code_of(&result), 0, "a validator's vote was refused");
         // The contract drops a proposal's status once it has decided it, so the vote it
         // was recorded in disappearing is how a decision is visible from outside.
@@ -1292,11 +1323,54 @@ fn catchain_limits(shard_validators: u32) -> chain_block::Cell {
 #[test]
 fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
     fn governed_change(param: i32, value: chain_block::Cell, query: u64) -> (Governed, bool) {
+        use chain_block::GetRepresentationHash;
         let (mut chain, validators, _election) = elect_install_and_rotate();
         require_one_winning_round(&mut chain);
+        if param == 28 {
+            assert_eq!(
+                raw_parameter(&chain, 28),
+                Some(catchain_limits(21)),
+                "the Genesis Param28 fixture changed"
+            );
+            // Genesis already has the exact 21 boundary. Start each governance
+            // proposal at a valid 20 so acceptance must change the stored cell.
+            set_contract_parameter(&mut chain, 28, catchain_limits(20));
+            chain.blockchain.set_config(configuration_from_contract(&chain))
+                .expect("the VM adopts the Param28 test baseline");
+        }
         let before = configuration_parameters_hash(&chain);
+        let raw_dir = std::env::var_os("Z01_GOVERNANCE_TX_DIR").map(std::path::PathBuf::from);
+        if let (Some(dir), Some(cell)) = (&raw_dir, raw_parameter(&chain, param)) {
+            std::fs::create_dir_all(dir).expect("Z01 raw config directory");
+            std::fs::write(
+                dir.join(format!("config-before-{query:04x}.boc")),
+                chain_block::write_boc(&cell).expect("Z01 before config BOC"),
+            ).expect("save Z01 before config BOC");
+        }
+        let value_hash = value.repr_hash();
+        let expected = value.clone();
         let outcome = govern_install(&mut chain, &validators, param, value, query);
-        let changed = configuration_parameters_hash(&chain) != before;
+        let after = configuration_parameters_hash(&chain);
+        let actual = raw_parameter(&chain, param);
+        if let (Some(dir), Some(cell)) = (&raw_dir, &actual) {
+            std::fs::write(
+                dir.join(format!("config-after-{query:04x}.boc")),
+                chain_block::write_boc(cell).expect("Z01 after config BOC"),
+            ).expect("save Z01 after config BOC");
+        }
+        if query == 0x2800 {
+            assert_eq!(actual, Some(expected), "governance did not store the exact Param28=21 cell");
+        } else if query == 0x2801 {
+            assert_eq!(actual, Some(catchain_limits(20)), "governance changed Param28 after the 22 proposal");
+        }
+        eprintln!(
+            "z01_governance param={param} query={query} value_hash={} actual_hash={} before={} after={} decided={} installed={}",
+            hex::encode(value_hash.as_slice()),
+            hex::encode(actual.as_ref().map(|cell| cell.repr_hash().as_slice().to_vec()).unwrap_or_default()),
+            hex::encode(before), hex::encode(after),
+            outcome.decided, outcome.installed,
+        );
+        let changed = after != before;
         (outcome, changed)
     }
 
@@ -1313,10 +1387,10 @@ fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
         "governance installed ConfigParam16.max_validators=22"
     );
 
-    let (valid_catchain, valid_catchain_changed) = governed_change(28, catchain_limits(20), 0x2800);
+    let (valid_catchain, valid_catchain_changed) = governed_change(28, catchain_limits(21), 0x2800);
     assert!(
         valid_catchain.decided && valid_catchain_changed,
-        "a Param28 shard committee below 21 was refused"
+        "the exact Param28 shard committee launch boundary was refused"
     );
     let (invalid_catchain, invalid_catchain_changed) =
         governed_change(28, catchain_limits(22), 0x2801);

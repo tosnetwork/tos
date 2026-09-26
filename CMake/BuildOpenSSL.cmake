@@ -334,7 +334,7 @@ if (NOT OPENSSL_CRYPTO_LIBRARY)
           message(FATAL_ERROR "OpenSSL config failed with code ${OPENSSL_CONFIG_RESULT}")
         endif()
         execute_process(
-          COMMAND make -j16
+          COMMAND make -j2
           WORKING_DIRECTORY ${OPENSSL_BUILD_DIR}
           RESULT_VARIABLE OPENSSL_MAKE_RESULT
         )

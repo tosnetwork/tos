@@ -151,7 +151,7 @@ else()
         AR=${ZLIB_AR}
         RANLIB=${ZLIB_RANLIB}
         CFLAGS=${ZLIB_CFLAGS}
-        make -j16
+        make -j2
       COMMAND ${CMAKE_COMMAND} -E chdir ${ZLIB_BUILD_DIR} ${CMAKE_COMMAND} -E env
         CC=${ZLIB_CC}
         AR=${ZLIB_AR}

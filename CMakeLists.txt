@@ -820,6 +820,13 @@ target_compile_definitions(test-n5-manager-db-fixture PRIVATE MLD_CONFIG_FILE="c
 add_executable(test-pq-launch-cap test/pq-native/pq-launch-cap-test.cpp)
 target_link_libraries(test-pq-launch-cap PRIVATE tos_block)
 
+add_executable(z01-config-proof-check test/pq-native/z01-config-proof-check.cpp)
+target_link_libraries(z01-config-proof-check PRIVATE tos_block)
+
+add_executable(z01-chain-proof-check test/pq-native/z01-chain-proof-check.cpp)
+target_include_directories(z01-chain-proof-check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(z01-chain-proof-check PRIVATE tos_block lite-client-common)
+
 add_executable(test-measurement-contract test/test-td-main.cpp test/pq-native/measurement-contract-test.cpp)
 target_include_directories(test-measurement-contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)

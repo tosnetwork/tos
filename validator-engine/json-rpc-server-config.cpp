@@ -42,6 +42,13 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
   }
   int config_id = config_id_r.ok();
 
+  auto with_proof_r = params.get_optional_bool_field("with_proof", false);
+  if (with_proof_r.is_error()) {
+    promise.set_value(make_json_error(-32602, "Invalid 'with_proof' parameter", req_id));
+    return;
+  }
+  const bool with_proof = with_proof_r.ok();
+
   // Optional seqno: query config at a specific MC block
   auto seqno_r = params.get_optional_int_field("seqno");
   bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
@@ -69,7 +76,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
   slot->cors = opts_.cors_origin;
 
   // Step 2 lambda: query config at a resolved block
-  auto do_query_config = [cors = opts_.cors_origin, config_id, slot,
+  auto do_query_config = [cors = opts_.cors_origin, config_id, with_proof, slot,
                           self_id = actor_id(this)](
       tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
         std::vector<td::int32> param_list = {config_id};
@@ -83,7 +90,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
         td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
             std::move(query),
             td::PromiseCreator::lambda(
-                [cors, config_id, slot](td::Result<td::BufferSlice> R) mutable {
+                [cors, config_id, with_proof, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             slot->settle_error(-32603, PSTRING() << "getConfigParam failed: " << R.error());
             return;
@@ -178,10 +185,20 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
 
           if (!slot->settled) {
             slot->settled = true;
-            slot->promise.set_value(make_json_ok(
-                PSTRING() << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":" << td::JsonString(td::Slice(b64)) << "}"
-                          << validator_set_json << "}",
-                slot->req_id, cors));
+            td::StringBuilder sb;
+            sb << "{\"@type\":\"configInfo\",\"config\":{\"@type\":\"tvm.cell\",\"bytes\":"
+               << td::JsonString(td::Slice(b64)) << "}" << validator_set_json;
+            if (with_proof) {
+              // Return the ID and raw proofs actually checked above. A separate
+              // getBlockHeader(seqno) call may resolve a different fork.
+              sb << ",\"block_id\":" << format_block_id_json(*f->id_)
+                 << ",\"state_proof\":"
+                 << td::JsonString(td::Slice(td::base64_encode(f->state_proof_.as_slice())))
+                 << ",\"config_proof\":"
+                 << td::JsonString(td::Slice(td::base64_encode(f->config_proof_.as_slice())));
+            }
+            sb << "}";
+            slot->promise.set_value(make_json_ok(sb.as_cslice().str(), slot->req_id, cors));
           }
         }));
   };  // end of do_query_config

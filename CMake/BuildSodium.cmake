@@ -155,7 +155,7 @@ elseif (ANDROID OR NOT NIX)
         RANLIB=${SODIUM_RANLIB}
         CFLAGS=${SODIUM_CFLAGS}
         CXXFLAGS=${SODIUM_CXXFLAGS}
-        make -j16
+        make -j2
       COMMAND ${CMAKE_COMMAND} -E chdir ${SODIUM_BUILD_DIR} ${CMAKE_COMMAND} -E env
         CC=${SODIUM_CC}
         CXX=${SODIUM_CXX}
