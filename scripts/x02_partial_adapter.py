@@ -40,6 +40,15 @@ class DurableLedger:
 
     def __init__(self, path: Path):
         self.stream = path.open("xb", buffering=0)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            self.stream.close()
+            raise
 
     def append(self, row: dict) -> None:
         payload = json.dumps(row, sort_keys=True, separators=(",", ":")).encode() + b"\n"
@@ -87,7 +96,9 @@ class DecisionAdapter:
         self.pending = None
 
     def decide(self, direction: str, queue_packet_id: int, raw: bytes, submit) -> None:
-        sequence.require(not self.failed and self.pending is None, "adapter is failed or busy")
+        if self.failed or self.pending is not None:
+            self.failed = True
+            raise ValueError("adapter is failed or busy")
         try:
             sequence.require(isinstance(direction, str) and direction in self.endpoints,
                              "unknown queue direction")
@@ -105,6 +116,7 @@ class DecisionAdapter:
             self.pending = intent
             self.ledger.append(intent)
             submit(dropped)
+            sequence.require(not self.failed, "adapter poisoned during submission")
             self.ledger.append({"event": "verdict_submitted", "direction": direction,
                                 "index": index, "queue_packet_id": queue_packet_id,
                                 "monotonic_ns": time.monotonic_ns(), "dropped": dropped})

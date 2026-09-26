@@ -1,6 +1,9 @@
 import struct
+import json
+import tempfile
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
@@ -79,6 +82,66 @@ class AdapterTests(unittest.TestCase):
             self.engine.decide(self.direction, 0, self.raw, submitted.append)
         self.assertEqual(submitted, [])
         self.assertTrue(self.engine.failed)
+
+    def test_submission_then_completion_ledger_failure_is_uncertain(self):
+        append = self.ledger.append
+        def fail_completion(row):
+            if row["event"] == "verdict_submitted":
+                raise OSError("completion record failed")
+            append(row)
+        self.ledger.append = fail_completion
+        submitted = []
+        with self.assertRaisesRegex(OSError, "completion record failed"):
+            self.engine.decide(self.direction, 0, self.raw, submitted.append)
+        self.assertEqual(submitted, [False])
+        self.assertTrue(self.engine.failed)
+        self.assertIsNotNone(self.engine.pending)
+        self.assertEqual(self.engine.counts[self.direction]["seen"], 0)
+
+    def test_swallowed_reentry_still_poisons_outer_submission(self):
+        def reenter(dropped):
+            with self.assertRaisesRegex(ValueError, "failed or busy"):
+                self.engine.decide(self.direction, 1, self.raw, lambda verdict: None)
+        with self.assertRaisesRegex(ValueError, "poisoned during submission"):
+            self.engine.decide(self.direction, 0, self.raw, reenter)
+        self.assertTrue(self.engine.failed)
+        self.assertEqual([row["event"] for row in self.ledger.rows], ["intent"])
+
+    def test_real_file_short_writes_preserve_full_json_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ledger.jsonl"
+            ledger = adapter.DurableLedger(path)
+            stream = ledger.stream
+            class ShortWriter:
+                def write(self, raw):
+                    return stream.write(raw[:3])
+                def fileno(self):
+                    return stream.fileno()
+                def close(self):
+                    stream.close()
+            ledger.stream = ShortWriter()
+            try:
+                ledger.append({"event": "intent", "packet_hex": self.raw.hex()})
+            finally:
+                ledger.close()
+            self.assertEqual(json.loads(path.read_text()),
+                             {"event": "intent", "packet_hex": self.raw.hex()})
+            with self.assertRaises(FileExistsError):
+                adapter.DurableLedger(path)
+
+    def test_real_file_fsync_failure_never_submits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = adapter.DurableLedger(Path(directory) / "ledger.jsonl")
+            engine = adapter.DecisionAdapter(self.engine.policy, self.endpoints, ledger)
+            submitted = []
+            try:
+                with mock.patch.object(adapter.os, "fsync", side_effect=OSError("sync failed")):
+                    with self.assertRaisesRegex(OSError, "sync failed"):
+                        engine.decide(self.direction, 0, self.raw, submitted.append)
+                self.assertEqual(submitted, [])
+                self.assertTrue(engine.failed)
+            finally:
+                ledger.close()
 
 
 if __name__ == "__main__":
