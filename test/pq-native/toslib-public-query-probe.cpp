@@ -110,8 +110,9 @@ class Hook final : public PublicNetworkTestHook {
 int main(int argc, char** argv) {
   // A separate ticketed wrapper owns server/clone/stop/recovery/OS receipts.
   if (argc != 3) { std::cerr << "config output; stdin: public_id nonce\n"; return 2; }
-  auto config = td::read_file(argv[1]).move_as_ok();
+  auto config = td::read_file(td::CSlice(argv[1])).move_as_ok();
   std::string out = argv[2];
+  toslib::Client::execute({1, toslib_api::make_object<toslib_api::setLogVerbosityLevel>(5)});
   auto hook = std::make_shared<Hook>(out);
   toslib::Client client(hook);
   client.send({1, toslib_api::make_object<toslib_api::init>(toslib_api::make_object<toslib_api::options>(
@@ -145,6 +146,8 @@ int main(int argc, char** argv) {
   client.send({id, toslib_api::make_object<toslib_api::blocks_getMasterchainInfo>(), context});
   auto response = receive(id);
   // Error retained, not called application success. Wrapper checks expected route.
+  if (response.object->get_id() != toslib_api::error::ID &&
+      response.object->get_id() != toslib_api::blocks_masterchainInfo::ID) return 6;
   std::cout << to_string(response.object) << std::endl;
   std::cout << "Q01_PUBLIC_TERMINAL id=" << id << " nonce=" << nonce << " error="
             << (response.object->get_id() == toslib_api::error::ID) << std::endl;
