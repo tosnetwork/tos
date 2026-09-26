@@ -22,6 +22,7 @@ from tostester.n6_cluster import (  # noqa: E402
     _is_lite_transport_error,
     _masterchain_heights,
     _resource_monitor,
+    _require_structured_finalization,
     _simplex_session_log_paths,
     _structured_masterchain_timing,
     _sustained_timing_split,
@@ -780,6 +781,13 @@ def check_sustained_timing_split(directory: Path) -> None:
 
     consensus = _structured_masterchain_timing(logs, agreed)
     require(set(consensus) == {5, 6, 7}, "structured finalization did not join by full block id")
+    wrong_ids = dict(agreed)
+    wrong_ids[5] = agreed[5].replace("05" * 32, "ff" * 32)
+    require(wrong_ids[5] != agreed[5], "wrong full-ID control did not change its input")
+    require(
+        5 not in _structured_masterchain_timing(logs, wrong_ids),
+        "structured timing accepted the wrong full block ID",
+    )
     require(
         consensus[6]["finalization_through_descendant"] is True
         and consensus[6]["finalizing_candidate_slot"] == 60,
@@ -877,6 +885,75 @@ def check_sustained_timing_split(directory: Path) -> None:
         and remote["intervals"][0]["block_accepted_to_node_exposure_ms"]["node-b"] is None,
         "unsynchronised remote node clocks were treated as comparable",
     )
+    overlapping = [dict(event) for event in queries]
+    overlapping[0]["end_wall_unix_ns"] = (
+        consensus[5]["block_accepted_wall_unix_ns_by_node"]["node-a"] - 1_558_129
+    )
+    overlap = _sustained_timing_split(
+        observed, overlapping, consensus, list(nodes), barriers,
+        wall_clocks_comparable=True,
+    )
+    require(
+        overlap["per_height"]["5"]["block_accepted_to_node_exposure_ms"]["node-a"]
+        == -1.558129
+        and overlap["per_height"]["5"]["exposure_before_block_accepted_trace_nodes"]
+        == ["node-a"]
+        and overlap["block_accepted_trace_is_visibility_prerequisite"] is False,
+        "signed exposure overlap was rejected or hidden",
+    )
+    for invalid_queries, invalid_barriers, expected in (
+        ([event for event in queries if event["node"] != "node-b"], barriers,
+         "no successful lite query exposed"),
+        (queries, [], "no all-node barrier exposed"),
+    ):
+        try:
+            _sustained_timing_split(
+                observed, invalid_queries, consensus, list(nodes), invalid_barriers,
+                wall_clocks_comparable=True,
+            )
+        except RuntimeError as error:
+            require(expected in str(error), "timing negative failed for an unrelated reason")
+        else:
+            raise AssertionError("missing exposure/barrier was accepted")
+    missing_acceptance = {
+        height: {**item, "block_accepted_wall_unix_ns_by_node": {}}
+        for height, item in consensus.items()
+    }
+    incomplete = _sustained_timing_split(
+        observed, queries, missing_acceptance, list(nodes), barriers,
+        wall_clocks_comparable=True,
+    )
+    require(
+        incomplete["block_accepted_exposure_diagnostic_complete"] is False
+        and incomplete["per_height"]["5"]["missing_block_accepted_nodes"] == list(nodes)
+        and incomplete["per_height"]["5"]["block_accepted_to_node_exposure_ms"]
+        == {name: None for name in nodes},
+        "missing BlockAccepted traces were reported as complete timing evidence",
+    )
+    require(
+        split["block_accepted_exposure_diagnostic_complete"] is True
+        and remote["block_accepted_exposure_diagnostic_complete"] is False,
+        "timing completeness ignored unavailable wall-clock comparisons",
+    )
+    no_cert_logs = {}
+    for name, path in logs.items():
+        payload = json.loads(path.read_text())
+        payload["events"] = [
+            event for event in payload["events"]
+            if event["event"]["@type"] != "consensus.simplex.stats.certObserved"
+        ]
+        missing_path = directory / f"no-cert-{name}.jsonl"
+        missing_path.write_text(json.dumps(payload) + "\n")
+        no_cert_logs[name] = missing_path
+    without_cert = _structured_masterchain_timing(no_cert_logs, agreed)
+    require(not without_cert, "missing certObserved still produced finalization evidence")
+    try:
+        _require_structured_finalization(observed, without_cert)
+    except RuntimeError as error:
+        require("structured finalization is missing" in str(error),
+                "missing certificate consumer failed for an unrelated reason")
+    else:
+        raise AssertionError("structured finalization consumer accepted missing certificates")
 
 
 def main() -> int:

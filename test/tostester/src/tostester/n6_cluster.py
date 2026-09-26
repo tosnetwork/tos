@@ -516,6 +516,17 @@ def _observation_intervals(observed: list[ObservedBlock]) -> list[dict[str, Any]
     ]
 
 
+def _require_structured_finalization(
+    observed: list[ObservedBlock], consensus_by_height: dict[int, dict[str, Any]],
+) -> None:
+    missing = sorted({item.height for item in observed} - set(consensus_by_height))
+    if missing:
+        raise RuntimeError(
+            "N6_SUSTAINED_CONSENSUS_FAILURE: structured finalization is missing "
+            f"for agreed masterchain heights {missing}"
+        )
+
+
 def _sustained_timing_split(
     observed: list[ObservedBlock],
     query_events: list[dict[str, Any]],
@@ -586,11 +597,9 @@ def _sustained_timing_split(
                 accepted_to_exposure[name] = None
                 continue
             delta_ms = (exposures[name]["first_exposed_wall_unix_ns"] - accepted_ns) / 1_000_000
-            if delta_ms < 0:
-                raise RuntimeError(
-                    "N6_SUSTAINED_CONSENSUS_FAILURE: node exposed an agreed height "
-                    f"before blockAccepted: height={height} node={name} delta_ms={delta_ms}"
-                )
+            # BlockAccepted is published after ManagerFacade.accept_block returns.
+            # Lite visibility can precede that trace event; retain the signed
+            # difference as a diagnostic, without assuming a causal ordering.
             accepted_to_exposure[name] = delta_ms
         while (
             barrier_cursor < len(common_height_barriers)
@@ -609,6 +618,10 @@ def _sustained_timing_split(
             "common_height_barrier_monotonic_ns": barrier["at_monotonic_ns"],
             "slowest_node_exposure_lag_ms": lag_ms,
             "block_accepted_to_node_exposure_ms": accepted_to_exposure,
+            "exposure_before_block_accepted_trace_nodes": sorted(
+                name for name, delta in accepted_to_exposure.items()
+                if delta is not None and delta < 0
+            ),
             "missing_block_accepted_nodes": sorted(
                 name
                 for name in node_names
@@ -666,6 +679,11 @@ def _sustained_timing_split(
         "consensus_timestamp_source": "earliest local Simplex certObserved(finalizeVote) for the agreed block",
         "node_exposure_timestamp_source": "first successful get_masterchain_info result at or above height",
         "node_exposure_is_upper_bound_when_height_jumps": True,
+        "block_accepted_to_node_exposure_is_signed_diagnostic": True,
+        "block_accepted_trace_is_visibility_prerequisite": False,
+        "block_accepted_exposure_diagnostic_complete": wall_clocks_comparable and all(
+            not item["missing_block_accepted_nodes"] for item in per_height.values()
+        ),
         "query_events": query_events,
         "common_height_barriers": common_height_barriers,
         "per_height": per_height,
@@ -1380,12 +1398,7 @@ async def observe_sustained_consensus(
             simplex_validator_names,
         )
         consensus_by_height = _structured_masterchain_timing(session_logs, block_ids)
-        missing = sorted({item.height for item in observed} - set(consensus_by_height))
-        if missing:
-            raise RuntimeError(
-                "N6_SUSTAINED_CONSENSUS_FAILURE: structured finalization is missing "
-                f"for agreed masterchain heights {missing}"
-            )
+        _require_structured_finalization(observed, consensus_by_height)
 
     timing_split = _sustained_timing_split(
         observed,
