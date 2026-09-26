@@ -60,11 +60,14 @@ class NegativeControl(RuntimeError):
 def negative_control(case: str, manager, backend, ledger) -> None:
     if case == "install-race":
         marker = "foreign-fixture-" + manager.marker
-        manager.command(["/usr/sbin/nft", "-f", "-"],
-                        f'create table ip {manager.table} {{ comment "{marker}"; }}\n'.encode())
+        # Actual otherwise-valid foreign scheme, not a name-only or malformed fixture.
+        foreign = manager.script().replace(manager.marker.encode(), marker.encode())
+        manager.command(["/usr/sbin/nft", "-f", "-"], foreign)
         raw = manager.snapshot()
+        foreign_owner, unused_counts = manager.validate_snapshot(raw, fixture_marker=marker)
         tables = [item["table"] for item in json.loads(raw)["nftables"] if "table" in item]
-        require(len(tables) == 1 and tables[0].get("comment") == marker,
+        require(len(tables) == 1 and foreign_owner["marker"] == marker
+                and foreign_owner["marker"] != manager.marker,
                 "foreign fixture identity missing")
         handle = tables[0]["handle"]
         try:
@@ -79,10 +82,10 @@ def negative_control(case: str, manager, backend, ledger) -> None:
             require("do not delete same-name table" in str(error), "unexpected refusal reason")
         else:
             raise ValueError("cleanup deleted foreign table")
-        after = [item["table"] for item in json.loads(manager.snapshot())["nftables"] if "table" in item]
-        require(after == tables, "foreign fixture changed or disappeared")
+        require(json.loads(manager.snapshot()) == json.loads(raw), "foreign fixture changed or disappeared")
         ledger.append({"event": "negative_control_triggered", "case": case,
-                       "foreign_handle": handle, "reason": "install conflict; foreign table retained"})
+                       "foreign_handle": handle, "foreign_identity": foreign_owner,
+                       "reason": "install conflict; foreign table retained"})
         # Only the fixture's creator removes its proved foreign table.
         manager.command(["/usr/sbin/nft", "delete", "table", "ip", "handle", str(handle)])
         ruleset = json.loads(manager.command(["/usr/sbin/nft", "-j", "list", "ruleset"]))

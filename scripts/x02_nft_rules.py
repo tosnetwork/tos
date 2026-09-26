@@ -15,6 +15,8 @@ import time
 from x02_partial_adapter import DecisionAdapter
 from x02_partial_sequence import DIRECTIONS, require
 
+OWNERSHIP_SCHEME = "tos.x02.nft-identity-chain.v2"
+
 
 class RuleManager:
     def __init__(self, run_id: str, adapter: DecisionAdapter, backend, ledger):
@@ -29,6 +31,7 @@ class RuleManager:
         self.preflight_done = False
         self.install_acknowledged = False
         self.ownership = None
+        self.install_snapshot = None
         self.removed = False
 
     def command(self, argv: list[str], stdin: bytes | None = None) -> bytes:
@@ -58,6 +61,8 @@ class RuleManager:
         require(self.preflight_done, "preflight incomplete")
         prefix = f"ip {self.table}"
         lines = [f'create table {prefix} {{ comment "{self.marker}"; }}',
+                 f"add chain {prefix} identity",
+                 f'add rule {prefix} identity counter comment "{self.marker}"',
                  f"add chain {prefix} enqueue {{ type filter hook output priority 0; policy accept; }}",
                  f"add chain {prefix} afterq {{ type filter hook output priority 10; policy accept; }}"]
         queues = {direction: queue for queue, direction in self.backend.queues.items()}
@@ -74,14 +79,22 @@ class RuleManager:
         self.attempted = True
         self.command(["/usr/sbin/nft", "-f", "-"], raw)
         self.install_acknowledged = True
-        ownership, counts = self.validate_snapshot(self.snapshot())
+        self.install_snapshot = self.snapshot()
+        ownership, counts = self.validate_snapshot(self.install_snapshot)
         self.ownership = ownership
+        self.ledger.append({"event": "nft_ownership_verified", "ownership": ownership})
 
     def snapshot(self) -> bytes:
         return self.command(["/usr/sbin/nft", "-j", "-a", "list", "table", "ip", self.table])
 
-    def validate_snapshot(self, raw: bytes) -> tuple[dict, dict]:
+    def validate_snapshot(self, raw: bytes, fixture_marker: str | None = None) -> tuple[dict, dict]:
+        marker = self.marker if fixture_marker is None else fixture_marker
+        require(fixture_marker is None or
+                (fixture_marker == "foreign-fixture-" + self.marker
+                 and not self.attempted and self.ownership is None),
+                "foreign marker verification is fixture-only before install")
         tables, chains, rules = [], {}, {}
+        identity_rule = None
         counts = {}
         queues = {direction: queue for queue, direction in self.backend.queues.items()}
         for item in json.loads(raw)["nftables"]:
@@ -94,13 +107,19 @@ class RuleManager:
             require(obj.get("family") == "ip" and type(obj.get("handle")) is int
                     and obj["handle"] > 0, "object family/handle differs")
             if kind == "table":
-                require(obj.get("name") == self.table and obj.get("comment") == self.marker
-                        and not obj.get("flags"), "table owner marker or flags differ")
+                require(obj.get("name") == self.table and not obj.get("flags")
+                        and ("comment" not in obj or obj["comment"] == marker),
+                        "table name, visible comment or flags differ")
                 tables.append(obj["handle"])
                 continue
             require(obj.get("table") == self.table, "object table differs")
             if kind == "chain":
                 name = obj.get("name")
+                if name == "identity":
+                    require(name not in chains and set(obj) == {"family", "table", "name", "handle"},
+                            "identity chain must be unique and unhooked")
+                    chains[name] = obj["handle"]
+                    continue
                 require(name in ("enqueue", "afterq") and name not in chains
                         and obj.get("type") == "filter" and obj.get("hook") == "output"
                         and type(obj.get("prio")) is int
@@ -109,9 +128,20 @@ class RuleManager:
                 chains[name] = obj["handle"]
                 continue
             label = obj.get("comment")
-            require(isinstance(label, str) and label.startswith(self.marker + ":"),
+            if obj.get("chain") == "identity" or label == marker:
+                require(identity_rule is None, "duplicate table identity rule")
+                require(label == marker, "table identity marker differs")
+                require(obj.get("chain") == "identity"
+                        and obj.get("expr") == [{"counter": {"packets": 0, "bytes": 0}}],
+                        "table identity chain/expression differs")
+                # bool is not an integer counter receipt, even though Python compares it to zero.
+                require(all(type(value) is int for value in obj["expr"][0]["counter"].values()),
+                        "table identity counter types differ")
+                identity_rule = obj["handle"]
+                continue
+            require(isinstance(label, str) and label.startswith(marker + ":"),
                     "rule owner marker differs")
-            label = label[len(self.marker) + 1:]
+            label = label[len(marker) + 1:]
             matched = re.fullmatch(r"(entry|post)([0-9]|1[0-9]|2[0-3])", label)
             require(matched is not None and label not in rules, "counter rule identity differs")
             role, ordinal = matched[1], int(matched[2])
@@ -148,9 +178,11 @@ class RuleManager:
                         "queue number/flags differ")
             rules[label] = obj["handle"]
             counts[label] = counter["counter"]
-        require(len(tables) == 1 and set(chains) == {"enqueue", "afterq"} and len(rules) == 48,
+        require(len(tables) == 1 and set(chains) == {"identity", "enqueue", "afterq"}
+                and len(rules) == 48 and identity_rule is not None,
                 "missing or extra table/chain/rule")
-        ownership = {"table": tables[0], "chains": chains, "rules": rules}
+        ownership = {"scheme": OWNERSHIP_SCHEME, "marker": marker, "table": tables[0],
+                     "chains": chains, "rules": rules, "identity_rule": identity_rule}
         if self.ownership is not None:
             require(ownership == self.ownership, "recorded owner handles changed")
         return ownership, counts
