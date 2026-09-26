@@ -2902,7 +2902,7 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
         run_hardfork_accept_block_query(b, dataR.move_as_ok(), SelfId, std::move(P));
       });
       td::actor::send_closure(db_, &Db::try_get_static_file, b.file_hash, std::move(P));
-      co_return {};
+      co_return td::Unit{};
     }
   }
 
@@ -2915,7 +2915,7 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
   } else {
     prestart_sync();
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
@@ -2933,7 +2933,7 @@ td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
     co_await std::move(task);
     VLOG(VALIDATOR_INFO) << "Initial advancing mc to seqno " << next_handle->id().seqno();
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ValidatorManagerImpl::applied_hardfork() {

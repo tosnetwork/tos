@@ -28,6 +28,9 @@
 #include "tos/tos-types.h"
 
 #include "ToslibError.h"
+#ifdef TOSLIB_Q01_TEST_NETWORK
+#include "PublicNetworkTestHook.h"
+#endif
 #include "utils.h"
 
 namespace toslib {
@@ -36,6 +39,9 @@ class LastConfig;
 struct LastBlockState;
 struct LastConfigState;
 struct ExtClientRef {
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  std::shared_ptr<PublicNetworkTestHook> test_hook;
+#endif
   td::actor::ActorId<liteclient::ExtClient> adnl_ext_client_;
   td::actor::ActorId<LastBlock> last_block_actor_;
   td::actor::ActorId<LastConfig> last_config_actor_;
@@ -61,7 +67,11 @@ class ExtClient {
   void with_last_config(td::Promise<LastConfigState> promise);
 
   template <class QueryT>
-  void send_query(QueryT query, td::Promise<typename QueryT::ReturnType> promise, td::int32 seq_no = -1) {
+  void send_query(QueryT query, td::Promise<typename QueryT::ReturnType> promise, td::int32 seq_no = -1
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                  , QueryTraceContext trace_context = {}
+#endif
+                  ) {
     auto raw_query = tos::serialize_tl_object(&query, true);
     td::uint32 tag = td::Random::fast_uint32();
     VLOG(lite_server) << "send query to liteserver: " << tag << " " << to_string(query);
@@ -90,7 +100,11 @@ class ExtClient {
               << "got result from liteserver: " << tag << " " << td::Slice(to_string(res.ok())).truncate(1 << 12);
           VLOG_IF(lite_server, res.is_error()) << "got error from liteserver: " << tag << " " << res.error();
           promise.set_result(std::move(res));
-        });
+        }
+#ifdef TOSLIB_Q01_TEST_NETWORK
+        , trace_context
+#endif
+        );
   }
 
   void force_change_liteserver() {
@@ -105,6 +119,10 @@ class ExtClient {
   td::Container<td::Promise<LastBlockState>> last_block_queries_;
   td::Container<td::Promise<LastConfigState>> last_config_queries_;
 
-  void send_raw_query(td::BufferSlice query, td::Promise<td::BufferSlice> promise);
+  void send_raw_query(td::BufferSlice query, td::Promise<td::BufferSlice> promise
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                      , QueryTraceContext trace_context = {}
+#endif
+                      );
 };
 }  // namespace toslib

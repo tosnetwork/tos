@@ -361,6 +361,7 @@ class ValidatorElectionRehearsal:
         sample_interval: float,
         profile: RehearsalProfile,
         experiment: ExperimentProfile | None = None,
+        pq_pool_stake_order_binary: Path | None = None,
         enable_consensus_cleanup: bool = False,
         consensus_cleanup_state_ttl: int = 0,
         consensus_cleanup_archive_ttl: int = 0,
@@ -416,6 +417,7 @@ class ValidatorElectionRehearsal:
         self.consensus_cleanup_archive_ttl = consensus_cleanup_archive_ttl
         self.base_port = base_port
         self.original_build_dir = build_dir.absolute()
+        self.pq_pool_stake_order_binary = pq_pool_stake_order_binary
         self.install = Install(self.original_build_dir, REPO)
         self.sample_interval = sample_interval
         self.profile = profile
@@ -1158,7 +1160,9 @@ class ValidatorElectionRehearsal:
             binaries[relative] = self.file_provenance(target)
         if self.pq_election:
             relative = "tosctl/pq_pool_stake_order"
-            source = REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order"
+            source = (self.pq_pool_stake_order_binary
+                      if self.pq_pool_stake_order_binary is not None
+                      else REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order")
             target = snapshot_build / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
@@ -4289,6 +4293,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="TOS build directory",
     )
     parser.add_argument(
+        "--pq-pool-stake-order-binary", type=Path, default=None,
+        help="explicit frozen pool-order helper for the StageA artifact snapshot",
+    )
+    parser.add_argument(
         "--output-root",
         type=Path,
         default=None,
@@ -4397,6 +4405,7 @@ async def async_main() -> int:
         run_dir=run_dir,
         base_port=args.base_port,
         build_dir=args.build_dir,
+        pq_pool_stake_order_binary=args.pq_pool_stake_order_binary,
         sample_interval=sample_interval,
         profile=profile,
         experiment=experiment,

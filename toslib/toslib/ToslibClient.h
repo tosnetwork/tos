@@ -76,8 +76,19 @@ class ToslibClient : public td::actor::Actor {
   template <class T>
   using object_ptr = toslib_api::object_ptr<T>;
 
-  explicit ToslibClient(td::unique_ptr<ToslibCallback> callback);
-  void request(td::uint64 id, object_ptr<toslib_api::Function> function);
+  explicit ToslibClient(td::unique_ptr<ToslibCallback> callback
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                        , std::shared_ptr<PublicNetworkTestHook> hook = {}
+#endif
+                        );
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  void test_arm(td::uint64 id, std::string nonce, td::Promise<QueryTraceContext> ack);
+#endif
+  void request(td::uint64 id, object_ptr<toslib_api::Function> function
+#ifdef TOSLIB_Q01_TEST_NETWORK
+               , QueryTraceContext trace_context = {}
+#endif
+               );
   void close();
   static object_ptr<toslib_api::Object> static_request(object_ptr<toslib_api::Function> function);
 
@@ -106,6 +117,9 @@ class ToslibClient : public td::actor::Actor {
  private:
   enum class State { Uninited, Running, Closed } state_ = State::Uninited;
   td::unique_ptr<ToslibCallback> callback_;
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  std::shared_ptr<PublicNetworkTestHook> test_hook_;
+#endif
 
   // Config
   Config config_;
@@ -402,7 +416,11 @@ class ToslibClient : public td::actor::Actor {
   td::Status do_request(toslib_api::withBlock& request, td::Promise<object_ptr<toslib_api::Object>>&& promise);
 
   td::Status do_request(const toslib_api::blocks_getMasterchainInfo& masterchain_info,
-                        td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>>&& promise);
+                        td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>>&& promise
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                        , QueryTraceContext trace_context = {}
+#endif
+                        );
   td::Status do_request(const toslib_api::blocks_getShards& request,
                         td::Promise<object_ptr<toslib_api::blocks_shards>>&& promise);
   td::Status do_request(const toslib_api::blocks_lookupBlock& block_header,

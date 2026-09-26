@@ -54,7 +54,11 @@ void ExtClient::with_last_block(td::Promise<LastBlockState> promise) {
   td::actor::send_closure(client_.last_block_actor_, &LastBlock::get_last_block, std::move(P));
 }
 
-void ExtClient::send_raw_query(td::BufferSlice query, td::Promise<td::BufferSlice> promise) {
+void ExtClient::send_raw_query(td::BufferSlice query, td::Promise<td::BufferSlice> promise
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                                , QueryTraceContext trace_context
+#endif
+                                ) {
   auto query_id = queries_.create(std::move(promise));
   td::Promise<td::BufferSlice> P = [query_id, self = this,
                                     actor_id = td::actor::actor_id()](td::Result<td::BufferSlice> result) {
@@ -65,7 +69,15 @@ void ExtClient::send_raw_query(td::BufferSlice query, td::Promise<td::BufferSlic
   if (client_.adnl_ext_client_.empty()) {
     return P.set_error(ToslibError::NoLiteServers());
   }
+  auto deadline = td::Timestamp::in(10.0);
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  if (trace_context.public_request_id != 0) {
+    if (!client_.test_hook) return P.set_error(td::Status::Error("missing Q01 test transport"));
+    client_.test_hook->send_bound_query(trace_context, std::move(query), deadline, std::move(P));
+    return;
+  }
+#endif
   td::actor::send_closure(client_.adnl_ext_client_, &liteclient::ExtClient::send_query, "query", std::move(query),
-                          td::Timestamp::in(10.0), std::move(P));
+                          deadline, std::move(P));
 }
 }  // namespace toslib
