@@ -108,7 +108,16 @@ class AdnlExtClientImpl : public AdnlExtClient {
       td::actor::send_closure(SelfId, &AdnlExtClientImpl::destroy_query, id);
     };
     auto q_id = generate_next_query_id();
+    // Log a bounded caller correlation token only; arbitrary query names may
+    // contain whitespace or private data and must not enter structured traces.
+    bool has_nonce = name.size() == 64;
+    if (has_nonce) {
+      for (char c : name) {
+        has_nonce = has_nonce && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'));
+      }
+    }
     LOG(DEBUG) << "ADNL_EXT_QUERY client_create id=" << q_id.to_hex() << " server=" << dst_addr_
+               << " request_nonce=" << (has_nonce ? name : "-")
                << " function_id=" << traced_lite_function_id(data.as_slice())
                << " connection_present=" << !conn_.empty()
                << " connection_alive=" << (!conn_.empty() && conn_.is_alive())

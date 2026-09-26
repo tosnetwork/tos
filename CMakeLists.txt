@@ -859,6 +859,12 @@ target_include_directories(test-pq-lite-forward-proof PRIVATE ${CMAKE_CURRENT_SO
 target_link_libraries(test-pq-lite-forward-proof PRIVATE lite-client-common tos_block tos_pq_consensus_signer
                       tos_pq_consensus tos_crypto tl_api tl_lite_api tl-lite-utils tdutils tdactor adnl keys dht)
 
+add_executable(test-adnl-ext-query-closure test/pq-native/adnl-ext-query-closure-test.cpp)
+target_include_directories(test-adnl-ext-query-closure PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-query-closure PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
+                      tdutils tdactor)
+
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1431,6 +1437,7 @@ add_test(NAME pending-finality-retry-policy-source
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-finality-retry-policy.sh ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pending-finality-retry-policy-source PROPERTIES LABELS "source-guard")
 tos_test(test-pq-lite-forward-proof)
+tos_test(test-adnl-ext-query-closure)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
