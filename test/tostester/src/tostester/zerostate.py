@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 import nacl.signing
@@ -55,6 +56,10 @@ class SimplexConsensusConfig:
 
 @dataclass
 class NetworkConfig:
+    # Explicit immutable inputs for reproducible Genesis generation. Both must
+    # be supplied together; ordinary local testnets preserve their old defaults.
+    genesis_time: int | None = None
+    genesis_wallet_seed: bytes | None = field(default=None, repr=False)
     # TEST-HARNESS chain discriminator.  Three preserves the historical local
     # genesis byte-for-byte; isolated same-key multi-genesis experiments must
     # choose another int32 so controller signatures cannot cross replay.
@@ -206,7 +211,7 @@ wc_master setworkchain
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
-basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
+basestate0_rhash basestate0_fhash {genesis_now} {monitor_min_split} {split} dup 0 add-std-workchain-v2
 
 config.workchains!
 
@@ -414,7 +419,7 @@ config.param_proposals_setup!
 TM$100 1 500 config.complaint_prices!
 
 {validators}
-now dup {original_vset_valid_for} + {mc_validators} config.validators!
+{genesis_now} dup {original_vset_valid_for} + {mc_validators} config.validators!
 
 {new_consensus_config}
 config.new_consensus_params_all!
@@ -489,6 +494,15 @@ def create_zerostate(
     validator_keys: list[Key],
     pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
+    fixed_time = config.genesis_time
+    wallet_seed = config.genesis_wallet_seed
+    if (fixed_time is None) != (wallet_seed is None):
+        raise ValueError("fixed Genesis requires both time and wallet seed")
+    if fixed_time is not None:
+        if type(fixed_time) is not int or not 0 <= fixed_time <= 0xFFFF_FFFF:
+            raise ValueError("Genesis time must fit uint32")
+        if not isinstance(wallet_seed, bytes) or len(wallet_seed) != 32:
+            raise ValueError("Genesis wallet seed must be exactly 32 bytes")
     pq_validators = [] if pq_validators is None else pq_validators
     validator_count = len(validator_keys) + len(pq_validators)
     if not 1 <= config.shard_validators <= MAX_SHARD_COMMITTEE:
@@ -692,9 +706,17 @@ def create_zerostate(
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
+    if wallet_seed is not None:
+        # Refuse existing custody files rather than replacing an old run's key.
+        # Fift's load-generate-keypair consumes this exact raw 32-byte seed.
+        with (state_dir / "main-wallet.pk").open("xb") as wallet_file:
+            (state_dir / "main-wallet.pk").chmod(0o600)
+            wallet_file.write(wallet_seed)
+
     run_fift(
         install,
         _TEMPLATE.format(
+            genesis_now="now" if fixed_time is None else str(fixed_time),
             monitor_min_split=config.monitor_min_split,
             split=config.split,
             global_id=config.global_id,
@@ -709,6 +731,8 @@ def create_zerostate(
             **profile,
         ),
         state_dir,
+        **({"env": {**os.environ, "SOURCE_DATE_EPOCH": str(fixed_time)},
+            "retain_script": True} if fixed_time is not None else {}),
     )
 
     pk = (state_dir / "main-wallet.pk").read_bytes()

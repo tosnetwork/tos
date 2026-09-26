@@ -189,6 +189,20 @@ def environment(source_sha: str, host_netns: str, unit: str) -> dict:
 def run(args) -> None:
     context = environment(args.source_sha, args.host_netns, args.unit)
     load_fixed_sources(context)
+    if args.case == "positive":
+        # This successor source defines positive as the complete StageA chain,
+        # never as the previous192-packet compatibility probe. Same C entry/drop.
+        path = REPO / "scripts/x02_four_node.py"
+        raw = path.read_bytes()
+        frozen = subprocess.check_output(["git", "-C", str(REPO), "show",
+                                          args.source_sha + ":scripts/x02_four_node.py"])
+        require(raw == frozen, "full coordinator bytes differ")
+        module = types.ModuleType("x02_four_node")
+        module.__file__ = str(path)
+        sys.modules[module.__name__] = module
+        exec(compile(raw, str(path), "exec"), module.__dict__)
+        module.run(args, context)
+        return
     stats = QueueStatsFD(args.queue_stats_fd, args.queue_receipt_fd, args.host_netns)
     args.output.mkdir(exist_ok=False)
     ledger = DurableLedger(args.output / "kernel.jsonl")

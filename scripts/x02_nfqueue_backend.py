@@ -21,6 +21,39 @@ def attribute(kind: int, value: bytes) -> bytes:
     return struct.pack("=HH", length, kind) + value + bytes((-length) % 4)
 
 
+def frame_end(raw: bytes, offset: int, length: int) -> int:
+    """A terminal record may end at nlmsg_len/nla_len, without transport pad.
+
+    Linux NLMSG_OK tests the unaligned declared length against remaining bytes;
+    alignment determines the NEXT record, not extra bytes required after LAST.
+    Captured NFQUEUE packet has nlmsg_len98 and datagram length98. Its final
+    payload attribute has nla_len58 and ends exactly at byte98 as well.
+    Interior records still need their entire zero padding before a next header.
+    """
+    end = offset + length
+    require(end <= len(raw), "declared frame exceeds datagram")
+    if end == len(raw):
+        return end
+    aligned = offset + ((length + 3) & ~3)
+    require(aligned <= len(raw) and raw[end:aligned] == bytes(aligned - end),
+            "incomplete or nonzero netlink padding")
+    return aligned
+
+
+def netlink_messages(raw: bytes) -> list[tuple[int, int, bytes]]:
+    require(isinstance(raw, bytes) and len(raw) >= 16, "short netlink datagram")
+    offset, messages = 0, []
+    while offset < len(raw):
+        require(len(raw) - offset >= 16, "short netlink header")
+        length, kind, flags, seq, pid = struct.unpack_from("=IHHII", raw, offset)
+        require(16 <= length <= len(raw) - offset, "invalid netlink length")
+        require(kind in (2, 0x300), "unexpected netlink control or overflow")
+        messages.append((kind, seq, raw[offset + 16:offset + length]))
+        offset = frame_end(raw, offset, length)
+    require(offset == len(raw), "netlink alignment differs")
+    return messages
+
+
 def attributes(raw: bytes) -> dict[int, bytes]:
     result = {}
     offset = 0
@@ -31,7 +64,7 @@ def attributes(raw: bytes) -> dict[int, bytes]:
         require(4 <= length <= len(raw) - offset and kind not in result,
                 "invalid or duplicate netlink attribute")
         result[kind] = raw[offset + 4:offset + length]
-        offset += (length + 3) & ~3
+        offset = frame_end(raw, offset, length)
     require(offset == len(raw), "attribute alignment differs")
     return result
 
@@ -60,16 +93,7 @@ class QueueBackend:
                 "untrusted or truncated netlink datagram")
         self.ledger.append({"event": "kernel_netlink", "monotonic_ns": time.monotonic_ns(),
                             "peer": list(peer), "raw_hex": raw.hex()})
-        offset, messages = 0, []
-        while offset < len(raw):
-            require(len(raw) - offset >= 16, "short netlink header")
-            length, kind, flags, seq, pid = struct.unpack_from("=IHHII", raw, offset)
-            require(16 <= length <= len(raw) - offset, "invalid netlink length")
-            require(kind in (2, 0x300), "unexpected netlink control or overflow")
-            messages.append((kind, seq, raw[offset + 16:offset + length]))
-            offset += (length + 3) & ~3
-        require(offset == len(raw), "netlink alignment differs")
-        return messages
+        return netlink_messages(raw)
 
     def request(self, operation: int, queue: int, attrs: bytes) -> None:
         self.seq += 1
