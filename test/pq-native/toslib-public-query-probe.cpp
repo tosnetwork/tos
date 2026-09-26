@@ -20,7 +20,7 @@ class Proxy final : public liteclient::ExtClient {
   void arm(td::uint64 id, std::string nonce, td::Promise<QueryTraceContext> ack) {
     bool hex = nonce.size() == 64;
     for (char c : nonce) hex = hex && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
-    if (!id || !hex || pending_ || armed_ || used_ids_.count(id) || used_nonces_.count(nonce))
+    if (poisoned_ || token_ >= 32 || !id || !hex || pending_ || armed_ || used_ids_.count(id) || used_nonces_.count(nonce))
       return ack.set_error(td::Status::Error("Q01 arm not unique or transport busy"));
     strict_ = true; armed_ = true; context_ = {id, generation_, ++token_}; nonce_ = std::move(nonce);
     used_ids_.insert(id); used_nonces_.insert(nonce_);
@@ -30,7 +30,7 @@ class Proxy final : public liteclient::ExtClient {
              td::Promise<td::BufferSlice> promise) {
     auto inner = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
     auto expected = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
-    if (!armed_ || context.public_request_id != context_.public_request_id ||
+    if (poisoned_ || !armed_ || context.public_request_id != context_.public_request_id ||
         context.transport_generation != generation_ || context.arm_token != context_.arm_token ||
         bytes.as_slice() != expected.as_slice())
       return fail(std::move(promise), "Q01 bound query differs");
@@ -67,9 +67,10 @@ class Proxy final : public liteclient::ExtClient {
   td::actor::ActorOwn<liteclient::ExtClient> real_;
   td::uint32 generation_; std::string out_, nonce_;
   td::uint64 token_{0}; QueryTraceContext context_;
-  bool strict_{false}, armed_{false}; size_t pending_{0};
+  bool strict_{false}, armed_{false}, poisoned_{false}; size_t pending_{0};
   std::set<td::uint64> used_ids_; std::set<std::string> used_nonces_;
   void fail(td::Promise<td::BufferSlice> promise, const char* text) {
+    poisoned_ = true; armed_ = false;
     td::write_file(out_ + "/unexpected-query.txt", text).ensure();
     promise.set_error(td::Status::Error(text));
   }
@@ -92,6 +93,11 @@ class Hook final : public PublicNetworkTestHook {
   explicit Hook(std::string out) : out_(std::move(out)) {}
   td::actor::ActorOwn<liteclient::ExtClient> decorate(td::actor::ActorOwn<liteclient::ExtClient> real,
                                                      td::uint32 generation) override {
+    if (decorated_ && generation <= generation_) {
+      td::write_file(out_ + "/unexpected-query.txt", "factory generation reused").ensure();
+      return {};
+    }
+    decorated_ = true; generation_ = generation;
     auto proxy = td::actor::create_actor<Proxy>("Q01PublicProxy", std::move(real), generation, out_);
     proxy_ = proxy.get(); return std::move(proxy);
   }
@@ -101,10 +107,12 @@ class Hook final : public PublicNetworkTestHook {
   }
   void send_bound_query(QueryTraceContext context, td::BufferSlice data, td::Timestamp deadline,
                          td::Promise<td::BufferSlice> promise) override {
+    if (proxy_.empty()) return promise.set_error(td::Status::Error("Q01 factory absent"));
     td::actor::send_closure(proxy_, &Proxy::bound, context, std::move(data), deadline, std::move(promise));
   }
  private:
   std::string out_; td::actor::ActorId<Proxy> proxy_;
+  bool decorated_{false}; td::uint32 generation_{0};
 };
 }
 int main(int argc, char** argv) {
