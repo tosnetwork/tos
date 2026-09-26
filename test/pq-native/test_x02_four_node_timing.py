@@ -79,9 +79,12 @@ class FourNodeTimingControls(unittest.TestCase):
             declared_node_mapping(nodes, {'validators': swapped})
 
     def test_raw_config34_pairs_bind_controller_and_adnl(self):
-        controller, adnl = 'a' * 64, 'b' * 64
-        raw = f'validator_pq validator_id:x{controller} weight:1 adnl_addr:x{adnl}'
-        self.assertEqual(config34_pairs(raw), [(controller, adnl)])
+        controller, key, adnl = 'a' * 64, 'c' * 64, 'b' * 64
+        raw = (f'validator_pq validator_id:x{controller} algorithm_id:1 '
+               f'key_id:x{key} weight:1 adnl_addr:x{adnl}')
+        self.assertEqual(config34_pairs(raw), [(controller, key, adnl)])
+        with self.assertRaisesRegex(ValueError, 'key/ADNL text record malformed'):
+            config34_pairs(raw.replace(key, 'not-a-pq-key'))
         with self.assertRaisesRegex(ValueError, 'Config34 PQ identities alias'):
             config34_pairs(raw + ' ' + raw)
 

@@ -100,7 +100,7 @@ def declared_node_mapping(nodes, readiness):
 
 
 def config34_pairs(raw):
-    """Independently decode exact PQ controller-to-ADNL pairs from raw text."""
+    """Decode PQ controller/key/ADNL fields from lite TEXT, not a BOC proof."""
     markers = list(re.finditer(r'\bvalidator_pq\b', raw))
     identities = list(re.finditer(
         r'\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})', raw))
@@ -108,17 +108,21 @@ def config34_pairs(raw):
     pairs = []
     for index, match in enumerate(identities):
         end = identities[index + 1].start() if index + 1 < len(identities) else len(raw)
-        adnl = re.findall(r'\badnl_addr:x([0-9A-Fa-f]{64})', raw[match.end():end])
-        require(len(adnl) == 1, 'Config34 PQ validator ADNL record malformed')
-        pairs.append((match.group(1).lower(), adnl[0].lower()))
-    require(len({controller for controller, _ in pairs}) == len(pairs)
-            and len({adnl for _, adnl in pairs}) == len(pairs),
+        section = raw[match.end():end]
+        keys = re.findall(r'\bkey_id:x([0-9A-Fa-f]{64})', section)
+        adnl = re.findall(r'\badnl_addr:x([0-9A-Fa-f]{64})', section)
+        require(len(keys) == len(adnl) == 1,
+                'Config34 PQ validator key/ADNL text record malformed')
+        pairs.append((match.group(1).lower(), keys[0].lower(), adnl[0].lower()))
+    require(len({controller for controller, _, _ in pairs}) == len(pairs)
+            and len({key for _, key, _ in pairs}) == len(pairs)
+            and len({adnl for _, _, adnl in pairs}) == len(pairs),
             'Config34 PQ identities alias')
     return pairs
 
 
 def verify_elected_identity(report, readiness_parent, declared, ledger):
-    """Check every activated election against retained raw Config34 and frozen rows."""
+    """Check retained decoded TEXT/report; BOC/cell proof is a separate gate."""
     allocation_path = Path(report['experiment']['allocation_evidence'])
     require(allocation_path == readiness_parent / 'reward-election-allocation-evidence-v4.json',
             'StageA allocation path differs from readiness run')
@@ -129,7 +133,8 @@ def verify_elected_identity(report, readiness_parent, declared, ledger):
             and allocation['status'] == 'complete' and allocation['mode'] == 'experiment'
             and allocation['provenance']['source_commit'] == report['source_commit'],
             'final allocation source/status differs')
-    expected = {row['controller_id_hex'].lower(): row['adnl_id_hex'].lower()
+    expected = {row['controller_id_hex'].lower():
+                (row['consensus_key_id_hex'].lower(), row['adnl_id_hex'].lower())
                 for row in declared}
     activated = 0
     for election in allocation['elections']:
@@ -156,8 +161,9 @@ def verify_elected_identity(report, readiness_parent, declared, ledger):
                 and election['config34']['total'] == election['config34']['main'] == 4,
                 'raw Config34/cell election provenance differs')
         pairs = config34_pairs(raw_bytes.decode('utf-8'))
-        require(len(pairs) == 4 and dict(pairs) == expected,
-                'elected Config34 controller-to-ADNL mapping differs')
+        require(len(pairs) == 4
+                and {controller: (key, adnl) for controller, key, adnl in pairs} == expected,
+                'elected Config34 decoded text controller/key/ADNL mapping differs')
         for index, row in enumerate(declared, 1):
             candidate = election['validators'][str(index)]
             require(candidate['validator_index'] == index
@@ -167,10 +173,12 @@ def verify_elected_identity(report, readiness_parent, declared, ledger):
                     and candidate['adnl_id_hex'].lower() == row['adnl_id_hex'].lower()
                     and candidate['selection_status'] == 'selected',
                     'elected candidate differs from frozen pre-fault public row')
-        ledger.append({'event': 'elected_config34_identity_verified',
+        ledger.append({'event': 'elected_config34_decoded_text_identity_verified',
                        'election_id': election_id, 'raw_hex': raw_bytes.hex(),
-                       'raw_sha256': digest, 'cell_hash': election['config34_cell_hash'],
-                       'controller_adnl_pairs': pairs})
+                       'raw_sha256': digest,
+                       'reported_cell_hash_unverified': election['config34_cell_hash'],
+                       'controller_key_adnl_text_rows': pairs,
+                       'boc_cell_pq_key_proof': False})
     require(activated > 0, 'no activated elected Config34 allocation')
     ledger.append({'event': 'allocation_original', 'raw_hex': allocation_raw.hex(),
                    'sha256': hashlib.sha256(allocation_raw).hexdigest(),
