@@ -1,0 +1,15 @@
+# A03 original G-1 applicability map
+
+`a03-original-g1-applicability-map.json` freezes all 72 exact task paragraphs at memo `ae2be260e355277893453d4883407d2b1feb06b6`, rather than treating their lane labels as acceptance scope. The original human scoped signoffs are preserved; machine accepted IDs remain empty. This is a mapping delivery for independent review, not a production-evidence gate success or final integrated-tree run.
+
+Each row distinguishes runtime, actor/DB, retirement, audit/diagnostic, candidate, open software or deferred-testnet delivery; retains source/review/raw citations from the inventory; and records control/command provenance and invalidation rules. Twelve runtime/audit rows have typed report facts, twelve audit/diagnostic rows have Mac's specific applicability and actual limitations, and all eight previously uncited signed rows now have recoverable producer/review facts. The underlying cited task paragraph supplies each remaining row's exact declared result and exclusions. Empty old extractor arrays are explicitly not proof that original artifacts were lost.
+
+Important attribution fixes include N01's three cold processes, N07's same-process consumer boundary, E13's FAA success versus earlier failed sources and recovered exact Fift/Func snapshots, E11's separately sent 1 TOS versus unchanged-balance inference, C05 physical reads versus requester coalescing, T01's distinct default/experimental sources, T02's original watchdog argv/exit but genuinely missing source pin, and I01's historical Mac evidence versus current Ubuntu24 integration.
+
+The map also binds original G-1's larger applicability: four A02 historical N3/N4/N5/N6/retained matrices with MISSING/UNBOUND/STALE dispositions, ten current correctness registry scopes, and O-2's three DEFERRED_TO_TESTNET measurement gaps. These are cited historical observations, not newly authenticated local files. Route signoffs do not silently close their larger incident/registry scope; A03 does not sign final G-2 or release measurements.
+
+## Actual work and limitations
+
+This change is light immutable Git/report inventory reconciliation during the sole native build. No historical chain rerun, full evidence hash scan, post-hoc command receipt, fabricated mutation source or binary rebuild was performed. `git diff --check` is a formatting check only. Earlier finite classifier execution belongs fixed `1fec06092434fff719e6a5f275099ba1e5fb1348` and does not cover this new mapping. New fixed data remains pending Mac review and a separately scheduled finite consistency check, if required.
+
+True historical absences and narrower evidence remain visible: M02 incident originals, older N3/N4 audit gaps, T02 missing source pin, source/patch/build attribution for some historical controls, original shell receipts where only report-transcribed output exists, and then-current binaries where no frozen executable exists. Recoverable cited reports/raw are not mislabeled absent. Owners decide disposition of genuine ledger gaps; this document does not self-sign A03.

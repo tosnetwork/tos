@@ -8,6 +8,62 @@
     "binding": "immutable git blob at named commit; artifact SHA values are inside each entry and must be rechecked under a ticket"
   },
   "units": {
+    "E06": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "reviewed-original-citations-unreconciled",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md",
+      "executed_source": "d6d5b37f5f975ade0e1cb9ba3731053dfe215ceb",
+      "scope": "one fresh local Chain Index config-B advertised Task/Registry discovery route, deployment cursor barrier30",
+      "command_evidence": "Fixed report quotes retained script wrapper argv and original COMMAND_EXIT_CODE0; not newly authenticated OS argv here.",
+      "known": ["26 PASS and original wrapper exit0", "54 HTTP requests and Task/Registry exact address discovery", "fresh SQLite transaction/block relationship corroborates anchor30", "script/test source hashes", "tosctl runtime manifest and three then-current binary hash citations", "stale-cursor direction control"],
+      "unproven": ["current retained artifact existence/SHA under this mapping", "independent invocation or frozen snapshots for validator/DHT", "complete DTO field assertions and independent chain transaction proof", "unique direction-mutant source/patch/run receipt applicability"],
+      "ci": "Initial review pending CI; later task-table signoff cites efc same-source terminal CI. Exact source-equivalence and record binding must be mapped, not reported as d6d CI.",
+      "invalidation": ["cursor barrier, index route or discovery assertions change", "deployment/config-B/HTTP/SQLite/source or binary identity changes"],
+      "excluded": ["4096 ancestor backlog", "reorg ledger rollback", "crash persistence", "multi-node agreement"]
+    },
+    "E07": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "reviewed-original-citations-unreconciled",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-E07-F21-EXACT-RUN-REVIEW-20260925.md",
+      "executed_source": "f21f0c72606f3866d06b9692c4ab5dd58f141e2a",
+      "scope": "local one validator plus two observers Task Escrow full route and exact VM109 premature-timeout/bounce refusal",
+      "command_evidence": "Fixed report quotes script wrapper argv; original console unique exit0 and106PASS independently counted in that review.",
+      "known": ["exact wallet send to escrow inbound hash, VM109 before deadline, exact escrow bounce to wallet credit", "later full heads and unchanged accepted state", "three PID/RPC process-map citations", "wrong-hash/duplicate-bounce/extra-outbound control distinctions", "fixed source/test hashes and reviewed single hash-membership guard red"],
+      "unproven": ["current retained bytes/SHA under this mapping", "independent runtime executable snapshots", "positive refund and list transaction pages not separately sealed", "unique mutant patch/source/run applicability to signed tree"],
+      "ci": "Review had Branch/Source success and microbench pending; fixed task later signed only after all f21 CI success. Separate final CI JSON mapping remains required.",
+      "invalidation": ["bounce membership, deadline or negative-window assertions change", "process/receipt/query/contract/raw or runtime binary identity changes"],
+      "excluded": ["multiple validators", "power loss", "release scale"]
+    },
+    "E08": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "reviewed-original-citations-unreconciled",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-E08-F580-EXACT-RUN-REVIEW-20260925.md",
+      "executed_source": "f5808d03dc99ed8e3e7ca5caecc96be1ab470b45",
+      "scope": "local single-validator Proof Attestation advertised route; five exact refusals and bounded positive console assertions",
+      "command_evidence": "Fixed report quotes script wrapper argv, original23PASS/0FAIL and COMMAND_EXIT_CODE0; manifest includes run command.",
+      "known": ["five wallet-to-contract-to-bounce hash/LT joins", "VM2101/2102/2100 and two later full heads per refusal", "RPC/CLI/negative raw and manifest/source hashes cited", "old2221 real observation-order red versus f580 bounce-wait fix", "fixed VM-exit guard offline red, not mutant real chain"],
+      "unproven": ["current retained bytes/SHA under this mapping", "independent executable snapshots", "positive operations not individually hash-joined by review", "fixed f580 unique mutant artifact/run reconstruction"],
+      "ci": "b997 docs-only successor CI pending at review; owner later permits local+independent acceptance without waiting CI. Do not turn this scope ruling into an invented f580 terminal CI.",
+      "invalidation": ["exact VM/hash/bounce/final-head assertions change", "contract/script/manifest/raw or binary bytes change"],
+      "excluded": ["multi-node consensus", "power-loss recovery"]
+    },
+    "E09": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "reviewed-original-citations-unreconciled",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-E09-E1DD-EXACT-RUN-REVIEW-20260925.md",
+      "executed_source": "e1dd48d6ff19a8f48f383c69c88715fb2bb452c4",
+      "scope": "local single-validator Capability Registry advertised route with five exact rejected transactions",
+      "command_evidence": "Fixed report quotes original script wrapper,31PASS/0FAIL/COMMAND_EXIT_CODE0 and runtime manifest command.",
+      "known": ["five exact wallet/Registry/bounce message joins and LTs", "VM1800/1801/1803/1805 and two later full heads with full state unchanged", "fixed script/test and original RPC/CLI/negative/manifest hashes", "ten fixed-source tests and unique VM-exit comparison guard offline red"],
+      "unproven": ["current original artifact existence/SHA under this mapping", "independent executable snapshots", "positive funds operations not individually joined", "unique offline mutation patch/executed-source applicability"],
+      "ci": "No e1dd or375a CI at review; owner later local+independent signoff permits bounded acceptance. Record actual later CI separately, not synthesize terminal success.",
+      "invalidation": ["Registry authorization/VM or exact transaction/state checks change", "bounce baseline pagination, raw/source or binary identity changes"],
+      "excluded": ["multi-validator", "power loss", "release scale"]
+    },
     "N01": {
       "delivery_type": "runtime-route",
       "evidence_state": "recoverable-but-unmapped-citation",
