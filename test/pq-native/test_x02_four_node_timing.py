@@ -2,7 +2,7 @@
 """Constructed chain timing controls, not live RPC/native/socket evidence."""
 import unittest
 
-from x02_four_node import ChainCapture, recovery_target_met
+from x02_four_node import ChainCapture, recovery_target_met, fresh_observer_epoch
 
 
 class FourNodeTimingControls(unittest.TestCase):
@@ -34,6 +34,22 @@ class FourNodeTimingControls(unittest.TestCase):
         self.assertFalse(recovery_target_met(self.anchor, self.current, 149))
         just_one = dict(self.current, full_id=(-1, '8000000000000000', 11, 'a', 'b'))
         self.assertFalse(recovery_target_met(self.anchor, just_one, 200))
+
+    def test_fresh_postdrain_idle_epoch(self):
+        self.assertTrue(fresh_observer_epoch({'requested_epoch': 1, 'completed_epoch': 1,
+            'requested_ns': 200, 'last_packet_ns': 210, 'idle_started_ns': 220,
+            'idle_completed_ns': 240}, 1))
+
+    def test_sticky_prior_timeout_cannot_count(self):
+        self.assertFalse(fresh_observer_epoch({'requested_epoch': 1, 'completed_epoch': 1,
+            'requested_ns': 200, 'last_packet_ns': 0, 'idle_started_ns': 100,
+            'idle_completed_ns': 240}, 1))
+
+    def test_packet_after_idle_or_wrong_epoch_cannot_count(self):
+        state = {'requested_epoch': 1, 'completed_epoch': 1, 'requested_ns': 200,
+                 'last_packet_ns': 250, 'idle_started_ns': 220, 'idle_completed_ns': 240}
+        self.assertFalse(fresh_observer_epoch(state, 1))
+        self.assertFalse(fresh_observer_epoch(dict(state, last_packet_ns=0), 2))
 
 
 if __name__ == '__main__':

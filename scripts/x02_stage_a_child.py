@@ -43,7 +43,7 @@ def main():
     fields = dict(line.split(':', 1) for line in status.splitlines() if ':' in line)
     require(all(int(fields[key], 16) == 0 for key in
                 ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'))
-            and int(fields['CapBnd'], 16) == 0x3000
+            and int(fields['CapBnd'], 16) == 0
             and int(fields['NoNewPrivs']) == 1, 'child capability/NNP verification failed')
     for fd in (3, 4):
         try:
@@ -89,13 +89,15 @@ def main():
     origins = []
     def verified_bytes(path):
         path = str(Path(path).absolute())
-        require(path in binding['files'], 'import origin is outside frozen closure: ' + path)
+        receipt_path = path if path in binding['files'] else str(Path(binding['rootfs_root']) / path.lstrip('/'))
+        require(receipt_path in binding['files'], 'import origin is outside frozen closure: ' + path)
         raw = Path(path).read_bytes()
-        expected = binding['files'][path]
+        expected = binding['files'][receipt_path]
         require(len(raw) == expected['bytes']
                 and hashlib.sha256(raw).hexdigest() == expected['sha256'],
                 'actual import bytes differ: ' + path)
-        origins.append({'path': path, 'sha256': expected['sha256'], 'bytes': len(raw)})
+        origins.append({'path': path, 'bound_path': receipt_path,
+                        'sha256': expected['sha256'], 'bytes': len(raw)})
         return raw
     class VerifiedSource(importlib.machinery.SourceFileLoader):
         def get_data(self, path):

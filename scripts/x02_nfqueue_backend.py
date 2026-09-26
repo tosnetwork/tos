@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from x02_partial_sequence import DIRECTIONS, require
+from x02_packet_identity import nfqueue_identity
 
 
 def attribute(kind: int, value: bytes) -> bytes:
@@ -167,6 +168,11 @@ class QueueBackend:
         if 14 in attrs:
             require(len(attrs[14]) == 4 and struct.unpack("!I", attrs[14])[0] & 2 == 0,
                     "GSO packet is outside fixed unit")
+        skb_info = struct.unpack('!I', attrs[14])[0] if 14 in attrs else 0
+        identity = nfqueue_identity(attrs[10], skb_info)
+        self.ledger.append({'event': 'kernel_packet_identity', 'queue': queue,
+                            'direction': self.queues[queue], 'queue_packet_id': packet_id,
+                            'identity': identity, 'monotonic_ns': time.monotonic_ns()})
         self.last_id[queue] = packet_id
         def submit(dropped):
             self.request(1, queue, attribute(2, struct.pack("!II", 0 if dropped else 1, packet_id)))

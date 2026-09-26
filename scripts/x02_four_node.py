@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import threading
@@ -37,7 +38,7 @@ class D(ctypes.Structure):
 h=H(0x20080522,0);d=(D*2)()
 assert libc.capset(ctypes.byref(h),ctypes.byref(d))==0, 'child caps clear failed'
 s=dict(line.split(':',1) for line in open('/proc/self/status') if ':' in line)
-assert all(int(s[k],16)==0 for k in ('CapEff','CapPrm','CapInh','CapAmb')) and int(s['CapBnd'],16)==0x3000 and int(s['NoNewPrivs'])==1, 'child final privilege state differs'
+assert all(int(s[k],16)==0 for k in ('CapEff','CapPrm','CapInh','CapAmb','CapBnd')) and int(s['NoNewPrivs'])==1, 'child final privilege state differs'
 p,ph,q,qh=sys.argv[1:5];b=open(p,'rb').read();c=open(q,'rb').read()
 assert hashlib.sha256(b).hexdigest()==ph and hashlib.sha256(c).hexdigest()==qh, 'child/helper execution bytes differ'
 m=types.ModuleType('x02_four_node_binding');m.__file__=q;m.__executed_sha256__=qh;sys.modules[m.__name__]=m
@@ -55,6 +56,13 @@ def require(value, reason):
 def recovery_target_met(anchor, current, deadline_ns):
     return (current['full_id'][2] >= anchor['full_id'][2] + 2
             and current['completed_ns'] <= deadline_ns)
+
+
+def fresh_observer_epoch(state, epoch):
+    return (state['completed_epoch'] == epoch and state['requested_epoch'] == epoch
+            and state['idle_started_ns'] >= state['requested_ns']
+            and state['last_packet_ns'] <= state['idle_started_ns']
+            and state['idle_completed_ns'] > state['idle_started_ns'])
 
 
 def write_once(path, value):
@@ -87,7 +95,7 @@ def socket_and_namespace(node, context):
     status = dict(line.split(':', 1) for line in (proc / 'status').read_text().splitlines()
                   if ':' in line)
     require(all(int(status[key], 16) == 0 for key in ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'))
-            and int(status['CapBnd'], 16) == 0x3000 and int(status['NoNewPrivs']) == 1
+            and int(status['CapBnd'], 16) == 0 and int(status['NoNewPrivs']) == 1
             and status['Uid'].split() == ['1000'] * 4
             and status['Gid'].split() == ['1000'] * 4 and not status['Groups'].split(),
             'validator IDs/groups/capabilities/NNP differ')
@@ -248,7 +256,7 @@ def run(args, context):
     require(raw == frozen, 'four-node runtime input binding differs from fixed source')
     binding = json.loads(raw)
     closure = fixed_module('x02_four_node_binding', context)
-    closure.verify_binding(binding)
+    closure.verify_binding(binding, host=True)
     require(binding['source_root'] == str(REPO), 'full StageA source must be the reviewed driver tree')
     args.output.mkdir(exist_ok=False)
     # Driver calls this after verified module load; imports below refer to those bytes.
@@ -257,13 +265,17 @@ def run(args, context):
     from x02_queue_stats_fd import QueueStatsFD
     from x02_nfqueue_backend import QueueBackend
     from x02_nft_rules import RuleManager
+    from x02_packet_identity import ingress_identity
     evidence = fixed_module('x02_fault_evidence', context)
     prepare = fixed_module('x02_prepare_policy', context)
     ledger = DurableLedger(args.output / 'kernel.jsonl')
     chain_ledger = DurableLedger(args.output / 'chain.jsonl')
     delivered = DurableLedger(args.output / 'delivered.jsonl')
     stats = QueueStatsFD(args.queue_stats_fd, args.queue_receipt_fd, args.host_netns)
-    stop, observer_idle, errors, stopped = threading.Event(), threading.Event(), [], set()
+    stop, errors, stopped = threading.Event(), [], set()
+    observer_condition = threading.Condition()
+    observer_state = {'requested_epoch': 0, 'completed_epoch': 0, 'requested_ns': 0,
+                      'last_packet_ns': 0, 'idle_started_ns': 0, 'idle_completed_ns': 0}
     stage, backend, manager, worker, observer, observer_worker = (None,) * 6
     nodes, cleanup_ok, checks_passed, stage_natural = [], False, False, False
     received = Counter()
@@ -283,7 +295,7 @@ def run(args, context):
         binding_sha = write_once(binding_path, binding)
         child = REPO / 'scripts/x02_stage_a_child.py'
         helper = REPO / 'scripts/x02_four_node_binding.py'
-        argv = [binding['interpreter'], '-I', '-S', '-B', '-c', CHILD_BOOTSTRAP,
+        inner_argv = [binding['interpreter'], '-I', '-S', '-B', '-c', CHILD_BOOTSTRAP,
                 str(child), binding['files'][str(child)]['sha256'],
                 str(helper), binding['files'][str(helper)]['sha256'], '--binding', str(binding_path),
                 '--binding-sha256', binding_sha, '--output', str(args.output)]
@@ -292,6 +304,26 @@ def run(args, context):
                'PYTHONHASHSEED': '0', 'UV_OFFLINE': '1'}
         Path(env['HOME']).mkdir()
         Path(env['TMPDIR']).mkdir()
+        # Mount-only ordinary sandbox: NO PID or network namespace unshare.
+        # All native PIDs remain host-visible in the driver's existing private
+        # network namespace, while U24 supplies the actual ELF loader/libc.
+        argv = [binding['bwrap_path'], '--unshare-user', '--uid', '1000', '--gid', '1000',
+                '--cap-drop', 'ALL', '--die-with-parent',
+                '--ro-bind', binding['rootfs_root'], '/',
+                '--tmpfs', '/datax', '--tmpfs', '/home',
+                '--ro-bind', binding['rootfs_root'], binding['rootfs_root'],
+                '--ro-bind', binding['source_root'], binding['source_root'],
+                '--ro-bind', binding['git_common_root'], binding['git_common_root'],
+                '--ro-bind', binding['build_root'], binding['build_root'],
+                '--ro-bind', '/proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp']
+        for root in binding['runtime_roots']:
+            argv += ['--ro-bind', root, root]
+        for root in binding['dependency_roots']:
+            argv += ['--ro-bind', root, root]
+        argv += ['--bind', str(args.output), str(args.output), '--chdir', str(REPO), '--clearenv']
+        for name, value in env.items():
+            argv += ['--setenv', name, value]
+        argv += ['--', *inner_argv]
         with (args.output / 'stage.stdout.raw').open('xb') as stdout, \
              (args.output / 'stage.stderr.raw').open('xb') as stderr:
             stage = subprocess.Popen(argv, stdout=stdout, stderr=stderr, cwd=REPO,
@@ -310,6 +342,11 @@ def run(args, context):
                 break
             time.sleep(.25)
         readiness_raw = readiness.read_bytes()
+        child_receipt = json.loads((args.output / 'child-bootstrap.json').read_text())
+        harness_pid = child_receipt['pid']
+        harness_stat = Path(f'/proc/{harness_pid}/stat').read_bytes().rsplit(b') ', 1)[1].split()
+        require(int(harness_stat[2]) == stage.pid and child_receipt['netns'] == context['netns']
+                and child_receipt['cgroup'] == context['cgroup'], 'StageA sandbox harness escaped owning group/namespace')
         manifest = json.loads(readiness_raw)
         require(manifest['schema'] == 'tos.validator-election-experiment-readiness.v2'
                 and manifest['status'] == 'ready' and manifest['mode'] == 'experiment'
@@ -331,7 +368,7 @@ def run(args, context):
                     and node['quic_port'] == 33602 + i * 3
                     and node['rpc_url'] == f'http://127.0.0.1:{34600 + i}/jsonRPC'
                     and node['exe_sha256'] == binding['native_binary_sha256']
-                    and node['harness_pid'] == stage.pid, 'native node preset/provenance differs')
+                    and node['harness_pid'] == harness_pid, 'native node preset/provenance differs')
             socket_and_namespace(node, context)
         zero = manifest['network']['zero_state']['masterchain']
         zerostate = {'root_hash': zero['root_hash_hex'], 'file_hash': zero['file_hash_hex']}
@@ -365,25 +402,56 @@ def run(args, context):
         manager = RuleManager(args.run_id, engine, backend, ledger)
         manager.preflight()
         # Receive-only raw observer proves input delivery bytes separately from ACKs/counters.
-        observer = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
-        observer.bind(('127.0.0.1', 0))
+        observer = socket.socket(socket.AF_PACKET, socket.SOCK_DGRAM, socket.htons(0x0800))
+        observer.bind(('lo', 0x0800))
+        observer.setsockopt(263, 8, 1)  # SOL_PACKET/PACKET_AUXDATA, exact20-byte native struct.
         observer.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1048576)
         observer.settimeout(.2)
         tuples = set(endpoints.values())
         def receive_delivered():
             try:
                 while not stop.is_set():
+                    read_started = time.monotonic_ns()
                     try:
-                        packet = observer.recv(65535)
+                        packet, ancillary, flags, peer = observer.recvmsg(65535, 256)
                     except socket.timeout:
-                        observer_idle.set()
+                        with observer_condition:
+                            if (observer_state['requested_epoch'] > observer_state['completed_epoch']
+                                    and read_started >= observer_state['requested_ns']):
+                                observer_state.update(completed_epoch=observer_state['requested_epoch'],
+                                                      idle_started_ns=read_started,
+                                                      idle_completed_ns=time.monotonic_ns())
+                                delivered.append({'event': 'fresh_observer_idle', **observer_state})
+                                observer_condition.notify_all()
                         continue
-                    observer_idle.clear()
-                    if udp_datagram(packet) in tuples:
-                        digest = hashlib.sha256(packet).hexdigest()
+                    require(not flags & (socket.MSG_TRUNC | socket.MSG_CTRUNC)
+                            and peer[0] == 'lo', 'truncated or foreign ingress observer frame')
+                    # PACKET_OUTGOING duplicates and unrelated DHT/TCP traffic
+                    # are outside the selected24 UDP four-tuples, not loss hits.
+                    if peer[2] != 0 or len(packet) < 28 or packet[9] != 17:
+                        continue
+                    ihl = (packet[0] & 15) * 4
+                    if len(packet) < ihl + 8:
+                        continue
+                    ports = struct.unpack_from('!HH', packet, ihl)
+                    endpoint = (socket.inet_ntoa(packet[12:16]), ports[0],
+                                socket.inet_ntoa(packet[16:20]), ports[1])
+                    if endpoint in tuples:
+                        aux = [raw for level, kind, raw in ancillary if (level, kind) == (263, 8)]
+                        require(len(aux) == 1 and len(aux[0]) == 20 and len(ancillary) == 1,
+                                'ingress checksum auxiliary metadata missing or ambiguous')
+                        status, wire_len, snap_len, mac, net, vlan, vlan_type = struct.unpack('=IIIHHHH', aux[0])
+                        require(vlan == vlan_type == 0, 'unexpected loopback VLAN metadata')
+                        identity = ingress_identity(packet, status, wire_len, snap_len)
+                        digest = identity['identity_sha256']
                         received[digest] += 1
-                        delivered.append({'event': 'raw_delivered', 'packet_hex': packet.hex(),
-                                          'packet_sha256': digest, 'monotonic_ns': time.monotonic_ns()})
+                        received_ns = time.monotonic_ns()
+                        with observer_condition:
+                            observer_state['last_packet_ns'] = received_ns
+                        delivered.append({'event': 'raw_ingress', 'packet_hex': packet.hex(),
+                                          'identity': identity, 'aux_hex': aux[0].hex(),
+                                          'peer': list(peer[:-1]) + [peer[-1].hex()],
+                                          'monotonic_ns': received_ns})
             except Exception as error:
                 errors.append('observer: ' + repr(error))
         def process_queues():
@@ -434,7 +502,14 @@ def run(args, context):
                 require(str(error) == 'queue is not drained' and time.monotonic() < drain_deadline,
                         'queue drain failed: ' + str(error))
                 time.sleep(.05)
-        require(observer_idle.wait(5), 'raw delivery observer did not drain to idle')
+        with observer_condition:
+            epoch = observer_state['requested_epoch'] + 1
+            observer_state.update(requested_epoch=epoch, requested_ns=time.monotonic_ns())
+            request = dict(observer_state)
+            delivered.append({'event': 'observer_drain_requested', **request})
+            fresh = observer_condition.wait_for(lambda: observer_state['completed_epoch'] == epoch, timeout=5)
+            require(fresh and fresh_observer_epoch(observer_state, epoch),
+                    'raw ingress observer has no fresh post-drain idle epoch')
         # Thread consumes only receives now; request/unbind is exclusively main after join.
         counts = manager.counters_quiescent()
         ledger.append({'event': 'partial_quiescent_counters', 'counts': counts,
@@ -447,6 +522,12 @@ def run(args, context):
         observer_worker.join(5)
         require(not worker.is_alive() and not observer_worker.is_alive() and not errors,
                 'callback/observer did not stop cleanly')
+        packet_stats = observer.getsockopt(263, 6, 8)
+        packets_seen, packets_dropped = struct.unpack('=II', packet_stats)
+        delivered.append({'event': 'packet_socket_statistics', 'raw_hex': packet_stats.hex(),
+                          'packets_seen': packets_seen, 'packets_dropped': packets_dropped,
+                          'monotonic_ns': time.monotonic_ns()})
+        require(packets_dropped == 0, 'ingress observer dropped packets')
         observer.close()
         backend.close_drained()
         # Stable counters and exact raw delivery multiset are checked independently.
@@ -463,8 +544,15 @@ def run(args, context):
                 'intent/ACK identity or captured datagram digest differs')
         selection = verify_selection_trace(policy, [{key: row[key] for key in
                     ('direction', 'index', 'packet_sha256', 'dropped')} for row in intents])
-        accepted = Counter(row['packet_sha256'] for row in intents if not row['dropped'])
-        require(received == accepted, 'native datagram delivery differs from selected accepts')
+        metadata_rows = [row for row in records if row.get('event') == 'kernel_packet_identity']
+        metadata = {(row['direction'], row['queue_packet_id']): row['identity'] for row in metadata_rows}
+        require(len(metadata) == len(metadata_rows) == len(intents)
+                and all(metadata[(row['direction'], row['queue_packet_id'])]['raw_sha256']
+                        == row['packet_sha256'] for row in intents),
+                'checksum metadata does not bind every queued datagram')
+        accepted = Counter(metadata[(row['direction'], row['queue_packet_id'])]['identity_sha256']
+                           for row in intents if not row['dropped'])
+        require(received == accepted, 'native ingress identities differ from selected accepts')
         for ordinal, direction in enumerate(DIRECTIONS):
             actual = engine.counts[direction]
             require(counts[f'entry{ordinal}']['packets'] == actual['seen']
@@ -476,7 +564,8 @@ def run(args, context):
                     'actual native nft counter does not match serialized verdicts')
         ledger.append({'event': 'owned_partial_removed', 'started_ns': removal_start,
                        'completed_ns': removal_complete, 'selection': selection,
-                       'raw_delivery_verified': True})
+                       'raw_ingress_verified': True, 'canonical_rule':
+                       'udp-checksum-field-only-after-mode-validation.v1'})
         for pid in list(stopped):
             os.kill(pid, signal.SIGCONT)
             stopped.remove(pid)
@@ -511,7 +600,7 @@ def run(args, context):
                 and report['source_commit'] == context['source_sha']
                 and report['source_commit_at_report'] == context['source_sha']
                 and not report['git_status'], 'natural StageA report/settlement/source differs')
-        closure.verify_binding(binding)
+        closure.verify_binding(binding, host=True)
         cgroup_path = Path('/sys/fs/cgroup') / context['cgroup'].split(':', 2)[-1].strip().lstrip('/')
         remaining_pids = (cgroup_path / 'cgroup.procs').read_text()
         ledger.append({'event': 'post_stage_cgroup', 'raw': remaining_pids,

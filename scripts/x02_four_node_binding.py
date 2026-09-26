@@ -21,7 +21,7 @@ def require(value, reason):
         raise ValueError(reason)
 
 
-def verify_binding(binding):
+def verify_binding(binding, host=False):
     require(binding['schema'] == 'tos.x02.four-node-binding.v1', 'binding schema differs')
     require(re.fullmatch('[0-9a-f]{40}', binding['native_source_sha']) is not None,
             'native source provenance absent')
@@ -36,6 +36,19 @@ def verify_binding(binding):
     require(Path(binding['interpreter']).is_absolute()
             and Path(binding['build_root']).is_absolute()
             and Path(binding['source_root']).is_absolute(), 'binding path is not absolute')
+    require(binding['rootfs_root'] == '/datax/n6-unit-agents/Z02/u24-rootfs'
+            and binding['git_common_root'] == '/home/tomi/tos/.git'
+            and binding['bwrap_path'] == '/usr/bin/bwrap', 'sandbox paths differ from fixed interface')
+    require(binding['native_source_sha'] == 'f1f912dafd2dc3120e92829ec1858941bc426ec9'
+            and binding['native_binary_sha256'] ==
+                'e7670133c59160614fdedb04dd8ae03ba4be74c2a4841518f3ccec92cde4f3ee',
+            'native snapshot differs from actual frozen f1f source/binary')
+    if host:
+        receipt = binding['host_files'][binding['bwrap_path']]
+        require(hashlib.sha256(Path(binding['bwrap_path']).read_bytes()).hexdigest() == receipt['sha256'],
+                'ordinary mount sandbox executable differs')
+    os_release = Path(binding['rootfs_root']) / 'etc/os-release'
+    require('VERSION_ID="24.04"' in os_release.read_text(), 'StageA rootfs is not U24')
     files = binding['files']
     require(isinstance(files, dict) and 0 < len(files) <= 100000, 'missing/boundless file closure')
     for relative in BINARY_PATHS:
@@ -51,7 +64,7 @@ def verify_binding(binding):
     roots = [Path(binding['source_root']) / 'test/tostester/src',
              Path(binding['source_root']) / 'crypto/fift/lib',
              Path(binding['source_root']) / 'crypto/smartcont',
-             Path(binding['build_root']) / 'crypto/smartcont/auto',
+             Path(binding['build_root']) / 'crypto/smartcont',
              *map(Path, binding['dependency_roots']), *map(Path, binding['runtime_roots'])]
     require(len(binding['dependency_roots']) > 0, 'StageA dependency closure absent')
     for root in roots:

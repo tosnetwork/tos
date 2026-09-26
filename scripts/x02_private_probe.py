@@ -33,7 +33,7 @@ def load_fixed_sources(context):
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "requires python -I -S -B")
     modules = {}
-    for name in ("x02_partial_sequence", "x02_partial_adapter", "x02_queue_stats_fd", "x02_nfqueue_backend", "x02_nft_rules"):
+    for name in ("x02_partial_sequence", "x02_partial_adapter", "x02_queue_stats_fd", "x02_packet_identity", "x02_nfqueue_backend", "x02_nft_rules"):
         path = REPO / "scripts" / (name + ".py")
         raw = path.read_bytes()
         require(hashlib.sha256(raw).hexdigest() == context["sources"][name + ".py"]
@@ -174,7 +174,8 @@ def environment(source_sha: str, host_netns: str, unit: str) -> dict:
     require(head == source_sha and not clean, "source HEAD or tracked cleanliness differs")
     sources = {}
     for name in ("x02_partial_sequence.py", "x02_partial_adapter.py", "x02_nfqueue_backend.py",
-                 "x02_nft_rules.py", "x02_private_probe.py", "x02_queue_stats_fd.py", "x02_queue_stats_broker.c"):
+                 "x02_nft_rules.py", "x02_private_probe.py", "x02_queue_stats_fd.py", "x02_queue_stats_broker.c",
+                 "x02_packet_identity.py"):
         raw = (REPO / "scripts" / name).read_bytes()
         frozen = subprocess.check_output(["git", "-C", str(REPO), "show", f"HEAD:scripts/{name}"])
         require(raw == frozen, "runtime source bytes differ")
