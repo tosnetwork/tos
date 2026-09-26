@@ -1453,7 +1453,7 @@ def match_agent_pool_transaction(
         boc = base64.b64decode(encoded, validate=True)
         transaction_cell = Cell.one_from_boc(boc)
         transaction = Transaction.deserialize(transaction_cell.begin_parse())
-    except TypeError, ValueError, TlbError, BocError, IndexError:
+    except (TypeError, ValueError, TlbError, BocError, IndexError):
         return None
     if transaction.account_addr != sender.hash_part or getattr(
         transaction.description, "aborted", True

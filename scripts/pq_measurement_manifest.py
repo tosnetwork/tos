@@ -239,7 +239,7 @@ def _memory_and_swap() -> tuple[int, bool]:
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
             name, raw = line.split(":", 1)
             values[name] = int(raw.strip().split()[0]) * 1024
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return 0, False
     return values.get("MemTotal", 0), values.get("SwapTotal", 0) != 0
 
