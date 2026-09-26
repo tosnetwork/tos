@@ -69,6 +69,8 @@ def live_node(item: dict) -> dict:
     quic_port = (peer["port"] + 1000) % 65536
     x02.require(quic_port != 0, "derived QUIC UDP port is zero")
     node = {"name": name, "pid": pid,
+            "validator_index": item["validator_index"],
+            "controller_id": item["controller_id_hex"],
             "pid_start_ticks": x02._proc_start_ticks(raw_stat),
             "service": name, "data_dir": str(directory),
             "rpc_url": item["rpc_url"],

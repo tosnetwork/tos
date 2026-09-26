@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import socket
 import struct
@@ -63,6 +64,125 @@ def fresh_observer_epoch(state, epoch):
             and state['idle_started_ns'] >= state['requested_ns']
             and state['last_packet_ns'] <= state['idle_started_ns']
             and state['idle_completed_ns'] > state['idle_started_ns'])
+
+
+def distinct_db_inodes(nodes):
+    """Four path labels must identify four real, different DB directories."""
+    if len(nodes) != 4:
+        return False
+    identities = [(node.get('db_dev'), node.get('db_ino')) for node in nodes]
+    return (all(type(dev) is int and dev > 0 and type(ino) is int and ino > 0
+                for dev, ino in identities) and len(set(identities)) == 4)
+
+
+def declared_node_mapping(nodes, readiness):
+    """Bind pre-election declared public identities to live PID/DB rows."""
+    rows = readiness['validators']
+    require(len(rows) == len(nodes) == 4, 'four declared/live identity rows absent')
+    mapped = []
+    fields = ('validator_index', 'node_name', 'controller_id_hex',
+              'consensus_key_id_hex', 'adnl_id_hex')
+    for index, (row, node) in enumerate(zip(rows, nodes), 1):
+        require(type(row.get('validator_index')) is int and row['validator_index'] == index
+                and row.get('node_name') == node['name'] == f'node{index}'
+                and node['validator_index'] == index
+                and all(re.fullmatch('[0-9a-fA-F]{64}', row.get(key, ''))
+                        for key in fields[2:])
+                and node['controller_id'].lower() == row['controller_id_hex'].lower()
+                and node['consensus_key_id'].lower() == row['consensus_key_id_hex'].lower()
+                and node['adnl_id'].lower() == row['adnl_id_hex'].lower(),
+                'declared controller/key/ADNL row differs from live validator')
+        mapped.append({key: row[key] for key in fields})
+    for field in fields[2:]:
+        require(len({row[field].lower() for row in mapped}) == 4,
+                'declared public identity aliases another validator: ' + field)
+    return mapped
+
+
+def config34_pairs(raw):
+    """Decode PQ controller/key/ADNL fields from lite TEXT, not a BOC proof."""
+    markers = list(re.finditer(r'\bvalidator_pq\b', raw))
+    identities = list(re.finditer(
+        r'\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})', raw))
+    require(len(markers) == len(identities), 'Config34 PQ validator ID record malformed')
+    pairs = []
+    for index, match in enumerate(identities):
+        end = identities[index + 1].start() if index + 1 < len(identities) else len(raw)
+        section = raw[match.end():end]
+        keys = re.findall(r'\bkey_id:x([0-9A-Fa-f]{64})', section)
+        adnl = re.findall(r'\badnl_addr:x([0-9A-Fa-f]{64})', section)
+        require(len(keys) == len(adnl) == 1,
+                'Config34 PQ validator key/ADNL text record malformed')
+        pairs.append((match.group(1).lower(), keys[0].lower(), adnl[0].lower()))
+    require(len({controller for controller, _, _ in pairs}) == len(pairs)
+            and len({key for _, key, _ in pairs}) == len(pairs)
+            and len({adnl for _, _, adnl in pairs}) == len(pairs),
+            'Config34 PQ identities alias')
+    return pairs
+
+
+def verify_elected_identity(report, readiness_parent, declared, ledger):
+    """Check retained decoded TEXT/report; BOC/cell proof is a separate gate."""
+    allocation_path = Path(report['experiment']['allocation_evidence'])
+    require(allocation_path == readiness_parent / 'reward-election-allocation-evidence-v4.json',
+            'StageA allocation path differs from readiness run')
+    allocation_raw = allocation_path.read_bytes()
+    require(len(allocation_raw) <= 16 * 1024 * 1024, 'allocation original exceeds bound')
+    allocation = json.loads(allocation_raw)
+    require(allocation['schema'] == 'tos.validator-reward-election-allocation-evidence.v4'
+            and allocation['status'] == 'complete' and allocation['mode'] == 'experiment'
+            and allocation['provenance']['source_commit'] == report['source_commit'],
+            'final allocation source/status differs')
+    expected = {row['controller_id_hex'].lower():
+                (row['consensus_key_id_hex'].lower(), row['adnl_id_hex'].lower())
+                for row in declared}
+    activated = 0
+    for election in allocation['elections']:
+        if 'config34_artifact' not in election:
+            continue
+        activated += 1
+        election_id = election['election_id']
+        require(type(election_id) is int and election_id > 0
+                and set(election['validators']) == {'1', '2', '3', '4'}
+                and type(election['config34_cell_hash']) is int
+                and election['config34_cell_hash'] > 0,
+                'activated election attribution/cell hash incomplete')
+        artifact = election['config34_artifact']
+        path = Path(artifact['path'])
+        require(path == readiness_parent / 'artifacts' / f'election-{election_id}-config34.txt'
+                and path.is_file() and not path.is_symlink()
+                and type(artifact['size']) is int and 0 < artifact['size'] <= 1024 * 1024,
+                'raw Config34 artifact path/type/size differs')
+        raw_bytes = path.read_bytes()
+        digest = hashlib.sha256(raw_bytes).hexdigest()
+        require(len(raw_bytes) == artifact['size'] and digest == artifact['sha256']
+                and digest == election['config34']['raw_sha256']
+                and election['config34']['utime_since'] == election_id
+                and election['config34']['total'] == election['config34']['main'] == 4,
+                'raw Config34/cell election provenance differs')
+        pairs = config34_pairs(raw_bytes.decode('utf-8'))
+        require(len(pairs) == 4
+                and {controller: (key, adnl) for controller, key, adnl in pairs} == expected,
+                'elected Config34 decoded text controller/key/ADNL mapping differs')
+        for index, row in enumerate(declared, 1):
+            candidate = election['validators'][str(index)]
+            require(candidate['validator_index'] == index
+                    and candidate['controller_id_hex'].lower() == row['controller_id_hex'].lower()
+                    and candidate['consensus_key_id_hex'].lower()
+                        == row['consensus_key_id_hex'].lower()
+                    and candidate['adnl_id_hex'].lower() == row['adnl_id_hex'].lower()
+                    and candidate['selection_status'] == 'selected',
+                    'elected candidate differs from frozen pre-fault public row')
+        ledger.append({'event': 'elected_config34_decoded_text_identity_verified',
+                       'election_id': election_id, 'raw_hex': raw_bytes.hex(),
+                       'raw_sha256': digest,
+                       'reported_cell_hash_unverified': election['config34_cell_hash'],
+                       'controller_key_adnl_text_rows': pairs,
+                       'boc_cell_pq_key_proof': False})
+    require(activated > 0, 'no activated elected Config34 allocation')
+    ledger.append({'event': 'allocation_original', 'raw_hex': allocation_raw.hex(),
+                   'sha256': hashlib.sha256(allocation_raw).hexdigest(),
+                   'activated_elections': activated})
 
 
 def write_once(path, value):
@@ -350,6 +470,7 @@ def run(args, context):
         manifest = json.loads(readiness_raw)
         require(manifest['schema'] == 'tos.validator-election-experiment-readiness.v2'
                 and manifest['status'] == 'ready' and manifest['mode'] == 'experiment'
+                and manifest['election']['mapping_status'] == 'declared-before-first-election'
                 and manifest['network']['validator_count'] == 4
                 and manifest['network']['internal_base_port'] == 32600
                 and manifest['provenance']['source_commit'] == context['source_sha'],
@@ -358,11 +479,13 @@ def run(args, context):
         require(len(nodes) == 4 and {node['name'] for node in nodes} == {f'node{i}' for i in range(1, 5)}
                 and len({node['pid'] for node in nodes}) == 4
                 and len({node['data_dir'] for node in nodes}) == 4
+                and distinct_db_inodes(nodes)
                 and len({(node['log_dev'], node['log_ino']) for node in nodes}) == 4,
                 'four distinct native identities/DB/logs absent')
         for key in ('consensus_key_id', 'adnl_id'):
             require(len({evidence.hex64(node[key], key) for node in nodes}) == 4,
                     'four validator keys alias')
+        declared = declared_node_mapping(nodes, manifest)
         for i, node in enumerate(nodes):
             require(node['name'] == f'node{i + 1}' and node['peer_port'] == 32602 + i * 3
                     and node['quic_port'] == 33602 + i * 3
@@ -383,6 +506,8 @@ def run(args, context):
         policy = candidate_policy(context['source_sha'])
         policy_record = {'schema': 'tos.x02.four-node-live-policy.v1', 'selection': policy,
                          'nodes': nodes, 'endpoints': endpoints, 'zerostate': zerostate,
+                         'declared_public_identity_rows': declared,
+                         'identity_mapping_status': manifest['election']['mapping_status'],
                          'readiness_sha256': hashlib.sha256(readiness_raw).hexdigest(),
                          'readiness_b64': base64.b64encode(readiness_raw).decode(),
                          'native_source_sha': binding['native_source_sha'],
@@ -600,6 +725,7 @@ def run(args, context):
                 and report['source_commit'] == context['source_sha']
                 and report['source_commit_at_report'] == context['source_sha']
                 and not report['git_status'], 'natural StageA report/settlement/source differs')
+        verify_elected_identity(report, readiness.parent, declared, chain_ledger)
         closure.verify_binding(binding, host=True)
         cgroup_path = Path('/sys/fs/cgroup') / context['cgroup'].split(':', 2)[-1].strip().lstrip('/')
         remaining_pids = (cgroup_path / 'cgroup.procs').read_text()

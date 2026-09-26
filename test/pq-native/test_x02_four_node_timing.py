@@ -2,7 +2,8 @@
 """Constructed chain timing controls, not live RPC/native/socket evidence."""
 import unittest
 
-from x02_four_node import ChainCapture, recovery_target_met, fresh_observer_epoch
+from x02_four_node import (ChainCapture, recovery_target_met, fresh_observer_epoch,
+                           distinct_db_inodes, declared_node_mapping, config34_pairs)
 
 
 class FourNodeTimingControls(unittest.TestCase):
@@ -50,6 +51,42 @@ class FourNodeTimingControls(unittest.TestCase):
                  'last_packet_ns': 250, 'idle_started_ns': 220, 'idle_completed_ns': 240}
         self.assertFalse(fresh_observer_epoch(state, 1))
         self.assertFalse(fresh_observer_epoch(dict(state, last_packet_ns=0), 2))
+
+    def test_four_db_paths_require_four_distinct_real_inodes(self):
+        nodes = [{'data_dir': f'/owned/node{i}', 'db_dev': 2049, 'db_ino': 100 + i}
+                 for i in range(4)]
+        self.assertTrue(distinct_db_inodes(nodes))
+        alias = [dict(node) for node in nodes]
+        alias[3]['db_ino'] = alias[0]['db_ino']
+        self.assertFalse(distinct_db_inodes(alias))
+        alias[3]['db_ino'] = 0
+        self.assertFalse(distinct_db_inodes(alias))
+        alias[3]['db_ino'] = True
+        self.assertFalse(distinct_db_inodes(alias))
+
+    def test_declared_public_row_swap_rejects_before_fault(self):
+        keys = ('controller_id_hex', 'consensus_key_id_hex', 'adnl_id_hex')
+        rows = [dict(validator_index=i, node_name=f'node{i}',
+                     **{key: f'{i:064x}' for key in keys}) for i in range(1, 5)]
+        nodes = [dict(name=f'node{i}', validator_index=i, controller_id=f'{i:064x}',
+                      consensus_key_id=f'{i:064x}', adnl_id=f'{i:064x}')
+                 for i in range(1, 5)]
+        self.assertEqual(declared_node_mapping(nodes, {'validators': rows}), rows)
+        swapped = [dict(row) for row in rows]
+        swapped[0]['controller_id_hex'], swapped[1]['controller_id_hex'] = (
+            swapped[1]['controller_id_hex'], swapped[0]['controller_id_hex'])
+        with self.assertRaisesRegex(ValueError, 'declared controller/key/ADNL row differs'):
+            declared_node_mapping(nodes, {'validators': swapped})
+
+    def test_raw_config34_pairs_bind_controller_and_adnl(self):
+        controller, key, adnl = 'a' * 64, 'c' * 64, 'b' * 64
+        raw = (f'validator_pq validator_id:x{controller} algorithm_id:1 '
+               f'key_id:x{key} weight:1 adnl_addr:x{adnl}')
+        self.assertEqual(config34_pairs(raw), [(controller, key, adnl)])
+        with self.assertRaisesRegex(ValueError, 'key/ADNL text record malformed'):
+            config34_pairs(raw.replace(key, 'not-a-pq-key'))
+        with self.assertRaisesRegex(ValueError, 'Config34 PQ identities alias'):
+            config34_pairs(raw + ' ' + raw)
 
 
 if __name__ == '__main__':
