@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
   std::string out = argv[2];
   toslib::Client::execute({1, toslib_api::make_object<toslib_api::setLogVerbosityLevel>(5)});
   auto hook = std::make_shared<Hook>(out);
-  toslib::Client client(hook);
+  toslib::Client client(std::move(hook));
   client.send({1, toslib_api::make_object<toslib_api::init>(toslib_api::make_object<toslib_api::options>(
     toslib_api::make_object<toslib_api::config>(config.as_slice().str(), "", false, true),
     toslib_api::make_object<toslib_api::keyStoreTypeInMemory>()))});
