@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "memo_commit": "c73f29ee5ce63d8c96fa93a65ccc4964e3515697",
+  "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
   "task_table_path": "pq-native/N6-AGENT-WORK-UNITS-20260924.md",
-  "task_table_sha256": "efea5ea416a8e952baa68f38a6f97e6bf3266a8e961dd242512d270d557c903b",
+  "task_table_sha256": "07b72bd03967aa27cef81184394b4c323e86edeef882312a54fc79750bbed596",
   "tasks": [
     {
       "id": "M01",
@@ -331,7 +331,7 @@
     {
       "id": "X02",
       "lane": "F-2 VR-2",
-      "owner": "PQ + PG + Mac",
+      "owner": "Agent-X02",
       "status": "▶"
     },
     {
@@ -355,13 +355,13 @@
     {
       "id": "Q01",
       "lane": "D-2 Lite query",
-      "owner": "PQ + PG + Mac",
+      "owner": "PG",
       "status": "▶"
     },
     {
       "id": "Q02",
       "lane": "D-2 Lite query",
-      "owner": "PQ",
+      "owner": "Agent-Q02",
       "status": "□"
     },
     {
@@ -373,19 +373,19 @@
     {
       "id": "Z01",
       "lane": "R-2 Genesis",
-      "owner": "PQ + PG + Mac",
+      "owner": "Agent-Z01",
       "status": "▶"
     },
     {
       "id": "Z02",
       "lane": "R-2 Genesis",
-      "owner": "PQ",
+      "owner": "Agent-Z02",
       "status": "□"
     },
     {
       "id": "Z03",
       "lane": "R-2 Genesis",
-      "owner": "Mac",
+      "owner": "Agent-Z03",
       "status": "□"
     },
     {
@@ -403,7 +403,7 @@
     {
       "id": "A03",
       "lane": "G-1 账本",
-      "owner": "CC + PQ + Mac",
+      "owner": "PQ",
       "status": "▶"
     },
     {
@@ -427,13 +427,13 @@
     {
       "id": "I04",
       "lane": "G-2 集成",
-      "owner": "PQ",
+      "owner": "Agent-I04",
       "status": "□"
     },
     {
       "id": "I05",
       "lane": "G-2 集成",
-      "owner": "Mac",
+      "owner": "Agent-I05",
       "status": "□"
     }
   ]

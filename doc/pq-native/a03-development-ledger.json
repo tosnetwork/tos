@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "snapshot_sha256": "8b5811a6b4c775bd1487ae9b31c20f89e39c80a278097148ff03ffa902415ec5",
+  "snapshot_sha256": "f9e5875793c50a136938cfc693d4450681fb71469cc6fec0a48083328059d86b",
   "source_commit": "84a30e4268f94e894497e402d97058cadcbb876d",
   "units": {
     "M01": {
@@ -445,11 +445,36 @@
         "memo_raw_artifacts": [],
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
-          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/getattr-red.log", "sha256": "cabe859eaa03f65f8b5f13b3577def34d1e00594c29ae19d14179b886972461e", "role": "getattr-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
-          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/bound-method-red.log", "sha256": "9c3f0fb7569dc0da89efb070e9093bf06eaa9ade5e3d9bd20bc2f40e840dd241", "role": "bound-method-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
-          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/spare-red.log", "sha256": "297cfc39ed7f1a29648b210af6d681e95da0171ea31d3df119cf72ecff4f418e", "role": "spare-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
-          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/n6-import-red.log", "sha256": "58f5416015425d9db050a6432af94d1e7eef60f609ea463f620f84ee0300e225", "role": "n6-import-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
-          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/removed-call-red.log", "sha256": "86f65a41d32cb4b68e49a8adde2258ec05f9866ceda7187375bb9f253bf58685", "role": "removed-call-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"}
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/getattr-red.log",
+            "sha256": "cabe859eaa03f65f8b5f13b3577def34d1e00594c29ae19d14179b886972461e",
+            "role": "getattr-mutant-red",
+            "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/bound-method-red.log",
+            "sha256": "9c3f0fb7569dc0da89efb070e9093bf06eaa9ade5e3d9bd20bc2f40e840dd241",
+            "role": "bound-method-mutant-red",
+            "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/spare-red.log",
+            "sha256": "297cfc39ed7f1a29648b210af6d681e95da0171ea31d3df119cf72ecff4f418e",
+            "role": "spare-mutant-red",
+            "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/n6-import-red.log",
+            "sha256": "58f5416015425d9db050a6432af94d1e7eef60f609ea463f620f84ee0300e225",
+            "role": "n6-import-mutant-red",
+            "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/removed-call-red.log",
+            "sha256": "86f65a41d32cb4b68e49a8adde2258ec05f9866ceda7187375bb9f253bf58685",
+            "role": "removed-call-mutant-red",
+            "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
+          }
         ],
         "source_references": [],
         "missing_required_fields": [
