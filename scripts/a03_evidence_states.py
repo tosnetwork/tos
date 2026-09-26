@@ -27,7 +27,8 @@ def classify(snapshot, ledger, pointers):
         if unit.get('accepted') is not False:
             raise ValueError('this inventory cannot promote an accepted row')
         pointer = pointers['units'].get(task['id'])
-        if pointer and (not isinstance(pointer.get('scope'), str) or not pointer['scope'].strip()
+        if task['id'] in pointers['units'] and (not isinstance(pointer, dict)
+                or not isinstance(pointer.get('scope'), str) or not pointer['scope'].strip()
                 or pointer.get('delivery_type') not in ('runtime-route', 'independent-audit')
                 or not isinstance(pointer.get('invalidation'), list) or not pointer['invalidation']
                 or any(not isinstance(value, str) or not value.strip() for value in pointer['invalidation'])):

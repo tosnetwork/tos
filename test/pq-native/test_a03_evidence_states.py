@@ -48,6 +48,11 @@ class EvidenceStatesTest(unittest.TestCase):
             pointers['units']['T00'] = row
             with self.subTest(field=field), self.assertRaises(ValueError):
                 states.classify(snapshot, ledger, pointers)
+        for invalid in ({}, None):
+            snapshot, ledger, pointers = self.inputs()
+            pointers['units']['T00'] = invalid
+            with self.subTest(pointer=invalid), self.assertRaises(ValueError):
+                states.classify(snapshot, ledger, pointers)
 
 
 if __name__ == '__main__':
