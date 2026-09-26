@@ -10,6 +10,7 @@ struct QueryTraceContext {
   td::uint64 public_request_id{0};
   td::uint32 transport_generation{0};
   td::uint64 arm_token{0};
+  bool decoder_negative{false};  // Explicit test-only single-byte decoder input control.
 };
 class PublicNetworkTestHook {
  public:

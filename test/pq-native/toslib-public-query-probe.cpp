@@ -43,8 +43,12 @@ class Proxy final : public liteclient::ExtClient {
     LOG(ERROR) << "Q01_PUBLIC_BOUND id=" << context.public_request_id << " generation=" << generation_
                << " token=" << context.arm_token << " nonce=" << nonce << " deadline=" << deadline.at();
     forward(nonce, std::move(bytes), deadline,
-      td::Promise<td::BufferSlice>([prefix, promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
-        if (result.is_ok()) td::write_file(prefix + ".answer.bin", result.ok().as_slice()).ensure();
+      td::Promise<td::BufferSlice>([prefix, decoder_negative = context.decoder_negative, promise = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
+        if (result.is_ok()) {
+          td::write_file(prefix + ".answer.bin", result.ok().as_slice()).ensure();
+          if (decoder_negative) result = td::BufferSlice(td::Slice("\0", 1));
+          td::write_file(prefix + ".decoder-input.bin", result.ok().as_slice()).ensure();
+        }
         else td::write_file(prefix + ".transport-error.txt", result.error().to_string()).ensure();
         // Same original result is returned to ExtClient queries_ and its real decoder.
         promise.set_result(std::move(result));
@@ -138,8 +142,9 @@ int main(int argc, char** argv) {
   };
   auto init = receive(1); if (init.object->get_id() == toslib_api::error::ID) return 3;
   std::cout << "Q01_PUBLIC_READY" << std::endl;
-  td::uint64 id; std::string nonce;
-  while (std::cin >> id >> nonce) {
+  td::uint64 id; std::string nonce, mode;
+  while (std::cin >> id >> nonce >> mode) {
+  if (mode != "normal" && mode != "expect-error" && mode != "wrong-context" && mode != "decoder-negative") return 7;
   if (id < 2) return 2;
   std::mutex mutex; std::condition_variable cv; bool ready = false;
   td::Result<QueryTraceContext> armed = td::Status::Error("not armed");
@@ -151,13 +156,17 @@ int main(int argc, char** argv) {
   auto context = armed.move_as_ok();
   std::cout << "Q01_PUBLIC_ARM id=" << context.public_request_id << " generation="
             << context.transport_generation << " token=" << context.arm_token << " nonce=" << nonce << std::endl;
+  if (mode == "wrong-context") ++context.public_request_id;
+  if (mode == "decoder-negative") context.decoder_negative = true;
   client.send({id, toslib_api::make_object<toslib_api::blocks_getMasterchainInfo>(), context});
   auto response = receive(id);
   // Error retained, not called application success. Wrapper checks expected route.
   if (response.object->get_id() != toslib_api::error::ID &&
       response.object->get_id() != toslib_api::blocks_masterchainInfo::ID) return 6;
   std::cout << to_string(response.object) << std::endl;
-  std::cout << "Q01_PUBLIC_TERMINAL id=" << id << " nonce=" << nonce << " error="
+  bool error = response.object->get_id() == toslib_api::error::ID;
+  if (error != (mode != "normal")) return 8;
+  std::cout << "Q01_PUBLIC_TERMINAL id=" << id << " nonce=" << nonce << " mode=" << mode << " error="
             << (response.object->get_id() == toslib_api::error::ID) << std::endl;
   }
   return 0;
