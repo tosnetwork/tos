@@ -50,7 +50,10 @@ class Proxy final : public liteclient::ExtClient {
           if (decoder_negative) result = td::BufferSlice(td::Slice("\0", 1));
           td::write_file(prefix + ".decoder-input.bin", result.ok().as_slice()).ensure();
         }
-        else td::write_file(prefix + ".transport-error.txt", result.error().to_string()).ensure();
+        else {
+          td::write_file(prefix + ".transport-error.txt", result.error().to_string()).ensure();
+          td::write_file(prefix + ".transport-code.txt", std::to_string(result.error().code())).ensure();
+        }
         // Normal mode forwards the original result. The explicit decoder control
         // alone forwards the retained one-byte derived input to the same decoder.
         promise.set_result(std::move(result));
