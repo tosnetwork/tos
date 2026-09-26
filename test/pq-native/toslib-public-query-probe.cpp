@@ -24,7 +24,7 @@ class Proxy final : public liteclient::ExtClient {
       return ack.set_error(td::Status::Error("Q01 arm not unique or transport busy"));
     strict_ = true; armed_ = true; context_ = {id, generation_, ++token_}; nonce_ = std::move(nonce);
     used_ids_.insert(id); used_nonces_.insert(nonce_);
-    ack.set_value(context_);
+    ack.set_value(QueryTraceContext(context_));
   }
   void bound(QueryTraceContext context, td::BufferSlice bytes, td::Timestamp deadline,
              td::Promise<td::BufferSlice> promise) {
@@ -88,8 +88,8 @@ class Proxy final : public liteclient::ExtClient {
   std::set<td::uint64> used_ids_; std::set<std::string> used_nonces_;
   void fail(td::Promise<td::BufferSlice> promise, const char* text) {
     poisoned_ = true; armed_ = false;
-    td::write_file(out_ + "/unexpected-query.txt", text).ensure();
-    promise.set_error(td::Status::Error(text));
+    td::write_file(out_ + "/unexpected-query.txt", td::Slice(text)).ensure();
+    promise.set_error(td::Status::Error(td::Slice(text)));
   }
   void forward(std::string name, td::BufferSlice bytes, td::Timestamp deadline,
                td::Promise<td::BufferSlice> promise) {
