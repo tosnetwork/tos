@@ -65,6 +65,15 @@ def fresh_observer_epoch(state, epoch):
             and state['idle_completed_ns'] > state['idle_started_ns'])
 
 
+def distinct_db_inodes(nodes):
+    """Four path labels must identify four real, different DB directories."""
+    if len(nodes) != 4:
+        return False
+    identities = [(node.get('db_dev'), node.get('db_ino')) for node in nodes]
+    return (all(type(dev) is int and dev > 0 and type(ino) is int and ino > 0
+                for dev, ino in identities) and len(set(identities)) == 4)
+
+
 def write_once(path, value):
     raw = (json.dumps(value, sort_keys=True, indent=2) + '\n').encode()
     with path.open('xb') as stream:
@@ -358,6 +367,7 @@ def run(args, context):
         require(len(nodes) == 4 and {node['name'] for node in nodes} == {f'node{i}' for i in range(1, 5)}
                 and len({node['pid'] for node in nodes}) == 4
                 and len({node['data_dir'] for node in nodes}) == 4
+                and distinct_db_inodes(nodes)
                 and len({(node['log_dev'], node['log_ino']) for node in nodes}) == 4,
                 'four distinct native identities/DB/logs absent')
         for key in ('consensus_key_id', 'adnl_id'):

@@ -2,7 +2,7 @@
 """Constructed chain timing controls, not live RPC/native/socket evidence."""
 import unittest
 
-from x02_four_node import ChainCapture, recovery_target_met, fresh_observer_epoch
+from x02_four_node import ChainCapture, recovery_target_met, fresh_observer_epoch, distinct_db_inodes
 
 
 class FourNodeTimingControls(unittest.TestCase):
@@ -50,6 +50,18 @@ class FourNodeTimingControls(unittest.TestCase):
                  'last_packet_ns': 250, 'idle_started_ns': 220, 'idle_completed_ns': 240}
         self.assertFalse(fresh_observer_epoch(state, 1))
         self.assertFalse(fresh_observer_epoch(dict(state, last_packet_ns=0), 2))
+
+    def test_four_db_paths_require_four_distinct_real_inodes(self):
+        nodes = [{'data_dir': f'/owned/node{i}', 'db_dev': 2049, 'db_ino': 100 + i}
+                 for i in range(4)]
+        self.assertTrue(distinct_db_inodes(nodes))
+        alias = [dict(node) for node in nodes]
+        alias[3]['db_ino'] = alias[0]['db_ino']
+        self.assertFalse(distinct_db_inodes(alias))
+        alias[3]['db_ino'] = 0
+        self.assertFalse(distinct_db_inodes(alias))
+        alias[3]['db_ino'] = True
+        self.assertFalse(distinct_db_inodes(alias))
 
 
 if __name__ == '__main__':
