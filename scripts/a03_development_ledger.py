@@ -255,10 +255,20 @@ def validate(snapshot, ledger, snapshot_bytes, repo, evidence_root, current_task
                 if not isinstance(control, dict) or not isinstance(control.get("argv"), list) or not control["argv"] or not all(isinstance(x, str) for x in control["argv"]) or type(control.get("exit")) is not int or (control["exit"] == 0) != wanted:
                     errors.append(f"{tid}:{kind}: wrong or missing exit")
                 else:
+                    control_commit = control.get("source_commit")
+                    if not COMMIT.fullmatch(str(control_commit)):
+                        errors.append(f"{tid}:{kind}: independent executed source identity missing")
+                        continue
+                    control_files = control.get("source_files")
+                    if not isinstance(control_files, list) or not control_files:
+                        errors.append(f"{tid}:{kind}: executed source files missing")
+                    else:
+                        for n, file in enumerate(control_files):
+                            source_file(file, repo, control_commit, errors, f"{tid}:{kind}:source:{n}")
                     unique_raw(control.get("raw"), f"{tid}:{kind}")
                     if isinstance(control.get("raw"), dict):
                         run_receipt(control.get("receipt"), evidence_root, errors, f"{tid}:{kind}", {
-                            "schema": 1, "unit_id": tid, "role": kind, "source_commit": ev["source_commit"],
+                            "schema": 1, "unit_id": tid, "role": kind, "source_commit": control_commit,
                             "argv": control["argv"], "exit": control["exit"],
                             "raw_sha256": control["raw"].get("sha256"),
                         })

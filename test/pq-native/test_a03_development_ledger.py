@@ -63,6 +63,9 @@ class LedgerTest(unittest.TestCase):
                 "ci": {"state": "pending", "reason": "Local independent review suffices until CI completes."},
             }
             for role, run in [("main", ev["command"])] + list(ev["controls"].items()):
+                if role != "main":
+                    run["source_commit"] = COMMIT
+                    run["source_files"] = copy.deepcopy(ev["source_files"])
                 raw = ev["raw"] if role == "main" else run["raw"]
                 receipt = {
                     "schema": 1, "unit_id": tid, "role": role, "source_commit": COMMIT,
@@ -79,6 +82,35 @@ class LedgerTest(unittest.TestCase):
 
     def test_complete_individual_evidence_green(self):
         self.assertEqual([], self.check())
+
+    def test_old_control_has_own_executed_commit_and_receipt(self):
+        tid = self.snapshot["tasks"][0]["id"]
+        control = self.ledger["units"][tid]["evidence"]["controls"]["old_red"]
+        older = subprocess.check_output(["git", "rev-parse", COMMIT + "^"], cwd=ROOT).decode().strip()
+        raw = subprocess.check_output(["git", "show", older + ":AGENTS.md"], cwd=ROOT)
+        control["source_commit"] = older
+        control["source_files"] = [{"path": "AGENTS.md", "sha256": hashlib.sha256(raw).hexdigest()}]
+        receipt_path = self.evidence_root / control["receipt"]["path"]
+        receipt = json.loads(receipt_path.read_text())
+        receipt["source_commit"] = older
+        payload = json.dumps(receipt, sort_keys=True).encode()
+        receipt_path.write_bytes(payload)
+        control["receipt"]["sha256"] = hashlib.sha256(payload).hexdigest()
+        self.assertEqual([], self.check())
+        receipt["source_commit"] = COMMIT
+        payload = json.dumps(receipt, sort_keys=True).encode()
+        receipt_path.write_bytes(payload)
+        control["receipt"]["sha256"] = hashlib.sha256(payload).hexdigest()
+        self.assertIn(f"{tid}:old_red: run receipt does not bind unit/role/source/argv/exit/raw", self.check())
+
+    def test_control_source_identity_and_files_are_not_inherited(self):
+        tid = self.snapshot["tasks"][0]["id"]
+        control = self.ledger["units"][tid]["evidence"]["controls"]["mutant_red"]
+        control.pop("source_commit")
+        self.assertIn(f"{tid}:mutant_red: independent executed source identity missing", self.check())
+        control["source_commit"] = COMMIT
+        control.pop("source_files")
+        self.assertIn(f"{tid}:mutant_red: executed source files missing", self.check())
 
     def test_open_task_cannot_borrow_other_green(self):
         self.snapshot["tasks"][0]["status"] = "□"
