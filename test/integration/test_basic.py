@@ -13,6 +13,8 @@ from tostester.install import Install
 from tostester.n6_cluster import (
     SustainedObservationConfig,
     block_id_text,
+    lite_admission_drop_warnings,
+    lite_connection_budget,
     observe_sustained_consensus,
 )
 from tostester.network import FullNode, Network, StartOptions
@@ -127,10 +129,18 @@ async def main(args: argparse.Namespace):
             ),
             block_id_text(network.zerostate.as_block()),
             simplex_validator_names=[node.name for node in nodes],
+            lite_budget=lite_connection_budget(repo_root),
         )
         require(
             sustained["masterchain_blocks_produced"] >= args.sustain_blocks,
             "functional cluster did not sustain the requested number of blocks",
+        )
+        # A dropped query is never answered, so the client waits out its whole timeout
+        # and a retry hides it. The observer stays inside the budget, so any drop is real.
+        admission_drops = lite_admission_drop_warnings({node.name: node.log_path for node in nodes})
+        require(
+            not any(admission_drops.values()),
+            f"a liteserver dropped queries past its admission budget: {admission_drops}",
         )
         result = {
             "scenario": "pq-validator-functional-regression",
@@ -141,6 +151,7 @@ async def main(args: argparse.Namespace):
             "wallet_seqno": wallet_state.seqno,
             "actor_stats_and_perf_counters": True,
             "sustained_observation": sustained,
+            "lite_admission_drop_warnings": admission_drops,
             "evidence_class": "COLOCATED_DIAGNOSTIC_ONLY",
             "release_evidence_eligible": False,
         }
