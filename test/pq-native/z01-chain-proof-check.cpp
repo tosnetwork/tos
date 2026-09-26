@@ -25,7 +25,7 @@ int reject(const std::string& reason) {
 }
 
 td::Result<td::Bits256> digest(const char* input) {
-  auto decoded = td::hex_decode(input);
+  auto decoded = td::hex_decode(td::Slice{input});
   if (decoded.is_error()) return decoded.move_as_error();
   auto bytes = decoded.move_as_ok();
   if (bytes.size() != 32) return td::Status::Error("digest must be32bytes");
@@ -36,7 +36,7 @@ td::Result<td::Bits256> digest(const char* input) {
 }
 
 td::Status bind_boc(const char* path, const tos::BlockIdExt& id) {
-  TRY_RESULT(raw, td::read_file(path, max_file_bytes + 1));
+  TRY_RESULT(raw, td::read_file(td::CSlice{path}, max_file_bytes + 1));
   if (raw.size() > max_file_bytes) return td::Status::Error("raw BOC exceeds size limit");
   if (block::compute_file_hash(raw.as_slice()) != id.file_hash)
     return td::Status::Error("raw BOC file hash differs from fullID");
@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
   auto current = anchor;
   std::size_t links = 0;
   for (int index = 8; index < argc; ++index) {
-    auto raw = td::read_file(argv[index], max_file_bytes + 1);
+    auto raw = td::read_file(td::CSlice{argv[index]}, max_file_bytes + 1);
     if (raw.is_error()) return reject("raw chain response unreadable");
     if (raw.ok().size() > max_file_bytes) return reject("raw chain response exceeds size limit");
     auto parsed_chain = tos::fetch_tl_object<tos::lite_api::liteServer_partialBlockProof>(raw.move_as_ok(), true);
