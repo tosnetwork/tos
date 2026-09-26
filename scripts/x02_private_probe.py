@@ -20,10 +20,87 @@ from pathlib import Path
 
 from x02_partial_adapter import DecisionAdapter, DurableLedger
 from x02_partial_sequence import DIRECTIONS, candidate_policy, require
-from x02_nfqueue_backend import QueueBackend
+from x02_nfqueue_backend import QueueBackend, attribute
 from x02_nft_rules import RuleManager
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+class NegativeControl(RuntimeError):
+    pass
+
+
+def negative_control(case: str, manager, backend, ledger) -> None:
+    if case == "install-race":
+        marker = "foreign-fixture-" + manager.marker
+        manager.command(["/usr/sbin/nft", "-f", "-"],
+                        f'create table ip {manager.table} {{ comment "{marker}"; }}\n'.encode())
+        raw = manager.snapshot()
+        tables = [item["table"] for item in json.loads(raw)["nftables"] if "table" in item]
+        require(len(tables) == 1 and tables[0].get("comment") == marker,
+                "foreign fixture identity missing")
+        handle = tables[0]["handle"]
+        try:
+            manager.install()
+        except ValueError as error:
+            require(str(error) == "nft command failed; cleanup required", "unexpected install failure")
+        else:
+            raise ValueError("same-name install did not reject")
+        try:
+            manager.remove_owned_table()
+        except ValueError as error:
+            require("do not delete same-name table" in str(error), "unexpected refusal reason")
+        else:
+            raise ValueError("cleanup deleted foreign table")
+        after = [item["table"] for item in json.loads(manager.snapshot())["nftables"] if "table" in item]
+        require(after == tables, "foreign fixture changed or disappeared")
+        ledger.append({"event": "negative_control_triggered", "case": case,
+                       "foreign_handle": handle, "reason": "install conflict; foreign table retained"})
+        # Only the fixture's creator removes its proved foreign table.
+        manager.command(["/usr/sbin/nft", "delete", "table", "ip", "handle", str(handle)])
+        ruleset = json.loads(manager.command(["/usr/sbin/nft", "-j", "list", "ruleset"]))
+        require(not any(item.get("table", {}).get("name") == manager.table
+                        for item in ruleset["nftables"]), "foreign fixture cleanup failed")
+        manager.removed = True  # Independent fixture removal was verified; no own table was installed.
+    elif case == "wrong-flow":
+        manager.install()
+        handle = manager.ownership["rules"]["entry0"]
+        queue = min(backend.queues)
+        def replacement(port):
+            return (f'replace rule ip {manager.table} enqueue handle {handle} ip saddr 127.0.0.1 '
+                    f'ip daddr 127.0.0.2 udp sport {port} udp dport 33000 counter queue to {queue} '
+                    f'comment "{manager.marker}:entry0"\n').encode()
+        manager.command(["/usr/sbin/nft", "-f", "-"], replacement(32199))
+        try:
+            manager.validate_snapshot(manager.snapshot())
+        except ValueError as error:
+            require(str(error) == "counter four-tuple or expression differs", "unexpected flow rejection")
+        else:
+            raise ValueError("wrong actual flow accepted by counter validator")
+        manager.command(["/usr/sbin/nft", "-f", "-"], replacement(32000))
+        manager.validate_snapshot(manager.snapshot())
+        ledger.append({"event": "negative_control_triggered", "case": case,
+                       "reason": "actual wrong-flow rule rejected and fixture restored"})
+    elif case == "late-ack":
+        receive = backend.receive
+        def delayed_receive():
+            messages = receive()  # Real config ACK; delay only acceptance, not kernel behavior.
+            time.sleep(2.05)
+            return messages
+        backend.receive = delayed_receive
+        try:
+            backend.request(2, min(backend.queues), attribute(3, struct.pack("!I", 256)))
+        except ValueError as error:
+            require(str(error) == "late kernel ACK or packet batch", "unexpected deadline rejection")
+        else:
+            raise ValueError("late ACK accepted")
+        finally:
+            backend.receive = receive
+        ledger.append({"event": "negative_control_triggered", "case": case,
+                       "reason": "real ACK acceptance delayed beyond absolute deadline and rejected"})
+    else:
+        raise ValueError("unknown negative control")
+    raise NegativeControl(case)
 
 
 def checksum(raw: bytes) -> int:
@@ -106,6 +183,8 @@ def run(args) -> None:
         backend.bind()
         manager = RuleManager(args.run_id, engine, backend, ledger)
         manager.preflight()
+        if args.case != "positive":
+            negative_control(args.case, manager, backend, ledger)
         sink = []
         for ordinal in range(24):
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -116,7 +195,7 @@ def run(args) -> None:
         observer = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_UDP)
         sockets.append(observer)
         observer.bind(("127.0.0.2", 0))
-        observer.setblocking(False)
+        observer.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1048576)
         sender = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
         sockets.append(sender)
         sender.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
@@ -149,23 +228,29 @@ def run(args) -> None:
         require(not worker.is_alive() and not errors and not engine.failed,
                 f"backend failed or timed out: {errors}")
         raw_seen = set()
-        while True:
-            try:
-                raw = observer.recv(65535)
-            except BlockingIOError:
-                break
+        while len(raw_seen) < len(expected):
+            require(time.monotonic() < deadline, "raw receiver deadline exceeded")
+            observer.settimeout(deadline - time.monotonic())
+            raw = observer.recv(65535)
             received.append({"event": "raw_receiver", "packet_hex": raw.hex(),
                              "monotonic_ns": time.monotonic_ns()})
             require(raw in expected and raw not in raw_seen, "unexpected or duplicate raw delivery")
             raw_seen.add(raw)
         require(raw_seen == set(expected), "raw receiver bytes differ from fixed accepted set")
+        observer.setblocking(False)
+        try:
+            extra = observer.recv(65535)
+        except BlockingIOError:
+            pass
+        else:
+            received.append({"event": "unexpected_extra_raw", "packet_hex": extra.hex()})
+            raise ValueError("extra raw receiver packet")
         for ordinal, sock in enumerate(sink):
             actual = []
-            while True:
-                try:
-                    payload, peer = sock.recvfrom(65535)
-                except BlockingIOError:
-                    break
+            while len(actual) < 6:
+                require(time.monotonic() < deadline, "UDP receiver deadline exceeded")
+                sock.settimeout(deadline - time.monotonic())
+                payload, peer = sock.recvfrom(65535)
                 received.append({"event": "udp_receiver", "direction": DIRECTIONS[ordinal],
                                  "peer": list(peer), "payload_hex": payload.hex()})
                 require(peer == ("127.0.0.1", 32000 + ordinal), "receiver endpoint differs")
@@ -173,6 +258,15 @@ def run(args) -> None:
             wanted = [raw[28:] for raw, pair in expected.items() if pair[0] == DIRECTIONS[ordinal]]
             require(sorted(actual) == sorted(wanted) and len(actual) == 6,
                     "actual UDP socket receipt differs")
+            sock.setblocking(False)
+            try:
+                extra, peer = sock.recvfrom(65535)
+            except BlockingIOError:
+                pass
+            else:
+                received.append({"event": "unexpected_extra_udp", "direction": DIRECTIONS[ordinal],
+                                 "payload_hex": extra.hex(), "peer": list(peer)})
+                raise ValueError("extra UDP receiver payload")
         counters = manager.counters_quiescent()
         for ordinal, direction in enumerate(DIRECTIONS):
             require(counters[f"entry{ordinal}"]["packets"] == 8
@@ -238,5 +332,6 @@ if __name__ == "__main__":
     parser.add_argument("--host-netns", required=True)
     parser.add_argument("--unit", required=True)
     parser.add_argument("--run-id", required=True)
+    parser.add_argument("--case", choices=("positive", "install-race", "wrong-flow", "late-ack"), default="positive")
     parser.add_argument("--output", required=True, type=Path)
     run(parser.parse_args())
