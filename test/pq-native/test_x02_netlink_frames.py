@@ -38,7 +38,7 @@ class NetlinkFrameControls(unittest.TestCase):
     def test_two_records_require_complete_intermediate_alignment(self):
         padded = CAPTURED + b'\0\0'
         self.assertEqual(netlink_messages(padded + CAPTURED), netlink_messages(CAPTURED) * 2)
-        with self.assertRaisesRegex(ValueError, '^invalid netlink length$'):
+        with self.assertRaisesRegex(ValueError, '^incomplete or nonzero netlink padding$'):
             netlink_messages(CAPTURED + CAPTURED)
 
     def test_nonzero_intermediate_padding_rejects(self):
