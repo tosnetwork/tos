@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -489,6 +490,150 @@ void disconnected_refusal() {
   std::printf("Q02_REGRESSION case=absent outcome=cancelled production_deadline_s=10.0 historical_attribution=false\n");
 }
 
+// A loopback peer the test owns: it accepts the client's TCP connection and
+// later closes it, so the client connection actor stops on a peer close.
+struct RawPeer {
+  int listener = -1;
+  int accepted = -1;
+  td::uint16 port = 0;
+  RawPeer() {
+    listener = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    require(listener >= 0, "cannot create raw peer socket");
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    require(::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 && ::listen(listener, 1) == 0,
+            "cannot listen on raw peer socket");
+    socklen_t size = sizeof(address);
+    require(::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &size) == 0, "cannot read raw peer port");
+    port = ntohs(address.sin_port);
+  }
+  ~RawPeer() {
+    if (accepted >= 0) ::close(accepted);
+    if (listener >= 0) ::close(listener);
+  }
+};
+
+// Shared between the test thread and the held client actor turn.
+struct DeadWindowGate {
+  std::atomic<bool> entered{false};
+  std::atomic<bool> closed_while_held{false};
+};
+
+// Test-only client: its send_query override holds the client actor's own turn
+// until the connection actor has published its stop, then runs the production
+// send_query. conn_stopped() is queued behind this turn and only this actor
+// clears conn_, so conn_ is still the same non-empty handle when the
+// production guard runs; the production log line records present/alive.
+class DeadWindowClient final : public adnl::AdnlExtClientImpl {
+ public:
+  DeadWindowClient(adnl::AdnlNodeIdFull dst, td::IPAddress addr, std::unique_ptr<Callback> callback,
+                   std::shared_ptr<DeadWindowGate> gate)
+      : AdnlExtClientImpl(std::move(dst), addr, std::move(callback)), gate_(std::move(gate)) {
+  }
+  void send_query(std::string name, td::BufferSlice data, td::Timestamp timeout,
+                  td::Promise<td::BufferSlice> promise) override {
+    gate_->entered.store(true, std::memory_order_release);
+    const auto limit = td::Timestamp::in(5.0);
+    while (!connection_closed_synchronously()) {
+      require(!limit.is_in_past(), "client connection actor did not stop while the client turn was held");
+      ::usleep(1000);
+    }
+    gate_->closed_while_held.store(true, std::memory_order_release);
+    AdnlExtClientImpl::send_query(std::move(name), std::move(data), timeout, std::move(promise));
+  }
+
+ private:
+  // check_ready answers synchronously, on this thread and inside this call,
+  // only when conn_ is empty or its actor is closed; otherwise it forwards to
+  // the connection actor, whose reply runs elsewhere and is ignored here.
+  bool connection_closed_synchronously() {
+    auto sync_not_ready = std::make_shared<std::atomic<bool>>(false);
+    auto in_call = std::make_shared<std::atomic<bool>>(true);
+    const auto self = std::this_thread::get_id();
+    check_ready(td::PromiseCreator::lambda([sync_not_ready, in_call, self](td::Result<td::Unit> result) {
+      if (in_call->load(std::memory_order_acquire) && std::this_thread::get_id() == self && result.is_error() &&
+          result.error().code() == ErrorCode::notready && result.error().message() == "not ready") {
+        sync_not_ready->store(true, std::memory_order_release);
+      }
+    }));
+    in_call->store(false, std::memory_order_release);
+    return sync_not_ready->load(std::memory_order_acquire);
+  }
+  std::shared_ptr<DeadWindowGate> gate_;
+};
+
+void dead_nonempty_refusal() {
+  RawPeer peer;
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<DeadWindowClient> client;
+  auto transitions = std::make_shared<std::atomic<int>>(0);
+  auto gate = std::make_shared<DeadWindowGate>();
+  auto slot = std::make_shared<Slot>();
+  slot->request = nonce(5);
+  td::IPAddress address;
+  require(address.init_ipv4_port("127.0.0.1", peer.port).is_ok(), "cannot build raw peer address");
+  auto id = adnl::AdnlNodeIdFull{PrivateKey{privkeys::Ed25519::random()}.compute_public_key()};
+  scheduler.run_in_context([&] {
+    client = td::actor::create_actor<DeadWindowClient>("q02-dead", id, address,
+                                                       std::make_unique<ReadyCallback>(transitions), gate);
+  });
+  // The client's start_up alarm opened the connection; accept it so the
+  // connection actor exists and is alive before the query is submitted.
+  const auto accept_limit = td::Timestamp::in(5.0);
+  while (peer.accepted < 0) {
+    scheduler.run(0.01);
+    peer.accepted = ::accept4(peer.listener, nullptr, nullptr, SOCK_NONBLOCK);
+    require(peer.accepted >= 0 || !accept_limit.is_in_past(), "client never connected to the raw peer");
+  }
+  // No second connection can be accepted: a reconnect could not replace conn_
+  // with a new live handle and mask the dead one.
+  ::close(peer.listener);
+  peer.listener = -1;
+  scheduler.run_in_context([&] {
+    slot->sent_at = td::Time::now();
+    slot->deadline = slot->sent_at + 10.0;
+    std::printf("Q02_CALLER_CREATE nonce=%s logical=dead-nonempty attempt=0 retry_of_nonce=- pid=%d deadline_s=10.0\n",
+                slot->request.c_str(), ::getpid());
+    td::actor::send_closure(client, &adnl::AdnlExtClientImpl::send_query, slot->request, td::BufferSlice{slot->request},
+                            td::Timestamp::at(slot->deadline),
+                            td::PromiseCreator::lambda([slot](td::Result<td::BufferSlice> result) {
+                              std::lock_guard lock(slot->mutex);
+                              slot->result = std::move(result);
+                              slot->completed_at = td::Time::now();
+                              slot->completions.fetch_add(1, std::memory_order_acq_rel);
+                              std::printf("Q02_CALLER_TERMINAL nonce=%s logical=dead-nonempty attempt=0 retry_of_nonce=- pid=%d outcome=%s code=%d message=%s elapsed_ms=%.3f\n",
+                                          slot->request.c_str(), ::getpid(), slot->result.is_ok() ? "value" : "error",
+                                          slot->result.is_ok() ? 0 : slot->result.error().code(),
+                                          slot->result.is_ok() ? "-" : slot->result.error().message().str().c_str(),
+                                          1000.0 * (slot->completed_at - slot->sent_at));
+                              std::fflush(stdout);
+                            }));
+  });
+  const auto enter_limit = td::Timestamp::in(5.0);
+  while (!gate->entered.load(std::memory_order_acquire)) {
+    scheduler.run(0.01);
+    require(!enter_limit.is_in_past(), "client never entered the held send_query turn");
+  }
+  // Peer close while the client turn is held: the connection actor sees EOF and stops.
+  ::close(peer.accepted);
+  peer.accepted = -1;
+  const auto bound = td::Timestamp::in(11.0);
+  while (!slot->completions.load(std::memory_order_acquire) || transitions->load() < 1000) {
+    scheduler.run(0.01);
+    require(!bound.is_in_past(), "dead-connection caller or stop callback did not complete");
+  }
+  require(gate->closed_while_held.load(), "connection stop was not observed inside the held client turn");
+  require(slot->completions == 1 && slot->result.is_error() && slot->result.error().code() == ErrorCode::cancelled &&
+              slot->result.error().message() == "conn not ready",
+          "dead non-empty connection was not refused by the connection guard");
+  require(slot->completed_at - slot->sent_at < 1.0, "dead-connection refusal waited for the query deadline");
+  scheduler.run_in_context([&] { client.reset(); });
+  scheduler.run(0.1);
+  scheduler.stop();
+  std::printf("Q02_REGRESSION case=dead-nonempty outcome=cancelled production_deadline_s=10.0 historical_attribution=false\n");
+}
+
 void tcp_controls() {
   Pair pair{"closure"};
   pair.create_client();
@@ -524,9 +669,10 @@ void tcp_controls() {
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(DEBUG));
   const std::string only = argc > 1 ? argv[1] : "all";
-  require(only == "all" || only == "absent" || only == "tcp", "unknown case");
-  if (only != "tcp") disconnected_refusal();
-  if (only != "absent") tcp_controls();
+  require(only == "all" || only == "absent" || only == "dead" || only == "tcp", "unknown case");
+  if (only == "all" || only == "absent") disconnected_refusal();
+  if (only == "all" || only == "dead") dead_nonempty_refusal();
+  if (only == "all" || only == "tcp") tcp_controls();
   std::printf("Q02_SCOPE controlled-adnl-mechanism historical_cause=false application_success=false q02_signoff=false\n");
   return 0;
 }
