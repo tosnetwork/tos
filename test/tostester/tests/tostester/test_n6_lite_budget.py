@@ -206,6 +206,25 @@ def test_admission_drop_check_refuses_a_missing_log(tmp_path: Path) -> None:
         lite_admission_drop_warnings({"node-1": tmp_path / "absent.log"})
 
 
+def test_admission_drop_check_counts_a_marker_across_read_chunks(tmp_path: Path) -> None:
+    path = tmp_path / "node.log"
+    marker = LITE_ADMISSION_DROP_MARKER.encode()
+    path.write_bytes(b"x" * (1024 * 1024 - 4) + marker + b"\n")
+    assert lite_admission_drop_warnings({"node-1": path}) == {"node-1": 1}
+
+
+def test_admission_drop_check_refuses_symlink_and_oversize(tmp_path: Path) -> None:
+    path = tmp_path / "node.log"
+    path.write_bytes(b"ready\n")
+    (tmp_path / "link.log").symlink_to(path)
+    with pytest.raises(RuntimeError, match="N6_LITE_ADMISSION_CHECK_FAILURE"):
+        lite_admission_drop_warnings({"node-1": tmp_path / "link.log"})
+    with path.open("r+b") as stream:
+        stream.truncate(64 * 1024 * 1024 + 1)
+    with pytest.raises(RuntimeError, match="N6_LITE_ADMISSION_CHECK_FAILURE"):
+        lite_admission_drop_warnings({"node-1": path})
+
+
 def test_server_still_reports_the_first_drop_at_default_verbosity() -> None:
     # Nodes run at verbosity 3, which keeps warnings but not debug lines; if the first drop
     # moved to debug, the drop check above would count nothing and pass.

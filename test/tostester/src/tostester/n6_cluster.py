@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import stat
 import subprocess
 import time
 from bisect import bisect_right
@@ -44,6 +45,7 @@ LITE_QUERIES_PER_HEIGHT_POLL = 1
 # The server logs the first drop on each connection at warning level, which nodes started at
 # the default verbosity keep; later drops on the same connection are debug-only.
 LITE_ADMISSION_DROP_MARKER = "Dropping external query from "
+LITE_ADMISSION_LOG_MAX_BYTES = 64 * 1024 * 1024
 T = TypeVar("T")
 
 
@@ -405,14 +407,58 @@ class LiteQueryPacer:
 
 def lite_admission_drop_warnings(log_paths: dict[str, Path]) -> dict[str, int]:
     counts: dict[str, int] = {}
+    marker = LITE_ADMISSION_DROP_MARKER.encode()
     for name, path in log_paths.items():
         try:
-            data = Path(path).read_bytes()
-        except OSError as error:
+            with os.fdopen(
+                os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC), "rb"
+            ) as log:
+                before = os.fstat(log.fileno())
+                named_before = os.lstat(path)
+                if (
+                    not stat.S_ISREG(before.st_mode)
+                    or (before.st_dev, before.st_ino) != (named_before.st_dev, named_before.st_ino)
+                    or before.st_size > LITE_ADMISSION_LOG_MAX_BYTES
+                ):
+                    raise ValueError("log is not a stable bounded regular file")
+                count, size, tail = 0, 0, b""
+                while chunk := log.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > LITE_ADMISSION_LOG_MAX_BYTES:
+                        raise ValueError("log exceeded the 64 MiB read limit")
+                    combined = tail + chunk
+                    count += combined.count(marker)
+                    tail = combined[-(len(marker) - 1) :]
+                after = os.fstat(log.fileno())
+                named_after = os.lstat(path)
+                before_id = (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                )
+                after_id = (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+                named_id = (
+                    named_after.st_dev,
+                    named_after.st_ino,
+                    named_after.st_size,
+                    named_after.st_mtime_ns,
+                    named_after.st_ctime_ns,
+                )
+                if before_id != after_id or after_id != named_id:
+                    raise ValueError("log changed while it was read")
+        except (OSError, ValueError) as error:
             raise RuntimeError(
                 f"N6_LITE_ADMISSION_CHECK_FAILURE: cannot read the log of {name}: {error}"
             ) from error
-        counts[name] = data.count(LITE_ADMISSION_DROP_MARKER.encode())
+        counts[name] = count
     return counts
 
 
