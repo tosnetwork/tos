@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "memo_commit": "331c92eccf13423258653c31c627cd5211922e72",
+  "memo_commit": "c73f29ee5ce63d8c96fa93a65ccc4964e3515697",
   "task_table_path": "pq-native/N6-AGENT-WORK-UNITS-20260924.md",
-  "task_table_sha256": "ff04af53b730d466efa57c2b5285daeef890a01ab63d924c5b57a0022c7d9eaf",
+  "task_table_sha256": "efea5ea416a8e952baa68f38a6f97e6bf3266a8e961dd242512d270d557c903b",
   "tasks": [
     {
       "id": "M01",
@@ -326,7 +326,7 @@
       "id": "X01",
       "lane": "F-2 VR-2",
       "owner": "PQ + PG + Mac",
-      "status": "▶"
+      "status": "✅"
     },
     {
       "id": "X02",
@@ -373,8 +373,8 @@
     {
       "id": "Z01",
       "lane": "R-2 Genesis",
-      "owner": "PQ",
-      "status": "□"
+      "owner": "PQ + PG + Mac",
+      "status": "▶"
     },
     {
       "id": "Z02",
@@ -403,7 +403,7 @@
     {
       "id": "A03",
       "lane": "G-1 账本",
-      "owner": "PG + PQ + Mac",
+      "owner": "CC + PQ + Mac",
       "status": "▶"
     },
     {

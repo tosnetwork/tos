@@ -2,6 +2,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,6 +14,14 @@ SPEC = importlib.util.spec_from_file_location("ledger", ROOT / "scripts/a03_deve
 ledger_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ledger_module)
 COMMIT = "84a30e4268f94e894497e402d97058cadcbb876d"
+MEMO = Path(os.environ.get("A03_MEMO_REPO", "/home/tomi/memo"))
+# Last tree whose snapshot still froze memo 331c92ec with X01 open and Z01 unstarted.
+STALE_SNAPSHOT_COMMIT = "a1d3ea8a1574345a4412672bfd43fecde64418df"
+
+
+def synthetic_table(snapshot):
+    rows = "".join(f"| {t['id']} | {t['lane']} | {t['owner']} | {t['status']} | synthetic |\n" for t in snapshot["tasks"])
+    return ("| ID | lane | owner | status | evidence |\n| --- | --- | --- | --- | --- |\n" + rows).encode()
 
 
 class LedgerTest(unittest.TestCase):
@@ -22,7 +31,7 @@ class LedgerTest(unittest.TestCase):
         self.evidence_root = Path(self.temp.name)
         self.snapshot = json.loads((ROOT / "doc/pq-native/a03-task-snapshot.json").read_text())
         self.snapshot["tasks"] = [dict(t, status="✅") for t in self.snapshot["tasks"]]
-        self.table_bytes = b"synthetic table with 72 signed rows"
+        self.table_bytes = synthetic_table(self.snapshot)
         self.snapshot["task_table_sha256"] = hashlib.sha256(self.table_bytes).hexdigest()
         self.snapshot_bytes = json.dumps(self.snapshot, ensure_ascii=False).encode()
         source = subprocess.check_output(["git", "show", f"{COMMIT}:AGENTS.md"], cwd=ROOT)
@@ -101,6 +110,19 @@ class LedgerTest(unittest.TestCase):
         duplicate.write_bytes(original.read_bytes())
         ev["controls"]["old_red"]["raw"] = {"path": duplicate.name, "sha256": ev["raw"]["sha256"]}
         self.assertIn(f"{tid}: raw content reused from {tid}:raw", self.check())
+
+    def test_synthetic_table_must_restate_snapshot_rows(self):
+        self.snapshot["tasks"][1]["status"] = "▶"
+        self.table_bytes = synthetic_table(self.snapshot)
+        self.snapshot["task_table_sha256"] = hashlib.sha256(self.table_bytes).hexdigest()
+        tid = self.snapshot["tasks"][1]["id"]
+        self.snapshot["tasks"][1]["status"] = "✅"
+        self.assertIn(f"{tid}: snapshot status ✅ differs from task table ▶", self.check())
+
+    def test_unparseable_table_cannot_stand_for_72_rows(self):
+        self.table_bytes = b"synthetic table with 72 signed rows"
+        self.snapshot["task_table_sha256"] = hashlib.sha256(self.table_bytes).hexdigest()
+        self.assertIn("snapshot: task IDs or order differ from task table", self.check())
 
     def test_changed_current_memo_table_red(self):
         self.table_bytes = b"changed task table"
@@ -238,6 +260,70 @@ class LedgerTest(unittest.TestCase):
         self.snapshot_bytes = json.dumps(self.snapshot, ensure_ascii=False).encode()
         self.ledger["snapshot_sha256"] = hashlib.sha256(self.snapshot_bytes).hexdigest()
         self.assertIn(f"{tid}: testnet item cannot close development gate", self.check())
+
+
+class RealSnapshotTest(unittest.TestCase):
+    """Checks the committed snapshot and ledger against the fixed memo task table."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.snapshot_bytes = (ROOT / "doc/pq-native/a03-task-snapshot.json").read_bytes()
+        cls.snapshot = json.loads(cls.snapshot_bytes)
+        cls.ledger = json.loads((ROOT / "doc/pq-native/a03-development-ledger.json").read_bytes())
+        cls.table = subprocess.check_output(
+            ["git", "show", f"{cls.snapshot['memo_commit']}:{cls.snapshot['task_table_path']}"], cwd=MEMO)
+
+    def check(self, snapshot, snapshot_bytes, ledger):
+        return ledger_module.validate(snapshot, ledger, snapshot_bytes, ROOT, Path("/"), self.table, MEMO)
+
+    def test_committed_snapshot_is_trusted_and_restates_table(self):
+        self.assertEqual(ledger_module.EXPECTED_SNAPSHOT_SHA, hashlib.sha256(self.snapshot_bytes).hexdigest())
+        self.assertEqual(self.snapshot["task_table_sha256"], hashlib.sha256(self.table).hexdigest())
+        self.assertEqual([], ledger_module.snapshot_table_errors(self.snapshot, self.table))
+
+    def test_committed_ledger_fails_closed_only_on_unreconciled_rows(self):
+        errors = self.check(self.snapshot, self.snapshot_bytes, self.ledger)
+        signed = [t["id"] for t in self.snapshot["tasks"] if t["status"] == "✅"]
+        open_ids = [t["id"] for t in self.snapshot["tasks"] if t["status"] in {"□", "▶"}]
+        self.assertEqual(sorted([f"{tid}: signed row lacks machine evidence" for tid in signed]
+                                + [f"{tid}: development unit open" for tid in open_ids]), sorted(errors))
+        self.assertEqual({"accepted": 0, "signed_unreconciled": 58, "open": 10, "deferred_testnet": 4},
+                         ledger_module.unit_counts(self.snapshot, self.ledger))
+
+    def test_stale_snapshot_is_precisely_red_against_current_table(self):
+        stale_bytes = subprocess.check_output(
+            ["git", "show", f"{STALE_SNAPSHOT_COMMIT}:doc/pq-native/a03-task-snapshot.json"], cwd=ROOT)
+        stale = json.loads(stale_bytes)
+        self.assertEqual(["X01: snapshot status ▶ differs from task table ✅",
+                          "Z01: snapshot owner PQ differs from task table PQ + PG + Mac",
+                          "Z01: snapshot status □ differs from task table ▶",
+                          "A03: snapshot owner PG + PQ + Mac differs from task table CC + PQ + Mac"],
+                         ledger_module.snapshot_table_errors(stale, self.table))
+        ledger = copy.deepcopy(self.ledger)
+        ledger["snapshot_sha256"] = hashlib.sha256(stale_bytes).hexdigest()
+        self.assertIn("snapshot: current memo task table differs", self.check(stale, stale_bytes, ledger))
+
+    def test_open_or_testnet_row_cannot_be_passed_off_as_signed(self):
+        ledger = copy.deepcopy(self.ledger)
+        ledger["units"]["Z01"].update(status="✅", accepted=True)
+        ledger["units"]["S01"]["accepted"] = True
+        errors = self.check(self.snapshot, self.snapshot_bytes, ledger)
+        self.assertIn("Z01: task-table status/scope mismatch", errors)
+        self.assertIn("S01: testnet item cannot close development gate", errors)
+        snapshot = copy.deepcopy(self.snapshot)
+        next(t for t in snapshot["tasks"] if t["id"] == "Z01")["status"] = "✅"
+        self.assertIn("Z01: snapshot status ✅ differs from task table ▶",
+                      ledger_module.snapshot_table_errors(snapshot, self.table))
+
+    def test_x01_partial_evidence_is_rehashed(self):
+        for key in ("review_reports", "memo_raw_artifacts", "local_raw_artifacts", "source_references"):
+            ledger = copy.deepcopy(self.ledger)
+            ledger["units"]["X01"]["partial_evidence"][key][0]["sha256"] = "0" * 64
+            errors = [e for e in self.check(self.snapshot, self.snapshot_bytes, ledger) if e.startswith("X01")]
+            self.assertTrue(any("SHA mismatch" in e for e in errors), (key, errors))
+        ledger = copy.deepcopy(self.ledger)
+        ledger["units"]["X01"]["partial_evidence"]["missing_required_fields"] = []
+        self.assertIn("X01: explicit per-row gaps missing", self.check(self.snapshot, self.snapshot_bytes, ledger))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "snapshot_sha256": "53249169f93c1eecf508fa48bc79b0c485b6ac038e733f637821c59451f67c79",
+  "snapshot_sha256": "8b5811a6b4c775bd1487ae9b31c20f89e39c80a278097148ff03ffa902415ec5",
   "source_commit": "84a30e4268f94e894497e402d97058cadcbb876d",
   "units": {
     "M01": {
@@ -1735,7 +1735,7 @@
       "accepted": false,
       "evidence": null,
       "partial_evidence": {
-        "task_table_row_sha256": "d051d8e361b1e902b05c434f722d1c33ee9e627bc2f97b5244e6eb7089e2f94e",
+        "task_table_row_sha256": "6a250f2d606f0e0b19a7c2d73a5c6809c3b8ae280fbe5f131325d0b85977b274",
         "review_reports": [
           {
             "path": "pq-native/N6-MAC-F01-2E1-EXACT-RUN-REVIEW-20260925.md",
@@ -1778,7 +1778,7 @@
         "missing_required_fields": [
           "exact run command, exit and original console/report are indexed in first-batch inventory but not yet bound to per-run receipt and complete controls",
           "12 binary snapshots and independent OS watcher are indexed in first-batch inventory but not yet bound to complete per-unit acceptance record",
-          "exact 2e1 CI has no run returned in raw query; later CI or explicit scoped dispensation must be reconciled",
+          "exact 2e1 CI query returned no run; the signed row now cites CI on docs-only descendant 38440fe9d, recorded as source-equivalence in the first-batch index but not yet reconciled as a per-unit CI state",
           "old-red/new-green/mutant-red raw and independent review of full A03 row still missing"
         ]
       }
@@ -1807,11 +1807,122 @@
       "gap": "Pending unit execution/review; task-table state only."
     },
     "X01": {
-      "status": "▶",
+      "status": "✅",
       "scope": "F-2 VR-2",
       "accepted": false,
       "evidence": null,
-      "gap": "Pending unit execution/review; task-table state only."
+      "gap": "Signed scope is the fixed 6e863142b single-host four-process accelerated Stage A stop/restart fault window only; A03 per-unit fields are not yet individually reconciled.",
+      "partial_evidence": {
+        "task_table_row_sha256": "37e24ea8f364f0450a24ee43c88db6c1b6a69013d08b1a11569fb3f88d835e16",
+        "review_reports": [
+          {
+            "path": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md",
+            "sha256": "f3563415a22fe63dede660cdd621c3533ed2fc1677a7861b085db55cce627631"
+          }
+        ],
+        "memo_raw_artifacts": [
+          {
+            "path": "pq-native/evidence/x01-6e8-original-sha256.txt",
+            "sha256": "16a00b342100fa18644267faf6ab0928712c57cf39c4c0efa8cdaf0a5ccec03b",
+            "cited_by": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md"
+          },
+          {
+            "path": "pq-native/evidence/x01-6e8-independent-audit.py",
+            "sha256": "4756b6e299768cb7082b7f666e4278541648532e99a2866ef1583e788097ec09",
+            "cited_by": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md"
+          },
+          {
+            "path": "pq-native/evidence/x01-6e8-independent-audit.json",
+            "sha256": "aeb9f12e432533c15497ed74017d715183b71cc0ae5579d6152bb5987ba7e5c6",
+            "cited_by": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md"
+          },
+          {
+            "path": "pq-native/evidence/x01-6e8-check-rerun.json",
+            "sha256": "2ed05512cde9637b4d4c33c47bd3e8aecca7157900431b2f94663cdc8631ce16",
+            "cited_by": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md"
+          }
+        ],
+        "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
+        "local_raw_artifacts": [
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925-console.typescript",
+            "sha256": "132c15355fc834717ae5061490bc75a82b1345f0f0e2244c6aa2435578ac0ff8",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/report.json",
+            "sha256": "7256ad9697a3288532423e5c4b06a0fff60f570db2753a651a13bb5009fdb10f",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/policy.json",
+            "sha256": "976c1cc502e5d76a185ad0152f47a2f881e1a6ad58aeaca01865714a98171442",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/trace.json",
+            "sha256": "c390f7ac83a086ab4d9581867e2d26918a40aa6da89c4d4a7cf8e1531467b4ec",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/rpc.jsonl",
+            "sha256": "4c45efebd84e2274acb2486e2a5e3d94e97f1b8ff6ea3466d086a3c078f8c666",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/check.json",
+            "sha256": "d1bd442c99001ff14e534ca3a4bc1ad17aad7165df050874edcfd16bec5ae7a6",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/capture-manifest.json",
+            "sha256": "b24c41d32b227abd34ed526be298eaf5a53a2354563ed359f04b4dfb4495dd2a",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/f01-finality/capture-manifest.json",
+            "sha256": "2be7c717e935355948ff9eab0ef32238887f423fe202cb5c89e63d6863d62719",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/datax/n6-supervisor-x01-6e8-evidence/process-generations.jsonl",
+            "sha256": "23da4b79fbd380e6b2790f49a7eeefc55b67e714b614e2c68955d8a315e8a754",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/datax/n6-supervisor-x01-6e8-evidence/proc-absences.jsonl",
+            "sha256": "cb2302fb54e0d91abcecb71abaaec8c527df483475ad69ef6e5b0cdb6dd234c0",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/datax/n6-supervisor-x01-6e8-evidence/independent-check.json",
+            "sha256": "2ed05512cde9637b4d4c33c47bd3e8aecca7157900431b2f94663cdc8631ce16",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          },
+          {
+            "path": "/datax/n6-supervisor-x01-6e8-evidence/SHA256SUMS",
+            "sha256": "588fcb5ee7ed21bc74a38c6b1b1609bf1bcfbd689ce16b062e2f8794fafc1ebd",
+            "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
+          }
+        ],
+        "source_references": [
+          {
+            "commit": "6e863142be50976b998572249fc7fb62a980b808",
+            "path": "scripts/validator-election-stage-a.py",
+            "sha256": "dbfd25f2c9b7c3132ed822e06d9e023961c5d02cccb114eef6cbe6c574431e1a",
+            "cited_by": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md",
+            "sha_origin": "computed_from_cited_path"
+          }
+        ],
+        "missing_required_fields": [
+          "exact launch argv appears only in the Mac review prose; the original console does not record it and no per-run receipt binds argv, natural exit and console SHA",
+          "no distinct old-red/new-green/mutant-red raw runs of the fixed 6e863142b X01 checker are indexed for this signed run",
+          "fault-window policy was frozen inside the harness before the first stop, not precommitted outside it",
+          "applicable CI succeeded on docs-only descendant 262f5c5c7, not on 6e863142b itself; the source-equivalence is recorded in the first-batch index only",
+          "12 binary snapshots and independent OS watcher are indexed in the first-batch inventory but not bound to a complete per-unit acceptance record",
+          "no X02 directed isolation/loss, multi-host, power-loss or release-network coverage may be inherited from this row"
+        ]
+      }
     },
     "X02": {
       "status": "▶",
@@ -1863,7 +1974,7 @@
       "gap": "Pending unit execution/review; task-table state only."
     },
     "Z01": {
-      "status": "□",
+      "status": "▶",
       "scope": "R-2 Genesis",
       "accepted": false,
       "evidence": null,

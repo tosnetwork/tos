@@ -13,11 +13,55 @@ COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SIGNED = "✅"
 TESTNET = "◇"
 OPEN = {"□", "▶"}
-EXPECTED_SNAPSHOT_SHA = "53249169f93c1eecf508fa48bc79b0c485b6ac038e733f637821c59451f67c79"
+EXPECTED_SNAPSHOT_SHA = "8b5811a6b4c775bd1487ae9b31c20f89e39c80a278097148ff03ffa902415ec5"
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def task_table_rows(table_bytes):
+    """Return (id, lane, owner, status) for every task row, in table order."""
+    rows = []
+    for line in table_bytes.decode("utf-8").splitlines():
+        if re.match(r"^\| [A-Z][0-9]{2} \|", line):
+            cells = [cell.strip() for cell in line.split("|")[1:5]]
+            rows.append(tuple(cells) if len(cells) == 4 else (cells[0], None, None, None))
+    return rows
+
+
+def snapshot_table_errors(snapshot, table_bytes):
+    """The snapshot must restate the table exactly; a matching SHA alone is not enough."""
+    rows = task_table_rows(table_bytes)
+    tasks = snapshot.get("tasks") if isinstance(snapshot.get("tasks"), list) else []
+    ids = [row[0] for row in rows]
+    if len(ids) != len(set(ids)):
+        return ["snapshot: task table has duplicate IDs"]
+    if ids != [t.get("id") if isinstance(t, dict) else None for t in tasks]:
+        return ["snapshot: task IDs or order differ from task table"]
+    errors = []
+    for task, (tid, lane, owner, status) in zip(tasks, rows):
+        for key, wanted in (("lane", lane), ("owner", owner), ("status", status)):
+            if task.get(key) != wanted:
+                errors.append(f"{tid}: snapshot {key} {task.get(key)} differs from task table {wanted}")
+    return errors
+
+
+def unit_counts(snapshot, ledger):
+    """Separate accepted rows from signed-but-unreconciled, open and deferred rows."""
+    units = ledger.get("units") if isinstance(ledger.get("units"), dict) else {}
+    counts = {"accepted": 0, "signed_unreconciled": 0, "open": 0, "deferred_testnet": 0}
+    for task in snapshot.get("tasks", []):
+        status = task.get("status")
+        if status == TESTNET:
+            counts["deferred_testnet"] += 1
+        elif status in OPEN:
+            counts["open"] += 1
+        elif units.get(task.get("id"), {}).get("accepted") is True:
+            counts["accepted"] += 1
+        else:
+            counts["signed_unreconciled"] += 1
+    return counts
 
 
 def artifact(item, evidence_root, errors, label):
@@ -70,6 +114,7 @@ def validate(snapshot, ledger, snapshot_bytes, repo, evidence_root, current_task
     errors = []
     if digest(current_task_table_bytes) != snapshot.get("task_table_sha256"):
         errors.append("snapshot: current memo task table differs")
+    errors.extend(snapshot_table_errors(snapshot, current_task_table_bytes))
     tasks = snapshot.get("tasks")
     if snapshot.get("schema") != 1 or not isinstance(tasks, list) or len(tasks) != 72:
         return ["snapshot: expected 72 task rows"]
@@ -256,7 +301,8 @@ def main():
         print(json.dumps({"passed": False, "errors": ["current memo task table unavailable"]}))
         return 1
     errors = validate(snapshot, ledger, raw, args.repo, args.evidence_root, table.stdout, args.memo_repo)
-    print(json.dumps({"passed": not errors, "task_count": len(snapshot.get("tasks", [])), "errors": errors}, ensure_ascii=False, indent=2))
+    print(json.dumps({"passed": not errors, "task_count": len(snapshot.get("tasks", [])),
+                      "counts": unit_counts(snapshot, ledger), "errors": errors}, ensure_ascii=False, indent=2))
     return bool(errors)
 
 
