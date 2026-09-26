@@ -8,6 +8,54 @@
     "binding": "immutable git blob at named commit; artifact SHA values are inside each entry and must be rechecked under a ticket"
   },
   "units": {
+    "N01": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "recoverable-but-unmapped-citation",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-N01-0F104CAEE-SEQ2-CONTINUATION-REVIEW-20260924.md",
+      "executed_source_prefix": "e0923941d",
+      "scope": "controlled single-process actor/dual-DB cold seq1-to-seq2 continuation; not power loss or ADNL",
+      "known": ["cited exact test/Manager/patch/mutant hashes", "cited retained clean/red build, binary and raw files", "cold predecessor-next control fails at the intended seq1-to-seq2 boundary", "named CTest and N5 observations and independent review"],
+      "unproven": ["current raw-file existence and SHA under this typed mapping", "separate original shell exit wrapper; report distinguishes inferred direct shell/child status", "complete original argv/receipt and unique patch-to-executed-mutant reconstruction"],
+      "ci": "Fixed-tree CI was part of scoped historical signoff; exact machine CI record and applicability remain unmapped here, not fabricated as new success.",
+      "invalidation": ["session/DB root, next-link or continuation source changes", "raw/control/binary identity changes"]
+    },
+    "N03": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "recoverable-but-unmapped-citation",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "reports": ["pq-native/N6-MAC-N03-DF3A6B037-CUT2-REVIEW-20260924.md", "pq-native/N6-MAC-N03-D28E2EC7B-CUT2-MUTANTS-REVIEW-20260924.md"],
+      "scope": "controlled Cut2 cold production #13 signature-file persistence and bootstrap recovery",
+      "known": ["two committed patches and independently reconstructed mutant hashes", "distinct retained binary/raw hashes", "missing signature-file control reaches cold #13 with handle flag true", "restored build/binary/green and three CTest hashes"],
+      "unproven": ["current raw-file existence and SHA under this typed mapping", "original argv/exit wrapper and separately retained guard-red receipt", "exact compilation attestation; identical generic build logs alone are insufficient"],
+      "control_boundaries": ["signature flag absent", "signature file absent while flag true; directly tests Db::get_block_signatures"],
+      "ci": "Historical scoped CI applicability must be mapped separately; no new terminal success is asserted.",
+      "invalidation": ["signature write/read, gate ordering or cold bootstrap changes", "either distinct control source/patch/raw identity changes"]
+    },
+    "N04": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "recoverable-but-unmapped-citation",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-N04-EBCCA660A-CUT3-EVIDENCE-REVIEW-20260924.md",
+      "scope": "controlled Cut3 after production AcceptBlock/BlockProof and before finalized marker; orderly actor cancellation",
+      "known": ["explicit clean resolver/test hashes", "unique marker patch and reconstructed mutant source", "red/clean binary, build, raw and CTest hashes cited", "same-certificate cold marker absent-to-present recovery"],
+      "unproven": ["current raw-file existence and SHA under this typed mapping", "direct shell exit wrapper", "red compile provenance is weak because retained build says no work to do", "complete unique patch/run attribution"],
+      "mapping_correction": "Empty c027 source/raw extraction is not proof that originals are absent; fixed cited review contains literal identities.",
+      "ci": "Historical scoped CI applicability remains a separate unmapped record.",
+      "invalidation": ["AcceptBlock completion/marker ordering or actor gate changes", "proof/marker/DB root and mutant identity changes"]
+    },
+    "E05": {
+      "delivery_type": "runtime-route",
+      "evidence_state": "recoverable-but-unmapped-citation",
+      "memo_commit": "ae2be260e355277893453d4883407d2b1feb06b6",
+      "report": "pq-native/N6-MAC-E05-FILTER-EXACT-RUN-REVIEW-20260925.md",
+      "executed_source_prefix": "c5b77a3c8",
+      "scope": "local single-validator Agent Query advertised route and discriminating creator/agent lists",
+      "known": ["exact script argv and original COMMAND_EXIT_CODE0", "manifest/HTTP/script/test hash citations", "16 original decoded HTTP responses", "three complete positive and two inverse-empty lists plus four DTOs", "independent raw review"],
+      "unproven": ["current raw-file existence and SHA under this typed mapping", "separately frozen runtime executable snapshots", "untracked Python import shadow inventory", "complete source-equivalent CI/owner-waiver and per-control applicability mapping"],
+      "ci": "Exact CI absent at initial review; later descendant equivalence and owner local-signoff ruling must be separately attributed, not rewritten as an exact-tree CI result.",
+      "invalidation": ["list/filter DTO, exact-set or error-item assertions change", "RPC/API source, HTTP raw or runtime manifest identity changes"]
+    },
     "E16": {
       "delivery_type": "runtime-route",
       "inventory_entry": "E16",
