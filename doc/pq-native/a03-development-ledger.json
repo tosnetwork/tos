@@ -131,6 +131,18 @@
             "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-bootstrap-red.raw.log",
             "sha256": "9a8522e20be8524fd804e8ade6e6c5f3719f981139a3fe58a57f02b806cf433b",
             "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-save-red.raw.log",
+            "sha256": "8a5519561e5c829e96f2ef4352f339e1937549623b1d4136782bb49e96141417",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "role": "no-save-mutant-red"
+          },
+          {
+            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-cut1-final-green.raw.log",
+            "sha256": "4a155708ad3753c0c5b6f9d9346a4764fa084353e9457ed4451d3daee7aede6c",
+            "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
+            "role": "final-restored-green"
           }
         ],
         "source_references": [
@@ -432,11 +444,17 @@
         ],
         "memo_raw_artifacts": [],
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
-        "local_raw_artifacts": [],
+        "local_raw_artifacts": [
+          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/getattr-red.log", "sha256": "cabe859eaa03f65f8b5f13b3577def34d1e00594c29ae19d14179b886972461e", "role": "getattr-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
+          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/bound-method-red.log", "sha256": "9c3f0fb7569dc0da89efb070e9093bf06eaa9ade5e3d9bd20bc2f40e840dd241", "role": "bound-method-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
+          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/spare-red.log", "sha256": "297cfc39ed7f1a29648b210af6d681e95da0171ea31d3df119cf72ecff4f418e", "role": "spare-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
+          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/n6-import-red.log", "sha256": "58f5416015425d9db050a6432af94d1e7eef60f609ea463f620f84ee0300e225", "role": "n6-import-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"},
+          {"path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/removed-call-red.log", "sha256": "86f65a41d32cb4b68e49a8adde2258ec05f9866ceda7187375bb9f253bf58685", "role": "removed-call-mutant-red", "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"}
+        ],
         "source_references": [],
         "missing_required_fields": [
           "no fixed source file bytes referenced by directly linked review",
-          "no hash-verified raw artifact found in direct task-table/review references",
+          "five red raw hashes checked under A03-e17-n02-535-v1; exact a2b green raw and original command/exit still not indexed",
           "exact command and exit are not machine-bound to the primary raw artifact",
           "distinct old-red/new-green/mutant-red raw and exit controls are not mapped",
           "binary SHA or explicit scoped gap is not reconciled",

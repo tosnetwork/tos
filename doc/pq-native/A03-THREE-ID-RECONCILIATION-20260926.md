@@ -60,3 +60,25 @@ These commands test an index at the current source, not re-execute any of the
 three historical live networks. Original console/review/binary paths and
 individual SHA values remain in the machine index, not copied into new fake
 run artifacts.
+
+## Fixed-tree local observation receipts
+
+On tracked-clean `535214d58`, the following new **offline commands** were
+wrapped by `script -q -e -c`; their command and exit trailers are retained
+under `test/integration/.a03-three-id-535214d58-20260926/`. They are receipts
+for the present byte checks only, never receipts for the historical networks.
+
+| Raw log | Actual command result | SHA-256 |
+| --- | --- | --- |
+| `unit-tests.typescript` | 43/43 tests, exit 0 | `e7894b4b4eb66e2db4dc99f9f2c4805b92a67d1aa7010d49f874061412d26ac7` |
+| `inventory.typescript` | inventory integrity true, accepted IDs empty, exit 0 | `2c6e700b56e2742a85433234c61a35a1bb9d572a6b108f21e555a49e6a8701e3` |
+| `development-gate.typescript` | fixed memo `c73f29ee`, accepted 0 / unreconciled 58 / open 10 / deferred 4, exit 1 | `89607e6d09a1728b577f391fad35bae5b14e8b04531f783994f89c66d373ed1d` |
+| `latest-table-gate.typescript` | memo `377518d9`, same counts plus full-table-byte drift, exit 1 | `373549adbaeba65ccf32bae742f2b28b65d91ef8d06ee8361295829f09f4db41` |
+
+The updated machine index SHA is
+`b018093dff980214320a997336b4041a0ceb41ba9a89a4944fcdf68e428d217e`.
+While these checks ran, the memo table advanced to `377518d9`; all 72
+ID/lane/owner/status rows still match the frozen snapshot, but full text SHA
+is now `dcea2ea8ea55228826556c632e18fd802f288c3e2148baaaa7bbdbd22bfc4e35`.
+The stricter current-table gate therefore adds a snapshot-drift error.
+This update does not silently rewrite the snapshot or treat that red as green.
