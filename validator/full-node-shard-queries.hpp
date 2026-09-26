@@ -146,7 +146,7 @@ class NextBlocksFullSender : public td::actor::Actor {
       }
       self->promise_.set_value(create_serialize_tl_object<tos_api::tosNode_nextBlocksFull>(std::move(self->result_)));
       self->stop();
-      co_return {};
+      co_return td::Unit{};
     }(this)
                                           .start()
                                           .detach();
@@ -181,7 +181,7 @@ class NextBlocksFullSender : public td::actor::Actor {
         break;
       }
     }
-    co_return {};
+    co_return td::Unit{};
   }
 
  private:
