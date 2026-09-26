@@ -96,7 +96,7 @@ class QueueStatsFD:
         saved = os.dup(self.fd)
         fake = os.memfd_create("x02-fake-stats", os.MFD_CLOEXEC)
         try:
-            for case in ("missing", "fake", "writable"):
+            for case in ("missing", "fake", "writable-fake"):
                 if case == "missing":
                     os.close(self.fd)
                 elif case == "fake":
