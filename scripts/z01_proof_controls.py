@@ -78,6 +78,21 @@ def mutate_middle_byte(raw: bytes) -> bytes:
     return raw[:index] + bytes([raw[index] ^ 0xFF]) + raw[index + 1:]
 
 
+def positive_output_matches(stdout: bytes, seqno: int, root: str, file: str, param30: str) -> bool:
+    """Bind the native checker's hex output to the exact block and cell.
+
+    The native checker prints digests with td's uppercase to_hex(); quartet
+    digests are lowercase. Letter case alone may differ, every digit must not.
+    """
+    match = re.fullmatch(
+        rb"Z01_CONFIG_PROOF_OK seqno=(\d+) root=([0-9A-Fa-f]{64}) "
+        rb"file=([0-9A-Fa-f]{64}) param30=([0-9A-Fa-f]{64})\n", stdout)
+    return (match is not None and int(match[1]) == seqno
+            and match[2].decode().lower() == root
+            and match[3].decode().lower() == file
+            and match[4].decode().lower() == param30)
+
+
 def load_quartet(manifest: dict[str, Any]) -> dict[str, Any]:
     """Validate a quartet manifest and read its originals with SHA binding."""
     require(manifest.get("schema") == "tos.z01.config30-quartet.v1", "wrong quartet schema")
@@ -175,9 +190,9 @@ def run_matrix(checker: Path, checker_sha256: str, quartet_manifest: Path,
         write_once(directory / "stderr.raw", completed.stderr)
         expected = EXPECTED[name]
         if expected is None:
-            wanted = (f"Z01_CONFIG_PROOF_OK seqno={block['seqno']} root={block['root_hash']} "
-                      f"file={block['file_hash']} param30={quartet['expected']}\n").encode()
-            passed = completed.returncode == 0 and completed.stdout == wanted and completed.stderr == b""
+            passed = (completed.returncode == 0 and completed.stderr == b""
+                      and positive_output_matches(completed.stdout, block["seqno"], block["root_hash"],
+                                                  block["file_hash"], quartet["expected"]))
         else:
             passed = (completed.returncode == 1 and completed.stdout == b""
                       and completed.stderr == REJECT_PREFIX + expected + b"\n")

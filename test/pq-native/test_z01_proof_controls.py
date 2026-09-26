@@ -84,6 +84,38 @@ class ProofControlMatrix(unittest.TestCase):
         self.assertEqual(set(verdict["controls"]), set(controls.EXPECTED))
         self.assertEqual(verdict["controls"]["positive"]["exit"], 0)
 
+    def test_checker_printing_uppercase_digests_passes(self):
+        # The native checker prints td's uppercase to_hex(); only letter case differs.
+        upper = FAKE_CHECKER.replace(
+            'print(f"Z01_CONFIG_PROOF_OK seqno={seqno} root={root} file={file} param30={cell}")',
+            'print(f"Z01_CONFIG_PROOF_OK seqno={seqno} root={root.upper()} file={file.upper()} '
+            'param30={cell.upper()}")')
+        self.assertNotEqual(upper, FAKE_CHECKER)
+        verdict = self.run_matrix(upper)
+        self.assertTrue(verdict["passed"], verdict["failures"])
+
+    def test_positive_output_binds_real_native_bytes(self):
+        # Byte-exact stdout of the native checker in the four-node live attempt
+        # at masterchain 11; the same bytes were retained on all four nodes.
+        root = "0eb765e2da7e18706a7312e26256096f657a16440b60c0c3ea4eefcff2a6fa1c"
+        file = "48eab1201f0eca6e170f65b985ec7d2ab611098da5b625521c53559203816e44"
+        param30 = "a922fc0cb6bacfee2d49645da25394f069447d8c250e4a0fb5ed75ba23cdd9e5"
+        real = (b"Z01_CONFIG_PROOF_OK seqno=11 "
+                b"root=0EB765E2DA7E18706A7312E26256096F657A16440B60C0C3EA4EEFCFF2A6FA1C "
+                b"file=48EAB1201F0ECA6E170F65B985EC7D2AB611098DA5B625521C53559203816E44 "
+                b"param30=A922FC0CB6BACFEE2D49645DA25394F069447D8C250E4A0FB5ED75BA23CDD9E5\n")
+        self.assertEqual(hashlib.sha256(real).hexdigest(),
+                         "507109437d363cff7690794d06eb21e8bc62e29acd858bbd1c7c2da822fff0b5")
+        self.assertTrue(controls.positive_output_matches(real, 11, root, file, param30))
+        self.assertFalse(controls.positive_output_matches(real, 12, root, file, param30))
+        self.assertFalse(controls.positive_output_matches(real, 11, "1" + root[1:], file, param30))
+        self.assertFalse(controls.positive_output_matches(real, 11, root, file[:-1] + "0", param30))
+        self.assertFalse(controls.positive_output_matches(real, 11, root, file, "b" + param30[1:]))
+        self.assertFalse(controls.positive_output_matches(real, 11, file, root, param30))
+        self.assertFalse(controls.positive_output_matches(real.rstrip(b"\n"), 11, root, file, param30))
+        self.assertFalse(controls.positive_output_matches(real + real, 11, root, file, param30))
+        self.assertFalse(controls.positive_output_matches(real.replace(b"root=0", b"root=G"), 11, root, file, param30))
+
     def test_checker_that_refuses_everything_fails_positive_and_later_checks(self):
         refuse = ("import sys\nsys.stderr.write('Z01_CONFIG_PROOF_REJECT: "
                   "block BOC file hash differs from full BlockIdExt\\n')\nsys.exit(1)\n")

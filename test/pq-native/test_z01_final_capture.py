@@ -40,6 +40,24 @@ def receipts() -> list[dict]:
 
 
 class FinalCaptureControls(unittest.TestCase):
+    def test_native_proof_output_accepts_uppercase_hex_only_for_exact_id_and_cell(self):
+        # These values came from the four-node live attempt at masterchain 11.
+        root = "0eb765e2da7e18706a7312e26256096f657a16440b60c0c3ea4eefcff2a6fa1c"
+        file = "48eab1201f0eca6e170f65b985ec7d2ab611098da5b625521c53559203816e44"
+        param30 = "a922fc0cb6bacfee2d49645da25394f069447d8c250e4a0fb5ed75ba23cdd9e5"
+        stdout = (f"Z01_CONFIG_PROOF_OK seqno=11 root={root.upper()} "
+                  f"file={file.upper()} param30={param30.upper()}\n").encode()
+        exact = (-1, -(1 << 63), 11, root, file)
+        z01.verify_proof_tool_output(stdout, 11, exact, param30)
+        with self.assertRaisesRegex(z01.EvidenceError, "different block or Config30"):
+            z01.verify_proof_tool_output(stdout, 12, exact, param30)
+        with self.assertRaisesRegex(z01.EvidenceError, "different block or Config30"):
+            z01.verify_proof_tool_output(stdout, 11, exact[:-1] + ("0" + file[1:],), param30)
+        with self.assertRaisesRegex(z01.EvidenceError, "different block or Config30"):
+            z01.verify_proof_tool_output(stdout, 11, exact, "0" + param30[1:])
+        with self.assertRaisesRegex(z01.EvidenceError, "different block or Config30"):
+            z01.verify_proof_tool_output(stdout.replace(b"root=", b"root=G"), 11, exact, param30)
+
     def test_exact_block_and_proofs_pass(self):
         header = {"id": full_id(10)}
         config = {"@type": "configInfo", "block_id": full_id(10),

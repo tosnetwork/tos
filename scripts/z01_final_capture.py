@@ -82,6 +82,19 @@ def config_provenance(header: dict[str, Any], config: dict[str, Any], height: in
     return exact, param, state, proof
 
 
+def verify_proof_tool_output(stdout: bytes, seq: int, exact: tuple,
+                             param30_cell_hash: str) -> None:
+    """Match the native checker's hex output to the resolved block and cell."""
+    match = re.fullmatch(
+        rb"Z01_CONFIG_PROOF_OK seqno=(\d+) root=([0-9A-Fa-f]{64}) "
+        rb"file=([0-9A-Fa-f]{64}) param30=([0-9A-Fa-f]{64})\n", stdout)
+    require(match is not None and int(match[1]) == seq
+            and match[2].decode().lower() == exact[3]
+            and match[3].decode().lower() == exact[4]
+            and match[4].decode().lower() == param30_cell_hash,
+            "proof tool returned a different block or Config30 cell")
+
+
 def process_snapshot(pid: int, db_root: Path, expected_exe_sha: str,
                      raw_dir: Path, label: str, endpoint: str, global_config: Path,
                      stderr_pipe_inode: int) -> dict[str, Any]:
@@ -486,11 +499,7 @@ async def capture_node(
                                          "checker_sha256": checker_sha}
             watcher.drain()
             require(proof.returncode == 0, "independent Config30 proof verification failed")
-            match = re.fullmatch(rb"Z01_CONFIG_PROOF_OK seqno=(\d+) root=([0-9a-f]{64}) file=([0-9a-f]{64}) param30=([0-9a-f]{64})\n", proof.stdout)
-            require(match is not None and int(match[1]) == seq and match[2].decode() == exact[3]
-                    and match[3].decode() == exact[4]
-                    and match[4].decode() == node["param30_cell_hash"],
-                    "proof tool returned a different block or Config30 cell")
+            verify_proof_tool_output(proof.stdout, seq, exact, node["param30_cell_hash"])
 
         memory_at = time.monotonic_ns()
         memory, query_raw, reply_raw = await console.get_consensus_noncritical_params_overrides_with_raw()
