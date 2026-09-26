@@ -46,6 +46,12 @@ class QueueStatsFD:
                 and self.receipt["worker_caps"] == CAPS,
                 "handoff identity differs")
         self.identity = (self.receipt["proc_dev"], self.receipt["proc_inode"])
+        broker = os.stat("/datax/n6-control/helpers/x02-nfq-proc-fd-v1", follow_symlinks=False)
+        require(stat.S_ISREG(broker.st_mode) and broker.st_uid == broker.st_gid == 0
+                and stat.S_IMODE(broker.st_mode) == 0o555
+                and (broker.st_dev, broker.st_ino) ==
+                (self.receipt["broker_dev"], self.receipt["broker_inode"]),
+                "root broker executable identity differs")
         self.validate()
 
     def validate(self):
