@@ -46,7 +46,12 @@ class QueueStatsFD:
                 and self.receipt["worker_caps"] == CAPS,
                 "handoff identity differs")
         self.identity = (self.receipt["proc_dev"], self.receipt["proc_inode"])
-        broker = os.stat("/datax/n6-control/helpers/x02-nfq-proc-fd-v1", follow_symlinks=False)
+        for directory in ("/", "/usr", "/usr/local", "/usr/local/libexec"):
+            ancestor = os.stat(directory, follow_symlinks=False)
+            require(stat.S_ISDIR(ancestor.st_mode) and ancestor.st_uid == 0
+                    and not stat.S_IMODE(ancestor.st_mode) & 0o022,
+                    "broker ancestor is not root protected")
+        broker = os.stat("/usr/local/libexec/x02-nfq-proc-fd-v1", follow_symlinks=False)
         require(stat.S_ISREG(broker.st_mode) and broker.st_uid == broker.st_gid == 0
                 and stat.S_IMODE(broker.st_mode) == 0o555
                 and (broker.st_dev, broker.st_ino) ==
