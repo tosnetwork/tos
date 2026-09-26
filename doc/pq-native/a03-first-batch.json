@@ -21,6 +21,30 @@
         {
           "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
           "sha256": "c4ad6b36eaf185d2be34cd308229913d6f89d48cc84c1c1ab88ebb0bb1705c88"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790348791414184765.json",
+          "sha256": "5e12a1544ecda5bf68b08fba609487942d3d85f3302c0ed226772f63d129c6e8"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790349985272467639.json",
+          "sha256": "3639809e338da619f6b4d24577b5df7e64e4980aafd45eb2b8c1fd9bb1f1786d"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node1/log",
+          "sha256": "3353806922d55fd9537977808fb3a8ed38a4065755c836357f06de295a92be40"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node2/log",
+          "sha256": "293efe843ca5506672e19a3dd5e75145f1f6f3b971736cec0c2583f084b1d0fc"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/state/zerostate.boc",
+          "sha256": "478f1294bed7d5510d7e9c17301bb4f82eb2e4913e4d128a308832c43deaf56c"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/initial-config15-34.typescript",
+          "sha256": "1074866b886d54b85f510393ce0fbaef6843edb210201d2d94406d6a2b1cbdf5"
         }
       ],
       "binaries": [
@@ -104,30 +128,15 @@
       ],
       "command": {
         "kind": "real_chain",
-        "argv": [
-          "env",
-          "PYTHONPATH=test/tostester/src",
-          "uv",
-          "run",
-          "python",
-          "-u",
-          "scripts/nominator-pool-lifecycle-e2e.py",
-          "--build-dir",
-          "/home/tomi/tos-n6/build",
-          "--run-dir",
-          "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network",
-          "--base-port",
-          "25000",
-          "--campaign-run-id",
-          "n6-e16-84a30e426",
-          "--agent-manifest",
-          "/home/tomi/tos-n6/test/integration/.pq-nominator-pool-t3/diagnostic-agent-manifest.json"
-        ],
+        "argv": null,
+        "argv_gap": "The original E16 console header does not record launch argv; the documented command is reviewer prose, not an OS or run receipt.",
+        "reported_argv_text": "env PYTHONPATH=test/tostester/src uv run python -u scripts/nominator-pool-lifecycle-e2e.py --build-dir /home/tomi/tos-n6/build --run-dir /home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network --base-port 25000 --campaign-run-id n6-e16-84a30e426 --agent-manifest /home/tomi/tos-n6/test/integration/.pq-nominator-pool-t3/diagnostic-agent-manifest.json",
         "reported_exit": 0,
         "exit_raw_role": "console",
         "exit_raw_marker": "COMMAND_EXIT_CODE=\"0\""
       },
       "gaps": [
+        "Exact original launch argv and a contemporaneous per-run receipt are absent; reported_argv_text is checked only against the fixed reviewer prose.",
         "The signed route lacks a source-commit field embedded in the run report; source provenance is review+fixed Git blob+console.",
         "No same-run full five-hop BOC chain for the first successful stake.",
         "No OS PID/executable-inode map for the retained binary snapshots.",
@@ -181,6 +190,18 @@
         {
           "path": "/datax/n6-supervisor-f01-2e1-evidence/process-generations.jsonl",
           "sha256": "60ce3df964688a35dcffa486a654af73dce0d874f2518eecdacedbead5650739"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-89.json",
+          "sha256": "87894e5cbd293e1d03a764845ccec1bfd4d47a1f41d45ed096b5396e7fb7203a"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-131.json",
+          "sha256": "adfd715975ff54c8ee3a7b6838aa0ebaa5f8de2cbc7ae371574c207cc6a30c35"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-172.json",
+          "sha256": "33e1ae352ce05c764e556302c677c0fbc6cadac657fbf9ff5f20ddfc4ee537f6"
         }
       ],
       "binaries": [

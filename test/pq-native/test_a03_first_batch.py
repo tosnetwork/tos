@@ -38,6 +38,14 @@ class FirstBatchTest(unittest.TestCase):
         batch["entries"]["E16"]["accepted"] = True
         self.assertIn("E16: status/acceptance differs from frozen task table", self.check(batch))
 
+    def test_e16_documented_argv_is_not_original_process_argv(self):
+        command = self.original["entries"]["E16"]["command"]
+        self.assertIsNone(command["argv"])
+        self.assertTrue(command["argv_gap"])
+        batch = copy.deepcopy(self.original)
+        del batch["entries"]["E16"]["command"]["argv_gap"]
+        self.assertIn("E16: documented command and exact reported exit missing", self.check(batch))
+
     def test_exact_e16_console_bytes_required(self):
         batch = copy.deepcopy(self.original)
         batch["entries"]["E16"]["raw"][0]["sha256"] = "0" * 64
