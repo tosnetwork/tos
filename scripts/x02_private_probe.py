@@ -16,14 +16,40 @@ import struct
 import subprocess
 import threading
 import time
+import sys
+import types
 from pathlib import Path
 
-from x02_partial_adapter import DecisionAdapter, DurableLedger
-from x02_partial_sequence import DIRECTIONS, candidate_policy, require
-from x02_nfqueue_backend import QueueBackend, attribute
-from x02_nft_rules import RuleManager
-
 REPO = Path(__file__).resolve().parents[1]
+
+
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
+def load_fixed_sources(context):
+    """Compile verified source bytes directly; never trust ignored __pycache__."""
+    require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
+            "requires python -I -S -B")
+    modules = {}
+    for name in ("x02_partial_sequence", "x02_partial_adapter", "x02_nfqueue_backend", "x02_nft_rules"):
+        path = REPO / "scripts" / (name + ".py")
+        raw = path.read_bytes()
+        require(hashlib.sha256(raw).hexdigest() == context["sources"][name + ".py"]
+                and name not in sys.modules, "source changed or module already loaded")
+        module = types.ModuleType(name)
+        module.__file__ = str(path)
+        sys.modules[name] = module
+        exec(compile(raw, str(path), "exec"), module.__dict__)
+        modules[name] = module
+    globals().update(DIRECTIONS=modules["x02_partial_sequence"].DIRECTIONS,
+                     candidate_policy=modules["x02_partial_sequence"].candidate_policy,
+                     DecisionAdapter=modules["x02_partial_adapter"].DecisionAdapter,
+                     DurableLedger=modules["x02_partial_adapter"].DurableLedger,
+                     QueueBackend=modules["x02_nfqueue_backend"].QueueBackend,
+                     attribute=modules["x02_nfqueue_backend"].attribute,
+                     RuleManager=modules["x02_nft_rules"].RuleManager)
 
 
 class NegativeControl(RuntimeError):
@@ -156,6 +182,7 @@ def environment(source_sha: str, host_netns: str, unit: str) -> dict:
 
 def run(args) -> None:
     context = environment(args.source_sha, args.host_netns, args.unit)
+    load_fixed_sources(context)
     args.output.mkdir(exist_ok=False)
     ledger = DurableLedger(args.output / "kernel.jsonl")
     sent = DurableLedger(args.output / "sender.jsonl")
