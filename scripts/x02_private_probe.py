@@ -33,7 +33,7 @@ def load_fixed_sources(context):
     require(sys.flags.isolated and sys.flags.no_site and sys.dont_write_bytecode,
             "requires python -I -S -B")
     modules = {}
-    for name in ("x02_partial_sequence", "x02_partial_adapter", "x02_nfqueue_backend", "x02_nft_rules"):
+    for name in ("x02_partial_sequence", "x02_partial_adapter", "x02_queue_stats_fd", "x02_nfqueue_backend", "x02_nft_rules"):
         path = REPO / "scripts" / (name + ".py")
         raw = path.read_bytes()
         require(hashlib.sha256(raw).hexdigest() == context["sources"][name + ".py"]
@@ -48,6 +48,7 @@ def load_fixed_sources(context):
                      DecisionAdapter=modules["x02_partial_adapter"].DecisionAdapter,
                      DurableLedger=modules["x02_partial_adapter"].DurableLedger,
                      QueueBackend=modules["x02_nfqueue_backend"].QueueBackend,
+                     QueueStatsFD=modules["x02_queue_stats_fd"].QueueStatsFD,
                      attribute=modules["x02_nfqueue_backend"].attribute,
                      RuleManager=modules["x02_nft_rules"].RuleManager)
 
@@ -160,7 +161,9 @@ def environment(source_sha: str, host_netns: str, unit: str) -> dict:
     status = Path("/proc/self/status").read_text()
     capabilities = {line.split(":", 1)[0]: line.split(":", 1)[1].strip()
                     for line in status.splitlines() if line.startswith("Cap")}
-    for key in ("CapEff", "CapPrm", "CapAmb"):
+    require(os.getresuid() == (1000, 1000, 1000) and os.getresgid() == (1000, 1000, 1000)
+            and os.getgroups() == [], "final ordinary identities/groups differ")
+    for key in ("CapEff", "CapPrm", "CapAmb", "CapInh", "CapBnd"):
         require(int(capabilities[key], 16) == (1 << 12 | 1 << 13),
                 "requires only NET_ADMIN and NET_RAW capabilities")
     head = subprocess.check_output(["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True).strip()
@@ -168,7 +171,7 @@ def environment(source_sha: str, host_netns: str, unit: str) -> dict:
     require(head == source_sha and not clean, "source HEAD or tracked cleanliness differs")
     sources = {}
     for name in ("x02_partial_sequence.py", "x02_partial_adapter.py", "x02_nfqueue_backend.py",
-                 "x02_nft_rules.py", "x02_private_probe.py"):
+                 "x02_nft_rules.py", "x02_private_probe.py", "x02_queue_stats_fd.py", "x02_queue_stats_broker.c"):
         raw = (REPO / "scripts" / name).read_bytes()
         frozen = subprocess.check_output(["git", "-C", str(REPO), "show", f"HEAD:scripts/{name}"])
         require(raw == frozen, "runtime source bytes differ")
@@ -183,6 +186,7 @@ def environment(source_sha: str, host_netns: str, unit: str) -> dict:
 def run(args) -> None:
     context = environment(args.source_sha, args.host_netns, args.unit)
     load_fixed_sources(context)
+    stats = QueueStatsFD(args.queue_stats_fd, args.queue_receipt_fd, args.host_netns)
     args.output.mkdir(exist_ok=False)
     ledger = DurableLedger(args.output / "kernel.jsonl")
     sent = DurableLedger(args.output / "sender.jsonl")
@@ -194,6 +198,7 @@ def run(args) -> None:
     deadline = time.monotonic() + 30
     try:
         ledger.append({"event": "context", **context})
+        stats.inverse_controls(ledger)
         # Only this private namespace's loopback is configured.
         argv = ["/usr/sbin/ip", "link", "set", "dev", "lo", "up"]
         result = subprocess.run(argv, capture_output=True, timeout=5, check=False)
@@ -206,7 +211,7 @@ def run(args) -> None:
         ledger.append({"event": "frozen_probe_policy", "policy": policy, "run_id": args.run_id,
                        "endpoints": endpoints, "monotonic_ns": time.monotonic_ns()})
         engine = DecisionAdapter(policy, endpoints, ledger)
-        backend = QueueBackend(ledger)
+        backend = QueueBackend(ledger, stats)
         backend.bind()
         manager = RuleManager(args.run_id, engine, backend, ledger)
         manager.preflight()
@@ -351,6 +356,7 @@ def run(args) -> None:
                            "monotonic_ns": time.monotonic_ns()})
             for log in (sent, received, ledger):
                 log.close()
+            stats.close()
 
 
 if __name__ == "__main__":
@@ -361,4 +367,6 @@ if __name__ == "__main__":
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--case", choices=("positive", "install-race", "wrong-flow", "late-ack"), default="positive")
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--queue-stats-fd", required=True, type=int)
+    parser.add_argument("--queue-receipt-fd", required=True, type=int)
     run(parser.parse_args())

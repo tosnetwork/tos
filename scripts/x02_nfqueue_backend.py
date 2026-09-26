@@ -37,9 +37,12 @@ def attributes(raw: bytes) -> dict[int, bytes]:
 
 
 class QueueBackend:
-    def __init__(self, ledger, first_queue: int = 32600):
+    def __init__(self, ledger, stats_reader, first_queue: int = 32600):
         require(type(first_queue) is int and 0 <= first_queue <= 65512, "invalid queue base")
         self.ledger = ledger
+        self.stats_reader = stats_reader
+        require(stats_reader.read() == b"", "initial private queue stats not empty")
+        self.ledger.append({"event": "queue_stats_initial_empty", "receipt": stats_reader.receipt})
         self.queues = {first_queue + ordinal: direction
                        for ordinal, direction in enumerate(DIRECTIONS)}
         self.sock = socket.socket(socket.AF_NETLINK, socket.SOCK_RAW, 12)
@@ -146,7 +149,7 @@ class QueueBackend:
         adapter.decide(self.queues[queue], packet_id, attrs[10], submit)
 
     def health(self, require_empty: bool = False) -> dict:
-        raw = Path("/proc/net/netfilter/nfnetlink_queue").read_bytes()
+        raw = self.stats_reader.read()
         self.ledger.append({"event": "kernel_queue_stats", "monotonic_ns": time.monotonic_ns(),
                             "raw_hex": raw.hex(), "portid": self.portid})
         rows = {}
@@ -168,4 +171,7 @@ class QueueBackend:
         self.health(require_empty=True)
         for queue in sorted(self.bound):
             self.request(2, queue, attribute(1, struct.pack("!BBH", 2, 0, socket.AF_INET)))
+        self.bound.clear()
+        require(self.stats_reader.read() == b"", "final private queue stats not empty")
+        self.ledger.append({"event": "queue_stats_final_empty"})
         self.sock.close()
