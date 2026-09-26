@@ -20,6 +20,10 @@ EVIDENCE_CLASS = "DIAGNOSTIC_SCAFFOLDING_ONLY"
 PROOF_BYTES = re.compile(r"got block proof .* \((?P<bytes>[0-9]+) bytes\)")
 SUSTAINED_TRANSPORT_RETRY_SECONDS = 30.0
 SUSTAINED_TRANSPORT_RETRY_DELAY_SECONDS = 0.1
+# The liteserver refuses every query with exactly this error until the validator manager has
+# started (ValidatorManagerImpl::run_ext_query, ErrorCode::notready); toslib reports it as code 500.
+LITE_STARTUP_NOT_SYNCED = "LITE_SERVER_NOTREADY: node not synced"
+STARTUP_NOT_SYNCED_DELAY_SECONDS = 0.25
 SUSTAINED_SESSION_LOG_FLUSH_SECONDS = 5.1
 T = TypeVar("T")
 
@@ -303,6 +307,16 @@ def _is_lite_transport_error(error: BaseException) -> bool:
     )
 
 
+def _is_lite_startup_not_synced(error: BaseException) -> bool:
+    # Only the exact startup refusal, never another NOTREADY reason or another code-500 error.
+    return (
+        type(error).__module__ == "toslib.toslibjson"
+        and type(error).__qualname__ == "ToslibError"
+        and getattr(error, "code", None) == 500
+        and str(error) == LITE_STARTUP_NOT_SYNCED
+    )
+
+
 async def _retry_lite_transport(
     node_name: str,
     operation_name: str,
@@ -344,19 +358,34 @@ async def _wait_all_heights(
 ) -> list[int]:
     deadline = time.monotonic() + timeout
     last: list[int] = []
+    last_not_synced: BaseException | None = None
     clients = {node.name: await node.toslib_client() for node in nodes}
     while time.monotonic() < deadline:
-        values = await _masterchain_heights(
-            clients,
-            transport_retry_counts=transport_retry_counts,
-            transport_retry_budget_seconds=transport_retry_budget_seconds,
-            transport_retry_delay_seconds=transport_retry_delay_seconds,
-        )
+        try:
+            values = await _masterchain_heights(
+                clients,
+                transport_retry_counts=transport_retry_counts,
+                transport_retry_budget_seconds=transport_retry_budget_seconds,
+                transport_retry_delay_seconds=transport_retry_delay_seconds,
+                settle_all=True,
+            )
+        except Exception as error:
+            # A node still starting refuses with the exact not-synced error; wait for it within
+            # this same startup deadline. Anything else keeps its original behaviour.
+            if not _is_lite_startup_not_synced(error):
+                raise
+            last_not_synced = error
+            await asyncio.sleep(STARTUP_NOT_SYNCED_DELAY_SECONDS)
+            continue
+        last_not_synced = None
         last = list(values.values())
         if min(last) >= minimum:
             return last
         await asyncio.sleep(0.25)
-    raise TimeoutError(f"nodes did not reach masterchain height {minimum}; last={last}")
+    raise TimeoutError(
+        f"nodes did not reach masterchain height {minimum}; last={last}"
+        + (f"; still refusing: {last_not_synced}" if last_not_synced is not None else "")
+    )
 
 
 async def _masterchain_heights(
@@ -366,6 +395,7 @@ async def _masterchain_heights(
     transport_retry_counts: dict[str, dict[str, int]] | None = None,
     transport_retry_budget_seconds: float = SUSTAINED_TRANSPORT_RETRY_SECONDS,
     transport_retry_delay_seconds: float = SUSTAINED_TRANSPORT_RETRY_DELAY_SECONDS,
+    settle_all: bool = False,
 ) -> dict[str, int]:
     async def query(name: str, client: Any) -> Any:
         async def attempt() -> Any:
@@ -413,7 +443,18 @@ async def _masterchain_heights(
             retry_delay_seconds=transport_retry_delay_seconds,
         )
 
-    infos = await asyncio.gather(*(query(name, client) for name, client in clients.items()))
+    if settle_all:
+        # Let every node's query finish before reporting a failure, so a retry by the caller never
+        # overlaps a still-running query on the same client. A non-not-synced error wins.
+        outcomes = await asyncio.gather(
+            *(query(name, client) for name, client in clients.items()), return_exceptions=True
+        )
+        errors = [item for item in outcomes if isinstance(item, BaseException)]
+        if errors:
+            raise next((e for e in errors if not _is_lite_startup_not_synced(e)), errors[0])
+        infos = outcomes
+    else:
+        infos = await asyncio.gather(*(query(name, client) for name, client in clients.items()))
     return {name: info.last.seqno for name, info in zip(clients, infos, strict=True)}
 
 
