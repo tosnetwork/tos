@@ -76,7 +76,10 @@ def discover(root: Path) -> dict[str, dict[str, int]]:
             if not path.is_file() or path.suffix not in SUFFIXES:
                 continue
             relative = path.relative_to(root).as_posix()
-            if relative == "scripts/check-classical-stake-callers.py" or relative in NON_CALLER_SOURCE_GUARDS:
+            if (
+                relative == "scripts/check-classical-stake-callers.py"
+                or relative in NON_CALLER_SOURCE_GUARDS
+            ):
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
             matches = {}
@@ -96,7 +99,9 @@ def discover(root: Path) -> dict[str, dict[str, int]]:
 
 
 def main() -> int:
-    root = Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path(__file__).resolve().parents[1]
+    root = (
+        Path(sys.argv[1]).resolve() if len(sys.argv) == 2 else Path(__file__).resolve().parents[1]
+    )
     retired_operator = root / "crypto/smartcont/single-nominator-pool/validator-elect-signed.fif"
     if retired_operator.exists():
         fail("retired single-nominator Ed25519 operator script is still executable")
@@ -121,8 +126,12 @@ def main() -> int:
             if path.name == "check-classical-stake-callers.py":
                 continue
             source = path.read_text(encoding="utf-8", errors="replace")
-            if re.search(r"(?<![A-Za-z0-9_-])validator-elect-body(?:\+stake)?(?![A-Za-z0-9_+])", source):
-                fail(f"product source regained a classical validator-elect body word: {path.relative_to(root)}")
+            if re.search(
+                r"(?<![A-Za-z0-9_-])validator-elect-body(?:\+stake)?(?![A-Za-z0-9_+])", source
+            ):
+                fail(
+                    f"product source regained a classical validator-elect body word: {path.relative_to(root)}"
+                )
     smartcont_test = (root / "crypto/test/test-smartcont.cpp").read_text(encoding="utf-8")
     base_request_fixture = "test/fift/fixtures/validator-legacy-elect-req.fif"
     base_signed_fixture = "test/fift/fixtures/validator-legacy-elect-signed.fif"
@@ -134,17 +143,30 @@ def main() -> int:
         fail("test-smartcont no longer loads exactly one test-only single-nominator legacy fixture")
     liquid_fixture = "test/fift/fixtures/liquid-controller-legacy-elect-signed.fif"
     if smartcont_test.count(liquid_fixture) != 1:
-        fail("test-smartcont no longer loads exactly one test-only liquid-controller legacy fixture")
-    proposal_smoke = (root / "crypto/test/fift/validator-proposal-test.fif").read_text(encoding="utf-8")
+        fail(
+            "test-smartcont no longer loads exactly one test-only liquid-controller legacy fixture"
+        )
+    proposal_smoke = (root / "crypto/test/fift/validator-proposal-test.fif").read_text(
+        encoding="utf-8"
+    )
     if '"Proposal.fif" include' not in proposal_smoke or "proposal-query-id" not in proposal_smoke:
         fail("proposal smoke no longer exercises the Proposal.fif helper")
     if '"Validator.fif" include' in proposal_smoke or any(
         marker in proposal_smoke
-        for marker in ("validator-elect-req>B", "validator-elect-body", "parse-val-pubkey", "parse-val-signature")
+        for marker in (
+            "validator-elect-req>B",
+            "validator-elect-body",
+            "parse-val-pubkey",
+            "parse-val-signature",
+        )
     ):
         fail("proposal smoke has regained a classical validator-stake dependency")
-    parity = (root / "crypto/test/fift/validator-proposal-legacy-parity.fif").read_text(encoding="utf-8")
-    if '"Validator.fif" include' in parity or re.search(r"(?<![A-Za-z0-9_-])validator-elect-req>B", parity):
+    parity = (root / "crypto/test/fift/validator-proposal-legacy-parity.fif").read_text(
+        encoding="utf-8"
+    )
+    if '"Validator.fif" include' in parity or re.search(
+        r"(?<![A-Za-z0-9_-])validator-elect-req>B", parity
+    ):
         fail("legacy parity has regained the product Validator.fif stake codec")
     for word in (
         "legacy-parse-val-signature",
@@ -153,7 +175,10 @@ def main() -> int:
         "legacy-validator-elect-body+stake",
     ):
         uses = re.findall(rf"(?<![A-Za-z0-9_-]){re.escape(word)}(?![A-Za-z0-9_+])", parity)
-        if sum(line.strip() == f"}} : {word}" for line in parity.splitlines()) != 1 or len(uses) < 2:
+        if (
+            sum(line.strip() == f"}} : {word}" for line in parity.splitlines()) != 1
+            or len(uses) < 2
+        ):
             fail(f"legacy parity no longer defines and exercises its test-local {word} codec")
     actual = discover(root)
     missing = sorted(set(EXPECTED) - set(actual))
@@ -164,7 +189,9 @@ def main() -> int:
         if actual[path] != EXPECTED[path]
     }
     if missing or unexpected or wrong:
-        fail(f"literal Fift caller inventory changed: missing={missing} unexpected={unexpected} wrong={wrong}")
+        fail(
+            f"literal Fift caller inventory changed: missing={missing} unexpected={unexpected} wrong={wrong}"
+        )
     document = (root / "doc/pq-native/T2-PQ-LAUNCH-GATE-MIGRATION.md").read_text()
     undocumented = sorted(path for path in EXPECTED if f"`{path}`" not in document)
     if undocumented:

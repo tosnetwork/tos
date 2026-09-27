@@ -22,7 +22,8 @@ def main() -> None:
         if source.count(marker) != expected:
             raise RuntimeError(
                 f"DNS_PQ_VOTE_SOURCE_FAILURE: {marker!r} occurs "
-                f"{source.count(marker)} times, expected {expected}")
+                f"{source.count(marker)} times, expected {expected}"
+            )
     if "validator_key.key.sign(" in source:
         raise RuntimeError("DNS_PQ_VOTE_SOURCE_FAILURE: DNS still signs a vote locally")
     for path in (root / "scripts").rglob("*.py"):
@@ -30,8 +31,12 @@ def main() -> None:
             continue
         text = path.read_text(encoding="utf-8")
         if "0x566F7445" in text:
-            raise RuntimeError(f"DNS_PQ_VOTE_SOURCE_FAILURE: local config-vote preimage tag in {path}")
-    print("DNS_PQ_VOTE_SOURCE_OK: DNS requests a node-produced PQ vote; scripts contain no local config-vote signer")
+            raise RuntimeError(
+                f"DNS_PQ_VOTE_SOURCE_FAILURE: local config-vote preimage tag in {path}"
+            )
+    print(
+        "DNS_PQ_VOTE_SOURCE_OK: DNS requests a node-produced PQ vote; scripts contain no local config-vote signer"
+    )
 
 
 if __name__ == "__main__":

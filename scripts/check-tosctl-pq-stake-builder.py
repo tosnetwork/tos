@@ -51,7 +51,9 @@ def main() -> None:
             source,
         )
         if len(builder_calls) != 1:
-            fail(f"{name} reaches the verified controller birth builder {len(builder_calls)} times, expected 1")
+            fail(
+                f"{name} reaches the verified controller birth builder {len(builder_calls)} times, expected 1"
+            )
         if "nominator::new_stake(&" in source or "nominator::new_stake_with_witness(&" in source:
             fail(f"{name} bypasses the verified controller birth artifact builder")
 
@@ -59,7 +61,9 @@ def main() -> None:
     if runner.count("controller_birth_state_init_boc.as_deref().ok_or_else") != 1:
         fail("election daemon no longer refuses a missing controller birth artifact")
     wallet = collapsed(pool_callers["config-wallet pool command"][0])
-    roles_read = wallet.find(".get_roles() .await .context(\"read live single-nominator pool roles\")?")
+    roles_read = wallet.find(
+        '.get_roles() .await .context("read live single-nominator pool roles")?'
+    )
     roles_check = wallet.find("verify_live_pool_roles(pool_cfg, &wallet_address, &live_roles)?;")
     verified_order = wallet.find("let payload = build_verified_manual_pool_stake(")
     message = wallet.find("let msg = wallet.message(")
@@ -67,53 +71,85 @@ def main() -> None:
         fail("config-wallet verified pool order no longer precedes the fee-bearing wallet message")
     if not (0 <= roles_read < roles_check < verified_order):
         fail("config-wallet live pool roles are not checked before the verified pool order")
-    if wallet.count("let artifact_path = configured_birth_artifact_path(binding, binding_name)?;") != 1:
+    if (
+        wallet.count("let artifact_path = configured_birth_artifact_path(binding, binding_name)?;")
+        != 1
+    ):
         fail("config-wallet verified pool order no longer requires the configured birth artifact")
     stake_command = wallet.split("impl WalletStakeCmd", 1)[1]
     seqno_check = stake_command.find("let initial_seqno = require_observable_wallet_seqno(")
     broadcast = stake_command.find("provider.send_boc(&msg_boc).await")
-    if seqno_check < 0 or broadcast < 0 or seqno_check >= broadcast or stake_command.count("Some(initial_seqno)") != 1:
-        fail("config-wallet stake can send without a wallet type and seqno that chain RPC can observe")
+    if (
+        seqno_check < 0
+        or broadcast < 0
+        or seqno_check >= broadcast
+        or stake_command.count("Some(initial_seqno)") != 1
+    ):
+        fail(
+            "config-wallet stake can send without a wallet type and seqno that chain RPC can observe"
+        )
 
     # The CLI embeds this V1R3 code; chain RPC must recognize its cell hash or
     # getWalletInformation returns wallet=false/seqno=null forever.
     v1r3_hash = "587cc789eff1c84f46ec3797e45fc809a14ff5ae24f1e0c7a6a99cc9dc9061ff"
-    wallet_code = collapsed(root / "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs")
+    wallet_code = collapsed(
+        root / "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs"
+    )
     account_model = collapsed(root / "validator-engine/json-rpc-account-model.cpp")
     if v1r3_hash not in wallet_code or v1r3_hash.upper() not in account_model:
         fail("tosctl V1R3 code hash is not pinned in both the wallet test and chain RPC recognizer")
     parser = collapsed(root / "tosctl/src/node-control/common/src/tvm_stack_parser.rs")
     list_parser = parser.split("pub fn list_or_empty", 1)[1].split("pub fn tuple", 1)[0]
     for marker in (
-        "StackEntry::Tvm_StackEntryTuple(_) =>", "slots.len() == 2",
-        "self.i64(index)? == 0", 'number.number.number() == "0"',
+        "StackEntry::Tvm_StackEntryTuple(_) =>",
+        "slots.len() == 2",
+        "self.i64(index)? == 0",
+        'number.number.number() == "0"',
         "stack cons list has a non-null tail",
     ):
         if marker not in list_parser:
             fail(f"JSON-RPC TVM cons-list parser lost its strict {marker!r} check")
-    if re.search(
-        r"StackEntry::Tvm_StackEntryList\(list\)\s+if\s+list\.list\.elements\(\)\.is_empty\(\)\s*=>",
-        list_parser,
-    ) is None:
+    if (
+        re.search(
+            r"StackEntry::Tvm_StackEntryList\(list\)\s+if\s+list\.list\.elements\(\)\.is_empty\(\)\s*=>",
+            list_parser,
+        )
+        is None
+    ):
         fail("JSON-RPC TVM cons-list parser no longer requires an empty List tail")
 
     product_probe = collapsed(root / "scripts/pq-config-wallet-first-stake-e2e.py")
-    if "elector_reply(pool_txs, query_id)" not in product_probe or "elector_reply(controller_txs, query_id)" in product_probe:
-        fail("product first-stake probe no longer reads the Elector reply from the stake-owner pool")
-    if any(marker not in product_probe for marker in (
-        "participant-list-extended-raw-open.json", "participant_path.write_text(",
-        "participant-list-after-attempt-", "attempt_path.write_text(",
-        'report["participant_list_after_raw"]',
-        '"index4_type": raw_stack[4]["@type"]',
-    )):
-        fail("product first-stake probe no longer saves both pre-order and post-order raw participant-list observations")
+    if (
+        "elector_reply(pool_txs, query_id)" not in product_probe
+        or "elector_reply(controller_txs, query_id)" in product_probe
+    ):
+        fail(
+            "product first-stake probe no longer reads the Elector reply from the stake-owner pool"
+        )
+    if any(
+        marker not in product_probe
+        for marker in (
+            "participant-list-extended-raw-open.json",
+            "participant_path.write_text(",
+            "participant-list-after-attempt-",
+            "attempt_path.write_text(",
+            'report["participant_list_after_raw"]',
+            '"index4_type": raw_stack[4]["@type"]',
+        )
+    ):
+        fail(
+            "product first-stake probe no longer saves both pre-order and post-order raw participant-list observations"
+        )
 
-    policy_provider = collapsed(
-        root / "tosctl/src/node-control/elections/src/providers/default.rs"
-    )
-    for marker in ("chain_provider.get_config_param(47).await?", "ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell)"):
+    policy_provider = collapsed(root / "tosctl/src/node-control/elections/src/providers/default.rs")
+    for marker in (
+        "chain_provider.get_config_param(47).await?",
+        "ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell)",
+    ):
         if policy_provider.count(marker) != 1:
-            fail(f"shared live controller policy reader no longer uses the raw ConfigParam 47 cell: {marker}")
+            fail(
+                f"shared live controller policy reader no longer uses the raw ConfigParam 47 cell: {marker}"
+            )
     if policy_provider.count("chain_provider.get_config_param(15).await?") != 1:
         fail("election parameters no longer come from the live chain provider")
     if "client.get_config_param(15)" in policy_provider:
@@ -148,9 +184,15 @@ def main() -> None:
         "binding.controller_birth_state_init_boc = Some(output.display().to_string())",
     ):
         if birth_import.count(marker) != 1:
-            fail(f"controller birth import does not pin supplied transaction structure and binding: {marker}")
-    import_command = birth_import.split("impl BindImportBirthCmd", 1)[-1].split("fn import_birth_artifact", 1)[0]
-    import_position = import_command.find("import_birth_artifact(binding, &transaction, &controller, output)?")
+            fail(
+                f"controller birth import does not pin supplied transaction structure and binding: {marker}"
+            )
+    import_command = birth_import.split("impl BindImportBirthCmd", 1)[-1].split(
+        "fn import_birth_artifact", 1
+    )[0]
+    import_position = import_command.find(
+        "import_birth_artifact(binding, &transaction, &controller, output)?"
+    )
     save_position = import_command.find("save_config(&config, path)?")
     if import_position < 0 or save_position < 0 or import_position >= save_position:
         fail("controller birth binding can be saved before its artifact is imported")

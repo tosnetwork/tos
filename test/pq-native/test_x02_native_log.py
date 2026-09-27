@@ -4,14 +4,13 @@ import copy
 import hashlib
 import importlib.util
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
-
 
 SOURCE = Path(__file__).resolve().parents[2] / "scripts/x02_fault_evidence.py"
 spec = importlib.util.spec_from_file_location("x02_fault_evidence", SOURCE)
@@ -37,24 +36,29 @@ class NativeLogCursorTests(unittest.TestCase):
         self.addCleanup(self.writer.close)
         self.child = subprocess.Popen(
             [sys.executable, "-u", "-c", "import time; time.sleep(20)"],
-            cwd=self.directory, stderr=subprocess.PIPE,
+            cwd=self.directory,
+            stderr=subprocess.PIPE,
         )
         self.addCleanup(self._stop_child)
         identity = self.directory.stat()
         log_identity = self.log.stat()
-        self.node = {"pid": self.child.pid,
-                     "pid_start_ticks": start_ticks(self.child.pid),
-                     "harness_pid": os.getpid(),
-                     "harness_start_ticks": start_ticks(os.getpid()),
-                     "data_dir": str(self.directory),
-                     "db_dev": identity.st_dev, "db_ino": identity.st_ino,
-                     "log_path": str(self.log),
-                     "log_dev": log_identity.st_dev, "log_ino": log_identity.st_ino,
-                     "exe_sha256": sha(f"/proc/{self.child.pid}/exe"),
-                     "harness_exe_sha256": sha("/proc/self/exe"),
-                     "input_fd": self.child.stderr.fileno(),
-                     "input_link": os.readlink(f"/proc/self/fd/{self.child.stderr.fileno()}"),
-                     "output_fd": self.writer.fileno()}
+        self.node = {
+            "pid": self.child.pid,
+            "pid_start_ticks": start_ticks(self.child.pid),
+            "harness_pid": os.getpid(),
+            "harness_start_ticks": start_ticks(os.getpid()),
+            "data_dir": str(self.directory),
+            "db_dev": identity.st_dev,
+            "db_ino": identity.st_ino,
+            "log_path": str(self.log),
+            "log_dev": log_identity.st_dev,
+            "log_ino": log_identity.st_ino,
+            "exe_sha256": sha(f"/proc/{self.child.pid}/exe"),
+            "harness_exe_sha256": sha("/proc/self/exe"),
+            "input_fd": self.child.stderr.fileno(),
+            "input_link": os.readlink(f"/proc/self/fd/{self.child.stderr.fileno()}"),
+            "output_fd": self.writer.fileno(),
+        }
 
     def _stop_child(self):
         if self.child.poll() is None:
@@ -70,11 +74,13 @@ class NativeLogCursorTests(unittest.TestCase):
     def marker(self, height=11):
         now = time.time_ns()
         stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now // 1_000_000_000))
-        return (f"[ 3][t 2][{stamp}.{now % 1_000_000_000:09d}]"
-                "[BusRuntime.h:238] Published event "
-                "BlockFinalizedInMasterchain@0x1"
-                f"{{block=(-1,8000000000000000,{height}):"
-                f"{'1' * 64}:{'2' * 64}}}\n").encode()
+        return (
+            f"[ 3][t 2][{stamp}.{now % 1_000_000_000:09d}]"
+            "[BusRuntime.h:238] Published event "
+            "BlockFinalizedInMasterchain@0x1"
+            f"{{block=(-1,8000000000000000,{height}):"
+            f"{'1' * 64}:{'2' * 64}}}\n"
+        ).encode()
 
     def test_exact_pipe_db_log_and_incremental_prefix(self):
         self.append(b"first complete line\npartial")
@@ -82,8 +88,9 @@ class NativeLogCursorTests(unittest.TestCase):
         self.assertEqual(first["start_offset"], 0)
         self.assertEqual(first["end_offset"], len(b"first complete line\n"))
         self.assertEqual(first["partial_tail_bytes"], len(b"partial"))
-        self.assertEqual(first["origin"]["stderr_link"],
-                         f"pipe:[{first['origin']['stderr_pipe_inode']}]")
+        self.assertEqual(
+            first["origin"]["stderr_link"], f"pipe:[{first['origin']['stderr_pipe_inode']}]"
+        )
         self.append(b" rest\nsecond\n")
         second = x02.capture_native_log(self.node, first)
         self.assertEqual(second["start_offset"], first["end_offset"])
@@ -97,8 +104,9 @@ class NativeLogCursorTests(unittest.TestCase):
         self.writer.seek(0)
         self.writer.truncate(0)
         self.append(b"native marker H11 altered bytes!\n")
-        self.assertEqual((self.log.stat().st_dev, self.log.stat().st_ino),
-                         (identity.st_dev, identity.st_ino))
+        self.assertEqual(
+            (self.log.stat().st_dev, self.log.stat().st_ino), (identity.st_dev, identity.st_ino)
+        )
         with self.assertRaisesRegex(ValueError, "prefix changed"):
             x02.capture_native_log(self.node, first)
 
@@ -132,8 +140,9 @@ class NativeLogCursorTests(unittest.TestCase):
         self.assertEqual(ids[11][:2], ("1" * 64, "2" * 64))
         self.assertLess(ids[11][2], first["read_completed_ns"])
         self.assertTrue(ids[11][3].endswith(f":{len(line)}"))
-        self.assertEqual(x02.native_log_ids(x02.capture_native_log(self.node, first),
-                                             self.node, first), {})
+        self.assertEqual(
+            x02.native_log_ids(x02.capture_native_log(self.node, first), self.node, first), {}
+        )
 
     def test_replayed_cursor_and_late_event_are_rejected(self):
         self.append(self.marker())
@@ -142,8 +151,7 @@ class NativeLogCursorTests(unittest.TestCase):
         bad = dict(later, start_offset=0)
         with self.assertRaisesRegex(ValueError, "cursor gap"):
             x02.native_log_ids(bad, self.node, first)
-        bad = dict(first, realtime_completed_ns=first["realtime_completed_ns"] -
-                   1_000_000_000)
+        bad = dict(first, realtime_completed_ns=first["realtime_completed_ns"] - 1_000_000_000)
         with self.assertRaisesRegex(ValueError, "paired clock|calibration jumped|after read"):
             x02.native_log_ids(bad, self.node)
 
@@ -158,31 +166,34 @@ class NativeLogCursorTests(unittest.TestCase):
 
     def test_capture_retains_separate_pre_and_post_rpc_native_bytes(self):
         node = dict(self.node, name="node1", rpc_url="http://127.0.0.1:1/jsonRPC")
-        policy = {"source_commit": "a" * 40, "log_source": "native-file",
-                  "nodes": [node], "live_nodes": {}}
+        policy = {
+            "source_commit": "a" * 40,
+            "log_source": "native-file",
+            "nodes": [node],
+            "live_nodes": {},
+        }
 
         def observed_rpc(_url, method, _params, _query_id):
             started = time.monotonic_ns()
             if method == "getBlockHeader":
                 self.append(self.marker(11))
-            return {"method": method, "started_ns": started,
-                    "completed_ns": time.monotonic_ns()}
+            return {"method": method, "started_ns": started, "completed_ns": time.monotonic_ns()}
 
-        with (patch.object(x02, "require_source_commit", return_value={}),
-              patch.object(x02, "capture_tc", return_value={}),
-              patch.object(x02, "capture_process", return_value={}),
-              patch.object(x02, "rpc", side_effect=observed_rpc),
-              patch.object(x02, "parse_rpc", return_value=(-1, x02.SHARD, 11,
-                                                            "1" * 64, "2" * 64))):
+        with (
+            patch.object(x02, "require_source_commit", return_value={}),
+            patch.object(x02, "capture_tc", return_value={}),
+            patch.object(x02, "capture_process", return_value={}),
+            patch.object(x02, "rpc", side_effect=observed_rpc),
+            patch.object(x02, "parse_rpc", return_value=(-1, x02.SHARD, 11, "1" * 64, "2" * 64)),
+        ):
             row = x02.capture(policy, "b" * 64, "baseline")
         self.assertEqual(x02.native_log_ids(row["journals"]["node1"], node), {})
         post = row["post_journals"]["node1"]
-        self.assertIn(11, x02.native_log_ids(post, node,
-                                             row["journals"]["node1"]))
-        self.assertLess(row["journals"]["node1"]["completed_ns"],
-                        row["rpc"]["first"]["node1"]["started_ns"])
-        self.assertLess(row["rpc"]["last"]["node1"]["completed_ns"],
-                        post["started_ns"])
+        self.assertIn(11, x02.native_log_ids(post, node, row["journals"]["node1"]))
+        self.assertLess(
+            row["journals"]["node1"]["completed_ns"], row["rpc"]["first"]["node1"]["started_ns"]
+        )
+        self.assertLess(row["rpc"]["last"]["node1"]["completed_ns"], post["started_ns"])
         verified = x02.verified_native_segments(row, node, None)
         self.assertEqual(len(verified), 2)
         self.assertIn(11, verified[1][1])
@@ -196,7 +207,8 @@ class NativeLogCursorTests(unittest.TestCase):
             x02.verified_native_segments(replayed_post, node, None)
         late_post = copy.deepcopy(row)
         late_post["post_journals"]["node1"]["started_ns"] = (
-            row["rpc"]["last"]["node1"]["completed_ns"] - 1)
+            row["rpc"]["last"]["node1"]["completed_ns"] - 1
+        )
         with self.assertRaisesRegex(ValueError, "post-RPC"):
             x02.verified_native_segments(late_post, node, None)
         next_pre = x02.capture_native_log(node, post)

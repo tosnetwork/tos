@@ -5,10 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pytosiq_core import Address, Cell
-from pytosiq_core import Builder
+from pytosiq_core import Address, Builder, Cell
 from tosapi import tos_api, toslib_api
-
 from tostester.install import Install
 from tostester.pq_election_fixture import (
     assert_controller_identity,
@@ -26,9 +24,7 @@ ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_pq_stake_authorization_generated_binding_is_complete():
-    require_pq_stake_authorization_binding(
-        tos_api.Engine_validator_pqStakeAuthorization
-    )
+    require_pq_stake_authorization_binding(tos_api.Engine_validator_pqStakeAuthorization)
 
     class StaleResponse:
         def __init__(self, validator_id, key_id, signature):
@@ -82,6 +78,7 @@ def test_controller_identity_and_pool_roles_are_bound_by_state_init(tmp_path):
 
 def test_pool_stake_order_round_trips_every_field_in_contract_parser_order():
     """A shape-only pool parse cannot catch adjacent fixed-width field swaps."""
+
     def pq_bytes(cell: Cell) -> bytes:
         root = cell.begin_parse()
         remaining = root.load_uint(32)
@@ -103,9 +100,14 @@ def test_pool_stake_order_round_trips_every_field_in_contract_parser_order():
 
     witness = Cell.empty()
     body = build_pool_stake_order(
-        query_id=19, stake_amount=10_000_000_000_000, stake_at=1_700_000_000,
-        max_factor=65_536, adnl_addr=bytes([0x22]) * 32, algorithm_id=1,
-        public_key=bytes([0x11]) * 1312, signature=bytes([0x33]) * 2420,
+        query_id=19,
+        stake_amount=10_000_000_000_000,
+        stake_at=1_700_000_000,
+        max_factor=65_536,
+        adnl_addr=bytes([0x22]) * 32,
+        algorithm_id=1,
+        public_key=bytes([0x11]) * 1312,
+        signature=bytes([0x33]) * 2420,
         witness=witness,
     )
     view = body.begin_parse()
@@ -135,9 +137,13 @@ def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatc
     monkeypatch.setattr("tostester.pq_election_fixture.subprocess.run", fake_run)
     witness = Builder().store_uint(7, 32).end_cell()
     args = dict(
-        query_id=3, stake_amount=11_000_000_000_000, stake_at=1_700_000_000,
-        max_factor=65_536, adnl_addr=bytes([0x22]) * 32,
-        public_key=bytes([0x11]) * 1312, signature=bytes([0x33]) * 2420,
+        query_id=3,
+        stake_amount=11_000_000_000_000,
+        stake_at=1_700_000_000,
+        max_factor=65_536,
+        adnl_addr=bytes([0x22]) * 32,
+        public_key=bytes([0x11]) * 1312,
+        signature=bytes([0x33]) * 2420,
         witness=witness,
     )
     result = build_production_pool_stake_order(
@@ -158,59 +164,81 @@ def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatc
 def test_elector_reason_reader_skips_source_less_wallet_externals_and_pins_query():
     query_id = 0xE1EC7
     body = (
-        Builder().store_uint(0xEE6F454C, 32).store_uint(query_id, 64)
-        .store_uint(8, 32).end_cell().to_boc()
+        Builder()
+        .store_uint(0xEE6F454C, 32)
+        .store_uint(query_id, 64)
+        .store_uint(8, 32)
+        .end_cell()
+        .to_boc()
     )
-    external = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(""), msg_data=toslib_api.Msg_dataRaw(body=body)
-    ))
+    external = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(""), msg_data=toslib_api.Msg_dataRaw(body=body)
+        )
+    )
     elector = Address((-1, bytes.fromhex("33" * 32)))
-    returned = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
-        msg_data=toslib_api.Msg_dataRaw(body=body),
-    ))
+    returned = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+            msg_data=toslib_api.Msg_dataRaw(body=body),
+        )
+    )
     assert elector_return_reason([external, returned], query_id) == 8
     assert elector_return_reason([external, returned], query_id + 1) is None
     assert elector_return_reason([external], query_id) is None
     accepted_body = (
-        Builder().store_uint(0xF374484C, 32).store_uint(query_id, 64)
-        .store_uint(0, 32).end_cell().to_boc()
+        Builder()
+        .store_uint(0xF374484C, 32)
+        .store_uint(query_id, 64)
+        .store_uint(0, 32)
+        .end_cell()
+        .to_boc()
     )
-    accepted = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
-        msg_data=toslib_api.Msg_dataRaw(body=accepted_body),
-    ))
+    accepted = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+            msg_data=toslib_api.Msg_dataRaw(body=accepted_body),
+        )
+    )
     assert elector_reply([external, accepted], query_id) == (0xF374484C, 0)
     assert elector_return_reason([accepted], query_id) is None
     unknown_body = (
-        Builder().store_uint(0xFFFFFFFF, 32).store_uint(query_id, 64)
-        .store_uint(7, 32).end_cell().to_boc()
+        Builder()
+        .store_uint(0xFFFFFFFF, 32)
+        .store_uint(query_id, 64)
+        .store_uint(7, 32)
+        .end_cell()
+        .to_boc()
     )
-    unknown = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
-        msg_data=toslib_api.Msg_dataRaw(body=unknown_body),
-    ))
+    unknown = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+            msg_data=toslib_api.Msg_dataRaw(body=unknown_body),
+        )
+    )
     assert elector_reply([external, unknown], query_id) == (0xFFFFFFFF, 7)
     recovered_body = (
-        Builder().store_uint(0xF96F7324, 32).store_uint(query_id, 64)
-        .end_cell().to_boc()
+        Builder().store_uint(0xF96F7324, 32).store_uint(query_id, 64).end_cell().to_boc()
     )
-    recovered = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
-        msg_data=toslib_api.Msg_dataRaw(body=recovered_body),
-    ))
+    recovered = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+            msg_data=toslib_api.Msg_dataRaw(body=recovered_body),
+        )
+    )
     assert elector_reply([recovered], query_id) == (0xF96F7324, 0), (
         "elector mature recovery has no trailing 32-bit detail"
     )
     assert elector_reply([recovered], query_id + 1) is None
     unknown_short_body = (
-        Builder().store_uint(0xF96F7325, 32).store_uint(query_id, 64)
-        .end_cell().to_boc()
+        Builder().store_uint(0xF96F7325, 32).store_uint(query_id, 64).end_cell().to_boc()
     )
-    unknown_short = SimpleNamespace(in_msg=SimpleNamespace(
-        source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
-        msg_data=toslib_api.Msg_dataRaw(body=unknown_short_body),
-    ))
+    unknown_short = SimpleNamespace(
+        in_msg=SimpleNamespace(
+            source=toslib_api.AccountAddress(elector.to_str(is_user_friendly=True)),
+            msg_data=toslib_api.Msg_dataRaw(body=unknown_short_body),
+        )
+    )
     assert elector_reply([unknown_short], query_id) is None, (
         "a source-matched 96-bit reply is not automatically mature recovery"
     )

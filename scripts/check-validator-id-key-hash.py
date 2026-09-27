@@ -8,7 +8,6 @@ import re
 import sys
 from pathlib import Path
 
-
 DIRECT_BITS_EXPRESSION = re.compile(
     r"\bValidatorId\s*[({][^;]{0,500}?bits256_value\s*\(", re.MULTILINE
 )
@@ -41,7 +40,8 @@ def violations(root: Path) -> list[str]:
                 relative = path.relative_to(root)
                 if (
                     relative == CLASSICAL_DESCRIPTOR_SITE
-                    and "classical_validator_id(" in text[max(0, match.start() - 200) : match.start()]
+                    and "classical_validator_id("
+                    in text[max(0, match.start() - 200) : match.start()]
                     and "compute_short_id()" in match.group(0)
                 ):
                     approved_classical_conversions += 1
@@ -52,9 +52,7 @@ def violations(root: Path) -> list[str]:
             for assignment in BITS_ASSIGNMENT.finditer(text):
                 name = assignment.group("name")
                 construction = re.compile(
-                    r"\bValidatorId\s*[({]\s*"
-                    + re.escape(name)
-                    + r"\s*[)}]"
+                    r"\bValidatorId\s*[({]\s*" + re.escape(name) + r"\s*[)}]"
                 ).search(text, assignment.end())
                 if construction is None:
                     continue
@@ -80,8 +78,7 @@ def main() -> int:
         raise RuntimeError(
             "validator-id key-hash check failed: a transport key hash was constructed "
             "as ValidatorId; use local_consensus_descriptor so PQ custody decides "
-            "membership:\n  "
-            + "\n  ".join(found)
+            "membership:\n  " + "\n  ".join(found)
         )
     print(
         "validator-id key-hash check passed: no unapproved .bits256_value() or "

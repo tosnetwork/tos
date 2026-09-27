@@ -3,11 +3,12 @@
 The old actual nft JSON supplies the 48 flow rules. Only the new identity chain
 and rule below are constructed test data; they must later be observed live.
 """
+
 import copy
 import json
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 
 from x02_nft_rules import RuleManager
 from x02_partial_sequence import DIRECTIONS
@@ -17,23 +18,51 @@ ORIGINAL = Path("/datax/n6-unit-agents/X02/evidence/procfd-b2c31241a2ba/positive
 
 def fixture():
     rows = [json.loads(line) for line in ORIGINAL.read_text().splitlines()]
-    captures = [bytes.fromhex(row["stdout_hex"]) for row in rows
-                if row.get("event") == "nft_command" and row["argv"] ==
-                ["/usr/sbin/nft", "-j", "-a", "list", "table", "ip", "x02_2026092600000001"]]
+    captures = [
+        bytes.fromhex(row["stdout_hex"])
+        for row in rows
+        if row.get("event") == "nft_command"
+        and row["argv"]
+        == ["/usr/sbin/nft", "-j", "-a", "list", "table", "ip", "x02_2026092600000001"]
+    ]
     if len(captures) != 1:
         raise ValueError("actual original snapshot identity differs")
     original = json.loads(captures[0])
     baseline = copy.deepcopy(original)
-    baseline["nftables"].extend([
-        {"chain": {"family": "ip", "table": "x02_2026092600000001", "name": "identity", "handle": 900}},
-        {"rule": {"family": "ip", "table": "x02_2026092600000001", "chain": "identity",
-                  "handle": 901, "comment": "x02-owner-2026092600000001",
-                  "expr": [{"counter": {"packets": 0, "bytes": 0}}]}}])
-    endpoints = {direction: ("127.0.0.1", 32000 + ordinal, "127.0.0.2", 33000 + ordinal)
-                 for ordinal, direction in enumerate(DIRECTIONS)}
-    manager = RuleManager("2026092600000001", SimpleNamespace(endpoints=endpoints),
-                          SimpleNamespace(queues={32600 + ordinal: direction
-                                                  for ordinal, direction in enumerate(DIRECTIONS)}), None)
+    baseline["nftables"].extend(
+        [
+            {
+                "chain": {
+                    "family": "ip",
+                    "table": "x02_2026092600000001",
+                    "name": "identity",
+                    "handle": 900,
+                }
+            },
+            {
+                "rule": {
+                    "family": "ip",
+                    "table": "x02_2026092600000001",
+                    "chain": "identity",
+                    "handle": 901,
+                    "comment": "x02-owner-2026092600000001",
+                    "expr": [{"counter": {"packets": 0, "bytes": 0}}],
+                }
+            },
+        ]
+    )
+    endpoints = {
+        direction: ("127.0.0.1", 32000 + ordinal, "127.0.0.2", 33000 + ordinal)
+        for ordinal, direction in enumerate(DIRECTIONS)
+    }
+    manager = RuleManager(
+        "2026092600000001",
+        SimpleNamespace(endpoints=endpoints),
+        SimpleNamespace(
+            queues={32600 + ordinal: direction for ordinal, direction in enumerate(DIRECTIONS)}
+        ),
+        None,
+    )
     return manager, original, baseline
 
 
@@ -58,10 +87,12 @@ class IdentityReceiptControls(unittest.TestCase):
 
     def test_duplicate_wrong_chain_foreign_token_and_changed_token(self):
         manager, original, baseline = fixture()
-        for case, reason in (("duplicate", "duplicate table identity rule"),
-                             ("chain", "table identity chain/expression differs"),
-                             ("foreign", "table identity marker differs"),
-                             ("changed", "table identity marker differs")):
+        for case, reason in (
+            ("duplicate", "duplicate table identity rule"),
+            ("chain", "table identity chain/expression differs"),
+            ("foreign", "table identity marker differs"),
+            ("changed", "table identity marker differs"),
+        ):
             snapshot = copy.deepcopy(baseline)
             rule = snapshot["nftables"][-1]["rule"]
             if case == "duplicate":
@@ -69,22 +100,30 @@ class IdentityReceiptControls(unittest.TestCase):
             elif case == "chain":
                 rule["chain"] = "enqueue"
             else:
-                rule["comment"] = ("foreign-fixture-" + manager.marker if case == "foreign" else manager.marker + "-changed")
+                rule["comment"] = (
+                    "foreign-fixture-" + manager.marker
+                    if case == "foreign"
+                    else manager.marker + "-changed"
+                )
             with self.subTest(case=case), self.assertRaisesRegex(ValueError, "^" + reason + "$"):
                 manager.validate_snapshot(encoded(snapshot))
 
     def test_unhooked_chain_extra_object_and_visible_comment_conflict(self):
         manager, original, baseline = fixture()
-        for case, reason in (("hook", "identity chain must be unique and unhooked"),
-                             ("extra", "unexpected object in owned table"),
-                             ("comment", "table name, visible comment or flags differ")):
+        for case, reason in (
+            ("hook", "identity chain must be unique and unhooked"),
+            ("extra", "unexpected object in owned table"),
+            ("comment", "table name, visible comment or flags differ"),
+        ):
             snapshot = copy.deepcopy(baseline)
             if case == "hook":
                 snapshot["nftables"][-2]["chain"]["hook"] = "output"
             elif case == "extra":
                 snapshot["nftables"].append({"set": {"family": "ip"}})
             else:
-                next(item["table"] for item in snapshot["nftables"] if "table" in item)["comment"] = "foreign"
+                next(item["table"] for item in snapshot["nftables"] if "table" in item)[
+                    "comment"
+                ] = "foreign"
             with self.subTest(case=case), self.assertRaisesRegex(ValueError, "^" + reason + "$"):
                 manager.validate_snapshot(encoded(snapshot))
 
@@ -97,14 +136,20 @@ class IdentityReceiptControls(unittest.TestCase):
 
     def test_otherwise_valid_foreign_fixture_and_install_boundary(self):
         manager, original, baseline = fixture()
-        foreign = encoded(baseline).replace(manager.marker.encode(), ("foreign-fixture-" + manager.marker).encode())
-        owner, unused = manager.validate_snapshot(foreign, fixture_marker="foreign-fixture-" + manager.marker)
+        foreign = encoded(baseline).replace(
+            manager.marker.encode(), ("foreign-fixture-" + manager.marker).encode()
+        )
+        owner, unused = manager.validate_snapshot(
+            foreign, fixture_marker="foreign-fixture-" + manager.marker
+        )
         self.assertEqual(owner["marker"], "foreign-fixture-" + manager.marker)
         self.assertEqual(owner["identity_rule"], 901)
         with self.assertRaisesRegex(ValueError, "^rule owner marker differs$"):
             manager.validate_snapshot(foreign)
         manager.attempted = True
-        with self.assertRaisesRegex(ValueError, "^foreign marker verification is fixture-only before install$"):
+        with self.assertRaisesRegex(
+            ValueError, "^foreign marker verification is fixture-only before install$"
+        ):
             manager.validate_snapshot(foreign, fixture_marker="foreign-fixture-" + manager.marker)
 
 

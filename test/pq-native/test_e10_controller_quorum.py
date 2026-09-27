@@ -4,24 +4,32 @@ import ast
 import importlib.util
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-
-SCRIPT = Path(os.environ.get(
-    "E10_SOURCE_PATH",
-    Path(__file__).resolve().parents[2] / "scripts/agent-economy-composed-e2e.py",
-))
+SCRIPT = Path(
+    os.environ.get(
+        "E10_SOURCE_PATH",
+        Path(__file__).resolve().parents[2] / "scripts/agent-economy-composed-e2e.py",
+    )
+)
 SPEC = importlib.util.spec_from_file_location("e10_composed", SCRIPT)
 e10 = importlib.util.module_from_spec(SPEC)
-stubs = {name: types.ModuleType(name) for name in (
-    "tostester", "tostester.install", "tostester.network",
-    "tostester.pq_initial_validator", "contract", "pytosiq_core",
-)}
+stubs = {
+    name: types.ModuleType(name)
+    for name in (
+        "tostester",
+        "tostester.install",
+        "tostester.network",
+        "tostester.pq_initial_validator",
+        "contract",
+        "pytosiq_core",
+    )
+}
 stubs["tostester.install"].Install = object
 stubs["tostester.network"].Network = object
 stubs["tostester.network"].StartOptions = object
@@ -36,8 +44,10 @@ with patch.dict(sys.modules, stubs):
 class E10ControllerQuorumTests(unittest.TestCase):
     def test_all_agent_account_task_actions_have_unique_stable_ids_and_two_configs(self):
         expected = {
-            ("accept", "workflow-happy"), ("result", "workflow-happy"),
-            ("accept", "workflow-contested"), ("result", "workflow-contested"),
+            ("accept", "workflow-happy"),
+            ("result", "workflow-happy"),
+            ("accept", "workflow-contested"),
+            ("result", "workflow-contested"),
         }
         found = []
         for node in ast.walk(ast.parse(SCRIPT.read_text())):
@@ -76,14 +86,18 @@ class E10ControllerQuorumTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             configs = (root / "observer-1.json", root / "observer-2.json")
-            with patch.object(e10, "CONFIG", root / "primary.json"), patch.object(
-                e10, "OBSERVER_CONFIGS", configs
+            with (
+                patch.object(e10, "CONFIG", root / "primary.json"),
+                patch.object(e10, "OBSERVER_CONFIGS", configs),
             ):
                 e10.write_config()
-            urls = [json.loads(path.read_text())["chain_rpc"]["urls"]
-                    for path in (root / "primary.json", *configs)]
-            self.assertEqual(urls, [[f"http://{endpoint}/"]
-                                    for endpoint in (e10.RPC, *e10.OBSERVER_RPCS)])
+            urls = [
+                json.loads(path.read_text())["chain_rpc"]["urls"]
+                for path in (root / "primary.json", *configs)
+            ]
+            self.assertEqual(
+                urls, [[f"http://{endpoint}/"] for endpoint in (e10.RPC, *e10.OBSERVER_RPCS)]
+            )
             self.assertEqual(len({row[0] for row in urls}), 3)
 
     def test_observers_must_match_primary_zerostate(self):
@@ -119,13 +133,19 @@ class E10ControllerQuorumTests(unittest.TestCase):
 
     def test_main_starts_both_observers_and_checks_quorum_before_actions(self):
         tree = ast.parse(SCRIPT.read_text())
-        methods = {node.name: node for node in tree.body
-                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        methods = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
 
         def has_call(method, name):
-            return any(isinstance(node, ast.Call)
-                       and isinstance(node.func, ast.Name) and node.func.id == name
-                       for node in ast.walk(methods[method]))
+            return any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == name
+                for node in ast.walk(methods[method])
+            )
 
         self.assertTrue(has_call("main", "write_config"))
         self.assertTrue(has_call("main", "require_independent_processes"))

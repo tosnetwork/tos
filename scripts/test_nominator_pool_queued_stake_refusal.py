@@ -5,12 +5,13 @@ import asyncio
 import base64
 import hashlib
 import os
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 
-
-SOURCE = Path(os.environ.get("E16_ROUTE_SOURCE", Path(__file__).with_name("nominator-pool-lifecycle-e2e.py")))
+SOURCE = Path(
+    os.environ.get("E16_ROUTE_SOURCE", Path(__file__).with_name("nominator-pool-lifecycle-e2e.py"))
+)
 
 
 def load_functions(*names):
@@ -20,10 +21,20 @@ def load_functions(*names):
         if isinstance(node, ast.FunctionDef) and node.name in names:
             selected.append(node)
         if isinstance(node, ast.ClassDef) and node.name == "PoolLifecycle":
-            selected.extend(item for item in node.body if isinstance(item, ast.AsyncFunctionDef) and item.name in names)
-    namespace = {"Any": object, "POOL_STATE_IDLE": 0,
-                 "base64": base64, "hashlib": hashlib}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])), str(SOURCE), "exec"), namespace)
+            selected.extend(
+                item
+                for item in node.body
+                if isinstance(item, ast.AsyncFunctionDef) and item.name in names
+            )
+    namespace = {"Any": object, "POOL_STATE_IDLE": 0, "base64": base64, "hashlib": hashlib}
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[])),
+            str(SOURCE),
+            "exec",
+        ),
+        namespace,
+    )
     return namespace
 
 
@@ -45,24 +56,39 @@ class TestQueuedStakeRefusal(unittest.TestCase):
         check = namespace["_queued_stake_refusal"]
 
         def transaction(query, *, code=85, aborted=True):
-            message = SimpleNamespace(info=namespace["InternalMsgInfo"](), body=SimpleNamespace(begin_parse=lambda: Body(query)))
-            return SimpleNamespace(in_msg=message, description=SimpleNamespace(aborted=aborted, compute_ph=SimpleNamespace(exit_code=code)), lt=42, data=b"pool-transaction-boc")
+            message = SimpleNamespace(
+                info=namespace["InternalMsgInfo"](),
+                body=SimpleNamespace(begin_parse=lambda: Body(query)),
+            )
+            return SimpleNamespace(
+                in_msg=message,
+                description=SimpleNamespace(
+                    aborted=aborted, compute_ph=SimpleNamespace(exit_code=code)
+                ),
+                lt=42,
+                data=b"pool-transaction-boc",
+            )
 
         self.assertIsNone(check([], 7))
         self.assertIsNone(check([transaction(8)], 7))
         self.assertIsNone(check([transaction(7, code=0)], 7))
         self.assertIsNone(check([transaction(7, aborted=False)], 7))
-        self.assertEqual(check([transaction(7)], 7), {
-            "transaction_lt": "42",
-            "transaction_boc_base64": base64.b64encode(b"pool-transaction-boc").decode(),
-            "transaction_boc_sha256": hashlib.sha256(b"pool-transaction-boc").hexdigest(),
-            "exit_code": 85,
-        })
+        self.assertEqual(
+            check([transaction(7)], 7),
+            {
+                "transaction_lt": "42",
+                "transaction_boc_base64": base64.b64encode(b"pool-transaction-boc").decode(),
+                "transaction_boc_sha256": hashlib.sha256(b"pool-transaction-boc").hexdigest(),
+                "exit_code": 85,
+            },
+        )
 
     def test_idle_state_without_finalized_refusal_cannot_pass(self):
         namespace = load_functions("stake_must_be_refused")
+
         async def no_sleep(*args):
             pass
+
         namespace["asyncio"] = SimpleNamespace(sleep=no_sleep)
         namespace["_transactions_since"] = self._empty_history
         namespace["_queued_stake_refusal"] = lambda transactions, query: None

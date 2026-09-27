@@ -66,29 +66,32 @@ from pytosiq_core import (  # noqa: E402
 from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
 from tosapi import tos_api, toslib_api  # noqa: E402
 from toslib.errors import LocalError, RemoteError  # noqa: E402
+from tostester.f01_stage_a_evidence import (  # noqa: E402
+    config34_hash,
+    extract_finalized_log,
+    locate_transition,
+    write_manifest,
+)
 from tostester.install import Install  # noqa: E402
 from tostester.network import FullNode, Network, NetworkConfig, StartOptions  # noqa: E402
-from tostester.f01_stage_a_evidence import (  # noqa: E402
-    config34_hash, extract_finalized_log, locate_transition, write_manifest,
-)
-from x01_window_evidence import validate as validate_x01_window  # noqa: E402
-from x02_config34_proof import verify_bundle as verify_config34_bundle  # noqa: E402
-from tostester.pq_initial_validator import (  # noqa: E402
-    make_deterministic_pq_initial_validator,
-)
 from tostester.pq_election_fixture import (  # noqa: E402
     ControllerFixture,
     PoolFixture,
     assert_controller_identity,
     build_production_pool_stake_order,
-    elector_reply,
     compile_controller_code,
+    elector_reply,
     make_controller_fixture,
     make_pool_fixture,
     parse_past_elections_list,
     participant_ids_from_runmethod,
     require_pq_stake_authorization_binding,
 )
+from tostester.pq_initial_validator import (  # noqa: E402
+    make_deterministic_pq_initial_validator,
+)
+from x01_window_evidence import validate as validate_x01_window  # noqa: E402
+from x02_config34_proof import verify_bundle as verify_config34_bundle  # noqa: E402
 
 NANO = 1_000_000_000
 VALIDATOR_COUNT = 4
@@ -97,13 +100,11 @@ EFFECTIVE_STAKE = 10_000 * NANO
 PQ_STAKE_MESSAGE_VALUE = 11_000 * NANO  # sandbox-tested margin above the 10,000 TOS floor
 VALIDATOR_WALLET_FUNDING = 20_020 * NANO
 EXPERIMENT_CONCURRENT_STAKE_CAPACITY = 3
-PQ_EXPERIMENT_POOL_CAPITAL = (
-    EXPERIMENT_CONCURRENT_STAKE_CAPACITY * (PQ_STAKE_MESSAGE_VALUE + 20 * NANO)
+PQ_EXPERIMENT_POOL_CAPITAL = EXPERIMENT_CONCURRENT_STAKE_CAPACITY * (
+    PQ_STAKE_MESSAGE_VALUE + 20 * NANO
 )
 EXPERIMENT_OPERATOR_FEE_RESERVE = 1_000 * NANO
-EXPERIMENT_VALIDATOR_WALLET_FUNDING = (
-    PQ_EXPERIMENT_POOL_CAPITAL + EXPERIMENT_OPERATOR_FEE_RESERVE
-)
+EXPERIMENT_VALIDATOR_WALLET_FUNDING = PQ_EXPERIMENT_POOL_CAPITAL + EXPERIMENT_OPERATOR_FEE_RESERVE
 NEGATIVE_WALLET_FUNDING = 15_000 * NANO
 EXPERIMENT_FAUCET_FEE_RESERVE = 1_000 * NANO
 EXPERIMENT_GENESIS_FAUCET_FUNDING = (
@@ -112,9 +113,7 @@ EXPERIMENT_GENESIS_FAUCET_FUNDING = (
     + VALIDATOR_COUNT * 10 * NANO  # admitted controller deployment
     + EXPERIMENT_FAUCET_FEE_RESERVE
 )
-PQ_FULL_FOLLOWUP_FAUCET_CAPITAL = (
-    2 * VALIDATOR_COUNT * (PQ_STAKE_MESSAGE_VALUE + 40 * NANO)
-)
+PQ_FULL_FOLLOWUP_FAUCET_CAPITAL = 2 * VALIDATOR_COUNT * (PQ_STAKE_MESSAGE_VALUE + 40 * NANO)
 PQ_FULL_FAUCET_FEE_RESERVE = 1_000 * NANO
 PQ_FULL_GENESIS_FAUCET_FUNDING = (
     VALIDATOR_COUNT * VALIDATOR_WALLET_FUNDING
@@ -230,17 +229,13 @@ class Config34:
 def parse_pq_validator_adnl_pairs(output: str) -> list[tuple[str, str]]:
     """Bind identity and ADNL from the same decoded ConfigParam 34 record."""
     markers = list(re.finditer(r"\bvalidator_pq\b", output))
-    identities = list(re.finditer(
-        r"\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})", output
-    ))
+    identities = list(re.finditer(r"\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})", output))
     if len(markers) != len(identities):
-        raise ValueError(
-            "ConfigParam 34 has a PQ validator record without a 256-bit validator_id"
-        )
+        raise ValueError("ConfigParam 34 has a PQ validator record without a 256-bit validator_id")
     pairs = []
     for index, identity in enumerate(identities):
         end = identities[index + 1].start() if index + 1 < len(identities) else len(output)
-        section = output[identity.end():end]
+        section = output[identity.end() : end]
         adnl = re.findall(r"\badnl_addr:x([0-9A-Fa-f]{64})", section)
         if len(adnl) != 1:
             raise ValueError(
@@ -254,9 +249,7 @@ def parse_pq_validator_adnl_pairs(output: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def require_pq_config34_associations(
-    config: Config34, expected: dict[str, str]
-) -> None:
+def require_pq_config34_associations(config: Config34, expected: dict[str, str]) -> None:
     actual = dict(config.validator_adnl_pairs)
     if len(config.validator_adnl_pairs) != len(expected) or actual != expected:
         raise AssertionError(
@@ -484,7 +477,10 @@ class ValidatorElectionRehearsal:
         config.shard_validators = VALIDATOR_COUNT
         config.validator_economics_profile = True
         config.validator_election_stage_a_profile = self.profile.accelerated
-        if self.profile.stage == "a" and self.profile.elect_start_before != PROFILES["a"].elect_start_before:
+        if (
+            self.profile.stage == "a"
+            and self.profile.elect_start_before != PROFILES["a"].elect_start_before
+        ):
             config.validator_election_stage_a_start_before = self.profile.elect_start_before
         if self.fixture_only or self.pq_election:
             if self.controller_code is None:
@@ -633,9 +629,11 @@ class ValidatorElectionRehearsal:
             log_binding = {
                 "harness_pid": os.getpid(),
                 "harness_start_ticks": int(harness_stat.rsplit(b") ", 1)[1].split()[19]),
-                "input_fd": fds["input_fd"], "input_link": input_link,
+                "input_fd": fds["input_fd"],
+                "input_link": input_link,
                 "output_fd": fds["output_fd"],
-                "output_dev": output_stat.st_dev, "output_ino": output_stat.st_ino,
+                "output_dev": output_stat.st_dev,
+                "output_ino": output_stat.st_ino,
             }
         return {
             "validator_index": index + 1,
@@ -687,20 +685,11 @@ class ValidatorElectionRehearsal:
             )
             result = response["result"]
             assert self.network is not None
-            expected_root = base64.b64encode(
-                self.network.zerostate.masterchain.root_hash
-            ).decode()
-            expected_file = base64.b64encode(
-                self.network.zerostate.masterchain.file_hash
-            ).decode()
+            expected_root = base64.b64encode(self.network.zerostate.masterchain.root_hash).decode()
+            expected_file = base64.b64encode(self.network.zerostate.masterchain.file_hash).decode()
             init = result.get("init") or {}
-            if (
-                init.get("root_hash") != expected_root
-                or init.get("file_hash") != expected_file
-            ):
-                raise AssertionError(
-                    f"validator {index + 1} JSON-RPC zero-state mismatch"
-                )
+            if init.get("root_hash") != expected_root or init.get("file_hash") != expected_file:
+                raise AssertionError(f"validator {index + 1} JSON-RPC zero-state mismatch")
             return {
                 "validator_index": index + 1,
                 "address": address,
@@ -829,9 +818,7 @@ class ValidatorElectionRehearsal:
                 "minimum_stake_nanotos": EFFECTIVE_STAKE,
                 "stake_message_value_nanotos": PQ_STAKE_MESSAGE_VALUE,
                 "operator_wallet_funding_nanotos": self.validator_wallet_funding(),
-                "supported_concurrent_unrecovered_stakes": (
-                    EXPERIMENT_CONCURRENT_STAKE_CAPACITY
-                ),
+                "supported_concurrent_unrecovered_stakes": (EXPERIMENT_CONCURRENT_STAKE_CAPACITY),
                 "mapping_status": "declared-before-first-election",
                 "mapping_becomes_on_chain": (
                     "when each node-authorized pool order is accepted and ConfigParam 34 activates"
@@ -955,22 +942,26 @@ class ValidatorElectionRehearsal:
             )
         )
         retained_by_state: dict[str, list[dict[str, int]]] = {
-            name: [] for name in (
-                "active-retained", "retired-frozen", "matured-unrecovered", "unmeasured"
-            )
+            name: []
+            for name in ("active-retained", "retired-frozen", "matured-unrecovered", "unmeasured")
         }
         for election_id, allocation in self.election_allocations.items():
             for index in range(VALIDATOR_COUNT):
                 candidate = allocation.get("validators", {}).get(str(index + 1))
-                if candidate is None or candidate.get("recovery_status") != "retained-settlement-rollover":
+                if (
+                    candidate is None
+                    or candidate.get("recovery_status") != "retained-settlement-rollover"
+                ):
                     continue
                 retained_by_state[self.experiment_retention_state(election_id)].append(
                     {"election_id": election_id, "validator_index": index + 1}
                 )
         matured_retained_unrecovered = retained_by_state["matured-unrecovered"]
         outstanding = (
-            outstanding_recorded + len(missing_primary_allocations)
-            + len(matured_retained_unrecovered) + len(retained_by_state["unmeasured"])
+            outstanding_recorded
+            + len(missing_primary_allocations)
+            + len(matured_retained_unrecovered)
+            + len(retained_by_state["unmeasured"])
         )
         retained_rollover = sum(
             1
@@ -989,9 +980,7 @@ class ValidatorElectionRehearsal:
             rendered["on_chain_unfreeze_at"] = (
                 on_chain["unfreeze_at"] if on_chain is not None else None
             )
-            rendered["on_chain_vset_hash"] = (
-                on_chain["vset_hash"] if on_chain is not None else None
-            )
+            rendered["on_chain_vset_hash"] = on_chain["vset_hash"] if on_chain is not None else None
             if allocation.get("purpose") == "primary-window":
                 missing_indices = [
                     index
@@ -1036,9 +1025,7 @@ class ValidatorElectionRehearsal:
                 "minimum_stake_nanotos": EFFECTIVE_STAKE,
                 "operator_wallet_funding_nanotos": self.validator_wallet_funding(),
                 "pool_capital_per_validator_nanotos": PQ_EXPERIMENT_POOL_CAPITAL,
-                "supported_concurrent_unrecovered_stakes": (
-                    EXPERIMENT_CONCURRENT_STAKE_CAPACITY
-                ),
+                "supported_concurrent_unrecovered_stakes": (EXPERIMENT_CONCURRENT_STAKE_CAPACITY),
                 "allocation_basis": (
                     "node-authorized controller/pool/ADNL mapping plus exact pool-level Elector "
                     "compute_returned_stake credit and elector-observed accepted principal; "
@@ -1133,8 +1120,7 @@ class ValidatorElectionRehearsal:
     def require_complete_experiment_settlement(outstanding_allocations: int) -> None:
         if outstanding_allocations != 0:
             raise RuntimeError(
-                "validator experiment ended with "
-                f"{outstanding_allocations} outstanding allocations"
+                f"validator experiment ended with {outstanding_allocations} outstanding allocations"
             )
 
     def prepare_artifact_snapshot(self) -> None:
@@ -1163,9 +1149,11 @@ class ValidatorElectionRehearsal:
             binaries[relative] = self.file_provenance(target)
         if self.pq_election:
             relative = "tosctl/pq_pool_stake_order"
-            source = (self.pq_pool_stake_order_binary
-                      if self.pq_pool_stake_order_binary is not None
-                      else REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order")
+            source = (
+                self.pq_pool_stake_order_binary
+                if self.pq_pool_stake_order_binary is not None
+                else REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order"
+            )
             target = snapshot_build / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
@@ -1173,7 +1161,9 @@ class ValidatorElectionRehearsal:
 
         # The toslib shared library is platform-specific: .dylib on macOS, .so elsewhere
         # (install.py already loads the .dylib on darwin). Snapshot whichever exists.
-        toslib_rel = "toslib/libtoslibjson.dylib" if sys.platform == "darwin" else "toslib/libtoslibjson.so"
+        toslib_rel = (
+            "toslib/libtoslibjson.dylib" if sys.platform == "darwin" else "toslib/libtoslibjson.so"
+        )
         toslib_source = (self.original_build_dir / toslib_rel).resolve(strict=True)
         toslib_target = snapshot_build / toslib_rel
         toslib_target.parent.mkdir(parents=True, exist_ok=True)
@@ -1248,14 +1238,13 @@ class ValidatorElectionRehearsal:
             "generated_contracts": generated_contracts,
             "pq_stake_authorization_python_tl": (
                 {
-                    "schema": self.file_provenance(
-                        schema_target
-                    ),
+                    "schema": self.file_provenance(schema_target),
                     "generated_binding": self.file_provenance(
                         snapshot_source / "test/tostester/src/tosapi/tos_api.py"
                     ),
                 }
-                if self.pq_election else None
+                if self.pq_election
+                else None
             ),
         }
         (snapshot_dir / "manifest.json").write_text(
@@ -1369,7 +1358,8 @@ class ValidatorElectionRehearsal:
     async def wait_pool_capital(self, address: Address, amount: int, label: str) -> int:
         """Wait for the destination shard to expose a funded pool after wallet seqno advances."""
         return await self.retry(
-            lambda: self.balance(address), timeout=60,
+            lambda: self.balance(address),
+            timeout=60,
             description=f"{label} pool capital at least {amount}",
             predicate=lambda value: value >= amount,
         )
@@ -1480,25 +1470,29 @@ class ValidatorElectionRehearsal:
         stat_fields_after = (proc / "stat").read_text().rsplit(") ", 1)[1].split()
         if stat_fields_after[19] != stat_fields[19]:
             raise RuntimeError(f"F01 {node.name} validator PID changed during cwd capture")
-        if (cwd != node_dir or (cwd_stat.st_dev, cwd_stat.st_ino)
-                != (node_dir_stat.st_dev, node_dir_stat.st_ino)):
+        if cwd != node_dir or (cwd_stat.st_dev, cwd_stat.st_ino) != (
+            node_dir_stat.st_dev,
+            node_dir_stat.st_ino,
+        ):
             raise RuntimeError(f"F01 {node.name} validator process cwd differs from its DB root")
         generations = self.f01_process_generations.setdefault(node.name, [])
-        generations.append({
-            "node_name": node.name,
-            "generation": len(generations),
-            "pid": pid,
-            "proc_start_ticks": int(stat_fields[19]),
-            "exe_path": str(executable),
-            "exe_device": executable_stat.st_dev,
-            "exe_inode": executable_stat.st_ino,
-            "node_data_dir": str(node_dir),
-            "proc_cwd_link": str(cwd_link),
-            "proc_cwd_realpath": str(cwd),
-            "proc_cwd_device": cwd_stat.st_dev,
-            "proc_cwd_inode": cwd_stat.st_ino,
-            "recorded_at": utc_now(),
-        })
+        generations.append(
+            {
+                "node_name": node.name,
+                "generation": len(generations),
+                "pid": pid,
+                "proc_start_ticks": int(stat_fields[19]),
+                "exe_path": str(executable),
+                "exe_device": executable_stat.st_dev,
+                "exe_inode": executable_stat.st_ino,
+                "node_data_dir": str(node_dir),
+                "proc_cwd_link": str(cwd_link),
+                "proc_cwd_realpath": str(cwd),
+                "proc_cwd_device": cwd_stat.st_dev,
+                "proc_cwd_inode": cwd_stat.st_ino,
+                "recorded_at": utc_now(),
+            }
+        )
 
     def preserve_f01_log(self, index: int) -> None:
         """Copy a stopped validator's raw log before the next run truncates it."""
@@ -1514,8 +1508,9 @@ class ValidatorElectionRehearsal:
     def x01_endpoint(self, index: int) -> str:
         return f"127.0.0.1:{self.base_port + 500 + index}"
 
-    async def x01_rpc(self, index: int, method: str,
-                      params: dict[str, Any] | None = None) -> tuple[dict[str, Any], str]:
+    async def x01_rpc(
+        self, index: int, method: str, params: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], str]:
         """Keep the response bytes, endpoint and request for each independent node view."""
         self.x01_directory.mkdir(parents=True, exist_ok=True)
         endpoint = self.x01_endpoint(index)
@@ -1524,7 +1519,8 @@ class ValidatorElectionRehearsal:
 
         def call() -> tuple[dict[str, Any], str]:
             request = urllib.request.Request(
-                f"http://{endpoint}/jsonRPC", data=request_bytes,
+                f"http://{endpoint}/jsonRPC",
+                data=request_bytes,
                 headers={"Content-Type": "application/json"},
             )
             try:
@@ -1533,22 +1529,38 @@ class ValidatorElectionRehearsal:
                 observed_at = utc_now()
             except Exception as error:
                 with (self.x01_directory / "rpc.jsonl").open("a") as output:
-                    output.write(json.dumps({
-                        "at": utc_now(), "node": self.nodes[index].name,
-                        "endpoint": endpoint, "request_base64": base64.b64encode(request_bytes).decode(),
-                        "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
-                        "transport_error": f"{type(error).__name__}: {error}",
-                    }, sort_keys=True) + "\n")
+                    output.write(
+                        json.dumps(
+                            {
+                                "at": utc_now(),
+                                "node": self.nodes[index].name,
+                                "endpoint": endpoint,
+                                "request_base64": base64.b64encode(request_bytes).decode(),
+                                "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+                                "transport_error": f"{type(error).__name__}: {error}",
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
                 raise
             with (self.x01_directory / "rpc.jsonl").open("a") as output:
-                output.write(json.dumps({
-                    "at": observed_at, "node": self.nodes[index].name,
-                    "endpoint": endpoint, "request_base64": base64.b64encode(request_bytes).decode(),
-                    "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
-                    "http_status": status,
-                    "response_base64": base64.b64encode(raw).decode(),
-                    "response_sha256": hashlib.sha256(raw).hexdigest(),
-                }, sort_keys=True) + "\n")
+                output.write(
+                    json.dumps(
+                        {
+                            "at": observed_at,
+                            "node": self.nodes[index].name,
+                            "endpoint": endpoint,
+                            "request_base64": base64.b64encode(request_bytes).decode(),
+                            "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
+                            "http_status": status,
+                            "response_base64": base64.b64encode(raw).decode(),
+                            "response_sha256": hashlib.sha256(raw).hexdigest(),
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
             document = json.loads(raw)
             if status != 200 or document.get("error") is not None or document.get("result") is None:
                 raise RuntimeError(f"X01 {self.nodes[index].name} {method} failed")
@@ -1565,11 +1577,17 @@ class ValidatorElectionRehearsal:
             return raw.hex()
 
         if int(value["workchain"]) != -1 or int(value["shard"]) not in (
-                -9223372036854775808, 9223372036854775808):
+            -9223372036854775808,
+            9223372036854775808,
+        ):
             raise ValueError("X01 RPC returned a non-masterchain block")
-        return {"workchain": -1, "shard": "8000000000000000",
-                "seqno": int(value["seqno"]),
-                "root_hash": digest("root_hash"), "file_hash": digest("file_hash")}
+        return {
+            "workchain": -1,
+            "shard": "8000000000000000",
+            "seqno": int(value["seqno"]),
+            "root_hash": digest("root_hash"),
+            "file_hash": digest("file_hash"),
+        }
 
     async def x01_freeze_policy(self) -> None:
         if not self.pq_full or self.x01_policy is not None:
@@ -1586,24 +1604,41 @@ class ValidatorElectionRehearsal:
             if zero["seqno"] != 0:
                 raise ValueError("X01 RPC zerostate has nonzero height")
             nodes[node.name] = {
-                "endpoint": self.x01_endpoint(index), "zerostate": zero,
+                "endpoint": self.x01_endpoint(index),
+                "zerostate": zero,
                 "node_data_dir": str(node.directory.resolve()),
                 "node_log_path": str(node.log_path.resolve()),
                 "pq_key_id_hex": node.pq_initial_validator.key_id.hex(),
                 "adnl_id_hex": node.validator_key.id.hex(),
                 "initial_pid": node.process_id,
-                "validator_engine_exe_path": self.provenance["binaries"]["validator-engine/validator-engine"]["path"],
-                "validator_engine_exe_sha256": self.provenance["binaries"]["validator-engine/validator-engine"]["sha256"],
+                "validator_engine_exe_path": self.provenance["binaries"][
+                    "validator-engine/validator-engine"
+                ]["path"],
+                "validator_engine_exe_sha256": self.provenance["binaries"][
+                    "validator-engine/validator-engine"
+                ]["sha256"],
             }
         if len({json.dumps(row["zerostate"], sort_keys=True) for row in nodes.values()}) != 1:
             raise ValueError("X01 independent RPC endpoints do not share zerostate")
-        policy = {"schema": "tos.x01.window-policy.v1", "nodes": nodes,
-                  "thresholds": {"three_min_delta": 1, "halt_min_samples": 8,
-                                 "halt_tail_samples": 4, "recovery_min_delta": 1,
-                                 "three_max_seconds": 90, "halt_min_seconds": 30,
-                                 "halt_tail_min_seconds": 15, "recovery_max_seconds": 90}}
+        policy = {
+            "schema": "tos.x01.window-policy.v1",
+            "nodes": nodes,
+            "thresholds": {
+                "three_min_delta": 1,
+                "halt_min_samples": 8,
+                "halt_tail_samples": 4,
+                "recovery_min_delta": 1,
+                "three_max_seconds": 90,
+                "halt_min_seconds": 30,
+                "halt_tail_min_seconds": 15,
+                "recovery_max_seconds": 90,
+            },
+        }
         write_json_atomic(policy_path, policy)
-        self.x01_policy, self.x01_policy_sha256 = policy, hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        self.x01_policy, self.x01_policy_sha256 = (
+            policy,
+            hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+        )
         self.event("x01_policy_frozen", path=str(policy_path), sha256=self.x01_policy_sha256)
 
     def x01_running_process(self, pid: int) -> tuple[bytes, str, str]:
@@ -1612,20 +1647,37 @@ class ValidatorElectionRehearsal:
         executable = (proc / "exe").resolve(strict=True)
         provenance = self.file_provenance(proc / "exe")
         expected = self.provenance["binaries"]["validator-engine/validator-engine"]
-        if executable != Path(expected["path"]).resolve() or provenance["sha256"] != expected["sha256"]:
+        if (
+            executable != Path(expected["path"]).resolve()
+            or provenance["sha256"] != expected["sha256"]
+        ):
             raise ValueError(f"X01 PID {pid} executable differs from snapshotted validator engine")
         return stat, str(executable), provenance["sha256"]
 
-    def x01_process_event(self, phase: str, index: int, *, stopped: bool,
-                          old_pid: int, pid: int, proc_stat: bytes,
-                          exe_path: str, exe_sha256: str) -> None:
+    def x01_process_event(
+        self,
+        phase: str,
+        index: int,
+        *,
+        stopped: bool,
+        old_pid: int,
+        pid: int,
+        proc_stat: bytes,
+        exe_path: str,
+        exe_sha256: str,
+    ) -> None:
         node = self.nodes[index]
         observation = {
             "schema": "tos.x01.process-stop.v1" if stopped else "tos.x01.process-start.v1",
-            "phase": phase, "node": node.name, "pid": pid, "at": utc_now(),
-            "running_before": stopped, "running_after": not stopped,
+            "phase": phase,
+            "node": node.name,
+            "pid": pid,
+            "at": utc_now(),
+            "running_before": stopped,
+            "running_after": not stopped,
             "proc_stat_base64": base64.b64encode(proc_stat).decode(),
-            "exe_path": exe_path, "exe_sha256": exe_sha256,
+            "exe_path": exe_path,
+            "exe_sha256": exe_sha256,
             "node_data_dir": str(node.directory.resolve()),
             "node_log_path": str(node.log_path.resolve()),
             "pq_key_id_hex": node.pq_initial_validator.key_id.hex(),
@@ -1639,9 +1691,14 @@ class ValidatorElectionRehearsal:
         raw = (json.dumps(observation, sort_keys=True) + "\n").encode()
         kind = "process_stopped" if stopped else "process_started"
         collection = "faults" if stopped else "restarts"
-        event = {"phase": phase, "node": node.name, "kind": kind, "hit": True,
-                 "raw_evidence_sha256": hashlib.sha256(raw).hexdigest(),
-                 "raw_evidence_base64": base64.b64encode(raw).decode()}
+        event = {
+            "phase": phase,
+            "node": node.name,
+            "kind": kind,
+            "hit": True,
+            "raw_evidence_sha256": hashlib.sha256(raw).hexdigest(),
+            "raw_evidence_base64": base64.b64encode(raw).decode(),
+        }
         self.x01_trace[collection].append(event)
         path = self.x01_directory / f"{phase}-{node.name}-{kind}.json"
         path.write_bytes(raw)
@@ -1655,14 +1712,22 @@ class ValidatorElectionRehearsal:
         await node.stop()
         if node.process_id is not None or Path(f"/proc/{pid}/stat").exists():
             raise RuntimeError(f"X01 {node.name} PID {pid} remained after stop")
-        self.x01_process_event(phase, index, stopped=True,
-                               old_pid=pid, pid=pid, proc_stat=proc_stat,
-                               exe_path=exe_path, exe_sha256=exe_sha256)
+        self.x01_process_event(
+            phase,
+            index,
+            stopped=True,
+            old_pid=pid,
+            pid=pid,
+            proc_stat=proc_stat,
+            exe_path=exe_path,
+            exe_sha256=exe_sha256,
+        )
 
     async def x01_start(self, phase: str, index: int) -> None:
         node = self.nodes[index]
-        stopped = next(row for row in reversed(self.x01_trace["faults"])
-                       if row["node"] == node.name)
+        stopped = next(
+            row for row in reversed(self.x01_trace["faults"]) if row["node"] == node.name
+        )
         old_pid = json.loads(base64.b64decode(stopped["raw_evidence_base64"]))["pid"]
         if Path(f"/proc/{old_pid}/stat").exists():
             raise RuntimeError(f"X01 {node.name} old PID was reused before restart")
@@ -1671,9 +1736,16 @@ class ValidatorElectionRehearsal:
         if pid is None or pid <= 0 or pid == old_pid:
             raise RuntimeError(f"X01 {node.name} restart PID did not change")
         proc_stat, exe_path, exe_sha256 = self.x01_running_process(pid)
-        self.x01_process_event(phase, index, stopped=False,
-                               old_pid=old_pid, pid=pid, proc_stat=proc_stat,
-                               exe_path=exe_path, exe_sha256=exe_sha256)
+        self.x01_process_event(
+            phase,
+            index,
+            stopped=False,
+            old_pid=old_pid,
+            pid=pid,
+            proc_stat=proc_stat,
+            exe_path=exe_path,
+            exe_sha256=exe_sha256,
+        )
 
     async def x01_sample(self, phase: str, indices: tuple[int, ...]) -> dict[str, Any]:
         at = utc_now()  # before any RPC read, so a later stop cannot predate this sample
@@ -1684,12 +1756,20 @@ class ValidatorElectionRehearsal:
         height = min(tip["seqno"] for tip in initial_tips.values())
         views = {}
         for index in indices:
-            header, _ = await self.x01_rpc(index, "getBlockHeader", {
-                "workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": height,
-            })
+            header, _ = await self.x01_rpc(
+                index,
+                "getBlockHeader",
+                {
+                    "workchain": -1,
+                    "shard": MASTERCHAIN_SHARD_STR,
+                    "seqno": height,
+                },
+            )
             views[self.nodes[index].name] = self.x01_block_id(header["id"])
-        if any(block["seqno"] != height for block in views.values()) or len({
-                json.dumps(block, sort_keys=True) for block in views.values()}) != 1:
+        if (
+            any(block["seqno"] != height for block in views.values())
+            or len({json.dumps(block, sort_keys=True) for block in views.values()}) != 1
+        ):
             raise AssertionError(f"X01 {phase} full IDs conflict at common height {height}")
         tips, tip_observed_at = {}, {}
         for index in indices:
@@ -1697,13 +1777,17 @@ class ValidatorElectionRehearsal:
             name = self.nodes[index].name
             tip = self.x01_block_id(info["last"])
             before = initial_tips[name]
-            if (tip["seqno"] < before["seqno"]
-                    or tip["seqno"] == before["seqno"] and tip != before):
+            if tip["seqno"] < before["seqno"] or tip["seqno"] == before["seqno"] and tip != before:
                 raise AssertionError(f"X01 {phase} {name} tip regressed during sample")
             tips[name], tip_observed_at[name] = tip, observed_at
-        sample = {"at": at, "completed_at": utc_now(), "nodes": views,
-                  "initial_tips": initial_tips, "tips": tips,
-                  "tip_observed_at": tip_observed_at}
+        sample = {
+            "at": at,
+            "completed_at": utc_now(),
+            "nodes": views,
+            "initial_tips": initial_tips,
+            "tips": tips,
+            "tip_observed_at": tip_observed_at,
+        }
         self.x01_trace["phases"].setdefault(phase, []).append(sample)
         return sample
 
@@ -1712,27 +1796,39 @@ class ValidatorElectionRehearsal:
         policy_path = self.x01_directory / "policy.json"
         if hashlib.sha256(policy_path.read_bytes()).hexdigest() != self.x01_policy_sha256:
             raise ValueError("X01 pre-fault policy file changed during the run")
-        checkpoint_height = self.x01_trace["phases"]["two_of_four"][-1]["nodes"][self.nodes[0].name]["seqno"]
+        checkpoint_height = self.x01_trace["phases"]["two_of_four"][-1]["nodes"][
+            self.nodes[0].name
+        ]["seqno"]
         checkpoint = {}
         for index, node in enumerate(self.nodes):
-            header, _ = await self.x01_rpc(index, "getBlockHeader", {
-                "workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": checkpoint_height,
-            })
+            header, _ = await self.x01_rpc(
+                index,
+                "getBlockHeader",
+                {
+                    "workchain": -1,
+                    "shard": MASTERCHAIN_SHARD_STR,
+                    "seqno": checkpoint_height,
+                },
+            )
             checkpoint[node.name] = self.x01_block_id(header["id"])
         self.x01_trace["recovery_halt_checkpoint"] = checkpoint
         trace_path = self.x01_directory / "trace.json"
         write_json_atomic(trace_path, self.x01_trace)
-        manifest = {"schema": "tos.x01.stage-a-capture.v1",
-                    "source_commit": self.provenance["source_commit"],
-                    "harness": self.provenance["harness"],
-                    "x01_checker": self.provenance["x01_checker"],
-                    "binaries": self.provenance["binaries"],
-                    "policy": self.file_provenance(self.x01_directory / "policy.json"),
-                    "trace": self.file_provenance(trace_path),
-                    "rpc_transcript": self.file_provenance(self.x01_directory / "rpc.jsonl"),
-                    "process_events": [self.file_provenance(path) for path in sorted(
-                        self.x01_directory.glob("*-process_*.json"))],
-                    "f01_capture_manifest": str(self.f01_directory / "capture-manifest.json")}
+        manifest = {
+            "schema": "tos.x01.stage-a-capture.v1",
+            "source_commit": self.provenance["source_commit"],
+            "harness": self.provenance["harness"],
+            "x01_checker": self.provenance["x01_checker"],
+            "binaries": self.provenance["binaries"],
+            "policy": self.file_provenance(self.x01_directory / "policy.json"),
+            "trace": self.file_provenance(trace_path),
+            "rpc_transcript": self.file_provenance(self.x01_directory / "rpc.jsonl"),
+            "process_events": [
+                self.file_provenance(path)
+                for path in sorted(self.x01_directory.glob("*-process_*.json"))
+            ],
+            "f01_capture_manifest": str(self.f01_directory / "capture-manifest.json"),
+        }
         manifest_path = self.x01_directory / "capture-manifest.json"
         write_json_atomic(manifest_path, manifest)
         self.x01_capture_provenance = self.file_provenance(manifest_path)
@@ -1746,11 +1842,16 @@ class ValidatorElectionRehearsal:
         if hashlib.sha256(policy_path.read_bytes()).hexdigest() != self.x01_policy_sha256:
             raise ValueError("X01 pre-fault policy changed before final F01 log validation")
         f01_bytes = f01_path.read_bytes()
-        result = validate_x01_window(self.x01_policy, self.x01_trace,
-                                     generation_manifest=json.loads(f01_bytes))
-        result.update({"policy_sha256": self.x01_policy_sha256,
-                       "trace_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest(),
-                       "f01_capture_manifest_sha256": hashlib.sha256(f01_bytes).hexdigest()})
+        result = validate_x01_window(
+            self.x01_policy, self.x01_trace, generation_manifest=json.loads(f01_bytes)
+        )
+        result.update(
+            {
+                "policy_sha256": self.x01_policy_sha256,
+                "trace_sha256": hashlib.sha256(trace_path.read_bytes()).hexdigest(),
+                "f01_capture_manifest_sha256": hashlib.sha256(f01_bytes).hexdigest(),
+            }
+        )
         write_json_atomic(self.x01_directory / "check.json", result)
         manifest_path = self.x01_directory / "capture-manifest.json"
         manifest = json.loads(manifest_path.read_bytes())
@@ -1803,7 +1904,8 @@ class ValidatorElectionRehearsal:
                 "binaries": self.provenance["binaries"],
                 "config34_raw_rpc_transcript": self.file_provenance(rpc_transcript),
             },
-            nodes=nodes, transitions=self.f01_transitions,
+            nodes=nodes,
+            transitions=self.f01_transitions,
         )
         self.f01_capture_provenance = self.file_provenance(path)
 
@@ -1825,7 +1927,8 @@ class ValidatorElectionRehearsal:
             def call() -> dict[str, Any]:
                 payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
                 request = urllib.request.Request(
-                    f"http://{address}/jsonRPC", data=json.dumps(payload).encode(),
+                    f"http://{address}/jsonRPC",
+                    data=json.dumps(payload).encode(),
                     headers={"Content-Type": "application/json"},
                 )
                 with urllib.request.urlopen(request, timeout=8) as response:
@@ -1833,12 +1936,25 @@ class ValidatorElectionRehearsal:
                     status = response.status
                 document = json.loads(raw)
                 with transcript.open("a") as output:
-                    output.write(json.dumps({
-                        "node_name": self.nodes[index].name, "node_index": index,
-                        "address": address, "request": payload, "http_status": status,
-                        "response_base64": base64.b64encode(raw).decode(),
-                    }, sort_keys=True) + "\n")
-                if status != 200 or document.get("error") is not None or document.get("result") is None:
+                    output.write(
+                        json.dumps(
+                            {
+                                "node_name": self.nodes[index].name,
+                                "node_index": index,
+                                "address": address,
+                                "request": payload,
+                                "http_status": status,
+                                "response_base64": base64.b64encode(raw).decode(),
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
+                if (
+                    status != 200
+                    or document.get("error") is not None
+                    or document.get("result") is None
+                ):
                     raise RuntimeError(f"F01 {self.nodes[index].name} {method} failed")
                 return document
 
@@ -1850,18 +1966,23 @@ class ValidatorElectionRehearsal:
         for index, node in enumerate(self.nodes):
             await self.retry(
                 lambda index=index: query(index, "getMasterchainInfo", {}),
-                timeout=90, interval=1,
+                timeout=90,
+                interval=1,
                 description=f"F01 {node.name} reaches Config34 observation height {upper}",
                 predicate=lambda value: int(value["result"]["last"]["seqno"]) >= upper,
             )
         height = await locate_transition(
-            config_at, self.f01_previous_config_height, upper,
-            self.f01_previous_config_hash, after_hash,
+            config_at,
+            self.f01_previous_config_height,
+            upper,
+            self.f01_previous_config_hash,
+            after_hash,
         )
         for index, node in enumerate(self.nodes):
             await self.retry(
                 lambda index=index: query(index, "getMasterchainInfo", {}),
-                timeout=90, interval=1,
+                timeout=90,
+                interval=1,
                 description=f"F01 {node.name} reaches post-transition height {height + 1}",
                 predicate=lambda value: int(value["result"]["last"]["seqno"]) >= height + 1,
             )
@@ -1874,23 +1995,40 @@ class ValidatorElectionRehearsal:
                 expected_hash = self.f01_previous_config_hash if boundary < height else after_hash
                 if observed_hash != expected_hash:
                     raise AssertionError(f"F01 {node.name} Config34 differs at height {boundary}")
-                header = await query(index, "getBlockHeader", {
-                    "workchain": -1, "shard": MASTERCHAIN_SHARD_STR, "seqno": boundary,
-                })
+                header = await query(
+                    index,
+                    "getBlockHeader",
+                    {
+                        "workchain": -1,
+                        "shard": MASTERCHAIN_SHARD_STR,
+                        "seqno": boundary,
+                    },
+                )
                 block_id = header["result"]["id"]
                 if int(block_id["seqno"]) != boundary or int(block_id["workchain"]) != -1:
                     raise AssertionError(f"F01 {node.name} header has wrong masterchain height")
                 block_ids.append(block_id)
-                observations.append({"node_name": node.name, "height": boundary,
-                                     "block_id": block_id, "config34_cell_hash": observed_hash})
+                observations.append(
+                    {
+                        "node_name": node.name,
+                        "height": boundary,
+                        "block_id": block_id,
+                        "config34_cell_hash": observed_hash,
+                    }
+                )
             if any(block_id != block_ids[0] for block_id in block_ids[1:]):
-                raise AssertionError(f"F01 per-node block IDs disagree at transition height {boundary}")
-        self.f01_transitions.append({
-            "label": label, "height": height,
-            "before_config34_cell_hash": self.f01_previous_config_hash,
-            "after_config34_cell_hash": after_hash,
-            "observations": observations,
-        })
+                raise AssertionError(
+                    f"F01 per-node block IDs disagree at transition height {boundary}"
+                )
+        self.f01_transitions.append(
+            {
+                "label": label,
+                "height": height,
+                "before_config34_cell_hash": self.f01_previous_config_hash,
+                "after_config34_cell_hash": after_hash,
+                "observations": observations,
+            }
+        )
         self.f01_previous_config_height = height
         self.f01_previous_config_hash = after_hash
 
@@ -1960,7 +2098,9 @@ class ValidatorElectionRehearsal:
         root_hash = block_id.get("root_hash")
         file_hash = block_id.get("file_hash")
         if not root_hash or not file_hash:
-            raise RuntimeError(f"node {index + 1} getBlockHeader({seqno}) returned no block-id hashes: {response}")
+            raise RuntimeError(
+                f"node {index + 1} getBlockHeader({seqno}) returned no block-id hashes: {response}"
+            )
         return (root_hash, file_hash)
 
     async def _node_consensus_status(self, index: int) -> dict[str, Any]:
@@ -1980,21 +2120,29 @@ class ValidatorElectionRehearsal:
         count = len(self.experiment.rpc_addresses)
         statuses = []
         for i in range(count):
-            statuses.append(await self.retry(
-                lambda i=i: self._node_consensus_status(i),
-                timeout=60, interval=2, description=f"node {i + 1} consensus status",
-            ))
+            statuses.append(
+                await self.retry(
+                    lambda i=i: self._node_consensus_status(i),
+                    timeout=60,
+                    interval=2,
+                    description=f"node {i + 1} consensus status",
+                )
+            )
         failures = []
         for i, s in enumerate(statuses):
             vset = s.get("validator_set") or {}
             if vset.get("is_validator") is not True:
-                failures.append(f"node {i + 1} is_validator={vset.get('is_validator')} (expected true)")
+                failures.append(
+                    f"node {i + 1} is_validator={vset.get('is_validator')} (expected true)"
+                )
             # P2-1 invariant: a single-turn snapshot can never show served leading applied,
             # so the gap is always >= 0. A negative value would mean the two points were read
             # at different instants (the defect this endpoint was rewritten to avoid).
             gap = s.get("applied_minus_consensus")
             if gap is not None and gap < 0:
-                failures.append(f"node {i + 1} applied_minus_consensus={gap} (< 0: inconsistent snapshot)")
+                failures.append(
+                    f"node {i + 1} applied_minus_consensus={gap} (< 0: inconsistent snapshot)"
+                )
         key_blocks = {json.dumps(s.get("last_key_block"), sort_keys=True) for s in statuses}
         if len(key_blocks) != 1:
             failures.append(f"nodes disagree on last_key_block: {key_blocks}")
@@ -2002,36 +2150,55 @@ class ValidatorElectionRehearsal:
         common_height = min(applied_seqnos)
         block_ids = set()
         for i in range(count):
-            block_ids.add(await self.retry(
-                lambda i=i: self._node_mc_block_id(i, common_height),
-                timeout=60, interval=2, description=f"node {i + 1} block id at {common_height}",
-            ))
+            block_ids.add(
+                await self.retry(
+                    lambda i=i: self._node_mc_block_id(i, common_height),
+                    timeout=60,
+                    interval=2,
+                    description=f"node {i + 1} block id at {common_height}",
+                )
+            )
         if len(block_ids) != 1:
-            failures.append(f"nodes disagree on masterchain block id at seqno {common_height}: {block_ids}")
+            failures.append(
+                f"nodes disagree on masterchain block id at seqno {common_height}: {block_ids}"
+            )
         result = {
             "verdict": "passed" if not failures else "failed",
             "nodes": count,
             "common_height": common_height,
-            "all_report_is_validator": all((s.get("validator_set") or {}).get("is_validator") is True for s in statuses),
+            "all_report_is_validator": all(
+                (s.get("validator_set") or {}).get("is_validator") is True for s in statuses
+            ),
             "agree_on_last_key_block": len(key_blocks) == 1,
             "agree_on_block_id_at_common_height": len(block_ids) == 1,
             "statuses": statuses,
             "failures": failures,
         }
-        (self.run_dir / "consensus-status-probe.json").write_text(json.dumps(result, indent=2) + "\n")
-        self.event("consensus_status_probe", verdict=result["verdict"], common_height=common_height, failures=failures)
+        (self.run_dir / "consensus-status-probe.json").write_text(
+            json.dumps(result, indent=2) + "\n"
+        )
+        self.event(
+            "consensus_status_probe",
+            verdict=result["verdict"],
+            common_height=common_height,
+            failures=failures,
+        )
         if failures:
             raise AssertionError(f"consensus-status probe failed: {failures}")
         return result
 
-    async def _node_account_balance(self, index: int, address: Address, seqno: int | None = None) -> int:
+    async def _node_account_balance(
+        self, index: int, address: Address, seqno: int | None = None
+    ) -> int:
         """Account balance (nanotos) as node <index>'s own JSON-RPC reports it, optionally at a
         specific masterchain seqno so all nodes can be compared at the SAME height."""
         assert self.experiment is not None
         params: dict[str, Any] = {"address": raw_address(address)}
         if seqno is not None:
             params["seqno"] = int(seqno)
-        resp = await asyncio.to_thread(json_rpc_call, self.experiment.rpc_addresses[index], "getAddressBalance", params)
+        resp = await asyncio.to_thread(
+            json_rpc_call, self.experiment.rpc_addresses[index], "getAddressBalance", params
+        )
         return int(resp["result"])
 
     async def transfer_soak(self, faucet: WalletV1) -> dict[str, Any]:
@@ -2048,12 +2215,15 @@ class ValidatorElectionRehearsal:
         for name in names:
             before = await self.wallet_seqno(faucet)
             wallet = await faucet.deploy(
-                WalletV1Blueprint(workchain=-1), CurrencyCollection(tomis=self.soak_wallet_funding), seqno=before
+                WalletV1Blueprint(workchain=-1),
+                CurrencyCollection(tomis=self.soak_wallet_funding),
+                seqno=before,
             )
             await self.wait_wallet_seqno(faucet, before + 1)
             await self.retry(
                 lambda wallet=wallet: self.balance(wallet.address),
-                timeout=60, description=f"soak wallet {name} funding",
+                timeout=60,
+                description=f"soak wallet {name} funding",
                 predicate=lambda v: v >= self.soak_wallet_funding - NANO,
             )
             wallets[name] = wallet
@@ -2076,7 +2246,11 @@ class ValidatorElectionRehearsal:
             dst_before = await self.balance(dst.address)
             try:
                 await self.send_from_wallet(
-                    src, dest=dst.address, amount=amount, body=Cell.empty(), label=f"soak-{src_name}->{dst_name}"
+                    src,
+                    dest=dst.address,
+                    amount=amount,
+                    body=Cell.empty(),
+                    label=f"soak-{src_name}->{dst_name}",
                 )
             except Exception as error:  # noqa: BLE001
                 failures.append(f"transfer {src_name}->{dst_name} amount={amount} failed: {error}")
@@ -2087,8 +2261,11 @@ class ValidatorElectionRehearsal:
             # by H.
             try:
                 await self.retry(
-                    lambda: self.balance(dst.address), timeout=60, interval=1,
-                    description=f"soak {dst_name} credited", predicate=lambda v: v > dst_before,
+                    lambda: self.balance(dst.address),
+                    timeout=60,
+                    interval=1,
+                    description=f"soak {dst_name} credited",
+                    predicate=lambda v: v > dst_before,
                 )
             except Exception as error:  # noqa: BLE001
                 failures.append(f"{src_name}->{dst_name} not credited on node 1: {error}")
@@ -2101,12 +2278,16 @@ class ValidatorElectionRehearsal:
             for i in range(node_count):
                 try:
                     await self.retry(
-                        lambda i=i: self._node_mc_seqno(i), timeout=60, interval=1,
+                        lambda i=i: self._node_mc_seqno(i),
+                        timeout=60,
+                        interval=1,
                         description=f"node {i + 1} reaches confirmed height {confirmed_height}",
                         predicate=lambda s: s >= confirmed_height,
                     )
                 except Exception as error:  # noqa: BLE001
-                    failures.append(f"node {i + 1} did not reach confirmed height {confirmed_height}: {error}")
+                    failures.append(
+                        f"node {i + 1} did not reach confirmed height {confirmed_height}: {error}"
+                    )
                     caught_up = False
             if not caught_up:
                 continue
@@ -2118,12 +2299,20 @@ class ValidatorElectionRehearsal:
                 seen = set()
                 for i in range(node_count):
                     try:
-                        seen.add(await self._node_account_balance(i, wallet.address, seqno=confirmed_height))
+                        seen.add(
+                            await self._node_account_balance(
+                                i, wallet.address, seqno=confirmed_height
+                            )
+                        )
                     except Exception as error:  # noqa: BLE001
-                        failures.append(f"node {i + 1} balance {name}@{confirmed_height} query failed: {error}")
+                        failures.append(
+                            f"node {i + 1} balance {name}@{confirmed_height} query failed: {error}"
+                        )
                         checked_ok = False
                 if len(seen) > 1:
-                    failures.append(f"nodes disagree on {name} balance at seqno {confirmed_height}: {sorted(seen)}")
+                    failures.append(
+                        f"nodes disagree on {name} balance at seqno {confirmed_height}: {sorted(seen)}"
+                    )
                     checked_ok = False
                 if name == dst_name and seen and min(seen) <= dst_before:
                     failures.append(
@@ -2133,8 +2322,12 @@ class ValidatorElectionRehearsal:
             if checked_ok:
                 consistency_checks += 1
             if transfers % 10 == 0:
-                self.event("soak_progress", transfers=transfers, consistency_checks=consistency_checks,
-                           failures=len(failures))
+                self.event(
+                    "soak_progress",
+                    transfers=transfers,
+                    consistency_checks=consistency_checks,
+                    failures=len(failures),
+                )
 
         result = {
             "verdict": "passed" if not failures else "failed",
@@ -2145,9 +2338,16 @@ class ValidatorElectionRehearsal:
             "wallets": {n: raw_address(w.address) for n, w in wallets.items()},
             "failures": failures[:20],
         }
-        (self.run_dir / "transfer-soak-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
-        self.event("transfer_soak_complete", verdict=result["verdict"], transfers=transfers,
-                   consistency_checks=consistency_checks, failures=len(failures))
+        (self.run_dir / "transfer-soak-analysis.json").write_text(
+            json.dumps(result, indent=2) + "\n"
+        )
+        self.event(
+            "transfer_soak_complete",
+            verdict=result["verdict"],
+            transfers=transfers,
+            consistency_checks=consistency_checks,
+            failures=len(failures),
+        )
         if failures:
             raise AssertionError(f"transfer soak failed ({len(failures)} issue(s)): {failures[:5]}")
         return result
@@ -2181,7 +2381,9 @@ class ValidatorElectionRehearsal:
                 "verdict": "NOT_EXERCISED",
                 "reason": "no non-zero node completed a real validator cleanup (VALCLEANUP erase_ack) in this run",
             }
-            (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+            (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(
+                json.dumps(result, indent=2) + "\n"
+            )
             self.event("post_cleanup_rejoin_not_exercised")
             return result
         # Prefer the node that erased the most (most exercised).
@@ -2198,7 +2400,9 @@ class ValidatorElectionRehearsal:
             "rejoin": rejoin,
             "consensus_status_probe_verdict": probe.get("verdict"),
         }
-        (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(json.dumps(result, indent=2) + "\n")
+        (self.run_dir / "post-cleanup-rejoin-analysis.json").write_text(
+            json.dumps(result, indent=2) + "\n"
+        )
         self.event(
             "post_cleanup_rejoin_result",
             verdict=result["verdict"],
@@ -2206,7 +2410,9 @@ class ValidatorElectionRehearsal:
             post_cleanup_recovery=recovered,
         )
         if result["verdict"] != "passed":
-            raise AssertionError(f"post-cleanup rejoin failed on node {node_index + 1}: post_cleanup_recovery={recovered}")
+            raise AssertionError(
+                f"post-cleanup rejoin failed on node {node_index + 1}: post_cleanup_recovery={recovered}"
+            )
         return result
 
     async def verify_live_rejoin(self, node_index: int = 3) -> dict[str, Any]:
@@ -2322,12 +2528,14 @@ class ValidatorElectionRehearsal:
         async def _agree_at(height: int) -> tuple[bool, tuple[str, str], tuple[str, str]]:
             ref = await self.retry(
                 lambda: self._node_mc_block_id(0, height),
-                timeout=60, interval=2,
+                timeout=60,
+                interval=2,
                 description=f"reference block id at masterchain seqno {height}",
             )
             tgt = await self.retry(
                 lambda: self._node_mc_block_id(node_index, height),
-                timeout=60, interval=2,
+                timeout=60,
+                interval=2,
                 description=f"node {node_index + 1} block id at masterchain seqno {height}",
             )
             return (ref == tgt, ref, tgt)
@@ -2350,9 +2558,7 @@ class ValidatorElectionRehearsal:
         # the restart.
         healthy = (not fatals) and block_ids_agree
         sync_recovery = "passed" if healthy else "failed"
-        post_cleanup_recovery = (
-            sync_recovery if pre_restart_erase_acks > 0 else "NOT_EXERCISED"
-        )
+        post_cleanup_recovery = sync_recovery if pre_restart_erase_acks > 0 else "NOT_EXERCISED"
         result = {
             "verdict": sync_recovery,
             "property": "target node recovered sync and keeps tracking the same chain",
@@ -2391,7 +2597,9 @@ class ValidatorElectionRehearsal:
                 f"shared prefix)"
             )
         if fatals:
-            raise AssertionError(f"live rejoin saw fault diagnostics on node {node_index + 1}: {fatals[:3]}")
+            raise AssertionError(
+                f"live rejoin saw fault diagnostics on node {node_index + 1}: {fatals[:3]}"
+            )
         return result
 
     async def verify_two_of_four_safe_halt(self) -> None:
@@ -2418,9 +2626,12 @@ class ValidatorElectionRehearsal:
             await self.x01_start("recovery", 3)
             self.record_f01_process(3)
             for index in range(4):
-                await self.retry(lambda index=index: self.x01_rpc(index, "getMasterchainInfo"),
-                                 timeout=60, interval=1,
-                                 description=f"X01 {self.nodes[index].name} RPC ready after restart")
+                await self.retry(
+                    lambda index=index: self.x01_rpc(index, "getMasterchainInfo"),
+                    timeout=60,
+                    interval=1,
+                    description=f"X01 {self.nodes[index].name} RPC ready after restart",
+                )
             await self.x01_sample("recovery", (0, 1, 2, 3))
         else:
             await self.nodes[2].run(self.validator_start_options(2))
@@ -2433,7 +2644,9 @@ class ValidatorElectionRehearsal:
             predicate=lambda value: value > resumed_from,
         )
         if self.pq_full:
-            halt_height = self.x01_trace["phases"]["two_of_four"][-1]["nodes"][self.nodes[0].name]["seqno"]
+            halt_height = self.x01_trace["phases"]["two_of_four"][-1]["nodes"][self.nodes[0].name][
+                "seqno"
+            ]
             deadline = time.monotonic() + 90
             while True:
                 sample = await self.x01_sample("recovery", (0, 1, 2, 3))
@@ -2592,7 +2805,9 @@ class ValidatorElectionRehearsal:
         allocation["config34"] = self.config34_evidence(config)
         allocation["config34_artifact"] = self.file_provenance(config_path)
         allocation["rpc_config34_consensus"] = rpc_consensus
-        allocation["config34_proof"] = await self.capture_config34_same_block_proof(config.utime_since)
+        allocation["config34_proof"] = await self.capture_config34_same_block_proof(
+            config.utime_since
+        )
         allocation["pq_authorizations"] = self.pq_authorization_records.get(config.utime_since, {})
         allocation["elector_snapshots"].append(
             await self.capture_elector_snapshot(f"election-{config.utime_since}-activated")
@@ -2630,7 +2845,8 @@ class ValidatorElectionRehearsal:
                 allocation = self.election_allocations[election_id]
                 candidate = allocation["validators"].get(str(index + 1))
                 if candidate is None or candidate["recovery_status"] not in (
-                    "pending", "retained-settlement-rollover"
+                    "pending",
+                    "retained-settlement-rollover",
                 ):
                     continue
                 if (
@@ -2639,21 +2855,18 @@ class ValidatorElectionRehearsal:
                 ):
                     eligible.append((election_id, candidate))
             if not eligible:
-                raise AssertionError(
-                    f"pool {index + 1} has an unmapped Elector credit {credit}"
-                )
+                raise AssertionError(f"pool {index + 1} has an unmapped Elector credit {credit}")
 
             # The Elector exposes only the pool's aggregate credit, not the
             # contributing election IDs. Never greedily choose a subset:
             # include every matured candidate, even a settlement rollover,
             # and wait until the credit covers their full observed principals.
-            principal = sum(
-                candidate["effective_stake_nanotos"] for _, candidate in eligible
-            )
+            principal = sum(candidate["effective_stake_nanotos"] for _, candidate in eligible)
             if credit < principal:
                 self.event(
                     "experiment_pool_credit_below_matured_principal",
-                    pool=raw_address(pool.address), credit=credit,
+                    pool=raw_address(pool.address),
+                    credit=credit,
                     matured_election_ids=[election_id for election_id, _ in eligible],
                     required_principal=principal,
                 )
@@ -2676,7 +2889,8 @@ class ValidatorElectionRehearsal:
                 label=recovery_label,
             )
             opcode, detail = await self.wait_pq_pool_elector_reply(
-                index, query_id,
+                index,
+                query_id,
                 description=f"experiment pool {index + 1} mature elector recovery",
             )
             if opcode != 0xF96F7324 or detail != 0:
@@ -2685,9 +2899,7 @@ class ValidatorElectionRehearsal:
                     f"opcode=0x{opcode:08x} detail={detail}"
                 )
             await self.retry(
-                lambda pool_id=pool_id: self.runmethod_int(
-                    "compute_returned_stake", pool_id
-                ),
+                lambda pool_id=pool_id: self.runmethod_int("compute_returned_stake", pool_id),
                 timeout=60,
                 description=f"pool {index + 1} experiment credit removal",
                 predicate=lambda value: value == 0,
@@ -2936,7 +3148,7 @@ class ValidatorElectionRehearsal:
                     logical_bytes += stat.st_size
                     allocated_bytes += stat.st_blocks * 512
                     file_count += 1
-            except (FileNotFoundError, PermissionError):
+            except FileNotFoundError, PermissionError:
                 continue
         return {
             "network_storage_logical_bytes": logical_bytes,
@@ -2981,7 +3193,7 @@ class ValidatorElectionRehearsal:
             # where this harness also runs. Skip the sample there rather than fault -- the
             # rest of the metrics (config34, balances, storage) are portable.
             proc_root = Path("/proc")
-            for proc_dir in (proc_root.iterdir() if proc_root.is_dir() else []):
+            for proc_dir in proc_root.iterdir() if proc_root.is_dir() else []:
                 if not proc_dir.name.isdigit():
                     continue
                 try:
@@ -3028,7 +3240,7 @@ class ValidatorElectionRehearsal:
                             "cpu_system_ticks": int(stat_fields[12]),
                         }
                     )
-                except (FileNotFoundError, PermissionError, ProcessLookupError):
+                except FileNotFoundError, PermissionError, ProcessLookupError:
                     continue
             sample["validator_processes"] = processes
             try:
@@ -3121,7 +3333,13 @@ class ValidatorElectionRehearsal:
             pool = make_pool_fixture(self.pool_code, wallet.address, controller.address)
             self.pools.append(pool)
             for label, address, state_init, code, sender in (
-                ("controller", controller.address, controller.state_init, self.controller_code, faucet),
+                (
+                    "controller",
+                    controller.address,
+                    controller.state_init,
+                    self.controller_code,
+                    faucet,
+                ),
                 ("pool", pool.address, pool.state_init, self.pool_code, wallet),
             ):
                 await self.send_from_wallet(
@@ -3150,16 +3368,18 @@ class ValidatorElectionRehearsal:
                     )
             if self.pq_election:
                 capital_amount = (
-                    PQ_EXPERIMENT_POOL_CAPITAL if self.experiment is not None
+                    PQ_EXPERIMENT_POOL_CAPITAL
+                    if self.experiment is not None
                     else PQ_STAKE_MESSAGE_VALUE + 20 * NANO
                 )
                 await self.send_from_wallet(
-                    wallet, dest=pool.address, amount=capital_amount,
-                    body=Cell.empty(), label=f"validator-{index + 1}-pool-capital",
+                    wallet,
+                    dest=pool.address,
+                    amount=capital_amount,
+                    body=Cell.empty(),
+                    label=f"validator-{index + 1}-pool-capital",
                 )
-                await self.wait_pool_capital(
-                    pool.address, capital_amount, f"validator {index + 1}"
-                )
+                await self.wait_pool_capital(pool.address, capital_amount, f"validator {index + 1}")
             self.event(
                 "pq_fixture_accounts_deployed",
                 validator=index + 1,
@@ -3170,7 +3390,11 @@ class ValidatorElectionRehearsal:
             )
 
     async def authorized_pq_pool_order(
-        self, index: int, election_id: int, query_id: int, *,
+        self,
+        index: int,
+        election_id: int,
+        query_id: int,
+        *,
         stake_amount: int = PQ_STAKE_MESSAGE_VALUE,
         corrupt_signature_for_negative: bool = False,
         retry_restart_transients: bool = False,
@@ -3190,9 +3414,13 @@ class ValidatorElectionRehearsal:
             adnl_addr=node.validator_key.id,
             stake_owner=pool.address.hash_part,
         )
-        auth = request.parse_result(await self.request_pq_authorization(
-            index, request, retry_restart_transients=retry_restart_transients,
-        ))
+        auth = request.parse_result(
+            await self.request_pq_authorization(
+                index,
+                request,
+                retry_restart_transients=retry_restart_transients,
+            )
+        )
         if auth.validator_id != controller.address.hash_part:
             raise AssertionError(f"validator {index + 1} node authorized the wrong controller")
         if auth.key_id != controller.consensus.key_id:
@@ -3219,7 +3447,9 @@ class ValidatorElectionRehearsal:
         )
         return body, auth.key_id
 
-    def record_pq_authorization(self, index: int, election_id: int, query_id: int, auth: Any) -> dict[str, Any]:
+    def record_pq_authorization(
+        self, index: int, election_id: int, query_id: int, auth: Any
+    ) -> dict[str, Any]:
         """Retain the node's own authorization answer and the process that gave it.
 
         X02 binds each live PID to this public identity instead of to readiness rows;
@@ -3228,7 +3458,9 @@ class ValidatorElectionRehearsal:
         node = self.nodes[index]
         pid = node.process_id
         if pid is None:
-            raise AssertionError(f"validator {index + 1} answered an authorization without a live process")
+            raise AssertionError(
+                f"validator {index + 1} answered an authorization without a live process"
+            )
         stat_raw = Path(f"/proc/{pid}/stat").read_bytes()
         record = {
             "schema": "tos.x02.pq-authorization.v1",
@@ -3245,12 +3477,14 @@ class ValidatorElectionRehearsal:
             "recorded_at": utc_now(),
         }
         path = self.artifacts_dir / (
-            f"pq-authorization-{election_id}-validator-{index + 1}-query-{query_id}.json")
+            f"pq-authorization-{election_id}-validator-{index + 1}-query-{query_id}.json"
+        )
         with path.open("x") as stream:
             json.dump(record, stream, sort_keys=True)
         provenance = self.file_provenance(path)
         self.pq_authorization_records.setdefault(election_id, {}).setdefault(
-            str(index + 1), []).append(provenance)
+            str(index + 1), []
+        ).append(provenance)
         return provenance
 
     async def capture_config34_same_block_proof(self, election_id: int) -> dict[str, Any]:
@@ -3264,13 +3498,30 @@ class ValidatorElectionRehearsal:
         address = self.experiment.rpc_addresses[0]
         # The proof binds the block root; no raw block BOC is served over JSON-RPC, so the
         # file hash is bound by all four nodes answering the same full ID for this height.
-        headers = [(await asyncio.to_thread(json_rpc_call, rpc, "getBlockHeader", {
-            "workchain": -1, "shard": str(-(1 << 63)), "seqno": seqno})) for rpc in self.experiment.rpc_addresses]
+        headers = [
+            (
+                await asyncio.to_thread(
+                    json_rpc_call,
+                    rpc,
+                    "getBlockHeader",
+                    {"workchain": -1, "shard": str(-(1 << 63)), "seqno": seqno},
+                )
+            )
+            for rpc in self.experiment.rpc_addresses
+        ]
         full = headers[0]["result"]["id"]
         if any(header["result"]["id"] != full for header in headers):
-            raise AssertionError("the four nodes disagree on the full block ID at the Config34 proof height")
-        reply = (await asyncio.to_thread(json_rpc_call, address, "getConfigParam", {
-            "param": 34, "seqno": seqno, "with_proof": True}))["result"]
+            raise AssertionError(
+                "the four nodes disagree on the full block ID at the Config34 proof height"
+            )
+        reply = (
+            await asyncio.to_thread(
+                json_rpc_call,
+                address,
+                "getConfigParam",
+                {"param": 34, "seqno": seqno, "with_proof": True},
+            )
+        )["result"]
         if reply.get("@type") != "configInfo" or reply.get("block_id") != full:
             raise AssertionError("Config34 proof resolved to another full block ID")
         directory = self.artifacts_dir / f"election-{election_id}-config34-proof"
@@ -3282,7 +3533,9 @@ class ValidatorElectionRehearsal:
         }
         bundle: dict[str, Any] = {
             "block_id": {
-                "workchain": full["workchain"], "shard": full["shard"], "seqno": full["seqno"],
+                "workchain": full["workchain"],
+                "shard": full["shard"],
+                "seqno": full["seqno"],
                 "root_hash": base64.b64decode(full["root_hash"], validate=True).hex(),
                 "file_hash": base64.b64decode(full["file_hash"], validate=True).hex(),
             },
@@ -3294,20 +3547,35 @@ class ValidatorElectionRehearsal:
             path = directory / f"header-node{index}.json"
             with path.open("xb") as stream:
                 stream.write(raw_header)
-            bundle["headers"].append({"rpc": rpc, "path": f"{directory.name}/{path.name}",
-                                      "sha256": hashlib.sha256(raw_header).hexdigest()})
+            bundle["headers"].append(
+                {
+                    "rpc": rpc,
+                    "path": f"{directory.name}/{path.name}",
+                    "sha256": hashlib.sha256(raw_header).hexdigest(),
+                }
+            )
         for name, raw in files.items():
             path = directory / f"{name}.boc"
             with path.open("xb") as stream:
                 stream.write(raw)
-            bundle[name] = {"path": f"{directory.name}/{name}.boc",
-                            "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
-        rows = [{"controller_id_hex": controller.address.hash_part.hex(),
-                 "consensus_key_id_hex": controller.consensus.key_id.hex(),
-                 "adnl_id_hex": node.validator_key.id.hex()}
-                for controller, node in zip(self.controllers, self.nodes)]
+            bundle[name] = {
+                "path": f"{directory.name}/{name}.boc",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            }
+        rows = [
+            {
+                "controller_id_hex": controller.address.hash_part.hex(),
+                "consensus_key_id_hex": controller.consensus.key_id.hex(),
+                "adnl_id_hex": node.validator_key.id.hex(),
+            }
+            for controller, node in zip(self.controllers, self.nodes)
+        ]
         verdict = verify_config34_bundle(
-            bundle, self.artifacts_dir.resolve(strict=True), rows, election_id,
+            bundle,
+            self.artifacts_dir.resolve(strict=True),
+            rows,
+            election_id,
             list(self.experiment.rpc_addresses),
         )
         if int(verdict["config34_cell_hash"], 16) != self.experiment_current_config34_hash:
@@ -3317,7 +3585,11 @@ class ValidatorElectionRehearsal:
         return bundle
 
     async def request_pq_authorization(
-        self, index: int, request: Any, *, retry_restart_transients: bool,
+        self,
+        index: int,
+        request: Any,
+        *,
+        retry_restart_transients: bool,
         timeout: float = 30.0,
     ) -> Any:
         """Retry only a restarted node's pre-send connection/state race.
@@ -3335,18 +3607,26 @@ class ValidatorElectionRehearsal:
                     response = await self.nodes[index].engine_console.request(request)
                 if retry_restart_transients:
                     self.event(
-                        "pq_authority_ready_after_restart", node=index + 1,
+                        "pq_authority_ready_after_restart",
+                        node=index + 1,
                         transient_connection_closures=connection_closures,
                         transient_not_started=not_started,
                     )
                 return response
             except LocalError as error:
-                if not retry_restart_transients or error.code != 0 or error.message != "Connection closed":
+                if (
+                    not retry_restart_transients
+                    or error.code != 0
+                    or error.message != "Connection closed"
+                ):
                     raise
                 connection_closures += 1
             except RemoteError as error:
-                if not retry_restart_transients or error.code != 651 or error.message not in (
-                    "not started", "this node cannot authorise a stake: not started"
+                if (
+                    not retry_restart_transients
+                    or error.code != 651
+                    or error.message
+                    not in ("not started", "this node cannot authorise a stake: not started")
                 ):
                     raise
                 not_started += 1
@@ -3360,8 +3640,12 @@ class ValidatorElectionRehearsal:
         )
 
     async def submit_pq_candidate(
-        self, index: int, election_id: int, *, round_number: int = 1,
-        retry_restart_transients: bool = False
+        self,
+        index: int,
+        election_id: int,
+        *,
+        round_number: int = 1,
+        retry_restart_transients: bool = False,
     ) -> dict[str, Any]:
         wallet = self.wallets[index]
         pool = self.pools[index]
@@ -3370,17 +3654,25 @@ class ValidatorElectionRehearsal:
         # let an old STAKE_ACCEPTED satisfy a new round's reply lookup.
         query_id = (round_number - 1) * 1_000 + index + 1
         body, authorization_key_id = await self.authorized_pq_pool_order(
-            index, election_id, query_id,
+            index,
+            election_id,
+            query_id,
             retry_restart_transients=retry_restart_transients,
         )
         elect_close = await self.require_open_pq_election(
-            election_id, f"round-{round_number}-validator-{index + 1}",
+            election_id,
+            f"round-{round_number}-validator-{index + 1}",
         )
-        body_path = self.artifacts_dir / f"pq-round-{round_number}-validator-{index + 1}-pool-order.boc"
+        body_path = (
+            self.artifacts_dir / f"pq-round-{round_number}-validator-{index + 1}-pool-order.boc"
+        )
         body_path.parent.mkdir(parents=True, exist_ok=True)
         body_path.write_bytes(body.to_boc())
         await self.send_from_wallet(
-            wallet, dest=pool.address, amount=2 * NANO, body=body,
+            wallet,
+            dest=pool.address,
+            amount=2 * NANO,
+            body=body,
             label=f"pq-round-{round_number}-validator-{index + 1}-pool-stake-order",
         )
         opcode, detail = await self.wait_pq_pool_elector_reply(
@@ -3388,7 +3680,8 @@ class ValidatorElectionRehearsal:
         )
         elector_input = await self.retry(
             lambda: self.exact_pq_elector_input(controller.address, query_id),
-            timeout=30, description=f"validator {index + 1} exact Elector inbound",
+            timeout=30,
+            description=f"validator {index + 1} exact Elector inbound",
             predicate=lambda value: value is not None,
         )
         input_path = self.artifacts_dir / (
@@ -3397,13 +3690,18 @@ class ValidatorElectionRehearsal:
         input_path.write_bytes(elector_input.data)
         input_id = elector_input.transaction_id
         self.event(
-            "pq_candidate_elector_input_observed", validator=index + 1,
-            round=round_number, query_id=query_id, election_id=election_id,
-            elect_close=elect_close, elector_input_utime=elector_input.utime,
+            "pq_candidate_elector_input_observed",
+            validator=index + 1,
+            round=round_number,
+            query_id=query_id,
+            election_id=election_id,
+            elect_close=elect_close,
+            elector_input_utime=elector_input.utime,
             elector_input_lt=input_id.lt if input_id is not None else None,
             elector_input_hash=input_id.hash.hex() if input_id is not None else None,
             elector_input_boc=self.file_provenance(input_path),
-            elector_reply_opcode=f"0x{opcode:08x}", elector_reply_detail=detail,
+            elector_reply_opcode=f"0x{opcode:08x}",
+            elector_reply_detail=detail,
         )
         if elector_input.utime >= elect_close:
             raise AssertionError(
@@ -3424,12 +3722,17 @@ class ValidatorElectionRehearsal:
             predicate=lambda value: value >= EFFECTIVE_STAKE,
         )
         self.event(
-            "pq_candidate_accepted", validator=index + 1,
-            round=round_number, query_id=query_id,
+            "pq_candidate_accepted",
+            validator=index + 1,
+            round=round_number,
+            query_id=query_id,
             controller=raw_address(controller.address),
-            pool=raw_address(pool.address), election_id=election_id,
-            effective_stake=actual, authorization_key_id=authorization_key_id.hex(),
-            stake_accepted=True, elector_reply_opcode=f"0x{opcode:08x}",
+            pool=raw_address(pool.address),
+            election_id=election_id,
+            effective_stake=actual,
+            authorization_key_id=authorization_key_id.hex(),
+            stake_accepted=True,
+            elector_reply_opcode=f"0x{opcode:08x}",
         )
         return {
             "query_id": query_id,
@@ -3451,9 +3754,12 @@ class ValidatorElectionRehearsal:
         elect_at, elect_close = map(int, window.groups())
         chain_time = await self.chain_time()
         self.event(
-            "pq_candidate_presend_window", label=label,
-            election_id=election_id, elect_at=elect_at,
-            elect_close=elect_close, chain_time=chain_time,
+            "pq_candidate_presend_window",
+            label=label,
+            election_id=election_id,
+            elect_at=elect_at,
+            elect_close=elect_close,
+            chain_time=chain_time,
             raw_window=self.file_provenance(path),
         )
         if elect_at != election_id or elect_close - chain_time <= 30:
@@ -3474,15 +3780,20 @@ class ValidatorElectionRehearsal:
             page = await self.client.raw_get_transactions(ELECTOR, cursor)
             for transaction in page.transactions:
                 message = transaction.in_msg
-                if (message is None or message.source is None
-                        or not message.source.account_address
-                        or Address(message.source.account_address) != source
-                        or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)):
+                if (
+                    message is None
+                    or message.source is None
+                    or not message.source.account_address
+                    or Address(message.source.account_address) != source
+                    or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)
+                ):
                     continue
                 body_slice = Cell.one_from_boc(message.msg_data.body).begin_parse()
-                if (body_slice.remaining_bits >= 96
-                        and body_slice.load_uint(32) == 0x50517374
-                        and body_slice.load_uint(64) == query_id):
+                if (
+                    body_slice.remaining_bits >= 96
+                    and body_slice.load_uint(32) == 0x50517374
+                    and body_slice.load_uint(64) == query_id
+                ):
                     return transaction
             previous = page.previous_transaction_id
             if previous is None or previous.lt >= cursor.lt:
@@ -3507,7 +3818,9 @@ class ValidatorElectionRehearsal:
             return elector_reply(transactions.transactions, query_id)
 
         return await self.retry(
-            pool_answer, timeout=60, description=description,
+            pool_answer,
+            timeout=60,
+            description=description,
             predicate=lambda value: value is not None,
         )
 
@@ -3524,17 +3837,28 @@ class ValidatorElectionRehearsal:
             ("wrong-election", election_id + 1, PQ_STAKE_MESSAGE_VALUE, False, 3),
             ("invalid-signature", election_id, PQ_STAKE_MESSAGE_VALUE, True, 1),
         )
-        for offset, (label, signed_election_id, stake_amount, corrupt, expected_reason) in enumerate(cases):
+        for offset, (
+            label,
+            signed_election_id,
+            stake_amount,
+            corrupt,
+            expected_reason,
+        ) in enumerate(cases):
             query_id = 101 + offset
             before = await self.runmethod_int("participates_in", controller_id)
             body, _ = await self.authorized_pq_pool_order(
-                0, signed_election_id, query_id,
+                0,
+                signed_election_id,
+                query_id,
                 stake_amount=stake_amount,
                 corrupt_signature_for_negative=corrupt,
             )
             await self.send_from_wallet(
-                self.wallets[0], dest=self.pools[0].address, amount=2 * NANO,
-                body=body, label=f"pq-negative-{label}-pool-order",
+                self.wallets[0],
+                dest=self.pools[0].address,
+                amount=2 * NANO,
+                body=body,
+                label=f"pq-negative-{label}-pool-order",
             )
             opcode, reason = await self.wait_pq_pool_elector_reply(
                 0, query_id, description=f"PQ {label} elector refusal through pool"
@@ -3550,10 +3874,14 @@ class ValidatorElectionRehearsal:
                     f"PQ {label} refusal changed controller participation: {before} -> {after}"
                 )
             self.event(
-                "pq_negative_pool_order_refused", case=label,
-                election_id=election_id, query_id=query_id,
-                reason=reason, expected_reason=expected_reason,
-                participation_before=before, participation_after=after,
+                "pq_negative_pool_order_refused",
+                case=label,
+                election_id=election_id,
+                query_id=query_id,
+                reason=reason,
+                expected_reason=expected_reason,
+                participation_before=before,
+                participation_after=after,
             )
 
     async def run_pq_first_election(self) -> None:
@@ -3591,8 +3919,10 @@ class ValidatorElectionRehearsal:
                 f"ids={sorted(three_ids)} total_stake={three_stake}"
             )
         self.event(
-            "pq_below_minimum_total_observed", controllers=3,
-            total_stake=three_stake, required_total=VALIDATOR_COUNT * EFFECTIVE_STAKE,
+            "pq_below_minimum_total_observed",
+            controllers=3,
+            total_stake=three_stake,
+            required_total=VALIDATOR_COUNT * EFFECTIVE_STAKE,
         )
         await self.restart_node(3, "open first PQ election")
         await self.submit_pq_candidate(3, self.first_election_id, retry_restart_transients=True)
@@ -3600,8 +3930,7 @@ class ValidatorElectionRehearsal:
         (self.artifacts_dir / "pq-first-participants.txt").write_text(participant_output)
         participant_ids = participant_ids_from_runmethod(participant_output)
         expected_ids = {
-            int.from_bytes(controller.address.hash_part, "big")
-            for controller in self.controllers
+            int.from_bytes(controller.address.hash_part, "big") for controller in self.controllers
         }
         if participant_ids != expected_ids:
             raise AssertionError(
@@ -3610,9 +3939,7 @@ class ValidatorElectionRehearsal:
                 f"unexpected={sorted(participant_ids - expected_ids)}"
             )
         self.event("pq_first_election_participants", controllers=len(participant_ids))
-        await self.wait_until_chain_time(
-            self.first_election_id - 55, "first PQ election closed"
-        )
+        await self.wait_until_chain_time(self.first_election_id - 55, "first PQ election closed")
         self.first_config34 = await self.retry(
             self.get_config34,
             timeout=180,
@@ -3645,8 +3972,10 @@ class ValidatorElectionRehearsal:
                 f"total={self.first_config34.total} main={self.first_config34.main}"
             )
         self.event(
-            "pq_first_election_activated", election_id=self.first_election_id,
-            controllers=VALIDATOR_COUNT, config34=asdict(self.first_config34),
+            "pq_first_election_activated",
+            election_id=self.first_election_id,
+            controllers=VALIDATOR_COUNT,
+            config34=asdict(self.first_config34),
         )
         await self.capture_f01_transition("first PQ set")
         await self.verify_three_of_four_liveness()
@@ -3668,8 +3997,11 @@ class ValidatorElectionRehearsal:
         if view.remaining_bits or view.remaining_refs:
             raise AssertionError("PQ pool early-recovery body has trailing data")
         await self.send_from_wallet(
-            self.wallets[0], dest=pool.address, amount=1 * NANO,
-            body=body, label="pq-early-pool-recovery",
+            self.wallets[0],
+            dest=pool.address,
+            amount=1 * NANO,
+            body=body,
+            label="pq-early-pool-recovery",
         )
         opcode, detail = await self.wait_pq_pool_elector_reply(
             0, query_id, description="PQ pool early-recovery elector refusal"
@@ -3687,15 +4019,21 @@ class ValidatorElectionRehearsal:
                 f"credit={before_credit}->{after_credit} balance={before_balance}->{after_balance}"
             )
         self.event(
-            "pq_early_recovery_no_credit", pool=raw_address(pool.address),
-            query_id=query_id, elector_reply_opcode=f"0x{opcode:08x}",
-            credit_before=before_credit, credit_after=after_credit,
-            balance_before=before_balance, balance_after=after_balance,
+            "pq_early_recovery_no_credit",
+            pool=raw_address(pool.address),
+            query_id=query_id,
+            elector_reply_opcode=f"0x{opcode:08x}",
+            credit_before=before_credit,
+            credit_after=after_credit,
+            balance_before=before_balance,
+            balance_after=after_balance,
         )
 
     async def wait_pq_config_activation(self, election_id: int, label: str) -> Config34:
         config = await self.retry(
-            self.get_config34, timeout=180, interval=1,
+            self.get_config34,
+            timeout=180,
+            interval=1,
             description=f"{label} PQ ConfigParam 34 activation",
             predicate=lambda value: value.utime_since == election_id,
         )
@@ -3710,8 +4048,11 @@ class ValidatorElectionRehearsal:
         require_pq_config34_associations(config, expected)
         await self.capture_f01_transition(label)
         self.event(
-            "pq_config34_activated", label=label, election_id=election_id,
-            total=config.total, main=config.main,
+            "pq_config34_activated",
+            label=label,
+            election_id=election_id,
+            total=config.total,
+            main=config.main,
             validator_adnl_pairs=config.validator_adnl_pairs,
         )
         return config
@@ -3731,29 +4072,40 @@ class ValidatorElectionRehearsal:
         amount = 2 * (PQ_STAKE_MESSAGE_VALUE + 20 * NANO)
         wallet_before = await self.balance(wallet.address)
         await self.send_from_wallet(
-            faucet, dest=wallet.address, amount=amount + 40 * NANO,
+            faucet,
+            dest=wallet.address,
+            amount=amount + 40 * NANO,
             body=Cell.empty(),
             label=f"pq-followup-validator-{index + 1}-wallet-capital",
         )
         await self.retry(
-            lambda: self.balance(wallet.address), timeout=60,
+            lambda: self.balance(wallet.address),
+            timeout=60,
             description=f"PQ followup wallet {index + 1} fresh capital",
             predicate=lambda value: value >= wallet_before + amount,
         )
         before = await self.balance(pool.address)
         await self.send_from_wallet(
-            wallet, dest=pool.address, amount=amount, body=Cell.empty(),
+            wallet,
+            dest=pool.address,
+            amount=amount,
+            body=Cell.empty(),
             label=f"pq-followup-validator-{index + 1}-pool-capital",
         )
         after = await self.retry(
-            lambda: self.balance(pool.address), timeout=60,
+            lambda: self.balance(pool.address),
+            timeout=60,
             description=f"PQ followup pool {index + 1} fresh capital",
             predicate=lambda value: value >= before + amount - 2 * NANO,
         )
         self.event(
-            "pq_followup_pool_prefunded", rounds=[2, 3], validator=index + 1,
-            fresh_from_faucet=amount + 40 * NANO, fresh_to_pool=amount,
-            pool_balance_before=before, pool_balance_after=after,
+            "pq_followup_pool_prefunded",
+            rounds=[2, 3],
+            validator=index + 1,
+            fresh_from_faucet=amount + 40 * NANO,
+            fresh_to_pool=amount,
+            pool_balance_before=before,
+            pool_balance_after=after,
         )
 
     async def require_pq_full_faucet_capacity(self, faucet: WalletV1) -> None:
@@ -3765,7 +4117,9 @@ class ValidatorElectionRehearsal:
                 f"balance={actual} required={required}"
             )
         self.event(
-            "pq_full_faucet_capacity", balance=actual, required=required,
+            "pq_full_faucet_capacity",
+            balance=actual,
+            required=required,
             genesis_budget=PQ_FULL_GENESIS_FAUCET_FUNDING,
         )
 
@@ -3778,7 +4132,8 @@ class ValidatorElectionRehearsal:
             pool_id = "0x" + pool.address.hash_part.hex()
             credit = await self.retry(
                 lambda pool_id=pool_id: self.runmethod_int("compute_returned_stake", pool_id),
-                timeout=credit_timeout, interval=max(2.0, self.long_poll_interval),
+                timeout=credit_timeout,
+                interval=max(2.0, self.long_poll_interval),
                 description=f"PQ round {round_number} pool {index + 1} mature credit",
                 predicate=lambda value: value > EFFECTIVE_STAKE,
             )
@@ -3791,11 +4146,15 @@ class ValidatorElectionRehearsal:
             if view.remaining_bits or view.remaining_refs:
                 raise AssertionError("PQ pool recovery body has trailing data")
             await self.send_from_wallet(
-                wallet, dest=pool.address, amount=1 * NANO, body=body,
+                wallet,
+                dest=pool.address,
+                amount=1 * NANO,
+                body=body,
                 label=f"pq-round-{round_number}-pool-{index + 1}-recover",
             )
             opcode, detail = await self.wait_pq_pool_elector_reply(
-                index, query_id,
+                index,
+                query_id,
                 description=f"PQ round {round_number} pool {index + 1} mature elector recovery",
             )
             if opcode != 0xF96F7324 or detail != 0:
@@ -3810,15 +4169,23 @@ class ValidatorElectionRehearsal:
                 predicate=lambda value: value == 0,
             )
             after = await self.retry(
-                lambda pool=pool: self.balance(pool.address), timeout=60,
+                lambda pool=pool: self.balance(pool.address),
+                timeout=60,
                 description=f"PQ round {round_number} pool {index + 1} payout",
-                predicate=lambda value, before=before, credit=credit: value >= before + credit - 2 * NANO,
+                predicate=lambda value, before=before, credit=credit: (
+                    value >= before + credit - 2 * NANO
+                ),
             )
             credits.append(credit)
             self.event(
-                "pq_pool_stake_recovered", round=round_number, validator=index + 1,
-                pool=raw_address(pool.address), query_id=query_id, credit=credit,
-                pool_balance_before=before, pool_balance_after=after,
+                "pq_pool_stake_recovered",
+                round=round_number,
+                validator=index + 1,
+                pool=raw_address(pool.address),
+                query_id=query_id,
+                credit=credit,
+                pool_balance_before=before,
+                pool_balance_after=after,
                 elector_reply_opcode=f"0x{opcode:08x}",
             )
         return credits
@@ -3836,11 +4203,16 @@ class ValidatorElectionRehearsal:
             raise AssertionError("duplicate PQ recovery body has the wrong opcode")
         query_id = view.load_uint(64)
         await self.send_from_wallet(
-            self.wallets[0], dest=pool.address, amount=1 * NANO, body=body,
+            self.wallets[0],
+            dest=pool.address,
+            amount=1 * NANO,
+            body=body,
             label="pq-duplicate-pool-recovery",
         )
         opcode, detail = await self.wait_pq_pool_elector_reply(
-            0, query_id, description="PQ duplicate pool recovery elector refusal",
+            0,
+            query_id,
+            description="PQ duplicate pool recovery elector refusal",
         )
         after_credit = await self.runmethod_int("compute_returned_stake", pool_id)
         after_balance = await self.balance(pool.address)
@@ -3854,23 +4226,28 @@ class ValidatorElectionRehearsal:
                 f"PQ duplicate recovery unexpectedly credited pool: {before_balance}->{after_balance}"
             )
         self.event(
-            "pq_duplicate_recovery_no_credit", query_id=query_id,
+            "pq_duplicate_recovery_no_credit",
+            query_id=query_id,
             elector_reply_opcode=f"0x{opcode:08x}",
-            pool_balance_before=before_balance, pool_balance_after=after_balance,
+            pool_balance_before=before_balance,
+            pool_balance_after=after_balance,
         )
 
     async def run_pq_followup_elections(self, faucet: WalletV1) -> None:
         """Run later elections using capital placed before the first window."""
         self.second_election_id = await self.retry(
             lambda: self.runmethod_int("active_election_id"),
-            timeout=max(240, self.profile.elected_for), interval=self.long_poll_interval,
+            timeout=max(240, self.profile.elected_for),
+            interval=self.long_poll_interval,
             description="second PQ election opening",
             predicate=lambda value: value > self.first_election_id,
         )
         self.event("pq_second_election_open", election_id=self.second_election_id)
         for index in range(VALIDATOR_COUNT):
             await self.submit_pq_candidate(
-                index, self.second_election_id, round_number=2,
+                index,
+                self.second_election_id,
+                round_number=2,
                 retry_restart_transients=True,
             )
         second_output = await self.runmethod("participant_list_extended")
@@ -3887,37 +4264,48 @@ class ValidatorElectionRehearsal:
 
         self.rollover_election_id = await self.retry(
             lambda: self.runmethod_int("active_election_id"),
-            timeout=max(240, self.profile.elected_for), interval=self.long_poll_interval,
+            timeout=max(240, self.profile.elected_for),
+            interval=self.long_poll_interval,
             description="rollover PQ election opening",
             predicate=lambda value: value > self.second_election_id,
         )
         self.event("pq_rollover_election_open", election_id=self.rollover_election_id)
         for index in range(VALIDATOR_COUNT):
             await self.submit_pq_candidate(
-                index, self.rollover_election_id, round_number=3,
+                index,
+                self.rollover_election_id,
+                round_number=3,
                 retry_restart_transients=True,
             )
         rollover_output = await self.runmethod("participant_list_extended")
         (self.artifacts_dir / "pq-round-3-participants.txt").write_text(rollover_output)
         if participant_ids_from_runmethod(rollover_output) != expected_ids:
-            raise AssertionError("rollover PQ election participants are not exactly four controllers")
+            raise AssertionError(
+                "rollover PQ election participants are not exactly four controllers"
+            )
         past_first = await self.runmethod("past_elections")
         (self.artifacts_dir / "pq-past-elections-before-first-recovery.txt").write_text(past_first)
         self.first_credits = await self.recover_pq_round(1)
-        await self.wait_until_chain_time(self.rollover_election_id - 55, "rollover PQ election closed")
+        await self.wait_until_chain_time(
+            self.rollover_election_id - 55, "rollover PQ election closed"
+        )
         self.rollover_config34 = await self.wait_pq_config_activation(
             self.rollover_election_id, "rollover PQ set"
         )
         past_second = await self.runmethod("past_elections")
-        (self.artifacts_dir / "pq-past-elections-before-second-recovery.txt").write_text(past_second)
+        (self.artifacts_dir / "pq-past-elections-before-second-recovery.txt").write_text(
+            past_second
+        )
         self.second_credits = await self.recover_pq_round(2)
         await self.assert_duplicate_pq_recovery_no_credit()
         await self.verify_two_of_four_safe_halt()
         self.event(
-            "pq_full_launch_gate_passed", first_election_id=self.first_election_id,
+            "pq_full_launch_gate_passed",
+            first_election_id=self.first_election_id,
             second_election_id=self.second_election_id,
             rollover_election_id=self.rollover_election_id,
-            first_credits=self.first_credits, second_credits=self.second_credits,
+            first_credits=self.first_credits,
+            second_credits=self.second_credits,
         )
 
     async def assert_unwitnessed_wallet_stake_refused(self, election_id: int) -> None:
@@ -3931,24 +4319,38 @@ class ValidatorElectionRehearsal:
         node = self.nodes[0]
         query_id = 0xE1EC7
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
-            election_date=election_id, max_factor=MAX_FACTOR,
-            adnl_addr=node.validator_key.id, stake_owner=wallet.address.hash_part,
+            election_date=election_id,
+            max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id,
+            stake_owner=wallet.address.hash_part,
         )
         auth = request.parse_result(await node.engine_console.request(request))
-        public_key = Builder().store_uint(1312, 32).store_ref(byte_chain(auth.public_key)).end_cell()
+        public_key = (
+            Builder().store_uint(1312, 32).store_ref(byte_chain(auth.public_key)).end_cell()
+        )
         signature = Builder().store_uint(2420, 32).store_ref(byte_chain(auth.signature)).end_cell()
         body = (
             # Direct-to-elector negative control uses PQst, not the pool's
             # NEW_STAKE opcode. This body is never a client staking path.
-            Builder().store_uint(0x50517374, 32).store_uint(query_id, 64)
-            .store_uint(auth.algorithm_id, 16).store_ref(public_key)
-            .store_uint(election_id, 32).store_uint(MAX_FACTOR, 32)
-            .store_bytes(node.validator_key.id).store_ref(signature)
-            .store_maybe_ref(None).store_bit(0).end_cell()
+            Builder()
+            .store_uint(0x50517374, 32)
+            .store_uint(query_id, 64)
+            .store_uint(auth.algorithm_id, 16)
+            .store_ref(public_key)
+            .store_uint(election_id, 32)
+            .store_uint(MAX_FACTOR, 32)
+            .store_bytes(node.validator_key.id)
+            .store_ref(signature)
+            .store_maybe_ref(None)
+            .store_bit(0)
+            .end_cell()
         )
         await self.send_from_wallet(
-            wallet, dest=ELECTOR, amount=PQ_STAKE_MESSAGE_VALUE,
-            body=body, label="negative-wallet-no-controller-birth-witness",
+            wallet,
+            dest=ELECTOR,
+            amount=PQ_STAKE_MESSAGE_VALUE,
+            body=body,
+            label="negative-wallet-no-controller-birth-witness",
         )
 
         async def reason_reply() -> tuple[int, int] | None:
@@ -3961,7 +4363,9 @@ class ValidatorElectionRehearsal:
             return elector_reply(transactions.transactions, query_id)
 
         opcode, reason = await self.retry(
-            reason_reply, timeout=60, description="negative wallet elector return reason",
+            reason_reply,
+            timeout=60,
+            description="negative wallet elector return reason",
             predicate=lambda value: value is not None,
         )
         if opcode != 0xEE6F454C or reason != 8:
@@ -3998,22 +4402,36 @@ class ValidatorElectionRehearsal:
             )
         query_id = 0xE1EC8
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(
-            election_date=election_id, max_factor=MAX_FACTOR,
-            adnl_addr=node.validator_key.id, stake_owner=wallet.address.hash_part,
+            election_date=election_id,
+            max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id,
+            stake_owner=wallet.address.hash_part,
         )
         auth = request.parse_result(await node.engine_console.request(request))
-        public_key = Builder().store_uint(1312, 32).store_ref(byte_chain(auth.public_key)).end_cell()
+        public_key = (
+            Builder().store_uint(1312, 32).store_ref(byte_chain(auth.public_key)).end_cell()
+        )
         signature = Builder().store_uint(2420, 32).store_ref(byte_chain(auth.signature)).end_cell()
         body = (
-            Builder().store_uint(0x50517374, 32).store_uint(query_id, 64)
-            .store_uint(auth.algorithm_id, 16).store_ref(public_key)
-            .store_uint(election_id, 32).store_uint(MAX_FACTOR, 32)
-            .store_bytes(node.validator_key.id).store_ref(signature)
-            .store_maybe_ref(None).store_bit(0).end_cell()
+            Builder()
+            .store_uint(0x50517374, 32)
+            .store_uint(query_id, 64)
+            .store_uint(auth.algorithm_id, 16)
+            .store_ref(public_key)
+            .store_uint(election_id, 32)
+            .store_uint(MAX_FACTOR, 32)
+            .store_bytes(node.validator_key.id)
+            .store_ref(signature)
+            .store_maybe_ref(None)
+            .store_bit(0)
+            .end_cell()
         )
         await self.send_from_wallet(
-            wallet, dest=ELECTOR, amount=PQ_STAKE_MESSAGE_VALUE,
-            body=body, label="pq-negative-duplicate-key",
+            wallet,
+            dest=ELECTOR,
+            amount=PQ_STAKE_MESSAGE_VALUE,
+            body=body,
+            label="pq-negative-duplicate-key",
         )
 
         async def duplicate_reply() -> tuple[int, int, Any] | None:
@@ -4030,7 +4448,8 @@ class ValidatorElectionRehearsal:
             return None
 
         opcode, reason, reply_transaction = await self.retry(
-            duplicate_reply, timeout=60,
+            duplicate_reply,
+            timeout=60,
             description="PQ duplicate key elector return reason",
             predicate=lambda value: value is not None,
         )
@@ -4039,7 +4458,8 @@ class ValidatorElectionRehearsal:
         receipt_id = reply_transaction.transaction_id
 
         input_transaction = await self.retry(
-            lambda: self.exact_pq_elector_input(wallet.address, query_id), timeout=30,
+            lambda: self.exact_pq_elector_input(wallet.address, query_id),
+            timeout=30,
             description="PQ duplicate key exact Elector inbound transaction",
             predicate=lambda value: value is not None,
         )
@@ -4047,8 +4467,10 @@ class ValidatorElectionRehearsal:
         input_path.write_bytes(input_transaction.data)
         input_id = input_transaction.transaction_id
         self.event(
-            "pq_duplicate_key_reply_observed", election_id=election_id,
-            elect_close=elect_close, presend_chain_time=presend_chain_time,
+            "pq_duplicate_key_reply_observed",
+            election_id=election_id,
+            elect_close=elect_close,
+            presend_chain_time=presend_chain_time,
             elector_input_utime=input_transaction.utime,
             elector_input_lt=input_id.lt if input_id is not None else None,
             elector_input_hash=input_id.hash.hex() if input_id is not None else None,
@@ -4057,7 +4479,8 @@ class ValidatorElectionRehearsal:
             reply_lt=receipt_id.lt if receipt_id is not None else None,
             reply_hash=receipt_id.hash.hex() if receipt_id is not None else None,
             reply_boc=self.file_provenance(receipt_path),
-            opcode=f"0x{opcode:08x}", reason=reason,
+            opcode=f"0x{opcode:08x}",
+            reason=reason,
         )
         if input_transaction.utime >= elect_close:
             raise AssertionError(
@@ -4075,15 +4498,16 @@ class ValidatorElectionRehearsal:
                 f"PQ duplicate held key changed first controller's stake: {before} -> {after}"
             )
         self.event(
-            "pq_duplicate_key_refused", reason=reason, expected_reason=4,
-            participation_before=before, participation_after=after,
+            "pq_duplicate_key_refused",
+            reason=reason,
+            expected_reason=4,
+            participation_before=before,
+            participation_after=after,
         )
 
     async def execute(self) -> None:
         if self.pq_election:
-            require_pq_stake_authorization_binding(
-                tos_api.Engine_validator_pqStakeAuthorization
-            )
+            require_pq_stake_authorization_binding(tos_api.Engine_validator_pqStakeAuthorization)
         self.ensure_experiment_rpc_ports_available()
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.network_dir.mkdir()
@@ -4093,9 +4517,21 @@ class ValidatorElectionRehearsal:
             # spent building a diagnostic executable. Its only encoding call
             # is the production nominator::new_stake_with_witness builder.
             result = subprocess.run(
-                ["cargo", "build", "--manifest-path", "tosctl/src/Cargo.toml",
-                 "-p", "contracts", "--example", "pq_pool_stake_order", "--locked"],
-                cwd=REPO, text=True, capture_output=True, check=False,
+                [
+                    "cargo",
+                    "build",
+                    "--manifest-path",
+                    "tosctl/src/Cargo.toml",
+                    "-p",
+                    "contracts",
+                    "--example",
+                    "pq_pool_stake_order",
+                    "--locked",
+                ],
+                cwd=REPO,
+                text=True,
+                capture_output=True,
+                check=False,
             )
             if result.returncode:
                 raise RuntimeError(
@@ -4109,14 +4545,20 @@ class ValidatorElectionRehearsal:
             )
             self.pool_code = Cell.one_from_boc(
                 bytes.fromhex(
-                    (self.install.source_dir /
-                     "crypto/smartcont/single-nominator-pool/single-nominator-code.hex")
-                    .read_text().strip()
+                    (
+                        self.install.source_dir
+                        / "crypto/smartcont/single-nominator-pool/single-nominator-code.hex"
+                    )
+                    .read_text()
+                    .strip()
                 )
             )
             self.controllers = [
                 make_controller_fixture(
-                    self.install, self.artifacts_dir / "controller-keys", self.controller_code, index
+                    self.install,
+                    self.artifacts_dir / "controller-keys",
+                    self.controller_code,
+                    index,
                 )
                 for index in range(VALIDATOR_COUNT)
             ]
@@ -4128,11 +4570,19 @@ class ValidatorElectionRehearsal:
         self.event(
             start_event,
             stage=self.profile.label,
-            mode=("fixture-check" if self.fixture_only else
-                  "experiment" if self.experiment is not None and not self.soak_mode else
-                  "pq-launch-gate" if self.pq_full else
-                  "pq-election" if self.pq_election else
-                  "transfer-soak" if self.soak_mode else "launch-gate"),
+            mode=(
+                "fixture-check"
+                if self.fixture_only
+                else "experiment"
+                if self.experiment is not None and not self.soak_mode
+                else "pq-launch-gate"
+                if self.pq_full
+                else "pq-election"
+                if self.pq_election
+                else "transfer-soak"
+                if self.soak_mode
+                else "launch-gate"
+            ),
             accelerated=self.profile.accelerated,
             source_commit=self.provenance["source_commit"],
             artifact_snapshot=str(self.run_dir / "artifact-snapshot"),
@@ -4264,8 +4714,7 @@ class ValidatorElectionRehearsal:
         if self.pq_full:
             try:
                 self.write_f01_capture()
-                if (self.x01_policy is not None
-                        and (self.x01_directory / "trace.json").is_file()):
+                if self.x01_policy is not None and (self.x01_directory / "trace.json").is_file():
                     self.write_x01_check()
             except Exception as error:
                 self.fail(f"F01/X01 Stage A capture incomplete: {error}")
@@ -4273,11 +4722,19 @@ class ValidatorElectionRehearsal:
             "status": self.report_status(),
             "generated_at": utc_now(),
             "run_dir": str(self.run_dir),
-            "mode": ("fixture-check" if self.fixture_only else
-                     "experiment" if self.experiment is not None and not self.soak_mode else
-                     "pq-launch-gate" if self.pq_full else
-                     "pq-election" if self.pq_election else
-                     "transfer-soak" if self.soak_mode else "launch-gate"),
+            "mode": (
+                "fixture-check"
+                if self.fixture_only
+                else "experiment"
+                if self.experiment is not None and not self.soak_mode
+                else "pq-launch-gate"
+                if self.pq_full
+                else "pq-election"
+                if self.pq_election
+                else "transfer-soak"
+                if self.soak_mode
+                else "launch-gate"
+            ),
             "source_commit": self.provenance["source_commit"],
             "source_commit_at_report": subprocess.run(
                 ["git", "rev-parse", "HEAD"],
@@ -4313,9 +4770,7 @@ class ValidatorElectionRehearsal:
                     "deadline_at": self.experiment_deadline_at,
                     "settlement_deadline_at": self.settlement_deadline_at,
                     "final_status": self.experiment_final_status,
-                    "genesis_faucet_funding_nanotos": (
-                        EXPERIMENT_GENESIS_FAUCET_FUNDING
-                    ),
+                    "genesis_faucet_funding_nanotos": (EXPERIMENT_GENESIS_FAUCET_FUNDING),
                     "readiness_manifest": str(self.readiness_path),
                     "allocation_evidence": str(self.allocation_evidence_path),
                     "election_count": len(self.election_allocations),
@@ -4355,7 +4810,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=("launch-gate", "experiment", "transfer-soak", "fixture-check", "pq-election", "pq-launch-gate"),
+        choices=(
+            "launch-gate",
+            "experiment",
+            "transfer-soak",
+            "fixture-check",
+            "pq-election",
+            "pq-launch-gate",
+        ),
         default="launch-gate",
         help=(
             "launch-gate runs the complete PQ Stage-A/Stage-B rehearsal; "
@@ -4365,14 +4827,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "pq-election proves the first PQ election; pq-launch-gate continues through rollover and recovery"
         ),
     )
-    parser.add_argument("--soak-duration", type=float, default=600.0,
-                        help="transfer-soak: seconds to run the random-transfer loop")
-    parser.add_argument("--soak-min-interval", type=float, default=1.0,
-                        help="transfer-soak: minimum seconds between transfers")
-    parser.add_argument("--soak-max-interval", type=float, default=5.0,
-                        help="transfer-soak: maximum seconds between transfers")
-    parser.add_argument("--soak-wallet-funding-tos", type=int, default=2000,
-                        help="transfer-soak: initial funding per A/B/C wallet, in TOS")
+    parser.add_argument(
+        "--soak-duration",
+        type=float,
+        default=600.0,
+        help="transfer-soak: seconds to run the random-transfer loop",
+    )
+    parser.add_argument(
+        "--soak-min-interval",
+        type=float,
+        default=1.0,
+        help="transfer-soak: minimum seconds between transfers",
+    )
+    parser.add_argument(
+        "--soak-max-interval",
+        type=float,
+        default=5.0,
+        help="transfer-soak: maximum seconds between transfers",
+    )
+    parser.add_argument(
+        "--soak-wallet-funding-tos",
+        type=int,
+        default=2000,
+        help="transfer-soak: initial funding per A/B/C wallet, in TOS",
+    )
     parser.add_argument(
         "--stage",
         choices=sorted(PROFILES),
@@ -4380,7 +4858,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="'a' for accelerated timing or 'b' for unmodified production timing",
     )
     parser.add_argument(
-        "--f01-extended-election-window", action="store_true",
+        "--f01-extended-election-window",
+        action="store_true",
         help="F01 launch-gate Stage A only: elect_start_before=240 instead of 180",
     )
     parser.add_argument(
@@ -4396,7 +4875,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="TOS build directory",
     )
     parser.add_argument(
-        "--pq-pool-stake-order-binary", type=Path, default=None,
+        "--pq-pool-stake-order-binary",
+        type=Path,
+        default=None,
         help="explicit frozen pool-order helper for the StageA artifact snapshot",
     )
     parser.add_argument(

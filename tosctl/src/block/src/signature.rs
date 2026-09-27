@@ -311,9 +311,9 @@ impl BlockSignaturesPure {
                 if !vd.verify_signature(data, &sign.sign) {
                     fail!(BlockError::BadSignature)
                 }
-                weight = weight.checked_add(vd.weight).ok_or_else(|| {
-                    BlockError::InvalidData("signature weight overflow".into())
-                })?;
+                weight = weight
+                    .checked_add(vd.weight)
+                    .ok_or_else(|| BlockError::InvalidData("signature weight overflow".into()))?;
             }
             Ok(true)
         })?;

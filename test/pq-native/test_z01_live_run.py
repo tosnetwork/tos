@@ -6,7 +6,6 @@ through a recording process backend that spawns only ``sleep``.
 """
 
 import asyncio
-import hashlib
 import importlib.util
 import json
 import os
@@ -15,7 +14,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -59,8 +57,10 @@ class RunnerGuards(unittest.TestCase):
                 live.load_precommit(path, "00" * 32, Path(temp), True)
 
     def test_native_tail_reads_only_appended_complete_lines(self):
-        marker = ("[2026-09-26 00:00:00.000000] BlockFinalizedInMasterchain "
-                  "{block=(-1,8000000000000000,%d):" + "11" * 32 + ":" + "22" * 32 + "}\n")
+        marker = (
+            "[2026-09-26 00:00:00.000000] BlockFinalizedInMasterchain "
+            "{block=(-1,8000000000000000,%d):" + "11" * 32 + ":" + "22" * 32 + "}\n"
+        )
         with tempfile.TemporaryDirectory() as temp:
             log = Path(temp) / "log"
             log.write_bytes((marker % 4).encode())
@@ -75,11 +75,24 @@ class RunnerGuards(unittest.TestCase):
             self.assertEqual(tail.tip(), 5)
 
     def test_expected_param_cells_are_the_reviewed_launch_cells(self):
-        self.assertEqual(live.EXPECTED_PARAM_CELLS["28"],
-                         "f0a98e1c3fa538583cc06d470a29dfb1a6d9407323fe8d64a8f870c838a19fea")
-        self.assertEqual(set(live.BINARIES), {"validator_engine", "dht_server", "lite_client",
-                                              "create_state", "pq_consensus_key", "toslibjson",
-                                              "proof_checker", "chain_checker", "launch_cap_test"})
+        self.assertEqual(
+            live.EXPECTED_PARAM_CELLS["28"],
+            "f0a98e1c3fa538583cc06d470a29dfb1a6d9407323fe8d64a8f870c838a19fea",
+        )
+        self.assertEqual(
+            set(live.BINARIES),
+            {
+                "validator_engine",
+                "dht_server",
+                "lite_client",
+                "create_state",
+                "pq_consensus_key",
+                "toslibjson",
+                "proof_checker",
+                "chain_checker",
+                "launch_cap_test",
+            },
+        )
         self.assertEqual(live.BINARIES["chain_checker"], "z01-chain-proof-check")
 
 
@@ -95,7 +108,8 @@ class RecordingBackend:
     async def spawn(self, name, executable, args, cwd, env, capture_stdout=False):
         self.spawned.append((str(executable), [str(arg) for arg in args], str(cwd)))
         return await asyncio.create_subprocess_exec(
-            "sleep", "30", cwd=cwd, stdout=None, stderr=asyncio.subprocess.PIPE)
+            "sleep", "30", cwd=cwd, stdout=None, stderr=asyncio.subprocess.PIPE
+        )
 
 
 @unittest.skipUnless(os.environ.get("Z01_BUILD_DIR"), "needs Z01_BUILD_DIR with genesis tools")
@@ -113,12 +127,14 @@ class GenesisAndArgv(unittest.TestCase):
             network._process_backend = backend
             genesis = live.check_genesis(network, directory, live.EXPECTED_PARAM_CELLS)
             node = nodes[0]
-            await node.run(StartOptions(threads=2, verbosity=3,
-                                        args=("--json-rpc-address", "127.0.0.1:31600")))
+            await node.run(
+                StartOptions(threads=2, verbosity=3, args=("--json-rpc-address", "127.0.0.1:31600"))
+            )
             try:
                 executable, args, cwd = backend.spawned[0]
-                self.assertEqual([executable, *args],
-                                 live.expected_cmdline(install, node, "127.0.0.1:31600"))
+                self.assertEqual(
+                    [executable, *args], live.expected_cmdline(install, node, "127.0.0.1:31600")
+                )
                 self.assertEqual(cwd, str(node.directory))
             finally:
                 await node.stop()

@@ -26,7 +26,11 @@ _ROOT_DOMAIN = b"tos-test-pq-election-controller-root-v1\x00"
 _KEY_ID = re.compile(r"^key_id\s+([0-9a-f]{64})$", re.MULTILINE)
 _PUBLIC = re.compile(r"^public\s+([0-9a-f]{2624})$", re.MULTILINE)
 _AUTHORIZATION_FIELDS = {
-    "validator_id", "key_id", "algorithm_id", "public_key", "signature",
+    "validator_id",
+    "key_id",
+    "algorithm_id",
+    "public_key",
+    "signature",
 }
 
 
@@ -93,8 +97,13 @@ def compile_controller_code(install: Install, output_dir: Path) -> Cell:
     subprocess.run(
         [
             str(install.build_dir / "crypto/func"),
-            "-W", str(compiled_boc), "-AP", "-o", str(compiled_fif),
-            str(source / "stdlib.fc"), str(source / "validator-controller-v1.fc"),
+            "-W",
+            str(compiled_boc),
+            "-AP",
+            "-o",
+            str(compiled_fif),
+            str(source / "stdlib.fc"),
+            str(source / "validator-controller-v1.fc"),
         ],
         cwd=install.source_dir,
         check=True,
@@ -121,8 +130,15 @@ def _packed_key(public_key: bytes) -> Cell:
 
 
 def build_pool_stake_order(
-    *, query_id: int, stake_amount: int, stake_at: int, max_factor: int,
-    adnl_addr: bytes, algorithm_id: int, public_key: bytes, signature: bytes,
+    *,
+    query_id: int,
+    stake_amount: int,
+    stake_at: int,
+    max_factor: int,
+    adnl_addr: bytes,
+    algorithm_id: int,
+    public_key: bytes,
+    signature: bytes,
     witness: Cell | None,
 ) -> Cell:
     """NEW_STAKE as consumed by single-nominator's check_new_stake_msg.
@@ -148,20 +164,32 @@ def build_pool_stake_order(
         .store_bytes(adnl_addr)
         .store_uint(algorithm_id, 16)
         .store_ref(_packed_key(public_key))
-        .store_ref(Builder().store_uint(len(signature), 32).store_ref(byte_chain(signature)).end_cell())
+        .store_ref(
+            Builder().store_uint(len(signature), 32).store_ref(byte_chain(signature)).end_cell()
+        )
         .store_maybe_ref(witness)
         .end_cell()
     )
 
 
 def build_production_pool_stake_order(
-    executable: Path, *, query_id: int, stake_amount: int, stake_at: int,
-    max_factor: int, adnl_addr: bytes, algorithm_id: int, public_key: bytes, signature: bytes,
+    executable: Path,
+    *,
+    query_id: int,
+    stake_amount: int,
+    stake_at: int,
+    max_factor: int,
+    adnl_addr: bytes,
+    algorithm_id: int,
+    public_key: bytes,
+    signature: bytes,
     witness: Cell,
 ) -> Cell:
     """Invoke Rust nominator::new_stake_with_witness, not a second Python encoder."""
     if algorithm_id != 1:
-        raise ValueError(f"production pool order requires ML-DSA-44 algorithm 1, got {algorithm_id}")
+        raise ValueError(
+            f"production pool order requires ML-DSA-44 algorithm 1, got {algorithm_id}"
+        )
     payload = {
         "query_id": query_id,
         "stake_amount": stake_amount,
@@ -173,8 +201,11 @@ def build_production_pool_stake_order(
         "witness_boc_hex": witness.to_boc().hex(),
     }
     result = subprocess.run(
-        [str(executable)], input=json.dumps(payload), text=True,
-        capture_output=True, check=False,
+        [str(executable)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
     )
     if result.returncode:
         raise RuntimeError(

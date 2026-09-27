@@ -11,6 +11,7 @@ Covers:
   - getBlockHeader
   - getOutMsgQueueSize
 """
+
 import base64
 
 import pytest
@@ -22,8 +23,8 @@ SHARD_ALL = -9223372036854775808  # 0x8000000000000000 (signed)
 #  1. getMasterchainInfo
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetMasterchainInfo:
 
+class TestGetMasterchainInfo:
     METHOD = "getMasterchainInfo"
 
     def test_basic(self, api_method_call):
@@ -45,8 +46,8 @@ class TestGetMasterchainInfo:
 #  2. getMasterchainBlockSignatures
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetMasterchainBlockSignatures:
 
+class TestGetMasterchainBlockSignatures:
     METHOD = "getMasterchainBlockSignatures"
     # Ordinary blocks answer with blocks.blockSignatures; simplex-consensus
     # blocks answer with blocks.blockSignatures.simplex, which additionally
@@ -167,13 +168,16 @@ class TestGetMasterchainBlockSignatures:
 #  3. getShardBlockProof
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetShardBlockProof:
 
+class TestGetShardBlockProof:
     METHOD = "getShardBlockProof"
 
     def test_basic(self, api_method_call, last_mc_seqno):
         response = api_method_call(
-            self.METHOD, workchain=-1, shard=SHARD_ALL, seqno=1,
+            self.METHOD,
+            workchain=-1,
+            shard=SHARD_ALL,
+            seqno=1,
         )
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
@@ -183,8 +187,7 @@ class TestGetShardBlockProof:
         assert isinstance(data["result"]["links"], list)
 
     def test_wrong_workchain(self, api_method_call):
-        response = api_method_call(self.METHOD, workchain="invalid",
-                                   shard=SHARD_ALL, seqno=1)
+        response = api_method_call(self.METHOD, workchain="invalid", shard=SHARD_ALL, seqno=1)
         assert response.json()["ok"] is False
 
     def test_empty_workchain(self, api_method_call):
@@ -208,8 +211,9 @@ class TestGetShardBlockProof:
         assert data["ok"] in (True, False)
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, workchain=-1, shard=SHARD_ALL, seqno=last_mc_seqno + 1000000
+        )
         assert response.json()["ok"] is False
 
     def test_negative_seqno(self, api_method_call):
@@ -226,8 +230,8 @@ class TestGetShardBlockProof:
 #  4. getConsensusBlock
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetConsensusBlock:
 
+class TestGetConsensusBlock:
     METHOD = "getConsensusBlock"
 
     def test_basic(self, api_method_call):
@@ -242,13 +246,12 @@ class TestGetConsensusBlock:
 #  5. lookupBlock
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestLookupBlock:
 
+class TestLookupBlock:
     METHOD = "lookupBlock"
 
     def test_by_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, workchain=-1,
-                                   shard=SHARD_ALL, seqno=last_mc_seqno)
+        response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL, seqno=last_mc_seqno)
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
@@ -265,8 +268,9 @@ class TestLookupBlock:
         assert response.json()["ok"] is False
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, workchain=-1, shard=SHARD_ALL, seqno=last_mc_seqno + 1000000
+        )
         assert response.json()["ok"] is False
 
 
@@ -274,8 +278,8 @@ class TestLookupBlock:
 #  6. shards / getShards
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetShards:
 
+class TestGetShards:
     @pytest.mark.parametrize("method", ["shards", "getShards"])
     def test_basic(self, api_method_call, last_mc_seqno, method):
         response = api_method_call(method, seqno=last_mc_seqno)
@@ -304,13 +308,12 @@ class TestGetShards:
 #  7. getBlockHeader
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetBlockHeader:
 
+class TestGetBlockHeader:
     METHOD = "getBlockHeader"
 
     def test_basic(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, workchain=-1,
-                                   shard=SHARD_ALL, seqno=last_mc_seqno)
+        response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL, seqno=last_mc_seqno)
         assert response.status_code == 200, response.json().get("error")
         data = response.json()
         assert data["ok"] is True
@@ -326,13 +329,15 @@ class TestGetBlockHeader:
             assert parent["root_hash"] and parent["file_hash"]
 
     def test_wrong_workchain(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, workchain="invalid",
-                                   shard=SHARD_ALL, seqno=last_mc_seqno)
+        response = api_method_call(
+            self.METHOD, workchain="invalid", shard=SHARD_ALL, seqno=last_mc_seqno
+        )
         assert response.json()["ok"] is False
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, workchain=-1, shard=SHARD_ALL,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, workchain=-1, shard=SHARD_ALL, seqno=last_mc_seqno + 1000000
+        )
         assert response.json()["ok"] is False
 
 
@@ -340,8 +345,8 @@ class TestGetBlockHeader:
 #  8. getOutMsgQueueSize
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetOutMsgQueueSize:
 
+class TestGetOutMsgQueueSize:
     METHOD = "getOutMsgQueueSize"
 
     def test_basic(self, api_method_call):

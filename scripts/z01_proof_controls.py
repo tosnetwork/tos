@@ -75,7 +75,7 @@ def mutate_middle_byte(raw: bytes) -> bytes:
     """Flip every bit of one byte in the middle of the BOC (never a no-op)."""
     require(len(raw) >= 32, "block BOC is too short to mutate")
     index = len(raw) // 2
-    return raw[:index] + bytes([raw[index] ^ 0xFF]) + raw[index + 1:]
+    return raw[:index] + bytes([raw[index] ^ 0xFF]) + raw[index + 1 :]
 
 
 def positive_output_matches(stdout: bytes, seqno: int, root: str, file: str, param30: str) -> bool:
@@ -86,11 +86,16 @@ def positive_output_matches(stdout: bytes, seqno: int, root: str, file: str, par
     """
     match = re.fullmatch(
         rb"Z01_CONFIG_PROOF_OK seqno=(\d+) root=([0-9A-Fa-f]{64}) "
-        rb"file=([0-9A-Fa-f]{64}) param30=([0-9A-Fa-f]{64})\n", stdout)
-    return (match is not None and int(match[1]) == seqno
-            and match[2].decode().lower() == root
-            and match[3].decode().lower() == file
-            and match[4].decode().lower() == param30)
+        rb"file=([0-9A-Fa-f]{64}) param30=([0-9A-Fa-f]{64})\n",
+        stdout,
+    )
+    return (
+        match is not None
+        and int(match[1]) == seqno
+        and match[2].decode().lower() == root
+        and match[3].decode().lower() == file
+        and match[4].decode().lower() == param30
+    )
 
 
 def load_quartet(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -98,31 +103,55 @@ def load_quartet(manifest: dict[str, Any]) -> dict[str, Any]:
     require(manifest.get("schema") == "tos.z01.config30-quartet.v1", "wrong quartet schema")
     block = manifest.get("block_id")
     require(isinstance(block, dict), "quartet lacks full BlockIdExt")
-    require(block.get("workchain") == -1 and block.get("shard") == MASTERCHAIN_SHARD,
-            "quartet is not a masterchain block")
+    require(
+        block.get("workchain") == -1 and block.get("shard") == MASTERCHAIN_SHARD,
+        "quartet is not a masterchain block",
+    )
     require(type(block.get("seqno")) is int and block["seqno"] > 0, "quartet seqno is invalid")
     for key in ("root_hash", "file_hash"):
-        require(isinstance(block.get(key), str) and HEX64.fullmatch(block[key]) is not None
-                and int(block[key], 16) != 0, f"quartet {key} is not a nonzero 64-hex digest")
+        require(
+            isinstance(block.get(key), str)
+            and HEX64.fullmatch(block[key]) is not None
+            and int(block[key], 16) != 0,
+            f"quartet {key} is not a nonzero 64-hex digest",
+        )
     expected = manifest.get("expected_param30_cell_hash")
-    require(isinstance(expected, str) and HEX64.fullmatch(expected) is not None,
-            "quartet lacks the precommitted Param30 cell hash")
+    require(
+        isinstance(expected, str) and HEX64.fullmatch(expected) is not None,
+        "quartet lacks the precommitted Param30 cell hash",
+    )
     files: dict[str, bytes] = {}
-    for key in ("block_boc", "state_proof", "config_proof", "param30_boc",
-                "wrong_param30_boc", "other_block_state_proof"):
+    for key in (
+        "block_boc",
+        "state_proof",
+        "config_proof",
+        "param30_boc",
+        "wrong_param30_boc",
+        "other_block_state_proof",
+    ):
         entry = manifest.get(key)
-        require(isinstance(entry, dict) and isinstance(entry.get("path"), str)
-                and isinstance(entry.get("sha256"), str), f"quartet lacks {key}")
+        require(
+            isinstance(entry, dict)
+            and isinstance(entry.get("path"), str)
+            and isinstance(entry.get("sha256"), str),
+            f"quartet lacks {key}",
+        )
         raw = Path(entry["path"]).read_bytes()
         require(raw != b"", f"quartet {key} is empty")
         require(sha(raw) == entry["sha256"], f"quartet {key} differs from its recorded SHA-256")
         files[key] = raw
-    require(sha(files["block_boc"]) == block["file_hash"],
-            "quartet block BOC SHA-256 is not the full-ID file hash")
-    require(files["wrong_param30_boc"] != files["param30_boc"],
-            "wrong Param30 control is byte-identical to the genuine Param30 BOC")
-    require(files["other_block_state_proof"] != files["state_proof"],
-            "other-block state proof is byte-identical to the genuine state proof")
+    require(
+        sha(files["block_boc"]) == block["file_hash"],
+        "quartet block BOC SHA-256 is not the full-ID file hash",
+    )
+    require(
+        files["wrong_param30_boc"] != files["param30_boc"],
+        "wrong Param30 control is byte-identical to the genuine Param30 BOC",
+    )
+    require(
+        files["other_block_state_proof"] != files["state_proof"],
+        "other-block state proof is byte-identical to the genuine state proof",
+    )
     return {"block": block, "expected": expected, "files": files}
 
 
@@ -130,9 +159,14 @@ def control_inputs(quartet: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Build each control as exactly one changed input over the genuine quartet."""
     block = quartet["block"]
     files = quartet["files"]
-    genuine = {"root": block["root_hash"], "file": block["file_hash"],
-               "block_boc": files["block_boc"], "state_proof": files["state_proof"],
-               "config_proof": files["config_proof"], "param30_boc": files["param30_boc"]}
+    genuine = {
+        "root": block["root_hash"],
+        "file": block["file_hash"],
+        "block_boc": files["block_boc"],
+        "state_proof": files["state_proof"],
+        "config_proof": files["config_proof"],
+        "param30_boc": files["param30_boc"],
+    }
     mutated = mutate_middle_byte(files["block_boc"])
     controls = {
         "positive": {},
@@ -150,7 +184,10 @@ def control_inputs(quartet: dict[str, Any]) -> dict[str, dict[str, Any]]:
     for name, change in controls.items():
         changed = [key for key in change if change[key] != genuine[key]]
         if name == "mutated_block_byte_consistent_file_hash":
-            require(sorted(changed) == ["block_boc", "file"], f"{name} must change exactly block bytes and file")
+            require(
+                sorted(changed) == ["block_boc", "file"],
+                f"{name} must change exactly block bytes and file",
+            )
         elif name == "positive":
             require(changed == [], "positive control changed an input")
         else:
@@ -159,13 +196,24 @@ def control_inputs(quartet: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
-def run_matrix(checker: Path, checker_sha256: str, quartet_manifest: Path,
-               manifest_sha256: str, out: Path,
-               runner: list[str] | None = None) -> dict[str, Any]:
+def run_matrix(
+    checker: Path,
+    checker_sha256: str,
+    quartet_manifest: Path,
+    manifest_sha256: str,
+    out: Path,
+    runner: list[str] | None = None,
+) -> dict[str, Any]:
     """Run all controls; return a verdict and retain every original."""
     manifest_raw = quartet_manifest.read_bytes()
-    require(sha(manifest_raw) == manifest_sha256, "quartet manifest differs from its precommitted SHA-256")
-    require(sha(checker.read_bytes()) == checker_sha256, "proof checker differs from its precommitted SHA-256")
+    require(
+        sha(manifest_raw) == manifest_sha256,
+        "quartet manifest differs from its precommitted SHA-256",
+    )
+    require(
+        sha(checker.read_bytes()) == checker_sha256,
+        "proof checker differs from its precommitted SHA-256",
+    )
     quartet = load_quartet(json.loads(manifest_raw))
     out.mkdir(parents=True, exist_ok=False)
     write_once(out / "quartet-manifest.json", manifest_raw)
@@ -179,9 +227,18 @@ def run_matrix(checker: Path, checker_sha256: str, quartet_manifest: Path,
         for key in ("block_boc", "state_proof", "config_proof", "param30_boc"):
             paths[key] = directory / f"{key}.boc"
             write_once(paths[key], inputs[key])
-        argv = [str(checker), "-1", str(MASTERCHAIN_SHARD), str(block["seqno"]),
-                inputs["root"], inputs["file"], str(paths["block_boc"]),
-                str(paths["state_proof"]), str(paths["config_proof"]), str(paths["param30_boc"])]
+        argv = [
+            str(checker),
+            "-1",
+            str(MASTERCHAIN_SHARD),
+            str(block["seqno"]),
+            inputs["root"],
+            inputs["file"],
+            str(paths["block_boc"]),
+            str(paths["state_proof"]),
+            str(paths["config_proof"]),
+            str(paths["param30_boc"]),
+        ]
         command = (runner or []) + argv
         completed = subprocess.run(command, capture_output=True, check=False)
         write_once(directory / "command.json", (json.dumps(command) + "\n").encode())
@@ -190,24 +247,48 @@ def run_matrix(checker: Path, checker_sha256: str, quartet_manifest: Path,
         write_once(directory / "stderr.raw", completed.stderr)
         expected = EXPECTED[name]
         if expected is None:
-            passed = (completed.returncode == 0 and completed.stderr == b""
-                      and positive_output_matches(completed.stdout, block["seqno"], block["root_hash"],
-                                                  block["file_hash"], quartet["expected"]))
+            passed = (
+                completed.returncode == 0
+                and completed.stderr == b""
+                and positive_output_matches(
+                    completed.stdout,
+                    block["seqno"],
+                    block["root_hash"],
+                    block["file_hash"],
+                    quartet["expected"],
+                )
+            )
         else:
-            passed = (completed.returncode == 1 and completed.stdout == b""
-                      and completed.stderr == REJECT_PREFIX + expected + b"\n")
+            passed = (
+                completed.returncode == 1
+                and completed.stdout == b""
+                and completed.stderr == REJECT_PREFIX + expected + b"\n"
+            )
         if not passed:
             failures.append(name)
-        rows[name] = {"exit": completed.returncode, "passed": passed,
-                      "expected_stderr": None if expected is None else expected.decode(),
-                      "stdout_sha256": sha(completed.stdout), "stderr_sha256": sha(completed.stderr),
-                      "inputs_sha256": {key: sha(inputs[key]) for key in paths},
-                      "root": inputs["root"], "file": inputs["file"]}
-    verdict = {"schema": "tos.z01.config30-proof-controls.v1", "passed": not failures,
-               "failures": failures, "checker_sha256": checker_sha256,
-               "quartet_manifest_sha256": manifest_sha256, "block_id": block,
-               "expected_param30_cell_hash": quartet["expected"], "controls": rows}
-    write_once(out / "verdict.json", (json.dumps(verdict, sort_keys=True, indent=2) + "\n").encode())
+        rows[name] = {
+            "exit": completed.returncode,
+            "passed": passed,
+            "expected_stderr": None if expected is None else expected.decode(),
+            "stdout_sha256": sha(completed.stdout),
+            "stderr_sha256": sha(completed.stderr),
+            "inputs_sha256": {key: sha(inputs[key]) for key in paths},
+            "root": inputs["root"],
+            "file": inputs["file"],
+        }
+    verdict = {
+        "schema": "tos.z01.config30-proof-controls.v1",
+        "passed": not failures,
+        "failures": failures,
+        "checker_sha256": checker_sha256,
+        "quartet_manifest_sha256": manifest_sha256,
+        "block_id": block,
+        "expected_param30_cell_hash": quartet["expected"],
+        "controls": rows,
+    }
+    write_once(
+        out / "verdict.json", (json.dumps(verdict, sort_keys=True, indent=2) + "\n").encode()
+    )
     return verdict
 
 
@@ -218,19 +299,30 @@ def main() -> int:
     parser.add_argument("--quartet", type=Path, required=True)
     parser.add_argument("--quartet-sha256", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--runner-json", default="[]",
-                        help="optional JSON argv prefix, e.g. a docker run wrapper")
+    parser.add_argument(
+        "--runner-json", default="[]", help="optional JSON argv prefix, e.g. a docker run wrapper"
+    )
     args = parser.parse_args()
     runner = json.loads(args.runner_json)
-    require(isinstance(runner, list) and all(isinstance(part, str) for part in runner),
-            "runner prefix must be a JSON string list")
+    require(
+        isinstance(runner, list) and all(isinstance(part, str) for part in runner),
+        "runner prefix must be a JSON string list",
+    )
     try:
-        verdict = run_matrix(args.checker, args.checker_sha256, args.quartet, args.quartet_sha256,
-                             args.output_dir, runner)
+        verdict = run_matrix(
+            args.checker,
+            args.checker_sha256,
+            args.quartet,
+            args.quartet_sha256,
+            args.output_dir,
+            runner,
+        )
     except ControlError as exc:
         print(f"Z01_PROOF_CONTROLS_REFUSED: {exc}", file=sys.stderr)
         return 2
-    print(json.dumps({"passed": verdict["passed"], "failures": verdict["failures"]}, sort_keys=True))
+    print(
+        json.dumps({"passed": verdict["passed"], "failures": verdict["failures"]}, sort_keys=True)
+    )
     return 0 if verdict["passed"] else 1
 
 

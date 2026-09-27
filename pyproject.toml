@@ -26,6 +26,35 @@ members = [
 [tool.ruff]
 line-length = 100
 include = ["test/integration/**/*.py", "test/tostester/**/*.py"]
+# Evidence records pin these files by their exact bytes (sha256), and the A03
+# ledger re-hashes the working tree; reformatting them would break those
+# bindings. force-exclude makes the exclusion hold for explicitly named files.
+force-exclude = true
+extend-exclude = [
+    "scripts/a03_development_ledger.py",
+    "scripts/agent-chain-index-e2e.py",
+    "scripts/agent-economy-composed-e2e.py",
+    "scripts/agent-query-api-e2e.py",
+    "scripts/agent-task-escrow-e2e.py",
+    "scripts/agent-wallet-account-e2e.py",
+    "scripts/capability-registry-e2e.py",
+    "scripts/check-nominator-pool-pq-route.py",
+    "scripts/check-pq-e2e-initial-validators.py",
+    "scripts/f01_finalized_ids.py",
+    "scripts/proof-attestation-e2e.py",
+    "scripts/service-actor-e2e.py",
+    "scripts/x01_window_evidence.py",
+    "test/integration/test_simplex2_release.py",
+    "test/integration/test_simplex2_release_unit.py",
+    "test/pq-native/test_a03_development_ledger.py",
+    "test/pq-native/test_e05_http_transcript.py",
+    "test/pq-native/test_e06_http_transcript.py",
+    "test/pq-native/test_e07_timeout_control.py",
+    "test/pq-native/test_e08_negative_finality.py",
+    "test/pq-native/test_e09_negative_finality.py",
+    "test/pq-native/test_e10_composed_evidence.py",
+    "test/tostester/src/tostester/network.py",
+]
 
 [tool.ruff.lint]
 # Default rules with isort
@@ -43,6 +72,11 @@ ignore = [
     # `0`". My response will be use a proper font that makes them distinguishable.
     "E741",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Names injected at run time by the hash-verified loader that executes these files.
+"scripts/x02_private_probe.py" = ["F821"]
+"scripts/x02_stage_a_child.py" = ["F821"]
 
 [tool.pyright]
 include = ["test/integration", "test/tostester"]

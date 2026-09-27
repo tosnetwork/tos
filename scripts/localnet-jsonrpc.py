@@ -16,30 +16,36 @@ Fund your app wallet address (repeatable):
 
 Stop: Ctrl-C. In the Android emulator the wallet base url is http://10.0.2.2:18545 (10.0.2.2 = emulator -> host).
 """
+
 import argparse
 import asyncio
 import json
-import threading
-import time
+import logging
 import os
 import re
-import urllib.request
+import shutil
+import threading
+import time
 import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import shutil
-import logging
-import nacl.signing
-from e03_http_trace import record as record_e03_http
 
+import nacl.signing
+from contract import WalletV1, WalletV1Blueprint, tos
+from e03_http_trace import record as record_e03_http
+from pytosiq_core import (
+    Address,
+    Cell,
+    InternalMsgInfo,
+    MessageAny,
+    WalletMessage,
+)
+from tosapi import tos_api
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
-from contract import WalletV1, WalletV1Blueprint, tos
-from pytosiq_core import (
-    Address, Builder, Cell, InternalMsgInfo, MessageAny, WalletMessage,
-)
-from tosapi import tos_api
+
 from toslib import ToslibClient
 
 REPO = Path(__file__).resolve().parents[1]
@@ -81,8 +87,9 @@ async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: fl
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("fresh basechain account state was not readable within 40s")
-            return await asyncio.to_thread(rpc_balance_nano, rpc_addr, address,
-                                           timeout=min(8, remaining))
+            return await asyncio.to_thread(
+                rpc_balance_nano, rpc_addr, address, timeout=min(8, remaining)
+            )
         except urllib.error.HTTPError as error:
             body = getattr(error, "json_rpc_body", b"").decode(errors="replace")
             if error.code != 500 or not re.search(
@@ -90,7 +97,9 @@ async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: fl
             ):
                 raise
             if time.monotonic() >= deadline:
-                raise TimeoutError("fresh basechain account state was not readable within 40s") from error
+                raise TimeoutError(
+                    "fresh basechain account state was not readable within 40s"
+                ) from error
             await asyncio.sleep(0.5)
 
 
@@ -118,7 +127,7 @@ async def wait_masterchain_info(rpc_addr: str, timeout: float):
 
 
 def fmt(nano: int) -> str:
-    return f"{nano/1e9:.9f} TOS"
+    return f"{nano / 1e9:.9f} TOS"
 
 
 def make_transfer(faucet, dest: Address, amount_tos) -> WalletMessage:
@@ -126,9 +135,16 @@ def make_transfer(faucet, dest: Address, amount_tos) -> WalletMessage:
         send_mode=3,
         message=MessageAny(
             info=InternalMsgInfo(
-                ihr_disabled=True, bounce=False, bounced=False,
-                src=faucet.address, dest=dest, value=tos(amount_tos),
-                ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+                ihr_disabled=True,
+                bounce=False,
+                bounced=False,
+                src=faucet.address,
+                dest=dest,
+                value=tos(amount_tos),
+                ihr_fee=0,
+                fwd_fee=0,
+                created_lt=0,
+                created_at=0,
             ),
             init=None,
             body=Cell.empty(),
@@ -138,6 +154,7 @@ def make_transfer(faucet, dest: Address, amount_tos) -> WalletMessage:
 
 async def wait_balance_at_least(rpc_addr, address, target_nano, timeout=30.0):
     import time
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -210,10 +227,12 @@ def saved_network_exists(workdir: Path, num_validators: int) -> bool:
         workdir / "node0/config.json",
     ]
     for index in range(1, num_validators + 1):
-        required.extend([
-            workdir / f"node{index}/config.global.json",
-            workdir / f"node{index}/config.json",
-        ])
+        required.extend(
+            [
+                workdir / f"node{index}/config.global.json",
+                workdir / f"node{index}/config.json",
+            ]
+        )
     return all(path.exists() for path in required)
 
 
@@ -253,17 +272,17 @@ async def wait_rpc_ready(rpc_addr: str, timeout: float):
 
 
 async def load_saved_faucet(install: Install, workdir: Path):
-    config = tos_api.Liteclient_config_global.from_json(
-        (workdir / "lite-client.json").read_text()
-    )
+    config = tos_api.Liteclient_config_global.from_json((workdir / "lite-client.json").read_text())
     client = ToslibClient(config, install.toslibjson)
     await client.init()
     key = nacl.signing.SigningKey((workdir / "state/main-wallet.pk").read_bytes())
     address_data = (workdir / "state/main-wallet.addr").read_bytes()
-    address = Address((
-        int.from_bytes(address_data[32:36], "big", signed=True),
-        address_data[:32],
-    ))
+    address = Address(
+        (
+            int.from_bytes(address_data[32:36], "big", signed=True),
+            address_data[:32],
+        )
+    )
     return client, WalletV1(client, address, key)
 
 
@@ -290,31 +309,42 @@ async def resume_saved_network(
     ]
     for index in range(num_validators):
         node_dir = workdir / f"node{index + 1}"
-        commands.append((
-            install.validator_engine_exe,
-            node_dir,
-            [
-                "--initial-sync-delay", "5",
-                "--session-logs", str(node_dir / "session-logs"),
-                "--quic-flood-control", "-1",
-                "--json-rpc-address", rpc_addresses[index],
-            ],
-        ))
+        commands.append(
+            (
+                install.validator_engine_exe,
+                node_dir,
+                [
+                    "--initial-sync-delay",
+                    "5",
+                    "--session-logs",
+                    str(node_dir / "session-logs"),
+                    "--quic-flood-control",
+                    "-1",
+                    "--json-rpc-address",
+                    rpc_addresses[index],
+                ],
+            )
+        )
 
     try:
         for executable, node_dir, extra in commands:
             process = await asyncio.create_subprocess_exec(
                 executable,
-                "--global-config", node_dir / "config.global.json",
-                "--local-config", node_dir / "config.json",
-                "--db", ".", "-v1", *extra,
+                "--global-config",
+                node_dir / "config.global.json",
+                "--local-config",
+                node_dir / "config.json",
+                "--db",
+                ".",
+                "-v1",
+                *extra,
                 cwd=node_dir,
                 stderr=asyncio.subprocess.PIPE,
             )
             processes.append(process)
-            drainers.append(asyncio.create_task(
-                drain_stderr(process.stderr, node_dir / "restart.log")
-            ))
+            drainers.append(
+                asyncio.create_task(drain_stderr(process.stderr, node_dir / "restart.log"))
+            )
 
         print("[localnet] resuming saved validator database; waiting for JSON-RPC ...")
         await wait_rpc_ready(rpc_addr, boot_timeout)
@@ -327,7 +357,9 @@ async def resume_saved_network(
             print("=" * 70)
             print(" TOS LOCALNET RESUMED")
             print(f"   masterchain seqno: {info['last']['seqno']}")
-            print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
+            print(
+                f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}"
+            )
             print(f"   control  : http://{control_addr}")
             print(f"   faucet   : {faucet.address.to_str()}")
             print("=" * 70)
@@ -384,9 +416,7 @@ async def main(
             # must retain an active ConfigParam 34 for its entire run. The
             # NetworkConfig validator checks this test-only override during
             # fresh zerostate generation.
-            network.config.bootstrap_validator_set_valid_for = (
-                bootstrap_validator_set_valid_for
-            )
+            network.config.bootstrap_validator_set_valid_for = bootstrap_validator_set_valid_for
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
         for validator_index in range(num_validators):
@@ -399,7 +429,9 @@ async def main(
         lite_client_config.write_text(nodes[0].liteserver_config.to_json())
 
         rpc_host, rpc_port_text = rpc_addr.rsplit(":", 1)
-        rpc_addresses = [f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)]
+        rpc_addresses = [
+            f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)
+        ]
         node_tasks = [asyncio.create_task(dht.run())]
         for i, node in enumerate(nodes):
             extra = ["--json-rpc-address", rpc_addresses[i]]
@@ -411,15 +443,21 @@ async def main(
         client = await nodes[0].toslib_client()
         faucet = network.zerostate.main_wallet(client)
         faucet_addr = faucet.address.to_str()
-        control_server = start_control_server(control_addr, asyncio.get_running_loop(), faucet, rpc_addr)
+        control_server = start_control_server(
+            control_addr, asyncio.get_running_loop(), faucet, rpc_addr
+        )
         port = rpc_addr.rsplit(":", 1)[-1]
 
         print("=" * 70)
         print(" TOS LOCALNET READY")
-        print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
+        print(
+            f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}"
+        )
         print(f"   control  : http://{control_addr} (localhost test faucet only)")
         print(f"   lite     : {lite_client_config}")
-        print(f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}")
+        print(
+            f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}"
+        )
         print(f"   emulator : http://10.0.2.2:{port}")
         print("=" * 70)
 
@@ -434,10 +472,12 @@ async def main(
             _ = await faucet.deploy(bp, tos(5))
             ok = await wait_balance_at_least(rpc_addr, new_addr, before + 1, timeout=40)
             after = rpc_balance_nano(rpc_addr, new_addr)
-            print(f"[demo] balance after (via JSON-RPC): {fmt(after)}   changed={'ok' if ok else 'TIMEOUT'} (+{fmt(after-before)})")
+            print(
+                f"[demo] balance after (via JSON-RPC): {fmt(after)}   changed={'ok' if ok else 'TIMEOUT'} (+{fmt(after - before)})"
+            )
 
         # ---- Fund an arbitrary address (your app wallet) ----
-        for spec in (fund or []):
+        for spec in fund or []:
             if ":" in spec and not spec.split(":", 1)[0].lstrip("-").isdigit():
                 # form like 0:hex:amount -- the last segment is the amount
                 addr_str, amt = spec.rsplit(":", 1)
@@ -453,7 +493,9 @@ async def main(
             await faucet.send(make_transfer(faucet, dest, amount))
             ok = await wait_balance_at_least(rpc_addr, dest.to_str(), before + 1, timeout=40)
             after = rpc_balance_nano(rpc_addr, dest.to_str())
-            print(f"[fund] done: {fmt(after)}  {'ok' if ok else 'TIMEOUT'} (+{fmt(after-before)})")
+            print(
+                f"[fund] done: {fmt(after)}  {'ok' if ok else 'TIMEOUT'} (+{fmt(after - before)})"
+            )
 
         print("[localnet] resident; press Ctrl-C to exit.")
         try:
@@ -486,7 +528,9 @@ if __name__ == "__main__":
             "a long-running localnet that does not exercise elections"
         ),
     )
-    p.add_argument("--demo", action="store_true", help="self-test faucet -> new wallet balance change")
+    p.add_argument(
+        "--demo", action="store_true", help="self-test faucet -> new wallet balance change"
+    )
     p.add_argument("--fund", action="append", help="fund an address, form 0:hex or 0:hex:25")
     p.add_argument(
         "--reuse",
@@ -495,10 +539,19 @@ if __name__ == "__main__":
     )
     a = p.parse_args()
     try:
-        asyncio.run(main(
-            a.rpc, a.control, a.validators, Path(a.workdir), a.boot_timeout,
-            a.demo, a.fund, a.reuse, a.base_port,
-            a.bootstrap_validator_set_valid_for,
-        ))
+        asyncio.run(
+            main(
+                a.rpc,
+                a.control,
+                a.validators,
+                Path(a.workdir),
+                a.boot_timeout,
+                a.demo,
+                a.fund,
+                a.reuse,
+                a.base_port,
+                a.bootstrap_validator_set_valid_for,
+            )
+        )
     except KeyboardInterrupt:
         print("\n[localnet] stopped.")

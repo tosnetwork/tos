@@ -2,12 +2,13 @@
 
 import ast
 import os
+import unittest
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 
-
-SOURCE = Path(os.environ.get("E11_ROUTE_SOURCE", Path(__file__).with_name("validator-election-stage-a.py")))
+SOURCE = Path(
+    os.environ.get("E11_ROUTE_SOURCE", Path(__file__).with_name("validator-election-stage-a.py"))
+)
 
 
 def report_status(stage):
@@ -20,15 +21,24 @@ def report_status(stage):
         if isinstance(method, ast.FunctionDef) and method.name == "report_status"
     )
     namespace = {}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), str(SOURCE), "exec"), namespace)
+    exec(
+        compile(
+            ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])),
+            str(SOURCE),
+            "exec",
+        ),
+        namespace,
+    )
     return namespace["report_status"](stage)
 
 
 class TestFullPqCompletion(unittest.TestCase):
     def stage(self, events, *, full=True, failures=(), experiment=None, final=None):
         return SimpleNamespace(
-            pq_full=full, events=[{"event": event} for event in events],
-            failures=list(failures), experiment=experiment,
+            pq_full=full,
+            events=[{"event": event} for event in events],
+            failures=list(failures),
+            experiment=experiment,
             experiment_final_status=final,
         )
 
@@ -41,8 +51,15 @@ class TestFullPqCompletion(unittest.TestCase):
 
     def test_other_modes_and_existing_failure_gate(self):
         self.assertEqual(report_status(self.stage([], full=False)), "pass")
-        self.assertEqual(report_status(self.stage(["pq_full_launch_gate_passed"], failures=["bad"])), "fail")
-        self.assertEqual(report_status(self.stage([], full=False, experiment=object(), final="partial-settlement")), "fail")
+        self.assertEqual(
+            report_status(self.stage(["pq_full_launch_gate_passed"], failures=["bad"])), "fail"
+        )
+        self.assertEqual(
+            report_status(
+                self.stage([], full=False, experiment=object(), final="partial-settlement")
+            ),
+            "fail",
+        )
 
 
 if __name__ == "__main__":

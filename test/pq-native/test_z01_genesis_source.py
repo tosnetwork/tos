@@ -1,7 +1,6 @@
 import importlib.util
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("z01", ROOT / "scripts/check-z01-genesis-source.py")
@@ -33,19 +32,47 @@ class GenesisSourceTest(unittest.TestCase):
         self.assertTrue(any("Param30" in error for error in self.check(production=changed)))
 
     def test_production_param16_or_28_ceiling_red(self):
-        self.assertTrue(any("Param16" in error for error in self.check(production=self.production.replace("21 21 4 config.validator_num!", "22 21 4 config.validator_num!", 1))))
-        self.assertTrue(any("Param28" in error for error in self.check(production=self.production.replace("250 250 1000 21 true config.catchain_params!", "250 250 1000 22 true config.catchain_params!", 1))))
+        self.assertTrue(
+            any(
+                "Param16" in error
+                for error in self.check(
+                    production=self.production.replace(
+                        "21 21 4 config.validator_num!", "22 21 4 config.validator_num!", 1
+                    )
+                )
+            )
+        )
+        self.assertTrue(
+            any(
+                "Param28" in error
+                for error in self.check(
+                    production=self.production.replace(
+                        "250 250 1000 21 true config.catchain_params!",
+                        "250 250 1000 22 true config.catchain_params!",
+                        1,
+                    )
+                )
+            )
+        )
 
     def test_local_genesis_simplex_default_red(self):
         changed = self.harness.replace("protocol_version: int = 2", "protocol_version: int = 1", 1)
         self.assertTrue(any("protocol_version" in error for error in self.check(harness=changed)))
 
     def test_manager_chain_selected_config_red(self):
-        changed = self.manager.replace("last_masterchain_state_->get_selected_new_consensus_config(shard.workchain)", "local_simplex_config(shard.workchain)", 1)
+        changed = self.manager.replace(
+            "last_masterchain_state_->get_selected_new_consensus_config(shard.workchain)",
+            "local_simplex_config(shard.workchain)",
+            1,
+        )
         self.assertTrue(any("chain Param30" in error for error in self.check(manager=changed)))
 
     def test_manager_param30_identity_red(self):
-        changed = self.manager.replace(".simplex_config_cell_hash = selected_config.value().cell_hash", ".simplex_config_cell_hash = local_config.cell_hash", 1)
+        changed = self.manager.replace(
+            ".simplex_config_cell_hash = selected_config.value().cell_hash",
+            ".simplex_config_cell_hash = local_config.cell_hash",
+            1,
+        )
         self.assertTrue(any("selected Param30" in error for error in self.check(manager=changed)))
 
 

@@ -1,4 +1,5 @@
 """Fail-closed validation and fresh reads of the broker's private proc descriptor."""
+
 import ctypes
 import fcntl
 import json
@@ -32,63 +33,90 @@ class QueueStatsFD:
         require((fd, receipt_fd) == (3, 4), "fixed inherited descriptors required")
         self.fd, self.receipt_fd, self.host_netns = fd, receipt_fd, host_netns
         receipt = os.fstat(receipt_fd)
-        require(stat.S_ISREG(receipt.st_mode) and receipt.st_uid == receipt.st_gid == 0
-                and stat.S_IMODE(receipt.st_mode) == 0o400
-                and fcntl.fcntl(receipt_fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
-                and fcntl.fcntl(receipt_fd, fcntl.F_GET_SEALS) == 15,
-                "receipt identity/permissions/seals differ")
+        require(
+            stat.S_ISREG(receipt.st_mode)
+            and receipt.st_uid == receipt.st_gid == 0
+            and stat.S_IMODE(receipt.st_mode) == 0o400
+            and fcntl.fcntl(receipt_fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
+            and fcntl.fcntl(receipt_fd, fcntl.F_GET_SEALS) == 15,
+            "receipt identity/permissions/seals differ",
+        )
         self.receipt = json.loads(bounded_read(receipt_fd, 4096))
-        require(self.receipt["schema"] == "tos.x02.queue-stats-fd.v1"
-                and self.receipt["broker_pid"] == os.getpid()
-                and self.receipt["broker_euid"] == 0
-                and self.receipt["entry_caps"] == 0x31c0
-                and self.receipt["worker_uid"] == self.receipt["worker_gid"] == 1000
-                and self.receipt["worker_caps"] == CAPS,
-                "handoff identity differs")
+        require(
+            self.receipt["schema"] == "tos.x02.queue-stats-fd.v1"
+            and self.receipt["broker_pid"] == os.getpid()
+            and self.receipt["broker_euid"] == 0
+            and self.receipt["entry_caps"] == 0x31C0
+            and self.receipt["worker_uid"] == self.receipt["worker_gid"] == 1000
+            and self.receipt["worker_caps"] == CAPS,
+            "handoff identity differs",
+        )
         self.identity = (self.receipt["proc_dev"], self.receipt["proc_inode"])
         for directory in ("/", "/usr", "/usr/local", "/usr/local/libexec"):
             ancestor = os.stat(directory, follow_symlinks=False)
-            require(stat.S_ISDIR(ancestor.st_mode) and ancestor.st_uid == 0
-                    and not stat.S_IMODE(ancestor.st_mode) & 0o022,
-                    "broker ancestor is not root protected")
+            require(
+                stat.S_ISDIR(ancestor.st_mode)
+                and ancestor.st_uid == 0
+                and not stat.S_IMODE(ancestor.st_mode) & 0o022,
+                "broker ancestor is not root protected",
+            )
         broker = os.stat("/usr/local/libexec/x02-nfq-proc-fd-v1", follow_symlinks=False)
-        require(stat.S_ISREG(broker.st_mode) and broker.st_uid == broker.st_gid == 0
-                and stat.S_IMODE(broker.st_mode) == 0o555
-                and (broker.st_dev, broker.st_ino) ==
-                (self.receipt["broker_dev"], self.receipt["broker_inode"]),
-                "root broker executable identity differs")
+        require(
+            stat.S_ISREG(broker.st_mode)
+            and broker.st_uid == broker.st_gid == 0
+            and stat.S_IMODE(broker.st_mode) == 0o555
+            and (broker.st_dev, broker.st_ino)
+            == (self.receipt["broker_dev"], self.receipt["broker_inode"]),
+            "root broker executable identity differs",
+        )
         self.validate()
 
     def validate(self):
-        require(os.getresuid() == (1000, 1000, 1000)
-                and os.getresgid() == (1000, 1000, 1000) and os.getgroups() == [],
-                "ordinary final credentials differ")
-        status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines()
-                      if ":" in line)
-        require(all(int(status[key], 16) == CAPS for key in
-                    ("CapEff", "CapPrm", "CapInh", "CapAmb", "CapBnd"))
-                and int(status["NoNewPrivs"]) == 1, "final capabilities/NNP differ")
+        require(
+            os.getresuid() == (1000, 1000, 1000)
+            and os.getresgid() == (1000, 1000, 1000)
+            and os.getgroups() == [],
+            "ordinary final credentials differ",
+        )
+        status = dict(
+            line.split(":", 1)
+            for line in Path("/proc/self/status").read_text().splitlines()
+            if ":" in line
+        )
+        require(
+            all(
+                int(status[key], 16) == CAPS
+                for key in ("CapEff", "CapPrm", "CapInh", "CapAmb", "CapBnd")
+            )
+            and int(status["NoNewPrivs"]) == 1,
+            "final capabilities/NNP differ",
+        )
         net = os.stat("/proc/self/ns/net")
         user = os.stat("/proc/self/ns/user")
-        require(os.readlink("/proc/self/ns/net") != self.host_netns
-                and net.st_ino == self.receipt["netns_inode"]
-                and user.st_ino == self.receipt["owner_userns_inode"]
-                and self.receipt["owner_uid"] == 0, "private namespace continuity differs")
+        require(
+            os.readlink("/proc/self/ns/net") != self.host_netns
+            and net.st_ino == self.receipt["netns_inode"]
+            and user.st_ino == self.receipt["owner_userns_inode"]
+            and self.receipt["owner_uid"] == 0,
+            "private namespace continuity differs",
+        )
         current = os.fstat(self.fd)
         named = os.stat(PROC)
-        require((current.st_dev, current.st_ino) == self.identity
-                == (named.st_dev, named.st_ino)
-                and stat.S_ISREG(current.st_mode) and current.st_uid == current.st_gid == 0
-                and stat.S_IMODE(current.st_mode) == self.receipt["proc_mode"] == 0o440
-                and self.receipt["proc_uid"] == self.receipt["proc_gid"] == 0
-                and fcntl.fcntl(self.fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
-                and not fcntl.fcntl(self.fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC,
-                "proc descriptor identity/permissions/inheritance differ")
+        require(
+            (current.st_dev, current.st_ino) == self.identity == (named.st_dev, named.st_ino)
+            and stat.S_ISREG(current.st_mode)
+            and current.st_uid == current.st_gid == 0
+            and stat.S_IMODE(current.st_mode) == self.receipt["proc_mode"] == 0o440
+            and self.receipt["proc_uid"] == self.receipt["proc_gid"] == 0
+            and fcntl.fcntl(self.fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
+            and not fcntl.fcntl(self.fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC,
+            "proc descriptor identity/permissions/inheritance differ",
+        )
         libc = ctypes.CDLL(None, use_errno=True)
         buffer = ctypes.create_string_buffer(256)
         require(libc.fstatfs(self.fd, ctypes.byref(buffer)) == 0, "fstatfs failed")
         magic = ctypes.c_long.from_buffer(buffer).value
-        require(magic == self.receipt["procfs_magic"] == 0x9fa0, "not kernel procfs")
+        require(magic == self.receipt["procfs_magic"] == 0x9FA0, "not kernel procfs")
         start = Path("/proc/self/stat").read_text().rsplit(")", 1)[1].split()[19]
         require(start == self.receipt["startticks"], "process start identity differs")
 
@@ -125,8 +153,13 @@ class QueueStatsFD:
             try:
                 self.validate()
             except ValueError as error:
-                require(str(error) == "private namespace continuity differs", "wrong namespace guard reason")
-                ledger.append({"event": "fd_guard_rejected", "case": "wrong-namespace", "error": str(error)})
+                require(
+                    str(error) == "private namespace continuity differs",
+                    "wrong namespace guard reason",
+                )
+                ledger.append(
+                    {"event": "fd_guard_rejected", "case": "wrong-namespace", "error": str(error)}
+                )
             else:
                 raise ValueError("wrong namespace guard failed")
             finally:

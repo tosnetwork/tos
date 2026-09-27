@@ -30,8 +30,7 @@ async def run_gate(root: Path) -> None:
         boot_requests.append(validators)
         return {
             "nodes": [
-                {"role": "validator", "name": f"validator-{index}"}
-                for index in range(validators)
+                {"role": "validator", "name": f"validator-{index}"} for index in range(validators)
             ]
             + [{"role": "non-validator-verifier", "name": "verifier"}],
             "consensus_milestones": {

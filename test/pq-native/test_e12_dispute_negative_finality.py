@@ -3,23 +3,30 @@
 import asyncio
 import importlib.util
 import os
-from pathlib import Path
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-
-SCRIPT = Path(os.environ.get(
-    "E12_SOURCE_PATH",
-    Path(__file__).resolve().parents[2] / "scripts/dispute-e2e.py",
-))
+SCRIPT = Path(
+    os.environ.get(
+        "E12_SOURCE_PATH",
+        Path(__file__).resolve().parents[2] / "scripts/dispute-e2e.py",
+    )
+)
 SPEC = importlib.util.spec_from_file_location("e12_dispute", SCRIPT)
 e12 = importlib.util.module_from_spec(SPEC)
-stubs = {name: types.ModuleType(name) for name in (
-    "tostester", "tostester.install", "tostester.network",
-    "tostester.pq_initial_validator", "pytosiq_core",
-)}
+stubs = {
+    name: types.ModuleType(name)
+    for name in (
+        "tostester",
+        "tostester.install",
+        "tostester.network",
+        "tostester.pq_initial_validator",
+        "pytosiq_core",
+    )
+}
 stubs["tostester.install"].Install = object
 stubs["tostester.network"].Network = object
 stubs["tostester.network"].StartOptions = object
@@ -38,23 +45,38 @@ def head(seqno):
 
 
 def wallet_tx():
-    return {"transaction_id": {"lt": "11"}, "aborted": False,
-            "compute": {"success": True}, "action": {"success": True},
-            "out_msgs": [{"destination": "0:abc", "hash": "message-hash"}]}
+    return {
+        "transaction_id": {"lt": "11"},
+        "aborted": False,
+        "compute": {"success": True},
+        "action": {"success": True},
+        "out_msgs": [{"destination": "0:abc", "hash": "message-hash"}],
+    }
 
 
 def contract_tx(exit_code=2007):
-    return {"transaction_id": {"lt": "21"}, "aborted": True,
-            "compute": {"success": False, "exit_code": exit_code},
-            "in_msg": {"hash": "message-hash", "source": "0:payer"},
-            "out_msgs": [{"hash": "bounce-hash", "source": "0:abc",
-                          "destination": "0:payer", "bounced": True}]}
+    return {
+        "transaction_id": {"lt": "21"},
+        "aborted": True,
+        "compute": {"success": False, "exit_code": exit_code},
+        "in_msg": {"hash": "message-hash", "source": "0:payer"},
+        "out_msgs": [
+            {"hash": "bounce-hash", "source": "0:abc", "destination": "0:payer", "bounced": True}
+        ],
+    }
 
 
 def bounce_tx(message_hash="bounce-hash"):
-    return {"transaction_id": {"lt": "12"}, "in_msg": {
-        "hash": message_hash, "source": "0:abc", "destination": "0:payer",
-        "bounced": True}, "out_msgs": []}
+    return {
+        "transaction_id": {"lt": "12"},
+        "in_msg": {
+            "hash": message_hash,
+            "source": "0:abc",
+            "destination": "0:payer",
+            "bounced": True,
+        },
+        "out_msgs": [],
+    }
 
 
 class DisputeNegativeTests(unittest.TestCase):
@@ -69,24 +91,52 @@ class DisputeNegativeTests(unittest.TestCase):
         with patch.object(e12, "rpc_call", return_value={"result": rows}):
             self.assertEqual(len(e12.transactions_after("0:abc", 15)), 5)
 
-    def run_case(self, *, expected=2007, transaction=None, send_error=None,
-                 wallet=None, bounce=None, extra=None, states=None, rows=None):
+    def run_case(
+        self,
+        *,
+        expected=2007,
+        transaction=None,
+        send_error=None,
+        wallet=None,
+        bounce=None,
+        extra=None,
+        states=None,
+        rows=None,
+    ):
         send = AsyncMock(side_effect=send_error, return_value="submitted")
-        with patch.object(e12, "dispute_show", new=AsyncMock(
-            side_effect=states or [STATE, STATE, STATE]
-        )), patch.object(e12, "finalized_mc_header",
-                         side_effect=[head(10), head(11), head(12)]), patch.object(
-            e12, "last_lt", side_effect=[10, 20]
-        ), patch.object(e12, "transactions_after", side_effect=rows or [
-            [wallet or wallet_tx(), bounce or bounce_tx(), *(extra or [])],
-            [transaction or contract_tx()]
-        ]), patch.object(e12, "same_addr", side_effect=lambda a, b: a == b), patch.object(
-            e12, "send_op", send
-        ), patch.object(e12, "record_jsonl") as record, patch.object(e12, "check") as check:
-            asyncio.run(e12.rejected_operation(
-                "frozen", "0:abc", "0:payer", expected,
-                "rotate-attestor-key", "case-5", "reviewer",
-                "--new-attestor-pubkey", "dd" * 32))
+        with (
+            patch.object(
+                e12, "dispute_show", new=AsyncMock(side_effect=states or [STATE, STATE, STATE])
+            ),
+            patch.object(e12, "finalized_mc_header", side_effect=[head(10), head(11), head(12)]),
+            patch.object(e12, "last_lt", side_effect=[10, 20]),
+            patch.object(
+                e12,
+                "transactions_after",
+                side_effect=rows
+                or [
+                    [wallet or wallet_tx(), bounce or bounce_tx(), *(extra or [])],
+                    [transaction or contract_tx()],
+                ],
+            ),
+            patch.object(e12, "same_addr", side_effect=lambda a, b: a == b),
+            patch.object(e12, "send_op", send),
+            patch.object(e12, "record_jsonl") as record,
+            patch.object(e12, "check") as check,
+        ):
+            asyncio.run(
+                e12.rejected_operation(
+                    "frozen",
+                    "0:abc",
+                    "0:payer",
+                    expected,
+                    "rotate-attestor-key",
+                    "case-5",
+                    "reviewer",
+                    "--new-attestor-pubkey",
+                    "dd" * 32,
+                )
+            )
             return record, check
 
     def test_exact_vm_exit_with_two_final_heads_passes(self):
@@ -123,8 +173,9 @@ class DisputeNegativeTests(unittest.TestCase):
 
     def test_exact_bounce_is_not_second_wallet_send(self):
         record, check = self.run_case()
-        self.assertEqual(record.call_args.args[1]["bounce_transaction"]["in_msg"]["hash"],
-                         "bounce-hash")
+        self.assertEqual(
+            record.call_args.args[1]["bounce_transaction"]["in_msg"]["hash"], "bounce-hash"
+        )
         check.assert_called_once_with("frozen", True)
 
     def test_wrong_bounce_hash_is_refused(self):
@@ -136,8 +187,10 @@ class DisputeNegativeTests(unittest.TestCase):
             self.run_case(extra=[bounce_tx()])
 
     def test_additional_wallet_outbound_is_refused(self):
-        unrelated = {"transaction_id": {"lt": "13"}, "out_msgs": [
-            {"destination": "0:other", "hash": "other-send"}]}
+        unrelated = {
+            "transaction_id": {"lt": "13"},
+            "out_msgs": [{"destination": "0:other", "hash": "other-send"}],
+        }
         with self.assertRaisesRegex(RuntimeError, "unrelated or duplicate"):
             self.run_case(extra=[unrelated])
 

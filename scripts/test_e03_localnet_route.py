@@ -2,8 +2,8 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -54,8 +54,9 @@ def test_negative_workchain_controller_is_one_cli_argument(monkeypatch):
         created = True
 
     seeder.run = run
-    seeder.config_data = lambda: {"pools": {"toscan-staking": {"address": "0:" + "11" * 32}}
-                                  if created else {}}
+    seeder.config_data = lambda: {
+        "pools": {"toscan-staking": {"address": "0:" + "11" * 32}} if created else {}
+    }
     seeder.fund = lambda *_: None
     seeder.address_active = lambda *_: True
     seeder.rpc_call = lambda *_args, **_kwargs: ["already deposited"]
@@ -74,12 +75,18 @@ def http_error(body):
 def test_wallet_balance_evidence_skips_retained_http_errors():
     verifier = load_verifier()
     rows = [
-        {"status": status,
-         "request_body": json.dumps({"method": "getAddressInformation", "params": {"address": "wallet"}}),
-         "response_body": json.dumps(response)}
-        for status, response in [(500, {"error": "missing block"}),
-                                 (200, {"result": {"balance": "0"}}),
-                                 (200, {"result": {"balance": "4999999000"}})]
+        {
+            "status": status,
+            "request_body": json.dumps(
+                {"method": "getAddressInformation", "params": {"address": "wallet"}}
+            ),
+            "response_body": json.dumps(response),
+        }
+        for status, response in [
+            (500, {"error": "missing block"}),
+            (200, {"result": {"balance": "0"}}),
+            (200, {"result": {"balance": "4999999000"}}),
+        ]
     ]
     assert verifier.wallet_balances(rows, "wallet") == [0, 4999999000]
 
@@ -92,7 +99,9 @@ async def test_missing_fresh_basechain_block_is_retried(monkeypatch):
     def balance(*_, **__):
         calls.append(1)
         if len(calls) == 1:
-            raise http_error("getAccountState: cannot load block (0,8000000000000000,0):abc : not in db")
+            raise http_error(
+                "getAccountState: cannot load block (0,8000000000000000,0):abc : not in db"
+            )
         return 0
 
     monkeypatch.setattr(localnet, "rpc_balance_nano", balance)
@@ -118,17 +127,25 @@ async def test_unrelated_json_rpc_500_is_not_retried(monkeypatch):
 @pytest.mark.asyncio
 async def test_missing_block_has_a_deadline(monkeypatch):
     localnet = load_localnet()
-    monkeypatch.setattr(localnet, "rpc_balance_nano", lambda *_, **__: (_ for _ in ()).throw(
-        http_error("cannot load block (0,8000000000000000,0):abc : not in db")))
+    monkeypatch.setattr(
+        localnet,
+        "rpc_balance_nano",
+        lambda *_, **__: (_ for _ in ()).throw(
+            http_error("cannot load block (0,8000000000000000,0):abc : not in db")
+        ),
+    )
     with pytest.raises(TimeoutError, match="not readable"):
         await localnet.wait_initial_balance_readable("unused", "wallet", timeout=0.001)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("block", [
-    "(0,8000000000000000,1)",
-    "(-1,8000000000000000,0)",
-])
+@pytest.mark.parametrize(
+    "block",
+    [
+        "(0,8000000000000000,1)",
+        "(-1,8000000000000000,0)",
+    ],
+)
 async def test_other_missing_blocks_fail_immediately(monkeypatch, block):
     localnet = load_localnet()
     calls = []

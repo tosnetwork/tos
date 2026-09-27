@@ -29,7 +29,10 @@ if not match:
     fail("check_validator_set body is absent")
 body = match.group(1)
 
-if "kMaxTotalValidatorWeight = UINT64_MAX / 3" not in quorum or "checked_add_validator_weight" not in node:
+if (
+    "kMaxTotalValidatorWeight = UINT64_MAX / 3" not in quorum
+    or "checked_add_validator_weight" not in node
+):
     fail("node validator-weight rule changed; compare the contract bound again")
 if "seen_adnl_addrs.insert(adnl_addr)" not in node:
     fail("node ADNL uniqueness rule changed; compare the contract check again")
@@ -45,7 +48,11 @@ for label, pattern in required.items():
     if not re.search(pattern, body, re.S):
         fail(f"check_validator_set no longer records {label}")
 
-install = re.search(r"\(cell, int\) install_param\(cell cfg_dict, int param_id, cell param_val\) inline_ref \{(.*?)\n\}", contract, re.S)
+install = re.search(
+    r"\(cell, int\) install_param\(cell cfg_dict, int param_id, cell param_val\) inline_ref \{(.*?)\n\}",
+    contract,
+    re.S,
+)
 if not install:
     fail("governance install_param body is absent")
 install_body = install.group(1)
@@ -106,8 +113,13 @@ if len(actual_cases) != len(rows) or actual_cases != required_cases:
 valid = [(name, verdict) for name, verdict, _ in rows if verdict == "accept"]
 if valid != [("valid", "accept")]:
     fail(f"shared node validator-set BOC positive control changed: {valid}")
-for path in ("test/pq-native/validator-set-cases.txt", "test/pq-native/validator-set-cases-gen.cpp"):
+for path in (
+    "test/pq-native/validator-set-cases.txt",
+    "test/pq-native/validator-set-cases-gen.cpp",
+):
     if workflow.count(f'"{path}"') != 2:
         fail(f"contract sandbox PR and integration-push triggers no longer both include {path}")
 
-print("CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance record ADNL/weight rules; both sandbox tests decode the 22 shared node vectors and vector changes trigger contract CI")
+print(
+    "CONFIG_VALIDATOR_SET_PARITY_OK: Elector and governance record ADNL/weight rules; both sandbox tests decode the 22 shared node vectors and vector changes trigger contract CI"
+)

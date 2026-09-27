@@ -12,12 +12,11 @@ import json
 import os
 import subprocess
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 from e03_http_trace import record as record_e03_http
-
 from pytosiq_core import Address
 
 REPO = Path(__file__).resolve().parents[1]

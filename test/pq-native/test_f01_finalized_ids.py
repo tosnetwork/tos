@@ -1,23 +1,24 @@
 """Synthetic controls for the read-only F01 finalization evidence checker."""
 
-import importlib.util
 import base64
 import hashlib
+import importlib.util
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from pytosiq_core import Builder
 
-
-SOURCE = Path(os.environ.get(
-    "F01_CHECKER_SOURCE",
-    Path(__file__).resolve().parents[2] / "scripts/f01_finalized_ids.py",
-))
+SOURCE = Path(
+    os.environ.get(
+        "F01_CHECKER_SOURCE",
+        Path(__file__).resolve().parents[2] / "scripts/f01_finalized_ids.py",
+    )
+)
 SPEC = importlib.util.spec_from_file_location("f01_finalized_ids", SOURCE)
 f01 = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(f01)
@@ -28,9 +29,12 @@ def fixture():
     nodes = {}
     for index in range(4):
         nodes[f"node{index}"] = [
-            {"height": height,
-             "id": (-1, "8000000000000000", height, f"{height:064x}", f"{height + 10:064x}"),
-             "at": f"2026-09-25 10:00:{height:02d}.{index + 1:09d}", "line": height}
+            {
+                "height": height,
+                "id": (-1, "8000000000000000", height, f"{height:064x}", f"{height + 10:064x}"),
+                "at": f"2026-09-25 10:00:{height:02d}.{index + 1:09d}",
+                "line": height,
+            }
             for height in (1, 2, 3)
         ]
     return nodes
@@ -45,52 +49,85 @@ def capture_fixture(root, nodes, log_paths, before_cell, after_cell):
             height = event["height"]
             _, _, _, root_hash, file_hash = event["id"]
             block_id = {
-                "workchain": -1, "shard": -(1 << 63), "seqno": height,
+                "workchain": -1,
+                "shard": -(1 << 63),
+                "seqno": height,
                 "root_hash": base64.b64encode(bytes.fromhex(root_hash)).decode(),
                 "file_hash": base64.b64encode(bytes.fromhex(file_hash)).decode(),
             }
             cell = before_cell if height < 2 else after_cell
-            observations.append({
-                "node_name": name, "height": height, "block_id": block_id,
-                "config34_cell_hash": cell.hash.hex(),
-            })
+            observations.append(
+                {
+                    "node_name": name,
+                    "height": height,
+                    "block_id": block_id,
+                    "config34_cell_hash": cell.hash.hex(),
+                }
+            )
             for method, result in (
                 ("getBlockHeader", {"id": block_id}),
-                ("getConfigParam", {"config": {
-                    "bytes": base64.b64encode(cell.to_boc()).decode()}}),
+                ("getConfigParam", {"config": {"bytes": base64.b64encode(cell.to_boc()).decode()}}),
             ):
-                rows.append({
-                    "node_name": name, "address": f"127.0.0.1:{25000 + int(name[4:])}",
-                    "http_status": 200,
-                    "request": {"method": method, "params": {
-                        "seqno": height,
-                        **({"param": 34} if method == "getConfigParam" else {
-                            "workchain": -1, "shard": "-9223372036854775808"}),
-                    }},
-                    "response_base64": base64.b64encode(json.dumps({
-                        "ok": True, "result": result,
-                    }).encode()).decode(),
-                })
+                rows.append(
+                    {
+                        "node_name": name,
+                        "address": f"127.0.0.1:{25000 + int(name[4:])}",
+                        "http_status": 200,
+                        "request": {
+                            "method": method,
+                            "params": {
+                                "seqno": height,
+                                **(
+                                    {"param": 34}
+                                    if method == "getConfigParam"
+                                    else {"workchain": -1, "shard": "-9223372036854775808"}
+                                ),
+                            },
+                        },
+                        "response_base64": base64.b64encode(
+                            json.dumps(
+                                {
+                                    "ok": True,
+                                    "result": result,
+                                }
+                            ).encode()
+                        ).decode(),
+                    }
+                )
     transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
     manifest = root / "capture-manifest.json"
-    manifest.write_text(json.dumps({
-        "schema": "tos.f01.stage-a-capture.v1",
-        "source": {"config34_raw_rpc_transcript": {
-            "path": str(transcript),
-            "sha256": hashlib.sha256(transcript.read_bytes()).hexdigest(),
-        }},
-        "validators": [{"node_name": name,
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "tos.f01.stage-a-capture.v1",
+                "source": {
+                    "config34_raw_rpc_transcript": {
+                        "path": str(transcript),
+                        "sha256": hashlib.sha256(transcript.read_bytes()).hexdigest(),
+                    }
+                },
+                "validators": [
+                    {
+                        "node_name": name,
                         "rpc_address": f"127.0.0.1:{25000 + int(name[4:])}",
                         "combined_log": {
-            "path": str(log_paths[name]),
-            "sha256": hashlib.sha256(log_paths[name].read_bytes()).hexdigest(),
-        }} for name in nodes],
-        "transitions": [{
-            "height": 2, "before_config34_cell_hash": before_cell.hash.hex(),
-            "after_config34_cell_hash": after_cell.hash.hex(),
-            "observations": observations,
-        }],
-    }))
+                            "path": str(log_paths[name]),
+                            "sha256": hashlib.sha256(log_paths[name].read_bytes()).hexdigest(),
+                        },
+                    }
+                    for name in nodes
+                ],
+                "transitions": [
+                    {
+                        "height": 2,
+                        "before_config34_cell_hash": before_cell.hash.hex(),
+                        "after_config34_cell_hash": after_cell.hash.hex(),
+                        "observations": observations,
+                    }
+                ],
+            }
+        )
+    )
     return manifest, transcript
 
 
@@ -106,10 +143,13 @@ class FinalizedIdTests(unittest.TestCase):
             before = Builder().store_uint(1, 8).end_cell()
             after = Builder().store_uint(2, 8).end_cell()
             manifest, transcript = capture_fixture(root, nodes, paths, before, after)
-            sources = {name: (path, hashlib.sha256(path.read_bytes()).hexdigest())
-                       for name, path in paths.items()}
-            verdict = f01.verify_capture(manifest, nodes, sources, 2,
-                                         before.hash.hex(), after.hash.hex())
+            sources = {
+                name: (path, hashlib.sha256(path.read_bytes()).hexdigest())
+                for name, path in paths.items()
+            }
+            verdict = f01.verify_capture(
+                manifest, nodes, sources, 2, before.hash.hex(), after.hash.hex()
+            )
             self.assertEqual(verdict["raw_header_heights"], [1, 2, 3])
 
             original_rows = [json.loads(line) for line in transcript.read_text().splitlines()]
@@ -117,8 +157,9 @@ class FinalizedIdTests(unittest.TestCase):
             def seal(rows):
                 transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
                 document = json.loads(manifest.read_text())
-                document["source"]["config34_raw_rpc_transcript"]["sha256"] = (
-                    hashlib.sha256(transcript.read_bytes()).hexdigest())
+                document["source"]["config34_raw_rpc_transcript"]["sha256"] = hashlib.sha256(
+                    transcript.read_bytes()
+                ).hexdigest()
                 manifest.write_text(json.dumps(document))
 
             for method, changed, expected_error in (
@@ -127,9 +168,13 @@ class FinalizedIdTests(unittest.TestCase):
                 ("getConfigParam", ("param", 47), "Config34/masterchain"),
             ):
                 rows = json.loads(json.dumps(original_rows))
-                target = next(row for row in rows if row["node_name"] == "node3"
-                              and row["request"]["method"] == method
-                              and row["request"]["params"]["seqno"] == 3)
+                target = next(
+                    row
+                    for row in rows
+                    if row["node_name"] == "node3"
+                    and row["request"]["method"] == method
+                    and row["request"]["params"]["seqno"] == 3
+                )
                 field, value = changed
                 if field == "address":
                     target[field] = value
@@ -137,20 +182,24 @@ class FinalizedIdTests(unittest.TestCase):
                     target["request"]["params"][field] = value
                 seal(rows)
                 with self.assertRaisesRegex(ValueError, expected_error):
-                    f01.verify_capture(manifest, nodes, sources, 2,
-                                       before.hash.hex(), after.hash.hex())
+                    f01.verify_capture(
+                        manifest, nodes, sources, 2, before.hash.hex(), after.hash.hex()
+                    )
 
             rows = json.loads(json.dumps(original_rows))
-            target = next(row for row in rows if row["node_name"] == "node3"
-                          and row["request"]["method"] == "getBlockHeader"
-                          and row["request"]["params"]["seqno"] == 3)
+            target = next(
+                row
+                for row in rows
+                if row["node_name"] == "node3"
+                and row["request"]["method"] == "getBlockHeader"
+                and row["request"]["params"]["seqno"] == 3
+            )
             response = json.loads(base64.b64decode(target["response_base64"]))
             response["result"]["id"]["root_hash"] = base64.b64encode(b"z" * 32).decode()
             target["response_base64"] = base64.b64encode(json.dumps(response).encode()).decode()
             seal(rows)
             with self.assertRaisesRegex(ValueError, "raw header differs"):
-                f01.verify_capture(manifest, nodes, sources, 2,
-                                   before.hash.hex(), after.hash.hex())
+                f01.verify_capture(manifest, nodes, sources, 2, before.hash.hex(), after.hash.hex())
 
     def test_full_ids_agree_across_transition_and_lag_catches_up(self):
         report = f01.evaluate(fixture(), 2, BEFORE, AFTER)
@@ -171,18 +220,27 @@ class FinalizedIdTests(unittest.TestCase):
             f01.evaluate(nodes, 2, BEFORE, AFTER)
         nodes = fixture()
         for index in range(3):
-            nodes[f"node{index}"].append({
-                "height": 4,
-                "id": (-1, "8000000000000000", 4, f"{4:064x}", f"{14:064x}"),
-                "at": f"2026-09-25 10:00:04.{index + 1:09d}", "line": 4,
-            })
+            nodes[f"node{index}"].append(
+                {
+                    "height": 4,
+                    "id": (-1, "8000000000000000", 4, f"{4:064x}", f"{14:064x}"),
+                    "at": f"2026-09-25 10:00:04.{index + 1:09d}",
+                    "line": 4,
+                }
+            )
         with self.assertRaisesRegex(ValueError, "never caught up"):
             f01.evaluate(nodes, 2, BEFORE, AFTER)
 
     def test_extractor_requires_raw_full_id_and_timestamp(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "node.log"
-            path.write_text("[2026-09-25 10:00:01.000000001] BlockFinalizedInMasterchain {block=(-1,8000000000000000,2):" + "a" * 64 + ":" + "b" * 64 + "}\n")
+            path.write_text(
+                "[2026-09-25 10:00:01.000000001] BlockFinalizedInMasterchain {block=(-1,8000000000000000,2):"
+                + "a" * 64
+                + ":"
+                + "b" * 64
+                + "}\n"
+            )
             events, digest = f01.extract(path)
             self.assertEqual(events[0]["id"], (-1, "8000000000000000", 2, "a" * 64, "b" * 64))
             self.assertEqual(len(digest), 64)
@@ -237,13 +295,15 @@ class FinalizedIdTests(unittest.TestCase):
             original = root / "node1.log"
 
             def write_log(path, node_index):
-                path.write_text("".join(
-                    f"[2026-09-25 10:00:{height:02d}.{node_index:09d}] "
-                    "BlockFinalizedInMasterchain "
-                    f"{{block=(-1,8000000000000000,{height}):"
-                    f"{height:064x}:{height + 10:064x}}}\n"
-                    for height in (1, 2, 3)
-                ))
+                path.write_text(
+                    "".join(
+                        f"[2026-09-25 10:00:{height:02d}.{node_index:09d}] "
+                        "BlockFinalizedInMasterchain "
+                        f"{{block=(-1,8000000000000000,{height}):"
+                        f"{height:064x}:{height + 10:064x}}}\n"
+                        for height in (1, 2, 3)
+                    )
+                )
 
             write_log(original, 1)
             distinct = [original]
@@ -252,21 +312,33 @@ class FinalizedIdTests(unittest.TestCase):
                 write_log(path, index)
                 distinct.append(path)
             output = root / "report.json"
-            native_nodes = {f"node{index}": f01.extract(path)[0]
-                            for index, path in enumerate(distinct, 1)}
+            native_nodes = {
+                f"node{index}": f01.extract(path)[0] for index, path in enumerate(distinct, 1)
+            }
             before = Builder().store_uint(1, 8).end_cell()
             after = Builder().store_uint(2, 8).end_cell()
             manifest, _ = capture_fixture(
-                root, native_nodes,
+                root,
+                native_nodes,
                 {name: path for name, path in zip(native_nodes, distinct)},
-                before, after,
+                before,
+                after,
             )
 
             def run(paths):
-                argv = ["f01_finalized_ids.py", "--transition-height", "2",
-                        "--before-set", before.hash.hex(), "--after-set", after.hash.hex(),
-                        "--capture-manifest", str(manifest),
-                        "--out", str(output)]
+                argv = [
+                    "f01_finalized_ids.py",
+                    "--transition-height",
+                    "2",
+                    "--before-set",
+                    before.hash.hex(),
+                    "--after-set",
+                    after.hash.hex(),
+                    "--capture-manifest",
+                    str(manifest),
+                    "--out",
+                    str(output),
+                ]
                 for index, path in enumerate(paths, 1):
                     argv += ["--node-log", f"node{index}={path}"]
                 with patch.object(sys, "argv", argv):

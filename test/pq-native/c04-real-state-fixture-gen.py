@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Offline C04 PQ genesis fixture with the public test keys from Fixture."""
+
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/tostester/src"))
@@ -39,7 +40,10 @@ def main() -> None:
             key_path = scratch / f"validator-{i}.seed"
             proc = subprocess.run(
                 [str(install.pq_consensus_key_exe), "import", str(key_path)],
-                input=seed.hex() + "\n", text=True, capture_output=True, check=True,
+                input=seed.hex() + "\n",
+                text=True,
+                capture_output=True,
+                check=True,
             )
             key_id = re.search(r"^key_id\s+([0-9a-f]{64})$", proc.stdout, re.MULTILINE)
             public = re.search(r"^public\s+([0-9a-f]{2624})$", proc.stdout, re.MULTILINE)
@@ -52,27 +56,32 @@ def main() -> None:
                 adnl_id=hashlib.sha256(f"pq-finality-adnl-{i}".encode()).digest(),
             )
             descriptors.append(descriptor)
-            public_rows.append({
-                "index": i,
-                "validator_id": descriptor.validator_id.hex(),
-                "key_id": descriptor.key_id.hex(),
-                "public_key_sha256": digest(descriptor.public_key),
-                "adnl_id": descriptor.adnl_id.hex(),
-                "genesis_weight": 17,
-            })
+            public_rows.append(
+                {
+                    "index": i,
+                    "validator_id": descriptor.validator_id.hex(),
+                    "key_id": descriptor.key_id.hex(),
+                    "public_key_sha256": digest(descriptor.public_key),
+                    "adnl_id": descriptor.adnl_id.hex(),
+                    "genesis_weight": 17,
+                }
+            )
     state_dir = out / "state"
     state_dir.mkdir(exist_ok=True)
     zero = create_zerostate(
-        install, state_dir,
+        install,
+        state_dir,
         NetworkConfig(global_id=-239, shard_validators=4),
-        [], descriptors,
+        [],
+        descriptors,
     )
     # The generated wallet key is unrelated to this public proof fixture.
     (state_dir / "main-wallet.pk").unlink(missing_ok=True)
     boc = zero.masterchain.file.read_bytes()
     metadata = {
-        "source_commit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True,
-                                        capture_output=True, check=True).stdout.strip(),
+        "source_commit": subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
+        ).stdout.strip(),
         "global_id": -239,
         "masterchain_boc_sha256": digest(boc),
         "masterchain_boc_bytes": len(boc),
@@ -81,7 +90,12 @@ def main() -> None:
         "signers": public_rows,
     }
     (out / "fixture.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    print("C04_REAL_GENESIS_OK root=" + metadata["root_hash"] + " boc_sha256=" + metadata["masterchain_boc_sha256"])
+    print(
+        "C04_REAL_GENESIS_OK root="
+        + metadata["root_hash"]
+        + " boc_sha256="
+        + metadata["masterchain_boc_sha256"]
+    )
 
 
 if __name__ == "__main__":

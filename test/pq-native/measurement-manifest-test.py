@@ -376,7 +376,9 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
         encoding="utf-8",
     )
 
-    def expect_gap_refusal(registry: dict[str, object], expected: str, *, release: bool, label: str) -> None:
+    def expect_gap_refusal(
+        registry: dict[str, object], expected: str, *, release: bool, label: str
+    ) -> None:
         variant = Path(raw).parent / f"gap-variant-{Path(raw).name}.json"
         variant.write_text(json.dumps(registry), encoding="utf-8")
         try:
@@ -387,6 +389,7 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
                 fail(f"{label} reported the wrong refusal: {exc}")
         finally:
             variant.unlink(missing_ok=True)
+
     try:
         # This branch has a live correctness question.  Check it before every
         # other release precondition so neither a missing N5 artifact nor a dirty

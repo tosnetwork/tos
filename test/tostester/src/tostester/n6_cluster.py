@@ -410,9 +410,7 @@ def lite_admission_drop_warnings(log_paths: dict[str, Path]) -> dict[str, int]:
     marker = LITE_ADMISSION_DROP_MARKER.encode()
     for name, path in log_paths.items():
         try:
-            with os.fdopen(
-                os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC), "rb"
-            ) as log:
+            with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC), "rb") as log:
                 before = os.fstat(log.fileno())
                 named_before = os.lstat(path)
                 if (
@@ -713,7 +711,8 @@ def _observation_intervals(observed: list[ObservedBlock]) -> list[dict[str, Any]
 
 
 def _require_structured_finalization(
-    observed: list[ObservedBlock], consensus_by_height: dict[int, dict[str, Any]],
+    observed: list[ObservedBlock],
+    consensus_by_height: dict[int, dict[str, Any]],
 ) -> None:
     missing = sorted({item.height for item in observed} - set(consensus_by_height))
     if missing:
@@ -815,7 +814,8 @@ def _sustained_timing_split(
             "slowest_node_exposure_lag_ms": lag_ms,
             "block_accepted_to_node_exposure_ms": accepted_to_exposure,
             "exposure_before_block_accepted_trace_nodes": sorted(
-                name for name, delta in accepted_to_exposure.items()
+                name
+                for name, delta in accepted_to_exposure.items()
                 if delta is not None and delta < 0
             ),
             "missing_block_accepted_nodes": sorted(
@@ -877,9 +877,8 @@ def _sustained_timing_split(
         "node_exposure_is_upper_bound_when_height_jumps": True,
         "block_accepted_to_node_exposure_is_signed_diagnostic": True,
         "block_accepted_trace_is_visibility_prerequisite": False,
-        "block_accepted_exposure_diagnostic_complete": wall_clocks_comparable and all(
-            not item["missing_block_accepted_nodes"] for item in per_height.values()
-        ),
+        "block_accepted_exposure_diagnostic_complete": wall_clocks_comparable
+        and all(not item["missing_block_accepted_nodes"] for item in per_height.values()),
         "query_events": query_events,
         "common_height_barriers": common_height_barriers,
         "per_height": per_height,

@@ -31,12 +31,16 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from e03_http_trace import record as record_e03_http
 from e03_config34_identity import (
     decode as decode_e03_config34,
+)
+from e03_config34_identity import (
     verify as verify_e03_config34,
+)
+from e03_config34_identity import (
     verify_genesis_member as verify_e03_genesis_member,
 )
+from e03_http_trace import record as record_e03_http
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_WORKDIR = REPO / "test/integration/.toscan-explorer-e2e"
@@ -93,8 +97,7 @@ def wait_until(label: str, predicate, timeout=180):
             last_error = error
         time.sleep(1)
     raise TimeoutError(
-        f"{label} timed out after {budget:.0f}s "
-        f"(scale {TIMEOUT_SCALE:g}): {last_error}"
+        f"{label} timed out after {budget:.0f}s (scale {TIMEOUT_SCALE:g}): {last_error}"
     )
 
 
@@ -151,15 +154,9 @@ def generate_explorer_config(tosctl: Path, path: Path, rpc_origin: str, http_bin
 # caller rather than a version mismatch, and a gate that silently stops covering
 # something is worse than one that was never written.
 CAPABILITIES = {
-    "browser-command": (
-        "--browser-command runs an external release gate against the live chain"
-    ),
-    "staking-projection": (
-        "/explorer/staking is asserted against Elector election history"
-    ),
-    "effective-stake-cap": (
-        "/explorer/staking reports the stake factor and the cap it implies"
-    ),
+    "browser-command": ("--browser-command runs an external release gate against the live chain"),
+    "staking-projection": ("/explorer/staking is asserted against Elector election history"),
+    "effective-stake-cap": ("/explorer/staking reports the stake factor and the cap it implies"),
     "validator-set-decoding": (
         "getConfigParam returns decoded validator sets alongside the raw cell"
     ),
@@ -310,9 +307,7 @@ def main():
             pool_status, pool_body = request_json(
                 f"{explorer_origin}/explorer/contracts/{NOMINATOR_POOL_KIND}/{encoded}"
             )
-            staking_status, staking_body = request_json(
-                f"{explorer_origin}/explorer/staking"
-            )
+            staking_status, staking_body = request_json(f"{explorer_origin}/explorer/staking")
             if pool_status != 200 or staking_status != 200:
                 observed = {"pool_status": pool_status, "staking_status": staking_status}
                 if observed != staking_observation:
@@ -390,7 +385,9 @@ def main():
             )
             return rich
 
-        wait_until("indexed transaction carries fee and inbound-message hash", rich_transaction_visible)
+        wait_until(
+            "indexed transaction carries fee and inbound-message hash", rich_transaction_visible
+        )
         assert rich is not None
         status, raw = request_json(
             f"{rpc_origin}/jsonRPC",
@@ -412,8 +409,14 @@ def main():
         assert isinstance(transaction.get("in_msg"), dict)
         assert isinstance(transaction.get("out_msgs"), list)
         assert transaction.get("transaction_type") in {
-            "ordinary", "storage", "tick", "tock", "split_prepare",
-            "split_install", "merge_prepare", "merge_install",
+            "ordinary",
+            "storage",
+            "tick",
+            "tock",
+            "split_prepare",
+            "split_install",
+            "merge_prepare",
+            "merge_install",
         }
         if transaction.get("transaction_type") in {"ordinary", "tick", "tock"}:
             assert isinstance(transaction.get("aborted"), bool)
@@ -450,11 +453,13 @@ def main():
 
         if args.browser_command:
             browser_env = dict(os.environ)
-            browser_env.update({
-                "TOSCAN_REAL_RPC_ORIGIN": rpc_origin,
-                "TOSCAN_REAL_SOURCE_ORIGIN": explorer_origin,
-                "TOSCAN_REAL_SEED_MANIFEST": str(manifest),
-            })
+            browser_env.update(
+                {
+                    "TOSCAN_REAL_RPC_ORIGIN": rpc_origin,
+                    "TOSCAN_REAL_SOURCE_ORIGIN": explorer_origin,
+                    "TOSCAN_REAL_SEED_MANIFEST": str(manifest),
+                }
+            )
             subprocess.run(
                 args.browser_command,
                 cwd=REPO,
@@ -487,7 +492,10 @@ def main():
             path = workdir / name
             if path.exists():
                 print(f"\n--- {name} (tail) ---", file=sys.stderr)
-                print("".join(path.read_text(errors="replace").splitlines(True)[-80:]), file=sys.stderr)
+                print(
+                    "".join(path.read_text(errors="replace").splitlines(True)[-80:]),
+                    file=sys.stderr,
+                )
         raise
     finally:
         stop(explorer)

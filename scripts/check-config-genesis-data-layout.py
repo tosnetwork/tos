@@ -7,13 +7,10 @@ import re
 import sys
 from pathlib import Path
 
-
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1])
 EXPECTED_DATA = "<bconfigdictref,dictnewdict,b>"
 EXPECTED_LOADER = (
-    "varcs=get_data().begin_parse();"
-    "varres=(cs~load_ref(),cs~load_dict());"
-    "cs.end_parse();returnres;"
+    "varcs=get_data().begin_parse();varres=(cs~load_ref(),cs~load_dict());cs.end_parse();returnres;"
 )
 
 
@@ -41,7 +38,9 @@ harness = ROOT / "test/tostester/src/tostester/zerostate.py"
 for path in (production, harness):
     actual = genesis_data(path)
     if actual != EXPECTED_DATA:
-        fail(f"{path.relative_to(ROOT)} config data differs: expected={EXPECTED_DATA} actual={actual}")
+        fail(
+            f"{path.relative_to(ROOT)} config data differs: expected={EXPECTED_DATA} actual={actual}"
+        )
 
 contract = ROOT / "crypto/smartcont/config-code.fc"
 source = contract.read_text(encoding="utf-8")

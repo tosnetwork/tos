@@ -193,9 +193,7 @@ impl TvmStackParser {
                         // The same node renders a proper nonempty cons chain
                         // with an explicit empty tvm.stackEntryList terminator.
                         // Only an empty list may terminate the chain.
-                        StackEntry::Tvm_StackEntryList(list)
-                            if list.list.elements().is_empty() =>
-                        {
+                        StackEntry::Tvm_StackEntryList(list) if list.list.elements().is_empty() => {
                             return Ok(Self::new(elements));
                         }
                         _ => anyhow::bail!(
@@ -587,11 +585,13 @@ mod tests {
 
     #[test]
     fn list_or_empty_accepts_only_numeric_nil() {
-        assert!(TvmStackParser::new(vec![create_number_entry("0")])
-            .list_or_empty(0)
-            .unwrap()
-            .stack
-            .is_empty());
+        assert!(
+            TvmStackParser::new(vec![create_number_entry("0")])
+                .list_or_empty(0)
+                .unwrap()
+                .stack
+                .is_empty()
+        );
         let error = TvmStackParser::new(vec![create_number_entry("1")])
             .list_or_empty(0)
             .unwrap_err()
@@ -636,10 +636,7 @@ mod tests {
             create_number_entry("11"),
             create_list_entry(vec![create_number_entry("22")]),
         ]);
-        let error = TvmStackParser::new(vec![wrong_tail])
-            .list_or_empty(0)
-            .unwrap_err()
-            .to_string();
+        let error = TvmStackParser::new(vec![wrong_tail]).list_or_empty(0).unwrap_err().to_string();
         assert!(error.contains("non-null tail"), "wrong refusal: {error}");
         assert!(error.contains("Tvm_StackEntryList"), "tail type was lost: {error}");
     }

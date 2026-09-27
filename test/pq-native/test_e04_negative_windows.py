@@ -3,12 +3,11 @@
 import base64
 import importlib.util
 import json
-from pathlib import Path
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from pytosiq_core import Cell
-
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/agent-wallet-account-e2e.py"
 SPEC = importlib.util.spec_from_file_location("e04_agent_wallet_account", SCRIPT)
@@ -27,11 +26,11 @@ class NegativeWindowTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("observer read failed")
             return True
 
-        heads = iter(({"node": {"seqno": 1}},
-                      *({"node": {"seqno": 2}} for _ in range(100))))
+        heads = iter(({"node": {"seqno": 1}}, *({"node": {"seqno": 2}} for _ in range(100))))
         with patch.object(e04, "finalized_views", side_effect=lambda: next(heads)):
-            self.assertFalse(await e04.predicate_stays_true(
-                predicate, duration=0.05, poll_interval=0.001))
+            self.assertFalse(
+                await e04.predicate_stays_true(predicate, duration=0.05, poll_interval=0.001)
+            )
         self.assertEqual(calls, 2)
 
     async def test_async_later_rpc_error_does_not_certify_absence(self):
@@ -44,46 +43,62 @@ class NegativeWindowTests(unittest.IsolatedAsyncioTestCase):
                 raise RuntimeError("account read failed")
             return True
 
-        heads = iter(({"node": {"seqno": 1}},
-                      *({"node": {"seqno": 2}} for _ in range(100))))
+        heads = iter(({"node": {"seqno": 1}}, *({"node": {"seqno": 2}} for _ in range(100))))
         with patch.object(e04, "finalized_views", side_effect=lambda: next(heads)):
-            self.assertFalse(await e04.async_predicate_stays_true(
-                predicate, duration=0.05, poll_interval=0.001))
+            self.assertFalse(
+                await e04.async_predicate_stays_true(predicate, duration=0.05, poll_interval=0.001)
+            )
         self.assertEqual(calls, 2)
 
     async def test_success_requires_repeated_samples_and_finalized_progress(self):
-        views = iter(({"node": {"seqno": 1}},
-                      *({"node": {"seqno": 1}} for _ in range(100)),
-                      {"node": {"seqno": 2}}))
+        views = iter(
+            (
+                {"node": {"seqno": 1}},
+                *({"node": {"seqno": 1}} for _ in range(100)),
+                {"node": {"seqno": 2}},
+            )
+        )
         with patch.object(e04, "finalized_views", side_effect=lambda: next(views)):
-            self.assertFalse(await e04.predicate_stays_true(
-                lambda: True, duration=0.004, poll_interval=0.001))
+            self.assertFalse(
+                await e04.predicate_stays_true(lambda: True, duration=0.004, poll_interval=0.001)
+            )
 
 
 class ExactCancellationTests(unittest.TestCase):
     def test_only_precise_bad_seqno_submission_error_is_accepted(self):
-        body = {"code": -32603, "error":
-                "sendBoc failed: cannot apply external message to current state\nexitcode=1705, steps=124"}
-        self.assertTrue(e04.explicit_contract_refusal(
-            {"http_status": 500, "body": json.dumps(body)}, 1705))
+        body = {
+            "code": -32603,
+            "error": "sendBoc failed: cannot apply external message to current state\nexitcode=1705, steps=124",
+        }
+        self.assertTrue(
+            e04.explicit_contract_refusal({"http_status": 500, "body": json.dumps(body)}, 1705)
+        )
         body["error"] = body["error"].replace("1705", "17050")
-        self.assertFalse(e04.explicit_contract_refusal(
-            {"http_status": 500, "body": json.dumps(body)}, 1705))
+        self.assertFalse(
+            e04.explicit_contract_refusal({"http_status": 500, "body": json.dumps(body)}, 1705)
+        )
         body["error"] = body["error"].replace("17050", "1706")
-        self.assertFalse(e04.explicit_contract_refusal(
-            {"http_status": 500, "body": json.dumps(body)}, 1705))
-        self.assertTrue(e04.explicit_contract_refusal(
-            {"http_status": 500, "body": json.dumps(body)}, 1706))
-        self.assertFalse(e04.explicit_contract_refusal(
-            {"http_status": 500, "body": "not JSON"}, 1705))
+        self.assertFalse(
+            e04.explicit_contract_refusal({"http_status": 500, "body": json.dumps(body)}, 1705)
+        )
+        self.assertTrue(
+            e04.explicit_contract_refusal({"http_status": 500, "body": json.dumps(body)}, 1706)
+        )
+        self.assertFalse(
+            e04.explicit_contract_refusal({"http_status": 500, "body": "not JSON"}, 1705)
+        )
 
     def test_winner_is_bound_to_exact_boc_and_baseline(self):
         boc = base64.b64encode(Cell.empty().to_boc()).decode()
         inbound_hash = base64.b64encode(Cell.empty().hash).decode()
         self.assertEqual(e04.exact_boc_hash(boc), "sha256:" + Cell.empty().hash.hex())
-        winner = {"transaction_id": {"lt": "2"},
-                  "in_msg": {"hash": inbound_hash}, "aborted": False,
-                  "compute": {"success": True}, "action": {"success": True}}
+        winner = {
+            "transaction_id": {"lt": "2"},
+            "in_msg": {"hash": inbound_hash},
+            "aborted": False,
+            "compute": {"success": True},
+            "action": {"success": True},
+        }
         baseline = {"transaction_id": {"lt": "1"}}
 
         def rpc(_method, **_params):
@@ -101,11 +116,18 @@ class ExactCancellationTests(unittest.TestCase):
                 e04.exact_account_winner("account", boc, 1)
 
     def test_expiry_uses_header_for_the_exact_finalized_block(self):
-        block = {"workchain": -1, "shard": "-9223372036854775808",
-                 "seqno": 7, "root_hash": "root", "file_hash": "file"}
+        block = {
+            "workchain": -1,
+            "shard": "-9223372036854775808",
+            "seqno": 7,
+            "root_hash": "root",
+            "file_hash": "file",
+        }
         header = {"id": dict(block), "gen_utime": 123}
-        with patch.object(e04, "finalized_views", return_value={e04.RPC: block}), \
-             patch.object(e04, "rpc_call", return_value={"result": header}):
+        with (
+            patch.object(e04, "finalized_views", return_value={e04.RPC: block}),
+            patch.object(e04, "rpc_call", return_value={"result": header}),
+        ):
             self.assertEqual(e04.finalized_mc_header()["gen_utime"], 123)
             header["id"]["root_hash"] = "other"
             with self.assertRaisesRegex(RuntimeError, "did not bind"):
