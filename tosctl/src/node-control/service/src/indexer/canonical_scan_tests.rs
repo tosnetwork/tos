@@ -73,6 +73,10 @@ pub(super) struct ChainState {
     /// Fail the n-th (1-based) masterchain identity lookup.
     pub(super) fail_lookup_number: Option<usize>,
     pub(super) lookups: usize,
+    /// Runs on every masterchain identity lookup, after counting it: lets a
+    /// test reorganize the chain at an exact point inside one tick.
+    #[allow(clippy::type_complexity)]
+    pub(super) on_lookup: Option<Box<dyn FnMut(&mut ChainState, usize) + Send>>,
     pub(super) parent_calls: HashMap<Key, usize>,
     pub(super) scans: HashMap<Key, usize>,
     pub(super) scan_order: Vec<Key>,
@@ -361,6 +365,11 @@ impl ChainProvider for FakeChain {
             s.lookups += 1;
             if s.fail_lookup_number == Some(s.lookups) {
                 anyhow::bail!("simulated masterchain lookup outage");
+            }
+            if let Some(mut hook) = s.on_lookup.take() {
+                let lookups = s.lookups;
+                hook(&mut s, lookups);
+                s.on_lookup = Some(hook);
             }
         } else {
             *s.scans.entry(k).or_insert(0) += 1;
@@ -822,6 +831,58 @@ async fn a_pending_anchor_that_switches_fork_leaks_no_hidden_rows() {
     let (blocks, txs) = store.raw_explorer_row_counts().unwrap();
     let stats = store.explorer_stats().unwrap();
     assert_eq!((blocks, txs), (stats.blocks as i64, stats.transactions as i64));
+}
+
+/// The masterchain block of the pending height is reorganized after its
+/// batch was fully assembled but before it is published, inside one tick.
+#[tokio::test]
+async fn an_anchor_that_changes_just_before_publish_is_discarded_not_published() {
+    let chain = FakeChain::new();
+    let base = chain.shard_chain(ROOT, 1, 1, 0);
+    chain.add_master(1, 0, &[&base[0]]);
+    let a2 = chain.add_block(0, ROOT, 2, 0xA);
+    chain.set_parents(&a2, &[&base[0]]);
+    chain.add_tx(&a2, &"aa".repeat(32), "tx-pre-a");
+    chain.add_master(2, 0xA, &[&a2]);
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(1, 100), 1, 2).await;
+    let b2 = block_id(0, ROOT, 2, 0xB);
+    let base_id = base[0].clone();
+    // Lookups of the next tick: published recheck, open height 2, then the
+    // pre-publish recheck -- where fork B replaces fork A.
+    let switch_at = chain.with(|s| s.lookups) + 3;
+    chain.with(|s| {
+        s.on_lookup = Some(Box::new(move |state: &mut ChainState, lookups: usize| {
+            if lookups != switch_at {
+                return;
+            }
+            let master = block_id(-1, MC, 2, 0xB);
+            state.blocks.insert((-1, MC, 2), (master, Vec::new()));
+            state.shards.insert(2, vec![b2.clone()]);
+            state.blocks.insert(
+                (0, ROOT, 2),
+                (
+                    b2.clone(),
+                    vec![ShortTxId {
+                        r#type: None,
+                        account: "bb".repeat(32),
+                        lt: 1_000,
+                        hash: "tx-pre-b".to_owned(),
+                    }],
+                ),
+            );
+            state.parents.insert((0, ROOT, 2), vec![base_id.clone()]);
+        }))
+    });
+    let outcome = run_tick(&chain, &store, &limits(10, 100)).await.unwrap();
+    assert_eq!(outcome.published_mc_seqno, 2);
+    assert_eq!(
+        store.canonical_state().unwrap().unwrap().root_hash,
+        hex_of(&block_id(-1, MC, 2, 0xB))
+    );
+    assert!(store.explorer_transaction("tx-pre-b").unwrap().is_some());
+    assert!(!store.raw_transaction_exists("tx-pre-a").unwrap(), "fork A was published or leaked");
+    assert_eq!(chain.scans_of(&block_id(-1, MC, 2, 0)), 2, "height 2 was assembled twice");
 }
 
 #[tokio::test]
