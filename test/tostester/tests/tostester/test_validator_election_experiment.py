@@ -2,6 +2,8 @@
 
 import asyncio
 import importlib.util
+import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -195,9 +197,13 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
             seen["request"] = request
             return authorization.to_dict()
 
+    # A real live process stands in for the validator: an accepted authorization is
+    # retained with the PID and start ticks that answered it (X02 binds the PID to it).
     rehearsal.nodes = [SimpleNamespace(
-        validator_key=SimpleNamespace(id=adnl_id), engine_console=FakeConsole()
+        validator_key=SimpleNamespace(id=adnl_id), engine_console=FakeConsole(),
+        process_id=os.getpid(), transport_ports=(26_002, 26_003, 26_004),
     )]
+    rehearsal.artifacts_dir.mkdir(parents=True)
     rehearsal.pools = [SimpleNamespace(address=stage_a.Address((-1, pool_id)))]
     rehearsal.controllers = [SimpleNamespace(
         address=stage_a.Address((-1, controller_id)),
@@ -223,12 +229,21 @@ def test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool(
         "adnl_addr": adnl_id, "algorithm_id": 1,
         "public_key": public_key, "signature": signature, "witness": witness,
     }
+    record_path = rehearsal.artifacts_dir / "pq-authorization-1700000000-validator-1-query-19.json"
+    record = json.loads(record_path.read_text())
+    assert record["validator_id_hex"] == controller_id.hex() and record["key_id_hex"] == key_id.hex()
+    assert record["public_key_hex"] == public_key.hex() and record["control_port"] == 26_004
+    assert record["node_pid"] == os.getpid() and record["node_start_ticks"] > 0
+    assert [item["path"] for item in rehearsal.pq_authorization_records[1_700_000_000]["1"]] == [
+        str(record_path)]
 
     authorization.key_id = bytes(32)
     seen.pop("fields")
     with pytest.raises(AssertionError, match="wrong consensus key"):
         asyncio.run(rehearsal.authorized_pq_pool_order(0, 1_700_000_000, 20))
     assert "fields" not in seen, "a mismatched authorization reached the pool builder"
+    assert not (rehearsal.artifacts_dir / "pq-authorization-1700000000-validator-1-query-20.json").exists(), \
+        "a mismatched authorization was retained as the node's answer"
 
     authorization.key_id = key_id
     asyncio.run(rehearsal.authorized_pq_pool_order(
@@ -698,13 +713,26 @@ def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
     monkeypatch.setattr(rehearsal, "rpc_config34_consensus", rpc_consensus)
     monkeypatch.setattr(rehearsal, "capture_elector_snapshot", snapshot)
     monkeypatch.setattr(rehearsal, "publish_allocation_evidence", lambda status: None)
+    # The same-block proof reads four live RPC endpoints; its own behaviour is covered by
+    # test/pq-native/test_x02_stage_a_capture.py. Here: activation retains its result.
+    proofs = []
+
+    async def capture_proof(election_id):
+        proofs.append(election_id)
+        return {"stage_a_verdict": "X02_CONFIG34_SAME_BLOCK_PROOF_OK", "election_id": election_id}
+
+    monkeypatch.setattr(rehearsal, "capture_config34_same_block_proof", capture_proof)
     if swap_controller_adnl:
         with pytest.raises(AssertionError, match="controller.*ADNL|association"):
             asyncio.run(rehearsal.observe_experiment_activation())
+        assert proofs == [], "a set with a swapped controller/ADNL association reached the proof"
     else:
         assert asyncio.run(rehearsal.observe_experiment_activation()) is True
         allocation = rehearsal.election_allocations[100]
         assert allocation["selection_status"] == "selected"
+        assert proofs == [100]
+        assert allocation["config34_proof"] == {
+            "stage_a_verdict": "X02_CONFIG34_SAME_BLOCK_PROOF_OK", "election_id": 100}
         assert [allocation["validators"][str(index + 1)]["individual_weight"]
                 for index in range(4)] == [str(index + 1) for index in range(4)]
 
