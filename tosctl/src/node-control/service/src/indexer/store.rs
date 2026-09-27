@@ -28,6 +28,13 @@ use std::sync::Mutex;
 use contracts::MasterchainCheckpoint;
 use rusqlite::{Connection, OptionalExtension, params};
 
+#[path = "store_canonical.rs"]
+mod canonical;
+pub use canonical::{
+    AddressRefresh, AddressTouch, BatchPhase, PendingBatch, ScannedTarget, ShardStep,
+    shards_intersect,
+};
+
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
@@ -136,9 +143,12 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
 /// the explorer history is replayed from genesis under the new watermark.
 fn migrate_to_canonical_publication(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
+    conn.execute_batch(TRAVERSAL_SCHEMA)?;
+    for table in CANONICAL_PROGRESS_TABLES {
+        conn.execute(&format!("DELETE FROM {table}"), [])?;
+    }
     conn.execute_batch(
-        "DELETE FROM indexer_canonical_state;
-         DELETE FROM explorer_transactions;
+        "DELETE FROM explorer_transactions;
          DELETE FROM explorer_blocks;
          DELETE FROM dns_domain_history;
          DELETE FROM indexer_meta
@@ -275,6 +285,95 @@ const CANONICAL_PUBLICATION_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS indexer_c
         SELECT t.*, b.gen_utime AS block_gen_utime FROM explorer_transactions t
         JOIN published_explorer_blocks b
           ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno;";
+
+/// v11: durable traversal progress, decoupled from retained history.
+///
+/// `canonical_shard_frontier` holds the exact shard heads referenced by the
+/// last published masterchain block; ancestry traversal stops only on an
+/// exact match. It is progress metadata, so retention never touches it. The
+/// batch tables persist one masterchain height's ancestry DAG (work items and
+/// full-identity parent edges) and the per-address touch counts, so a crash
+/// or a bounded tick resumes the same height. `indexer_address_refresh` hands
+/// published touches to the contract refresher, bound to the exact published
+/// masterchain block.
+const TRAVERSAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS canonical_shard_frontier (
+        workchain INTEGER NOT NULL,
+        shard INTEGER NOT NULL,
+        seqno INTEGER NOT NULL,
+        root_hash TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        published_mc_seqno INTEGER NOT NULL,
+        PRIMARY KEY(workchain, shard)
+    );
+    CREATE TABLE IF NOT EXISTS indexer_master_batch (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        mc_seqno INTEGER NOT NULL,
+        mc_root_hash TEXT NOT NULL,
+        mc_file_hash TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK(phase IN ('scan_master', 'seed_shards', 'traverse'))
+    );
+    CREATE TABLE IF NOT EXISTS indexer_shard_work (
+        batch_mc_seqno INTEGER NOT NULL,
+        workchain INTEGER NOT NULL,
+        shard INTEGER NOT NULL,
+        seqno INTEGER NOT NULL,
+        root_hash TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        state TEXT NOT NULL
+            CHECK(state IN ('discovered', 'parents_expanded', 'indexed', 'frontier')),
+        is_head INTEGER NOT NULL DEFAULT 0,
+        pending_parents INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(batch_mc_seqno, workchain, shard, seqno)
+    );
+    CREATE INDEX IF NOT EXISTS idx_indexer_shard_work_state
+        ON indexer_shard_work(batch_mc_seqno, state, pending_parents, seqno);
+    CREATE TABLE IF NOT EXISTS indexer_shard_edge (
+        batch_mc_seqno INTEGER NOT NULL,
+        child_workchain INTEGER NOT NULL,
+        child_shard INTEGER NOT NULL,
+        child_seqno INTEGER NOT NULL,
+        child_root_hash TEXT NOT NULL,
+        child_file_hash TEXT NOT NULL,
+        parent_workchain INTEGER NOT NULL,
+        parent_shard INTEGER NOT NULL,
+        parent_seqno INTEGER NOT NULL,
+        parent_root_hash TEXT NOT NULL,
+        parent_file_hash TEXT NOT NULL,
+        PRIMARY KEY(batch_mc_seqno, child_workchain, child_shard, child_seqno,
+                    parent_workchain, parent_shard, parent_seqno)
+    );
+    CREATE INDEX IF NOT EXISTS idx_indexer_shard_edge_parent
+        ON indexer_shard_edge(batch_mc_seqno, parent_workchain, parent_shard, parent_seqno);
+    CREATE TABLE IF NOT EXISTS indexer_touched_address (
+        batch_mc_seqno INTEGER NOT NULL,
+        address TEXT NOT NULL,
+        touch_count INTEGER NOT NULL,
+        last_block_seqno INTEGER NOT NULL,
+        last_gen_utime INTEGER NOT NULL,
+        PRIMARY KEY(batch_mc_seqno, address)
+    );
+    CREATE TABLE IF NOT EXISTS indexer_address_refresh (
+        address TEXT PRIMARY KEY,
+        touch_count INTEGER NOT NULL,
+        last_block_seqno INTEGER NOT NULL,
+        last_gen_utime INTEGER NOT NULL,
+        mc_seqno INTEGER NOT NULL,
+        mc_root_hash TEXT NOT NULL,
+        mc_file_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0
+    );";
+
+/// Tables holding canonical progress; emptied together whenever the index
+/// is replayed from genesis.
+const CANONICAL_PROGRESS_TABLES: &[&str] = &[
+    "indexer_canonical_state",
+    "canonical_shard_frontier",
+    "indexer_master_batch",
+    "indexer_shard_work",
+    "indexer_shard_edge",
+    "indexer_touched_address",
+    "indexer_address_refresh",
+];
 
 /// One indexed account: either a recognized contract (`kind` is one of the
 /// public explorer contract kinds, including Agent Account) or
@@ -491,6 +590,7 @@ impl IndexerStore {
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
         conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
+        conn.execute_batch(TRAVERSAL_SCHEMA)?;
         Ok(())
     }
 
@@ -679,29 +779,6 @@ impl IndexerStore {
         Ok(rows)
     }
 
-    /// Makes one completely assembled masterchain height public, in a single
-    /// transaction: the published watermark and the legacy per-shard
-    /// checkpoints (now carrying both hashes) move together, so no reader
-    /// can observe one without the other.
-    pub fn publish_masterchain_height(
-        &self,
-        master_shard: i64,
-        anchor: &MasterchainCheckpoint,
-        shard_heads: &[BlockFullId],
-    ) -> anyhow::Result<()> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        let previous = read_canonical_state(&tx)?.map_or(0, |state| state.seqno);
-        anyhow::ensure!(
-            anchor.seqno == previous.saturating_add(1),
-            "masterchain height {} cannot be published after {previous}",
-            anchor.seqno
-        );
-        write_publication(&tx, master_shard, anchor, shard_heads)?;
-        tx.commit()?;
-        Ok(())
-    }
-
     /// Atomically records a block identity and every transaction short-ID
     /// returned for it. Replaying the same block is idempotent.
     pub fn index_explorer_block(
@@ -864,7 +941,9 @@ impl IndexerStore {
         tx.execute("DELETE FROM indexed_contracts", [])?;
         tx.execute("DELETE FROM service_request_lifecycle", [])?;
         tx.execute("DELETE FROM dns_domain_history", [])?;
-        tx.execute("DELETE FROM indexer_canonical_state", [])?;
+        for table in CANONICAL_PROGRESS_TABLES {
+            tx.execute(&format!("DELETE FROM {table}"), [])?;
+        }
         tx.execute(
             "DELETE FROM indexer_meta
              WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'filehash:%'
@@ -873,6 +952,38 @@ impl IndexerStore {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// File-backed store for tests that simulate a process restart by
+    /// dropping and reopening it. Commits stay atomic across a process
+    /// crash; only the OS-crash fsync barrier is relaxed to keep tests fast.
+    #[cfg(test)]
+    pub(crate) fn open_for_tests(path: &Path) -> anyhow::Result<Self> {
+        let store = Self::open(path)?;
+        store.lock()?.execute_batch("PRAGMA synchronous = OFF;")?;
+        Ok(store)
+    }
+
+    /// Every explorer row, published or hidden: `(blocks, transactions)`.
+    #[cfg(test)]
+    pub(crate) fn raw_explorer_row_counts(&self) -> anyhow::Result<(i64, i64)> {
+        let conn = self.lock()?;
+        Ok((
+            conn.query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM explorer_transactions", [], |row| row.get(0))?,
+        ))
+    }
+
+    /// Raw transaction presence, published or hidden.
+    #[cfg(test)]
+    pub(crate) fn raw_transaction_exists(&self, hash: &str) -> anyhow::Result<bool> {
+        let conn = self.lock()?;
+        Ok(conn
+            .query_row("SELECT 1 FROM explorer_transactions WHERE hash = ?1", params![hash], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some())
     }
 
     /// Declares everything up to `seqno` published, for tests that seed
@@ -969,47 +1080,6 @@ impl IndexerStore {
              WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
             params![workchain, shard, seqno],
             |row| row.get(0),
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    /// Raw identity of the masterchain block row at `seqno`, published or
-    /// not; internal to the scanner, which binds pending-height reads to it.
-    pub fn masterchain_block_identity(
-        &self,
-        seqno: u32,
-    ) -> anyhow::Result<Option<MasterchainCheckpoint>> {
-        let conn = self.lock()?;
-        conn.query_row(
-            "SELECT seqno, root_hash, file_hash FROM explorer_blocks
-             WHERE workchain = -1 AND seqno = ?1",
-            params![seqno],
-            |row| {
-                Ok(MasterchainCheckpoint {
-                    seqno: row.get(0)?,
-                    root_hash: row.get(1)?,
-                    file_hash: row.get(2)?,
-                })
-            },
-        )
-        .optional()
-        .map_err(Into::into)
-    }
-
-    /// Raw row lookup, published or not; internal to the scanner.
-    pub fn explorer_block_hashes(
-        &self,
-        workchain: i32,
-        shard: i64,
-        seqno: u32,
-    ) -> anyhow::Result<Option<(String, String)>> {
-        let conn = self.lock()?;
-        conn.query_row(
-            "SELECT root_hash, file_hash FROM explorer_blocks
-             WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
-            params![workchain, shard, seqno],
-            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
         .map_err(Into::into)
@@ -2379,40 +2449,6 @@ mod tests {
         assert_eq!(store.explorer_stats().unwrap().blocks, 0);
         assert_eq!(store.explorer_stats().unwrap().transactions, 0);
         assert!(store.explorer_transaction("tx-1").unwrap().is_none());
-    }
-
-    #[test]
-    fn publishing_moves_the_watermark_and_full_hash_checkpoints_together() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        let anchor = |seqno: u32| MasterchainCheckpoint {
-            seqno,
-            root_hash: format!("{seqno:064x}"),
-            file_hash: format!("{:064x}", seqno + 100),
-        };
-        let head = BlockFullId {
-            workchain: 0,
-            shard: i64::MIN,
-            seqno: 3,
-            root_hash: "aa".repeat(32),
-            file_hash: "bb".repeat(32),
-        };
-        assert!(
-            store.publish_masterchain_height(i64::MIN, &anchor(2), &[]).is_err(),
-            "a height cannot be published before its predecessor"
-        );
-        store.publish_masterchain_height(i64::MIN, &anchor(1), &[head.clone()]).unwrap();
-        assert_eq!(store.canonical_state().unwrap(), Some(anchor(1)));
-        assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 1);
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 3);
-        let conn = store.conn.lock().unwrap();
-        let file: String = conn
-            .query_row(
-                "SELECT value FROM indexer_meta WHERE key = 'filehash:-1:-9223372036854775808'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(file, anchor(1).file_hash);
     }
 
     #[test]
