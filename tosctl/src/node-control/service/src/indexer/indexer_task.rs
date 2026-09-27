@@ -49,8 +49,8 @@ const DNS_COLLECTION_ADDRESS: &str =
 const DNS_ITEM_CODE_DEPTH: u16 = 11;
 
 use crate::indexer::store::{
-    DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
-    IndexerStore, ServiceRequestRecord,
+    BlockFullId, DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord,
+    IndexedRecord, IndexerStore, ServiceRequestRecord,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -164,34 +164,25 @@ pub async fn run(
     let mut interval = tokio::time::interval(Duration::from_secs(app_config.tick_interval));
     let mut cancel = cancellation_ctx.subscribe();
     let retention_blocks = app_config.indexer_retention_blocks;
-    // Only prune once the tip has advanced by this much past the last prune, so
-    // the referential transaction sweep does not run every tick.
-    let prune_step = (retention_blocks / 10).max(1000);
-    let mut last_prune_seqno: u32 = 0;
+    // Only prune once the published watermark has advanced by this much past
+    // the last prune, so the referential transaction sweep does not run every
+    // tick.
+    let mut prune = PruneState::new((retention_blocks / 10).max(1000));
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                match scan_new_blocks(&chain_provider, &indexer_store, &known, &probe_budget).await {
-                    Ok(mc_tip) => {
-                        if retention_blocks > 0 && mc_tip > retention_blocks {
-                            let keep_from = mc_tip - retention_blocks;
-                            if keep_from >= last_prune_seqno.saturating_add(prune_step) {
-                                match indexer_store.prune_history(keep_from) {
-                                    Ok(removed) => {
-                                        last_prune_seqno = keep_from;
-                                        if removed > 0 {
-                                            tracing::info!(
-                                                target: "indexer",
-                                                "pruned {removed} history rows older than mc seqno {keep_from}"
-                                            );
-                                        }
-                                    }
-                                    Err(e) => tracing::error!(target: "indexer", "prune error: {:#}", e),
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => tracing::error!(target: "indexer", "scan error: {:#}", e),
+                if let Err(e) = tick(
+                    &chain_provider,
+                    &indexer_store,
+                    &known,
+                    &probe_budget,
+                    &ScanLimits::production(),
+                    retention_blocks,
+                    &mut prune,
+                )
+                .await
+                {
+                    tracing::error!(target: "indexer", "scan error: {:#}", e);
                 }
             }
             _ = cancel.changed() => {
@@ -228,12 +219,91 @@ impl KnownCodeHashes {
     }
 }
 
+/// How much work one tick may do. Every bound yields a normal, resumable
+/// return rather than an error: the next tick continues from durable state.
+#[derive(Clone, Debug)]
+struct ScanLimits {
+    /// Masterchain heights published per tick.
+    max_batches: u32,
+}
+
+impl ScanLimits {
+    fn production() -> Self {
+        Self { max_batches: MAX_BLOCKS_PER_TICK }
+    }
+}
+
+/// What one scan pass achieved. `published_mc_seqno` is the only value any
+/// retention decision may be derived from; `remote_tip` is informational.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScanOutcome {
+    remote_tip: u32,
+    published_mc_seqno: u32,
+}
+
+/// Retention bookkeeping carried across ticks.
+struct PruneState {
+    last_prune_seqno: u32,
+    step: u32,
+}
+
+impl PruneState {
+    fn new(step: u32) -> Self {
+        Self { last_prune_seqno: 0, step: step.max(1) }
+    }
+}
+
+/// One indexer tick: scan, then prune strictly below the published
+/// watermark.
+async fn tick(
+    chain_provider: &Arc<dyn ChainProvider>,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
+    limits: &ScanLimits,
+    retention_blocks: u32,
+    prune: &mut PruneState,
+) -> anyhow::Result<ScanOutcome> {
+    let outcome = scan_new_blocks(chain_provider, store, known, probe_budget, limits).await?;
+    if let Err(e) = prune_after_scan(store, retention_blocks, outcome.published_mc_seqno, prune) {
+        tracing::error!(target: "indexer", "prune error: {:#}", e);
+    }
+    Ok(outcome)
+}
+
+/// Retention is measured from what is published, never from the remote tip:
+/// `keep_from = published - retention`.
+fn prune_after_scan(
+    store: &IndexerStore,
+    retention_blocks: u32,
+    published_mc_seqno: u32,
+    prune: &mut PruneState,
+) -> anyhow::Result<()> {
+    if retention_blocks == 0 || published_mc_seqno <= retention_blocks {
+        return Ok(());
+    }
+    let keep_from = published_mc_seqno.saturating_sub(retention_blocks);
+    if keep_from < prune.last_prune_seqno.saturating_add(prune.step) {
+        return Ok(());
+    }
+    let removed = store.prune_history(keep_from)?;
+    prune.last_prune_seqno = keep_from;
+    if removed > 0 {
+        tracing::info!(
+            target: "indexer",
+            "pruned {removed} history rows older than published mc seqno {keep_from}"
+        );
+    }
+    Ok(())
+}
+
 async fn scan_new_blocks(
     chain_provider: &Arc<dyn ChainProvider>,
     store: &IndexerStore,
     known: &KnownCodeHashes,
     probe_budget: &ProbeBudget,
-) -> anyhow::Result<u32> {
+    limits: &ScanLimits,
+) -> anyhow::Result<ScanOutcome> {
     let mc_info = chain_provider.get_masterchain_info().await?;
     let mc_target = mc_info.last.seqno;
 
@@ -244,9 +314,10 @@ async fn scan_new_blocks(
         mc_info.last.shard,
         mc_target,
         probe_budget,
+        limits,
     )
     .await?;
-    Ok(mc_target)
+    Ok(ScanOutcome { remote_tip: mc_target, published_mc_seqno: store.published_mc_seqno()? })
 }
 
 /// Advances the index from the masterchain timeline. For every masterchain
@@ -261,34 +332,29 @@ async fn scan_masterchain_history(
     master_shard: i64,
     target_seqno: u32,
     probe_budget: &ProbeBudget,
+    limits: &ScanLimits,
 ) -> anyhow::Result<()> {
-    let master_key = format!("-1:{master_shard}");
-    let mut next = store.checkpoint(&master_key)?.saturating_add(1).max(1);
-    let last_scanned = next.saturating_sub(1);
-
-    if last_scanned > 0 {
-        if let Some(expected_hash) = store.checkpoint_block_hash(&master_key)? {
-            let actual_hash = fetch_block_hash(chain_provider, -1, master_shard, last_scanned)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("masterchain checkpoint probe omitted block id"))?;
-            if actual_hash != expected_hash {
-                tracing::warn!(
-                    target: "indexer",
-                    seqno = last_scanned,
-                    "masterchain reorg detected; rebuilding canonical explorer index",
-                );
-                store.reset_canonical_index()?;
-                next = 1;
-            }
+    let mut next = 1;
+    if let Some(published) = store.canonical_state()? {
+        let actual = masterchain_block_id(chain_provider, master_shard, published.seqno).await?;
+        if actual.root_hash != published.root_hash || actual.file_hash != published.file_hash {
+            tracing::warn!(
+                target: "indexer",
+                seqno = published.seqno,
+                "published masterchain block changed; rebuilding canonical explorer index",
+            );
+            store.reset_canonical_index()?;
+        } else {
+            next = published.seqno.saturating_add(1);
         }
     }
 
     if next > target_seqno {
         return Ok(());
     }
-    let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
+    let end = next.saturating_add(limits.max_batches.saturating_sub(1)).min(target_seqno);
     while next <= end {
-        let block_hash = scan_one_seqno(
+        let master = scan_one_seqno(
             chain_provider,
             store,
             known,
@@ -301,10 +367,15 @@ async fn scan_masterchain_history(
         )
         .await?;
 
+        let master =
+            master.ok_or_else(|| anyhow::anyhow!("masterchain block page omitted its block id"))?;
+        let mut heads = Vec::new();
+
         // Anchor non-masterchain history to this exact masterchain block.
         // Repeated descriptors are skipped by root hash; newly split shards
         // can start at any seqno without a fabricated numeric backfill.
         for shard in chain_provider.get_shards(next).await?.shards {
+            heads.push(full_id(&shard)?);
             // A shard's zerostate descriptor is not an ordinary block and
             // cannot be queried through getBlockTransactions. It only
             // anchors the chain before that shard produces seqno 1.
@@ -332,23 +403,63 @@ async fn scan_masterchain_history(
                 )
                 .await?;
             }
-            let root_hash = hex::encode(&shard.root_hash);
-            let shard_key = format!("{}:{}", shard.workchain, shard.shard);
-            if shard.seqno >= store.checkpoint(&shard_key)? {
-                store.set_checkpoint(&shard_key, shard.seqno)?;
-                store.set_checkpoint_block_hash(&shard_key, &root_hash)?;
-            }
         }
 
-        // Commit the masterchain cursor only after all shard heads it
-        // references are durable. A crash restarts this entire unit safely.
-        store.set_checkpoint(&master_key, next)?;
-        if let Some(hash) = block_hash {
-            store.set_checkpoint_block_hash(&master_key, &hash)?;
-        }
+        // Publish only after all shard ancestry this height references is
+        // durable. A crash before this point leaves the rows hidden.
+        store.publish_masterchain_height(
+            master_shard,
+            &MasterchainCheckpoint {
+                seqno: master.seqno,
+                root_hash: master.root_hash,
+                file_hash: master.file_hash,
+            },
+            &heads,
+        )?;
         next += 1;
     }
     Ok(())
+}
+
+/// Converts an RPC block id into a full identity, refusing ids whose hashes
+/// are not 32 bytes: a truncated hash is not an identity.
+fn full_id(id: &BlockIdExt) -> anyhow::Result<BlockFullId> {
+    anyhow::ensure!(
+        id.root_hash.len() == 32 && id.file_hash.len() == 32,
+        "block id {}:{}:{} lacks full 32-byte hashes",
+        id.workchain,
+        id.shard,
+        id.seqno
+    );
+    Ok(BlockFullId {
+        workchain: id.workchain,
+        shard: id.shard,
+        seqno: id.seqno,
+        root_hash: hex::encode(&id.root_hash),
+        file_hash: hex::encode(&id.file_hash),
+    })
+}
+
+/// The exact identity the chain currently reports for one masterchain seqno.
+async fn masterchain_block_id(
+    chain_provider: &Arc<dyn ChainProvider>,
+    master_shard: i64,
+    seqno: u32,
+) -> anyhow::Result<BlockFullId> {
+    let page =
+        chain_provider.get_block_transactions_page(-1, master_shard, seqno, None, None, 1).await?;
+    let id = page
+        .id
+        .ok_or_else(|| anyhow::anyhow!("masterchain block {seqno} lookup omitted its id"))?;
+    let id = full_id(&id)?;
+    anyhow::ensure!(
+        id.workchain == -1 && id.shard == master_shard && id.seqno == seqno,
+        "masterchain block lookup for {seqno} returned {}:{}:{}",
+        id.workchain,
+        id.shard,
+        id.seqno
+    );
+    Ok(id)
 }
 
 enum NewShardHistory {
@@ -460,14 +571,15 @@ async fn scan_shard(
         )
         .await?;
         store.set_checkpoint(&shard_key, next)?;
-        if let Some(hash) = block_hash {
-            store.set_checkpoint_block_hash(&shard_key, &hash)?;
+        if let Some(block) = block_hash {
+            store.set_checkpoint_block_hash(&shard_key, &block.root_hash)?;
         }
         next += 1;
     }
     Ok(())
 }
 
+#[cfg(test)]
 /// Fetches just the block's own identity hash (a minimal, one-transaction
 /// page is enough) -- used only for the reorg check above, never to walk
 /// transactions.
@@ -492,9 +604,9 @@ async fn scan_one_seqno(
     observed_mc_seqno: u32,
     probe_budget: &ProbeBudget,
     expected_id: Option<&BlockIdExt>,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<Option<BlockFullId>> {
     let mut addresses: HashSet<String> = HashSet::new();
-    let mut block_hash: Option<String> = None;
+    let mut block_hash: Option<BlockFullId> = None;
     let mut explorer_block: Option<ExplorerBlockRecord> = None;
     let mut explorer_transactions: Vec<ExplorerTransactionRecord> = Vec::new();
     let indexed_at = time_format::now();
@@ -573,7 +685,7 @@ async fn scan_one_seqno(
             );
         }
         if block_hash.is_none() {
-            block_hash = id.as_ref().map(|id| hex::encode(&id.root_hash));
+            block_hash = id.as_ref().map(full_id).transpose()?;
         }
         if explorer_block.is_none() {
             explorer_block = id.as_ref().map(|id| ExplorerBlockRecord {
@@ -646,12 +758,7 @@ async fn scan_one_seqno(
         store.index_explorer_block(&block, &explorer_transactions)?;
     }
 
-    let dns_checkpoint =
-        store.masterchain_block(observed_mc_seqno)?.map(|block| MasterchainCheckpoint {
-            seqno: block.seqno,
-            root_hash: block.root_hash,
-            file_hash: block.file_hash,
-        });
+    let dns_checkpoint = store.masterchain_block_identity(observed_mc_seqno)?;
 
     for address in addresses {
         if let Err(e) = visit_address(
@@ -2205,7 +2312,15 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
         assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
         assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 1);
 
@@ -2217,7 +2332,15 @@ mod tests {
         provider.set_on(0, shard_b, 1, &"dd".repeat(32));
         provider.set_shards(&[(0, shard_b, 1)]);
 
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
 
         // The new shard is scanned from its own reported head with no
         // prior checkpoint -- it starts fresh, exactly as a genuinely new
@@ -2244,7 +2367,15 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 1);
         assert!(store.explorer_block_root(0, child_shard, 1).unwrap().is_some());
@@ -2275,7 +2406,15 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider;
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
         assert_eq!(store.checkpoint(&format!("0:{shard}")).unwrap(), 5);
         assert!(store.explorer_block_root(0, shard, 3).unwrap().is_some());
         assert!(store.explorer_block_root(0, shard, 4).unwrap().is_some());
@@ -2302,9 +2441,15 @@ mod tests {
         provider.set_shards(&[(0, root, 4)]);
         let store = IndexerStore::open_in_memory().unwrap();
         let dyn_provider: Arc<dyn ChainProvider> = provider;
-        scan_new_blocks(&dyn_provider, &store, &known_code_hashes_for_test(), &ProbeBudget::new())
-            .await
-            .unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
         for (shard, seqno) in [(root, 1), (root, 2), (left, 3), (right, 3), (root, 4)] {
             assert!(
                 store.explorer_block_root(0, shard, seqno).unwrap().is_some(),
@@ -2325,9 +2470,15 @@ mod tests {
         provider.set_shards_at(1, &[(0, shard, 2)]);
         let store = IndexerStore::open_in_memory().unwrap();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known_code_hashes_for_test(), &ProbeBudget::new())
-            .await
-            .unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
         provider.set_on(-1, shard, 2, &"a2".repeat(32));
         provider.set_on(0, shard, 2, &"99".repeat(32));
         provider.set_shards_at(2, &[(0, shard, 2)]);
@@ -2337,6 +2488,7 @@ mod tests {
             &store,
             &known_code_hashes_for_test(),
             &ProbeBudget::new(),
+            &ScanLimits::production(),
         )
         .await
         .unwrap_err();
@@ -2346,6 +2498,58 @@ mod tests {
         );
         assert_eq!(store.checkpoint(&format!("0:{shard}")).unwrap(), 0);
         assert!(store.explorer_block_root(0, shard, 2).unwrap().is_none());
+    }
+
+    /// A remote tip far ahead of what is published, a small retention
+    /// window, and a scanner that publishes a bounded number of heights per
+    /// tick. Retention must be measured from the published watermark: the
+    /// freshly published window stays, progress is monotone, and the scanner
+    /// catches up.
+    #[tokio::test]
+    async fn retention_is_measured_from_the_published_watermark_not_the_remote_tip() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let mc_shard = i64::MIN;
+        let tip = 600u32;
+        for seqno in 1..=tip {
+            provider.set_on(-1, mc_shard, seqno, &format!("{seqno:064x}"));
+        }
+        provider.set_masterchain_info(tip, mc_shard);
+        provider.set_shards(&[]);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        let retention = 50u32;
+        let limits = ScanLimits { max_batches: 200, ..ScanLimits::production() };
+        let mut prune = PruneState::new(1);
+        let mut previous = 0u32;
+        for _ in 0..4 {
+            let outcome = tick(
+                &dyn_provider,
+                &store,
+                &known,
+                &ProbeBudget::new(),
+                &limits,
+                retention,
+                &mut prune,
+            )
+            .await
+            .unwrap();
+            assert_eq!(outcome.remote_tip, tip);
+            assert!(outcome.published_mc_seqno >= previous, "published watermark regressed");
+            previous = outcome.published_mc_seqno;
+            let keep_from = previous.saturating_sub(retention);
+            for seqno in keep_from.max(1)..=previous {
+                assert!(
+                    store.masterchain_block(seqno).unwrap().is_some(),
+                    "published height {seqno} inside the retention window was pruned \
+                     (published {previous}, remote tip {tip})"
+                );
+            }
+            if keep_from > 1 {
+                assert!(store.explorer_block_root(-1, mc_shard, keep_from - 1).unwrap().is_none());
+            }
+        }
+        assert_eq!(previous, tip, "the scanner must catch up to the remote tip");
     }
 
     #[tokio::test]
@@ -2359,7 +2563,15 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(provider.calls_made(), 1, "only the masterchain block is queryable");
         assert_eq!(store.checkpoint(&format!("0:{}", i64::MIN)).unwrap(), 0);

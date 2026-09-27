@@ -25,12 +25,13 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use contracts::MasterchainCheckpoint;
 use rusqlite::{Connection, OptionalExtension, params};
 
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 10;
+const CURRENT_SCHEMA_VERSION: i64 = 11;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -126,7 +127,24 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
                WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%';",
         )
     },
+    migrate_to_canonical_publication,
 ];
+
+/// v11 introduces a published watermark. Rows indexed by a v10 binary carry
+/// no record of which masterchain height was completely assembled when they
+/// were written, so none of them can be declared published after the fact:
+/// the explorer history is replayed from genesis under the new watermark.
+fn migrate_to_canonical_publication(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
+    conn.execute_batch(
+        "DELETE FROM indexer_canonical_state;
+         DELETE FROM explorer_transactions;
+         DELETE FROM explorer_blocks;
+         DELETE FROM dns_domain_history;
+         DELETE FROM indexer_meta
+           WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'filehash:%';",
+    )
+}
 
 fn migrate_dns_checkpoint_hashes(conn: &Connection) -> rusqlite::Result<()> {
     let mut columns = conn.prepare("PRAGMA table_info(dns_domain_history)")?;
@@ -233,6 +251,31 @@ const EXPLORER_ORDER_INDEX_SCHEMA: &str = "CREATE INDEX IF NOT EXISTS idx_explor
     CREATE INDEX IF NOT EXISTS idx_explorer_transactions_order
         ON explorer_transactions(seqno DESC, length(lt) DESC, lt DESC, hash);";
 
+/// v11: the canonical publication watermark and the views every public
+/// explorer read goes through.
+///
+/// Explorer rows are written in slices while a masterchain height is still
+/// being assembled, so their mere presence proves nothing. A block is public
+/// only once the masterchain height that referenced it has been published;
+/// a transaction is public only through such a block. Without a published
+/// state nothing is public at all (the scalar subquery yields NULL and every
+/// comparison against it fails).
+const CANONICAL_PUBLICATION_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS indexer_canonical_state (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        published_mc_seqno INTEGER NOT NULL,
+        published_mc_root_hash TEXT NOT NULL,
+        published_mc_file_hash TEXT NOT NULL
+    );
+    CREATE VIEW IF NOT EXISTS published_explorer_blocks AS
+        SELECT b.* FROM explorer_blocks b
+        WHERE b.observed_mc_seqno <= (
+            SELECT c.published_mc_seqno FROM indexer_canonical_state c WHERE c.id = 1
+        );
+    CREATE VIEW IF NOT EXISTS published_explorer_transactions AS
+        SELECT t.*, b.gen_utime AS block_gen_utime FROM explorer_transactions t
+        JOIN published_explorer_blocks b
+          ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno;";
+
 /// One indexed account: either a recognized contract (`kind` is one of the
 /// public explorer contract kinds, including Agent Account) or
 /// `unclassified` (seen on-chain, code hash didn't match any known contract).
@@ -288,6 +331,24 @@ pub struct ExplorerTransactionRecord {
     pub fee: Option<String>,
     pub in_msg_hash: Option<String>,
     pub indexed_at: u64,
+}
+
+/// A block's complete identity. A coordinate `(workchain, shard, seqno)`
+/// alone names different blocks on different forks, so both hashes always
+/// travel with it (lowercase hex, as stored everywhere in this database).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BlockFullId {
+    pub workchain: i32,
+    pub shard: i64,
+    pub seqno: u32,
+    pub root_hash: String,
+    pub file_hash: String,
+}
+
+impl BlockFullId {
+    pub fn same_coordinate(&self, other: &Self) -> bool {
+        self.workchain == other.workchain && self.shard == other.shard && self.seqno == other.seqno
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -356,11 +417,15 @@ impl IndexerStore {
     /// (exclusive) to bound the append-only history tables. The DNS-history and
     /// explorer block tables are keyed by the masterchain seqno at which the row
     /// was observed; explorer transactions carry no such column and are pruned
-    /// referentially, by dropping rows whose block is no longer retained. Called
-    /// with `keep_from = tip - retention_window`; a window of 0 disables pruning
-    /// (the caller does not invoke this). Returns the number of rows removed.
+    /// referentially, by dropping rows whose block is no longer retained. The
+    /// caller passes `published_mc_seqno - retention_window`: the watermark of
+    /// what is actually published, never the remote chain tip, so an indexer
+    /// far behind the tip cannot prune what it has only just scanned. A window
+    /// of 0 disables pruning (the caller does not invoke this). Scanner
+    /// progress lives in `canonical_shard_frontier`, which is never pruned.
+    /// Returns the number of rows removed.
     pub fn prune_history(&self, keep_from_mc_seqno: u32) -> anyhow::Result<usize> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut removed = 0usize;
         removed += conn.execute(
             "DELETE FROM dns_domain_history WHERE observed_mc_seqno < ?1",
@@ -425,7 +490,24 @@ impl IndexerStore {
         conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA)?;
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
+        conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
         Ok(())
+    }
+
+    fn lock(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+        self.conn.lock().map_err(|_| anyhow::anyhow!("indexer store lock poisoned"))
+    }
+
+    /// The last completely assembled masterchain height, with its full
+    /// identity. `None` until the first height is published.
+    pub fn canonical_state(&self) -> anyhow::Result<Option<MasterchainCheckpoint>> {
+        let conn = self.lock()?;
+        read_canonical_state(&conn)
+    }
+
+    /// Published masterchain seqno, `0` before anything is published.
+    pub fn published_mc_seqno(&self) -> anyhow::Result<u32> {
+        Ok(self.canonical_state()?.map_or(0, |state| state.seqno))
     }
 
     /// Records [`CURRENT_SCHEMA_VERSION`] on a fresh database, or runs any
@@ -508,7 +590,7 @@ impl IndexerStore {
     /// rescan is redundant work, not silent data loss, so this is a
     /// deliberate fail-safe rather than a fail-closed).
     pub fn checkpoint(&self, shard_key: &str) -> anyhow::Result<u32> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let value: Option<String> = conn
             .query_row(
                 "SELECT value FROM indexer_meta WHERE key = ?1",
@@ -534,7 +616,7 @@ impl IndexerStore {
     }
 
     pub fn set_checkpoint(&self, shard_key: &str, seqno: u32) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -548,7 +630,7 @@ impl IndexerStore {
     /// that same seqno, the block the indexer already scanned was
     /// reorganized out from under it.
     pub fn checkpoint_block_hash(&self, shard_key: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT value FROM indexer_meta WHERE key = ?1",
             params![format!("blockhash:{shard_key}")],
@@ -563,7 +645,7 @@ impl IndexerStore {
         shard_key: &str,
         block_hash: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -576,7 +658,7 @@ impl IndexerStore {
     /// order. Corrupt values are omitted (and separately warned about by
     /// [`Self::checkpoint`]) rather than being exposed as made-up progress.
     pub fn checkpoints(&self) -> anyhow::Result<Vec<IndexerCheckpoint>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT substr(key, 12), value FROM indexer_meta
              WHERE key LIKE 'checkpoint:%' ORDER BY key",
@@ -597,6 +679,29 @@ impl IndexerStore {
         Ok(rows)
     }
 
+    /// Makes one completely assembled masterchain height public, in a single
+    /// transaction: the published watermark and the legacy per-shard
+    /// checkpoints (now carrying both hashes) move together, so no reader
+    /// can observe one without the other.
+    pub fn publish_masterchain_height(
+        &self,
+        master_shard: i64,
+        anchor: &MasterchainCheckpoint,
+        shard_heads: &[BlockFullId],
+    ) -> anyhow::Result<()> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+        let previous = read_canonical_state(&tx)?.map_or(0, |state| state.seqno);
+        anyhow::ensure!(
+            anchor.seqno == previous.saturating_add(1),
+            "masterchain height {} cannot be published after {previous}",
+            anchor.seqno
+        );
+        write_publication(&tx, master_shard, anchor, shard_heads)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Atomically records a block identity and every transaction short-ID
     /// returned for it. Replaying the same block is idempotent.
     pub fn index_explorer_block(
@@ -604,7 +709,7 @@ impl IndexerStore {
         block: &ExplorerBlockRecord,
         transactions: &[ExplorerTransactionRecord],
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO explorer_blocks
@@ -677,7 +782,7 @@ impl IndexerStore {
         shard: i64,
         from_seqno: u32,
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM explorer_transactions
@@ -697,7 +802,7 @@ impl IndexerStore {
     /// suffix. This is the topology-aware counterpart to a masterchain
     /// reorg rewind and removes retired split/merge branches as well.
     pub fn rewind_masterchain_observations(&self, from_mc_seqno: u32) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM explorer_transactions WHERE EXISTS (
@@ -727,7 +832,7 @@ impl IndexerStore {
     /// counter would otherwise grow the table by one batch of dead rows per
     /// visit -- so the scan position must survive on its own.
     pub fn service_scan_high_water(&self, service_address: &str) -> anyhow::Result<Option<u64>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let value: Option<String> = conn
             .query_row(
                 "SELECT value FROM indexer_meta WHERE key = ?1",
@@ -743,7 +848,7 @@ impl IndexerStore {
         service_address: &str,
         high_water: u64,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT OR REPLACE INTO indexer_meta (key, value) VALUES (?1, ?2)",
             params![format!("svc-scan:{service_address}"), high_water.to_string()],
@@ -752,19 +857,38 @@ impl IndexerStore {
     }
 
     pub fn reset_canonical_index(&self) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM explorer_transactions", [])?;
         tx.execute("DELETE FROM explorer_blocks", [])?;
         tx.execute("DELETE FROM indexed_contracts", [])?;
         tx.execute("DELETE FROM service_request_lifecycle", [])?;
         tx.execute("DELETE FROM dns_domain_history", [])?;
+        tx.execute("DELETE FROM indexer_canonical_state", [])?;
         tx.execute(
             "DELETE FROM indexer_meta
-             WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'svc-scan:%'",
+             WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'filehash:%'
+                OR key LIKE 'svc-scan:%'",
             [],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Declares everything up to `seqno` published, for tests that seed
+    /// explorer rows directly instead of running the scanner.
+    #[cfg(test)]
+    pub(crate) fn publish_through_for_tests(&self, seqno: u32) -> anyhow::Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO indexer_canonical_state
+                (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET published_mc_seqno = excluded.published_mc_seqno,
+                published_mc_root_hash = excluded.published_mc_root_hash,
+                published_mc_file_hash = excluded.published_mc_file_hash",
+            params![seqno, "00".repeat(32), "00".repeat(32)],
+        )?;
         Ok(())
     }
 
@@ -774,7 +898,7 @@ impl IndexerStore {
                 && record.file_hash.as_ref().is_some_and(|hash| !hash.is_empty()),
             "DNS history requires a full masterchain checkpoint"
         );
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO dns_domain_history(address,account_seqno,observed_mc_seqno,observed_at,dto_json,root_hash,file_hash)
              VALUES(?1,?2,?3,?4,?5,?6,?7)
@@ -792,7 +916,7 @@ impl IndexerStore {
         after_address: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<DnsDomainHistoryRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut statement = conn.prepare(
             "SELECT h.address,h.account_seqno,h.observed_mc_seqno,h.observed_at,h.dto_json,
                     h.root_hash,h.file_hash
@@ -815,14 +939,15 @@ impl IndexerStore {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Published masterchain block at `seqno`; a pending height is invisible.
     pub fn masterchain_block(&self, seqno: u32) -> anyhow::Result<Option<ExplorerBlockRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT b.workchain, b.shard, b.seqno, b.root_hash, b.file_hash, b.gen_utime,
                     (SELECT COUNT(*) FROM explorer_transactions t
                      WHERE t.workchain=b.workchain AND t.shard=b.shard AND t.seqno=b.seqno),
                     b.indexed_at, b.observed_mc_seqno
-             FROM explorer_blocks b WHERE b.workchain=-1 AND b.seqno=?1",
+             FROM published_explorer_blocks b WHERE b.workchain=-1 AND b.seqno=?1",
             params![seqno],
             row_to_explorer_block,
         )
@@ -830,13 +955,15 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
+    /// Raw row lookup, published or not. Internal diagnostics and tests only;
+    /// public reads go through the published views.
     pub fn explorer_block_root(
         &self,
         workchain: i32,
         shard: i64,
         seqno: u32,
     ) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT root_hash FROM explorer_blocks
              WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
@@ -847,13 +974,37 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
+    /// Raw identity of the masterchain block row at `seqno`, published or
+    /// not; internal to the scanner, which binds pending-height reads to it.
+    pub fn masterchain_block_identity(
+        &self,
+        seqno: u32,
+    ) -> anyhow::Result<Option<MasterchainCheckpoint>> {
+        let conn = self.lock()?;
+        conn.query_row(
+            "SELECT seqno, root_hash, file_hash FROM explorer_blocks
+             WHERE workchain = -1 AND seqno = ?1",
+            params![seqno],
+            |row| {
+                Ok(MasterchainCheckpoint {
+                    seqno: row.get(0)?,
+                    root_hash: row.get(1)?,
+                    file_hash: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Raw row lookup, published or not; internal to the scanner.
     pub fn explorer_block_hashes(
         &self,
         workchain: i32,
         shard: i64,
         seqno: u32,
     ) -> anyhow::Result<Option<(String, String)>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT root_hash, file_hash FROM explorer_blocks
              WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
@@ -864,17 +1015,16 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
+    /// A transaction is public only through a published block.
     pub fn explorer_transaction(
         &self,
         hash: &str,
     ) -> anyhow::Result<Option<ExplorerTransactionRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
-                    COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
-             FROM explorer_transactions t
-             LEFT JOIN explorer_blocks b
-               ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno
+                    t.block_gen_utime, t.indexed_at, t.fee, t.in_msg_hash
+             FROM published_explorer_transactions t
              WHERE t.hash = ?1",
             params![hash],
             row_to_explorer_transaction,
@@ -887,13 +1037,13 @@ impl IndexerStore {
         &self,
         hash: &str,
     ) -> anyhow::Result<Option<ExplorerBlockRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT b.workchain, b.shard, b.seqno, b.root_hash, b.file_hash, b.gen_utime,
                     (SELECT COUNT(*) FROM explorer_transactions t
                      WHERE t.workchain = b.workchain AND t.shard = b.shard AND t.seqno = b.seqno),
                     b.indexed_at, b.observed_mc_seqno
-             FROM explorer_blocks b WHERE b.root_hash = ?1 OR b.file_hash = ?1 LIMIT 1",
+             FROM published_explorer_blocks b WHERE b.root_hash = ?1 OR b.file_hash = ?1 LIMIT 1",
             params![hash],
             row_to_explorer_block,
         )
@@ -911,10 +1061,12 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<ExplorerBlockRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let total = conn
-            .query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get::<_, i64>(0))?
-            as usize;
+        let conn = self.lock()?;
+        let total = usize::try_from(conn.query_row(
+            "SELECT COUNT(*) FROM published_explorer_blocks",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?)?;
         // The ORDER BY matches `idx_explorer_blocks_gen_utime` exactly so the
         // sort is an index walk, not a full-table sort per request.
         let mut stmt = conn.prepare(
@@ -922,7 +1074,7 @@ impl IndexerStore {
                     (SELECT COUNT(*) FROM explorer_transactions t
                      WHERE t.workchain = b.workchain AND t.shard = b.shard AND t.seqno = b.seqno),
                     b.indexed_at, b.observed_mc_seqno
-             FROM explorer_blocks b
+             FROM published_explorer_blocks b
              ORDER BY b.gen_utime DESC, b.seqno DESC, b.workchain, b.shard
              LIMIT ?1 OFFSET ?2",
         )?;
@@ -943,34 +1095,32 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<ExplorerTransactionRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let (where_sql, account_param) =
             if account.is_some() { (" WHERE account = ?1", account) } else { ("", None) };
-        let total: usize = if let Some(account) = account_param {
+        let total = usize::try_from(if let Some(account) = account_param {
             conn.query_row(
-                "SELECT COUNT(*) FROM explorer_transactions WHERE account = ?1",
+                "SELECT COUNT(*) FROM published_explorer_transactions WHERE account = ?1",
                 params![account],
                 |row| row.get::<_, i64>(0),
-            )? as usize
+            )?
         } else {
-            conn.query_row("SELECT COUNT(*) FROM explorer_transactions", [], |row| {
+            conn.query_row("SELECT COUNT(*) FROM published_explorer_transactions", [], |row| {
                 row.get::<_, i64>(0)
-            })? as usize
-        };
+            })?
+        })?;
         // Sorted on the transaction's own columns (matching
         // `idx_explorer_transactions_order` exactly for the network-wide
         // feed, and the `account` index's `seqno DESC` prefix for account
         // history) rather than the joined block's `gen_utime`, which no index
         // can serve. Observable ordering difference versus the older
         // gen_utime sort: same-seqno blocks in different shards group by
-        // seqno instead of block time, and a transaction whose block row is
-        // missing sorts by its own seqno instead of being forced last.
+        // seqno instead of block time. A transaction without a published
+        // block is not listed at all.
         let sql = format!(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
-                    COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
-             FROM explorer_transactions t
-             LEFT JOIN explorer_blocks b
-               ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno{where_sql}
+                    t.block_gen_utime, t.indexed_at, t.fee, t.in_msg_hash
+             FROM published_explorer_transactions t{where_sql}
              ORDER BY t.seqno DESC, length(t.lt) DESC, t.lt DESC, t.hash
              LIMIT ?{} OFFSET ?{}",
             if account.is_some() { 2 } else { 1 },
@@ -1000,19 +1150,17 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<ExplorerTransactionRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let total = conn.query_row(
-            "SELECT COUNT(*) FROM explorer_transactions
+        let conn = self.lock()?;
+        let total = usize::try_from(conn.query_row(
+            "SELECT COUNT(*) FROM published_explorer_transactions
              WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
             params![workchain, shard, seqno],
             |row| row.get::<_, i64>(0),
-        )? as usize;
+        )?)?;
         let mut stmt = conn.prepare(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
-                    COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
-             FROM explorer_transactions t
-             LEFT JOIN explorer_blocks b
-               ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno
+                    t.block_gen_utime, t.indexed_at, t.fee, t.in_msg_hash
+             FROM published_explorer_transactions t
              WHERE t.workchain = ?1 AND t.shard = ?2 AND t.seqno = ?3
              ORDER BY length(t.lt) DESC, t.lt DESC, t.hash
              LIMIT ?4 OFFSET ?5",
@@ -1027,33 +1175,30 @@ impl IndexerStore {
     }
 
     pub fn explorer_stats(&self) -> anyhow::Result<ExplorerIndexStats> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let blocks = conn
-            .query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get::<_, i64>(0))?
-            as usize;
-        let transactions =
-            conn.query_row("SELECT COUNT(*) FROM explorer_transactions", [], |row| {
-                row.get::<_, i64>(0)
-            })? as usize;
-        let contracts = conn.query_row(
-            "SELECT COUNT(*) FROM indexed_contracts WHERE kind != 'unclassified'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )? as usize;
+        let conn = self.lock()?;
+        let count = |sql: &str| -> anyhow::Result<usize> {
+            Ok(usize::try_from(conn.query_row(sql, [], |row| row.get::<_, i64>(0))?)?)
+        };
+        let blocks = count("SELECT COUNT(*) FROM published_explorer_blocks")?;
+        let transactions = count("SELECT COUNT(*) FROM published_explorer_transactions")?;
+        let contracts =
+            count("SELECT COUNT(*) FROM indexed_contracts WHERE kind != 'unclassified'")?;
         let latest_indexed_at: Option<i64> =
-            conn.query_row("SELECT MAX(indexed_at) FROM explorer_blocks", [], |row| row.get(0))?;
+            conn.query_row("SELECT MAX(indexed_at) FROM published_explorer_blocks", [], |row| {
+                row.get(0)
+            })?;
         Ok(ExplorerIndexStats {
             blocks,
             transactions,
             contracts,
-            latest_indexed_at: latest_indexed_at.map(|value| value as u64),
+            latest_indexed_at: latest_indexed_at.map(u64::try_from).transpose()?,
         })
     }
 
     /// `true` if this address has already been seen (classified or not),
     /// i.e. it does not need a fresh code-hash lookup.
     pub fn is_known(&self, address: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let found: Option<i64> = conn
             .query_row(
                 "SELECT 1 FROM indexed_contracts WHERE address = ?1",
@@ -1066,7 +1211,7 @@ impl IndexerStore {
 
     /// Returns the stored `kind` for an already-known address, if any.
     pub fn kind_of(&self, address: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let kind: Option<String> = conn
             .query_row(
                 "SELECT kind FROM indexed_contracts WHERE address = ?1",
@@ -1078,7 +1223,7 @@ impl IndexerStore {
     }
 
     pub fn upsert(&self, record: &IndexedRecord) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO indexed_contracts
                 (address, kind, creator, counterparty, status, deadline, last_seqno, updated_at, dto_json)
@@ -1108,7 +1253,7 @@ impl IndexerStore {
     }
 
     pub fn get(&self, address: &str) -> anyhow::Result<Option<IndexedRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT address, kind, creator, counterparty, status, deadline, last_seqno, updated_at, dto_json
              FROM indexed_contracts WHERE address = ?1",
@@ -1130,7 +1275,7 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<IndexedRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
 
         let mut where_clauses = vec!["kind = ?1".to_owned()];
         let mut bind: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(kind.to_owned())];
@@ -1181,7 +1326,7 @@ impl IndexerStore {
         &self,
         nominator_address: &str,
     ) -> anyhow::Result<Vec<NominatorLedgerRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut statement = conn.prepare(
             "SELECT pool_address, nominator_address, deposited_total, rewarded_total,
                     unattributed_total, last_amount, last_pending, first_seen_at, updated_at
@@ -1221,7 +1366,7 @@ impl IndexerStore {
         observed_at: u64,
         positions: &[(String, u64, u64)],
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         for (nominator, amount, pending) in positions {
             let previous: Option<(i64, i64, i64)> = tx
@@ -1308,7 +1453,7 @@ impl IndexerStore {
     }
 
     pub fn upsert_service_request(&self, record: &ServiceRequestRecord) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO service_request_lifecycle
                 (service_address, request_id, status, updated_at, dto_json)
@@ -1332,7 +1477,7 @@ impl IndexerStore {
         service_address: &str,
         request_id: u64,
     ) -> anyhow::Result<Option<ServiceRequestRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT service_address, request_id, status, updated_at, dto_json
              FROM service_request_lifecycle WHERE service_address = ?1 AND request_id = ?2",
@@ -1364,7 +1509,7 @@ impl IndexerStore {
         &self,
         service_address: &str,
     ) -> anyhow::Result<(Option<u64>, u64, Vec<ServiceRequestRecord>)> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT service_address, request_id, status, updated_at, dto_json
              FROM service_request_lifecycle WHERE service_address = ?1",
@@ -1403,6 +1548,72 @@ impl IndexerStore {
             .collect();
         Ok((max_id, stored, active))
     }
+}
+
+fn read_canonical_state(conn: &Connection) -> anyhow::Result<Option<MasterchainCheckpoint>> {
+    conn.query_row(
+        "SELECT published_mc_seqno, published_mc_root_hash, published_mc_file_hash
+         FROM indexer_canonical_state WHERE id = 1",
+        [],
+        |row| {
+            Ok(MasterchainCheckpoint {
+                seqno: row.get(0)?,
+                root_hash: row.get(1)?,
+                file_hash: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// The watermark and compatibility-checkpoint half of a publication. Shard
+/// checkpoints only move forward, so a retired shard keeps its last value.
+fn write_publication(
+    conn: &Connection,
+    master_shard: i64,
+    anchor: &MasterchainCheckpoint,
+    shard_heads: &[BlockFullId],
+) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO indexer_canonical_state
+            (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            published_mc_seqno = excluded.published_mc_seqno,
+            published_mc_root_hash = excluded.published_mc_root_hash,
+            published_mc_file_hash = excluded.published_mc_file_hash",
+        params![anchor.seqno, anchor.root_hash, anchor.file_hash],
+    )?;
+    let master_key = format!("-1:{master_shard}");
+    upsert_meta(conn, &format!("checkpoint:{master_key}"), &anchor.seqno.to_string())?;
+    upsert_meta(conn, &format!("blockhash:{master_key}"), &anchor.root_hash)?;
+    upsert_meta(conn, &format!("filehash:{master_key}"), &anchor.file_hash)?;
+    for head in shard_heads.iter().filter(|head| head.seqno > 0) {
+        let key = format!("{}:{}", head.workchain, head.shard);
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT value FROM indexer_meta WHERE key = ?1",
+                params![format!("checkpoint:{key}")],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = current.and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
+        if head.seqno >= current {
+            upsert_meta(conn, &format!("checkpoint:{key}"), &head.seqno.to_string())?;
+            upsert_meta(conn, &format!("blockhash:{key}"), &head.root_hash)?;
+            upsert_meta(conn, &format!("filehash:{key}"), &head.file_hash)?;
+        }
+    }
+    Ok(())
+}
+
+fn upsert_meta(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedRecord> {
@@ -1908,6 +2119,7 @@ mod tests {
         let block = explorer_block(7);
         let transaction = explorer_transaction("tx-seven", "-1:account", u64::MAX, 7);
         store.index_explorer_block(&block, std::slice::from_ref(&transaction)).unwrap();
+        store.publish_through_for_tests(7).unwrap();
 
         assert_eq!(store.explorer_block_by_hash("root-7").unwrap(), Some(block.clone()));
         assert_eq!(store.explorer_block_by_hash("file-7").unwrap(), Some(block));
@@ -2047,6 +2259,7 @@ mod tests {
         replacement.fee = Some("424242".into());
         replacement.in_msg_hash = Some("message-canonical".into());
         store.index_explorer_block(&replacement_block, std::slice::from_ref(&replacement)).unwrap();
+        store.publish_through_for_tests(9).unwrap();
 
         assert_eq!(store.explorer_transaction("tx-retired").unwrap(), None);
         assert_eq!(store.explorer_transaction("tx-canonical").unwrap(), Some(replacement));
@@ -2075,6 +2288,7 @@ mod tests {
                 ],
             )
             .unwrap();
+        store.publish_through_for_tests(2).unwrap();
 
         let (all, total) = store.list_explorer_transactions(None, 0, 2).unwrap();
         assert_eq!(total, 3);
@@ -2101,6 +2315,106 @@ mod tests {
         assert_eq!(block_transactions.iter().map(|row| row.lt).collect::<Vec<_>>(), vec![30, 20]);
     }
 
+    /// Every public read path, as one tuple, so a before/after comparison
+    /// covers all of them at once.
+    fn public_view(store: &IndexerStore) -> (usize, usize, usize, bool, bool, bool, usize, usize) {
+        let (blocks, block_total) = store.list_explorer_blocks(0, 50).unwrap();
+        let (txs, tx_total) = store.list_explorer_transactions(None, 0, 50).unwrap();
+        let (_, account_total) =
+            store.list_explorer_transactions(Some("-1:pending"), 0, 50).unwrap();
+        let by_block_hash = store.explorer_block_by_hash("root-8").unwrap().is_some();
+        let by_tx_hash = store.explorer_transaction("tx-pending").unwrap().is_some();
+        let master = store.masterchain_block(8).unwrap().is_some();
+        let (_, per_block_total) =
+            store.list_explorer_block_transactions(-1, i64::MIN, 8, 0, 50).unwrap();
+        let stats = store.explorer_stats().unwrap();
+        assert_eq!(blocks.len(), block_total);
+        assert_eq!(txs.len(), tx_total);
+        assert_eq!(stats.blocks, block_total);
+        assert_eq!(stats.transactions, tx_total);
+        (
+            block_total,
+            tx_total,
+            account_total,
+            by_block_hash,
+            by_tx_hash,
+            master,
+            per_block_total,
+            stats.latest_indexed_at.map_or(0, |value| value as usize),
+        )
+    }
+
+    #[test]
+    fn pending_rows_are_invisible_on_every_public_path_until_published() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store
+            .index_explorer_block(
+                &explorer_block(7),
+                &[explorer_transaction("tx-published", "-1:published", 1, 7)],
+            )
+            .unwrap();
+        store.publish_through_for_tests(7).unwrap();
+        // Height 8 is written but its masterchain batch is still assembling.
+        store
+            .index_explorer_block(
+                &explorer_block(8),
+                &[explorer_transaction("tx-pending", "-1:pending", 2, 8)],
+            )
+            .unwrap();
+
+        assert_eq!(public_view(&store), (1, 1, 0, false, false, false, 0, 1_007));
+        assert!(store.explorer_transaction("tx-published").unwrap().is_some());
+        assert!(store.explorer_block_root(-1, i64::MIN, 8).unwrap().is_some(), "row is durable");
+
+        store.publish_through_for_tests(8).unwrap();
+        assert_eq!(public_view(&store), (2, 2, 1, true, true, true, 1, 1_008));
+    }
+
+    #[test]
+    fn nothing_is_public_before_the_first_publication() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store
+            .index_explorer_block(&explorer_block(1), &[explorer_transaction("tx-1", "-1:a", 1, 1)])
+            .unwrap();
+        assert_eq!(store.explorer_stats().unwrap().blocks, 0);
+        assert_eq!(store.explorer_stats().unwrap().transactions, 0);
+        assert!(store.explorer_transaction("tx-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn publishing_moves_the_watermark_and_full_hash_checkpoints_together() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let anchor = |seqno: u32| MasterchainCheckpoint {
+            seqno,
+            root_hash: format!("{seqno:064x}"),
+            file_hash: format!("{:064x}", seqno + 100),
+        };
+        let head = BlockFullId {
+            workchain: 0,
+            shard: i64::MIN,
+            seqno: 3,
+            root_hash: "aa".repeat(32),
+            file_hash: "bb".repeat(32),
+        };
+        assert!(
+            store.publish_masterchain_height(i64::MIN, &anchor(2), &[]).is_err(),
+            "a height cannot be published before its predecessor"
+        );
+        store.publish_masterchain_height(i64::MIN, &anchor(1), &[head.clone()]).unwrap();
+        assert_eq!(store.canonical_state().unwrap(), Some(anchor(1)));
+        assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 1);
+        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 3);
+        let conn = store.conn.lock().unwrap();
+        let file: String = conn
+            .query_row(
+                "SELECT value FROM indexer_meta WHERE key = 'filehash:-1:-9223372036854775808'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(file, anchor(1).file_hash);
+    }
+
     #[test]
     fn explorer_rewind_removes_only_the_reorganized_suffix() {
         let store = IndexerStore::open_in_memory().unwrap();
@@ -2118,6 +2432,7 @@ mod tests {
                 .unwrap();
         }
         store.rewind_explorer(-1, i64::MIN, 2).unwrap();
+        store.publish_through_for_tests(3).unwrap();
 
         assert!(store.explorer_block_by_hash("root-1").unwrap().is_some());
         assert!(store.explorer_transaction("tx-1").unwrap().is_some());

@@ -578,6 +578,7 @@ async fn explorer_search_resolves_a_durably_indexed_transaction() {
             }],
         )
         .unwrap();
+    st.indexer_store.publish_through_for_tests(7).unwrap();
 
     let resp = app(st.clone()).oneshot(get("/explorer/search?q=tx-seven")).await.unwrap();
     assert_eq!(resp.status(), 200);
@@ -628,6 +629,7 @@ async fn explorer_block_lookup_accepts_the_nodes_base64_hash_format() {
             &[],
         )
         .unwrap();
+    st.indexer_store.publish_through_for_tests(8).unwrap();
     let base64_hash = base64::engine::general_purpose::STANDARD.encode([0x11; 32]);
     let uri = format!("/explorer/block?hash={base64_hash}");
     let response = app(st).oneshot(get(&uri)).await.unwrap();
