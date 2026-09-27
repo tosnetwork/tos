@@ -179,22 +179,6 @@ struct Slot {
 
 enum class Outcome { Answer, Timeout, Cancelled, OtherError, Pending };
 
-const char* outcome_name(Outcome outcome) {
-  switch (outcome) {
-    case Outcome::Answer:
-      return "answer";
-    case Outcome::Timeout:
-      return "timeout";
-    case Outcome::Cancelled:
-      return "cancelled";
-    case Outcome::OtherError:
-      return "other_error";
-    case Outcome::Pending:
-      return "pending";
-  }
-  return "unknown";
-}
-
 Outcome outcome_of(Slot& slot) {
   if (slot.completions.load(std::memory_order_acquire) == 0) {
     return Outcome::Pending;
@@ -430,10 +414,6 @@ void require_answered(Slot& slot, const std::string& where) {
                                    (slot.result.is_error() ? slot.result.error().message().str() : std::string{}));
   require(slot.result.ok().as_slice().str() == expected_answer(slot.request),
           where + ": answer bytes do not match the request");
-}
-
-std::string request_tag(const std::string& name, size_t index) {
-  return name + "#" + std::to_string(index) + "#" + std::to_string(td::Random::fast_uint64());
 }
 
 // Fixed before invocation in the resource manifest; unique within each run.

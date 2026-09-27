@@ -478,6 +478,13 @@ impl Deserializable for ValidatorDescr {
                 key = ValidatorKey::Pq(PqConsensusKey { algorithm_id, key_id, public_key });
                 weight = Deserializable::construct_from(slice)?;
                 adnl_addr = Some(Deserializable::construct_from(slice)?);
+                // The C++ decoder refuses anything after the address; accepting it here
+                // would let the two implementations disagree on the same consensus state.
+                if slice.remaining_bits() != 0 || slice.remaining_references() != 0 {
+                    fail!(BlockError::InvalidData(
+                        "post-quantum validator descriptor has trailing data".to_string()
+                    ))
+                }
             }
             tag => fail!(Self::invalid_tag(tag as u32)),
         }
