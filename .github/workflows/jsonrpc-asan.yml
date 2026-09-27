@@ -141,7 +141,8 @@ jobs:
       run: |
         export FUNC_BIN="$PWD/build-asan/crypto/func"
         export FIFT_BIN="$PWD/build-asan/crypto/fift"
-        ninja -C build-asan validator-engine create-state generate-random-id toslibjson
+        ninja -C build-asan validator-engine dht-server create-state generate-random-id toslibjson \
+          tos-pq-consensus-key
 
     - name: Prepare the harness environment
       # The harness needs the tostester dependencies; a bare system
