@@ -53,27 +53,46 @@ def main(root: Path) -> None:
         root,
         "adnl/adnl-ext-server.cpp",
         "AdnlInboundConnection::process_packet(",
-        "void AdnlInboundConnection::log_dropped_query(",
+        "bool AdnlInboundConnection::send_failure_answer(",
     )
     require(
         "server ingress and admission",
         server,
         "ADNL_EXT_QUERY server_ingress id=",
-        "admission=drop reason=per-connection-limit",
-        "admission=drop reason=server-or-per-ip-limit",
         "admission=accepted",
         "peer=",
+    )
+    # Both admission refusals (per connection, then server or per IP) must reach the
+    # single terminal path, which traces them; a bare return would drop the id.
+    if server.count("reject_or_close(f->query_id_,") != 2:
+        fail("server admission refusals no longer both reach reject_or_close")
+    refusal = segment(
+        root,
+        "adnl/adnl-ext-server.cpp",
+        "void AdnlInboundConnection::note_failure(",
+        "void AdnlInboundConnection::tear_down(",
+    )
+    require(
+        "server refusal",
+        refusal,
+        "ADNL_EXT_QUERY server_reject id=",
+        "query_id.to_hex()",
+        "reason=",
+        "response_sent=",
+        "connection_closed=",
     )
     completion = segment(root, "adnl/adnl-ext-server.cpp", "AdnlInboundConnection::query_finished(", "process_init_packet(")
     require(
         "server completion",
         completion,
         "ADNL_EXT_QUERY server_completion id=",
-        "outcome=error response_sent=false",
+        "outcome=error",
+        "ExtQueryFailureKind::HandlerError",
         "outcome=success response_ready=true",
         "bool enqueued = send(",
         "ADNL_EXT_QUERY server_answer_enqueue id=",
         "enqueued=",
+        "ExtQueryFailureKind::ResponseTooLarge",
     )
     if completion.index("ADNL_EXT_QUERY server_answer_enqueue id=") < completion.index("bool enqueued = send("):
         fail("answer enqueue trace precedes the send queue result")
@@ -88,7 +107,7 @@ def main(root: Path) -> None:
         "elapsed_ms=",
         "id_.to_hex()",
     )
-    print("ADNL_QUERY_ID_TRACE_OK: client create/refuse/transmit, server ingress/completion/answer enqueue, and client answer/timeout retain id-tagged debug events")
+    print("ADNL_QUERY_ID_TRACE_OK: client create/refuse/transmit, server ingress/refusal/completion/answer enqueue, and client answer/timeout retain id-tagged debug events")
 
 
 if __name__ == "__main__":

@@ -39,6 +39,13 @@ def classify(lines: list[str]) -> str:
         if "reason=no-live-connection pending_queries=0" not in stages["client_refuse"]:
             return "invalid_refusal_without_empty_query_map"
         return "client_no_connection_fail_fast"
+    if "server_reject" in stages:
+        answered = "response_sent=true" in stages["server_reject"]
+        if "client_timeout" in stages:
+            # The server ended the query itself; a timeout means its answer or its
+            # connection close never reached the client.
+            return "server_refusal_lost_before_client"
+        return "server_refused_with_answer" if answered else "server_refused_and_closed"
     if "client_timeout" not in stages:
         if "client_answer" in stages or "client_complete" in stages:
             return "unproven_answer_without_raw_attribution"
@@ -100,6 +107,25 @@ def self_test() -> None:
             "server_completion outcome=error response_sent=false",
             "client_timeout",
         ),
+        "server_refused_with_answer": lines(
+            "client_create",
+            "client_transmit",
+            "server_reject reason=per_connection_rate response_sent=true connection_closed=false",
+            "client_answer",
+            "client_complete outcome=answer",
+        ),
+        "server_refused_and_closed": lines(
+            "client_create",
+            "client_transmit",
+            "server_reject reason=handler_error response_sent=false connection_closed=true",
+            "client_complete outcome=error",
+        ),
+        "server_refusal_lost_before_client": lines(
+            "client_create",
+            "client_transmit",
+            "server_reject reason=per_ip response_sent=true connection_closed=false",
+            "client_timeout",
+        ),
         "unproven_answer_without_raw_attribution": lines(
             "client_create",
             "client_transmit",
@@ -115,7 +141,7 @@ def self_test() -> None:
         if actual != expected:
             raise RuntimeError(f"ADNL_QUERY_ID_ANALYSIS_FAILURE: expected {expected}, got {actual}")
     print(
-        "ADNL_QUERY_ID_ANALYSIS_OK: text-only answer remains unproven without raw attribution"
+        "ADNL_QUERY_ID_ANALYSIS_OK: server refusals are classified; text-only answer remains unproven without raw attribution"
     )
 
 
