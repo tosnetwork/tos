@@ -136,7 +136,8 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build --target \
-            validator-engine dht-server create-state generate-random-id toslibjson -j2
+            validator-engine dht-server create-state generate-random-id toslibjson \
+            tos-pq-consensus-key -j2
           ccache --show-stats
       - name: Build tosctl explorer
         run: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl --locked
