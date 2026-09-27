@@ -3,7 +3,7 @@
   "profile": {
     "source_commit": "unknown",
     "source_blob": "unknown",
-    "path": "doc/shielded-pool-v1-profile.md",
+    "path": "artifacts/shielded-pool/PROFILE.md",
     "bytes": 72665,
     "file_sha256": "c17ca510f3d7d6ad7889181e365044c7ee0032a1a24c74db639ee4b5ffee62db",
     "profile_hash": "ce1895de6787ea659baf5b03ceaf380d0e6703776c1048cd33d117da983d0ae0"

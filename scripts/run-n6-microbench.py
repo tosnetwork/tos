@@ -37,7 +37,7 @@ if (
     or subprocess.run(["git", "-C", repo, "diff", "--cached", "--quiet"]).returncode != 0
 ):
     fail("diagnostic result must still identify a clean source commit")
-criteria = repo / "doc/pq-native/N6-ACCEPTANCE-CRITERIA.json"
+criteria = repo / "test/pq-native/fixtures/N6-ACCEPTANCE-CRITERIA.json"
 criteria_sha256 = hashlib.sha256(criteria.read_bytes()).hexdigest()
 
 allowed = sorted(os.sched_getaffinity(0))

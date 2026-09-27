@@ -26,7 +26,7 @@
 // What this is NOT: a signature verifier, a post-quantum implementation, or
 // evidence that any of TIP-0002 is implemented. `ed_valid`/`pq_valid` in the
 // corpus are supplied outcomes, not signatures. None of the phases beyond the
-// classical one is enabled in production; see doc/tip-0002-p0-readiness.md.
+// classical one is enabled in production; see the policy tests.
 //
 // The quorum, weight-cap and zero-weight decisions below are delegated to
 // tos/quorum.h rather than restated, so that changing the real predicate

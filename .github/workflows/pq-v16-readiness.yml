@@ -11,7 +11,8 @@ on:
       - 'tools/pq/**'
       - 'common/global-version.h'
       - 'CMakeLists.txt'
-      - 'doc/pq-v16-readiness.md'
+      - 'doc/ConfigParam.md'
+      - 'doc/GlobalVersions.md'
       # The readiness suite imports these harnesses, compiles and deploys these
       # contracts, links this backend and loads this library. A change to any of
       # them changes what the jobs below execute.

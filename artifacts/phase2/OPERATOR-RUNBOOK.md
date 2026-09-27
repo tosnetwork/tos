@@ -1,6 +1,6 @@
 # Running the phase-2 ceremony for real
 
-`doc/shielded-pool-ceremony.md` says what the machinery does and how to invoke
+`artifacts/shielded-pool/CEREMONY.md` says what the machinery does and how to invoke
 it. This says what turns invoking it into a ceremony.
 
 The difference is not technical. The same four commands, run the same way,

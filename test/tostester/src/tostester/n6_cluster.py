@@ -1664,7 +1664,7 @@ async def run_cluster(
     commit = subprocess.check_output(
         ["git", "-C", install.source_dir, "rev-parse", "HEAD"], text=True
     ).strip()
-    criteria = install.source_dir / "doc/pq-native/N6-ACCEPTANCE-CRITERIA.json"
+    criteria = install.source_dir / "test/pq-native/fixtures/N6-ACCEPTANCE-CRITERIA.json"
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "evidence_class": EVIDENCE_CLASS,
@@ -1870,7 +1870,7 @@ async def run_scale_sweep(
             "N6_SCALE_SWEEP_FAILURE: this local host is restricted to the 4-validator minimum-BFT tier"
         )
     criteria = json.loads(
-        (install.source_dir / "doc/pq-native/N6-ACCEPTANCE-CRITERIA.json").read_text(
+        (install.source_dir / "test/pq-native/fixtures/N6-ACCEPTANCE-CRITERIA.json").read_text(
             encoding="utf-8"
         )
     )

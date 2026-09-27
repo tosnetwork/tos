@@ -20,9 +20,9 @@ STALE_X01_COMMIT = "a1d3ea8a1574345a4412672bfd43fecde64418df"
 class FirstBatchTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.snapshot_bytes = (ROOT / "doc/pq-native/a03-task-snapshot.json").read_bytes()
+        cls.snapshot_bytes = (ROOT / "test/pq-native/fixtures/a03-task-snapshot.json").read_bytes()
         cls.snapshot = json.loads(cls.snapshot_bytes)
-        cls.original = json.loads((ROOT / "doc/pq-native/a03-first-batch.json").read_bytes())
+        cls.original = json.loads((ROOT / "test/pq-native/fixtures/a03-first-batch.json").read_bytes())
 
     def check(self, batch):
         return first_batch.validate(batch, self.snapshot, self.snapshot_bytes, ROOT, MEMO)

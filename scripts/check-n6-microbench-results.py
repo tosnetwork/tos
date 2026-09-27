@@ -16,7 +16,7 @@ def fail(message: str) -> None:
 
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
-result_path = root / "doc/pq-native/N6-MICROBENCH-RESULTS.json"
+result_path = root / "test/pq-native/fixtures/N6-MICROBENCH-RESULTS.json"
 if not result_path.is_file():
     fail("results file is missing")
 result = json.loads(result_path.read_text(encoding="utf-8"))

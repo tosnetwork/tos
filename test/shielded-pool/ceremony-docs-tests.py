@@ -26,6 +26,7 @@ cheap to know.
 """
 
 import importlib.util
+import hashlib
 import re
 import subprocess
 import sys
@@ -36,10 +37,16 @@ DOCS = [
     "artifacts/phase2/README.md",
     "artifacts/phase2/PARTICIPANT-GUIDE.md",
     "artifacts/phase2/ANNOUNCEMENT.md",
-    "doc/shielded-pool-phase2-runbook.md",
+    "artifacts/phase2/OPERATOR-RUNBOOK.md",
 ]
 
 LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+# The published announcement is an immutable release asset. Its runbook link
+# names the original repository location; moving the runbook must not change
+# the announced bytes or the digest in the publication receipt.
+PUBLISHED_ANNOUNCEMENT_SHA256 = "43c8130141e1eca296fc5e1dafe9cf2b3ac577c3c42f45052fd7cf8f7433cbb1"
+HISTORICAL_RUNBOOK_LINK = "../../doc/shielded-pool-phase2-runbook.md"
 
 # Paths the documents name that do not exist yet because the ceremony has not
 # opened. Listed rather than pattern-matched away, so the set stays small and
@@ -55,8 +62,16 @@ def links_resolve() -> list[str]:
     problems = []
     for name in DOCS:
         path = ROOT / name
+        if name == "artifacts/phase2/ANNOUNCEMENT.md":
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual != PUBLISHED_ANNOUNCEMENT_SHA256:
+                problems.append(f"{name}: published announcement digest changed")
         for text, target in LINK.findall(path.read_text()):
             if target.startswith(("http://", "https://", "#", "mailto:")):
+                continue
+            if name == "artifacts/phase2/ANNOUNCEMENT.md" and target == HISTORICAL_RUNBOOK_LINK:
+                if not (ROOT / "artifacts/phase2/OPERATOR-RUNBOOK.md").is_file():
+                    problems.append("current operator runbook is missing")
                 continue
             target = target.split("#")[0]
             if not target:

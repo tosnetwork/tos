@@ -71,7 +71,7 @@ register paths for signature checks while open. The final check omits
 the operator. The declaration itself needs human review.
 
 See [PARTICIPANT-GUIDE.md](PARTICIPANT-GUIDE.md) and the
-[operator runbook](../../doc/shielded-pool-phase2-runbook.md).
+[operator runbook](OPERATOR-RUNBOOK.md).
 
 ## Publication record
 

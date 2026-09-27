@@ -695,7 +695,7 @@ Five tests establish that the gate judges rather than nods:
 ## Running a ceremony
 
 > The commands are below. **What turns running them into a ceremony is in
-> `doc/shielded-pool-phase2-runbook.md`** -- what has to be published before
+> `artifacts/phase2/OPERATOR-RUNBOOK.md`** -- what has to be published before
 > the first contribution, who counts as an independent participant, and who
 > checks afterwards. None of it is in the code and none of it can be.
 
@@ -893,7 +893,7 @@ ceilings stopped being sampled maxima and became derived bounds: the profile's
 bytes are the `profile_hash`, the hash is in the config store, the store is in
 the state, and the state is half the address. That is the intended coupling and
 not a surprise. **The current value is in
-`doc/shielded-pool/genesis-manifest.json`**, which the generator writes; a hash
+`artifacts/shielded-pool/genesis-manifest.json`**, which the generator writes; a hash
 quoted in prose is a copy, and a copy of a hash is exactly the thing that goes
 stale without anything failing. This page named one for two generations after
 it stopped being true.

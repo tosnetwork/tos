@@ -29,7 +29,7 @@ class LedgerTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.evidence_root = Path(self.temp.name)
-        self.snapshot = json.loads((ROOT / "doc/pq-native/a03-task-snapshot.json").read_text())
+        self.snapshot = json.loads((ROOT / "test/pq-native/fixtures/a03-task-snapshot.json").read_text())
         self.snapshot["tasks"] = [dict(t, status="✅") for t in self.snapshot["tasks"]]
         self.table_bytes = synthetic_table(self.snapshot)
         self.snapshot["task_table_sha256"] = hashlib.sha256(self.table_bytes).hexdigest()
@@ -299,9 +299,9 @@ class RealSnapshotTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.snapshot_bytes = (ROOT / "doc/pq-native/a03-task-snapshot.json").read_bytes()
+        cls.snapshot_bytes = (ROOT / "test/pq-native/fixtures/a03-task-snapshot.json").read_bytes()
         cls.snapshot = json.loads(cls.snapshot_bytes)
-        cls.ledger = json.loads((ROOT / "doc/pq-native/a03-development-ledger.json").read_bytes())
+        cls.ledger = json.loads((ROOT / "test/pq-native/fixtures/a03-development-ledger.json").read_bytes())
         cls.table = subprocess.check_output(
             ["git", "show", f"{cls.snapshot['memo_commit']}:{cls.snapshot['task_table_path']}"], cwd=MEMO)
 

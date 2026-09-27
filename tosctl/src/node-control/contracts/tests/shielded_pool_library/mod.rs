@@ -17,7 +17,7 @@ use std::path::PathBuf;
 pub fn configured_withdrawal_fee() -> i128 {
     let path = PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../../../doc/shielded-pool/genesis-manifest.json"
+        "/../../../../artifacts/shielded-pool/genesis-manifest.json"
     ));
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("{}: {error}", path.display()));

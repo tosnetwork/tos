@@ -21,7 +21,7 @@ if spec is None or spec.loader is None:
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
-criteria_path = repo_root / "doc" / "pq-native" / "N6-ACCEPTANCE-CRITERIA.json"
+criteria_path = repo_root / "test" / "pq-native" / "fixtures" / "N6-ACCEPTANCE-CRITERIA.json"
 criteria = module.load_acceptance_criteria(criteria_path, release=False)
 
 try:

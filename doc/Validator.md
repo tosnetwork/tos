@@ -489,5 +489,4 @@ be added on top — there is no built-in equivalent today.
 ## Related Docs
 
 - [FullNode.md](FullNode.md)
-- [Validator-Local.md](Validator-Local.md) — local 3-node testnet
 - [ConfigParam.md](ConfigParam.md)

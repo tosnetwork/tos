@@ -171,4 +171,4 @@ keys or contributions; publish additions with their history.
 
 The published announcement and publication receipt identify the opening.
 The beacon and final verification results appear only after closing.
-Operator procedure: [runbook](../../doc/shielded-pool-phase2-runbook.md).
+Operator procedure: [runbook](OPERATOR-RUNBOOK.md).

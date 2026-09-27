@@ -61,7 +61,7 @@ fn encoding<E: std::fmt::Display>(error: E) -> Error {
 /// What a deployment chooses. Everything else in the state is derived.
 #[derive(Clone, Debug)]
 pub struct Parameters {
-    /// The exact bytes of `doc/shielded-pool-v1-profile.md`, LF-normalised.
+    /// The exact bytes of `artifacts/shielded-pool/PROFILE.md`, LF-normalised.
     pub profile_bytes: Vec<u8>,
     /// The exact bytes of `crypto/poseidon2/manifest.bin`.
     pub poseidon_manifest_bytes: Vec<u8>,
@@ -497,7 +497,7 @@ pub fn development_parameters(root: &std::path::Path) -> Result<Parameters> {
             .map_err(|error| Error::Parameter(format!("{}: {error}", path.display())))
     };
 
-    let profile_bytes = normalise(&read(root.join("doc/shielded-pool-v1-profile.md"))?);
+    let profile_bytes = normalise(&read(root.join("artifacts/shielded-pool/PROFILE.md"))?);
     let poseidon_manifest_bytes = read(root.join("crypto/poseidon2/manifest.bin"))?;
 
     // The development verifying key. Section 19 gate 5 requires a production

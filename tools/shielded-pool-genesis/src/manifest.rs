@@ -48,7 +48,7 @@ pub fn render(genesis: &Genesis, provenance: &Provenance, code: Option<&Cell>) -
     out.push_str("  \"profile\": {\n");
     out.push_str(&format!("    \"source_commit\": \"{}\",\n", provenance.source_commit));
     out.push_str(&format!("    \"source_blob\": \"{}\",\n", provenance.source_blob));
-    out.push_str("    \"path\": \"doc/shielded-pool-v1-profile.md\",\n");
+    out.push_str("    \"path\": \"artifacts/shielded-pool/PROFILE.md\",\n");
     out.push_str(&format!("    \"bytes\": {},\n", parameters.profile_bytes.len()));
     out.push_str(&format!(
         "    \"file_sha256\": \"{}\",\n",

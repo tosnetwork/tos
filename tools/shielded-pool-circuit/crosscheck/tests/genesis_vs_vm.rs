@@ -51,7 +51,7 @@ fn normalise(bytes: &[u8]) -> Vec<u8> {
 fn parameters() -> Parameters {
     let root = root();
     let profile =
-        std::fs::read(root.join("doc/shielded-pool-v1-profile.md")).expect("the profile copy");
+        std::fs::read(root.join("artifacts/shielded-pool/PROFILE.md")).expect("the profile copy");
     let fixture = std::fs::read_to_string(
         root.join("tools/shielded-pool-circuit/fixtures/groth16-development.json"),
     )
@@ -74,7 +74,7 @@ fn parameters() -> Parameters {
 }
 
 fn frozen() -> serde_json::Value {
-    let text = std::fs::read_to_string(root().join("doc/shielded-pool/genesis-manifest.json"))
+    let text = std::fs::read_to_string(root().join("artifacts/shielded-pool/genesis-manifest.json"))
         .expect("the frozen manifest");
     serde_json::from_str(&text).expect("the manifest is JSON")
 }

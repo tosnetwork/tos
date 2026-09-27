@@ -394,8 +394,8 @@ with tempfile.TemporaryDirectory(prefix="measurement-manifest-") as raw:
         # This branch has a live correctness question.  Check it before every
         # other release precondition so neither a missing N5 artifact nor a dirty
         # developer tree can make this refusal pass for the wrong reason.
-        live_questions = repo_root / "doc/pq-native/N6-OPEN-CORRECTNESS-QUESTIONS.json"
-        live_gaps = repo_root / "doc/pq-native/N6-OPEN-MEASUREMENT-GAPS.json"
+        live_questions = repo_root / "test/pq-native/fixtures/N6-OPEN-CORRECTNESS-QUESTIONS.json"
+        live_gaps = repo_root / "test/pq-native/fixtures/N6-OPEN-MEASUREMENT-GAPS.json"
         try:
             module.create_manifest(
                 repo=repo_root,

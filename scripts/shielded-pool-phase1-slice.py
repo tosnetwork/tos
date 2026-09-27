@@ -107,7 +107,7 @@ def main() -> int:
     parser.add_argument("--transcript", default="zcash",
                         help="which phase-1 ceremony to inherit: zcash (default) or filecoin. "
                              "A custody decision, not a technical one -- see "
-                             "doc/shielded-pool-ceremony.md")
+                             "artifacts/shielded-pool/CEREMONY.md")
     parser.add_argument("--exponent", type=int, default=15,
                         help="the QAP domain exponent to slice at. The circuit decides this; "
                              "pass it only for a circuit that has changed.")

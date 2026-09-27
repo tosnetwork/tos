@@ -192,4 +192,3 @@ recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 - [`Zerostate.md`](Zerostate.md)
 - [`ConfigParam.md`](ConfigParam.md)
 - [`Validator.md`](Validator.md)
-- [`Validator-Local.md`](Validator-Local.md)

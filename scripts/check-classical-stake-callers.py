@@ -192,7 +192,7 @@ def main() -> int:
         fail(
             f"literal Fift caller inventory changed: missing={missing} unexpected={unexpected} wrong={wrong}"
         )
-    document = (root / "doc/pq-native/T2-PQ-LAUNCH-GATE-MIGRATION.md").read_text()
+    document = (root / "test/pq-native/fixtures/T2-PQ-LAUNCH-GATE-MIGRATION.md").read_text()
     undocumented = sorted(path for path in EXPECTED if f"`{path}`" not in document)
     if undocumented:
         fail(f"retained literal Fift callers absent from migration map: {undocumented}")

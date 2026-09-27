@@ -21,8 +21,8 @@ def collapsed(path: Path) -> str:
 
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
-proposal_path = root / "doc/pq-native/N6-ACCEPTANCE-CRITERIA-PROPOSAL.json"
-criteria_path = root / "doc/pq-native/N6-ACCEPTANCE-CRITERIA.json"
+proposal_path = root / "test/pq-native/fixtures/N6-ACCEPTANCE-CRITERIA-PROPOSAL.json"
+criteria_path = root / "test/pq-native/fixtures/N6-ACCEPTANCE-CRITERIA.json"
 proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
 criteria = json.loads(criteria_path.read_text(encoding="utf-8"))
 

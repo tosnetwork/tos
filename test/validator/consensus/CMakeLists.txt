@@ -393,7 +393,6 @@ add_test(
 if(Python3_Interpreter_FOUND)
     # The exact-ancestor resolver under a controlled certificate order. The pre-fix
     # resolver fails the `green` expectation with the N/N-1 Merkle abort; see
-    # doc/pq-native/N6-MERKLE-REPRO-20260923.md for the recorded old-RED runs.
     set(MERKLE_PROSPECTIVE_NOTAR_CHECK ${CMAKE_CURRENT_SOURCE_DIR}/check-merkle-prospective-notar.py)
     add_test(NAME test-consensus-simplex2-merkle-prospective-notar-exact-ancestor
              COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}

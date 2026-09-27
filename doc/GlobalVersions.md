@@ -2,6 +2,10 @@
 
 Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](../crypto/block/block.tlb).
 
+This source tree advertises `SUPPORTED_VERSION = 18` in
+[`global-version.h`](../common/global-version.h). That is a binary capability;
+the active version of a network is its on-chain ConfigParam 8.
+
 It enables protocol capability bits and gates behavior across validators, contracts, and VM execution.
 
 AI actor protocol primitives that affect consensus-visible behavior, such as scheduled task timeouts, delivery failure records, supervision, or new execution semantics, must be gated through the same global-version and capability process.
@@ -345,7 +349,7 @@ Not yet activated on any TOS network, same as version 14 above.
 
 ## Version 16
 
-Not yet activated on any TOS network.
+Activation on a particular network must be checked against its ConfigParam 8.
 
 ### New TVM instructions
 - `PQCHECKSIG_MLDSA44` (`message context signature public_key - valid`) - FIPS 204
@@ -368,7 +372,7 @@ the transaction engine is `>= 15` or lower and is satisfied at both versions.
 
 ## Version 17
 
-Not yet activated on any TOS network.
+Activation on a particular network must be checked against its ConfigParam 8.
 
 ### New TVM instructions
 - `POSEIDON2_PERM8` (`a0 a1 a2 a3 a4 a5 a6 a7 - b0 b1 b2 b3 b4 b5 b6 b7`) - the
@@ -401,7 +405,7 @@ None. Version 17 adds instructions and changes nothing in the transaction engine
 
 ## Version 18
 
-Not yet activated on any TOS network.
+Activation on a particular network must be checked against its ConfigParam 8.
 
 ### New TVM instructions
 - `POSEIDON2_PATH7` (`leaf domain path index depth - root`) - folds a Merkle
@@ -480,7 +484,7 @@ cannot prevent this in either direction: a node whose configuration is ahead of 
 and raising it activates nothing. The safe sequence:
 
 1. Ship a node binary whose `SUPPORTED_VERSION` covers the target -- the ceiling this binary is
-   capable of executing, currently 16 -- while `ConfigParam 8` on every live network stays at
+   capable of executing, currently 18 -- while `ConfigParam 8` on every live network stays at
    its current active version.
 2. Get every validator upgraded to such a binary before touching `ConfigParam 8`. This is the
    step that actually protects the network, because nothing downstream will refuse on its own.
@@ -492,4 +496,5 @@ and raising it activates nothing. The safe sequence:
 For the 15 -> 16 transition specifically, `tools/pq/activation.py` validates a proposal against
 this sequence -- evidence bound to one release, explicit owner approvals, and a roster in which
 every validator acknowledges the binary it runs -- and emits an unsigned `ConfigParam 8` payload.
-A validated proposal is not an activation. See [pq-v16-readiness.md](pq-v16-readiness.md).
+A validated proposal is not an activation. The proposal checker and its tests
+are under [`tools/pq/`](../tools/pq/) and [`test/pq-readiness/`](../test/pq-readiness/).

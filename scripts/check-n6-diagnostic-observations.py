@@ -29,7 +29,7 @@ def fail(message: str) -> None:
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    path = root / "doc/pq-native/N6-OPEN-DIAGNOSTIC-OBSERVATIONS.json"
+    path = root / "test/pq-native/fixtures/N6-OPEN-DIAGNOSTIC-OBSERVATIONS.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("schema_version") != 1:
         fail("schema_version must be 1")

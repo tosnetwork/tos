@@ -1,7 +1,6 @@
 # Configuration Parameters
 
-This document tracks the configuration parameters used by the current native TOS build for actor-based applications.
-AI actor features that need consensus-level activation, such as task deadline semantics, delivery failure records, or future service-actor pricing rules, should be introduced through explicit configuration and versioning rather than hidden local defaults.
+This document describes the configuration parameters understood by the current TOS source tree. The active value on a particular network must be read from that network's masterchain; a compiled limit or a local genesis template is not evidence that a parameter has been activated there.
 
 The canonical TL-B schema is in [block.tlb](../crypto/block/block.tlb). Initial values are set during [zero state generation](Zerostate.md).
 
@@ -44,8 +43,8 @@ way, and conflating them has already produced a wrong claim in this documentatio
 set. A capability the configuration enables but the binary does not implement is
 reported and the block is still produced. The same is true of `version`: the
 `get_global_version() > supported_version()` checks in
-[collator.cpp](../validator/impl/collator.cpp) (line 921) and
-[validate-query.cpp](../validator/impl/validate-query.cpp) (line 998) emit
+[collator.cpp](../validator/impl/collator.cpp) and
+[validate-query.cpp](../validator/impl/validate-query.cpp) emit
 
 ```
 block version N have been enabled in global configuration,
@@ -54,8 +53,7 @@ but we support only M (upgrade validator software?)
 
 and then **fall through**. Neither refuses. A local chain built when
 `SUPPORTED_VERSION` was still 15 was configured at `version = 16` and produced
-blocks that executed version-16 instructions; `doc/macos-local-node.md` records
-that run.
+blocks that executed version-16 instructions.
 
 So `tos::SUPPORTED_VERSION` in [global-version.h](../common/global-version.h) is an
 advertisement of what a binary implements, not a gate. Setting it low does not
@@ -68,26 +66,34 @@ that field.
 
 The only parameter that decides what a network executes is `version` here.
 
-### version 16
+### Versions 16–18 in this build
 
-Version 16 differs from 15 in exactly two places in this tree. Both are gated on
-the value configured here, not on any compiled constant.
+The compiled [SUPPORTED_VERSION](../common/global-version.h) is now **18**. It
+does not activate that version on a network. The configured value gates these
+instructions:
 
-1. The TVM instruction `PQCHECKSIG_MLDSA44` (`F93100`) exists. This is the only
-   `require_version(16)` in the repository — `vm::pq_mldsa44_min_version` in
-   [pqops.h](../crypto/vm/pqops.h). See [tvm-mldsa44.md](tvm-mldsa44.md) for the
-   instruction and [pq-v16-readiness.md](pq-v16-readiness.md) for what must be
-   established before proposing the transition.
+| Minimum version | Instruction | Reference |
+|---|---|---|
+| 16 | `PQCHECKSIG_MLDSA44` | [tvm-mldsa44.md](tvm-mldsa44.md) |
+| 17 | `POSEIDON2_PERM8`, `POSEIDON2_HASH7` | [GlobalVersions.md](GlobalVersions.md) |
+| 18 | `POSEIDON2_PATH7` | [GlobalVersions.md](GlobalVersions.md) |
+
+Version 16 also changes one transaction rule. Both version-16 changes are
+gated on the configured value, not on the compiled constant.
+
+1. The TVM instruction `PQCHECKSIG_MLDSA44` (`F93100`) exists. Its gate is
+   `vm::pq_mldsa44_min_version` in [pqops.h](../crypto/vm/pqops.h).
 2. Unfreezing is validated less strictly. In
-   [transaction.cpp](../crypto/block/transaction.cpp) (line 2352), an incoming
+   [transaction.cpp](../crypto/block/transaction.cpp), an incoming
    `StateInit` that revives a **frozen** account skips the
    `check_addr_rewrite_length` test at version 16, where version 15 applies it to
    every account status. An uninitialized account is unaffected. This arrived
    with the pre-launch audit changes and is unrelated to the instruction above;
    it is recorded here because activating version 16 activates it too.
 
-Nothing else branches on 15 versus 16: every other threshold in the transaction
-engine is `>= 15` or lower, and those are satisfied at both.
+The transaction change is independent of the version-17 and version-18
+instructions. See [GlobalVersions.md](GlobalVersions.md) for their full
+semantics and activation requirements.
 
 Because the checks above do not refuse, a mixed fleet will not fail loudly: nodes
 that do not implement the configured version log an error and keep validating,
@@ -121,6 +127,32 @@ It sets the per-block creation fee credited for producing a masterchain or basec
 block. When the parameter is absent both fees are treated as zero. These are the
 block-production fees only; they do not define the native TOS supply and are separate
 from any future service-actor pricing rules.
+
+## Shielded pool parameters
+
+The V1 shielded pool does **not** introduce a masterchain ConfigParam index.
+Its `profile_hash`, Poseidon2 manifest hash, Groth16 verifying-key hash,
+withdrawal fee and denominations are encoded in the pool contract's deployment
+state by [shielded-pool-genesis](../tools/shielded-pool-genesis/src/lib.rs).
+The reserve floor is part of that initial state. A change to these inputs
+changes the generated state or deployment identity; it is not a ConfigParam
+vote. The VM instructions used by the pool are gated separately by
+**ConfigParam 8**, at versions 17 and 18 as described above.
+
+The current **development fixture** records these amounts in the smallest
+native units (tomis):
+
+| Pool input | Value |
+|---|---:|
+| Reserve floor | 50,000,000,000 |
+| Withdrawal fee | 20,000,000 |
+| Note denominations | 1,000,000,000; 10,000,000,000; 100,000,000,000; 1,000,000,000,000 |
+
+The byte-frozen [V1 profile](../artifacts/shielded-pool/PROFILE.md) defines the
+wire format and rules. The [generated manifest](../artifacts/shielded-pool/genesis-manifest.json)
+pins these inputs and the resulting state hash. Its verifying key is a
+development fixture; neither the manifest nor compiled version 18 establishes
+network activation or production deployment.
 
 ## Validator and Network Parameters
 
@@ -159,6 +191,23 @@ The remaining masterchain parameters follow the native TOS schema in [block.tlb]
 | 39 | `(HashmapE 256 ValidatorSignedTempKey)` | validator temporary signing keys |
 | 40 | `MisbehaviourPunishmentConfig` | slashing / misbehaviour punishment |
 
+The current post-quantum launch code caps **total validators, masterchain
+committee members and shard committee members at 21**; these are binary and
+contract limits, not claims about a live network's current membership.
+[mc-config.cpp](../crypto/block/mc-config.cpp) checks the ordering and shape of
+Param 16, requires Param 28's `shard_validators_num` in `1..21`, and checks the
+total and main counts of any present sets in Params 34–37. The config contract
+applies corresponding limits when a proposal changes these values. The shared
+constants are in [pq-launch-limits.h](../crypto/pq/pq-launch-limits.h) and
+[pq-launch-limits.fc](../crypto/smartcont/pq-launch-limits.fc).
+
+The `validator_pq#b3` entry in Param 34 (and the other validator sets) records
+a stable `validator_id`, algorithm and `key_id`, the consensus public key,
+weight, and a separate ADNL address. Its exact cell layout is in
+[block.tlb](../crypto/block/block.tlb); the consensus key does not supply the
+ADNL identity. A locally generated four-validator zerostate is an example,
+not a fixed production membership.
+
 Production values for 15, 16, and 17 are in
 [tos-validator-only-token-economics.md §5.1](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-validator-only-token-economics.md).
 Note that 16's `min_validators` and 17's `max_stake_factor` constrain each
@@ -182,7 +231,7 @@ of the same document gives the bound and the order the two move in.
 |---|---|---|
 | 28 | `CatchainConfig` | catchain (block-consensus) parameters |
 | 29 | `ConsensusConfig` | consensus parameters |
-| 30 | `NewConsensusConfigAll` | extended/aggregated consensus configuration |
+| 30 | `NewConsensusConfigAll` | optional masterchain and shard Simplex configurations; `simplex_config#21` and `simplex_config_v2#22` are defined in TL-B |
 | 31 | `fundamental_smc_addr:(HashmapE 256 True)` | fundamental smart-contract addresses |
 
 **Execution safety limits**
