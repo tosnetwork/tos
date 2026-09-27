@@ -184,6 +184,18 @@ struct C05SimultaneousObservation {
   double notar_cert_time = 0;
 };
 C05SimultaneousObservation C05_SIMULTANEOUS_OBSERVATION;
+// The leader's CandidateGenerated handler and a follower's receipt run on different actors in
+// either order. If only the leader recorded the target, a follower that asked for the parent
+// state first would escape the injected fault, so whichever side sees it first records it.
+// The caller holds C05_SIMULTANEOUS_OBSERVATION.mutex.
+void c05_note_first_candidate(const CandidateRef& candidate) {
+  if (!C05_SIMULTANEOUS_OBSERVATION.first_candidate) {
+    C05_SIMULTANEOUS_OBSERVATION.first_candidate = candidate->id;
+    C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent = candidate->parent_id;
+    C05_SIMULTANEOUS_OBSERVATION.first_block = candidate->block_id();
+    C05_SIMULTANEOUS_OBSERVATION.candidate_time = td::Time::now();
+  }
+}
 // Production restarts an active group from its current accepted chain tip.
 bool RESTART_FROM_LAST_ACCEPTED_BLOCK = false;
 
@@ -392,10 +404,11 @@ class TestOverlayNode : public td::actor::SpawnsWith<Bus>, public td::actor::Con
   }
 
   void receive_candidate(CandidateRef candidate) {
-    if (C05_GENESIS_FAULT_BUDGET != 0 && candidate->block_id().seqno() == 1) {
+    if (C05_GENESIS_FAULT_BUDGET != 0 && !candidate->is_empty() && candidate->block_id().seqno() == 1) {
       auto node = owning_bus()->local_id->idx.value();
       if (node > 0 && node < 4) {
         std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
+        c05_note_first_candidate(candidate);
         if (C05_SIMULTANEOUS_OBSERVATION.first_candidate == candidate->id) {
           C05_SIMULTANEOUS_OBSERVATION.received_candidate[node] = candidate->id;
         }
@@ -682,12 +695,7 @@ class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public 
     ++CANDIDATES_GENERATED;
     if (C05_GENESIS_FAULT_BUDGET != 0 && !event->candidate->is_empty() && event->candidate->block_id().seqno() == 1) {
       std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
-      if (!C05_SIMULTANEOUS_OBSERVATION.first_candidate) {
-        C05_SIMULTANEOUS_OBSERVATION.first_candidate = event->candidate->id;
-        C05_SIMULTANEOUS_OBSERVATION.first_candidate_parent = event->candidate->parent_id;
-        C05_SIMULTANEOUS_OBSERVATION.first_block = event->candidate->block_id();
-        C05_SIMULTANEOUS_OBSERVATION.candidate_time = td::Time::now();
-      }
+      c05_note_first_candidate(event->candidate);
     }
     if (backlogged_) {
       ++CANDIDATES_WHILE_BACKLOGGED;
@@ -1832,9 +1840,18 @@ class TestConsensus : public td::actor::Actor {
             }
           }
         }
-        if (signed_votes != 1) {
+        // Three of four signatures form the certificate, so the slowest faulted node can see
+        // it before its own retry succeeds and then correctly has nothing left to sign. A node
+        // counted in the certificate must have signed exactly once; none may sign twice.
+        bool in_cert = false;
+        for (const auto& [signer, signature] : notar_cert->signatures) {
+          (void)signature;
+          in_cert |= signer.value() == node;
+        }
+        if (signed_votes > 1 || (in_cert && signed_votes != 1)) {
           fail(PSTRING() << "C05 node " << node << " had " << signed_votes
-                         << " signed notarize votes for the recovered candidate, expected one");
+                         << " signed notarize votes for the recovered candidate"
+                         << (in_cert ? ", expected one" : ", expected at most one"));
           co_return td::Unit{};
         }
       }
