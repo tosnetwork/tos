@@ -61,15 +61,12 @@ class AdnlInboundConnection : public AdnlExtConnection {
   void inited_crypto(td::Result<td::BufferSlice> R);
   void query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result);
 
-  // Terminal counts for this connection, reported when it closes.
+  // Terminal counts for this connection, per failure kind, reported when it closes.
   struct QueryOutcomes {
+    static constexpr size_t kKinds = 6;
     td::uint64 accepted{0};
-    td::uint64 rejected_reply{0};
-    td::uint64 rejected_close{0};
-    td::uint64 handler_error_reply{0};
-    td::uint64 handler_error_close{0};
-    td::uint64 response_too_large_reply{0};
-    td::uint64 response_too_large_close{0};
+    td::uint64 replied[kKinds]{};
+    td::uint64 closed[kKinds]{};
   };
 
  protected:

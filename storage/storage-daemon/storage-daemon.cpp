@@ -240,6 +240,8 @@ class StorageDaemon : public td::actor::Actor {
       td::actor::ActorId<StorageDaemon> self_id_;
     };
     td::actor::send_closure(adnl_, &adnl::Adnl::subscribe, adnl_id, "", std::make_unique<Callback>(actor_id(this)));
+    // Not a Lite service: no query failure encoder is installed, so a query this server
+    // refuses or cannot answer closes its connection instead of being answered.
     td::actor::send_closure(adnl_, &adnl::Adnl::create_ext_server, std::vector<adnl::AdnlNodeIdShort>{adnl_id},
                             std::vector<td::uint16>{control_port_},
                             [SelfId = actor_id(this)](td::Result<td::actor::ActorOwn<adnl::AdnlExtServer>> R) {

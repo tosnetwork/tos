@@ -637,6 +637,8 @@ void FullNodeMasterImpl::start_up() {
         R.ensure();
         R.move_as_ok().release();
       });
+  // Not a Lite service: no query failure encoder is installed, so a query this server
+  // refuses or cannot answer closes its connection instead of being answered.
   td::actor::send_closure(adnl_, &adnl::Adnl::create_ext_server, std::vector<adnl::AdnlNodeIdShort>{adnl_id_},
                           std::vector<td::uint16>{port_}, std::move(P));
 }

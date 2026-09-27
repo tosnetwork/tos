@@ -108,16 +108,9 @@ td::Status AdnlInboundConnection::reject_or_close(td::Bits256 query_id, ExtQuery
 }
 
 void AdnlInboundConnection::note_failure(td::Bits256 query_id, ExtQueryFailureKind kind, bool replied) {
-  switch (kind) {
-    case ExtQueryFailureKind::HandlerError:
-      (replied ? outcomes_.handler_error_reply : outcomes_.handler_error_close)++;
-      break;
-    case ExtQueryFailureKind::ResponseTooLarge:
-      (replied ? outcomes_.response_too_large_reply : outcomes_.response_too_large_close)++;
-      break;
-    default:
-      (replied ? outcomes_.rejected_reply : outcomes_.rejected_close)++;
-      break;
+  auto index = static_cast<size_t>(kind);
+  if (index < QueryOutcomes::kKinds) {
+    (replied ? outcomes_.replied : outcomes_.closed)[index]++;
   }
   LOG(DEBUG) << "ADNL_EXT_QUERY server_reject id=" << query_id.to_hex() << " peer=" << peer_ip_
              << " reason=" << ext_query_failure_kind_name(kind) << " response_sent=" << replied
@@ -133,12 +126,13 @@ void AdnlInboundConnection::note_failure(td::Bits256 query_id, ExtQueryFailureKi
 
 void AdnlInboundConnection::tear_down() {
   if (failures_logged_ > 0) {
-    LOG(INFO) << "External connection from " << peer_ip_ << " closed: accepted=" << outcomes_.accepted
-              << " rejected_reply=" << outcomes_.rejected_reply << " rejected_close=" << outcomes_.rejected_close
-              << " handler_error_reply=" << outcomes_.handler_error_reply
-              << " handler_error_close=" << outcomes_.handler_error_close
-              << " response_too_large_reply=" << outcomes_.response_too_large_reply
-              << " response_too_large_close=" << outcomes_.response_too_large_close;
+    auto line = PSTRING() << "External connection from " << peer_ip_ << " closed: accepted=" << outcomes_.accepted;
+    for (size_t index = 0; index < QueryOutcomes::kKinds; index++) {
+      auto name = ext_query_failure_kind_name(static_cast<ExtQueryFailureKind>(index));
+      line += PSTRING() << " replied." << name << "=" << outcomes_.replied[index] << " closed." << name << "="
+                        << outcomes_.closed[index];
+    }
+    LOG(INFO) << line;
   }
   AdnlExtConnection::tear_down();
 }

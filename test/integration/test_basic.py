@@ -135,8 +135,8 @@ async def main(args: argparse.Namespace):
             sustained["masterchain_blocks_produced"] >= args.sustain_blocks,
             "functional cluster did not sustain the requested number of blocks",
         )
-        # A dropped query is never answered, so the client waits out its whole timeout
-        # and a retry hides it. The observer stays inside the budget, so any drop is real.
+        # The observer stays inside the Lite admission budget, so any refused query means
+        # the test itself overloaded the server; the check fails whether or not it was answered.
         admission_drops = lite_admission_drop_warnings({node.name: node.log_path for node in nodes})
         require(
             not any(admission_drops.values()),

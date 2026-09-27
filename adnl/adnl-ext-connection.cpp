@@ -132,7 +132,15 @@ void AdnlExtConnection::loop() {
     return td::Status::OK();
   }();
   if (status.is_error()) {
-    LOG(ERROR) << "Client got error " << status;
+    // Answers already queued while this batch was processed still go out before
+    // the socket closes. A refusal that ends in a close is an intended terminal
+    // state for the peer's queries, not a fault of this side, so it is not an error.
+    buffered_fd_.flush_write().ignore();
+    if (status.code() == ErrorCode::notready) {
+      LOG(INFO) << "Closing external connection: " << status;
+    } else {
+      LOG(ERROR) << "Client got error " << status;
+    }
     stop();
   } else {
     send_ready();

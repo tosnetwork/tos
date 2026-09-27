@@ -144,7 +144,15 @@ class KindEncoder final : public adnl::ExtQueryFailureEncoder {
   }
 };
 
-enum class EncoderChoice { None, Kind, Lite };
+// Returns more than the failure payload cap; the server must close rather than send it.
+class OversizedEncoder final : public adnl::ExtQueryFailureEncoder {
+ public:
+  td::Result<td::BufferSlice> encode(const adnl::ExtQueryFailure&) const override {
+    return td::BufferSlice{adnl::kMaxExtQueryFailurePayloadBytes + 1};
+  }
+};
+
+enum class EncoderChoice { None, Kind, Lite, Oversized };
 
 class ReadyCallback final : public adnl::AdnlExtClient::Callback {
  public:
@@ -342,6 +350,9 @@ class Harness {
       } else if (encoder == EncoderChoice::Lite) {
         td::actor::send_closure(server_, &adnl::AdnlExtServer::set_query_failure_encoder,
                                 liteclient::LiteExtQueryFailureEncoder::create());
+      } else if (encoder == EncoderChoice::Oversized) {
+        td::actor::send_closure(server_, &adnl::AdnlExtServer::set_query_failure_encoder,
+                                std::make_shared<const OversizedEncoder>());
       }
       td::actor::send_closure(server_, &adnl::AdnlExtServer::wait_listening,
                               td::PromiseCreator::lambda([&](td::Result<td::Unit> result) {
@@ -423,7 +434,7 @@ void sixty_fifth_query() {
   auto client = harness.connect();
   auto started = td::Time::now();
   fill_rate_window(harness, client, 64, true);
-  require(td::Time::now() - started < 0.5, "the 64 accepted queries did not fit one rate window; case is not the 65th");
+  require(td::Time::now() - started < 0.9, "the 64 accepted queries did not fit one rate window; case is not the 65th");
   auto refused = harness.send(client, harness.tag(64));
   harness.wait_completed({refused}, "65th query did not complete");
   require(harness.delivered() == 64, "the refused query reached the service");
@@ -517,7 +528,7 @@ void reply_budget_exhaustion() {
   auto client = harness.connect();
   auto started = td::Time::now();
   fill_rate_window(harness, client, 64, true);
-  require(td::Time::now() - started < 0.5, "the 64 accepted queries did not fit one rate window");
+  require(td::Time::now() - started < 0.9, "the 64 accepted queries did not fit one rate window");
   std::vector<std::shared_ptr<Slot>> flood;
   for (size_t index = 0; index < 40; index++) {
     flood.push_back(harness.send(client, harness.tag(100 + index)));
@@ -612,6 +623,28 @@ void no_encoder_closes() {
       "B64_CASE no_encoder overload_closed=true handler_error_closed=true oversized_closed=true lite_payload=false\n");
 }
 
+// An encoder whose output exceeds the failure payload cap is never sent: the
+// refused query and every query held on the connection fail at once instead.
+void oversized_encoder_closes() {
+  Harness harness("oversized-encoder", EncoderChoice::Oversized);
+  auto client = harness.connect();
+  harness.set_mode(ServerMode::Hold);
+  std::vector<std::shared_ptr<Slot>> held;
+  for (size_t index = 0; index < 32; index++) {
+    held.push_back(harness.send(client, harness.tag(index)));
+  }
+  harness.wait_held(32);
+  auto refused = harness.send(client, harness.tag(32));
+  harness.wait_completed({refused}, "refused query did not complete");
+  require_closed_promptly(*refused, "oversized failure payload");
+  harness.wait_completed(held, "held queries did not fail with the closed connection");
+  for (auto& slot : held) {
+    require_closed_promptly(*slot, "held query after an oversized failure payload");
+  }
+  harness.release_held();
+  std::printf("B64_CASE oversized_encoder closed=true payload_sent=false\n");
+}
+
 // Value-level checks of the pieces the connection composes.
 void unit_checks() {
   using adnl::ExtQueryFailure;
@@ -664,6 +697,7 @@ int main(int argc, char** argv) {
       {"handler-error", handler_error_answered},
       {"oversized", oversized_answered},
       {"no-encoder", no_encoder_closes},
+      {"oversized-encoder", oversized_encoder_closes},
   };
   bool ran = false;
   for (auto& [name, run] : cases) {

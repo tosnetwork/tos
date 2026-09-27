@@ -2680,6 +2680,8 @@ void ValidatorEngine::start_control_interface() {
         R.ensure();
         td::actor::send_closure(SelfId, &ValidatorEngine::started_control_interface, R.move_as_ok());
       });
+  // Not a Lite service: no query failure encoder is installed, so a query this server
+  // refuses or cannot answer closes its connection instead of being answered.
   td::actor::send_closure(adnl_, &tos::adnl::Adnl::create_ext_server, std::move(c_ids), std::move(ports), std::move(P));
 }
 
