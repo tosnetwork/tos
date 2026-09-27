@@ -196,8 +196,10 @@ impl ObserveValidatorsCmd {
                 .list()
                 .iter()
                 .map(|v| {
-                    let pubkey_hex: String =
-                        v.public_key.key_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+                    let pubkey_hex: String = match v.public_key() {
+                        Ok(pk) => pk.key_bytes().iter().map(|b| format!("{:02x}", b)).collect(),
+                        Err(_) => "post-quantum".to_string(),
+                    };
                     serde_json::json!({
                         "public_key": pubkey_hex,
                         "weight": v.weight,
@@ -225,8 +227,10 @@ impl ObserveValidatorsCmd {
             println!("  {}", "\u{2500}".repeat(78));
 
             for (i, validator) in vset.list().iter().enumerate() {
-                let pubkey_hex: String =
-                    validator.public_key.key_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+                let pubkey_hex: String = match validator.public_key() {
+                    Ok(pk) => pk.key_bytes().iter().map(|b| format!("{:02x}", b)).collect(),
+                    Err(_) => "post-quantum".to_string(),
+                };
                 println!("  {:<4} {:<66} {}", i + 1, pubkey_hex, validator.weight);
             }
 

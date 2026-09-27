@@ -28,6 +28,7 @@
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api_json.h"
 #include "lite-client/ext-client.h"
+#include "lite-client/lite-ext-query-failure.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/actor.h"
 #include "td/utils/FileLog.h"
@@ -233,6 +234,10 @@ class ProxyLiteserver : public td::actor::Actor {
 
   void created_ext_server(td::actor::ActorOwn<adnl::AdnlExtServer> s) {
     ext_server_ = std::move(s);
+    // Queries refused before this arrives close their connection; from here on
+    // they are answered with a same-ID liteServer.error.
+    td::actor::send_closure(ext_server_, &adnl::AdnlExtServer::set_query_failure_encoder,
+                            liteclient::LiteExtQueryFailureEncoder::create());
     LOG(WARNING) << "Started proxy liteserver on port " << port_;
     alarm();
   }

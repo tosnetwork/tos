@@ -21,12 +21,26 @@ fn hex_cell(value: &str) -> anyhow::Result<chain_block::Cell> {
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<_> = env::args().collect();
-    anyhow::ensure!(args.len() == 3, "usage: pq-tx-parity config.boc scenarios.tsv");
+    anyhow::ensure!(
+        args.len() == 3 || args.len() == 4,
+        "usage: pq-tx-parity config.boc scenarios.tsv [min-global-version]"
+    );
+    // The scenarios decide which version they need. The post-quantum ones need the
+    // instruction to be activated; the ones that compare a version boundary need to run
+    // below it, and asserting 16 there would refuse exactly the case under test.
+    let required: u32 = match args.get(3) {
+        Some(value) => value.parse()?,
+        None => 16,
+    };
     let mut config = ConfigParams::construct_from_file(&args[1])?;
     let version = config
         .get_global_version()
         .map_err(|e| anyhow::anyhow!("configuration without a global version: {e}"))?;
-    anyhow::ensure!(version.version >= 16, "the scenarios need an activated instruction");
+    anyhow::ensure!(
+        version.version >= required,
+        "the scenarios need global version {required}, configuration has {}",
+        version.version
+    );
     config.set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 { global_version: version }))?;
     let blockchain = BlockchainConfig::with_config(config)?;
 

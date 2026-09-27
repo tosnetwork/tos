@@ -115,7 +115,8 @@ class ChainState : public td::CntObject {
   using Tip = std::variant<NormalTip, BeforeMergeTip, BeforeSplitTip, ZerostateTip>;
 
   static td::actor::Task<td::Ref<ChainState>> from_manager(td::actor::ActorId<ManagerFacade> manager, ShardIdFull shard,
-                                                           std::vector<BlockIdExt> blocks, BlockIdExt min_mc_block_id);
+                                                           std::vector<BlockIdExt> blocks, BlockIdExt min_mc_block_id,
+                                                           std::optional<CandidateId> requesting_candidate = std::nullopt);
 
   ChainState(Tip tip, BlockIdExt min_mc_block_id);
 

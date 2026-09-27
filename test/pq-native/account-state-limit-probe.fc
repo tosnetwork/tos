@@ -1,0 +1,8 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;; Stores whatever it is handed, so a transaction can be made to produce an account state
+;; of a chosen size. The account-state ceiling is checked in the action phase, after the
+;; compute phase has already set the new data, so reaching it needs a real transaction
+;; rather than a helper that asks the limit what it thinks.
+() recv_internal(int balance, int value, cell full_message, slice body) impure {
+  set_data(body~load_ref());
+}

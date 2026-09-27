@@ -1,0 +1,11 @@
+diff --git a/validator/db/rootdb.cpp b/validator/db/rootdb.cpp
+--- a/validator/db/rootdb.cpp
++++ b/validator/db/rootdb.cpp
+@@ -87,6 +87,5 @@ void RootDb::store_block_signatures(BlockHandle handle, td::Ref<block::BlockSignatureSet> data,
+       });
+   TRY_RESULT_PROMISE(P, root, data->serialize(vset));
+   TRY_RESULT_PROMISE(P, serialized, vm::std_boc_serialize(root));
+-  td::actor::send_closure(archive_db_, &ArchiveManager::add_temp_file_short, fileref::Signatures{handle->id()},
+-                          std::move(serialized), std::move(P));
++  P.set_value(td::Unit{});  // MUTATION: set the signature flag but omit its #13 file.
+ }

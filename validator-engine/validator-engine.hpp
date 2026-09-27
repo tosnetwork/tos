@@ -36,19 +36,21 @@
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api.hpp"
 #include "auto/tl/tos_api_json.h"
+#include "crypto/pq/consensus-pq-signer.h"
 #include "dht/dht.h"
 #include "metrics/prometheus-exporter.h"
-#include "tos/tos-types.h"
-#include "json-rpc-server.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
+#include "tos/tos-types.h"
 #include "validator/full-node-master.h"
 #include "validator/full-node.h"
 #include "validator/manager.h"
+#include "validator/validator-transport-authority.h"
 #include "validator/validator.h"
 
+#include "json-rpc-server.h"
 #include "overlays.h"
 
 enum ValidatorEnginePermissions : td::uint32 { vep_default = 1, vep_modify = 2, vep_unsafe = 4 };
@@ -83,6 +85,13 @@ struct Config {
     tos::PublicKey key;
     td::IPAddress addr;
   };
+  // The one post-quantum secret a validator host holds, and the identity it holds it
+  // for. The controller root that authorises the stake and its own replacement stays on
+  // an operator machine and has no representation here at all.
+  struct PqConsensus {
+    tos::ValidatorId validator_id;
+    std::string consensus_key_file;
+  };
   struct FastSyncOverlayClient {
     FastSyncOverlayClient() = default;
     FastSyncOverlayClient(tos::adnl::AdnlNodeIdShort id, td::int32 slot) : id(id), slot(slot) {
@@ -110,6 +119,7 @@ struct Config {
   std::set<tos::PublicKeyHash> gc;
   std::vector<tos::ShardIdFull> shards_to_monitor;
   std::vector<FastSyncOverlayClient> fast_sync_overlay_clients;
+  std::optional<PqConsensus> pq_consensus;
 
   bool state_serializer_enabled = true;
   std::vector<std::pair<tos::adnl::AdnlNodeIdShort, tos::overlay::OverlayMemberCertificate>>
@@ -180,6 +190,7 @@ class ValidatorEngine : public td::actor::Actor {
   td::actor::ActorOwn<tos::adnl::AdnlExtClient> full_node_client_;
   td::actor::ActorOwn<tos::validator::fullnode::FullNode> full_node_;
   tos::adnl::AdnlNodeIdShort full_node_id_ = tos::adnl::AdnlNodeIdShort::zero();
+  tos::validator::ValidatorAdnlRefCounts local_validator_adnl_ids_;
   std::map<td::uint16, td::actor::ActorOwn<tos::validator::fullnode::FullNodeMaster>> full_node_masters_;
   td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server_;
   td::actor::ActorOwn<tos::PrometheusExporter> exporter_;
@@ -215,6 +226,9 @@ class ValidatorEngine : public td::actor::Actor {
 
   td::Ref<tos::validator::MasterchainState> state_;
   td::Ref<block::ValidatorSet> validator_set_, validator_set_prev_, validator_set_next_;
+  // The hot consensus key this host custodies, kept so the node can sign its own votes
+  // without asking anything else for the secret.
+  std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_consensus_signer_;
   td::Timestamp issue_fast_sync_overlay_certificates_at_ = td::Timestamp::now();
   td::Timestamp issue_shard_overlay_certificates_at_ = td::Timestamp::now();
   bool fast_sync_member_certificates_write_scheduled_ = false;
@@ -507,6 +521,9 @@ class ValidatorEngine : public td::actor::Actor {
   void started_overlays();
 
   void start_validator();
+  // The part of validator startup that may only run once post-quantum custody, if any is
+  // configured, has been accepted.
+  void finish_start_validator();
   void started_validator();
   // Crash-recovery: re-index any wc=0 block left flagged incomplete by the
   // wc0 wallet-index writer (see wallet-index.h's 0x1E marker). Fired once,
@@ -558,7 +575,46 @@ class ValidatorEngine : public td::actor::Actor {
   void set_json_rpc_trust_proxy_headers(bool trust);
   void add_json_rpc_trusted_proxy(std::string ip);
 
-  void get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise);
+  // What this node is in the current validator set, if it is anything.
+  //
+  // A validator is ours only when the set's descriptor names the identity we were
+  // configured for and records the identity of the key we actually hold. The key is
+  // never taken from the configuration -- it is derived from the seed -- so a node
+  // cannot claim a membership it has no key for.
+  //
+  // This replaced a lookup that asked each descriptor for an Ed25519 key. A
+  // post-quantum descriptor has none and refuses rather than inventing one, so that
+  // lookup stopped the node the moment post-quantum descriptors became authoritative.
+  struct LocalValidator {
+    tos::ValidatorId validator_id;
+    tos::ConsensusKeyId key_id;
+    std::size_t idx;
+    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> signer;
+    // What every authority signature this node produces is bound to: the network, and
+    // the exact stored validator set that will count the vote. Both are read here, from
+    // the state the lookup already holds, so a caller cannot supply a set the node is
+    // not a member of.
+    td::int32 global_id;
+    td::Bits256 validator_set_id;
+  };
+  void get_current_validator(td::Promise<LocalValidator> promise);
+
+  // This node's post-quantum identity as it is configured and custodied, and nothing
+  // about any validator set.
+  //
+  // A stake is how a validator gets into a set, so the lookup that signs one cannot
+  // require being in a set already: a fresh controller with a bound key and a
+  // provisioned seed has never been elected, and the current-set lookup above would
+  // refuse it with "not a validator" -- a circle nothing could enter. The votes keep
+  // that lookup, because a vote is authority a member exercises; a stake is a request
+  // to become one.
+  struct LocalIdentity {
+    tos::ValidatorId validator_id;
+    tos::ConsensusKeyId key_id;
+    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> signer;
+    td::int32 global_id;
+  };
+  void get_local_pq_identity(td::Promise<LocalIdentity> promise);
 
   void try_add_adnl_node(tos::PublicKeyHash pub, AdnlCategory cat, td::Promise<td::Unit> promise);
   void try_add_dht_node(tos::PublicKeyHash pub, td::Promise<td::Unit> promise);
@@ -611,6 +667,9 @@ class ValidatorEngine : public td::actor::Actor {
   void issue_shard_overlay_certificates();
   std::vector<tos::ShardIdFull> get_shards_for_overlay_certificates();
   tos::PublicKeyHash find_local_validator_for_cert_issuing();
+  void add_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort id);
+  void del_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort id);
+  bool is_validator_transport_root(tos::PublicKeyHash id, const td::Ref<block::ValidatorSet> &set) const;
 
   std::string custom_overlays_config_file() const {
     return db_root_ + "/custom-overlays.json";
@@ -697,7 +756,7 @@ class ValidatorEngine : public td::actor::Actor {
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_getStats &query, td::BufferSlice data, tos::PublicKeyHash src,
                          td::uint32 perm, td::Promise<td::BufferSlice> promise);
-  void run_control_query(tos::tos_api::engine_validator_createElectionBid &query, td::BufferSlice data,
+  void run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorization &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_checkDhtServers &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);

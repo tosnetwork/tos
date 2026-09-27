@@ -7,13 +7,14 @@ step": public-testnet-style acceptance for controller-signed Agent Account
 actions, beyond the throwaway per-op coverage other scripts exercise
 indirectly).
 
-Boots a single local TOS chain (same machinery as agent-task-escrow-e2e.py),
+Boots a one-validator local TOS chain with two independent observer RPC nodes,
 deploys an Agent Wallet/Account, and exercises every lifecycle CLI command
 end to end against a real validator:
 
   agent account deploy / show / status
   agent account native-prepare         (bodyless native TOS Gift profile)
-  exact BOC retry + duplicate submission
+  exact BOC retry from the prepared artifact + duplicate submission; a
+      second preparation is refused once custody releases the signed bytes
   agent account cancel-prepare         (same-seqno finalized invalidation)
   agent account task-send            (controller-signed transfer)
   agent wallet update-policy + agent account update-policy
@@ -32,15 +33,17 @@ It then stops and restarts the validator mid-lifecycle (with its data
 directory intact) and re-verifies the Agent Account's on-chain state is
 still correct after catch-up -- https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actor-testing-matrix.md's "restart
 one validator during task lifecycle" / "verify transaction history after
-catch-up" Local Testnet Tests, scoped to a single-node restart (this harness
-has no existing multi-validator example to build a true multi-validator
+catch-up" Local Testnet Tests, scoped to a one-validator restart (this harness
+does not build a multi-validator
 fault-tolerance test on top of; that remains open, see ROADMAP.md).
 
 Run from the repository root: uv run python scripts/agent-wallet-account-e2e.py
 """
 import asyncio
+import base64
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -50,14 +53,17 @@ from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19546"
+OBSERVER_RPCS = ("127.0.0.1:19547", "127.0.0.1:19548")
 WORKDIR = REPO / "test/integration/.agent-wallet-account-e2e"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
+OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000010"
 NANO = 1_000_000_000
 
@@ -72,10 +78,10 @@ def check(label: str, ok: bool, detail: str = ""):
         failures.append(label)
 
 
-def rpc_call(method: str, **params):
+def rpc_call(method: str, *, endpoint: str = RPC, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
-        f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
+        f"http://{endpoint}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=8) as resp:
         return json.loads(resp.read().decode())
@@ -92,6 +98,24 @@ def broadcast_boc(exact_boc_base64: str, may_fail: bool = False):
         if not may_fail:
             raise
         return {"http_status": error.code, "body": error.read().decode(errors="replace")}
+
+
+def exact_boc_hash(exact_boc_base64: str) -> str:
+    return "sha256:" + Cell.one_from_boc(base64.b64decode(exact_boc_base64)).hash.hex()
+
+
+def explicit_contract_refusal(response: dict, exit_code: int) -> bool:
+    """One named Agent Account VM refusal, not an arbitrary HTTP 500."""
+    if response.get("http_status") != 500:
+        return False
+    try:
+        error = json.loads(response["body"])
+    except (KeyError, ValueError, TypeError):
+        return False
+    text = error.get("error", "")
+    return (error.get("code") == -32603
+            and "cannot apply external message to current state" in text
+            and re.search(rf"(?m)^exitcode={exit_code}(?:,|$)", text) is not None)
 
 
 async def tosctl(*args: str, may_fail: bool = False) -> str:
@@ -164,37 +188,73 @@ async def poll_predicate(predicate, timeout: float = 60.0) -> bool:
     return False
 
 
-async def predicate_stays_true(predicate, duration: float = 60.0) -> bool:
+async def predicate_stays_true(predicate, duration: float = 60.0,
+                               poll_interval: float = 1.0) -> bool:
     """Continuously disprove a negative invariant over the normal CI window."""
     deadline = time.time() + duration
-    observed = False
+    start = finalized_views()
+    samples = 0
     while time.time() < deadline:
         try:
-            holds = predicate()
-            observed = True
-            if not holds:
+            if not predicate():
                 return False
+            finalized_views()
         except Exception:
-            # A transient RPC failure is not evidence that the invariant held.
-            pass
-        await asyncio.sleep(1)
-    return observed
+            return False
+        samples += 1
+        await asyncio.sleep(poll_interval)
+    end = finalized_views()
+    print(f"  negative window: samples={samples} start={start} end={end}")
+    return samples >= 2 and all(end[i]["seqno"] > start[i]["seqno"] for i in start)
 
 
-async def async_predicate_stays_true(predicate, duration: float = 60.0) -> bool:
+async def async_predicate_stays_true(predicate, duration: float = 60.0,
+                                     poll_interval: float = 1.0) -> bool:
     """Async counterpart for invariants that require a CLI state read."""
     deadline = time.time() + duration
-    observed = False
+    start = finalized_views()
+    samples = 0
     while time.time() < deadline:
         try:
-            holds = await predicate()
-            observed = True
-            if not holds:
+            if not await predicate():
                 return False
+            finalized_views()
         except Exception:
-            pass
-        await asyncio.sleep(1)
-    return observed
+            return False
+        samples += 1
+        await asyncio.sleep(poll_interval)
+    end = finalized_views()
+    print(f"  negative window: samples={samples} start={start} end={end}")
+    return samples >= 2 and all(end[i]["seqno"] > start[i]["seqno"] for i in start)
+
+
+def finalized_views() -> dict[str, dict]:
+    return {endpoint: rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["last"]
+            for endpoint in (RPC, *OBSERVER_RPCS)}
+
+
+def finalized_mc_header() -> dict:
+    block = finalized_views()[RPC]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("masterchain header did not bind to the observed finalized block")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def exact_account_winner(address: str, exact_boc: str, after_lt: int) -> bool:
+    """Require the sole post-baseline inbound to be this signed BOC."""
+    exact_hash = base64.b64encode(Cell.one_from_boc(base64.b64decode(exact_boc)).hash).decode()
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    newer = [row for row in rows if int(row["transaction_id"]["lt"]) > after_lt]
+    if not any(int(row["transaction_id"]["lt"]) <= after_lt for row in rows):
+        raise RuntimeError("account transaction page did not cover the pre-order baseline")
+    if len(newer) != 1 or (newer[0].get("in_msg") or {}).get("hash") != exact_hash:
+        return False
+    row = newer[0]
+    return (not row["aborted"] and row["compute"]["success"]
+            and row["action"]["success"])
 
 
 async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -> bool:
@@ -222,11 +282,11 @@ async def wait_account_seqno(account: str, target: int, timeout: float = 60.0) -
     return False
 
 
-async def wait_rpc_ready(timeout: float = 180.0) -> bool:
+async def wait_rpc_ready(timeout: float = 180.0, endpoint: str = RPC) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if "result" in rpc_call("getMasterchainInfo"):
+            if "result" in rpc_call("getMasterchainInfo", endpoint=endpoint):
                 return True
         except Exception:
             pass
@@ -242,6 +302,10 @@ def write_config():
     cfg["elections"] = None
     cfg.pop("voting", None)
     CONFIG.write_text(json.dumps(cfg, indent=2))
+    for observer_config, endpoint in zip(OBSERVER_CONFIGS, OBSERVER_RPCS, strict=True):
+        observer_cfg = dict(cfg)
+        observer_cfg["chain_rpc"] = {"urls": [f"http://{endpoint}/"], "api_key": None}
+        observer_config.write_text(json.dumps(observer_cfg, indent=2))
 
 
 async def run_checks(faucet, node) -> None:
@@ -250,6 +314,15 @@ async def run_checks(faucet, node) -> None:
         check("json-rpc endpoint ready", False, f"no response from http://{RPC}/jsonRPC")
         return
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
+    primary_chain = rpc_call("getMasterchainInfo")["result"]["init"]
+    for endpoint in OBSERVER_RPCS:
+        ready = await wait_rpc_ready(endpoint=endpoint)
+        check(f"independent observer RPC {endpoint} ready", ready)
+        if not ready:
+            return
+        observer_chain = rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["init"]
+        check(f"observer RPC {endpoint} follows the same zerostate",
+              observer_chain == primary_chain)
 
     await tosctl("wallet", "create", "-n", "funder", "-v", "V3R2", "-w", "0")
     funder_out = await tosctl_json("wallet", "ls")
@@ -312,13 +385,23 @@ async def run_checks(faucet, node) -> None:
         "--unsigned-transfer-digest", "sha256:" + "4" * 64, "--yes",
     )
     prepared = await tosctl_action_json(*native_args)
-    retried = await tosctl_action_json(*native_args)
     exact_boc = prepared.get("exact_signed_boc", "")
     check("native Gift returns the frozen prepared-action schema",
           prepared.get("schema") == "tosctl.agent-account.prepared-action.v1"
           and prepared.get("action") == "agent-native-send" and bool(exact_boc), str(prepared))
-    check("exact native Gift retry returns byte-identical BOC",
-          retried.get("exact_signed_boc") == exact_boc)
+    # native-prepare marks the custody record Broadcasting before its BOC is
+    # released on stdout. Calling it again cannot prove an exact retry: the
+    # second call must refuse until finalized-state reconciliation. The exact
+    # retry is a second submission of the one retained prepared artifact.
+    reprepare_refusal = None
+    try:
+        await tosctl_action_json(*native_args)
+    except RuntimeError as error:
+        reprepare_refusal = str(error)
+    check("repreparing released native Gift is refused as ambiguous",
+          reprepare_refusal is not None
+          and "ambiguous broadcast must be resolved from finalized state" in reprepare_refusal,
+          str(reprepare_refusal))
     first_submit = broadcast_boc(exact_boc)
     duplicate_submit = broadcast_boc(exact_boc, may_fail=True)
     check("node accepts exact BOC submission path",
@@ -332,12 +415,54 @@ async def run_checks(faucet, node) -> None:
               lambda: balance(target) == target_before + 500_000_000))
     check("native Gift consumes exactly one Agent Account seqno",
           await wait_account_seqno(account, 1))
+    native_resolution = await tosctl_action_json(
+        "agent", "account", "native-resolve", "--wallet", "agent-1",
+        "--action-id", "a" * 64,
+        "--quorum-config", str(OBSERVER_CONFIGS[0]),
+        str(OBSERVER_CONFIGS[1]),
+    )
+    quorum = native_resolution.get("quorum", {})
+    transaction = native_resolution.get("transaction", {})
+    check("native Gift exact winner resolved by independent RPC majority",
+          native_resolution.get("schema") == "tos.agent-account.native-action-finalized.v1"
+          and native_resolution.get("state") == "finalized"
+          and native_resolution.get("source_account") == account
+          and same_addr(native_resolution.get("destination", ""), target)
+          and native_resolution.get("amount_nanotos") == 500_000_000
+          and native_resolution.get("exact_signed_boc_digest")
+              == prepared.get("exact_signed_boc_digest")
+          and quorum.get("members") == 3 and quorum.get("threshold") == 2
+          and quorum.get("agreeing", 0) >= 2
+          and bool(transaction.get("transaction_hash"))
+          and transaction.get("transaction_lt", 0) > 0
+          and bool(transaction.get("block_root_hash")),
+          str(native_resolution))
+    print("  native three-view resolution:", json.dumps(native_resolution, sort_keys=True))
 
-    print("\n=== same-seqno cancellation wins and original Gift stays unpaid ===")
-    cancel_target_before = balance(target)
+    print("\n=== isolated same-seqno cancellation wins and original Gift stays unpaid ===")
+    # A cancellation winner intentionally leaves the primary custody claim
+    # unresolved. Keep that terminal negative control on its own deployed
+    # account, while the main account continues the positive lifecycle.
+    await tosctl(
+        "agent", "wallet", "create", "--name", "cancel-agent", "-v", "V5R1", "-w", "0",
+        "--max-per-tx", "2", "--daily-limit", "10",
+    )
+    cancel_deploy = await tosctl_json(
+        "agent", "account", "deploy", "--wallet", "cancel-agent", "--from", "funder",
+        "-w", "0", "--amount", "3", "--yes",
+    )
+    cancel_account = norm_addr(cancel_deploy["address"])
+    check("cancellation account active on chain", await poll_predicate(
+        lambda: rpc_call("getAddressState", address=cancel_account).get("result") == "active"))
+    await tosctl("wallet", "create", "-n", "cancel-target", "-v", "V3R2", "-w", "0")
+    cancel_target = norm_addr(next(e["address"] for e in
+                                   await tosctl_json("wallet", "ls") if e["name"] == "cancel-target"))
+    cancel_target_before = balance(cancel_target)
+    cancel_baseline = int(rpc_call("getAddressInformation", address=cancel_account)
+                          ["result"]["last_transaction_id"]["lt"])
     cancel_valid_until = int(time.time()) + 300
     cancel_primary = await tosctl_action_json(
-        "agent", "account", "native-prepare", "--wallet", "agent-1", "--target", target,
+        "agent", "account", "native-prepare", "--wallet", "cancel-agent", "--target", cancel_target,
         "--amount-nanotos", str(200_000_000), "--fee-reserve-nanotos", str(50_000_000),
         "--valid-until", str(cancel_valid_until), "--action-id", "b" * 64,
         "--request-digest", "sha256:" + "5" * 64,
@@ -346,16 +471,32 @@ async def run_checks(faucet, node) -> None:
         "--unsigned-transfer-digest", "sha256:" + "8" * 64, "--yes",
     )
     cancellation = await tosctl_action_json(
-        "agent", "account", "cancel-prepare", "--wallet", "agent-1",
+        "agent", "account", "cancel-prepare", "--wallet", "cancel-agent",
         "--action-id", "b" * 64,
         "--owner-authorization-digest", "sha256:" + "9" * 64,
         "--valid-until", str(cancel_valid_until), "--yes",
     )
-    broadcast_boc(cancellation.get("exact_signed_boc", ""))
-    check("cancellation consumes the shared sequence", await wait_account_seqno(account, 2))
-    broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
+    cancellation_submit = broadcast_boc(cancellation.get("exact_signed_boc", ""))
+    print("  cancellation submission:", json.dumps({
+        "message_hash": exact_boc_hash(cancellation["exact_signed_boc"]),
+        "response": cancellation_submit}, sort_keys=True))
+    check("exact cancellation wins its account's shared sequence",
+          await poll_predicate(lambda: exact_account_winner(
+              cancel_account, cancellation["exact_signed_boc"], cancel_baseline))
+          and await wait_account_seqno(cancel_account, 1))
+    losing_gift_submit = broadcast_boc(cancel_primary.get("exact_signed_boc", ""), may_fail=True)
+    print("  losing same-seqno Gift submission:", json.dumps({
+        "message_hash": exact_boc_hash(cancel_primary["exact_signed_boc"]),
+        "response": losing_gift_submit}, sort_keys=True))
+    check("losing same-seqno Gift is admitted or explicitly refused as bad_seqno",
+          "result" in losing_gift_submit
+          or explicit_contract_refusal(losing_gift_submit, 1705),
+          str(losing_gift_submit))
     check("finalized cancellation prevents destination credit for the observation window",
-          await predicate_stays_true(lambda: balance(target) == cancel_target_before))
+          await predicate_stays_true(
+              lambda: balance(cancel_target) == cancel_target_before
+              and exact_account_winner(cancel_account, cancellation["exact_signed_boc"],
+                                       cancel_baseline)))
 
     print("\n=== controller-signed transfer (agent account task-send) ===")
     target_before = balance(target)
@@ -367,6 +508,19 @@ async def run_checks(faucet, node) -> None:
     )
     check("controller-signed transfer delivered", await wait_balance_at_least(
         target, target_before + int(0.49 * NANO)))
+    first_task_resolution = await tosctl_action_json(
+        "agent", "account", "task-send-resolve", "--wallet", "agent-1",
+        "--action-id", "c" * 64, "--quorum-config",
+        str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
+    check("first task-send exact winner resolved before another controller action",
+          first_task_resolution.get("schema") == "tos.agent-account.task-send-finalized.v1"
+          and first_task_resolution.get("state") == "resolved"
+          and same_addr(first_task_resolution.get("source_account", ""), account)
+          and same_addr(first_task_resolution.get("destination", ""), target)
+          and first_task_resolution.get("amount_nanotos") == 500_000_000
+          and first_task_resolution.get("quorum", {}).get("agreeing", 0) >= 2,
+          str(first_task_resolution))
+    print("  first task three-view resolution:", json.dumps(first_task_resolution, sort_keys=True))
 
     print("\n=== update-policy: push a new policy to the deployed Agent Account ===")
     print("  (this is the exact path a previously-undetected bug broke: an internal")
@@ -393,6 +547,19 @@ async def run_checks(faucet, node) -> None:
     )
     check("post-rotation controller-signed transfer delivered", await wait_balance_at_least(
         target, target_before_2 + int(0.29 * NANO)))
+    second_task_resolution = await tosctl_action_json(
+        "agent", "account", "task-send-resolve", "--wallet", "agent-1",
+        "--action-id", "d" * 64, "--quorum-config",
+        str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
+    check("post-rotation task-send exact winner resolved",
+          second_task_resolution.get("schema") == "tos.agent-account.task-send-finalized.v1"
+          and second_task_resolution.get("state") == "resolved"
+          and same_addr(second_task_resolution.get("source_account", ""), account)
+          and same_addr(second_task_resolution.get("destination", ""), target)
+          and second_task_resolution.get("amount_nanotos") == 300_000_000
+          and second_task_resolution.get("quorum", {}).get("agreeing", 0) >= 2,
+          str(second_task_resolution))
+    print("  second task three-view resolution:", json.dumps(second_task_resolution, sort_keys=True))
 
     print("\n=== owner-authorized transfer (agent wallet send) ===")
     target_before_3 = balance(target)
@@ -435,13 +602,20 @@ async def run_checks(faucet, node) -> None:
     )
     # Cross the validity boundary and then require a new finalized block before
     # submission, so rejection is based on chain time rather than local sleep.
-    await asyncio.sleep(max(0, expiry - int(time.time()) + 1))
-    pre_expiry_seqno = rpc_call("getMasterchainInfo")["result"]["last"]["seqno"]
-    check("chain finalizes a block after the Gift validity boundary",
+    pre_expiry_seqno = finalized_mc_header()["id"]["seqno"]
+    check("finalized block gen_utime exceeds Gift valid_until",
           await poll_predicate(
-              lambda: rpc_call("getMasterchainInfo")["result"]["last"]["seqno"]
-              > pre_expiry_seqno))
-    broadcast_boc(expired.get("exact_signed_boc", ""), may_fail=True)
+              lambda: (header := finalized_mc_header())["id"]["seqno"] > pre_expiry_seqno
+              and header["gen_utime"] > expiry))
+    print(f"  expiry chain header: {finalized_mc_header()} valid_until={expiry}")
+    expired_submit = broadcast_boc(expired.get("exact_signed_boc", ""), may_fail=True)
+    print("  expired Gift submission:", json.dumps({
+        "message_hash": exact_boc_hash(expired["exact_signed_boc"]),
+        "response": expired_submit}, sort_keys=True))
+    check("expired Gift is admitted or explicitly refused as expired",
+          "result" in expired_submit
+          or explicit_contract_refusal(expired_submit, 1706),
+          str(expired_submit))
 
     async def expired_state_unchanged() -> bool:
         state = await tosctl_json("agent", "account", "show", "--address", account)
@@ -467,21 +641,42 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=24000) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        observers = [network.create_full_node() for _ in OBSERVER_RPCS]
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
+        for observer in observers:
+            observer.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        observer_tasks = [
+            asyncio.create_task(observer.run(StartOptions(args=["--json-rpc-address", endpoint])))
+            for observer, endpoint in zip(observers, OBSERVER_RPCS, strict=True)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            process_map = [
+                {"role": role, "pid": process.process_id,
+                 "rpc": endpoint, "directory": str(process.directory)}
+                for role, process, endpoint in (
+                    ("validator", node, RPC),
+                    ("observer-1", observers[0], OBSERVER_RPCS[0]),
+                    ("observer-2", observers[1], OBSERVER_RPCS[1]),
+                )
+            ]
+            (WORKDIR / "process-map.json").write_text(json.dumps(process_map, indent=2) + "\n")
+            print(f"  three-view process map: {process_map}")
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet, node)
         finally:
-            node_task.cancel()
-            dht_task.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            for task in (node_task, dht_task, *observer_tasks):
+                task.cancel()
+            await asyncio.gather(node_task, dht_task, *observer_tasks,
+                                 return_exceptions=True)
             await node.stop()
+            for observer in observers:
+                await observer.stop()
             await dht.stop()
 
     print("\n=== RESULT:", "ALL PASS" if not failures else f"{len(failures)} FAILURE(S)", "===")

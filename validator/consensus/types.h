@@ -9,6 +9,7 @@
 #include <variant>
 
 #include "adnl/adnl-node-id.hpp"
+#include "crypto/pq/pq-consensus.h"
 #include "keys/keys.hpp"
 #include "tos/tos-types.h"
 
@@ -68,13 +69,26 @@ class PeerValidatorId {
 td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidatorId& id);
 
 struct PeerValidator {
+  // Who this validator is, taken from the descriptor rather than derived again from a
+  // key. A block it produces is attributed to this, so the attribution survives a
+  // consensus key rotation.
+  ValidatorId validator_id;
+
   [[nodiscard]] bool check_signature(ValidatorSessionId session, td::Slice data, td::Slice signature) const;
 
   bool operator==(const PeerValidator& other) const = default;
 
   PeerValidatorId idx;
-  PublicKey key;
-  PublicKeyHash short_id;
+
+  // The post-quantum consensus key the set records for this validator: the one consensus signs
+  // and verifies Simplex messages with. It is not a transport identity.
+  tos::pq::ConsensusPQKey consensus_key;
+
+  // The Ed25519 transport/overlay identity, derived from the descriptor's ADNL address.
+  // It authorizes network traffic (private overlay, FEC), never a consensus signature. A
+  // transport key hash must never be passed where a consensus verify key is expected.
+  PublicKeyHash transport_key_id;
+
   adnl::AdnlNodeIdShort adnl_id;
   ValidatorWeight weight;
 };

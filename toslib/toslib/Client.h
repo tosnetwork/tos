@@ -19,6 +19,9 @@
 */
 #pragma once
 #include "auto/tl/toslib_api.h"
+#ifdef TOSLIB_Q01_TEST_NETWORK
+#include "PublicNetworkTestHook.h"
+#endif
 
 namespace toslib_api = tos::toslib_api;
 
@@ -26,9 +29,16 @@ namespace toslib {
 class Client final {
  public:
   Client();
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  explicit Client(std::shared_ptr<PublicNetworkTestHook> hook);
+  void test_arm(std::uint64_t id, std::string nonce, td::Promise<QueryTraceContext> ack);
+#endif
   struct Request {
     std::uint64_t id;
     toslib_api::object_ptr<toslib_api::Function> function;
+#ifdef TOSLIB_Q01_TEST_NETWORK
+    QueryTraceContext trace_context;
+#endif
   };
 
   void send(Request&& request);

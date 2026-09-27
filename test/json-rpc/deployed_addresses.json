@@ -24,15 +24,6 @@
       "n": 3,
       "k": 2
     },
-    "nominator_pool": {
-      "address": "0:819483e9f7be67da6b8bfe643cc5d1293bcfe295030c47b2c8d57341b6cbd831",
-      "code_hash": "9a3ec14bc098f6b44064c305222caea2800f17dda85ee6a8198a7095ede10dcf",
-      "nominators_count": 1,
-      "validator_reward_share": 4000,
-      "max_nominators": 40,
-      "min_validator_stake": 1000000000,
-      "min_nominator_stake": 100000000
-    },
     "restricted_expired": {
       "address": "0:2c7979d7650d5f5f920437d4ef432b004dd894e786973fe937b6943a8550c5e7",
       "code_hash": "aa5f0602a1c32f8dbc9cdd26d8cecd1f89ab0869f7c4c837dc8d405d390541f6",
@@ -46,12 +37,6 @@
     "highload_v1": {
       "address": "0:7a789fdf7631b0bb5813da39cfedff75cb6ce1b4002515e8b46c7851125532e2",
       "code_hash": "9cec5155dcb2b37716c032c5ef85947c01e32c4405a2611ee8d1122afff0e0c1"
-    },
-    "nominator_pool_withdraw": {
-      "address": "0:feae51b29c7c00837e17ddb02caddd48d451590a9be2d52097c605e376886b7b",
-      "code_hash": "9a3ec14bc098f6b44064c305222caea2800f17dda85ee6a8198a7095ede10dcf",
-      "nominators_count": 1,
-      "has_withdraw_request": true
     },
     "restricted": {
       "address": "0:6c702f1bbe04fea77def8c0448055f7d5d3ce6f6f77a61d258ca47303bc5fb59",

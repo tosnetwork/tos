@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Pin the two pool stake callers to node authorization and refuse direct bids."""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+def fail(message: str) -> None:
+    raise RuntimeError(f"TOSCTL_PQ_STAKE_BUILDER_FAILURE: {message}")
+
+
+def collapsed(path: Path) -> str:
+    return re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+
+
+def main() -> None:
+    root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
+    pool_callers = {
+        "election daemon": (
+            root / "tosctl/src/node-control/elections/src/runner.rs",
+            "cannot stake directly from a wallet to the PQ elector",
+        ),
+        "config-wallet pool command": (
+            root / "tosctl/src/node-control/commands/src/commands/nodectl/config_wallet_cmd.rs",
+            "let pool_address = resolve_pool_address(pool_cfg, &wallet_address)?;",
+        ),
+    }
+
+    for name, (path, route_marker) in pool_callers.items():
+        source = collapsed(path)
+        for marker in (
+            route_marker,
+            "create_pq_stake_authorization(",
+            "live_controller_policy().await?",
+            "validator_pubkey: authorization.public_key.as_slice()"
+            if name == "election daemon"
+            else "validator_pubkey: &authorization.public_key",
+            "signature: authorization.signature.as_slice()"
+            if name == "election daemon"
+            else "signature: &authorization.signature",
+        ):
+            if source.count(marker) != 1:
+                fail(f"{name} has {source.count(marker)} occurrences of {marker!r}, expected 1")
+        if "0x654C5074" in source or ".sign(" in source:
+            fail(f"{name} still contains the classical stake tag or a local signer call")
+        builder_calls = re.findall(
+            r"nominator::new_stake_from_birth_artifact\(\s*&nominator::NewStakeParams\s*\{",
+            source,
+        )
+        if len(builder_calls) != 1:
+            fail(f"{name} reaches the verified controller birth builder {len(builder_calls)} times, expected 1")
+        if "nominator::new_stake(&" in source or "nominator::new_stake_with_witness(&" in source:
+            fail(f"{name} bypasses the verified controller birth artifact builder")
+
+    runner = collapsed(pool_callers["election daemon"][0])
+    if runner.count("controller_birth_state_init_boc.as_deref().ok_or_else") != 1:
+        fail("election daemon no longer refuses a missing controller birth artifact")
+    wallet = collapsed(pool_callers["config-wallet pool command"][0])
+    roles_read = wallet.find(".get_roles() .await .context(\"read live single-nominator pool roles\")?")
+    roles_check = wallet.find("verify_live_pool_roles(pool_cfg, &wallet_address, &live_roles)?;")
+    verified_order = wallet.find("let payload = build_verified_manual_pool_stake(")
+    message = wallet.find("let msg = wallet.message(")
+    if verified_order < 0 or message < 0 or verified_order >= message:
+        fail("config-wallet verified pool order no longer precedes the fee-bearing wallet message")
+    if not (0 <= roles_read < roles_check < verified_order):
+        fail("config-wallet live pool roles are not checked before the verified pool order")
+    if wallet.count("let artifact_path = configured_birth_artifact_path(binding, binding_name)?;") != 1:
+        fail("config-wallet verified pool order no longer requires the configured birth artifact")
+    stake_command = wallet.split("impl WalletStakeCmd", 1)[1]
+    seqno_check = stake_command.find("let initial_seqno = require_observable_wallet_seqno(")
+    broadcast = stake_command.find("provider.send_boc(&msg_boc).await")
+    if seqno_check < 0 or broadcast < 0 or seqno_check >= broadcast or stake_command.count("Some(initial_seqno)") != 1:
+        fail("config-wallet stake can send without a wallet type and seqno that chain RPC can observe")
+
+    # The CLI embeds this V1R3 code; chain RPC must recognize its cell hash or
+    # getWalletInformation returns wallet=false/seqno=null forever.
+    v1r3_hash = "587cc789eff1c84f46ec3797e45fc809a14ff5ae24f1e0c7a6a99cc9dc9061ff"
+    wallet_code = collapsed(root / "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs")
+    account_model = collapsed(root / "validator-engine/json-rpc-account-model.cpp")
+    if v1r3_hash not in wallet_code or v1r3_hash.upper() not in account_model:
+        fail("tosctl V1R3 code hash is not pinned in both the wallet test and chain RPC recognizer")
+    parser = collapsed(root / "tosctl/src/node-control/common/src/tvm_stack_parser.rs")
+    list_parser = parser.split("pub fn list_or_empty", 1)[1].split("pub fn tuple", 1)[0]
+    for marker in (
+        "StackEntry::Tvm_StackEntryTuple(_) =>", "slots.len() == 2",
+        "self.i64(index)? == 0", 'number.number.number() == "0"',
+        "stack cons list has a non-null tail",
+    ):
+        if marker not in list_parser:
+            fail(f"JSON-RPC TVM cons-list parser lost its strict {marker!r} check")
+    if re.search(
+        r"StackEntry::Tvm_StackEntryList\(list\)\s+if\s+list\.list\.elements\(\)\.is_empty\(\)\s*=>",
+        list_parser,
+    ) is None:
+        fail("JSON-RPC TVM cons-list parser no longer requires an empty List tail")
+
+    product_probe = collapsed(root / "scripts/pq-config-wallet-first-stake-e2e.py")
+    if "elector_reply(pool_txs, query_id)" not in product_probe or "elector_reply(controller_txs, query_id)" in product_probe:
+        fail("product first-stake probe no longer reads the Elector reply from the stake-owner pool")
+    if any(marker not in product_probe for marker in (
+        "participant-list-extended-raw-open.json", "participant_path.write_text(",
+        "participant-list-after-attempt-", "attempt_path.write_text(",
+        'report["participant_list_after_raw"]',
+        '"index4_type": raw_stack[4]["@type"]',
+    )):
+        fail("product first-stake probe no longer saves both pre-order and post-order raw participant-list observations")
+
+    policy_provider = collapsed(
+        root / "tosctl/src/node-control/elections/src/providers/default.rs"
+    )
+    for marker in ("chain_provider.get_config_param(47).await?", "ConfigParamEnum::ConfigParamAny(47, cell) => Ok(cell)"):
+        if policy_provider.count(marker) != 1:
+            fail(f"shared live controller policy reader no longer uses the raw ConfigParam 47 cell: {marker}")
+    if policy_provider.count("chain_provider.get_config_param(15).await?") != 1:
+        fail("election parameters no longer come from the live chain provider")
+    if "client.get_config_param(15)" in policy_provider:
+        fail("election parameters are routed to validator control instead of chain JSON-RPC")
+    if policy_provider.count("chain_provider.send_boc(msg_boc).await") != 1:
+        fail("stake BOC is not broadcast through the chain provider")
+    if "client.send_boc(msg_boc)" in policy_provider:
+        fail("stake BOC is routed to validator control instead of chain JSON-RPC")
+
+    direct_path = collapsed(
+        root / "tosctl/src/node-control/commands/src/commands/nodectl/vote_cmd.rs"
+    )
+    refusal = "a wallet cannot stake directly to the PQ elector"
+    if direct_path.count(refusal) != 1 or "nominator::new_stake(" in direct_path:
+        fail("interactive bid does not refuse direct-to-elector PQ staking")
+    if "0x654C5074" in direct_path or ".sign(" in direct_path or "Bid signed" in direct_path:
+        fail("interactive bid still exposes classical stake signing")
+
+    birth_import = collapsed(
+        root / "tosctl/src/node-control/commands/src/commands/nodectl/config_bind_cmd.rs"
+    )
+    for marker in (
+        "ImportBirth(BindImportBirthCmd)",
+        "configured_pool_controller(&config, pool_name)?",
+        "Transaction::construct_from_cell(root)?",
+        "transaction.end_status == AccountStatus::AccStateActive",
+        "!description.aborted",
+        "transaction.account_id() == id",
+        "message.dst_ref() == Some(controller)",
+        "verified_controller_birth_witness(state, &expected_id, &code_hash)?",
+        "OpenOptions::new().write(true).create_new(true).open(output)?",
+        "binding.controller_birth_state_init_boc = Some(output.display().to_string())",
+    ):
+        if birth_import.count(marker) != 1:
+            fail(f"controller birth import does not pin supplied transaction structure and binding: {marker}")
+    import_command = birth_import.split("impl BindImportBirthCmd", 1)[-1].split("fn import_birth_artifact", 1)[0]
+    import_position = import_command.find("import_birth_artifact(binding, &transaction, &controller, output)?")
+    save_position = import_command.find("save_config(&config, path)?")
+    if import_position < 0 or save_position < 0 or import_position >= save_position:
+        fail("controller birth binding can be saved before its artifact is imported")
+
+    multi_pool_test = collapsed(
+        root / "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs"
+    )
+    marker = "new_stake(&NewStakeParams {"
+    if multi_pool_test.count(marker) != 1:
+        fail(
+            "multi-nominator pool harness reaches the production PQ stake builder "
+            f"{multi_pool_test.count(marker)} times, expected 1"
+        )
+
+    print(
+        "TOSCTL_PQ_STAKE_BUILDER_OK: both pool callers request node authorization and read live Param47; election parameters and stake BOC use chain JSON-RPC; config-wallet checks live pool roles and an observable wallet seqno before sending; tosctl V1R3 code hash appears in the wallet test and chain RPC recognizer; TVM cons lists require pairs and an actual nil tail (numeric zero or empty list, never nonzero or nonempty); product probe saves pre-order and per-attempt post-order raw participant responses and reads Elector feedback at the stake-owner pool; the direct bid refuses; transaction import pins controller identity and create-new artifact binding; the multi-pool harness uses the production builder"
+    )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(1) from error

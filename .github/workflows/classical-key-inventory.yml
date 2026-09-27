@@ -1,0 +1,32 @@
+name: Classical Consensus Inventory
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'feat/**']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # Deliberately unfiltered by path: a caller added to any file is exactly the case
+      # this has to catch, so it must not be possible to introduce one in a file the
+      # trigger does not watch.
+      - name: Check the inventories against the tree
+        run: |
+          scripts/check-descriptor-classical-key.sh .
+          scripts/check-classical-carrier-sites.py .

@@ -1,19 +1,22 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
 
-{ ."usage: " @' $0 type ." <code-boc> <owner-addr> <validator-addr> <file-base>" cr
+{ ."usage: " @' $0 type ." <code-boc> <owner-addr> <validator-addr> <controller-addr> <file-base>" cr
   ."Creates a state-init to deploy a single-nominator-pool contract." cr cr
 
   ."<code-boc> is a filename of the compiled contract code BoC bytes or HEX." cr
   ."Saves the contract address in `<file-base>.addr`." cr
   ."Saves the init boc into `<file-base>-init.boc`." cr 1 halt
 } : usage
-$# 4 = { cr } { usage } cond
+$# 5 = { cr } { usage } cond
 
 $1 =: filename
 $2 parse-smc-addr drop 2=: owner-addr
 $3 parse-smc-addr drop 2=: validator-addr
-$4 =: file-base
+// The account that stands in the election with this pool's money. The elector takes a
+// stake from a post-quantum Validator Controller and from nowhere else.
+$4 parse-smc-addr drop 2=: controller-addr
+$5 =: file-base
 
 filename file>B dup
 8 B| drop B>$ "b5ee9c72" $= { B>$ x>B? drop } if
@@ -23,7 +26,8 @@ B>boc =: new-code-boc
 1 Tomi* =: tos-amount
 
 <b owner-addr Addr,
-   validator-addr Addr, b> // data
+   validator-addr Addr,
+   controller-addr Addr, b> // data
 <b b{00110} s, new-code-boc ref, swap ref, b> dup =: init-boc
 2 boc+>B
 dup ."StateInit: " B>base64 type cr cr

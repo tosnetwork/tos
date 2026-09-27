@@ -772,27 +772,28 @@ td::Status DelQuicAddressQuery::receive(td::BufferSlice data) {
   return td::Status::OK();
 }
 
-td::Status CreateElectionBidQuery::run() {
+td::Status CreatePqStakeAuthorizationQuery::run() {
   TRY_RESULT_ASSIGN(date_, tokenizer_.get_token<td::uint32>());
-  TRY_RESULT_ASSIGN(elector_addr_, tokenizer_.get_token<std::string>());
-  TRY_RESULT_ASSIGN(wallet_, tokenizer_.get_token<std::string>());
+  TRY_RESULT_ASSIGN(max_factor_, tokenizer_.get_token<td::uint32>());
+  TRY_RESULT_ASSIGN(adnl_addr_, tokenizer_.get_token<tos::Bits256>());
+  TRY_RESULT_ASSIGN(stake_owner_, tokenizer_.get_token<tos::Bits256>());
   TRY_RESULT_ASSIGN(fname_, tokenizer_.get_token<std::string>());
   TRY_STATUS(tokenizer_.check_endl());
   return td::Status::OK();
 }
 
-td::Status CreateElectionBidQuery::send() {
-  auto b =
-      tos::create_serialize_tl_object<tos::tos_api::engine_validator_createElectionBid>(date_, elector_addr_, wallet_);
+td::Status CreatePqStakeAuthorizationQuery::send() {
+  auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_createPqStakeAuthorization>(
+      date_, max_factor_, adnl_addr_, stake_owner_);
   td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
   return td::Status::OK();
 }
 
-td::Status CreateElectionBidQuery::receive(td::BufferSlice data) {
-  TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_electionBid>(data.as_slice(), true),
+td::Status CreatePqStakeAuthorizationQuery::receive(td::BufferSlice data) {
+  TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_pqStakeAuthorization>(data.as_slice(), true),
                     "received incorrect answer: ");
-  td::TerminalIO::out() << "success: permkey=" << f->perm_key_.to_hex() << " adnl=" << f->adnl_addr_.to_hex() << "\n";
-  TRY_STATUS(td::write_file(fname_, f->to_send_payload_.as_slice()));
+  td::TerminalIO::out() << "success: validator=" << f->validator_id_.to_hex() << " key=" << f->key_id_.to_hex() << "\n";
+  TRY_STATUS(td::write_file(fname_, f->signature_.as_slice()));
   return td::Status::OK();
 }
 
@@ -812,7 +813,9 @@ td::Status CreateProposalVoteQuery::send() {
 td::Status CreateProposalVoteQuery::receive(td::BufferSlice data) {
   TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_proposalVote>(data.as_slice(), true),
                     "received incorrect answer: ");
-  td::TerminalIO::out() << "success: permkey=" << f->perm_key_.to_hex() << "\n";
+  // The identity that voted. A post-quantum validator has no permanent key to name; the
+  // field keeps its wire name and carries the stable validator identity.
+  td::TerminalIO::out() << "success: validator=" << f->perm_key_.to_hex() << "\n";
   TRY_STATUS(td::write_file(fname_, f->to_send_.as_slice()));
   return td::Status::OK();
 }
@@ -835,7 +838,7 @@ td::Status CreateComplaintVoteQuery::send() {
 td::Status CreateComplaintVoteQuery::receive(td::BufferSlice data) {
   TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_proposalVote>(data.as_slice(), true),
                     "received incorrect answer: ");
-  td::TerminalIO::out() << "success: permkey=" << f->perm_key_.to_hex() << "\n";
+  td::TerminalIO::out() << "success: validator=" << f->perm_key_.to_hex() << "\n";
   TRY_STATUS(td::write_file(fname_, f->to_send_.as_slice()));
   return td::Status::OK();
 }

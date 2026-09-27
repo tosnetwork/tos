@@ -51,6 +51,10 @@ std::string detect_wallet_type(const vm::CellHash& code_hash) {
         {"89C890A6C9B5A3828B38570A93DFC93C792EE9147933DE8F21F5840AE19AB1AA", "wallet v1 r1"},
         {"27B5063EBDB6E5ECEC073F57451A4BE095EB68777496B65449B1B49FA09A43D9", "wallet v1 r2"},
         {"1F08EBE871907C8B60AA1BB9C22A54CB095D1DC0E007A3D7AF827D1C4DE23910", "wallet v1 r3"},
+        // The V1R3 BOC embedded in tosctl's WalletContract has this cell
+        // hash. Recognize the code we actually deploy, or wallet seqno
+        // polling reports null forever even after a valid transaction.
+        {"587CC789EFF1C84F46EC3797E45FC809A14FF5AE24F1E0C7A6A99CC9DC9061FF", "wallet v1 r3"},
         {"8369FDDA46A532A8302037D955D92D7A3308422EADF0074C497CECD209832C3A", "wallet v2 r1"},
         {"9264711341AB55499665D16B4589A148ED6AB8A4AED3AE9FCF805295EEE7B927", "wallet v2 r2"},
         {"F475EC633EA8EC25B6872878B95996AEEA061198BD1C86180D3984EA7E1E6FB4", "wallet v3 r1"},
@@ -63,7 +67,7 @@ std::string detect_wallet_type(const vm::CellHash& code_hash) {
         // repository, so this entry has to stay reproducible from
         // crypto/smartcont/nominator-pool.
         // scripts/check-nominator-pool-code-lock.sh enforces that.
-        {"9A3EC14BC098F6B44064C305222CAEA2800F17DDA85EE6A8198A7095EDE10DCF", "nominator pool v1"},
+        {"DF8BE95F5B48A3731445D0A33AA92E349677DE01556E597713025599DA14E61D", "nominator pool v1"},
         {"BCD75D29A1D932013CF31300C5D924A5F02EAA92CD830EC0330104FFBAD07928", "wallet v1 r1"},
         {"9CEC5155DCB2B37716C032C5EF85947C01E32C4405A2611EE8D1122AFFF0E0C1", "highload v1"},
         {"DE7D8832DDC838811F940EF0CECBBC95C6CD2CEF83E9D22ABCE5E1A1DBA5638A", "highload v2"},

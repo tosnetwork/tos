@@ -318,6 +318,12 @@ class TestGetBlockHeader:
         assert data["result"]["id"]["@type"] == "tos.blockIdExt"
         assert data["result"]["id"]["workchain"] == -1
         assert data["result"]["id"]["seqno"] == last_mc_seqno
+        assert data["result"]["prev_blocks"], "block header must expose exact parent IDs"
+        for parent in data["result"]["prev_blocks"]:
+            assert parent["workchain"] == -1
+            assert -(1 << 63) <= int(parent["shard"]) < (1 << 63)
+            assert parent["seqno"] < last_mc_seqno
+            assert parent["root_hash"] and parent["file_hash"]
 
     def test_wrong_workchain(self, api_method_call, last_mc_seqno):
         response = api_method_call(self.METHOD, workchain="invalid",

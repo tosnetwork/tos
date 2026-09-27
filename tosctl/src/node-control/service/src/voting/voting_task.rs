@@ -203,20 +203,26 @@ impl VotingRunner {
             validator_idx
         );
 
-        // Build the data to sign
-        let signing_data = config_contract::messages::unsigned_vote(validator_idx, &proposal.hash)?;
+        // The vote itself is built by `config_contract::messages`, which speaks the
+        // post-quantum wire the configuration contract now requires. What is missing is
+        // upstream of it and is named in the error, so this fails where the gap is
+        // rather than by sending something the chain will refuse.
+        let _ = validator_entry;
+        anyhow::bail!(
+            "a configuration vote is authorised by the current post-quantum validator set, \
+             and producing one needs two things this node cannot yet supply: a signature \
+             from its ML-DSA-44 consensus key, and the hash of the stored ConfigParam 34 \
+             cell that the vote is bound to. The control protocol carries neither, so the \
+             vote is not sent rather than sent in a form the chain refuses"
+        );
 
-        // Sign the data with the validator key
-        let signature = node
-            .api
-            .sign(signing_data.data(), validator_entry.key_id.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("sign error: {}", e))?;
-
-        // Build the external message
+        #[allow(unreachable_code)]
+        let vote: chain_block::Cell = unreachable!();
+        #[allow(unreachable_code)]
         let config_addr = self.config_contract.address();
-        let query_id = 0;
-        let vote = config_contract::messages::signed_vote(query_id, &signing_data, &signature)?;
+        #[allow(unreachable_code)]
+        let query_id: u64 = 0;
+        let _ = query_id;
         let msg_cell = node
             .wallet
             .message(config_addr, SEND_VOTE_AMOUNT, vote)
@@ -278,7 +284,7 @@ impl VotingRunner {
             let vset_entry = vset
                 .list()
                 .iter()
-                .position(|item| item.public_key.as_slice() == &key)
+                .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
                 .map(|idx| (idx as u16, entry.clone()));
             if let Some((idx, entry)) = vset_entry {
                 return Ok((idx, entry));

@@ -19,6 +19,7 @@
 */
 #include "adnl/utils.hpp"
 #include "tos/tos-io.hpp"
+#include "validator/pq-finality-verification.h"
 
 #include "apply-block.hpp"
 #include "fabric.h"
@@ -213,13 +214,13 @@ void ValidateBroadcast::got_zero_state(td::Ref<MasterchainState> state) {
 void ValidateBroadcast::check_signatures_common(td::Ref<ConfigHolder> conf) {
   VLOG(VALIDATOR_DEBUG) << "checking signatures (" << (broadcast_.sig_set->is_final() ? "final" : "approve") << ")";
   if (header_info_.cc_seqno != broadcast_.sig_set->get_catchain_seqno()) {
-    abort_query(
-        td::Status::Error(ErrorCode::notready, "catchain seqno in block header and signature set does not match"));
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "catchain seqno in block header and signature set does not match"));
     return;
   }
   if (header_info_.validator_set_hash != broadcast_.sig_set->get_validator_set_hash()) {
-    abort_query(
-        td::Status::Error(ErrorCode::notready, "validator set hash in block header and signature set does not match"));
+    abort_query(td::Status::Error(ErrorCode::protoviolation,
+                                  "validator set hash in block header and signature set does not match"));
     return;
   }
   if (signatures_checked_) {
@@ -237,12 +238,22 @@ void ValidateBroadcast::check_signatures_common(td::Ref<ConfigHolder> conf) {
       abort_query(td::Status::Error(ErrorCode::notready, "too new block, don't know recent enough key block"));
       return;
     } else {
-      abort_query(td::Status::Error(ErrorCode::notready, "bad validator set hash"));
+      abort_query(td::Status::Error(ErrorCode::protoviolation, "bad validator set hash"));
       return;
     }
   }
   td::Result<td::uint64> S;
-  if (broadcast_.sig_set->is_final()) {
+  if (broadcast_.sig_set->is_pq()) {
+    auto context = derive_pq_finality_context(*conf, val_set, broadcast_.block_id, header_info_.vertical_seqno,
+                                              header_info_.prev_key_mc_seqno);
+    if (context.is_error()) {
+      abort_query(context.move_as_error_prefix("failed to derive trusted finality context: "));
+      return;
+    }
+    S = block::verify_pq_finality(
+        context.ok(), *broadcast_.sig_set,
+        broadcast_.sig_set->is_final() ? block::FinalityRole::Final : block::FinalityRole::Approve);
+  } else if (broadcast_.sig_set->is_final()) {
     S = broadcast_.sig_set->check_signatures(val_set, broadcast_.block_id);
   } else {
     S = broadcast_.sig_set->check_approve_signatures(val_set, broadcast_.block_id);

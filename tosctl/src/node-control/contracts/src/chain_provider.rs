@@ -66,12 +66,12 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use chain_block::{ConfigParamEnum, MsgAddressInt};
+use chain_block::{Cell, ConfigParamEnum, MsgAddressInt};
 use chain_rpc_client::v2::{
     RPCStackEntry,
     client_json_rpc::ClientJsonRpc,
     data_models::{
-        GetAddressInformationRes, GetBlockTransactionsExtRes, GetBlockTransactionsRes,
+        BlockIdExt, GetAddressInformationRes, GetBlockTransactionsExtRes, GetBlockTransactionsRes,
         GetExtendedAddressInformationRes, GetMasterchainInfoRes, GetShardsRes,
         GetWalletInformationRes, RunGetMethodParams,
     },
@@ -163,6 +163,19 @@ pub trait ChainProvider: Send + Sync {
     /// Retrieve a blockchain configuration parameter by its numeric ID.
     async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum>;
 
+    /// Exact on-chain parameter cell for consumers that compare its hash.
+    async fn get_config_param_cell(&self, _param_id: u32) -> anyhow::Result<Cell> {
+        anyhow::bail!("exact config parameter cell is unsupported by this provider")
+    }
+
+    /// Missing is distinct from a transport or protocol error.
+    async fn get_optional_config_param(
+        &self,
+        _param_id: u32,
+    ) -> anyhow::Result<Option<ConfigParamEnum>> {
+        anyhow::bail!("optional config parameter read is unsupported by this provider")
+    }
+
     /// Get basic address information (balance, state, code, data).
     async fn get_address_info(&self, address: &MsgAddressInt) -> anyhow::Result<AddressInfo>;
 
@@ -183,6 +196,12 @@ pub trait ChainProvider: Send + Sync {
     /// Get the current shard block descriptors (for non-masterchain
     /// workchains) as of the given masterchain seqno.
     async fn get_shards(&self, seqno: u32) -> anyhow::Result<ShardsInfo>;
+
+    /// Exact signed-header ancestry for one block. Indexers must not infer
+    /// parents by subtracting sequence numbers across split/merge boundaries.
+    async fn get_block_parents(&self, _id: &BlockIdExt) -> anyhow::Result<Vec<BlockIdExt>> {
+        anyhow::bail!("exact block ancestry is unsupported by this provider")
+    }
 
     /// List the accounts (as `account`/`lt`/`hash` short-IDs) that had a
     /// transaction in the given block, paginated via `after_lt`/`after_account`
@@ -330,6 +349,17 @@ impl ChainProvider for DefaultChainProvider {
         self.client.get_config_param(param_id).await
     }
 
+    async fn get_config_param_cell(&self, param_id: u32) -> anyhow::Result<Cell> {
+        self.client.get_config_param_cell(param_id).await
+    }
+
+    async fn get_optional_config_param(
+        &self,
+        param_id: u32,
+    ) -> anyhow::Result<Option<ConfigParamEnum>> {
+        self.client.get_optional_config_param(param_id).await
+    }
+
     async fn get_address_info(&self, address: &MsgAddressInt) -> anyhow::Result<AddressInfo> {
         self.client.get_address_information(address).await
     }
@@ -351,6 +381,27 @@ impl ChainProvider for DefaultChainProvider {
 
     async fn get_shards(&self, seqno: u32) -> anyhow::Result<ShardsInfo> {
         self.client.get_shards(seqno).await
+    }
+
+    async fn get_block_parents(&self, id: &BlockIdExt) -> anyhow::Result<Vec<BlockIdExt>> {
+        let header =
+            self.client.get_block_header(id.workchain, &id.shard.to_string(), id.seqno).await?;
+        let actual = header.id.context("getBlockHeader omitted exact block id")?;
+        anyhow::ensure!(
+            actual.workchain == id.workchain
+                && actual.shard == id.shard
+                && actual.seqno == id.seqno
+                && actual.root_hash == id.root_hash
+                && actual.file_hash == id.file_hash,
+            "getBlockHeader resolved a different block at the requested coordinate"
+        );
+        let parents =
+            header.prev_blocks.context("getBlockHeader omitted proof-derived predecessors")?;
+        anyhow::ensure!(
+            !parents.is_empty() && parents.len() <= 2,
+            "getBlockHeader returned an invalid predecessor count"
+        );
+        Ok(parents)
     }
 
     async fn get_block_transactions_page(

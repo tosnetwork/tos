@@ -99,7 +99,10 @@ struct Signed {
   static td::Result<Signed<Vote>> from_tl(tl::vote&& data, PeerValidatorId validator, const Bus& bus)
     requires std::same_as<T, Vote>;
 
-  bool operator==(const Signed&) const = delete;  // Ed25519 signatures are not unique
+  // Two signatures over the same vote by the same validator are both valid and need not be
+  // equal: ML-DSA-44 signing is randomized. Comparing signed votes by bytes would therefore
+  // report a difference that does not exist.
+  bool operator==(const Signed&) const = delete;
 
   Signed<T> clone() const {
     return Signed<T>{validator, vote, signature.clone()};

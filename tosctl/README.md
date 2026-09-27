@@ -557,14 +557,17 @@ tosctl config-param -c tosctl-config.json 34
 ### Deploying a single-nominator pool
 
 ```bash
-# Add pool to config with the owner address
-tosctl config pool add --name pool0 --owner "-1:owner_address"
+# Add pool to config with the owner address and the validator controller
+# its stake will be relayed through
+tosctl config pool add --name pool0 --owner "-1:owner_address" \
+  --controller "-1:validator_controller_address"
 
 # Bind pool to node
 tosctl config bind add --node node0 --wallet wallet0 --pool pool0
 
 # Deploy pool contract (sends TOS from the wallet)
-tosctl deploy pool --node node0 --owner "-1:owner_address" --amount 1.5 --verbose
+tosctl deploy pool --node node0 --owner "-1:owner_address" \
+  --controller "-1:validator_controller_address" --amount 1.5 --verbose
 
 # Verify pool state
 tosctl pool get

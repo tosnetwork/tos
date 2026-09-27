@@ -314,12 +314,12 @@ td::actor::Task<> OverlayImpl::process_pending_peer(OverlayNode node) {
       VLOG(OVERLAY_INFO) << this << ": adding pending peer " << node.adnl_id_short();
       processing_pending_peers_.erase(node.adnl_id_short());
       add_peer(std::move(node), /* verified = */ true, /* checked_signature = */ true);
-      co_return {};
+      co_return td::Unit{};
     }
   }
   VLOG(OVERLAY_INFO) << this << ": dropping pending node " << node.adnl_id_short() << " - does not respond";
   processing_pending_peers_.erase(node.adnl_id_short());
-  co_return {};
+  co_return td::Unit{};
 }
 
 void OverlayImpl::add_peers(std::vector<OverlayNode> peers, bool verified, bool checked_signature) {

@@ -36,6 +36,7 @@ td::Result<std::unique_ptr<block::BlockProofChain>> deserialize_proof_chain(
   chain->complete = f->complete_;
   for (auto& s : f->steps_) {
     bool ok = false;
+    td::Status signature_error;
     td::BufferSlice dest_proof, proof, state_proof;
     tos::lite_api::downcast_call(*s, td::overloaded(
                                          [&](tos::lite_api::liteServer_blockLinkBack& s) {
@@ -57,6 +58,7 @@ td::Result<std::unique_ptr<block::BlockProofChain>> deserialize_proof_chain(
                                            proof = std::move(s.config_proof_);
                                            auto r_sig_set = block::BlockSignatureSet::fetch(s.signatures_);
                                            if (r_sig_set.is_error()) {
+                                             signature_error = r_sig_set.move_as_error();
                                              return;
                                            }
                                            link.sig_set = r_sig_set.move_as_ok();
@@ -64,6 +66,9 @@ td::Result<std::unique_ptr<block::BlockProofChain>> deserialize_proof_chain(
                                          },
                                          [&](auto& obj) {}));
     if (!ok) {
+      if (signature_error.is_error()) {
+        return signature_error.move_as_error_prefix("invalid lite signature set: ");
+      }
       return td::Status::Error("unknown constructor of liteServer.BlockLink");
     }
     auto& link = chain->last_link();

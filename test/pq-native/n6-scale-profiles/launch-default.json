@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "name": "launch-default",
+  "one_way_latency_ms": [50, 100],
+  "application": "external-network-shaping"
+}

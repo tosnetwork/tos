@@ -1,0 +1,507 @@
+{
+  "schema": 1,
+  "snapshot_sha256": "f9e5875793c50a136938cfc693d4450681fb71469cc6fec0a48083328059d86b",
+  "entries": {
+    "E16": {
+      "task_status": "✅",
+      "scope": "local accelerated single network",
+      "accepted": false,
+      "source_blobs": [
+        {
+          "commit": "84a30e4268f94e894497e402d97058cadcbb876d",
+          "path": "scripts/nominator-pool-lifecycle-e2e.py",
+          "sha256": "ccc3a931b22e7fc180f1ec9b0ea856ae29f09c779a15ef5cfe39302cbdef2176"
+        }
+      ],
+      "raw": [
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-console.typescript",
+          "sha256": "7d5922ca5d0dfadf3a2fed593f4e6eb2830af35d75eecc208aede3fe0172d620"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
+          "sha256": "c4ad6b36eaf185d2be34cd308229913d6f89d48cc84c1c1ab88ebb0bb1705c88"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790348791414184765.json",
+          "sha256": "5e12a1544ecda5bf68b08fba609487942d3d85f3302c0ed226772f63d129c6e8"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790349985272467639.json",
+          "sha256": "3639809e338da619f6b4d24577b5df7e64e4980aafd45eb2b8c1fd9bb1f1786d"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node1/log",
+          "sha256": "3353806922d55fd9537977808fb3a8ed38a4065755c836357f06de295a92be40"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node2/log",
+          "sha256": "293efe843ca5506672e19a3dd5e75145f1f6f3b971736cec0c2583f084b1d0fc"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/state/zerostate.boc",
+          "sha256": "478f1294bed7d5510d7e9c17301bb4f82eb2e4913e4d128a308832c43deaf56c"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/initial-config15-34.typescript",
+          "sha256": "1074866b886d54b85f510393ce0fbaef6843edb210201d2d94406d6a2b1cbdf5"
+        }
+      ],
+      "binaries": [
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/create-state",
+          "sha256": "64794dff6c422069994491bb189d6be9559094b9185da2c71033bf71917a210f"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/dht-server",
+          "sha256": "fd76bc835664b97fac56ced447b5f9310d8f6539ec24e3fc1422ec769f64d94d"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/fift",
+          "sha256": "ec4f335608595622b828ca96abd1b4fff8d4f2882d7be6ab46ccb5c05c30d51d"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/func",
+          "sha256": "3ad2f14b31183c1021c5f6e76ce02b00a5ba075e0086aaadc0ceabba0bcc5cd7"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/generate-random-id",
+          "sha256": "58d0fd9691e7ee1e7557991f6db71ef70b437014c6d3d5a743404da3502ef281"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/lite-client",
+          "sha256": "264410d28452ecb7c477a5cb35db03fd014b3a773b3fcf09168c3c6b75bfeade"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/pq_pool_stake_order",
+          "sha256": "71465af030fc0436e9678314fde4261346ba08d39bb4a1cf16d9c044193a2caa"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/tos-pq-consensus-key",
+          "sha256": "039811cd49d0b2d6f4232a5ea46e8cd025fd8ddd5d7fe37ee46b292992ba5c6b"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/validator-engine",
+          "sha256": "186fef777bba20168fb48efb43fd78d2945cb16a565a10630e165dc1bbabaa3a"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/validator-engine-console",
+          "sha256": "5fbe9840edc008bb29336c2cb0d0d8c724052f6acb410eb37a46b366d49c5c11"
+        }
+      ],
+      "review": {
+        "memo_commit": "77e16f8992bf27f96b36ff2ae3110b8f9c07af91",
+        "path": "pq-native/N6-MAC-E16-84A-EXACT-RUN-INDEPENDENT-REVIEW-20260925.md",
+        "sha256": "8490172c8a89183c342501d2fa3a92dcf99e3d2bdb82e084864ceb9844a9c2ed"
+      },
+      "ci": [
+        {
+          "run_id": 36149928365,
+          "head_sha": "84a30e4268f94e894497e402d97058cadcbb876d",
+          "name": "Branch PQ chain and Python tests",
+          "conclusion": "success",
+          "raw": {
+            "path": "/datax/tos-pg-a03-first-batch-evidence/ci-36149928365.json",
+            "sha256": "74d688de485624d7e45c3ce7b0a4a0f0d03a04b50d926f49949cf61ea28d73df"
+          }
+        },
+        {
+          "run_id": 36149928307,
+          "head_sha": "84a30e4268f94e894497e402d97058cadcbb876d",
+          "name": "N6 microbench smoke",
+          "conclusion": "success",
+          "raw": {
+            "path": "/datax/tos-pg-a03-first-batch-evidence/ci-36149928307.json",
+            "sha256": "cf5fccc99daf57c990a178c34fc78a5b15154ac7bf2eb67240a82eb2de9382b9"
+          }
+        },
+        {
+          "run_id": 36149928315,
+          "head_sha": "84a30e4268f94e894497e402d97058cadcbb876d",
+          "name": "Source guards",
+          "conclusion": "success",
+          "raw": {
+            "path": "/datax/tos-pg-a03-first-batch-evidence/ci-36149928315.json",
+            "sha256": "d57a06001d5196b3b9eecae516cb224263fd0e2b5626f7de1cd467160bd4c476"
+          }
+        }
+      ],
+      "command": {
+        "kind": "real_chain",
+        "argv": null,
+        "argv_gap": "The original E16 console header does not record launch argv; the documented command is reviewer prose, not an OS or run receipt.",
+        "reported_argv_text": "env PYTHONPATH=test/tostester/src uv run python -u scripts/nominator-pool-lifecycle-e2e.py --build-dir /home/tomi/tos-n6/build --run-dir /home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network --base-port 25000 --campaign-run-id n6-e16-84a30e426 --agent-manifest /home/tomi/tos-n6/test/integration/.pq-nominator-pool-t3/diagnostic-agent-manifest.json",
+        "reported_exit": 0,
+        "exit_raw_role": "console",
+        "exit_raw_marker": "COMMAND_EXIT_CODE=\"0\""
+      },
+      "gaps": [
+        "Exact original launch argv and a contemporaneous per-run receipt are absent; reported_argv_text is checked only against the fixed reviewer prose.",
+        "The signed route lacks a source-commit field embedded in the run report; source provenance is review+fixed Git blob+console.",
+        "No same-run full five-hop BOC chain for the first successful stake.",
+        "No OS PID/executable-inode map for the retained binary snapshots.",
+        "Old-red/new-green/mutant-red raw controls are not fully mapped into one E16 per-ID machine row.",
+        "The three successful branch CI jobs are recorded, but their job logs do not establish this exact E16 live route."
+      ],
+      "invalidating_changes": [
+        "retained E16 console/report/BOC or ten binary bytes change",
+        "fixed 84a source or exact-run independent review changes",
+        "a relevant later CI failure or contrary local-chain evidence",
+        "claim extends beyond the accelerated single-network lifecycle"
+      ]
+    },
+    "F01": {
+      "task_status": "✅",
+      "scope": "signed accelerated single-host four-process Stage A; A03 machine row incomplete",
+      "accepted": false,
+      "source_blobs": [
+        {
+          "commit": "2e1a51ad9f3be29c783aed3f8cff65abbb0dec08",
+          "path": "scripts/validator-election-stage-a.py",
+          "sha256": "aff27a7424043083ebf3895ab004eed2d8cee9b8d58924e10a222d76b0d48dde"
+        },
+        {
+          "commit": "2e1a51ad9f3be29c783aed3f8cff65abbb0dec08",
+          "path": "scripts/f01_finalized_ids.py",
+          "sha256": "eefa37199f54c9dac6b518b98855e09572bf42ededf110144c4189cb7e289b02"
+        }
+      ],
+      "raw": [
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925-console.typescript",
+          "sha256": "51e67651e5c535aa9f816cd9cfedf47d57bdd488c4cce4c803359799d7503980"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/report.json",
+          "sha256": "7cb8f9b04ce322c413055c8b391d81503bffe9b34a0fa2eab66ccc86db163762"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/manifest.json",
+          "sha256": "d8ac4b80b3a8ff0ec5abf8f33e6b8896e78bf4e623b333d3dc2201d8d6c2e31b"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/capture-manifest.json",
+          "sha256": "26053156186a422f61e6ac0626e4f5b3e04fd60ac17a9f9ce171136f06ac6bc5"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/config34-rpc.jsonl",
+          "sha256": "8420331f38837aa988f20050432b09b8b00e630f68882af96440aa32b9150e68"
+        },
+        {
+          "path": "/datax/n6-supervisor-f01-2e1-evidence/process-generations.jsonl",
+          "sha256": "60ce3df964688a35dcffa486a654af73dce0d874f2518eecdacedbead5650739"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-89.json",
+          "sha256": "87894e5cbd293e1d03a764845ccec1bfd4d47a1f41d45ed096b5396e7fb7203a"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-131.json",
+          "sha256": "adfd715975ff54c8ee3a7b6838aa0ebaa5f8de2cbc7ae371574c207cc6a30c35"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-172.json",
+          "sha256": "33e1ae352ce05c764e556302c677c0fbc6cadac657fbf9ff5f20ddfc4ee537f6"
+        }
+      ],
+      "binaries": [
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/blockchain-explorer/blockchain-explorer",
+          "sha256": "87c85aa59b3aee51181c8af153bf692e9d9d1fda308ca02c4050bd796ad8d86e"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/crypto/create-state",
+          "sha256": "64794dff6c422069994491bb189d6be9559094b9185da2c71033bf71917a210f"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/crypto/fift",
+          "sha256": "ec4f335608595622b828ca96abd1b4fff8d4f2882d7be6ab46ccb5c05c30d51d"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/crypto/func",
+          "sha256": "3ad2f14b31183c1021c5f6e76ce02b00a5ba075e0086aaadc0ceabba0bcc5cd7"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/crypto/pq/tos-pq-consensus-key",
+          "sha256": "039811cd49d0b2d6f4232a5ea46e8cd025fd8ddd5d7fe37ee46b292992ba5c6b"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/dht-server/dht-server",
+          "sha256": "fd76bc835664b97fac56ced447b5f9310d8f6539ec24e3fc1422ec769f64d94d"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/lite-client/lite-client",
+          "sha256": "264410d28452ecb7c477a5cb35db03fd014b3a773b3fcf09168c3c6b75bfeade"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/tosctl/pq_pool_stake_order",
+          "sha256": "71465af030fc0436e9678314fde4261346ba08d39bb4a1cf16d9c044193a2caa"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/toslib/libtoslibjson.so",
+          "sha256": "3471f1a485301a6c098fdd931777236da33c32efb2a400e54c42f33f32a68161"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/utils/generate-random-id",
+          "sha256": "58d0fd9691e7ee1e7557991f6db71ef70b437014c6d3d5a743404da3502ef281"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/validator-engine-console/validator-engine-console",
+          "sha256": "5fbe9840edc008bb29336c2cb0d0d8c724052f6acb410eb37a46b366d49c5c11"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/build/validator-engine/validator-engine",
+          "sha256": "186fef777bba20168fb48efb43fd78d2945cb16a565a10630e165dc1bbabaa3a"
+        }
+      ],
+      "review": {
+        "memo_commit": "331c92eccf13423258653c31c627cd5211922e72",
+        "path": "pq-native/N6-MAC-F01-2E1-EXACT-RUN-REVIEW-20260925.md",
+        "sha256": "64292fe502d1d68a78349738ccd0e6259dc2d40e847b98b1fe1c6aaad99bf2fa"
+      },
+      "ci": [
+        {
+          "run_id": 36169185047,
+          "head_sha": "38440fe9de1b846331cb7efd328812fc54802784",
+          "name": "Branch PQ chain and Python tests",
+          "conclusion": "success",
+          "source_equivalence": "docs_only_descendant",
+          "raw": {
+            "path": "/datax/cc-n6-20260925/evidence/f01-ci/run-36169185047.json",
+            "sha256": "f22ac7e340d3abc3c393bdaa3d18834d2dc75116b611d3e6ea8d5b8297f3252d"
+          }
+        },
+        {
+          "run_id": 36169185026,
+          "head_sha": "38440fe9de1b846331cb7efd328812fc54802784",
+          "name": "Source guards",
+          "conclusion": "success",
+          "source_equivalence": "docs_only_descendant",
+          "raw": {
+            "path": "/datax/cc-n6-20260925/evidence/f01-ci/run-36169185026.json",
+            "sha256": "0be8c1cfd72babb8b017111a872b29c686d6c07cf238da44b59dca3e9366c857"
+          }
+        },
+        {
+          "run_id": 36169185021,
+          "head_sha": "38440fe9de1b846331cb7efd328812fc54802784",
+          "name": "N6 microbench smoke",
+          "conclusion": "success",
+          "source_equivalence": "docs_only_descendant",
+          "raw": {
+            "path": "/datax/cc-n6-20260925/evidence/f01-ci/run-36169185021.json",
+            "sha256": "7eb5de4d85a78e7c4529cf8216ce404acad3dcb658e9e4197efce80c75b6df0b"
+          }
+        }
+      ],
+      "command": {
+        "kind": "real_chain",
+        "argv": null,
+        "reported_exit": 0,
+        "exit_raw_role": "console",
+        "exit_raw_marker": "COMMAND_EXIT_CODE=\"0\"",
+        "argv_gap": "The retained 2e1 console does not record the launch argv; report and run source identify the route only."
+      },
+      "gaps": [
+        "Exact F01 launch argv is absent from the retained console; report and run source identify route but cannot supply original argv.",
+        "No exact-2e1 GitHub CI run was returned by the retained query; the three indexed completed/success runs are on docs-only descendant 38440fe9d and do not prove execution of the F01 route.",
+        "The signed F01 task scope does not itself fill A03 old-red/new-green/mutant raw receipts or complete per-ID reviewer causality.",
+        "The indexed run is local accelerated four-process Stage A only, not multi-host or power-loss proof."
+      ],
+      "ci_query": {
+        "path": "/datax/tos-pg-a03-first-batch-evidence/ci-2e1-run-list.json",
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+      },
+      "invalidating_changes": [
+        "retained 2e1 console/report/Config34 or twelve binary bytes change",
+        "OS PID/starttime/cwd or four DB/PQ/ADNL identity join is contradicted",
+        "a relevant later exact-source CI failure or conflicting full BlockIdExt",
+        "claim extends beyond accelerated single-host four-process Stage A"
+      ]
+    },
+    "X01": {
+      "task_status": "✅",
+      "scope": "signed fixed-6e863142b accelerated single-host four-process Stage A stop/restart fault window; A03 machine row incomplete",
+      "accepted": false,
+      "source_blobs": [
+        {
+          "commit": "6e863142be50976b998572249fc7fb62a980b808",
+          "path": "scripts/validator-election-stage-a.py",
+          "sha256": "dbfd25f2c9b7c3132ed822e06d9e023961c5d02cccb114eef6cbe6c574431e1a"
+        },
+        {
+          "commit": "6e863142be50976b998572249fc7fb62a980b808",
+          "path": "scripts/x01_window_evidence.py",
+          "sha256": "108374780906e947a9cd4bed3230985d0be7d035276b044c1f89484ee8928f52"
+        },
+        {
+          "commit": "6e863142be50976b998572249fc7fb62a980b808",
+          "path": "scripts/f01_finalized_ids.py",
+          "sha256": "eefa37199f54c9dac6b518b98855e09572bf42ededf110144c4189cb7e289b02"
+        }
+      ],
+      "raw": [
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925-console.typescript",
+          "sha256": "132c15355fc834717ae5061490bc75a82b1345f0f0e2244c6aa2435578ac0ff8"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/report.json",
+          "sha256": "7256ad9697a3288532423e5c4b06a0fff60f570db2753a651a13bb5009fdb10f"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/policy.json",
+          "sha256": "976c1cc502e5d76a185ad0152f47a2f881e1a6ad58aeaca01865714a98171442"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/trace.json",
+          "sha256": "c390f7ac83a086ab4d9581867e2d26918a40aa6da89c4d4a7cf8e1531467b4ec"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/rpc.jsonl",
+          "sha256": "4c45efebd84e2274acb2486e2a5e3d94e97f1b8ff6ea3466d086a3c078f8c666"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/check.json",
+          "sha256": "d1bd442c99001ff14e534ca3a4bc1ad17aad7165df050874edcfd16bec5ae7a6"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/capture-manifest.json",
+          "sha256": "b24c41d32b227abd34ed526be298eaf5a53a2354563ed359f04b4dfb4495dd2a"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/f01-finality/capture-manifest.json",
+          "sha256": "2be7c717e935355948ff9eab0ef32238887f423fe202cb5c89e63d6863d62719"
+        },
+        {
+          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/manifest.json",
+          "sha256": "41f52c45fd2493600432e5fe6194d3249fe5e79955306ccca211750475c17f6e"
+        },
+        {
+          "path": "/datax/n6-supervisor-x01-6e8-evidence/process-generations.jsonl",
+          "sha256": "23da4b79fbd380e6b2790f49a7eeefc55b67e714b614e2c68955d8a315e8a754"
+        },
+        {
+          "path": "/datax/n6-supervisor-x01-6e8-evidence/proc-absences.jsonl",
+          "sha256": "cb2302fb54e0d91abcecb71abaaec8c527df483475ad69ef6e5b0cdb6dd234c0"
+        },
+        {
+          "path": "/datax/n6-supervisor-x01-6e8-evidence/independent-check.json",
+          "sha256": "2ed05512cde9637b4d4c33c47bd3e8aecca7157900431b2f94663cdc8631ce16"
+        }
+      ],
+      "binaries": [
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/blockchain-explorer/blockchain-explorer",
+          "sha256": "87c85aa59b3aee51181c8af153bf692e9d9d1fda308ca02c4050bd796ad8d86e"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/crypto/create-state",
+          "sha256": "64794dff6c422069994491bb189d6be9559094b9185da2c71033bf71917a210f"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/crypto/fift",
+          "sha256": "ec4f335608595622b828ca96abd1b4fff8d4f2882d7be6ab46ccb5c05c30d51d"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/crypto/func",
+          "sha256": "3ad2f14b31183c1021c5f6e76ce02b00a5ba075e0086aaadc0ceabba0bcc5cd7"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/crypto/pq/tos-pq-consensus-key",
+          "sha256": "039811cd49d0b2d6f4232a5ea46e8cd025fd8ddd5d7fe37ee46b292992ba5c6b"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/dht-server/dht-server",
+          "sha256": "fd76bc835664b97fac56ced447b5f9310d8f6539ec24e3fc1422ec769f64d94d"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/lite-client/lite-client",
+          "sha256": "264410d28452ecb7c477a5cb35db03fd014b3a773b3fcf09168c3c6b75bfeade"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/tosctl/pq_pool_stake_order",
+          "sha256": "71465af030fc0436e9678314fde4261346ba08d39bb4a1cf16d9c044193a2caa"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/toslib/libtoslibjson.so",
+          "sha256": "3471f1a485301a6c098fdd931777236da33c32efb2a400e54c42f33f32a68161"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/utils/generate-random-id",
+          "sha256": "58d0fd9691e7ee1e7557991f6db71ef70b437014c6d3d5a743404da3502ef281"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/validator-engine-console/validator-engine-console",
+          "sha256": "5fbe9840edc008bb29336c2cb0d0d8c724052f6acb410eb37a46b366d49c5c11"
+        },
+        {
+          "path": "/datax/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/build/validator-engine/validator-engine",
+          "sha256": "186fef777bba20168fb48efb43fd78d2945cb16a565a10630e165dc1bbabaa3a"
+        }
+      ],
+      "review": {
+        "memo_commit": "0e3f22ed80726af850049e74d02700e0777bf415",
+        "path": "pq-native/N6-MAC-X01-6E863-EXACT-FAULT-RUN-REVIEW-20260925.md",
+        "sha256": "f3563415a22fe63dede660cdd621c3533ed2fc1677a7861b085db55cce627631"
+      },
+      "ci": [
+        {
+          "run_id": 36177664474,
+          "head_sha": "262f5c5c7676389425a3e663c069966d367175e4",
+          "name": "Branch PQ chain and Python tests",
+          "conclusion": "success",
+          "source_equivalence": "docs_only_descendant",
+          "raw": {
+            "path": "/datax/cc-n6-20260925/evidence/x01-ci/run-36177664474.json",
+            "sha256": "df4585008c4c57389c6e80fc6a322089d0fe00b62d4b669f1b51385b4323ba17"
+          }
+        },
+        {
+          "run_id": 36177664508,
+          "head_sha": "262f5c5c7676389425a3e663c069966d367175e4",
+          "name": "Source guards",
+          "conclusion": "success",
+          "source_equivalence": "docs_only_descendant",
+          "raw": {
+            "path": "/datax/cc-n6-20260925/evidence/x01-ci/run-36177664508.json",
+            "sha256": "95a81fbdac0c9756864ce0bb89b931ceb4956d3e50d42bfa6c20fa66d59d1dd1"
+          }
+        },
+        {
+          "run_id": 36177664645,
+          "head_sha": "262f5c5c7676389425a3e663c069966d367175e4",
+          "name": "N6 microbench smoke",
+          "conclusion": "success",
+          "source_equivalence": "docs_only_descendant",
+          "raw": {
+            "path": "/datax/cc-n6-20260925/evidence/x01-ci/run-36177664645.json",
+            "sha256": "12d8372c60d2ac014a0a8d84c7cff4a296a4b0b8ec9e07151d7fc5b7def6a38f"
+          }
+        }
+      ],
+      "command": {
+        "kind": "real_chain",
+        "argv": null,
+        "argv_gap": "The retained console does not record the launch argv; it is known only from the independent review prose, which is checked as reported_argv_text.",
+        "reported_argv_text": "PYTHONPATH=test/tostester/src uv run python -u scripts/validator-election-stage-a.py --mode launch-gate --stage a --f01-extended-election-window --build-dir build --output-root test/integration/.x01-stage-a-6e863142b-20260925",
+        "reported_exit": 0,
+        "exit_raw_role": "console",
+        "exit_raw_marker": "COMMAND_EXIT_CODE=\"0\""
+      },
+      "gaps": [
+        "Exact launch argv is absent from the retained console; only the independent review reports it and no per-run receipt binds argv, exit and console SHA.",
+        "No distinct old-red/new-green/mutant-red raw runs of the fixed X01 checker are indexed for this signed run; the earlier 6a3 offline candidate controls belong to a different source.",
+        "Fault-window thresholds are frozen by the harness before the first stop, not by an external precommitment.",
+        "The three indexed completed/success CI runs are on docs-only descendant 262f5c5c7 and do not prove execution of the X01 route.",
+        "The indexed run is local accelerated single-host stop/restart only; it carries no X02 directed isolation/loss, multi-host, power-loss or release-network evidence."
+      ],
+      "invalidating_changes": [
+        "retained 6e863142b console, report, policy, trace, RPC, check or twelve binary bytes change",
+        "external /proc generation or ENOENT observations contradict the ten PID generations or six handoffs",
+        "a relevant later CI failure on the same source or a conflicting full BlockIdExt",
+        "claim extends beyond single-host four-process stop/restart Stage A"
+      ]
+    }
+  }
+}

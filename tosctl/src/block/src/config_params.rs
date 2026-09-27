@@ -3400,6 +3400,10 @@ pub struct SizeLimitsConfig {
     pub max_msg_extra_currencies: u32,
     pub max_acc_fixed_prefix_length: u8,
     pub acc_state_cells_for_storage_dict: u32,
+    /// Absent means unlimited, which is what a configuration without version 3 says.
+    pub max_transaction_library_loads: Option<u32>,
+    pub max_total_msg_bits: u32,
+    pub max_total_msg_cells: u32,
 }
 
 impl Default for SizeLimitsConfig {
@@ -3418,13 +3422,30 @@ impl Default for SizeLimitsConfig {
             max_msg_extra_currencies: 2,
             max_acc_fixed_prefix_length: 8,
             acc_state_cells_for_storage_dict: DICT_HASH_MIN_CELLS,
+            max_transaction_library_loads: None,
+            max_total_msg_bits: MAX_MSG_BITS * 5 / 2,
+            max_total_msg_cells: MAX_MSG_CELLS * 5 / 2,
         }
+    }
+}
+
+impl SizeLimitsConfig {
+    /// Whether anything only version 3 can carry differs from what a version 2
+    /// configuration means. Writing version 2 in that case would drop the difference
+    /// silently, and writing version 3 always would change the bytes of every
+    /// configuration that has no use for it.
+    fn needs_v3(&self) -> bool {
+        let default = Self::default();
+        self.max_transaction_library_loads != default.max_transaction_library_loads
+            || self.max_total_msg_bits != default.max_total_msg_bits
+            || self.max_total_msg_cells != default.max_total_msg_cells
     }
 }
 
 impl Serializable for SizeLimitsConfig {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
-        2u8.write_to(cell)?;
+        let tag: u8 = if self.needs_v3() { 3 } else { 2 };
+        tag.write_to(cell)?;
         self.max_msg_bits.write_to(cell)?;
         self.max_msg_cells.write_to(cell)?;
         self.max_library_cells.write_to(cell)?;
@@ -3438,6 +3459,17 @@ impl Serializable for SizeLimitsConfig {
         self.max_msg_extra_currencies.write_to(cell)?;
         self.max_acc_fixed_prefix_length.write_to(cell)?;
         self.acc_state_cells_for_storage_dict.write_to(cell)?;
+        if tag == 3 {
+            match self.max_transaction_library_loads {
+                Some(loads) => {
+                    true.write_to(cell)?;
+                    loads.write_to(cell)?;
+                }
+                None => false.write_to(cell)?,
+            }
+            self.max_total_msg_bits.write_to(cell)?;
+            self.max_total_msg_cells.write_to(cell)?;
+        }
         Ok(())
     }
 }
@@ -3445,7 +3477,7 @@ impl Serializable for SizeLimitsConfig {
 impl Deserializable for SizeLimitsConfig {
     fn read_from(&mut self, slice: &mut SliceData) -> Result<()> {
         let tag = slice.get_next_byte()?;
-        if tag != 1 && tag != 2 {
+        if tag != 1 && tag != 2 && tag != 3 {
             fail!(Self::invalid_tag(tag as u32))
         }
         self.max_msg_bits.read_from(slice)?;
@@ -3454,7 +3486,7 @@ impl Deserializable for SizeLimitsConfig {
         self.max_vm_data_depth.read_from(slice)?;
         self.max_ext_msg_size.read_from(slice)?;
         self.max_ext_msg_depth.read_from(slice)?;
-        if tag == 2 {
+        if tag >= 2 {
             self.max_acc_state_cells.read_from(slice)?;
             self.max_mc_acc_state_cells.read_from(slice)?;
             self.max_acc_public_libraries.read_from(slice)?;
@@ -3462,6 +3494,17 @@ impl Deserializable for SizeLimitsConfig {
             self.max_msg_extra_currencies.read_from(slice)?;
             self.max_acc_fixed_prefix_length.read_from(slice)?;
             self.acc_state_cells_for_storage_dict.read_from(slice)?;
+        }
+        if tag == 3 {
+            self.max_transaction_library_loads = if slice.get_next_bit()? {
+                let mut loads = 0u32;
+                loads.read_from(slice)?;
+                Some(loads)
+            } else {
+                None
+            };
+            self.max_total_msg_bits.read_from(slice)?;
+            self.max_total_msg_cells.read_from(slice)?;
         }
         Ok(())
     }

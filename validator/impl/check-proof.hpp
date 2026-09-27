@@ -19,6 +19,7 @@
 */
 #pragma once
 
+#include "block/signature-set.h"
 #include "interfaces/block-handle.h"
 #include "interfaces/validator-manager.h"
 #include "td/actor/actor.h"
@@ -27,6 +28,17 @@ namespace tos {
 
 namespace validator {
 using td::Ref;
+
+struct BlockProofSignatureEnvelope {
+  BlockIdExt block_id;
+  td::Ref<block::BlockSignatureSet> signatures;
+  ValidatorWeight claimed_weight{0};
+};
+
+// Parses only the signed-evidence envelope. Full header/state validation remains
+// CheckProof's responsibility, but every proof consumer uses this checked carrier
+// extraction rather than reaching into the signatures reference independently.
+td::Result<BlockProofSignatureEnvelope> parse_block_proof_signature_envelope(td::Ref<vm::Cell> proof_root);
 
 /*
  *
@@ -107,6 +119,7 @@ class CheckProof : public td::actor::Actor {
 
   BlockHandle handle_;
   td::Ref<MasterchainState> state_;
+  td::Ref<ConfigHolder> governing_config_;
   td::Ref<block::ValidatorSet> vset_;
   Ref<vm::Cell> proof_root_, old_proof_root_;
   td::Ref<block::BlockSignatureSet> sig_set_;
@@ -120,6 +133,7 @@ class CheckProof : public td::actor::Actor {
   BlockSeqno prev_key_seqno_{~0U};
   CatchainSeqno catchain_seqno_{0};
   td::uint32 validator_hash_{0};
+  td::uint32 vertical_seqno_{0};
   ValidatorWeight sig_weight_{0};
   bool skip_check_signatures_{false};
   bool sig_ok_{false};

@@ -1,0 +1,12 @@
+diff --git a/validator/manager.cpp b/validator/manager.cpp
+--- a/validator/manager.cpp
++++ b/validator/manager.cpp
+@@ -1047,7 +1047,7 @@ void ValidatorManagerImpl::failed_pending_block_proof(BlockIdExt block_id,
+   if (pending == nullptr || !pending->is_processing(attempt_token)) {
+     return;
+   }
+-  auto action = pending_block_proof_failure_action(source, error.code());
++  auto action = pending_block_proof_failure_action(PendingBlockProofFailureSource::BlockBytes, error.code());
+   if (action != PendingBlockProofFailureAction::DiscardBlockBytes) {
+     if (source == PendingBlockProofFailureSource::TrustedContext && error.code() != ErrorCode::notready &&
+         error.code() != ErrorCode::timeout) {

@@ -39,6 +39,15 @@ class ConfigHolder : public td::CntObject {
   virtual td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull shard, UnixTime utime,
                                                          CatchainSeqno seqno) const = 0;
   virtual std::pair<UnixTime, UnixTime> get_validator_set_start_stop(int next) const = 0;
+  // The proof/state header is the session authority. ConfigParam 19 is its
+  // on-chain mirror and must agree before either value is trusted.
+  virtual td::int32 get_global_id() const = 0;
+  virtual td::Result<td::int32> get_config_global_id() const = 0;
+  virtual ValidatorSessionConfig get_consensus_config() const = 0;
+  virtual td::optional<SelectedNewConsensusConfig> get_selected_new_consensus_config(WorkchainId wc) const = 0;
+  virtual td::Status validate_pq_launch_resource_config() const {
+    return td::Status::Error("launch resource validation is unavailable for this config holder");
+  }
 };
 
 }  // namespace validator

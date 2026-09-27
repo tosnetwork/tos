@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "auto/tl/lite_api.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "vm/cells.h"
@@ -55,5 +56,12 @@ td::Result<std::vector<std::string>> parse_multisig_public_keys(td::Ref<vm::Cell
 // seqno(32) subwallet_id(32) public_key(256) start_at(32). Returns 0 when the
 // cell is too short and fails when the root is exotic or null.
 td::Result<td::uint32> parse_restricted_wallet_start_at(td::Ref<vm::Cell> data_cell);
+
+// Renders the signature-set result returned by getMasterchainBlockSignatures.
+// The public JSON API has no post-quantum carrier yet, so a PQ lite carrier is
+// refused explicitly instead of being indistinguishable from an empty ordinary
+// set. id_json must already be a serialized JSON object.
+td::Result<std::string> render_masterchain_block_signatures_json(const lite_api::liteServer_SignatureSet* signatures,
+                                                                 td::Slice id_json);
 
 }  // namespace tos

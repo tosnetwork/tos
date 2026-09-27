@@ -1,0 +1,7 @@
+diff --git a/validator/consensus/simplex/pool.cpp b/validator/consensus/simplex/pool.cpp
+index b325aafe0..e72ebcfa3 100644
+--- a/validator/consensus/simplex/pool.cpp
++++ b/validator/consensus/simplex/pool.cpp
+@@ -351 +351 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
+-    for (auto cert : bus.bootstrap_certificates) {
++    if (false) for (auto cert : bus.bootstrap_certificates) {

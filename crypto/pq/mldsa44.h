@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #pragma once
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 
 namespace tos::pq {
@@ -15,4 +16,9 @@ enum class VerifyResult { invalid, valid, malformed_input, backend_error };
 // The caller owns each buffer for the duration of this synchronous call.
 VerifyResult verify_mldsa44(std::string_view message, std::string_view context,
                           std::string_view signature, std::string_view public_key) noexcept;
+
+// Process-wide instrumentation for structural parser tests. The counter is
+// incremented at the public verification boundary, before input validation.
+std::uint64_t mldsa44_verification_calls_for_test() noexcept;
+void reset_mldsa44_verification_calls_for_test() noexcept;
 }  // namespace tos::pq

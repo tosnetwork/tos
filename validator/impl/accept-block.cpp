@@ -25,6 +25,7 @@
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "validator/invariants.hpp"
+#include "validator/pq-finality-verification.h"
 #include "vm/boc.h"
 #include "vm/cells.h"
 #include "vm/cells/MerkleProof.h"
@@ -38,16 +39,46 @@ namespace tos {
 namespace validator {
 using namespace std::literals::string_literals;
 
+td::Result<td::Ref<vm::Cell>> prepare_accepted_block_signatures(td::Ref<block::ValidatorSet> validator_set,
+                                                                td::Ref<block::BlockSignatureSet> signatures,
+                                                                BlockIdExt block_id,
+                                                                ValidatorSessionId expected_session_id) {
+  if (validator_set.is_null()) {
+    return td::Status::Error("accept block: trusted validator set is missing");
+  }
+  if (signatures.is_null()) {
+    return td::Status::Error("accept block: signature set is missing");
+  }
+  td::Result<ValidatorWeight> verified;
+  if (signatures->is_pq()) {
+    const block::PQFinalityVerificationContext context{validator_set, block_id, expected_session_id};
+    verified = block::verify_pq_finality(
+        context, *signatures, signatures->is_final() ? block::FinalityRole::Final : block::FinalityRole::Approve);
+  } else if (signatures->is_final()) {
+    verified = signatures->check_signatures(validator_set, block_id);
+  } else {
+    verified = signatures->check_approve_signatures(validator_set, block_id);
+  }
+  TRY_RESULT(ignored_weight, std::move(verified));
+  static_cast<void>(ignored_weight);
+  if (!signatures->is_final()) {
+    return td::Ref<vm::Cell>{};
+  }
+  return signatures->serialize(std::move(validator_set));
+}
+
 AcceptBlockQuery::AcceptBlockQuery(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                                    td::Ref<block::ValidatorSet> validator_set,
-                                   td::Ref<block::BlockSignatureSet> signatures, int block_broadcast_mode,
-                                   int finality_broadcast_mode, bool send_shard_block_desc, bool apply,
-                                   td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise)
+                                   td::Ref<block::BlockSignatureSet> signatures, ValidatorSessionId expected_session_id,
+                                   int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
+                                   bool apply, td::actor::ActorId<ValidatorManager> manager,
+                                   td::Promise<td::Unit> promise)
     : id_(id)
     , data_(std::move(data))
     , prev_(std::move(prev))
     , validator_set_(std::move(validator_set))
     , signatures_(std::move(signatures))
+    , expected_session_id_(expected_session_id)
     , is_fake_(false)
     , is_fork_(false)
     , block_broadcast_mode_(block_broadcast_mode)
@@ -71,9 +102,6 @@ AcceptBlockQuery::AcceptBlockQuery(AcceptBlockQuery::IsFake fake, BlockIdExt id,
     , data_(std::move(data))
     , prev_(std::move(prev))
     , validator_set_(std::move(validator_set))
-    , signatures_(block::BlockSignatureSet::create_ordinary(std::vector<BlockSignature>{},
-                                                            validator_set_->get_catchain_seqno(),
-                                                            validator_set_->get_validator_set_hash()))
     , is_fake_(true)
     , is_fork_(false)
     , manager_(manager)
@@ -90,7 +118,6 @@ AcceptBlockQuery::AcceptBlockQuery(ForceFork ffork, BlockIdExt id, td::Ref<Block
                                    td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise)
     : id_(id)
     , data_(std::move(data))
-    , signatures_(block::BlockSignatureSet::create_ordinary(std::vector<BlockSignature>{}, 0, 0))
     , is_fake_(true)
     , is_fork_(true)
     , manager_(manager)
@@ -251,54 +278,24 @@ bool AcceptBlockQuery::create_new_proof() {
   }
   // 7. check signatures
   if (!is_fake_) {
-    td::Result<td::uint64> sign_chk;
-    if (signatures_->is_final()) {
-      sign_chk = signatures_->check_signatures(validator_set_, id_);
-    } else {
-      sign_chk = signatures_->check_approve_signatures(validator_set_, id_);
-    }
-    if (sign_chk.is_error()) {
-      auto err = sign_chk.move_as_error();
+    auto prepared = prepare_accepted_block_signatures(validator_set_, signatures_, id_, expected_session_id_);
+    if (prepared.is_error()) {
+      auto err = prepared.move_as_error();
       VLOG(VALIDATOR_WARNING) << "signature check failed : " << err.to_string();
       abort_query(std::move(err));
       return false;
     }
-  }
-  if (signatures_->is_final()) {
-    // 8. serialize signatures
-    if (!is_fake_) {
-      vm::CellBuilder cb2;
-      auto r_sign_cell = signatures_->serialize(validator_set_);
-      if (r_sign_cell.is_error()) {
-        abort_query(
-            r_sign_cell.move_as_error_prefix("cannot serialize BlockSignatures for the newly-accepted block: "));
-        return false;
-      }
-      signatures_cell_ = r_sign_cell.move_as_ok();
-    } else {  // FAKE
-      vm::CellBuilder cb2;
-      if (!(cb2.store_long_bool(0x11, 8)  // block_signatures#11
-            && cb2.store_long_bool(validator_set_.not_null() ? validator_set_->get_validator_set_hash() : 0,
-                                   32)  // validator_info$_ validator_set_hash_short:uint32
-            && cb2.store_long_bool(validator_set_.not_null() ? validator_set_->get_catchain_seqno() : 0,
-                                   32)     //   validator_set_ts:uint32
-            && cb2.store_long_bool(0, 32)  // sig_count:uint32
-            && cb2.store_long_bool(0, 64)  // sig_weight:uint32
-            && cb2.store_bool_bool(false)  // (HashmapE 16 CryptoSignaturePair)
-            && cb2.finalize_to(signatures_cell_))) {
-        return fatal_error("cannot serialize fake BlockSignatures for the newly-accepted block");
-      }
-    }
+    signatures_cell_ = prepared.move_as_ok();
   }
   Ref<vm::Cell> bs_cell;
   if (is_masterchain()) {
     // 9a. now create serialized proof
     vm::CellBuilder cb;
-    if (!(cb.store_long_bool(0xc3, 8)                // block_proof#c3
-          && block::tlb::t_BlockIdExt.pack(cb, id_)  // proof_for:BlockIdExt
-          && cb.store_ref_bool(std::move(proof))     // proof:^Cell
-          && cb.store_bool_bool(true)                // signatures:(Maybe
-          && cb.store_ref_bool(signatures_cell_)     //   ^BlockSignatures)
+    if (!(cb.store_long_bool(0xc3, 8)                           // block_proof#c3
+          && block::tlb::t_BlockIdExt.pack(cb, id_)             // proof_for:BlockIdExt
+          && cb.store_ref_bool(std::move(proof))                // proof:^Cell
+          && cb.store_bool_bool(!is_fake_)                      // signatures:(Maybe
+          && (is_fake_ || cb.store_ref_bool(signatures_cell_))  // ^BlockSignatures)
           && cb.finalize_to(bs_cell))) {
       return fatal_error("cannot serialize BlockProof for the newly-accepted block");
     }
@@ -418,9 +415,9 @@ void AcceptBlockQuery::got_block_handle(BlockHandle handle) {
   VLOG(VALIDATOR_DEBUG) << "got_block_handle()";
   handle_ = std::move(handle);
   if (handle_->received() && handle_->received_state() &&
-      (handle_->inited_signatures() || !signatures_->is_final() || is_fork_) && handle_->inited_split_after() &&
-      handle_->inited_merge_before() && handle_->inited_prev() && handle_->inited_logical_time() &&
-      handle_->inited_state_root_hash() &&
+      (handle_->inited_signatures() || is_fake_ || !signatures_->is_final() || is_fork_) &&
+      handle_->inited_split_after() && handle_->inited_merge_before() && handle_->inited_prev() &&
+      handle_->inited_logical_time() && handle_->inited_state_root_hash() &&
       (is_masterchain() ? handle_->inited_proof() && handle_->is_applied() && handle_->inited_is_key_block()
                         : handle_->inited_proof_link()) &&
       block_broadcast_mode_ == 0 && finality_broadcast_mode_ == 0) {
@@ -471,7 +468,7 @@ void AcceptBlockQuery::got_block_handle_cont() {
 
 void AcceptBlockQuery::written_block_data() {
   VLOG(VALIDATOR_DEBUG) << "written_block_data()";
-  if (handle_->inited_signatures() || !signatures_->is_final() || is_fork_) {
+  if (handle_->inited_signatures() || is_fake_ || !signatures_->is_final() || is_fork_) {
     written_block_signatures();
     return;
   }
@@ -611,7 +608,7 @@ void AcceptBlockQuery::written_state(td::Ref<ShardState> upd_state) {
 
 void AcceptBlockQuery::written_block_proof() {
   VLOG(VALIDATOR_DEBUG) << "written_block_proof()";
-  if (!signatures_->is_final()) {
+  if (is_fake_ || !signatures_->is_final()) {
     written_block_next();
     return;
   }

@@ -207,7 +207,7 @@ if (NOT SECP256K1_LIBRARY)
           AR=${SECP256K1_AR}
           RANLIB=${SECP256K1_RANLIB}
           CFLAGS=${SECP256K1_CFLAGS}
-          make -j16
+          make -j2
         COMMAND ${CMAKE_COMMAND} -E chdir ${SECP256K1_BUILD_DIR} ${CMAKE_COMMAND} -E env
           CC=${SECP256K1_CC}
           CXX=${SECP256K1_CXX}

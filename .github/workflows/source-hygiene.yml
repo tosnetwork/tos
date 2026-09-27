@@ -34,6 +34,10 @@ jobs:
         run: scripts/test-tos-service-native-registry-v1.sh
       - name: Verify the nominator pool code lock
         run: scripts/check-nominator-pool-code-lock.sh
+      - name: Verify the single-nominator code lock
+        run: scripts/check-single-nominator-code-lock.sh
+      - name: Verify a validator node cannot authorise a controller
+        run: scripts/check-root-authority-off-the-node.sh
       - name: Verify generated intermediates stay in the build tree
         run: |
           cmake --build build --target gen_fif -j2

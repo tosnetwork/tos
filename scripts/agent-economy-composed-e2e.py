@@ -41,17 +41,22 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/agent-economy-composed-e2e.py
 """
 import asyncio
+import base64
 import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from contract import tos
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
@@ -59,8 +64,14 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19246"
+OBSERVER_RPCS = ("127.0.0.1:19247", "127.0.0.1:19248")
 WORKDIR = REPO / "test/integration/.agent-economy-composed-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
+CHAIN_EVIDENCE = WORKDIR / "chain-evidence.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
+OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000008"
 NANO = 1_000_000_000
 REVIEW_PERIOD = 3600
@@ -87,6 +98,39 @@ RULING_HASH = "01" * 32
 failures: list[str] = []
 
 
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "evidence_test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e10_composed_evidence.py").read_bytes()).hexdigest(),
+        "quorum_test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e10_controller_quorum.py").read_bytes()).hexdigest(),
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+        "rpc_transcript": RPC_TRANSCRIPT.name,
+        "cli_transcript": CLI_TRANSCRIPT.name,
+        "chain_evidence": CHAIN_EVIDENCE.name,
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E10 real-chain run requires a clean tracked source tree")
+
+
 def check(label: str, ok: bool, detail: str = ""):
     if ok:
         print(f"  PASS: {label}")
@@ -95,20 +139,60 @@ def check(label: str, ok: bool, detail: str = ""):
         failures.append(label)
 
 
-def rpc_call(method: str, **params):
+def rpc_call(method: str, *, endpoint: str = RPC, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
-        f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
+        f"http://{endpoint}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"endpoint": endpoint, "method": method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"endpoint": endpoint, "method": method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    return json.loads(raw.decode())
+
+
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    return int(rpc_call("getAddressInformation", address=address)
+               ["result"]["last_transaction_id"]["lt"])
+
+
+def transactions_after(address: str, baseline_lt: int) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if len(rows) == 10 and all(
+        int(row["transaction_id"]["lt"]) > baseline_lt for row in rows
+    ):
+        raise RuntimeError("composed-route transaction page did not cover baseline")
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
 
 
 def balance(addr: str) -> int:
     return int(rpc_call("getAddressInformation", address=addr)["result"]["balance"])
 
 
-async def tosctl(*args: str, may_fail: bool = False) -> str:
+async def tosctl(*args: str) -> str:
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
@@ -119,8 +203,15 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=180)
     except TimeoutError:
         proc.kill()
+        out, err = await proc.communicate()
+        record_jsonl(CLI_TRANSCRIPT, {"args": args, "timeout": True,
+                     "stdout_base64": base64.b64encode(out).decode(),
+                     "stderr_base64": base64.b64encode(err).decode()})
         raise RuntimeError(f"tosctl {' '.join(args)} timed out")
-    if proc.returncode != 0 and not may_fail:
+    record_jsonl(CLI_TRANSCRIPT, {"args": args, "exit_code": proc.returncode,
+                 "stdout_base64": base64.b64encode(out).decode(),
+                 "stderr_base64": base64.b64encode(err).decode()})
+    if proc.returncode != 0:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
@@ -187,11 +278,11 @@ async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -
     return False
 
 
-async def wait_rpc_ready(timeout: float = 180.0) -> bool:
+async def wait_rpc_ready(timeout: float = 180.0, endpoint: str = RPC) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if "result" in rpc_call("getMasterchainInfo"):
+            if "result" in rpc_call("getMasterchainInfo", endpoint=endpoint):
                 return True
         except Exception:
             pass
@@ -217,11 +308,177 @@ async def wait_task_status(name: str, want: str, timeout: float = 90.0) -> str:
     return last
 
 
-async def send_task_op(operation: str, name: str, *extra: str, may_fail: bool = False) -> str:
+async def send_task_op(operation: str, name: str, *extra: str) -> str:
     return await tosctl(
         "agent", "task", "send", "--operation", operation, "--name", name,
-        "--yes", *extra, may_fail=may_fail,
+        "--yes", *extra,
     )
+
+
+async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
+                             show_state, send) -> None:
+    before_state = await show_state()
+    before_head = finalized_mc_header()
+    wallet_lt, contract_lt = last_lt(payer), last_lt(address)
+    receipt = await send()
+    deadline = time.monotonic() + 45
+    wallet_tx = contract_tx = bounce_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(payer, wallet_lt)
+        if wallet_rows:
+            sends = [row for row in wallet_rows if any(
+                same_addr(msg.get("destination"), address)
+                for msg in row.get("out_msgs") or [])]
+            if len(sends) != 1:
+                raise RuntimeError(f"{label}: expected exactly one wallet send to target")
+            wallet_tx = sends[0]
+            outgoing = wallet_tx.get("out_msgs") or []
+            if (wallet_tx.get("aborted") is not False
+                    or (wallet_tx.get("compute") or {}).get("success") is not True
+                    or (wallet_tx.get("action") or {}).get("success") is not True
+                    or len(outgoing) != 1
+                    or not same_addr(outgoing[0].get("destination"), address)):
+                raise RuntimeError(f"{label}: wallet did not submit to target contract")
+            contract_rows = transactions_after(address, contract_lt)
+            if contract_rows:
+                if len(contract_rows) != 1:
+                    raise RuntimeError(f"{label}: multiple new target transactions")
+                contract_tx = contract_rows[0]
+                inbound = contract_tx.get("in_msg") or {}
+                if (inbound.get("hash") != outgoing[0].get("hash")
+                        or not same_addr(inbound.get("source"), payer)):
+                    raise RuntimeError(f"{label}: target inbound hash differs from wallet outbound")
+                refunds = contract_tx.get("out_msgs") or []
+                if (len(refunds) != 1 or refunds[0].get("bounced") is not True
+                        or not same_addr(refunds[0].get("source"), address)
+                        or not same_addr(refunds[0].get("destination"), payer)):
+                    raise RuntimeError(f"{label}: target did not emit one exact bounce")
+                other_rows = [row for row in wallet_rows if row is not wallet_tx]
+                if len(other_rows) > 1:
+                    raise RuntimeError(f"{label}: unrelated or duplicate wallet transaction")
+                if other_rows:
+                    bounce_tx = other_rows[0]
+                    bounce_in = bounce_tx.get("in_msg") or {}
+                    if (bounce_in.get("hash") != refunds[0].get("hash")
+                            or bounce_in.get("bounced") is not True
+                            or not same_addr(bounce_in.get("source"), address)
+                            or not same_addr(bounce_in.get("destination"), payer)
+                            or bounce_tx.get("out_msgs")):
+                        raise RuntimeError(f"{label}: wallet credit is not the target's exact bounce")
+                    break
+        await asyncio.sleep(1)
+    if wallet_tx is None or contract_tx is None or bounce_tx is None:
+        raise RuntimeError(f"{label}: exact wallet-target-bounce chain not observed")
+    if (contract_tx.get("aborted") is not True
+            or (contract_tx.get("compute") or {}).get("success") is not False
+            or (contract_tx.get("compute") or {}).get("exit_code") != expected_exit):
+        raise RuntimeError(f"{label}: expected VM exit {expected_exit}, got {contract_tx}")
+    observations = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(observations) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            state = await show_state()
+            observations.append({"head": head, "state": state})
+            if state != before_state:
+                raise RuntimeError(f"{label}: contract state changed after VM rejection")
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(observations) != 2:
+        raise RuntimeError(f"{label}: two later finalized heads not observed")
+    record_jsonl(CHAIN_EVIDENCE, {"label": label, "kind": "negative", "receipt": receipt,
+                 "expected_exit": expected_exit, "before_state": before_state,
+                 "before_head": before_head, "wallet_tx": wallet_tx,
+                 "contract_tx": contract_tx, "bounce_tx": bounce_tx,
+                 "observations": observations})
+    check(label, True)
+
+
+async def verify_payout_edge(label: str, escrow: str, recipient: str,
+                             escrow_lt: int, recipient_lt: int, amount: int,
+                             before_head: dict) -> None:
+    """Tie one successful Escrow action to its exact Agent Account credit message."""
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        source_rows = transactions_after(escrow, escrow_lt)
+        recipient_rows = transactions_after(recipient, recipient_lt)
+        if source_rows and recipient_rows:
+            if len(source_rows) != 1:
+                raise RuntimeError(f"{label}: multiple new escrow transactions")
+            source_tx = source_rows[0]
+            if (source_tx.get("aborted") is not False
+                    or (source_tx.get("compute") or {}).get("success") is not True
+                    or (source_tx.get("action") or {}).get("success") is not True):
+                raise RuntimeError(f"{label}: escrow payout transaction failed")
+            outgoing = [msg for msg in source_tx.get("out_msgs") or []
+                        if same_addr(msg.get("destination"), recipient)]
+            if len(outgoing) != 1 or int(outgoing[0]["value"]) != amount:
+                raise RuntimeError(f"{label}: exact payout message and amount not found")
+            matching = [row for row in recipient_rows
+                        if (row.get("in_msg") or {}).get("hash") == outgoing[0].get("hash")]
+            if len(matching) != 1:
+                raise RuntimeError(f"{label}: recipient inbound hash did not match payout")
+            inbound = matching[0]["in_msg"]
+            if (not same_addr(inbound.get("source"), escrow)
+                    or int(inbound["value"]) != amount
+                    or matching[0].get("aborted") is not False):
+                raise RuntimeError(f"{label}: recipient did not accept exact escrow payout")
+            heads = []
+            last_seqno = before_head["id"]["seqno"]
+            while time.monotonic() < deadline and len(heads) < 2:
+                head = finalized_mc_header()
+                if head["id"]["seqno"] > last_seqno:
+                    heads.append(head)
+                    last_seqno = head["id"]["seqno"]
+                else:
+                    await asyncio.sleep(1)
+            if len(heads) != 2:
+                raise RuntimeError(f"{label}: two later finalized heads not observed")
+            record_jsonl(CHAIN_EVIDENCE, {"label": label, "kind": "payout",
+                         "escrow_tx": source_tx, "recipient_tx": matching[0],
+                         "amount": amount, "before_head": before_head, "final_heads": heads})
+            check(label, True)
+            return
+        await asyncio.sleep(1)
+    raise RuntimeError(f"{label}: exact escrow-to-agent-account payout not observed")
+def controller_task_args(operation: str, name: str) -> tuple[str, ...]:
+    """Stable per-action ID and two independent read-only RPC configurations."""
+    action_id = hashlib.sha256(f"e10:{name}:{operation}".encode()).hexdigest()
+    return ("--controller-action-id", action_id, "--quorum-config",
+            str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
+
+
+def write_config() -> None:
+    config = {
+        "nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
+        "chain_rpc": {"urls": [f"http://{RPC}/"]}, "http": {},
+        "master_wallet": None, "tick_interval": 40, "log": None,
+    }
+    CONFIG.write_text(json.dumps(config, indent=2))
+    for path, endpoint in zip(OBSERVER_CONFIGS, OBSERVER_RPCS, strict=True):
+        observer = dict(config)
+        observer["chain_rpc"] = {"urls": [f"http://{endpoint}/"]}
+        path.write_text(json.dumps(observer, indent=2))
+
+
+def require_same_zerostate() -> None:
+    if len(set((RPC, *OBSERVER_RPCS))) != 3:
+        raise RuntimeError("E10 quorum RPC endpoints are not independent")
+    primary = rpc_call("getMasterchainInfo")["result"]["init"]
+    for endpoint in OBSERVER_RPCS:
+        observed = rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["init"]
+        if observed != primary:
+            raise RuntimeError(f"E10 observer {endpoint} has a different zerostate")
+
+
+def require_independent_processes(process_map: list[dict]) -> None:
+    if (len(process_map) != 3 or
+            len({row["pid"] for row in process_map}) != 3 or
+            len({row["directory"] for row in process_map}) != 3 or
+            len({row["rpc"] for row in process_map}) != 3 or
+            any(row["pid"] is None for row in process_map)):
+        raise RuntimeError("E10 observer processes are not independent")
 
 
 async def run_checks(faucet) -> None:
@@ -230,6 +487,12 @@ async def run_checks(faucet) -> None:
         check("json-rpc endpoint ready", False, f"no response from http://{RPC}/jsonRPC")
         return
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
+    for endpoint in OBSERVER_RPCS:
+        if not await wait_rpc_ready(endpoint=endpoint):
+            check(f"independent observer RPC {endpoint} ready", False)
+            return
+    require_same_zerostate()
+    check("two independent observers share the validator zerostate", True)
 
     for name in ("planner", "verifier", "reviewer", "model-provider", "worker-owner"):
         await tosctl("wallet", "create", "-n", name, "-v", "V3R2", "-w", "0")
@@ -352,6 +615,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "accept", "--name", "workflow-happy",
         "--via-agent-account", "research-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("accept", "workflow-happy"),
     )
     check("worker Agent Account accepted the task",
           await wait_task_status("workflow-happy", "accepted") == "accepted")
@@ -378,23 +642,28 @@ async def run_checks(faucet) -> None:
         "agent", "task", "send", "--operation", "result", "--name", "workflow-happy",
         "--via-agent-account", "research-agent", "--amount", "0.1",
         "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+        *controller_task_args("result", "workflow-happy"),
     )
     check("worker Agent Account submitted the task result",
           await wait_task_status("workflow-happy", "result_submitted") == "result_submitted")
 
-    await send_task_op("settle", "workflow-happy", "--from", "verifier", "--payout", "5",
-                       may_fail=True)
-    await asyncio.sleep(5)
-    check("settle without attestation rejected",
-          (await task_show("workflow-happy"))["status"] == "result_submitted")
+    await rejected_operation(
+        "settle without attestation rejected", happy_escrow, verifier, 9,
+        lambda: task_show("workflow-happy"),
+        lambda: send_task_op("settle", "workflow-happy", "--from", "verifier", "--payout", "5"))
 
     worker_before = balance(worker_account)
+    happy_escrow_lt, worker_lt = last_lt(happy_escrow), last_lt(worker_account)
+    payout_before_head = finalized_mc_header()
     await send_task_op("settle", "workflow-happy", "--from", "verifier", "--payout", "5",
                        "--signer-vault-key", "task-attestor-key")
     check("happy task settled with attestation",
           await wait_task_status("workflow-happy", "settled") == "settled")
-    await asyncio.sleep(5)
-    check("worker Agent Account received the payout", balance(worker_account) > worker_before)
+    await verify_payout_edge("worker Agent Account received the payout", happy_escrow,
+                             worker_account, happy_escrow_lt, worker_lt, 5 * NANO,
+                             payout_before_head)
+    check("worker Agent Account balance rose after exact payout",
+          balance(worker_account) > worker_before)
 
     # ---------------- CONTESTED PATH ----------------
     print("\n=== contested path: dispute -> attested ruling -> Task Escrow resolve ===")
@@ -413,6 +682,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "accept", "--name", "workflow-contested",
         "--via-agent-account", "research-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("accept", "workflow-contested"),
     )
     check("worker Agent Account accepted the contested task",
           await wait_task_status("workflow-contested", "accepted") == "accepted")
@@ -424,6 +694,7 @@ async def run_checks(faucet) -> None:
         "--via-agent-account", "research-agent", "--amount", "0.1",
         "--result-hash", CONTESTED_RESULT_HASH, "--evidence-hash", CONTESTED_EVIDENCE_HASH,
         "--yes",
+        *controller_task_args("result", "workflow-contested"),
     )
     check("worker Agent Account submitted the contested result",
           await wait_task_status("workflow-contested", "result_submitted") == "result_submitted")
@@ -461,16 +732,13 @@ async def run_checks(faucet) -> None:
     check("worker submitted respondent evidence",
           dispute_data["status"] == "evidence_submitted", str(dispute_data))
 
-    await tosctl(
-        "agent", "dispute", "send", "--operation", "rule",
-        "--name", "workflow-contested-dispute", "--from", "reviewer",
-        "--ruling", "split", "--split-bps", "6500", "--ruling-hash", RULING_HASH,
-        may_fail=True,
-    )
-    dispute_data = await tosctl_json(
-        "agent", "dispute", "show", "--name", "workflow-contested-dispute")
-    check("rule without attestation rejected",
-          dispute_data["status"] == "evidence_submitted", str(dispute_data))
+    await rejected_operation(
+        "rule without attestation rejected", dispute_address, reviewer, 9,
+        lambda: tosctl_json("agent", "dispute", "show", "--name", "workflow-contested-dispute"),
+        lambda: tosctl("agent", "dispute", "send", "--operation", "rule",
+                       "--name", "workflow-contested-dispute", "--from", "reviewer",
+                       "--ruling", "split", "--split-bps", "6500",
+                       "--ruling-hash", RULING_HASH, "--yes"))
 
     await tosctl(
         "agent", "dispute", "send", "--operation", "rule",
@@ -487,12 +755,16 @@ async def run_checks(faucet) -> None:
 
     # 4 TOS budget * 6500 bps / 10000 = 2.6 TOS to the worker.
     worker_before = balance(worker_account)
+    contested_escrow_lt, worker_lt = last_lt(contested_escrow), last_lt(worker_account)
+    payout_before_head = finalized_mc_header()
     await send_task_op("resolve", "workflow-contested", "--from", "verifier", "--payout", "2.6")
     check("verifier resolved the contested task per the ruling",
           await wait_task_status("workflow-contested", "settled") == "settled")
-    await asyncio.sleep(5)
+    await verify_payout_edge("worker Agent Account received the split-translated payout",
+                             contested_escrow, worker_account, contested_escrow_lt, worker_lt,
+                             26 * NANO // 10, payout_before_head)
     worker_delta = balance(worker_account) - worker_before
-    check("worker Agent Account received the split-translated payout",
+    check("worker Agent Account balance reflects the split-translated payout",
           abs(worker_delta - int(2.6 * NANO)) <= NANO // 100, f"delta={worker_delta}")
 
 
@@ -505,30 +777,51 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps({
-        "nodes": {}, "wallets": {}, "pools": {}, "bindings": {},
-        "chain_rpc": {"urls": [f"http://{RPC}/"]}, "http": {},
-        "master_wallet": None, "tick_interval": 40, "log": None,
-    }, indent=2))
+    write_manifest()
+    write_config()
     install = Install(BUILD_DIR, REPO)
 
     async with Network(install, WORKDIR / "net", base_port=23800) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        observers = [network.create_full_node() for _ in OBSERVER_RPCS]
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
+        for observer in observers:
+            observer.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        observer_tasks = [
+            asyncio.create_task(observer.run(StartOptions(args=["--json-rpc-address", endpoint])))
+            for observer, endpoint in zip(observers, OBSERVER_RPCS, strict=True)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            if len({id(node), *(id(observer) for observer in observers)}) != 3:
+                raise RuntimeError("E10 observer node objects are not independent")
+            process_map = [
+                {"role": role, "pid": process.process_id,
+                 "rpc": endpoint, "directory": str(process.directory)}
+                for role, process, endpoint in (
+                    ("validator", node, RPC),
+                    ("observer-1", observers[0], OBSERVER_RPCS[0]),
+                    ("observer-2", observers[1], OBSERVER_RPCS[1]),
+                )
+            ]
+            require_independent_processes(process_map)
+            (WORKDIR / "process-map.json").write_text(json.dumps(process_map, indent=2) + "\n")
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet)
         finally:
-            for t in (node_task, dht_task):
+            for t in (node_task, dht_task, *observer_tasks):
                 t.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            await asyncio.gather(node_task, dht_task, *observer_tasks, return_exceptions=True)
+            await node.stop()
+            for observer in observers:
+                await observer.stop()
+            await dht.stop()
 
     return 1 if failures else 0
 

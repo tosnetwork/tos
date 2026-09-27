@@ -20,7 +20,9 @@ use crate::{
     merkle_update::MerkleUpdate,
     outbound_messages::OutMsgDescr,
     shard::ShardIdent,
-    signature::{BlockSignatures, BlockSignaturesSimplex, BlockSignaturesVariant},
+    signature::{
+        BlockSignatures, BlockSignaturesSimplex, BlockSignaturesSimplexPq, BlockSignaturesVariant,
+    },
     transactions::ShardAccountBlocks,
     types::{ChildCell, CurrencyCollection, InRefValue},
     validators::ValidatorSet,
@@ -1381,6 +1383,13 @@ impl TopBlockDescr {
         Self::with_id_and_signatures(proof_for, BlockSignaturesVariant::Simplex(signatures))
     }
 
+    pub fn with_id_and_simplex_pq_signatures(
+        proof_for: BlockIdExt,
+        signatures: BlockSignaturesSimplexPq,
+    ) -> Self {
+        Self::with_id_and_signatures(proof_for, BlockSignaturesVariant::SimplexPq(signatures))
+    }
+
     pub fn append_proof(&mut self, cell: Cell) {
         self.chain.push(cell);
     }
@@ -1395,21 +1404,38 @@ impl TopBlockDescr {
     }
 
     /// Get signatures as BlockSignatures (ordinary format only)
-    /// Returns None if signatures are Simplex format
-    pub fn ordinary_signatures(&self) -> Option<&BlockSignatures> {
-        self.signatures.as_ref().and_then(|irf| match &irf.0 {
-            BlockSignaturesVariant::Ordinary(sigs) => Some(sigs),
-            BlockSignaturesVariant::Simplex(_) => None,
-        })
+    /// Returns `Ok(None)` for a classical Simplex set and an error for a PQ set,
+    /// which has no `CryptoSignature` view.
+    pub fn ordinary_signatures(&self) -> Result<Option<&BlockSignatures>> {
+        match self.signatures.as_ref().map(|irf| &irf.0) {
+            Some(BlockSignaturesVariant::Ordinary(sigs)) => Ok(Some(sigs)),
+            Some(BlockSignaturesVariant::Simplex(_)) | None => Ok(None),
+            Some(BlockSignaturesVariant::SimplexPq(_)) => {
+                fail!("post-quantum signatures have no ordinary CryptoSignature view")
+            }
+        }
     }
 
     /// Get signatures as BlockSignaturesSimplex (simplex format only)
-    /// Returns None if signatures are Ordinary format
-    pub fn simplex_signatures(&self) -> Option<&BlockSignaturesSimplex> {
-        self.signatures.as_ref().and_then(|irf| match &irf.0 {
-            BlockSignaturesVariant::Ordinary(_) => None,
-            BlockSignaturesVariant::Simplex(sigs) => Some(sigs),
-        })
+    /// Returns `Ok(None)` for an ordinary set and an error for a PQ set, which
+    /// must be requested through `simplex_pq_signatures`.
+    pub fn simplex_signatures(&self) -> Result<Option<&BlockSignaturesSimplex>> {
+        match self.signatures.as_ref().map(|irf| &irf.0) {
+            Some(BlockSignaturesVariant::Simplex(sigs)) => Ok(Some(sigs)),
+            Some(BlockSignaturesVariant::Ordinary(_)) | None => Ok(None),
+            Some(BlockSignaturesVariant::SimplexPq(_)) => {
+                fail!("post-quantum signatures require the PQ accessor")
+            }
+        }
+    }
+
+    pub fn simplex_pq_signatures(&self) -> Result<Option<&BlockSignaturesSimplexPq>> {
+        match self.signatures.as_ref().map(|irf| &irf.0) {
+            Some(BlockSignaturesVariant::SimplexPq(sigs)) => Ok(Some(sigs)),
+            Some(BlockSignaturesVariant::Ordinary(_))
+            | Some(BlockSignaturesVariant::Simplex(_))
+            | None => Ok(None),
+        }
     }
 
     pub fn chain(&self) -> &Vec<Cell> {

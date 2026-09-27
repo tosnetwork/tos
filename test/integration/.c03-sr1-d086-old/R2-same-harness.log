@@ -1,0 +1,652 @@
+[1;33m[ 2][t 0][2026-09-24 10:51:22.128366828][candidate-codec.cpp:41][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000731 compression=none original_size=46 compressed_size=46[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.128731747][candidate-codec.cpp:69][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000015 compression=none compressed_size=46[0m
+[0m[ 4][t 0][2026-09-24 10:51:22.128764131][candidate-codec.cpp:126]	Compressing block candidate: 46 -> 33[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.128769001][candidate-codec.cpp:127][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=test time_sec=0.000018 compression=compressed original_size=46 compressed_size=33[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.128779986][candidate-codec.cpp:153][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000006 compression=compressed compressed_size=33[0m
+[0m[ 4][t 0][2026-09-24 10:51:22.128787746][candidate-codec.cpp:172]	Decompressing block candidate :33 -> 46[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.128830387][candidate-codec.cpp:160][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000009 compression=compressedV2_ImprovedStructureLZ4 compressed_size=32[0m
+[0m[ 4][t 0][2026-09-24 10:51:22.128837882][candidate-codec.cpp:172]	Decompressing block candidate V2:32 -> 46[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.128848263][candidate-codec.cpp:160][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000003 compression=compressedV2_BaselineLZ4 compressed_size=38[0m
+[0m[ 4][t 0][2026-09-24 10:51:22.128856802][candidate-codec.cpp:172]	Decompressing block candidate V2:38 -> 46[0m
+[0m[ 4][t 0][2026-09-24 10:51:22.138721376][candidate-codec.cpp:126]	Compressing block candidate: 526339 -> 36979[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.138738634][candidate-codec.cpp:127][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=5A69DD6E083571F2CD24AE8E40B2D2CCB70ECF33A21089CDB1E8FA3D9C4A0A32 called_from=compression-ratio-test time_sec=0.002604 compression=compressed original_size=526339 compressed_size=36979[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.141523634][candidate-codec.cpp:153][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=5A69DD6E083571F2CD24AE8E40B2D2CCB70ECF33A21089CDB1E8FA3D9C4A0A32 called_from=consensus time_sec=0.002499 compression=compressed compressed_size=36979[0m
+[0m[ 4][t 0][2026-09-24 10:51:22.143522363][candidate-codec.cpp:172]	Decompressing block candidate :36979 -> 526339[0m
+[1;33m[ 2][t 0][2026-09-24 10:51:22.144094186][test-consensus.cpp:3634]	C03 harness switches: restart_from_last_accepted_block=true anchor_transient_failures=2 origin_transient_failures=0[0m
+[1;31m[ 1][t 1][2026-09-24 10:51:22.149007675][test-consensus.cpp:1101][!test-consensus]	Starting node #0.0[0m
+[1;31m[ 1][t 3][2026-09-24 10:51:27.989003152][test-consensus.cpp:1115][!test-consensus]	Stopping node #0.0[0m
+[1;31m[ 1][t 2][2026-09-24 10:51:27.989875915][pool.cpp:891][!consensus.0.0.SimplexPool]	consensus: the signed vote for FinalizeVote{id={4339, /zTTZe1YoQLwWxSpKKETbIJG3pnHdFSCamDY+IZbY1Q=, ?}} was not committed ([Error : 653 : Actor destroyed]); not applying or broadcasting it[0m
+[1;31m[ 1][t 3][2026-09-24 10:51:28.010611490][test-consensus.cpp:1124][!test-consensus]	Stopped node #0.0[0m
+[1;31m[ 1][t 3][2026-09-24 10:51:29.116340894][test-consensus.cpp:1101][!test-consensus]	Starting node #0.0[0m
+[1;31m[ 0][t 1][2026-09-24 10:51:29.590752712][Status.h:274][!consensus.0.0.StateResolver]	Unexpected Status [Error : 0 : candidate block id = (0,8000000000000000,1):709999CC9DA8324C9A60B18F7246B65171214B867583EA7ECE6AE96EA9F435A9:312A88BA68102BDCCF8620C3BDC7B185CE9D61CF3CBCD344B07D46C672294C3C; base state root hash = 8E60D12D4010FB092EFF5F40B054E280A6E943D0155A204C1A05C4F09924A539: invalid Merkle update: expected old value hash = 4649E2069489A14E29D0BAEEC5838E43DB247C6C5805EECB1D43BCADAA016399, applied to value with hash = 8E60D12D4010FB092EFF5F40B054E280A6E943D0155A204C1A05C4F09924A539] in file /home/tomi/tos-n6/validator/consensus/chain-state.cpp at line 129[0m
+[pid 1079296] [time 1790247089] Signal: 6
+------- Stack Backtrace -------
+build/test/validator/consensus/test-consensus(+0x28d217)[0x64d73f989217]
+build/test/validator/consensus/test-consensus(+0x1397ad)[0x64d73f8357ad]
+/lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7a43c7c42520]
+/lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7a43c7c969bc]
+/lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7a43c7c42476]
+/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7a43c7c287f3]
+build/test/validator/consensus/test-consensus(+0x293367)[0x64d73f98f367]
+build/test/validator/consensus/test-consensus(+0x2938d7)[0x64d73f98f8d7]
+build/test/validator/consensus/test-consensus(+0x292ae7)[0x64d73f98eae7]
+build/test/validator/consensus/test-consensus(+0x208b97)[0x64d73f904b97]
+build/test/validator/consensus/test-consensus(+0x46f41e)[0x64d73fb6b41e]
+build/test/validator/consensus/test-consensus(+0x443a88)[0x64d73fb3fa88]
+build/test/validator/consensus/test-consensus(+0x4387df)[0x64d73fb347df]
+build/test/validator/consensus/test-consensus(+0x2846a2)[0x64d73f9806a2]
+build/test/validator/consensus/test-consensus(+0x2843f2)[0x64d73f9803f2]
+build/test/validator/consensus/test-consensus(+0x28aca4)[0x64d73f986ca4]
+build/test/validator/consensus/test-consensus(+0x289a13)[0x64d73f985a13]
+build/test/validator/consensus/test-consensus(+0x289a4e)[0x64d73f985a4e]
+build/test/validator/consensus/test-consensus(+0x210de0)[0x64d73f90cde0]
+/lib/x86_64-linux-gnu/libc.so.6(+0x94a83)[0x7a43c7c94a83]
+/lib/x86_64-linux-gnu/libc.so.6(+0x1268e0)[0x7a43c7d268e0]
+-------------------------------
+--- Enhanced Backtrace (libbacktrace) ---
+    #0  ?? (test-consensus+0x1397ac) [0x64d73f8357ac]
+    #1  ?? at libc_sigaction.c (libc.so.6+0x4251f) [0x7a43c7c4251f]
+    #2  __pthread_kill_implementation at pthread_kill.c:44 (libc.so.6+0x969bc) [0x7a43c7c969bc]
+    #3  __pthread_kill_internal at pthread_kill.c:78 (libc.so.6+0x969bc) [0x7a43c7c969bc]
+    #4  __GI___pthread_kill at pthread_kill.c:89 (libc.so.6+0x969bc) [0x7a43c7c969bc]
+    #5  __GI_raise at raise.c:26 (libc.so.6+0x42475) [0x7a43c7c42475]
+    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x7a43c7c287f2]
+    #7  ?? (test-consensus+0x293366) [0x64d73f98f366]
+    #8  ?? (test-consensus+0x2938d6) [0x64d73f98f8d6]
+    #9  ?? (test-consensus+0x292ae6) [0x64d73f98eae6]
+    #10  ?? (test-consensus+0x208b96) [0x64d73f904b96]
+    #11  ?? (test-consensus+0x46f41d) [0x64d73fb6b41d]
+    #12  ?? (test-consensus+0x443a87) [0x64d73fb3fa87]
+    #13  ?? (test-consensus+0x4387de) [0x64d73fb347de]
+    #14  ?? (test-consensus+0x2846a1) [0x64d73f9806a1]
+    #15  ?? (test-consensus+0x2843f1) [0x64d73f9803f1]
+    #16  ?? (test-consensus+0x28aca3) [0x64d73f986ca3]
+    #17  ?? (test-consensus+0x289a12) [0x64d73f985a12]
+    #18  ?? (test-consensus+0x289a4d) [0x64d73f985a4d]
+    #19  ?? (test-consensus+0x210ddf) [0x64d73f90cddf]
+    #20  start_thread at pthread_create.c:442 (libc.so.6+0x94a82) [0x7a43c7c94a82]
+    #21  ?? at clone3.S:81 (libc.so.6+0x1268df) [0x7a43c7d268df]
+    #22  €Ù¯ÇCz (unknown+0xffffffffffffffff) [0xffffffffffffffff]
+------------------------------------------
+[New LWP 1079297]
+[New LWP 1079298]
+[New LWP 1079299]
+[New LWP 1079300]
+[New LWP 1079301]
+[New LWP 1079302]
+[New LWP 1079303]
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+0x00007a43c7d25ebe in epoll_wait (epfd=4, events=0x64d749ae6460, maxevents=1000, timeout=10) at ../sysdeps/unix/sysv/linux/epoll_wait.c:30
+30	../sysdeps/unix/sysv/linux/epoll_wait.c: No such file or directory.
+[Current thread is 1 (Thread 0x7a43c82accc0 (LWP 1079296))]
+
+Thread 8 (Thread 0x7a43c4af8640 (LWP 1079303) "#0:cpu#6"):
+#0  __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x7a43c4af7650) at ./nptl/futex-internal.c:57
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+        resultvar = <optimized out>
+        __arg6 = <optimized out>
+        __arg5 = <optimized out>
+        __arg4 = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a6 = <optimized out>
+        _a5 = <optimized out>
+        _a4 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x7a43c4af7650) at ./nptl/futex-internal.c:87
+        err = <optimized out>
+        clockbit = 256
+        op = 393
+        err = <optimized out>
+        clockbit = <optimized out>
+        op = <optimized out>
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x7a43c4af7650, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+No locals.
+#3  0x00007a43c7c93a01 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x7a43c4af7600, cond=0x7a43c4af7628) at ./nptl/pthread_cond_wait.c:503
+        spin = 0
+        buffer = {__routine = 0x7a43c7c936e0 <__condvar_cleanup_waiting>, __arg = 0x7a43c4af73f0, __canceltype = -944777688, __prev = 0x0}
+        cbuffer = {wseq = 46548, cond = 0x7a43c4af7628, mutex = 0x7a43c4af7600, private = 0}
+        err = <optimized out>
+        g = 0
+        flags = <optimized out>
+        g1_start = <optimized out>
+        maxspin = 0
+        signals = <optimized out>
+        result = 0
+        wseq = 46548
+        seq = 23274
+        private = 0
+        maxspin = <optimized out>
+        err = <optimized out>
+        result = <optimized out>
+        wseq = <optimized out>
+        g = <optimized out>
+        seq = <optimized out>
+        flags = <optimized out>
+        private = <optimized out>
+        signals = <optimized out>
+        done = <optimized out>
+        g1_start = <optimized out>
+        spin = <optimized out>
+        buffer = <optimized out>
+        cbuffer = <optimized out>
+        s = <optimized out>
+#4  ___pthread_cond_wait (cond=0x7a43c4af7628, mutex=0x7a43c4af7600) at ./nptl/pthread_cond_wait.c:627
+No locals.
+#5  0x000064d73f987b3b in td::MpmcSleepyWaiter::Slot::park() ()
+No symbol table info available.
+#6  0x000064d73f98797f in td::MpmcSleepyWaiter::wait(td::MpmcSleepyWaiter::Slot&) ()
+No symbol table info available.
+#7  0x000064d73f9867ee in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#8  0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#9  0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#10 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#11 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431481235008, 0, 134431533254544, 140737449330464, -2213747178592789210, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#12 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 7 (Thread 0x7a43c52f9640 (LWP 1079302) "#0:cpu#5"):
+#0  __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x7a43c52f8654) at ./nptl/futex-internal.c:57
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+        resultvar = <optimized out>
+        __arg6 = <optimized out>
+        __arg5 = <optimized out>
+        __arg4 = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a6 = <optimized out>
+        _a5 = <optimized out>
+        _a4 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x7a43c52f8654) at ./nptl/futex-internal.c:87
+        err = <optimized out>
+        clockbit = 256
+        op = 393
+        err = <optimized out>
+        clockbit = <optimized out>
+        op = <optimized out>
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x7a43c52f8654, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+No locals.
+#3  0x00007a43c7c93a01 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x7a43c52f8600, cond=0x7a43c52f8628) at ./nptl/pthread_cond_wait.c:503
+        spin = 0
+        buffer = {__routine = 0x7a43c7c936e0 <__condvar_cleanup_waiting>, __arg = 0x7a43c52f83f0, __canceltype = 0, __prev = 0x0}
+        cbuffer = {wseq = 57127, cond = 0x7a43c52f8628, mutex = 0x7a43c52f8600, private = 0}
+        err = <optimized out>
+        g = 1
+        flags = <optimized out>
+        g1_start = <optimized out>
+        maxspin = 0
+        signals = <optimized out>
+        result = 0
+        wseq = 57127
+        seq = 28563
+        private = 0
+        maxspin = <optimized out>
+        err = <optimized out>
+        result = <optimized out>
+        wseq = <optimized out>
+        g = <optimized out>
+        seq = <optimized out>
+        flags = <optimized out>
+        private = <optimized out>
+        signals = <optimized out>
+        done = <optimized out>
+        g1_start = <optimized out>
+        spin = <optimized out>
+        buffer = <optimized out>
+        cbuffer = <optimized out>
+        s = <optimized out>
+#4  ___pthread_cond_wait (cond=0x7a43c52f8628, mutex=0x7a43c52f8600) at ./nptl/pthread_cond_wait.c:627
+No locals.
+#5  0x000064d73f987b3b in td::MpmcSleepyWaiter::Slot::park() ()
+No symbol table info available.
+#6  0x000064d73f98797f in td::MpmcSleepyWaiter::wait(td::MpmcSleepyWaiter::Slot&) ()
+No symbol table info available.
+#7  0x000064d73f9867ee in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#8  0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#9  0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#10 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#11 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431489627712, 0, 134431533254544, 140737449330464, -2213743884889744090, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#12 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 6 (Thread 0x7a43c5afa640 (LWP 1079301) "#0:cpu#4"):
+#0  __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x7a43c5af9650) at ./nptl/futex-internal.c:57
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+        resultvar = <optimized out>
+        __arg6 = <optimized out>
+        __arg5 = <optimized out>
+        __arg4 = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a6 = <optimized out>
+        _a5 = <optimized out>
+        _a4 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x7a43c5af9650) at ./nptl/futex-internal.c:87
+        err = <optimized out>
+        clockbit = 256
+        op = 393
+        err = <optimized out>
+        clockbit = <optimized out>
+        op = <optimized out>
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x7a43c5af9650, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+No locals.
+#3  0x00007a43c7c93a01 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x7a43c5af9600, cond=0x7a43c5af9628) at ./nptl/pthread_cond_wait.c:503
+        spin = 0
+        buffer = {__routine = 0x7a43c7c936e0 <__condvar_cleanup_waiting>, __arg = 0x7a43c5af93f0, __canceltype = -978348832, __prev = 0x0}
+        cbuffer = {wseq = 49160, cond = 0x7a43c5af9628, mutex = 0x7a43c5af9600, private = 0}
+        err = <optimized out>
+        g = 0
+        flags = <optimized out>
+        g1_start = <optimized out>
+        maxspin = 0
+        signals = <optimized out>
+        result = 0
+        wseq = 49160
+        seq = 24580
+        private = 0
+        maxspin = <optimized out>
+        err = <optimized out>
+        result = <optimized out>
+        wseq = <optimized out>
+        g = <optimized out>
+        seq = <optimized out>
+        flags = <optimized out>
+        private = <optimized out>
+        signals = <optimized out>
+        done = <optimized out>
+        g1_start = <optimized out>
+        spin = <optimized out>
+        buffer = <optimized out>
+        cbuffer = <optimized out>
+        s = <optimized out>
+#4  ___pthread_cond_wait (cond=0x7a43c5af9628, mutex=0x7a43c5af9600) at ./nptl/pthread_cond_wait.c:627
+No locals.
+#5  0x000064d73f987b3b in td::MpmcSleepyWaiter::Slot::park() ()
+No symbol table info available.
+#6  0x000064d73f98797f in td::MpmcSleepyWaiter::wait(td::MpmcSleepyWaiter::Slot&) ()
+No symbol table info available.
+#7  0x000064d73f9867ee in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#8  0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#9  0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#10 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#11 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431498020416, 0, 134431533254544, 140737449330464, -2213744984938242778, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#12 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 5 (Thread 0x7a43c62fb640 (LWP 1079300) "#0:cpu#3"):
+#0  __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x7a43c62fa654) at ./nptl/futex-internal.c:57
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+        resultvar = <optimized out>
+        __arg6 = <optimized out>
+        __arg5 = <optimized out>
+        __arg4 = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a6 = <optimized out>
+        _a5 = <optimized out>
+        _a4 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x7a43c62fa654) at ./nptl/futex-internal.c:87
+        err = <optimized out>
+        clockbit = 256
+        op = 393
+        err = <optimized out>
+        clockbit = <optimized out>
+        op = <optimized out>
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x7a43c62fa654, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+No locals.
+#3  0x00007a43c7c93a01 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x7a43c62fa600, cond=0x7a43c62fa628) at ./nptl/pthread_cond_wait.c:503
+        spin = 0
+        buffer = {__routine = 0x7a43c7c936e0 <__condvar_cleanup_waiting>, __arg = 0x7a43c62fa3f0, __canceltype = 2, __prev = 0x0}
+        cbuffer = {wseq = 52999, cond = 0x7a43c62fa628, mutex = 0x7a43c62fa600, private = 0}
+        err = <optimized out>
+        g = 1
+        flags = <optimized out>
+        g1_start = <optimized out>
+        maxspin = 0
+        signals = <optimized out>
+        result = 0
+        wseq = 52999
+        seq = 26499
+        private = 0
+        maxspin = <optimized out>
+        err = <optimized out>
+        result = <optimized out>
+        wseq = <optimized out>
+        g = <optimized out>
+        seq = <optimized out>
+        flags = <optimized out>
+        private = <optimized out>
+        signals = <optimized out>
+        done = <optimized out>
+        g1_start = <optimized out>
+        spin = <optimized out>
+        buffer = <optimized out>
+        cbuffer = <optimized out>
+        s = <optimized out>
+#4  ___pthread_cond_wait (cond=0x7a43c62fa628, mutex=0x7a43c62fa600) at ./nptl/pthread_cond_wait.c:627
+No locals.
+#5  0x000064d73f987b3b in td::MpmcSleepyWaiter::Slot::park() ()
+No symbol table info available.
+#6  0x000064d73f98797f in td::MpmcSleepyWaiter::wait(td::MpmcSleepyWaiter::Slot&) ()
+No symbol table info available.
+#7  0x000064d73f9867ee in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#8  0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#9  0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#10 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#11 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431506413120, 0, 134431533254544, 140737449330464, -2213741686940230362, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#12 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 4 (Thread 0x7a43c6afc640 (LWP 1079299) "#0:cpu#2"):
+#0  __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x7a43c6afb654) at ./nptl/futex-internal.c:57
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+        resultvar = <optimized out>
+        __arg6 = <optimized out>
+        __arg5 = <optimized out>
+        __arg4 = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a6 = <optimized out>
+        _a5 = <optimized out>
+        _a4 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x7a43c6afb654) at ./nptl/futex-internal.c:87
+        err = <optimized out>
+        clockbit = 256
+        op = 393
+        err = <optimized out>
+        clockbit = <optimized out>
+        op = <optimized out>
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x7a43c6afb654, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+No locals.
+#3  0x00007a43c7c93a01 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x7a43c6afb600, cond=0x7a43c6afb628) at ./nptl/pthread_cond_wait.c:503
+        spin = 0
+        buffer = {__routine = 0x7a43c7c936e0 <__condvar_cleanup_waiting>, __arg = 0x7a43c6afb3f0, __canceltype = -961563424, __prev = 0x0}
+        cbuffer = {wseq = 55219, cond = 0x7a43c6afb628, mutex = 0x7a43c6afb600, private = 0}
+        err = <optimized out>
+        g = 1
+        flags = <optimized out>
+        g1_start = <optimized out>
+        maxspin = 0
+        signals = <optimized out>
+        result = 0
+        wseq = 55219
+        seq = 27609
+        private = 0
+        maxspin = <optimized out>
+        err = <optimized out>
+        result = <optimized out>
+        wseq = <optimized out>
+        g = <optimized out>
+        seq = <optimized out>
+        flags = <optimized out>
+        private = <optimized out>
+        signals = <optimized out>
+        done = <optimized out>
+        g1_start = <optimized out>
+        spin = <optimized out>
+        buffer = <optimized out>
+        cbuffer = <optimized out>
+        s = <optimized out>
+#4  ___pthread_cond_wait (cond=0x7a43c6afb628, mutex=0x7a43c6afb600) at ./nptl/pthread_cond_wait.c:627
+No locals.
+#5  0x000064d73f987b3b in td::MpmcSleepyWaiter::Slot::park() ()
+No symbol table info available.
+#6  0x000064d73f98797f in td::MpmcSleepyWaiter::wait(td::MpmcSleepyWaiter::Slot&) ()
+No symbol table info available.
+#7  0x000064d73f9867ee in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#8  0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#9  0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#10 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#11 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431514805824, 0, 134431533254544, 140737449330464, -2213742786988729050, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#12 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 3 (Thread 0x7a43c72fd640 (LWP 1079298) "#0:cpu#1"):
+#0  __futex_abstimed_wait_common64 (private=0, cancel=true, abstime=0x0, op=393, expected=0, futex_word=0x7a43c72fc654) at ./nptl/futex-internal.c:57
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+        resultvar = <optimized out>
+        __arg6 = <optimized out>
+        __arg5 = <optimized out>
+        __arg4 = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a6 = <optimized out>
+        _a5 = <optimized out>
+        _a4 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+#1  __futex_abstimed_wait_common (cancel=true, private=0, abstime=0x0, clockid=0, expected=0, futex_word=0x7a43c72fc654) at ./nptl/futex-internal.c:87
+        err = <optimized out>
+        clockbit = 256
+        op = 393
+        err = <optimized out>
+        clockbit = <optimized out>
+        op = <optimized out>
+#2  __GI___futex_abstimed_wait_cancelable64 (futex_word=futex_word@entry=0x7a43c72fc654, expected=expected@entry=0, clockid=clockid@entry=0, abstime=abstime@entry=0x0, private=private@entry=0) at ./nptl/futex-internal.c:139
+No locals.
+#3  0x00007a43c7c93a01 in __pthread_cond_wait_common (abstime=0x0, clockid=0, mutex=0x7a43c72fc600, cond=0x7a43c72fc628) at ./nptl/pthread_cond_wait.c:503
+        spin = 0
+        buffer = {__routine = 0x7a43c7c936e0 <__condvar_cleanup_waiting>, __arg = 0x7a43c72fc3f0, __canceltype = 0, __prev = 0x0}
+        cbuffer = {wseq = 51707, cond = 0x7a43c72fc628, mutex = 0x7a43c72fc600, private = 0}
+        err = <optimized out>
+        g = 1
+        flags = <optimized out>
+        g1_start = <optimized out>
+        maxspin = 0
+        signals = <optimized out>
+        result = 0
+        wseq = 51707
+        seq = 25853
+        private = 0
+        maxspin = <optimized out>
+        err = <optimized out>
+        result = <optimized out>
+        wseq = <optimized out>
+        g = <optimized out>
+        seq = <optimized out>
+        flags = <optimized out>
+        private = <optimized out>
+        signals = <optimized out>
+        done = <optimized out>
+        g1_start = <optimized out>
+        spin = <optimized out>
+        buffer = <optimized out>
+        cbuffer = <optimized out>
+        s = <optimized out>
+#4  ___pthread_cond_wait (cond=0x7a43c72fc628, mutex=0x7a43c72fc600) at ./nptl/pthread_cond_wait.c:627
+No locals.
+#5  0x000064d73f987b3b in td::MpmcSleepyWaiter::Slot::park() ()
+No symbol table info available.
+#6  0x000064d73f98797f in td::MpmcSleepyWaiter::wait(td::MpmcSleepyWaiter::Slot&) ()
+No symbol table info available.
+#7  0x000064d73f9867ee in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#8  0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#9  0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#10 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#11 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431523198528, 0, 134431533254544, 140737449330464, -2213739484695749338, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#12 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 2 (Thread 0x7a43c7afe640 (LWP 1079297) "#0:cpu#0"):
+#0  0x00007a43c7cea3ef in __GI___wait4 (pid=1079361, stat_loc=0x0, options=0, usage=0x0) at ../sysdeps/unix/sysv/linux/wait4.c:30
+        sc_ret = -512
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+#1  0x000064d73f989492 in td::Stacktrace::print_to_stderr(td::Stacktrace::PrintOptions const&) ()
+No symbol table info available.
+#2  0x000064d73f8357ad in td::default_failure_signal_handler(int) ()
+No symbol table info available.
+#3  <signal handler called>
+No locals.
+#4  __pthread_kill_implementation (no_tid=0, signo=6, threadid=134431531591232) at ./nptl/pthread_kill.c:44
+        tid = <optimized out>
+        ret = 0
+        pd = 0x7a43c7afe640
+        old_mask = {__val = {0, 0, 0, 0, 91706141725408, 92874372830192, 0, 0, 0, 0, 0, 0, 89369679515840, 90537910620624, 0, 0}}
+        ret = <optimized out>
+        pd = <optimized out>
+        old_mask = <optimized out>
+        ret = <optimized out>
+        tid = <optimized out>
+        ret = <optimized out>
+        resultvar = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        resultvar = <optimized out>
+        __arg3 = <optimized out>
+        __arg2 = <optimized out>
+        __arg1 = <optimized out>
+        _a3 = <optimized out>
+        _a2 = <optimized out>
+        _a1 = <optimized out>
+        __futex = <optimized out>
+        __private = <optimized out>
+        __oldval = <optimized out>
+        result = <optimized out>
+#5  __pthread_kill_internal (signo=6, threadid=134431531591232) at ./nptl/pthread_kill.c:78
+No locals.
+#6  __GI___pthread_kill (threadid=134431531591232, signo=signo@entry=6) at ./nptl/pthread_kill.c:89
+No locals.
+#7  0x00007a43c7c42476 in __GI_raise (sig=sig@entry=6) at ../sysdeps/posix/raise.c:26
+        ret = <optimized out>
+#8  0x00007a43c7c287f3 in __GI_abort () at ./stdlib/abort.c:79
+        save_stage = 1
+        act = {__sigaction_handler = {sa_handler = 0x0, sa_sigaction = 0x0}, sa_mask = {__val = {0, 80023830677568, 81192061782352, 0, 0, 0, 0, 0, 0, 77687368468000, 78855599572784, 0, 0, 0, 0, 0}}, sa_flags = 0, sa_restorer = 0x0}
+        sigs = {__val = {32, 0, 84696755096704, 85864986201488, 0, 0, 0, 0, 0, 0, 82360292887136, 83528523991920, 0, 0, 0, 0}}
+#9  0x000064d73f98f367 in td::process_fatal_error(td::CSlice) ()
+No symbol table info available.
+#10 0x000064d73f98f8d7 in td::DefaultLog::append(td::CSlice, int) ()
+No symbol table info available.
+#11 0x000064d73f98eae7 in td::Logger::~Logger() ()
+No symbol table info available.
+#12 0x000064d73f904b97 in td::Status::ensure_impl(td::CSlice, int) const ()
+No symbol table info available.
+#13 0x000064d73fb6b41e in tos::validator::consensus::ChainState::apply(tos::BlockCandidate const&) const ()
+No symbol table info available.
+#14 0x000064d73fb3fa88 in tos::validator::consensus::simplex::(anonymous namespace)::StateResolverImpl::resolve_state_inner(std::optional<tos::validator::consensus::CandidateId>) [clone .resume] ()
+No symbol table info available.
+#15 0x000064d73fb347df in td::actor::detail::ActorMessageCoroutineSafe<td::actor::promise_type<td::Ref<tos::validator::consensus::ChainState> > >::run() ()
+No symbol table info available.
+#16 0x000064d73f9806a2 in td::actor::core::ActorExecutor::flush_one_message() ()
+No symbol table info available.
+#17 0x000064d73f9803f2 in td::actor::core::ActorExecutor::start() ()
+No symbol table info available.
+#18 0x000064d73f986ca4 in td::actor::core::CpuWorker::run() ()
+No symbol table info available.
+#19 0x000064d73f985a13 in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#20 0x000064d73f985a4e in td::LambdaDestructor<td::detail::ThreadPthread::ThreadPthread<td::actor::core::Scheduler::start()::$_0>(td::actor::core::Scheduler::start()::$_0&&)::{lambda()#1}>::~LambdaDestructor() ()
+No symbol table info available.
+#21 0x000064d73f90cde0 in td::detail::ThreadPthread::run_thread(void*) ()
+No symbol table info available.
+#22 0x00007a43c7c94a83 in start_thread (arg=<optimized out>) at ./nptl/pthread_create.c:442
+        ret = <optimized out>
+        pd = <optimized out>
+        out = <optimized out>
+        unwind_buf = {cancel_jmp_buf = {{jmp_buf = {140737449330112, 1567457134201019686, 134431531591232, 0, 134431533254544, 140737449330464, -2213740584744248026, -2213740871965860570}, mask_was_saved = 0}}, priv = {pad = {0x0, 0x0, 0x0, 0x0}, data = {prev = 0x0, cleanup = 0x0, canceltype = 0}}}
+        not_first_call = <optimized out>
+#23 0x00007a43c7d268e0 in clone3 () at ../sysdeps/unix/sysv/linux/x86_64/clone3.S:81
+No locals.
+
+Thread 1 (Thread 0x7a43c82accc0 (LWP 1079296) "test-consensus"):
+#0  0x00007a43c7d25ebe in epoll_wait (epfd=4, events=0x64d749ae6460, maxevents=1000, timeout=10) at ../sysdeps/unix/sysv/linux/epoll_wait.c:30
+        sc_ret = -4
+        sc_cancel_oldtype = 0
+        sc_ret = <optimized out>
+#1  0x000064d73f98abe2 in td::detail::Epoll::run(int) ()
+No symbol table info available.
+#2  0x000064d73f988625 in td::actor::core::IoWorker::run_once(double, bool) ()
+No symbol table info available.
+#3  0x000064d73f9834d9 in td::actor::core::Scheduler::run(double) ()
+No symbol table info available.
+#4  0x000064d73f900ebb in main ()
+No symbol table info available.
+[Inferior 1 (process 1079296) detached]

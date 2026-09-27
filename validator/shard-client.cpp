@@ -51,7 +51,7 @@ td::actor::Task<> ShardClient::initialize() {
   }
   init_mode_ = false;
   processed_masterchain_block_ = masterchain_block_handle_->id().seqno();
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> ShardClient::initialize_init_mode() {
@@ -71,7 +71,7 @@ td::actor::Task<> ShardClient::initialize_init_mode() {
   LOG(WARNING) << "Downloaded all shard states";
   co_await td::actor::ask(manager_, &ValidatorManager::update_shard_client_state, masterchain_block_handle_->id());
   init_mode_mc_state_.clear();
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ShardClient::start() {
@@ -141,7 +141,7 @@ td::actor::Task<> ShardClient::apply_all_shards(td::Ref<MasterchainState> mc_sta
   }
   co_await td::actor::all(std::move(tasks));
   LOG(DEBUG) << "shardclient: " << masterchain_block_handle_->id() << " finished";
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> ShardClient::apply_shard(BlockIdExt block_id) {
@@ -151,7 +151,7 @@ td::actor::Task<> ShardClient::apply_shard(BlockIdExt block_id) {
   run_apply_block_query(state->get_block_id(), td::Ref<BlockData>{}, masterchain_block_handle_->id(), manager_,
                         td::Timestamp::in(600), std::move(promise));
   co_await std::move(task);
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<> ShardClient::wait_shard_states(td::Ref<MasterchainState> mc_state) {
@@ -173,7 +173,7 @@ td::actor::Task<> ShardClient::wait_shard_states(td::Ref<MasterchainState> mc_st
   } else {
     LOG(WARNING) << "shardclient preprocess: " << masterchain_block_handle_->id() << " error: " << R.move_as_error();
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 td::actor::Task<td::Ref<MasterchainState>> ShardClient::wait_mc_state(BlockHandle handle) {
@@ -202,7 +202,7 @@ td::actor::Task<> ShardClient::force_update_shard_client_ex(BlockHandle handle, 
   CHECK(!started_);
   CHECK(masterchain_block_handle_);
   if (masterchain_block_handle_->id().seqno() >= handle->id().seqno()) {
-    co_return {};
+    co_return td::Unit{};
   }
   masterchain_block_handle_ = std::move(handle);
 
@@ -213,7 +213,7 @@ td::actor::Task<> ShardClient::force_update_shard_client_ex(BlockHandle handle, 
   processed_masterchain_block_ = masterchain_block_handle_->id().seqno();
   td::actor::send_closure(manager_, &ValidatorManager::update_shard_client_block_handle, masterchain_block_handle_,
                           std::move(state), [](td::Result<>) {});
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ShardClient::update_options(td::Ref<ValidatorManagerOptions> opts) {

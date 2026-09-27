@@ -266,8 +266,10 @@ class TestNode : public td::actor::Actor {
                               std::vector<TransId> trans,
                               std::vector<tos::tl_object_ptr<tos::lite_api::liteServer_transactionMetadata>> metadata,
                               td::BufferSlice proof);
-  bool get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode);
-  void got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode, td::BufferSlice res);
+  bool get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode,
+                       std::string capture_prefix = {}, unsigned capture_index = 0);
+  void got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode, td::BufferSlice res,
+                       std::string capture_prefix, unsigned capture_index);
   bool get_creator_stats(tos::BlockIdExt blkid, int mode, unsigned req_count, tos::Bits256 start_after,
                          tos::UnixTime min_utime);
   bool get_creator_stats(tos::BlockIdExt blkid, int mode, unsigned req_count, tos::Bits256 start_after,

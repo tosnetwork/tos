@@ -37,6 +37,8 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
                                      const std::string& wallet_type,
                                      td::int32 seqno,
                                      td::uint64 last_lt, const std::string& last_hash_b64,
+                                     const std::string& observed_mc_block,
+                                     const std::string& observed_shard_block,
                                      td::int64 wallet_id = -1) {
   td::StringBuilder sb;
   sb << "{\"@type\":\"ext.accounts.walletInformation\""
@@ -45,7 +47,9 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
      << ",\"account_state\":" << td::JsonString(td::Slice(account_state))
      << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
      << ",\"lt\":\"" << last_lt << "\""
-     << ",\"hash\":" << td::JsonString(td::Slice(last_hash_b64)) << "}";
+     << ",\"hash\":" << td::JsonString(td::Slice(last_hash_b64)) << "}"
+     << ",\"observed_masterchain_block\":" << observed_mc_block
+     << ",\"observed_shard_block\":" << observed_shard_block;
   if (is_wallet) {
     sb << ",\"wallet_type\":" << td::JsonString(td::Slice(wallet_type));
     if (seqno >= 0) {
@@ -2133,6 +2137,8 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         return;
       }
       auto f = F.move_as_ok();
+      const auto observed_mc_block = f->id_ ? format_block_id_json(*f->id_) : "null";
+      const auto observed_shard_block = f->shardblk_ ? format_block_id_json(*f->shardblk_) : "null";
       auto parsed_r = ParsedAccountState::parse(f, addr);
       if (parsed_r.is_error()) {
         promise_inner.set_value(make_json_error(-32603,
@@ -2150,7 +2156,8 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
       if (!is_wallet) {
         promise_inner.set_value(make_json_ok(
             build_wallet_json(false, parsed.balance, parsed.state_str, "",
-                              -1, parsed.last_trans_lt, parsed.last_trans_hash_b64),
+                              -1, parsed.last_trans_lt, parsed.last_trans_hash_b64,
+                              observed_mc_block, observed_shard_block),
             req_id_inner, cors));
         return;
       }
@@ -2163,7 +2170,8 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
       if (params_boc.is_error()) {
         promise_inner.set_value(make_json_ok(
             build_wallet_json(true, parsed.balance, parsed.state_str, wallet_type,
-                              -1, parsed.last_trans_lt, parsed.last_trans_hash_b64),
+                              -1, parsed.last_trans_lt, parsed.last_trans_hash_b64,
+                              observed_mc_block, observed_shard_block),
             req_id_inner, cors));
         return;
       }
@@ -2185,6 +2193,7 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
           td::PromiseCreator::lambda(
               [cors, balance = parsed.balance, account_state = parsed.state_str,
                last_lt = parsed.last_trans_lt, last_hash = parsed.last_trans_hash_b64,
+               observed_mc_block, observed_shard_block,
                wallet_type = std::move(wallet_type),
                req_id_inner = std::move(req_id_inner), promise_inner = std::move(promise_inner)](
                   td::Result<td::BufferSlice> R) mutable {
@@ -2207,7 +2216,8 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
         }
         promise_inner.set_value(make_json_ok(
             build_wallet_json(true, balance, account_state, wallet_type,
-                              seqno, last_lt, last_hash),
+                              seqno, last_lt, last_hash,
+                              observed_mc_block, observed_shard_block),
             req_id_inner, cors));
       }));
     }));

@@ -76,7 +76,8 @@ _ (Message Any) = MessageAny;
 
 //
 
-storage#_ owner_address:MsgAddress validator_address:MsgAddress = Storage;
+storage#_ owner_address:MsgAddress validator_address:MsgAddress
+          controller_address:MsgAddress = Storage;
 
 // owner ops
 withdraw#1000 query_id:uint64 amount:Coins = InternalMsgBody;

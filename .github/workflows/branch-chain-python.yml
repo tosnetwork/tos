@@ -1,0 +1,183 @@
+name: Branch PQ chain and Python tests
+
+# This job exists because compile/unit evidence cannot detect a chain fixture
+# that no longer forms a validator group. Keep one real PQ chain boot and the
+# complete Python suite on every branch push and pull request; do not move it
+# back behind main-only or workflow_dispatch-only triggers.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  CCACHE_DIR: /root/.ccache
+
+jobs:
+  python-and-pq-chain:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
+      credentials:
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up repository Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Restore native object cache
+        uses: actions/cache@v6
+        with:
+          path: /root/.ccache
+          # A commit-specific key makes each successful push immutable; the
+          # prefix restores the newest prior entry. This deliberately spends
+          # about 32 MiB per push from the repository cache budget.
+          key: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
+
+      - name: Configure the minimal native fixture build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_C_COMPILER=clang-21
+          -DCMAKE_CXX_COMPILER=clang++-21
+          -DCMAKE_BUILD_TYPE=Release
+          -DTOS_ARCH=x86-64
+          -DTOS_USE_JEMALLOC=ON
+          -DTOS_PRODUCTION_BUILD=ON
+
+      - name: Build only the Python and PQ-chain fixture dependencies
+        run: |
+          ccache --zero-stats
+          cmake --build build --parallel 4 --target \
+            gen_fif create-state toslibjson \
+            generate-random-id tos-pq-consensus-key \
+            dht-server validator-engine-console validator-engine \
+            test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
+            test-n5-manager-db-fixture test-consensus \
+            test-notarize-after-transient-resolve
+          ccache --show-stats
+
+      # A virtualized key-block proof must retain every PQ finality context
+      # field. This is a compiled behavior test, not a source-only guard.
+      - name: Check PQ key-block proof context
+        run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
+
+      # This manager actor test exercises the real proof producer and pending
+      # finality queue with bad evidence ahead of a valid certificate. It does
+      # not substitute for downstream AcceptBlock integration evidence.
+      - name: Check pending PQ finality proof queue
+        run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # C04 exercises the real Manager proof/apply path and cold RootDb
+      # readback, including stale-context recovery and expiry controls.
+      - name: Check real PQ predecessor and BlockProof fixture
+        run: ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'
+
+      # N01's two short cuts are still narrower than the full persistence
+      # chain: one cold-reads the production FinalCert journal; the other
+      # cold-reads AcceptBlock's proof/state/bytes/next through RootDb.
+      - name: Check N5 FinalCert journal cold read
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-manager-db-fixture$'
+
+      - name: Check N5 PQ AcceptBlock cold read
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-accept-block$'
+
+      - name: Check N5 same-FinalCert actor and cold persistence path
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-joined-finalcert$'
+
+      # N02 stops with the exact FinalCert journal but no marker or target
+      # RootDb handle, then cold-restarts through production Db/Pool bootstrap.
+      - name: Check N5 FinalCert write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut1-finalcert-recovery$'
+
+      - name: Check N5 #13 signature write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut2-signatures-recovery$'
+
+      - name: Check N5 BlockProof write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut3-proof-recovery$'
+
+      - name: Check N5 finalized marker cold replay without duplicate acceptance
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut4-finalized-replay$'
+
+      - name: Check N5 DB/archive-only full-root rebuild
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut5-full-root-rebuild$'
+
+      - name: Check N5 cold persisted PQ CheckProof acceptance and tamper refusal
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut6-check-proof$'
+
+      - name: Check N5 cold continuation through a second FinalCert
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cold-continuation$'
+
+
+      # C05: one transient parent-state miss must not cost a slot its local
+      # notarize vote; permanent/cancelled errors and an already cast SkipVote
+      # must never be retried into an unsafe late vote.
+      - name: Check Simplex parent-state retry voting
+        run: ctest --test-dir build --output-on-failure -R '^c05-notarize-'
+
+      # C03's restart-origin failure only appeared when an anchor read first
+      # failed and the exact predecessor was then needed. Keep both positive
+      # and fail-closed controls in the fixed-tree native gate.
+      - name: Check Simplex restart origin replay
+        run: |
+          set -e
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-empty-chain-restart$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-origin$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-permanent-origin$'
+
+      - name: Prepare generated Python API and dependencies
+        run: |
+          uv sync --no-dev
+          uv run test/tostester/generate_tl.py
+
+      - name: Run the complete Python suite
+        run: uv run pytest
+
+      # E04's negative controls are fast source-bound tests, not a replacement
+      # for the retained single-node real-chain lifecycle run.
+      - name: Check E04 exact cancellation and expiry controls
+        run: uv run pytest -q test/pq-native/test_e04_negative_windows.py
+
+      - name: Boot a four-validator PQ chain and exercise a transfer
+        run: uv run python test/integration/test_basic.py
+
+      # A local recovery tag must never become a PQ signing session. The
+      # process gate first proves zero rotation still records successful
+      # masterchain stats, then
+      # requires nonzero rotation to refuse before creating an active group.
+      - name: Refuse unsafe PQ session rotation before group creation
+        run: >-
+          uv run python test/integration/test_pq_unsafe_rotation_refusal.py
+          --build-dir build --artifact-dir test/integration/.pq-unsafe-rotation-ci
+
+  # Package allowlists left chain_block_json's test target uncompilable for two
+  # days. Compile every workspace test target on every branch push, separately
+  # from the native chain fixture so neither job can silently stand in for the other.
+  rust-workspace-tests-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tosctl/src -> target
+      - name: Compile every Rust workspace test target
+        run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
+      - name: Check E04 exact wallet message confirmation
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib exact_deploy_wallet_transaction_tests --locked --no-default-features

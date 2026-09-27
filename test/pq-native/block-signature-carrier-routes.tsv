@@ -1,0 +1,75 @@
+# Carrier inventory for the canonical persisted block_signatures_simplex_pq#13 BOC,
+# the generated node/lite SignatureSet encodings, and complete node finality and
+# lite forward-proof answers. Design section 6.5's node and lite gates are the
+# pq-node-finality-carrier-capacity and pq-lite-forward-proof-carrier-capacity
+# ctests. Their names describe their subjects rather than the execution stage.
+#
+# The complete node/lite rows are measured by those gates through the real generated
+# serializers, the exact admission predicates used by Plumtree and ADNL framed TCP,
+# and the checked receiving parsers. This proves deliverability, not block acceptance
+# or lite chain advancement, and does not stand up live overlay/TCP actor graphs.
+# The generated signature-set measurements below corrected a projection
+# that had invented 4 * signers + 4 bytes of bare-vector framing. The correction does not
+# reopen the persisted envelope: that bound came from the #13 BOC plus BlockProof overhead,
+# and the corrected network encodings are smaller.
+#
+# Lite-gate implementer note: despite the design text mentioning RLDP max_answer_size, this tree's
+# production lite client uses AdnlExtClient::send_query over framed TCP and does not use RLDP on
+# this path. The gate therefore boxes an adnl.message.answer and uses the external-connection
+# packet admission shared with that route.
+# The broadcast semantic gate measures the complete compressed-V2 production object at all four
+# structural counts; 21 and 100 additionally pass trusted cryptographic verification.
+#
+# layer columns: kind, route, layer, operation, source, named_constant, recorded_bytes, observation
+layer	finality-broadcast	overlay-manager-send	limit	overlay/overlay-manager.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	CHECK_aborts_instead_of_refusing
+layer	finality-broadcast	overlay-admission	limit	overlay/overlay.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	refuses_oversize_payload
+layer	finality-broadcast	plumtree-simple-send	limit	overlay/broadcast-plumtree.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	refuses_oversize_payload
+layer	finality-broadcast	plumtree-simple-receive	limit	overlay/broadcast-plumtree.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	refuses_oversize_payload
+layer	v2-broadcast	overlay-manager-send	limit	overlay/overlay-manager.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	CHECK_aborts_instead_of_refusing
+layer	v2-broadcast	overlay-privacy-admission	limit	validator/full-node-shard.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	refuses_payload_above_authorized_size
+layer	v2-broadcast	fec-reconstruction	limit	overlay/broadcast-fec.cpp	overlay::Overlays::max_fec_broadcast_size	16777216	refuses_oversize_reconstruction
+layer	lite-forward-proof	ext-connection-frame	limit	adnl/adnl-ext-limits.h	adnl::adnl_ext_max_packet_bytes	16777216	framed_TCP_packet_limit
+layer	lite-forward-proof	ext-connection-framing	overhead	adnl/adnl-ext-limits.h	adnl::adnl_ext_packet_framing_bytes	64	random_prefix_plus_SHA256
+layer	lite-forward-proof	answer-boxing	overhead	tl/generate/scheme/tos_api.tl	tos_api::adnl_message_answer.aligned_boxing_bytes	40	constructor_query_id_and_bytes_length
+# minimum columns: kind, route, expected usable object bytes
+minimum	finality-broadcast	16777216
+minimum	v2-broadcast	16777216
+minimum	lite-forward-proof	16777112
+# verdict columns: kind, object/signers, measured_or_projected_serialized_bytes, carrier_layer,
+# carrier_configured_or_admitted_maximum, framing_headroom, verdict
+verdict	persisted-#13-boc/1	measured:2720	finality-broadcast/minimum	16777216	16774496	STATIC FIT
+verdict	persisted-#13-boc/21	measured:53787	finality-broadcast/minimum	16777216	16723429	STATIC FIT
+verdict	persisted-#13-boc/100	measured:255396	finality-broadcast/minimum	16777216	16521820	STATIC FIT
+verdict	persisted-#13-boc/400	measured:1020996	finality-broadcast/minimum	16777216	15756220	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/1	measured:2636	finality-broadcast/minimum	16777216	16774580	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/21	measured:51836	finality-broadcast/minimum	16777216	16725380	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/100	measured:246176	finality-broadcast/minimum	16777216	16531040	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/400	measured:984176	finality-broadcast/minimum	16777216	15793040	STATIC FIT
+verdict	complete-tosNode.blockFinalityBroadcast/1	measured:2720	finality-broadcast/minimum	16777216	16774496	STATIC FIT
+verdict	complete-tosNode.blockFinalityBroadcast/21	measured:51920	finality-broadcast/minimum	16777216	16725296	STATIC FIT
+verdict	complete-tosNode.blockFinalityBroadcast/100	measured:246260	finality-broadcast/minimum	16777216	16530956	STATIC FIT
+verdict	complete-tosNode.blockFinalityBroadcast/400	measured:984260	finality-broadcast/minimum	16777216	15792956	STATIC FIT
+verdict	persisted-#13-boc/1	measured:2720	v2-broadcast/minimum	16777216	16774496	STATIC FIT
+verdict	persisted-#13-boc/21	measured:53787	v2-broadcast/minimum	16777216	16723429	STATIC FIT
+verdict	persisted-#13-boc/100	measured:255396	v2-broadcast/minimum	16777216	16521820	STATIC FIT
+verdict	persisted-#13-boc/400	measured:1020996	v2-broadcast/minimum	16777216	15756220	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/1	measured:2636	v2-broadcast/minimum	16777216	16774580	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/21	measured:51836	v2-broadcast/minimum	16777216	16725380	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/100	measured:246176	v2-broadcast/minimum	16777216	16531040	STATIC FIT
+verdict	tosNode.signatureSet.simplexPq/400	measured:984176	v2-broadcast/minimum	16777216	15793040	STATIC FIT
+verdict	complete-tosNode.blockBroadcastCompressedV2/1	measured:2768	v2-broadcast/minimum	16777216	16774448	STATIC FIT
+verdict	complete-tosNode.blockBroadcastCompressedV2/21	measured:51968	v2-broadcast/minimum	16777216	16725248	STATIC FIT
+verdict	complete-tosNode.blockBroadcastCompressedV2/100	measured:246308	v2-broadcast/minimum	16777216	16530908	STATIC FIT
+verdict	complete-tosNode.blockBroadcastCompressedV2/400	measured:984308	v2-broadcast/minimum	16777216	15792908	STATIC FIT
+verdict	persisted-#13-boc/1	measured:2720	lite-forward-proof/minimum	16777112	16774392	STATIC FIT
+verdict	persisted-#13-boc/21	measured:53787	lite-forward-proof/minimum	16777112	16723325	STATIC FIT
+verdict	persisted-#13-boc/100	measured:255396	lite-forward-proof/minimum	16777112	16521716	STATIC FIT
+verdict	persisted-#13-boc/400	measured:1020996	lite-forward-proof/minimum	16777112	15756116	STATIC FIT
+verdict	liteServer.signatureSet.simplexPq/1	measured:2636	lite-forward-proof/minimum	16777112	16774476	STATIC FIT
+verdict	liteServer.signatureSet.simplexPq/21	measured:51836	lite-forward-proof/minimum	16777112	16725276	STATIC FIT
+verdict	liteServer.signatureSet.simplexPq/100	measured:246176	lite-forward-proof/minimum	16777112	16530936	STATIC FIT
+verdict	liteServer.signatureSet.simplexPq/400	measured:984176	lite-forward-proof/minimum	16777112	15792936	STATIC FIT
+verdict	complete-lite-answer/1	measured:2996	lite-forward-proof/minimum	16777112	16774116	STATIC FIT
+verdict	complete-lite-answer/21	measured:52196	lite-forward-proof/minimum	16777112	16724916	STATIC FIT
+verdict	complete-lite-answer/100	measured:246536	lite-forward-proof/minimum	16777112	16530576	STATIC FIT
+verdict	complete-lite-answer/400	measured:984536	lite-forward-proof/minimum	16777112	15792576	STATIC FIT

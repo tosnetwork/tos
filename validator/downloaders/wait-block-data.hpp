@@ -21,6 +21,7 @@
 
 #include "interfaces/block-handle.h"
 #include "interfaces/validator-manager.h"
+#include "validator/finality-cache-policy.h"
 
 namespace tos {
 
@@ -68,7 +69,8 @@ class WaitBlockData : public td::actor::Actor {
 
   static td::Result<td::BufferSlice> generate_proof(BlockIdExt id, td::Ref<vm::Cell> block_root,
                                                     td::Ref<block::BlockSignatureSet> signatures,
-                                                    td::Ref<MasterchainState> state);
+                                                    td::Ref<MasterchainState> state,
+                                                    PendingBlockProofFailureSource &failure_source);
   static td::Result<td::BufferSlice> generate_proof_link(BlockIdExt id, td::Ref<vm::Cell> block_root);
   static td::Result<td::Ref<vm::Cell>> generate_block_proof_root(BlockIdExt id,
                                                                  td::Ref<vm::Cell> block_root);

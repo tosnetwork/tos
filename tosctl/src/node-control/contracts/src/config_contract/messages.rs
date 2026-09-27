@@ -6,37 +6,82 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use chain_block::{BuilderData, Cell, IBitstring};
+//! A validator's vote on a configuration proposal.
+//!
+//! The configuration contract authorises these against the current post-quantum
+//! validator set. The identity of the voter is read from the descriptor at the index the
+//! vote names, so nothing here states who is voting: the index and what is being voted
+//! on are all the message carries, besides the signature.
+use chain_block::{BuilderData, Cell, IBitstring, UInt256, pq_bytes};
 
 pub mod opcodes {
-    pub const VOTE_FOR_PROPOSAL: u32 = 0x566f7465;
+    /// `PQvo`: a post-quantum configuration vote, as an internal message.
+    pub const VOTE_FOR_PROPOSAL: u32 = 0x5051766f;
 }
 
-const VOTE_TAG: u32 = 0x566f7445;
+/// `PQVO`: the domain tag inside the signed bytes, distinct from the operation so that a
+/// message body can never be mistaken for a preimage.
+const VOTE_SIGN_TAG: u32 = 0x5051564f;
 
-/// Build vote data for signing by validator
-pub fn unsigned_vote(validator_idx: u16, proposal_hash: &[u8; 32]) -> anyhow::Result<BuilderData> {
+/// ML-DSA-44 signatures are this long. A signature of any other length is not one.
+const MLDSA44_SIGNATURE_BYTES: usize = 2420;
+
+/// Exactly the bytes a validator signs to vote for a proposal.
+///
+/// `validator_set_id` is the hash of the validator set the vote will be counted against,
+/// and `validator_id` is the identity the set records at `idx`. Both come from the set,
+/// not from the voter: a vote is bound to one set, so a signature made under an earlier
+/// one cannot be replayed, and it is bound to one validator, so it cannot be counted for
+/// another.
+///
+/// The layout is the one the contract builds; the two are held to each other by the
+/// shared preimage vectors.
+pub fn unsigned_vote(
+    global_id: i32,
+    validator_set_id: &UInt256,
+    validator_id: &UInt256,
+    validator_idx: u16,
+    proposal_hash: &[u8; 32],
+) -> anyhow::Result<BuilderData> {
     let mut builder = BuilderData::new();
-    builder.append_u32(VOTE_TAG)?.append_u16(validator_idx)?.append_raw(proposal_hash, 256)?;
+    builder
+        .append_u32(VOTE_SIGN_TAG)?
+        .append_i32(global_id)?
+        .append_raw(validator_set_id.as_slice(), 256)?
+        .append_raw(validator_id.as_slice(), 256)?
+        .append_u16(validator_idx)?
+        .append_raw(proposal_hash, 256)?;
     Ok(builder)
 }
 
-/// Builds vote message body with signature.
+/// Builds the vote message body.
+///
+/// The signature travels as a length and a chain of ordinary cells, which is the shape
+/// the verification instruction takes; it does not fit in one cell.
 pub fn signed_vote(
     query_id: u64,
-    unsigned_body: &BuilderData,
+    validator_idx: u16,
+    proposal_hash: &[u8; 32],
     signature: &[u8],
 ) -> anyhow::Result<Cell> {
-    if signature.len() != 64 {
-        anyhow::bail!("signature must be 64 bytes, got {}", signature.len());
+    if signature.len() != MLDSA44_SIGNATURE_BYTES {
+        anyhow::bail!(
+            "a validator vote is signed with ML-DSA-44, which is {MLDSA44_SIGNATURE_BYTES} \
+             bytes, and this signature is {}",
+            signature.len()
+        );
     }
 
     let mut builder = BuilderData::new();
     builder
         .append_u32(opcodes::VOTE_FOR_PROPOSAL)?
         .append_u64(query_id)?
-        .append_raw(signature, 512)?
-        .append_builder(unsigned_body)?;
+        .append_u16(validator_idx)?
+        .append_raw(proposal_hash, 256)?;
+    builder.checked_append_reference(pq_bytes::pack_pq_bytes(
+        signature,
+        pq_bytes::PQ_BYTES_HARD_MAX,
+    )?)?;
     builder.into_cell()
 }
 
@@ -45,46 +90,67 @@ mod tests {
     use super::*;
     use chain_block::SliceData;
 
-    #[test]
-    fn test_unsigned_vote() {
-        let builder = unsigned_vote(42, &[0xAB; 32]).unwrap();
-        let cell = builder.into_cell().unwrap();
-        let mut slice = SliceData::load_cell(cell).unwrap();
+    fn signature() -> Vec<u8> {
+        (0..MLDSA44_SIGNATURE_BYTES).map(|i| (i % 251) as u8).collect()
+    }
 
-        assert_eq!(slice.get_next_u32().unwrap(), VOTE_TAG);
+    /// The signed bytes, field by field. This is the half of the preimage that lives
+    /// outside the contract, so it is checked against the layout rather than against
+    /// itself: a field reordered here would still round-trip through this module while
+    /// every vote it produced was refused on chain.
+    #[test]
+    fn the_signed_bytes_are_the_frozen_layout() {
+        let set_id = UInt256::from_slice(&[0x11; 32]);
+        let validator_id = UInt256::from_slice(&[0x22; 32]);
+        let builder = unsigned_vote(-239, &set_id, &validator_id, 42, &[0xAB; 32]).unwrap();
+        assert_eq!(builder.length_in_bits(), 106 * 8, "the preimage is 106 bytes");
+
+        let mut slice = SliceData::load_cell(builder.into_cell().unwrap()).unwrap();
+        assert_eq!(slice.get_next_u32().unwrap(), VOTE_SIGN_TAG);
+        assert_eq!(slice.get_next_i32().unwrap(), -239);
+        assert_eq!(slice.get_next_bits(256).unwrap(), set_id.as_slice().to_vec());
+        assert_eq!(slice.get_next_bits(256).unwrap(), validator_id.as_slice().to_vec());
         assert_eq!(slice.get_next_u16().unwrap(), 42);
         assert_eq!(slice.get_next_bits(256).unwrap(), vec![0xAB; 32]);
         assert_eq!(slice.remaining_bits(), 0);
     }
 
+    /// The message carries the index and what is being voted on, and nothing that states
+    /// who is voting: the contract reads that from the set.
     #[test]
-    fn test_signed_vote() {
-        let signature = [0x11u8; 64];
-        let body = unsigned_vote(123, &[0xCD; 32]).unwrap();
-        let query_id: u64 = 0x1234567890ABCDEF;
-        let cell = signed_vote(query_id, &body, &signature).unwrap();
+    fn the_message_carries_the_index_the_proposal_and_the_signature() {
+        let query_id: u64 = 0x1234_5678_90AB_CDEF;
+        let cell = signed_vote(query_id, 123, &[0xCD; 32], &signature()).unwrap();
         let mut slice = SliceData::load_cell(cell).unwrap();
 
         assert_eq!(slice.get_next_u32().unwrap(), opcodes::VOTE_FOR_PROPOSAL);
         assert_eq!(slice.get_next_u64().unwrap(), query_id);
-        assert_eq!(slice.get_next_bits(512).unwrap(), signature.to_vec());
-
-        assert_eq!(slice.get_next_u32().unwrap(), VOTE_TAG);
         assert_eq!(slice.get_next_u16().unwrap(), 123);
         assert_eq!(slice.get_next_bits(256).unwrap(), vec![0xCD; 32]);
-        assert_eq!(slice.remaining_bits(), 0);
+        assert_eq!(slice.remaining_bits(), 0, "nothing else is stated in the body");
+
+        // The signature travels as a length and a chain, which is the shape the
+        // verification instruction takes.
+        let stored = slice.checked_drain_reference().unwrap();
+        assert_eq!(
+            pq_bytes::unpack_pq_bytes(&stored, pq_bytes::PQ_BYTES_HARD_MAX).unwrap(),
+            signature()
+        );
     }
 
+    /// An Ed25519 signature is 64 bytes. Handing one to this builder is what a caller
+    /// that has not been converted would do, and it fails here rather than on chain,
+    /// where it would have cost the sender the message.
     #[test]
-    fn test_signed_vote_invalid_signature_length() {
-        let body = unsigned_vote(1, &[0x00; 32]).unwrap();
-        let query_id: u64 = 1;
-
-        let result = signed_vote(query_id, &body, &[0u8; 32]);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("signature must be 64 bytes"));
-
-        let result = signed_vote(query_id, &body, &[0u8; 128]);
-        assert!(result.is_err());
+    fn a_signature_of_the_wrong_length_is_refused() {
+        for wrong in [32usize, 64, MLDSA44_SIGNATURE_BYTES - 1, MLDSA44_SIGNATURE_BYTES + 1] {
+            let result = signed_vote(1, 1, &[0x00; 32], &vec![0u8; wrong]);
+            assert!(result.is_err(), "a {wrong}-byte signature was accepted");
+            assert!(
+                result.unwrap_err().to_string().contains("ML-DSA-44"),
+                "the refusal should name what was expected"
+            );
+        }
+        assert!(signed_vote(1, 1, &[0x00; 32], &signature()).is_ok(), "the right length fails");
     }
 }

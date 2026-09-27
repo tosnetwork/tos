@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "minimum_samples": 100,
+  "verify_calls_per_sample": {
+    "single_verify": 1,
+    "certificate_verify_21": 21,
+    "certificate_verify_100": 100,
+    "proof_verify_21": 21,
+    "lite_verify_21": 21
+  },
+  "structural_cap": {
+    "maximum": 400,
+    "tested": 401
+  },
+  "large_timing_regression": {
+    "single_sign_over_single_verify_p95": 20.0,
+    "certificate_verify_21_per_signature_over_single_verify_p95": 3.0,
+    "certificate_verify_100_per_signature_over_single_verify_p95": 3.0,
+    "proof_verify_21_per_signature_over_single_verify_p95": 3.0,
+    "lite_verify_21_per_signature_over_single_verify_p95": 3.0
+  }
+}

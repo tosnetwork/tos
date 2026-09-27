@@ -25,6 +25,7 @@
 #include "td/actor/actor.h"
 #include "td/utils/port/IPAddress.h"
 
+#include "adnl-ext-query-failure.h"
 #include "adnl-node-id.hpp"
 #include "adnl-node.h"
 
@@ -44,6 +45,11 @@ class AdnlExtServer : public td::actor::Actor {
  public:
   virtual void add_local_id(AdnlNodeIdShort id) = 0;
   virtual void add_tcp_port(td::uint16 port) = 0;
+  virtual void wait_listening(td::Promise<td::Unit> promise) = 0;
+  // Installs the service's failure answer for queries it cannot serve (admission
+  // limits, handler errors, oversized results). Without one, such queries close
+  // their connection; they are never left unanswered.
+  virtual void set_query_failure_encoder(std::shared_ptr<const ExtQueryFailureEncoder> encoder) = 0;
   virtual ~AdnlExtServer() = default;
 };
 

@@ -1,0 +1,17 @@
+# Canonical block_signatures_simplex_pq#13 carrier measurements; BOCs use mode 0.
+# Counts through 100 use real verifier-valid ML-DSA-44 signatures. The 400 row uses
+# distinct deterministic exact-width payloads; this saves 300 signing operations and
+# changes no size because all signature objects remain exactly 2420 bytes.
+# node_tl and lite_tl are measurements from the generated serializers. They are
+# smaller than the retired projection by 4 * signers + 4 because TL writes a bare
+# vector of bare concrete elements. This correction does not reopen the persisted
+# envelope: its 1 MiB bound was selected from the #13 BOC plus BlockProof overhead,
+# not from either TL column, and every corrected network value moved downward.
+signers	cells	depth	block_signatures_boc	block_signatures_boc_sha256	block_proof_boc	node_tl	lite_tl	simplex_certificate_tl	boc_minus_certificate	input
+1	24	22	2720	4126D8275539A2F1A9DDB291DBF01AD889467AFC1E9C441AD13432D86BEDB4DA	2810	2636	2636	2488	232	valid
+21	484	27	53787	9B3A4DD98E783013BEA3C39220AF069F0B38000FA6C5330EF92EDEB7BF2C2630	53879	51836	51836	51128	2659	valid
+32	737	27	81860	FFBAB7287BD671021B1173DBAC414091CAF7B651CFE115D67EB84AF8571EC968	81952	78896	78896	77880	3980	valid
+64	1473	28	163524	00E79398B47FF5B6F679C0393FE4505CF36D4104F1D880745E83F4C0B9F3E98B	163616	157616	157616	155704	7820	valid
+100	2301	29	255396	E9383E2E22A927519B7543F092CBD5CAD5BF6391F1384FB76FA029949CCFA7FC	255488	246176	246176	243256	12140	valid
+400	9201	31	1020996	0C05E72DD2095B0B3497CEF3422DFBC65B42891BB011C75E769AC245FA0B9B63	1021088	984176	984176	972856	48140	deterministic-size
+401	REFUSED	REFUSED	REFUSED	REFUSED	REFUSED	REFUSED	REFUSED	REFUSED	REFUSED	structural

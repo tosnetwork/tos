@@ -32,7 +32,7 @@ class MetricCollectorImpl : public td::actor::SpawnsWith<Bus>, public td::actor:
     auto& bus = *owning_bus();
     collector.emplace(stats::MetricCollector{
         bus.session_id,
-        bus.local_id->short_id,
+        PublicKeyHash{bus.local_id->validator_id.value},
         tos::stats::recorder_for(fake_catchain_stats),
     });
   }

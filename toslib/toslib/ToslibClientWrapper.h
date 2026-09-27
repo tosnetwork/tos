@@ -46,7 +46,11 @@ class ToslibClientWrapper : public td::actor::Actor {
       return tos::move_tl_object_as<typename F::ReturnType::element_type>(std::move(x));
     });
     CHECK(requests_.emplace(id, std::move(P)).second);
-    td::actor::send_closure(toslib_client_, &toslib::ToslibClient::request, id, std::move(obj));
+    td::actor::send_closure(toslib_client_, &toslib::ToslibClient::request, id, std::move(obj)
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                            , QueryTraceContext{}
+#endif
+                            );
   }
 
   // Execute a typed request under one explicit block context. `withBlock`
@@ -65,7 +69,11 @@ class ToslibClientWrapper : public td::actor::Actor {
     CHECK(requests_.emplace(id, std::move(P)).second);
     toslib_api::object_ptr<toslib_api::Function> function = std::move(obj);
     auto wrapped = toslib_api::make_object<toslib_api::withBlock>(std::move(block_id), std::move(function));
-    td::actor::send_closure(toslib_client_, &toslib::ToslibClient::request, id, std::move(wrapped));
+    td::actor::send_closure(toslib_client_, &toslib::ToslibClient::request, id, std::move(wrapped)
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                            , QueryTraceContext{}
+#endif
+                            );
   }
 
  private:

@@ -661,7 +661,9 @@ fn open_nominator_pool(
     validator_addr: &MsgAddressInt,
 ) -> anyhow::Result<Arc<dyn NominatorWrapper>> {
     match config {
-        PoolConfig::SNP { address, owner } => {
+        PoolConfig::SNP { address, owner, controller } => {
+            let controller_addr = MsgAddressInt::from_str(controller)
+                .context(format!("invalid validator controller address: {}", controller))?;
             let pool = match (address, owner) {
                 (Some(address), Some(owner)) => {
                     let addr = MsgAddressInt::from_str(address)
@@ -672,10 +674,15 @@ fn open_nominator_pool(
                         contract_provider!(rpc_client.clone()),
                         &owner_addr,
                         validator_addr,
+                        &controller_addr,
                         -1,
                     )?;
-                    let calculated_addr =
-                        NominatorWrapperImpl::calculate_address(-1, &owner_addr, validator_addr)?;
+                    let calculated_addr = NominatorWrapperImpl::calculate_address(
+                        -1,
+                        &owner_addr,
+                        validator_addr,
+                        &controller_addr,
+                    )?;
                     if calculated_addr != addr {
                         anyhow::bail!(
                             "calculated pool address does not match the defined address: defined={}, calculated={}",
@@ -692,6 +699,7 @@ fn open_nominator_pool(
                         contract_provider!(rpc_client.clone()),
                         &owner_addr,
                         validator_addr,
+                        &controller_addr,
                         -1,
                     )?
                 }
@@ -708,6 +716,7 @@ fn open_nominator_pool(
         }
         PoolConfig::NominatorPool {
             address,
+            controller,
             validator_reward_share,
             max_nominators,
             min_validator_stake,
@@ -721,6 +730,19 @@ fn open_nominator_pool(
             }
             validator_account.copy_from_slice(&validator_addr_bytes);
 
+            // The controller is part of the pool's initial data, so it is part of the
+            // address below. Getting it wrong does not produce a pool that stakes to the
+            // wrong place; it produces a different address entirely, which the comparison
+            // below catches.
+            let controller_addr = MsgAddressInt::from_str(controller)
+                .context(format!("invalid validator controller address: {}", controller))?;
+            let controller_bytes = controller_addr.address().get_bytestring(0);
+            let mut controller_account = [0u8; 32];
+            if controller_bytes.len() != controller_account.len() {
+                anyhow::bail!("validator controller address must be a 256-bit account id");
+            }
+            controller_account.copy_from_slice(&controller_bytes);
+
             // A pool's address is the hash of its code and its initial data, so
             // the configured address is checkable rather than trusted: if the
             // parameters in the config produce a different address, the operator
@@ -729,6 +751,7 @@ fn open_nominator_pool(
             let derived = NominatorPoolWrapperImpl::calculate_address(
                 -1,
                 &validator_account,
+                &controller_account,
                 *validator_reward_share,
                 *max_nominators,
                 *min_validator_stake,

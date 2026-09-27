@@ -37,6 +37,8 @@ namespace {
 struct BlockProofRoot {
   td::Ref<vm::Cell> proof;
   UnixTime gen_utime;
+  td::uint32 validator_set_hash;
+  td::uint32 catchain_seqno;
 };
 
 td::Result<BlockProofRoot> generate_block_proof_root_impl(BlockIdExt id, td::Ref<vm::Cell> block_root) {
@@ -114,7 +116,8 @@ td::Result<BlockProofRoot> generate_block_proof_root_impl(BlockIdExt id, td::Ref
     }
   }
 
-  return BlockProofRoot{std::move(proof), info.gen_utime};
+  return BlockProofRoot{std::move(proof), info.gen_utime, info.gen_validator_list_hash_short,
+                        info.gen_catchain_seqno};
 }
 
 td::Result<td::BufferSlice> serialize_block_proof(BlockIdExt id, td::Ref<vm::Cell> proof, bool has_signatures,
@@ -378,28 +381,49 @@ void WaitBlockData::got_static_file(td::BufferSlice data) {
 
 td::Result<td::BufferSlice> WaitBlockData::generate_proof(BlockIdExt id, td::Ref<vm::Cell> block_root,
                                                           td::Ref<block::BlockSignatureSet> signatures,
-                                                          td::Ref<MasterchainState> state) {
+                                                          td::Ref<MasterchainState> state,
+                                                          PendingBlockProofFailureSource &failure_source) {
+  failure_source = PendingBlockProofFailureSource::BlockBytes;
   if (!id.is_masterchain()) {
     return td::Status::Error("cannot create proof for non-masterchain block");
   }
   if (signatures.is_null()) {
+    failure_source = PendingBlockProofFailureSource::FinalityEvidence;
     return td::Status::Error("block signatures are null");
   }
   if (!signatures->is_final()) {
+    failure_source = PendingBlockProofFailureSource::FinalityEvidence;
     return td::Status::Error("cannot create masterchain proof with non-final signatures");
   }
   if (state.is_null()) {
+    failure_source = PendingBlockProofFailureSource::TrustedContext;
     return td::Status::Error(ErrorCode::notready, "masterchain state is not ready");
   }
 
   TRY_RESULT(proof_root, generate_block_proof_root_impl(id, std::move(block_root)));
+  failure_source = PendingBlockProofFailureSource::TrustedContext;
   TRY_RESULT(config, state->get_config_holder());
-  auto vset =
-      config->get_validator_set(id.shard_full(), proof_root.gen_utime, signatures->get_catchain_seqno());
+  auto vset = config->get_validator_set(id.shard_full(), proof_root.gen_utime, proof_root.catchain_seqno);
   if (vset.is_null()) {
     return td::Status::Error(ErrorCode::notready, "failed to compute validator set for masterchain proof");
   }
+  // A set derived from a stale local state must not make us discard an honest
+  // certificate. Conversely, once the trusted set agrees with the block
+  // header, a differing carrier set identifies the independently received
+  // evidence as the bad input.
+  const auto identity_verdict = pending_block_proof_identity_verdict(
+      {proof_root.catchain_seqno, proof_root.validator_set_hash},
+      {vset->get_catchain_seqno(), vset->get_validator_set_hash()},
+      {signatures->get_catchain_seqno(), signatures->get_validator_set_hash()});
+  if (identity_verdict == PendingBlockProofIdentityVerdict::ContextMismatch) {
+    return td::Status::Error(ErrorCode::notready, "validator set context does not match block header");
+  }
+  failure_source = PendingBlockProofFailureSource::FinalityEvidence;
+  if (identity_verdict == PendingBlockProofIdentityVerdict::EvidenceMismatch) {
+    return td::Status::Error(ErrorCode::protoviolation, "finality evidence set does not match block header");
+  }
   TRY_RESULT(signatures_cell, signatures->serialize(vset));
+  failure_source = PendingBlockProofFailureSource::BlockBytes;
   return serialize_block_proof(id, std::move(proof_root.proof), true, std::move(signatures_cell));
 }
 

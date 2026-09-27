@@ -22,26 +22,24 @@ use crate::error::{SandboxError, SandboxResult};
 const MAINNET_GENESIS_UNIX: &str = "1789434000";
 
 /// Locate the TOS repository root by checking common paths.
+///
+/// The root is returned absolute. The tools found under it are run from a temporary
+/// working directory, so a root relative to the caller's would resolve to nothing there.
 fn find_tos_root() -> Option<PathBuf> {
-    if let Ok(root) = env::var("TOS_ROOT") {
-        let p = PathBuf::from(root);
-        if p.join("build/crypto/create-state").exists() {
-            return Some(p);
+    fn rooted(p: PathBuf) -> Option<PathBuf> {
+        p.join("build/crypto/create-state").exists().then(|| p.canonicalize().ok()).flatten()
+    }
+    if let Some(root) = env::var("TOS_ROOT").ok().map(PathBuf::from).and_then(rooted) {
+        return Some(root);
+    }
+    // The enclosing tree wins over any well-known checkout: a test run from a second
+    // worktree must exercise the contracts of that worktree, not the ones next door.
+    for candidate in [".", "..", "../..", "../../..", "../../../.."] {
+        if let Some(root) = rooted(PathBuf::from(candidate)) {
+            return Some(root);
         }
     }
-    if let Ok(home) = env::var("HOME") {
-        let p = PathBuf::from(&home).join("tos");
-        if p.join("build/crypto/create-state").exists() {
-            return Some(p);
-        }
-    }
-    for candidate in &[".", "..", "../..", "../../..", "../../../.."] {
-        let p = PathBuf::from(candidate);
-        if p.join("build/crypto/create-state").exists() {
-            return Some(p);
-        }
-    }
-    None
+    env::var("HOME").ok().map(|home| PathBuf::from(home).join("tos")).and_then(rooted)
 }
 
 /// Run `create-state` against a zero-state Fift template and return the

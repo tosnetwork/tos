@@ -29,6 +29,7 @@ is already where the source comments in this repository point.
 | [tvm-mldsa44-validation.md](tvm-mldsa44-validation.md) | Acceptance matrix, calibration method, and the limits of what the public vectors prove |
 | [mldsa44-auth-module.md](mldsa44-auth-module.md) | The immutable authentication module: exact signed bytes, funding failure classes, deployment and rotation boundary |
 | [pq-v16-readiness.md](pq-v16-readiness.md) | The Rust implementation's execution contract against the native one, the build and test commands, the wallet, key and relayer tooling, and what readiness does not yet cover |
+| [pq-finality-stage-status.md](pq-finality-stage-status.md) | Post-quantum finality implementation commits, gate mappings, proof boundaries, mutation evidence, and registered gaps |
 
 ## Running and testing a node
 

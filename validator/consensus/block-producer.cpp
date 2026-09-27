@@ -4,10 +4,13 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <cstring>
+
 #include "td/actor/SharedFuture.h"
 #include "td/actor/coro_task.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/CancellationToken.h"
+#include "validator/measurement/measurement-contract.h"
 
 #include "bus.h"
 #include "stats.h"
@@ -15,6 +18,12 @@
 namespace tos::validator::consensus {
 
 namespace {
+
+measurement::TraceId measurement_trace_id(const CandidateId& id) {
+  measurement::TraceId result{};
+  std::memcpy(result.data(), id.hash.data(), result.size());
+  return result;
+}
 
 class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<Bus> {
  public:
@@ -41,6 +50,12 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     last_mc_finalized_seqno_ = std::max(last_mc_finalized_seqno_, seqno);
     last_consensus_finalized_seqno_ = std::max(last_consensus_finalized_seqno_, seqno);
     last_consensus_finalized_at_ = td::Timestamp::now();
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const FinalizationBacklog> event) {
+    // Finality can catch up, and when it does this group produces again.
+    finality_behind_ = event->over_limit;
   }
 
   template <>
@@ -104,6 +119,9 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     td::Timestamp slot_start = event->start_time;
 
     for (td::uint32 slot = event->start_slot; current_leader_window_ == window && slot < event->end_slot; ++slot) {
+      if (finality_behind_) {
+        break;
+      }
       co_await td::actor::coro_sleep(slot_start - start_collate_before);
       if (current_leader_window_ != window) {
         break;
@@ -115,7 +133,7 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
             .shard = bus.shard,
             .min_masterchain_block_id = state->min_mc_block_id(),
             .prev = state->block_ids(),
-            .creator = Ed25519_PublicKey{bus.local_id->key.ed25519_value().raw()},
+            .creator = bus.local_id->validator_id,
             .skip_store_candidate = true,
             .utime = slot_start.at_unix(),
             .hard_timeout = slot_start + hard_timeout,
@@ -208,12 +226,32 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
       auto id_to_sign = serialize_tl_object(id.to_tl(), true);
       auto data_to_sign = create_serialize_tl_object<tl::dataToSign>(bus.session_id, std::move(id_to_sign));
-      auto signature = co_await td::actor::ask(bus.keyring, &keyring::Keyring::sign_message, bus.local_id->short_id,
-                                               std::move(data_to_sign));
+      // Signed by the node's custodied post-quantum consensus key, under the frozen
+      // simplex_sign_context, never the network keyring. Fail closed: with no signer or a
+      // signing failure, stop producing rather than emit an unsigned or classical candidate.
+      if (bus.pq_signer == nullptr) {
+        LOG(ERROR) << "consensus: no post-quantum consensus signer; not producing a candidate";
+        break;
+      }
+      const auto to_sign = data_to_sign.as_slice();
+      auto pq_signature = bus.pq_signer->sign_consensus(std::string_view(to_sign.data(), to_sign.size()));
+      if (!pq_signature.has_value()) {
+        LOG(ERROR) << "consensus: the post-quantum signer failed to sign a candidate; not producing it";
+        break;
+      }
+      td::BufferSlice signature(pq_signature->signature);
       auto candidate = td::make_ref<Candidate>(id, parent, bus.local_id->idx, std::move(block), std::move(signature));
       if (current_leader_window_ != window) {
         break;
       }
+      if (finality_behind_) {
+        // Collation began before the round stopped taking candidates. Publishing now would
+        // put one into a round that has stopped, or add to a finality backlog nothing is
+        // draining.
+        break;
+      }
+      measurement::record_trace_lazy([&] { return measurement_trace_id(candidate->id); },
+                                     measurement::TraceStage::candidate_generated);
       owning_bus().publish<CandidateGenerated>(candidate, collator);
       owning_bus().publish<CandidateReceived>(candidate);
       owning_bus().publish<TraceEvent>(stats::CandidateReceived::create(candidate, true));
@@ -231,6 +269,10 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   std::optional<td::uint32> current_leader_window_;
   td::CancellationTokenSource cancellation_source_;
+
+  // Set while more agreed certificates are waiting to be finalized than the resolver will
+  // hold. Producing more would add to a pile nothing is draining.
+  bool finality_behind_ = false;
 
   BlockSeqno last_consensus_finalized_seqno_ = 0;
   BlockSeqno last_mc_finalized_seqno_ = 0;

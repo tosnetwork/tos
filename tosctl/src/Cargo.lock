@@ -1345,6 +1345,7 @@ dependencies = [
  "secrets-vault",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
 ]

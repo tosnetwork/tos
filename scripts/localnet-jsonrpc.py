@@ -22,15 +22,19 @@ import json
 import threading
 import time
 import os
+import re
 import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import shutil
 import logging
 import nacl.signing
+from e03_http_trace import record as record_e03_http
 
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from contract import WalletV1, WalletV1Blueprint, tos
 from pytosiq_core import (
     Address, Builder, Cell, InternalMsgInfo, MessageAny, WalletMessage,
@@ -42,19 +46,52 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 
 
-def rpc_call(rpc_addr: str, method: str, **params):
+def rpc_call(rpc_addr: str, method: str, *, timeout: float = 8, **params):
     """Read path identical to the Android wallet: POST http://<rpc>/jsonRPC."""
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{rpc_addr}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            record_e03_http(req.full_url, body, resp.status, raw)
+            return json.loads(raw.decode())
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        record_e03_http(req.full_url, body, error.code, raw)
+        error.json_rpc_body = raw
+        raise
 
 
-def rpc_balance_nano(rpc_addr: str, address: str) -> int:
-    r = rpc_call(rpc_addr, "getAddressInformation", address=address)
+def rpc_balance_nano(rpc_addr: str, address: str, *, timeout: float = 8) -> int:
+    r = rpc_call(rpc_addr, "getAddressInformation", address=address, timeout=timeout)
     return int(r["result"]["balance"])
+
+
+async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: float = 40.0) -> int:
+    """Wait only for the fresh basechain account-state block to enter the DB.
+
+    A masterchain-ready localnet can answer its faucet while basechain block 0
+    is not yet loadable. Other JSON-RPC failures remain immediate errors.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("fresh basechain account state was not readable within 40s")
+            return await asyncio.to_thread(rpc_balance_nano, rpc_addr, address,
+                                           timeout=min(8, remaining))
+        except urllib.error.HTTPError as error:
+            body = getattr(error, "json_rpc_body", b"").decode(errors="replace")
+            if error.code != 500 or not re.search(
+                r"cannot load block \(0,8000000000000000,0\):[^\n]+: not in db", body
+            ):
+                raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError("fresh basechain account state was not readable within 40s") from error
+            await asyncio.sleep(0.5)
 
 
 async def wait_masterchain_info(rpc_addr: str, timeout: float):
@@ -352,9 +389,9 @@ async def main(
             )
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
-        for _ in range(num_validators):
+        for validator_index in range(num_validators):
             node = network.create_full_node()
-            node.make_initial_validator()
+            make_deterministic_pq_initial_validator(node, validator_index)
             node.announce_to(dht)
             nodes.append(node)
 
@@ -391,7 +428,7 @@ async def main(
             bp = WalletV1Blueprint(workchain=0)
             new_addr = bp.address.to_str()
             print(f"[demo] new wallet address: {new_addr}")
-            before = rpc_balance_nano(rpc_addr, new_addr)
+            before = await wait_initial_balance_readable(rpc_addr, new_addr)
             print(f"[demo] balance before (via JSON-RPC): {fmt(before)}")
             print("[demo] faucet deploys and funds 5 TOS ...")
             _ = await faucet.deploy(bp, tos(5))

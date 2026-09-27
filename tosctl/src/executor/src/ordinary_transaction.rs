@@ -291,7 +291,11 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
                 if !is_special { smc_info.unix_time() } else { 0 },
                 true,
             ) {
-                if check_account_size_limits(self.config().size_limits_config(), &mut new_acc)? {
+                if check_account_size_limits(
+                    self.config().size_limits_config(),
+                    self.config().global_version(),
+                    &mut new_acc,
+                )? {
                     *account = new_acc;
                 } else {
                     bad_state = true;

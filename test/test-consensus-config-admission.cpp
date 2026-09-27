@@ -55,9 +55,9 @@ td::Ref<vm::Cell> make_simplex_v1(unsigned flags) {
   vm::CellBuilder cb;
   CHECK(cb.store_long_bool(0x21, 8));
   CHECK(cb.store_long_bool(flags, 7));
-  CHECK(cb.store_long_bool(0, 1));     // use_quic
-  CHECK(cb.store_long_bool(400, 32));  // target_rate_ms
-  CHECK(cb.store_long_bool(4, 32));    // slots_per_leader_window (>= 1)
+  CHECK(cb.store_long_bool(0, 1));      // use_quic
+  CHECK(cb.store_long_bool(400, 32));   // target_rate_ms
+  CHECK(cb.store_long_bool(4, 32));     // slots_per_leader_window (>= 1)
   CHECK(cb.store_long_bool(2000, 32));  // first_block_timeout_ms
   CHECK(cb.store_long_bool(250, 32));   // max_leader_window_desync
   return cb.finalize();
@@ -111,9 +111,8 @@ bool admissible(const std::unique_ptr<block::Config>& config, tos::WorkchainId w
 TEST(ConsensusConfigAdmission, supported_version_is_admissible) {
   // The baseline: a well-formed v2 entry at the highest version this build
   // supports must be accepted for both the masterchain and a basechain.
-  auto config = make_config(make_param30(
-      make_simplex_v2(0, tos::NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION),
-      make_simplex_v2(0, tos::NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION)));
+  auto config = make_config(make_param30(make_simplex_v2(0, tos::NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION),
+                                         make_simplex_v2(0, tos::NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION)));
   ASSERT_TRUE(admissible(config, tos::masterchainId));
   ASSERT_TRUE(admissible(config, tos::basechainId));
 }
@@ -122,6 +121,23 @@ TEST(ConsensusConfigAdmission, legacy_v1_entry_is_admissible) {
   auto config = make_config(make_param30(make_simplex_v1(0), make_simplex_v1(0)));
   ASSERT_TRUE(admissible(config, tos::masterchainId));
   ASSERT_TRUE(admissible(config, tos::basechainId));
+}
+
+TEST(ConsensusConfigAdmission, selection_keeps_the_exact_parsed_cell_hash) {
+  auto mc_cell = make_simplex_v2(0, 2);
+  auto shard_cell = make_simplex_v1(0);
+  td::Bits256 mc_hash{mc_cell->get_hash().bits()};
+  td::Bits256 shard_hash{shard_cell->get_hash().bits()};
+  auto config = make_config(make_param30(std::move(mc_cell), std::move(shard_cell)));
+
+  auto mc = config->get_selected_new_consensus_config(tos::masterchainId);
+  auto shard = config->get_selected_new_consensus_config(tos::basechainId);
+  ASSERT_TRUE(static_cast<bool>(mc));
+  ASSERT_TRUE(static_cast<bool>(shard));
+  ASSERT_EQ(mc.value().cell_hash, mc_hash);
+  ASSERT_EQ(shard.value().cell_hash, shard_hash);
+  ASSERT_EQ(mc.value().config.protocol_version, 2u);
+  ASSERT_EQ(shard.value().config.protocol_version, 0u);
 }
 
 TEST(ConsensusConfigAdmission, missing_parameter_fails_closed) {

@@ -17,10 +17,11 @@
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
 #include "td/utils/logging.h"
+#include "validator/consensus/simplex/carrier-limits.h"
+#include "validator/consensus/simplex/misbehavior.h"
 
 #include "bus.h"
 #include "stats.h"
-#include "validator/consensus/simplex/misbehavior.h"
 
 namespace tos::validator::consensus {
 
@@ -50,17 +51,24 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     std::vector<td::Bits256> overlay_nodes_tl;
     std::map<PublicKeyHash, td::uint32> authorized_keys;
 
-    const td::uint64 max_broadcast_size_wide = static_cast<td::uint64>(bus.config.max_block_size) +
-                                               bus.config.max_collated_data_size + (1U << 20);
+    const td::uint64 max_broadcast_size_wide =
+        static_cast<td::uint64>(bus.config.max_block_size) + bus.config.max_collated_data_size + (1U << 20);
     LOG_CHECK(max_broadcast_size_wide <= std::numeric_limits<td::uint32>::max())
         << "Configured consensus broadcast limit overflows uint32";
+    // This authorized broadcast size also raises the per-peer transport MTU
+    // (OverlayImpl::update_peers_mtu sets it to max_broadcast_size + 1024), which is what a
+    // direct Simplex message -- a post-quantum vote or certificate -- travels under. It is
+    // sized for multi-megabyte candidate broadcasts, so it already covers the Simplex
+    // carrier hard maximum; this check keeps that true if the broadcast sizing ever shrinks.
+    LOG_CHECK(max_broadcast_size_wide >= simplex::simplex_carrier_peer_mtu_bytes)
+        << "the consensus overlay peer allowance no longer covers the Simplex carrier hard maximum";
     const td::uint32 max_broadcast_size = static_cast<td::uint32>(max_broadcast_size_wide);
     for (const auto& peer : bus.validator_set) {
       adnl_id_to_peer_[peer.adnl_id] = peer;
-      short_id_to_peer_[peer.short_id] = peer;
+      transport_key_to_peer_[peer.transport_key_id] = peer;
       validator_nodes.push_back(peer.adnl_id);
-      overlay_nodes_tl.push_back(peer.short_id.bits256_value());
-      authorized_keys.emplace(peer.short_id, max_broadcast_size);
+      overlay_nodes_tl.push_back(peer.transport_key_id.bits256_value());
+      authorized_keys.emplace(peer.transport_key_id, max_broadcast_size);
     }
 
     auto overlay_nodes = bus.config.observers_in_private_overlay() ? bus.all_validators : validator_nodes;
@@ -156,10 +164,9 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     if (max_response_size_wide > std::numeric_limits<td::uint32>::max()) {
       co_return td::Status::Error("Configured consensus response limit overflows uint32");
     }
-    td::actor::send_closure(
-        overlays_, &overlay::Overlays::send_query_via, dst, local_adnl_id_, overlay_id_, "", std::move(promise),
-        message->timeout, std::move(message->request.data), static_cast<td::uint32>(max_response_size_wide),
-        adnl_sender_);
+    td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, dst, local_adnl_id_, overlay_id_, "",
+                            std::move(promise), message->timeout, std::move(message->request.data),
+                            static_cast<td::uint32>(max_response_size_wide), adnl_sender_);
     auto response = co_await std::move(awaiter);
     if (fetch_tl_object<tl::requestError>(response, true).is_ok()) {
       co_return td::Status::Error("Peer returned an error");
@@ -178,7 +185,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     }
     td::BufferSlice extra = create_serialize_tl_object<tos_api::consensus_broadcastExtra>(event->candidate->id.slot);
     td::actor::send_closure(overlays_, &overlay::Overlays::send_broadcast_fec_with_extra, local_adnl_id_, overlay_id_,
-                            owning_bus()->local_id->short_id, 0, event->candidate->serialize(), std::move(extra));
+                            owning_bus()->local_id->transport_key_id, 0, event->candidate->serialize(),
+                            std::move(extra));
   }
 
  private:
@@ -226,6 +234,14 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
       LOG(WARNING) << "private-overlay: dropping message from non-member adnl src " << src_adnl_id;
       return;
     }
+    // Reject an over-sized Simplex protocol message before it is parsed, independent of the
+    // transport stream cap: nothing the consensus layer accepts is larger than a certificate
+    // at the structural signer ceiling, so a bigger inner payload is hostile or malformed.
+    if (!simplex::simplex_carrier_accepts(data.size())) {
+      LOG(WARNING) << "private-overlay: dropping a " << data.size() << "-byte protocol message from " << src_adnl_id
+                   << ", above the " << simplex::simplex_protocol_hard_max_bytes << "-byte Simplex hard maximum";
+      return;
+    }
     auto it = adnl_id_to_peer_.find(src_adnl_id);
     auto source_validator =
         it == adnl_id_to_peer_.end() ? std::optional<PeerValidatorId>{} : std::optional{it->second.idx};
@@ -237,7 +253,7 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
       LOG(WARNING) << "Dropping candidate broadcast in the consensus overlay while block sync is enabled";
       return;
     }
-    if (owning_bus()->is_validator() && src == owning_bus()->local_id->short_id) {
+    if (owning_bus()->is_validator() && src == owning_bus()->local_id->transport_key_id) {
       return;
     }
 
@@ -247,17 +263,17 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     // daemon. Mirror precheck_broadcast's parse-error handling.
     auto parsed_extra_r = fetch_tl_object<tos_api::consensus_broadcastExtra>(extra, true);
     if (parsed_extra_r.is_error()) {
-      LOG(WARNING) << "private-overlay: dropping broadcast with malformed extra from " << src
-                   << ": " << parsed_extra_r.move_as_error();
+      LOG(WARNING) << "private-overlay: dropping broadcast with malformed extra from " << src << ": "
+                   << parsed_extra_r.move_as_error();
       return;
     }
     auto parsed_extra = parsed_extra_r.move_as_ok();
 
     // Same `.at(src)` throw vector as on_overlay_message. The precheck
     // already rejects unknown src, but defense-in-depth here is cheap.
-    auto peer_it = short_id_to_peer_.find(src);
-    if (peer_it == short_id_to_peer_.end()) {
-      LOG(WARNING) << "private-overlay: dropping broadcast from unknown short_id src " << src;
+    auto peer_it = transport_key_to_peer_.find(src);
+    if (peer_it == transport_key_to_peer_.end()) {
+      LOG(WARNING) << "private-overlay: dropping broadcast from unknown transport-key src " << src;
       return;
     }
 
@@ -270,8 +286,7 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
 
     if (maybe_candidate.is_error()) {
       auto error_str = maybe_candidate.move_as_error().to_string();
-      LOG(WARNING) << "MISBEHAVIOR: Failed to deserialize block candidate broadcast from "
-                   << src << ": " << error_str;
+      LOG(WARNING) << "MISBEHAVIOR: Failed to deserialize block candidate broadcast from " << src << ": " << error_str;
       auto proof = simplex::MalformedBroadcast::create(std::move(raw_bytes), peer.idx, std::move(error_str));
       owning_bus().publish<MisbehaviorReport>(peer.idx, proof);
       return;
@@ -297,8 +312,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     auto& bus = *owning_bus();
     // Bare `.at(src)` throws if the src is not in the overlay membership map.
     // Return a structured error.
-    auto peer_it = short_id_to_peer_.find(src);
-    if (peer_it == short_id_to_peer_.end()) {
+    auto peer_it = transport_key_to_peer_.find(src);
+    if (peer_it == transport_key_to_peer_.end()) {
       co_return td::Status::Error("Precheck failed: src is not in private overlay membership");
     }
     auto peer = peer_it->second.idx;
@@ -344,10 +359,9 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
   std::set<adnl::AdnlNodeIdShort> overlay_nodes_;
   std::vector<adnl::AdnlNodeIdShort> other_overlay_nodes_;
   std::map<adnl::AdnlNodeIdShort, PeerValidator> adnl_id_to_peer_;
-  std::map<PublicKeyHash, PeerValidator> short_id_to_peer_;
+  std::map<PublicKeyHash, PeerValidator> transport_key_to_peer_;
 
   std::mt19937 gossip_rng_{td::Random::fast_uint32()};
-
 };
 
 }  // namespace

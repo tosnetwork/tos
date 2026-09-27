@@ -1,4 +1,5 @@
-"Asm.fif" include
+// PQ.fif includes Asm.fif and adds the post-quantum instruction.
+"PQ.fif" include
 "TosUtil.fif" include
 "State.fif" include
 "Config.fif" include

@@ -30,6 +30,7 @@ macro_rules! _invalid_id {
     };
 }
 
+pub mod pq_signature_set;
 pub mod secure;
 #[rustfmt::skip]
 #[allow(non_camel_case_types)]

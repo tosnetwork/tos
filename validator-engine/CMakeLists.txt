@@ -6,7 +6,7 @@ add_library(json-rpc-parse STATIC
   json-rpc-server-parse.cpp
 )
 target_include_directories(json-rpc-parse PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils)
+target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils tl_lite_api)
 
 set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server.h
@@ -42,7 +42,7 @@ target_compile_options(validator-engine PRIVATE
 )
 target_link_libraries(validator-engine metrics overlay tdutils tdactor adnl tl_api dht
   rldp2 quic full-node validator tos_validator validator
-  fift-lib memprof git ${JEMALLOC_LIBRARIES})
+  fift-lib memprof git tos_pq_consensus_signer ${JEMALLOC_LIBRARIES})
 
 add_library(json-rpc-account-model STATIC
   json-rpc-account-model.h
@@ -53,8 +53,11 @@ target_include_directories(json-rpc-account-model PUBLIC ${CMAKE_CURRENT_SOURCE_
 
 target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model)
 if (JEMALLOC_FOUND)
-  target_include_directories(validator-engine PRIVATE ${JEMALLOC_INCLUDE_DIR})
-  target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1)
+  # Name the jemalloc header by full path instead of adding JEMALLOC_INCLUDE_DIR to the
+  # search path: that directory is often a shared prefix (e.g. /opt/homebrew/include)
+  # whose other libraries would shadow the vendored headers this target is built against.
+  target_compile_definitions(validator-engine PRIVATE -DTOS_USE_JEMALLOC=1
+                             TOS_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
 endif()
 
 install(TARGETS validator-engine RUNTIME DESTINATION bin)

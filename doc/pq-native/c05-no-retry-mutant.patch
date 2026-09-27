@@ -1,0 +1,11 @@
+diff --git a/validator/consensus/simplex/consensus.cpp b/validator/consensus/simplex/consensus.cpp
+--- a/validator/consensus/simplex/consensus.cpp
++++ b/validator/consensus/simplex/consensus.cpp
+@@ -19,6 +19,6 @@ namespace {
+ // A candidate remains the slot's pending block while its exact parent state is
+ // temporarily unavailable. Re-delivery is not guaranteed, so retry here rather
+ // than clearing pending_block (which is also V-019's double-proposal evidence).
+-constexpr unsigned MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS = 16;
++constexpr unsigned MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS = 1;
+ constexpr double NOTARIZE_STATE_RESOLVE_RETRY_DELAY = 0.1;
+ constexpr double MAX_NOTARIZE_STATE_RESOLVE_RETRY_DELAY = 1.0;

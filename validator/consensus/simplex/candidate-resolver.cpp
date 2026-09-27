@@ -46,16 +46,11 @@ namespace {
 using BlockSignatureSetRef = td::Ref<block::BlockSignatureSet>;
 
 constexpr td::uint32 DEFAULT_CANDIDATE_RETENTION_SLOTS = 4096;
-// Bounds resolve_candidate_inner()'s peer-query retry loop. Without this, a
-// CandidateId that no peer can ever supply -- e.g. a slot that was
-// skip-certified via timeout, which never had any candidate (not even an
-// empty placeholder) broadcast for it -- is retried forever with a growing
-// (but capped) per-attempt timeout, never giving up. That in turn leaves the
-// StateResolver call that triggered this resolution permanently in-flight.
-// This is defense-in-depth: QuerySlotSkipped in state-resolver.cpp already
-// avoids ever starting this loop for a definitively skip-certified slot, but
-// any other reason a candidate can't be found (bug, malicious withholding,
-// partition) should still fail cleanly rather than retry indefinitely.
+// Bounds peer-query retries for an exact CandidateId. StateResolver never
+// replaces a signed parent with local skip evidence, so an unavailable exact
+// ancestor must fail cleanly instead of leaving resolution in flight forever.
+// New proposals choose their base in Pool before signing; this retry bound
+// also covers withholding, partitions, and malformed skip-only references.
 constexpr int DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS = 16;
 
 td::uint32 candidate_retention_slots_from_env() {

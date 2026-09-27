@@ -1,0 +1,185 @@
+{
+  "status": "REVIEW_PROPOSAL_NOT_ACCEPTANCE_CRITERIA",
+  "schema_version": 1,
+  "source_commit_policy": "Resolve every source fact from the release candidate commit; never derive a threshold from the N6 run it judges.",
+  "owner_decisions": {
+    "release_hardware_profile": {
+      "status": "PROVISIONING_REQUIRED",
+      "required_host_count": 21,
+      "topology": "one validator per bare-metal host",
+      "provisioning_requirements": {
+        "cpu_model": "record the actual model for every provisioned host",
+        "physical_cores_min": 8,
+        "cpu_governor": "performance",
+        "turbo_or_boost_enabled": false,
+        "memory_gib_min": 16,
+        "storage": "NVMe SSD",
+        "network_link_gbps_min": 1,
+        "virtualization_allowed": false
+      },
+      "required_fields": [
+        "cpu_model",
+        "cpu_governor",
+        "turbo_or_boost_enabled",
+        "memory",
+        "storage",
+        "network_link"
+      ],
+      "observed_nonqualifying_host": {
+        "platform": "KVM guest",
+        "physical_cores": 6,
+        "memory_gib": 11.68,
+        "swap_gib": 2,
+        "network_link": "100 Mbps symmetric (In 100.0 Mbps / Out 100.0 Mbps), MAC fa:16:3e:7c:0e:03, /23 subnet",
+        "cpu_governor": "unobservable from guest",
+        "turbo_or_boost_enabled": "unobservable from guest"
+      },
+      "available_paths": [
+        "provision 21 bare-metal hosts meeting this specification",
+        "change required_scales explicitly with written and machine-enforced extrapolation",
+        "virtual machines cannot produce release evidence because their host frequency policy is unobservable"
+      ],
+      "rationale": "The machine-enforced required scale and section 0.5 require 21 real hosts. Each host needs at least 16 GiB because the 390.48 MiB pending-finality budget is only one component of node RSS and 12 GiB was already marginal; at least 1 Gbps because a 984260-byte maximum carrier consumes 78.7 ms at 100 Mbps before fan-out and 157.5 ms after accepted network headroom; NVMe SSD for state-database write amplification; and at least 8 physical cores. Release timing is attributable only with governor performance and boost/turbo disabled, because throttling changes latency and tail variance while boost makes peak frequency depend on thermals. A virtual guest cannot truthfully report host governor or boost state, so it cannot satisfy this profile. The actual CPU model is recorded only after the 21 hosts exist; the live criteria sentinel remains until then."
+    },
+    "headroom_fractions": {
+      "status": "OWNER_ACCEPTED",
+      "values": {
+        "finality_window": 0.50,
+        "block_signature_timeout": 0.50,
+        "lite_query_timeout": 0.50,
+        "authority_slot": 0.80,
+        "cpu": 0.35,
+        "rss": 0.30,
+        "network": 0.50,
+        "disk_busy": 0.40,
+        "finalization_backpressure": 0.90
+      },
+      "rationale": {
+        "timing_windows": "Normal operation must complete within half of the finality, block-signature, and lite-query timeout envelopes; the remaining half is recovery margin rather than operating budget. The same finality-window fraction makes loss of finalized-height progress visible halfway to the standstill timeout.",
+        "authority_slot": "Authority classification may consume at most one fifth of a ConfigParam30 target block slot, leaving the rest of that slot for consensus work.",
+        "resources": "CPU, RSS, network, and disk headroom implement section 4.3's refusal to accept a release profile that operates a processor, memory budget, link, or storage device at its limit.",
+        "finalization_backpressure": "Only ten percent of observations may be backpressured because backpressure occurring at all is already close to the progress failure it is meant to prevent."
+      }
+    }
+  },
+  "source_facts": {
+    "simplex_target_rate_ms": 400,
+    "simplex_first_block_timeout_ms": 1000,
+    "simplex_slots_per_leader_window": 4,
+    "simplex_first_leader_window_ms": 2600,
+    "simplex_standstill_timeout_ms": 10000,
+    "block_signature_context_timeout_ms": 2000,
+    "lite_query_timeout_ms": 10000,
+    "maximum_boxed_finality_carrier_bytes": 984260,
+    "pending_finality_public_carrier_shares": 16,
+    "pending_finality_validator_carrier_shares": 400,
+    "pending_finality_minimum_charge_bytes": 4096,
+    "pending_finality_total_bytes": 409452160,
+    "pending_finality_maximum_candidates": 99963,
+    "launch_validator_cap": 21,
+    "simplex_fork_point_commit": "628506c9e",
+    "simplex_files_at_fork_point": 16,
+    "upstream_production_committee_approx": 400
+  },
+  "proposed_criteria": {
+    "schema_version": {
+      "proposal": 1,
+      "rationale": "The proposal targets the currently enforced N6 acceptance-criteria schema and must be reviewed again if that schema changes."
+    },
+    "release_hardware_profile": {
+      "proposal": "owner_decisions.release_hardware_profile",
+      "rationale": "Hardware-dependent latency and resource fractions are meaningful only on the reviewed CPU, memory, storage and link profile, including the CPU governor and whether turbo or boost is enabled. A throttling governor invalidates a release timing claim because it changes both sustained frequency and tail variance."
+    },
+    "required_scales": {
+      "proposal": [21],
+      "rationale": "The sole release scale is the enforced 21-validator launch ceiling, not an owner preference. ConfigParam16 and ConfigParam28 reject larger configured limits in crypto/smartcont/config-code.fc; node configuration admission rejects them through Config::validate_pq_launch_resource_config in crypto/block/mc-config.cpp and validator/manager.cpp; and both production Genesis in crypto/smartcont/gen-zerostate.fif and tostester Genesis in test/tostester/src/tostester/zerostate.py construct and enforce the same cap. Requiring unreachable 32/64/100 committees after those four enforcement points would not test a production configuration. Inherited-consensus evidence is prior context only: git tree 628506c9e already contains 16 validator/consensus/simplex files, and the reviewed upstream deployment operates that stack at approximately 400 validators. It does not close O-2 measurement gaps; release evidence still requires measurements on 21 independent hosts."
+    },
+    "required_network_profiles": {
+      "proposal": ["baseline", "launch-wan", "degraded"],
+      "rationale": "Compute isolation, the reviewed deployment link, and recovery under worse-than-launch conditions are separate claims."
+    },
+    "required_workloads": {
+      "proposal": ["consensus-isolation", "target-load", "high-load"],
+      "rationale": "Consensus cost must pass alone and with reviewed fractions of the authoritative gas, byte and collated-data limits."
+    },
+    "max_p99_persisted_finality_ms": {
+      "proposal": 1300,
+      "formula": "floor(2600 * (1 - headroom_fractions.finality_window))",
+      "hard_envelope_ms": 2600,
+      "rationale": "The normal persisted-finality SLO must finish, including persistence, before ConfigParam30's first leader window (first-block timeout plus four target-rate slots); the owner-selected reserve is recovery headroom."
+    },
+    "max_p99_block_signature_verify_ms": {
+      "proposal": 1000,
+      "formula": "floor(2000 * (1 - headroom_fractions.block_signature_timeout))",
+      "hard_envelope_ms": 2000,
+      "rationale": "The production signature/context path has a two-second deadline that also covers proof and state work, so signature verification must leave an explicit fraction of it unused."
+    },
+    "max_p99_lite_verify_ms": {
+      "proposal": 5000,
+      "formula": "floor(10000 * (1 - headroom_fractions.lite_query_timeout))",
+      "hard_envelope_ms": 10000,
+      "rationale": "The production lite query deadline is ten seconds and includes transport and proof-chain work; the verification threshold reserves the owner-reviewed remainder for those costs."
+    },
+    "max_cpu_fraction": {
+      "proposal": 0.65,
+      "formula": "1 - headroom_fractions.cpu",
+      "rationale": "CPU occupancy is capped below the reviewed hardware profile so proof/restart recovery is not attempted at saturation."
+    },
+    "max_rss_fraction": {
+      "proposal": 0.70,
+      "formula": "1 - headroom_fractions.rss",
+      "rationale": "RSS includes the 409452160-byte hostile-input finality cap and must retain reviewed memory for the database, actors and recovery."
+    },
+    "max_network_fraction": {
+      "proposal": 0.50,
+      "formula": "1 - headroom_fractions.network",
+      "rationale": "Network occupancy is relative to the reviewed hardware profile's link capacity and reserves bandwidth for retransmission, catch-up and finality recovery."
+    },
+    "max_disk_busy_fraction": {
+      "proposal": 0.60,
+      "formula": "1 - headroom_fractions.disk_busy",
+      "rationale": "Disk occupancy is relative to the reviewed storage profile and leaves capacity for proof persistence, archive reconstruction and restart recovery."
+    },
+    "max_finalization_backpressure_fraction": {
+      "proposal": 0.10,
+      "formula": "1 - headroom_fractions.finalization_backpressure",
+      "rationale": "The permitted backpressured fraction must leave an owner-reviewed progress margin rather than accepting a run that spends nearly all of its time throttled."
+    },
+    "max_pending_finality_bytes": {
+      "proposal": 409452160,
+      "rationale": "This is the enforced sum of the 16-carrier public pool and 400-carrier validator-reserved pool at 984260 bytes each; the RSS criterion supplies system headroom above this hostile-input ceiling."
+    },
+    "max_pending_finality_candidates": {
+      "proposal": 99963,
+      "rationale": "This is the conservative structural count floor(15748160/4096) + floor(393704000/4096) from the two disjoint byte pools and minimum per-entry charge."
+    },
+    "max_authority_classification_p99_ms": {
+      "proposal": 80,
+      "formula": "floor(400 * (1 - headroom_fractions.authority_slot))",
+      "hard_envelope_ms": 400,
+      "rationale": "Admission classification precedes retained work and must fit inside one ConfigParam30 target-rate slot while reserving time for all remaining consensus work."
+    },
+    "max_unbounded_memory_slope_bytes_per_hour": {
+      "proposal": 0,
+      "rationale": "No positive long-run memory slope is safe; bounded caches may fill and drain but cannot grow with run duration."
+    },
+    "max_finalized_height_stall_ms": {
+      "proposal": 5000,
+      "formula": "floor(10000 * (1 - headroom_fractions.finality_window))",
+      "hard_envelope_ms": 10000,
+      "rationale": "ConfigParam30 declares standstill after ten seconds; the acceptance threshold must detect loss of progress before that recovery trigger, with owner-selected headroom."
+    },
+    "safety_violations_allowed": {
+      "proposal": 0,
+      "rationale": "No timing, hardware or network profile makes a consensus safety violation acceptable."
+    },
+    "process_crashes_allowed": {
+      "proposal": 0,
+      "rationale": "The release run must survive the committed load and recovery schedule without a process crash."
+    },
+    "invalid_proofs_accepted": {
+      "proposal": 0,
+      "rationale": "Proof validity is an authority property, not a performance trade-off."
+    }
+  }
+}

@@ -32,6 +32,11 @@ Multi-nominator staking pool supporting up to ~40 nominators pooling funds for o
 Adapted for TOS. The contract uses `load_coins()`/`store_coins()` throughout (never raw
 `load_grams`/`store_grams`), and the bundled `stdlib.fc` has been replaced with the TOS
 system stdlib where these are aliased to `LDTOMIS`/`STTOMIS`. Constants renamed:
-legacy unit constants -> TOS unit constants. No logic changes.
+legacy unit constants -> TOS unit constants.
+
+The pool's config carries a second account beside the validator: the validator controller
+its stake is relayed through, since the elector takes a stake from a post-quantum
+controller and from nowhere else. That account is part of the config cell and therefore of
+the pool's address.
 
 Compile with the TOS FunC compiler.

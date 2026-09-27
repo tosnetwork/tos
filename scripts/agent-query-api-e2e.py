@@ -22,9 +22,13 @@ Exit code 0 iff every check passes.
 Run from the repository root: uv run python scripts/agent-query-api-e2e.py
 """
 import asyncio
+import base64
+import hashlib
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -33,6 +37,7 @@ from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
 REPO = Path(__file__).resolve().parents[1]
@@ -41,6 +46,8 @@ TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18647"
 HTTP = "127.0.0.1:18648"
 WORKDIR = REPO / "test/integration/.agent-query-api-e2e"
+HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
+MANIFEST = WORKDIR / "manifest.json"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000002"
 POLICY_HASH = "22" * 32
@@ -55,6 +62,35 @@ def check(label: str, ok: bool, detail: str = ""):
     else:
         print(f"  FAIL: {label}  {detail}")
         failures.append(label)
+
+
+def write_manifest() -> None:
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    source_dirty = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode != 0
+    binaries = {
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "tosctl": Path(TOSCTL),
+    }
+    manifest = {
+        "source_commit": source_commit,
+        "source_tracked_dirty": source_dirty,
+        "command": shlex.join([sys.executable, *sys.argv]),
+        "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "test_sha256": hashlib.sha256(
+            (REPO / "test/pq-native/test_e05_http_transcript.py").read_bytes()).hexdigest(),
+        "http_transcript": HTTP_TRANSCRIPT.name,
+        "binaries": {
+            name: {"path": str(path.resolve()),
+                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            for name, path in binaries.items()
+        },
+    }
+    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+    if source_dirty:
+        raise RuntimeError("E05 real-chain run requires a clean tracked source tree")
 
 
 def rpc_call(method: str, **params):
@@ -79,11 +115,82 @@ def http_get(path: str) -> tuple[int, dict]:
     except urllib.error.HTTPError as e:
         raw = e.read()
         status = e.code
+    with HTTP_TRANSCRIPT.open("a", encoding="utf-8") as transcript:
+        transcript.write(json.dumps({
+            "request": {"method": "GET", "path": path},
+            "response": {"status": status, "body_base64": base64.b64encode(raw).decode()},
+        }, sort_keys=True) + "\n")
     try:
         return status, json.loads(raw.decode())
     except json.JSONDecodeError:
         print(f"  DEBUG non-JSON response: status={status} raw={raw!r}")
         return status, {}
+
+
+async def http_get_async(path: str) -> tuple[int, dict]:
+    # run_checks shares this event loop with the process-log drain tasks.
+    # A synchronous urlopen can hold it for the service's full query timeout
+    # and backpressure the validator whose RPC answer we are awaiting.
+    return await asyncio.to_thread(http_get, path)
+
+
+def is_not_found(status: int, body: dict) -> bool:
+    error = body.get("error")
+    return (status == 404 and body.get("ok") is False
+            and isinstance(error, dict) and error.get("code") == 404
+            and error.get("kind") == "not_found")
+
+
+def is_detail_for(status: int, body: dict, address: str) -> bool:
+    result = body.get("result")
+    return (status == 200 and body.get("ok") is True
+            and isinstance(result, dict)
+            and same_addr(result.get("address"), address))
+
+
+def task_list_matches(status: int, body: dict,
+                      expected: dict[str, tuple[str, str]],
+                      creator: str, agent: str) -> bool:
+    """Require complete chain-backed entries, not names of failed RPC reads."""
+    if status != 200 or body.get("ok") is not True:
+        return False
+    rows = body.get("result")
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        return False
+    if body.get("total") != len(expected):
+        return False
+    seen = set()
+    for item in rows:
+        if not isinstance(item, dict):
+            return False
+        name = item.get("name")
+        if name not in expected or name in seen:
+            return False
+        seen.add(name)
+        addr, want_status = expected[name]
+        task = item.get("task")
+        if (item.get("error") is not None or item.get("error_kind") is not None
+                or not isinstance(task, dict)):
+            return False
+        if (not same_addr(item.get("address"), addr)
+                or not same_addr(task.get("address"), addr)
+                or task.get("status") != want_status
+                or not same_addr(task.get("creator"), creator)
+                or not same_addr(task.get("assigned_agent"), agent)):
+            return False
+    return seen == set(expected)
+
+
+async def check_task_filter_exclusion(creator: str, agent: str) -> None:
+    """Make ignored creator/agent filters observable with real nonmatching wallets."""
+    for label, path in (
+        ("creator", f"/tasks?creator={agent}"),
+        ("agent", f"/tasks?agent={creator}"),
+    ):
+        status, body = await http_get_async(path)
+        check(f"{label} filter excludes opposite wallet's tasks",
+              task_list_matches(status, body, {}, creator, agent),
+              f"status={status} body={body}")
 
 
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
@@ -218,7 +325,7 @@ async def wait_http_ready(timeout: float = 30.0) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            status, _ = http_get("/health")
+            status, _ = await http_get_async("/health")
             if status == 200:
                 return True
         except Exception:
@@ -255,6 +362,8 @@ async def run_checks(faucet) -> None:
     await tosctl("wallet", "create", "-n", "agent", "-v", "V3R2", "-w", "0")
     creator = await wallet_address("creator")
     agent = await wallet_address("agent")
+    if same_addr(creator, agent):
+        raise RuntimeError("creator and agent filter control wallets must differ")
     print(f"  creator: {creator}\n  agent:   {agent}")
 
     await faucet.send(faucet_transfer(faucet, creator, 50))
@@ -314,10 +423,14 @@ async def run_checks(faucet) -> None:
         check("tosctld health endpoint ready", await wait_http_ready())
 
         print("\n=== GET /agents/{address} ===")
-        status, body = http_get(f"/agents/{agent_account}")
-        check("get_agent status 200", status == 200, f"status={status} body={body}")
+        status, body = await http_get_async(f"/agents/{agent_account}")
+        check("get_agent response bound to requested address",
+              is_detail_for(status, body, agent_account), f"status={status} body={body}")
+        agent_result = body.get("result")
+        if not isinstance(agent_result, dict):
+            agent_result = {}
         check("get_agent owner matches",
-              same_addr(body.get("result", {}).get("owner"), agent_account_owner), str(body))
+              same_addr(agent_result.get("owner"), agent_account_owner), str(body))
 
         print("\n=== GET /tasks/{address} ===")
         # Contract-level note (not a query API concern): `budget` tracks the
@@ -329,9 +442,12 @@ async def run_checks(faucet) -> None:
             ("q-accepted", accepted_addr, "accepted", 2_000_000_000),
             ("q-settled", settled_addr, "settled", 0),
         ):
-            status, body = http_get(f"/tasks/{addr}")
-            check(f"get_task {name} status 200", status == 200, f"status={status} body={body}")
-            result = body.get("result", {})
+            status, body = await http_get_async(f"/tasks/{addr}")
+            check(f"get_task {name} response bound to requested address",
+                  is_detail_for(status, body, addr), f"status={status} body={body}")
+            result = body.get("result")
+            if not isinstance(result, dict):
+                result = {}
             check(f"get_task {name} status field", result.get("status") == want_status,
                   str(result))
             check(f"get_task {name} budget field", result.get("budget") == want_budget,
@@ -340,55 +456,57 @@ async def run_checks(faucet) -> None:
                   str(result))
 
         print("\n=== GET /tasks (listing + filters) ===")
-        status, body = http_get("/tasks")
-        check("list_tasks status 200", status == 200, f"status={status}")
-        names = {item["name"] for item in body.get("result", [])}
-        check("list_tasks includes all three", {"q-open", "q-accepted", "q-settled"} <= names,
-              str(names))
-        check("list_tasks total matches", body.get("total") == len(body.get("result", [])),
-              str(body))
+        all_tasks = {
+            "q-open": (open_addr, "open"),
+            "q-accepted": (accepted_addr, "accepted"),
+            "q-settled": (settled_addr, "settled"),
+        }
+        settled_task = {"q-settled": all_tasks["q-settled"]}
+        status, body = await http_get_async("/tasks")
+        check("list_tasks exact chain-backed set",
+              task_list_matches(status, body, all_tasks, creator, agent), str(body))
 
-        status, body = http_get("/tasks?status=settled")
-        settled_names = {item["name"] for item in body.get("result", [])}
-        check("status filter returns only settled", settled_names == {"q-settled"},
-              str(settled_names))
+        status, body = await http_get_async("/tasks?status=settled")
+        check("status filter returns exact settled task",
+              task_list_matches(status, body, settled_task, creator, agent), str(body))
 
-        status, body = http_get(f"/tasks?creator={creator}")
-        creator_names = {item["name"] for item in body.get("result", [])}
-        check("creator filter returns all three", {"q-open", "q-accepted", "q-settled"} <= creator_names,
-              str(creator_names))
+        status, body = await http_get_async(f"/tasks?creator={creator}")
+        check("creator filter returns exact chain-backed set",
+              task_list_matches(status, body, all_tasks, creator, agent), str(body))
 
-        status, body = http_get(f"/tasks?agent={agent}")
-        agent_names = {item["name"] for item in body.get("result", [])}
-        check("agent filter returns all three (all assigned to the same agent)",
-              {"q-open", "q-accepted", "q-settled"} <= agent_names, str(agent_names))
+        status, body = await http_get_async(f"/tasks?agent={agent}")
+        check("agent filter returns exact chain-backed set",
+              task_list_matches(status, body, all_tasks, creator, agent), str(body))
 
-        status, body = http_get(f"/tasks?deadline_after={deadline + 15}")
-        after_names = {item["name"] for item in body.get("result", [])}
-        check("deadline_after filter returns only q-settled", after_names == {"q-settled"},
-              str(after_names))
+        await check_task_filter_exclusion(creator, agent)
+
+        status, body = await http_get_async(f"/tasks?deadline_after={deadline + 15}")
+        check("deadline_after filter returns exact settled task",
+              task_list_matches(status, body, settled_task, creator, agent), str(body))
 
         print("\n=== malformed addresses -> 400 invalid_request ===")
-        status, body = http_get("/agents/not-an-address")
+        status, body = await http_get_async("/agents/not-an-address")
         check("get_agent malformed address -> 400", status == 400, f"status={status}")
         check("get_agent malformed address kind", body.get("error", {}).get("kind") == "invalid_request",
               str(body))
 
-        status, body = http_get("/tasks/not-an-address")
+        status, body = await http_get_async("/tasks/not-an-address")
         check("get_task malformed address -> 400", status == 400, f"status={status}")
         check("get_task malformed address kind", body.get("error", {}).get("kind") == "invalid_request",
               str(body))
 
         print("\n=== never-deployed address (calibration) ===")
         never_deployed = "0:" + "ee" * 32
-        status, body = http_get(f"/tasks/{never_deployed}")
+        status, body = await http_get_async(f"/tasks/{never_deployed}")
         print(f"  OBSERVED: status={status} body={json.dumps(body)}")
-        check("never-deployed address does not 200", status != 200, f"status={status}")
+        check("never-deployed address returns 404 not_found",
+              is_not_found(status, body), f"status={status} body={body}")
 
         print("\n=== wrong contract kind (Agent Account queried as a Task) ===")
-        status, body = http_get(f"/tasks/{agent_account}")
+        status, body = await http_get_async(f"/tasks/{agent_account}")
         print(f"  OBSERVED: status={status} body={json.dumps(body)}")
-        check("wrong-kind contract does not 200", status != 200, f"status={status}")
+        check("wrong-kind contract returns 404 not_found",
+              is_not_found(status, body), f"status={status} body={body}")
     finally:
         service_proc.terminate()
         try:
@@ -414,6 +532,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)
     import logging
@@ -422,7 +541,7 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=23200) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())

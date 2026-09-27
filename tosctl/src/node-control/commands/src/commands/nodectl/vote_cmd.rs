@@ -358,11 +358,10 @@ impl VoteOfferCastCmd {
         use common::time_format::format_ts;
         use contracts::{
             ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, SmartContract, Wallet,
-            config_contract, contract_provider_from,
+            contract_provider_from,
         };
         use control_client::{
-            client_adnl::ControlClientAdnl,
-            client_api::{ClientAPI, SignRq},
+            client_adnl::ControlClientAdnl, client_api::ClientAPI,
             config_params::parse_config_param_34,
         };
         use std::path::Path;
@@ -507,8 +506,10 @@ impl VoteOfferCastCmd {
                 continue;
             }
             // Search for this public key in the current validator set
-            if let Some(idx) =
-                vset.list().iter().position(|item| item.public_key.as_slice() == &key)
+            if let Some(idx) = vset
+                .list()
+                .iter()
+                .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
             {
                 found_idx = Some(idx as u16);
                 found_key_id = Some(validator.id.clone());
@@ -542,20 +543,17 @@ impl VoteOfferCastCmd {
         }
 
         // --- Build and sign the vote ---
-        println!("{}", "Signing vote...".cyan());
-        let unsigned_body =
-            config_contract::messages::unsigned_vote(validator_idx, &proposal.hash)?;
+        let _ = (&client, &key_id);
+        anyhow::bail!(
+            "a configuration vote is authorised by the current post-quantum validator set, \
+             and producing one needs two things this node cannot yet supply: a signature \
+             from its ML-DSA-44 consensus key, and the hash of the stored ConfigParam 34 \
+             cell that the vote is bound to. The control protocol carries neither, so the \
+             vote is not sent rather than sent in a form the chain refuses"
+        );
 
-        let signature = client
-            .sign(&SignRq { key_hash: key_id, data: unsigned_body.data().to_vec() })
-            .await
-            .context("sign vote")?;
-        println!("  {} Vote signed", "OK".green().bold());
-
-        // Build the signed vote message body
-        let query_id = 0u64;
-        let vote_body =
-            config_contract::messages::signed_vote(query_id, &unsigned_body, &signature)?;
+        #[allow(unreachable_code)]
+        let vote_body: chain_block::Cell = unreachable!();
 
         // --- Send via wallet ---
         println!("{}", "Sending vote transaction...".cyan());
@@ -699,11 +697,10 @@ impl VoteComplaintCastCmd {
         use colored::Colorize;
         use contracts::{
             DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract, Wallet,
-            contract_provider_from, elector,
+            contract_provider_from,
         };
         use control_client::{
-            client_adnl::ControlClientAdnl,
-            client_api::{ClientAPI, SignRq},
+            client_adnl::ControlClientAdnl, client_api::ClientAPI,
             config_params::parse_config_param_34,
         };
         use std::path::Path;
@@ -790,8 +787,10 @@ impl VoteComplaintCastCmd {
                 continue;
             }
             // Search for this public key in the current validator set
-            if let Some(idx) =
-                vset.list().iter().position(|item| item.public_key.as_slice() == &key)
+            if let Some(idx) = vset
+                .list()
+                .iter()
+                .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
             {
                 found_idx = Some(idx as u16);
                 found_key_id = Some(validator.id.clone());
@@ -814,37 +813,17 @@ impl VoteComplaintCastCmd {
         let key_id = found_key_id.unwrap();
 
         // --- Build and sign the complaint vote ---
-        println!("{}", "Signing complaint vote...".cyan());
-        let unsigned_body = elector::messages::unsigned_complaint_vote(
-            validator_idx,
-            self.election_id,
-            &complaint_hash,
-        )?;
+        let _ = (&client, &key_id, validator_idx);
+        anyhow::bail!(
+            "a complaint vote is authorised by the current post-quantum validator set, \
+             and producing one needs two things this node cannot yet supply: a signature \
+             from its ML-DSA-44 consensus key, and the hash of the stored ConfigParam 34 \
+             cell that the vote is bound to. The control protocol carries neither, so the \
+             vote is not sent rather than sent in a form the chain refuses"
+        );
 
-        let signature = client
-            .sign(&SignRq { key_hash: key_id, data: unsigned_body.data().to_vec() })
-            .await
-            .context("sign complaint vote")?;
-        println!("  {} Complaint vote signed", "OK".green().bold());
-
-        // Build the signed complaint vote message body.
-        // Query ID follows the same convention as complaint-vote-signed.fif:
-        //   now << 32 | (complaint_hash % (1 << 32))
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        // complaint_hash interpreted as big-endian 256-bit number, take low 32 bits
-        let hash_low32 = u32::from_be_bytes([
-            complaint_hash[28],
-            complaint_hash[29],
-            complaint_hash[30],
-            complaint_hash[31],
-        ]);
-        let query_id = (now << 32) | (hash_low32 as u64 % (1u64 << 32));
-
-        let vote_body =
-            elector::messages::signed_complaint_vote(query_id, &unsigned_body, &signature)?;
+        #[allow(unreachable_code)]
+        let vote_body: chain_block::Cell = unreachable!();
 
         // --- Send via wallet ---
         println!("{}", "Sending complaint vote transaction...".cyan());
@@ -989,29 +968,18 @@ impl VoteElectionLsCmd {
 
 impl VoteElectionCastCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use super::utils::{load_config_vault_rpc_client, make_wallet, wallet_info};
-        use anyhow::Context;
-        use chain_block::{UnixTime, write_boc};
+        use super::utils::load_config_vault_rpc_client;
         use colored::Colorize;
         use common::chain_utils::display_tos;
         use contracts::{
-            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, SmartContract, Wallet,
-            contract_provider_from, nominator,
-        };
-        use control_client::{
-            client_adnl::ControlClientAdnl,
-            client_api::{
-                AddAdnlAddressRq, AddValidatorAdnlAddrRq, AddValidatorPermKeyRq,
-                AddValidatorTempKeyRq, ClientAPI, SignRq,
-            },
-            config_params::parse_config_param_15,
+            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from,
         };
         use std::path::Path;
         use std::sync::Arc;
 
         let config_path = Path::new(config_path);
 
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
+        let (_config, _vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
 
         println!("\n{}", "Querying elector for active election...".cyan());
 
@@ -1048,153 +1016,8 @@ impl VoteElectionCastCmd {
             return Ok(());
         }
 
-        // Validate max_factor
-        if !(1.0..=3.0).contains(&self.max_factor) {
-            anyhow::bail!("--max-factor must be between 1.0 and 3.0, got {}", self.max_factor);
-        }
-
-        // --- Connect to node via ADNL control ---
-        println!("\n{}", "Connecting to validator node...".cyan());
-        let (node_name, node_cfg) =
-            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
-        let adnl_config = node_cfg.to_node_adnl_config(None).await?;
-        let mut client = ControlClientAdnl::new(adnl_config, 1);
-        client.connect().await.context("Failed to connect to validator node via ADNL")?;
-        println!("  {} Connected to node '{}'", "OK".green().bold(), node_name);
-
-        // --- Get config param 15 for timing ---
-        let cfg15_bytes = client.get_config_param(15).await.context("get config param 15")?;
-        let cfg15 = parse_config_param_15(&cfg15_bytes)?;
-        let key_expire_at = election_id + cfg15.validators_elected_for as u64 + 300; // 5 min lag
-
-        // --- Generate validator key pair ---
-        println!("{}", "Generating validator key pair...".cyan());
-        let key_hash = client.generate_key_pair().await.context("generate_key_pair")?;
-        println!("  {} Key hash: {}", "OK".green().bold(), hex::encode(&key_hash));
-
-        // Register permanent key
-        client
-            .add_validator_perm_key(&AddValidatorPermKeyRq {
-                key_hash: key_hash.clone(),
-                election_date: election_id as i32,
-                expire_at: key_expire_at as i32,
-            })
-            .await
-            .context("add_validator_perm_key")?;
-        println!("  {} Permanent key registered", "OK".green().bold());
-
-        // Register temp key (same as perm key for simplicity)
-        client
-            .add_validator_temp_key(&AddValidatorTempKeyRq {
-                perm_key_hash: key_hash.clone(),
-                key_hash: key_hash.clone(),
-                expire_at: key_expire_at as i32,
-            })
-            .await
-            .context("add_validator_temp_key")?;
-        println!("  {} Temp key registered", "OK".green().bold());
-
-        // Export public key
-        let pub_key = client.export_key_pub(&key_hash).await.context("export_key_pub")?;
-        println!("  {} Public key: {}", "OK".green().bold(), hex::encode(&pub_key));
-
-        // --- Generate ADNL address ---
-        println!("{}", "Generating ADNL address...".cyan());
-        let adnl_key_hash = client.generate_key_pair().await.context("generate ADNL key pair")?;
-        client
-            .add_adnl_address(&AddAdnlAddressRq { key_hash: adnl_key_hash.clone(), category: 0 })
-            .await
-            .context("add_adnl_address")?;
-        client
-            .add_validator_adnl_addr(&AddValidatorAdnlAddrRq {
-                perm_key_hash: key_hash.clone(),
-                key_hash: adnl_key_hash.clone(),
-                expire_at: key_expire_at as i32,
-            })
-            .await
-            .context("add_validator_adnl_addr")?;
-        println!("  {} ADNL address: {}", "OK".green().bold(), hex::encode(&adnl_key_hash));
-
-        // --- Determine wallet and stake ---
-        let wallet_name = self.wallet.as_deref().unwrap_or(node_name);
-        let wallet_cfg = config
-            .wallets
-            .get(wallet_name)
-            .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found in config", wallet_name))?;
-
-        let (wallet_address, _wallet_info_res, secret) =
-            wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
-        let wallet_addr_bytes = wallet_address.address().clone().storage().to_vec();
-
-        let wallet = make_wallet(rpc_client.clone(), wallet_cfg, secret, wallet_name).await?;
-
-        // Calculate stake in nanotos
-        let stake_nanotos: u64 = if let Some(stake_tos) = self.stake {
-            stake_tos * 1_000_000_000
-        } else {
-            // Use minimum stake from the elector if available, otherwise fail
-            if elections_info.min_stake > 0 {
-                elections_info.min_stake
-            } else {
-                anyhow::bail!(
-                    "Could not determine minimum stake. Please specify --stake explicitly."
-                );
-            }
-        };
-
-        let max_factor_u32 = (self.max_factor * 65536.0) as u32;
-
-        println!("\n{}", "Building election bid...".cyan());
-        println!("  Election ID:  {}", election_id);
-        println!("  Stake:        {} TOS", display_tos(stake_nanotos));
-        println!("  Max factor:   {}", self.max_factor);
-        println!("  Wallet:       {}", wallet_address);
-
-        // --- Sign the election bid data ---
-        // Build data to sign (same format as validator-elect-req.fif / runner.rs)
-        let mut data_to_sign = 0x654C5074u32.to_be_bytes().to_vec();
-        data_to_sign.extend_from_slice(&(election_id as u32).to_be_bytes());
-        data_to_sign.extend_from_slice(&max_factor_u32.to_be_bytes());
-        data_to_sign.extend_from_slice(&wallet_addr_bytes);
-        data_to_sign.extend_from_slice(&adnl_key_hash);
-
-        let signature = client
-            .sign(&SignRq { key_hash: key_hash.clone(), data: data_to_sign })
-            .await
-            .context("sign election bid")?;
-        println!("  {} Bid signed", "OK".green().bold());
-
-        // --- Build the stake message payload ---
-        let payload = nominator::new_stake(&nominator::NewStakeParams {
-            query_id: UnixTime::now(),
-            stake_amount: stake_nanotos,
-            validator_pubkey: pub_key.as_slice(),
-            stake_at: election_id as u32,
-            max_factor: max_factor_u32,
-            adnl_addr: adnl_key_hash.as_slice(),
-            signature: signature.as_slice(),
-        })?;
-
-        // --- Send the bid via wallet ---
-        println!("{}", "Sending election bid...".cyan());
-        let elector_addr = elector.address();
-        let send_value = stake_nanotos + 1_000_000_000; // stake + elector fee
-        let msg_cell = wallet.message(elector_addr, send_value, payload).await?;
-        let boc = write_boc(&msg_cell)?;
-        client.send_boc(&boc).await.context("send election bid BOC")?;
-
-        println!("\n{} Election bid submitted successfully!", "OK".green().bold());
-        println!("  Election ID:  {}", election_id);
-        println!("  Stake:        {} TOS", display_tos(stake_nanotos));
-        println!("  Public key:   {}", hex::encode(&pub_key));
-        println!("  ADNL addr:    {}", hex::encode(&adnl_key_hash));
-        println!();
-        println!(
-            "  {}",
-            "Use 'tosctl vote election ls' to verify your bid appears in participants.".dimmed()
-        );
-        println!();
-
-        Ok(())
+        anyhow::bail!(
+            "a wallet cannot stake directly to the PQ elector: configure a single-nominator pool and an admitted validator controller, then use the pool bid command"
+        )
     }
 }

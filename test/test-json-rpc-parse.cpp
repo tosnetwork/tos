@@ -80,10 +80,23 @@ TEST(JsonRpcParse, result_stack_round_trip) {
   auto parsed = tos::parse_get_method_result_stack(serialize_stack(stack).as_slice());
   ASSERT_TRUE(parsed.is_ok());
   auto stk = parsed.move_as_ok();
-  ASSERT_EQ(2u, stk->depth());
+  ASSERT_EQ(2, stk->depth());
   ASSERT_TRUE(stk->at(1).is_int());
   ASSERT_EQ(42, stk->at(1).as_int()->to_long());
   ASSERT_TRUE(stk->at(0).is_cell());
+}
+
+TEST(JsonRpcParse, pq_block_signatures_fail_loudly) {
+  auto signatures = tos::create_tl_object<tos::lite_api::liteServer_signatureSet_simplexPq>();
+  auto rendered = tos::render_masterchain_block_signatures_json(signatures.get(), td::Slice("{}"));
+  ASSERT_TRUE(rendered.is_error());
+  ASSERT_STREQ("post-quantum block signatures are not supported by JSON-RPC yet", rendered.error().message().c_str());
+}
+
+TEST(JsonRpcParse, absent_block_signatures_remain_an_empty_ordinary_set) {
+  auto rendered = tos::render_masterchain_block_signatures_json(nullptr, td::Slice("{\"seqno\":1}"));
+  ASSERT_TRUE(rendered.is_ok());
+  ASSERT_STREQ("{\"@type\":\"blocks.blockSignatures\",\"id\":{\"seqno\":1},\"signatures\":[]}", rendered.ok().c_str());
 }
 
 TEST(JsonRpcParse, result_stack_rejects_garbage_boc) {

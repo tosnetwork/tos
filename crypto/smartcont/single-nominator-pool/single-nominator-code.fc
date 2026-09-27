@@ -18,7 +18,10 @@ const OP::SEND_RAW_MSG = 0x7702;
 const OP::UPGRADE = 0x9903;
 
 ;; elector ops
+;; What an operator still calls this command, and what the contract sends on. The first is
+;; a name this contract answers to; the second is a message the controller relays.
 const OP::NEW_STAKE = 0x4e73744b;
+const OP::RELAY_STAKE = 0x5051726c;  ;; "PQrl"
 const OP::RECOVER_STAKE = 0x47657424;
 
 ;; modes
@@ -34,23 +37,32 @@ const ERROR::INSUFFICIENT_ELECTOR_FEE = 0x2005;
 
 ;; =============== storage =============================
 
-;; storage#_ owner_address:MsgAddressInt validator_address:MsgAddressInt = Storage
+;; storage#_ owner_address:MsgAddressInt validator_address:MsgAddressInt
+;;            controller_address:MsgAddressInt = Storage
+;;
+;; Three addresses, because three roles that used to be two. The owner holds the funds.
+;; The validator commands this contract. The controller is the account that stands in the
+;; election -- it is the validator identity, it is authorised by a post-quantum root that
+;; is not on the validator's machine, and a stake goes through it rather than straight to
+;; the elector, which no longer takes one from anywhere else.
 
-(slice, slice) load_data() inline {
+(slice, slice, slice) load_data() inline {
 	slice ds = get_data().begin_parse();
 
 	slice owner_address = ds~load_msg_addr();
 	slice validator_address = ds~load_msg_addr();
+	slice controller_address = ds~load_msg_addr();
 
 	ds.end_parse();
 
-	return (owner_address, validator_address);
+	return (owner_address, validator_address, controller_address);
 }
 
-() save_data(slice owner_address, slice validator_address) impure inline {
+() save_data(slice owner_address, slice validator_address, slice controller_address) impure inline {
 	set_data(begin_cell()
 		.store_slice(owner_address)
 		.store_slice(validator_address)
+		.store_slice(controller_address)
 		.end_cell());
 }
 
@@ -65,7 +77,7 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 ;; main entry point for receiving messages
 ;; my_balance contains balance after adding msg_value
 () recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
-	var (owner_address, validator_address) = load_data();
+	var (owner_address, validator_address, controller_address) = load_data();
 
 	if (in_msg_body.slice_empty?()) {
 		return ();
@@ -106,7 +118,7 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 		;; mainly used when the validator was compromised to prevent validator from entering new election cycles
 		if (op == OP::CHANGE_VALIDATOR_ADDRESS) {
 			slice new_validator_address = in_msg_body~load_msg_addr();
-			save_data(owner_address, new_validator_address);
+			save_data(owner_address, new_validator_address, controller_address);
 		}
 
 		;; emergency safeguard to allow owner to send arbitrary messages as the nominator contract
@@ -117,6 +129,11 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 		}
 
 		;; second emergency safeguard to allow owner to replace nominator logic - you should never need to use this
+		;;
+		;; This replaces code and nothing else. Code that reads a storage layout this
+		;; account was not deployed with will underflow on its next message, and there is
+		;; no generic way for one contract to rewrite another's storage, so an upgrade
+		;; across a layout change is a redeployment rather than this operation.
 		if (op == OP::UPGRADE) {
 			cell code = in_msg_body~load_ref();
 			throw_if(ERROR::WRONG_SET_CODE, cell_null?(code));
@@ -140,7 +157,10 @@ int check_new_stake_msg(slice cs) impure inline_ref;
 			check_new_stake_msg(in_msg_body);
 			throw_unless(ERROR::INSUFFICIENT_BALANCE, stake_amount <= my_balance - msg_value - MIN_TOS_FOR_STORAGE);
 
-			send_msg(elector_address(), stake_amount, begin_cell().store_uint(OP::NEW_STAKE, 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE, MODE::SEND_MODE_REMAINING_AMOUNT); ;; bounceable, validator pays gas fees
+			;; To the controller, which reads this contract as the account the money came
+			;; from and states it to the elector. The terms travel unchanged: this contract
+			;; checks that they are the right shape and nothing else, as it always has.
+			send_msg(controller_address, stake_amount, begin_cell().store_uint(OP::RELAY_STAKE, 32).store_uint(query_id, 64).store_slice(msg).end_cell(), BOUNCEABLE, MODE::SEND_MODE_REMAINING_AMOUNT); ;; bounceable, validator pays gas fees
 		}
 
 		;; recover stake from elector of previous validation cycle (sent every period ~18 hours)
@@ -184,20 +204,25 @@ slice elector_address() inline_ref {
 ;; check the validity of the new_stake message
 ;; https://github.com/tos-network/tos/blob/b38d227a469666d83ac535ad2eea80cb49d911b8/crypto/smartcont/elector-code.fc#L208
 int check_new_stake_msg(slice cs) impure inline_ref {
-	var validator_pubkey = cs~load_uint(256);
+	;; The terms of a post-quantum stake, checked for shape and passed on. The key and the
+	;; signature are the validator's, the controller compares the key against the one it
+	;; was bound to, and the elector verifies the signature. Nothing here does either.
 	var stake_at = cs~load_uint(32);
 	var max_factor = cs~load_uint(32);
 	var adnl_addr = cs~load_uint(256);
-	var signature = cs~load_ref().begin_parse().preload_bits(512);
+	var algorithm_id = cs~load_uint(16);
+	var public_key = cs~load_ref();
+	var signature = cs~load_ref();
+	var witness = cs~load_maybe_ref();
 	cs.end_parse();
 	return stake_at; ;; supposed start of next validation round (utime_since)
 }
 
 ;; =============== getters =============================
 
-(slice, slice) get_roles() method_id {
-	var (owner_address, validator_address) = load_data();
-	return (owner_address, validator_address);
+(slice, slice, slice) get_roles() method_id {
+	var (owner_address, validator_address, controller_address) = load_data();
+	return (owner_address, validator_address, controller_address);
 }
 
 ;; nominator-pool interface with mytosctrl: https://github.com/tos-network/nominator-pool/blob/2f35c36b5ad662f10fd7b01ef780c3f1949c399d/func/pool.fc#L198

@@ -320,14 +320,15 @@ struct ValidationStats {
 
 struct CollatorNodeResponseStats {
   PublicKeyHash self = PublicKeyHash::zero();
-  PublicKeyHash validator_id = PublicKeyHash::zero();
+  // The validator this response was produced for, by stable identity.
+  ValidatorId validator_id;
   double timestamp = -1.0;
   BlockIdExt block_id, original_block_id;
   td::Bits256 collated_data_hash = td::Bits256::zero();
 
   tl_object_ptr<tos_api::validatorStats_collatorNodeResponse> tl() const {
     return create_tl_object<tos_api::validatorStats_collatorNodeResponse>(
-        self.bits256_value(), validator_id.bits256_value(), timestamp, create_tl_block_id(block_id),
+        self.bits256_value(), validator_id.value, timestamp, create_tl_block_id(block_id),
         create_tl_block_id(original_block_id), collated_data_hash);
     ;
   }
@@ -534,7 +535,7 @@ class ValidatorManager : public ValidatorManagerInterface {
                                                     td::Promise<ConstBlockHandle> promise) = 0;
   virtual void get_block_by_seqno_for_litequery(AccountIdPrefixFull account, BlockSeqno seqno,
                                                 td::Promise<ConstBlockHandle> promise) = 0;
-  virtual void get_block_candidate_for_litequery(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash,
+  virtual void get_block_candidate_for_litequery(ValidatorId source, BlockIdExt block_id, FileHash collated_data_hash,
                                                  td::Promise<BlockCandidate> promise) = 0;
   virtual void get_validator_groups_info_for_litequery(
       td::optional<ShardIdFull> shard,

@@ -1,0 +1,11 @@
+diff --git a/validator/manager.cpp b/validator/manager.cpp
+--- a/validator/manager.cpp
++++ b/validator/manager.cpp
+@@ -787,6 +787,6 @@
+     co_return td::Unit{};
+   }
+-  delay_action(
++  if (false) delay_action(
+       [SelfId = actor_id(this), block_id]() {
+         td::actor::send_closure(SelfId, &ValidatorManagerImpl::expire_pending_block_finality, block_id);
+       },

@@ -45,6 +45,7 @@ namespace {
 
 struct Config {
   std::atomic<int> port_counter{21000};
+  std::string db_root{"tmp-dir-test-quic-sender"};
   int threads{4};
   double timeout{60.0};
   int large_nodes{5};
@@ -382,7 +383,7 @@ class TestRunner : public td::actor::Actor {
 };
 
 void run_test(TestRunner::TestFunc test) {
-  std::string db_root = "tmp-dir-test-quic-sender";
+  std::string db_root = g_config.db_root + "-adnl";
   td::rmrf(db_root).ignore();
   td::mkdir(db_root).ensure();
 
@@ -812,7 +813,7 @@ class RawQuicTestRunner final : public td::actor::Actor {
 };
 
 void run_raw_quic_test(RawQuicTestRunner::TestFunc test) {
-  std::string db_root = "tmp-dir-test-quic-sender-raw";
+  std::string db_root = g_config.db_root + "-raw";
   td::rmrf(db_root).ignore();
   td::mkdir(db_root).ensure();
 
@@ -2153,6 +2154,8 @@ int main(int argc, char* argv[]) {
     g_config.port_counter = v;
     return td::Status::OK();
   });
+  p.add_option('d', "db-root", "per-process database root (default tmp-dir-test-quic-sender)",
+               [](td::Slice arg) { g_config.db_root = arg.str(); });
   p.add_checked_option('t', "threads", "scheduler threads (default 4)", [](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<int>(arg));
     g_config.threads = v;

@@ -57,6 +57,7 @@ from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from contract import tos
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 
@@ -64,8 +65,10 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
 TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:18546"
+OBSERVER_RPCS = ("127.0.0.1:18547", "127.0.0.1:18548")
 WORKDIR = REPO / "test/integration/.task-escrow-e2e"
 CONFIG = WORKDIR / "tosctl-e2e-config.json"
+OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
 
 POLICY_HASH = "11" * 32
@@ -87,10 +90,10 @@ def check(label: str, ok: bool, detail: str = ""):
         failures.append(label)
 
 
-def rpc_call(method: str, **params):
+def rpc_call(method: str, *, endpoint: str = RPC, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
-        f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
+        f"http://{endpoint}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=8) as resp:
         return json.loads(resp.read().decode())
@@ -98,6 +101,16 @@ def rpc_call(method: str, **params):
 
 def balance(addr: str) -> int:
     return int(rpc_call("getAddressInformation", address=addr)["result"]["balance"])
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("masterchain header did not bind to the observed finalized block")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
 
 
 # tosctl runs as an *async* subprocess: a blocking subprocess.run would stall
@@ -119,6 +132,13 @@ async def tosctl(*args: str, may_fail: bool = False) -> str:
         raise RuntimeError(
             f"tosctl {' '.join(args)} failed:\n{out.decode()}\n{err.decode()}")
     return out.decode()
+
+
+def controller_task_args(operation: str, name: str) -> tuple[str, ...]:
+    """One stable id per Task action, resolved using two independent RPC nodes."""
+    action_id = hashlib.sha256(f"e07:{name}:{operation}".encode()).hexdigest()
+    return ("--controller-action-id", action_id, "--quorum-config",
+            str(OBSERVER_CONFIGS[0]), str(OBSERVER_CONFIGS[1]))
 
 
 async def tosctl_json(*args: str):
@@ -159,6 +179,176 @@ async def assert_status_stays(name: str, want: str, label: str, settle_secs: flo
     await asyncio.sleep(settle_secs)
     status = (await task_show(name))["status"]
     check(label, status == want, f"status={status}")
+
+
+def transactions_after(address: str, baseline_lt: int) -> tuple[list[dict], list[dict]]:
+    rows = rpc_call("getTransactions", address=address, limit=10)["result"]
+    if not any(int(row["transaction_id"]["lt"]) <= baseline_lt for row in rows):
+        raise RuntimeError("timeout control transaction page did not cover baseline")
+    newer = [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+    return rows, newer
+
+
+def timeout_wallet_send(newer_wallet: list[dict], escrow_address: str) -> dict | None:
+    """Select the sole send; a same-escrow bounce is a separate wallet credit."""
+    sends = [
+        row for row in newer_wallet
+        if any(same_addr(message.get("destination"), escrow_address)
+               for message in row.get("out_msgs", []))
+    ]
+    if len(sends) > 1:
+        raise RuntimeError("premature timeout control found multiple wallet sends to escrow")
+    for row in newer_wallet:
+        if sends and row is sends[0]:
+            continue
+        incoming = row.get("in_msg") or {}
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), escrow_address)
+                or row.get("out_msgs")):
+            raise RuntimeError("premature timeout control found an unrelated wallet transaction")
+    return sends[0] if sends else None
+
+
+def validate_timeout_bounces(wallet_rows: list[dict], wallet_send: dict,
+                             escrow_tx: dict, wallet_address: str,
+                             escrow_address: str) -> None:
+    """Only this escrow transaction's exact bounce may add a wallet credit."""
+    if len(wallet_send.get("out_msgs") or []) != 1:
+        raise RuntimeError("premature timeout wallet send has extra outbound messages")
+    escrow_bounces = escrow_tx.get("out_msgs") or []
+    if any(message.get("bounced") is not True
+           or not same_addr(message.get("source"), escrow_address)
+           or not same_addr(message.get("destination"), wallet_address)
+           or not message.get("hash") for message in escrow_bounces):
+        raise RuntimeError("premature timeout escrow emitted an unrelated message")
+    if len(escrow_bounces) > 1:
+        raise RuntimeError("premature timeout escrow emitted multiple bounces")
+    expected_hashes = {message["hash"] for message in escrow_bounces}
+    observed_hashes: set[str] = set()
+    for row in wallet_rows:
+        if row is wallet_send:
+            continue
+        incoming = row.get("in_msg") or {}
+        bounce_hash = incoming.get("hash")
+        if (incoming.get("bounced") is not True
+                or not same_addr(incoming.get("source"), escrow_address)
+                or not same_addr(incoming.get("destination"), wallet_address)
+                or row.get("out_msgs")
+                or not bounce_hash
+                or bounce_hash not in expected_hashes
+                or bounce_hash in observed_hashes):
+            raise RuntimeError("premature timeout wallet credit is not this escrow's bounce")
+        observed_hashes.add(bounce_hash)
+
+
+async def premature_timeout_control(name: str, requested_deadline: int,
+                                    creator_wallet: str) -> None:
+    task = await task_show(name)
+    deadline = int(task["deadline"])
+    if deadline != requested_deadline or task["status"] != "accepted":
+        raise RuntimeError(f"timeout control task state mismatch: {task}")
+    before = finalized_mc_header()
+    print(f"  premature timeout control: mc={before['id']['seqno']} "
+          f"chain_time={before['gen_utime']} deadline={deadline}")
+    if deadline - before["gen_utime"] < 30:
+        raise RuntimeError("premature timeout control window expired before send")
+    address = norm_addr(task["address"])
+    baseline_lt = int(rpc_call("getAddressInformation", address=address)
+                      ["result"]["last_transaction_id"]["lt"])
+    wallet_baseline_lt = int(rpc_call("getAddressInformation", address=creator_wallet)
+                             ["result"]["last_transaction_id"]["lt"])
+    await send_op("timeout", name, "creator")
+    tx = None
+    wallet_tx = None
+    wallet_rows = []
+    escrow_rows = []
+    until = time.monotonic() + 25
+    while time.monotonic() < until:
+        wallet_rows, newer_wallet = transactions_after(creator_wallet, wallet_baseline_lt)
+        escrow_rows, newer_escrow = transactions_after(address, baseline_lt)
+        try:
+            candidate_wallet = timeout_wallet_send(newer_wallet, address)
+            if len(newer_escrow) > 1:
+                raise RuntimeError("premature timeout control found multiple escrow transactions")
+        except RuntimeError:
+            (WORKDIR / "e07-premature-timeout-ambiguous.json").write_text(json.dumps({
+                "task": name, "task_address": address, "creator_wallet": creator_wallet,
+                "before_header": before, "deadline": deadline,
+                "wallet_baseline_lt": wallet_baseline_lt,
+                "escrow_baseline_lt": baseline_lt,
+                "wallet_transactions": wallet_rows,
+                "escrow_transactions": escrow_rows,
+                "newer_wallet_count": len(newer_wallet),
+                "newer_escrow_count": len(newer_escrow),
+            }, indent=2, sort_keys=True) + "\n")
+            raise
+        if candidate_wallet and newer_escrow:
+            wallet_tx = candidate_wallet
+            tx = newer_escrow[0]
+            out = [message for message in wallet_tx.get("out_msgs", [])
+                   if same_addr(message.get("destination"), address)]
+            try:
+                if (len(out) != 1 or out[0].get("hash") is None
+                        or (tx.get("in_msg") or {}).get("hash") != out[0]["hash"]
+                        or not same_addr((tx.get("in_msg") or {}).get("source"), creator_wallet)):
+                    raise RuntimeError("premature timeout escrow inbound does not match wallet outbound")
+                validate_timeout_bounces(newer_wallet, wallet_tx, tx, creator_wallet, address)
+            except RuntimeError:
+                (WORKDIR / "e07-premature-timeout-ambiguous.json").write_text(json.dumps({
+                    "task": name, "task_address": address, "creator_wallet": creator_wallet,
+                    "before_header": before, "deadline": deadline,
+                    "wallet_baseline_lt": wallet_baseline_lt,
+                    "escrow_baseline_lt": baseline_lt,
+                    "wallet_transactions": wallet_rows,
+                    "escrow_transactions": escrow_rows,
+                    "newer_wallet_count": len(newer_wallet),
+                    "newer_escrow_count": len(newer_escrow),
+                }, indent=2, sort_keys=True) + "\n")
+                raise
+            if wallet_tx["aborted"] or not wallet_tx["compute"]["success"] or not wallet_tx["action"]["success"]:
+                raise RuntimeError("premature timeout wallet message failed before escrow")
+            break
+        if newer_escrow and not candidate_wallet:
+            # Both accounts may be read at different visible heads. Do not
+            # assign an escrow transaction to a wallet send by timing alone.
+            if int(newer_escrow[0]["utime"]) >= deadline:
+                raise RuntimeError("premature timeout escrow transaction arrived after deadline")
+        if finalized_mc_header()["gen_utime"] >= deadline:
+            raise RuntimeError("premature timeout control reached chain deadline without matched transaction")
+        await asyncio.sleep(1)
+    if tx is None or wallet_tx is None:
+        raise RuntimeError("premature timeout control matching transaction not observed")
+    after = finalized_mc_header()
+    status = (await task_show(name))["status"]
+    (WORKDIR / "e07-premature-timeout-receipts.json").write_text(json.dumps({
+        "before_header": before, "after_header": after,
+        "wallet_baseline_lt": wallet_baseline_lt, "escrow_baseline_lt": baseline_lt,
+        "wallet_transactions": wallet_rows, "escrow_transactions": escrow_rows,
+        "wallet_transaction": wallet_tx, "escrow_transaction": tx,
+        "task_status_after": status,
+    }, indent=2, sort_keys=True) + "\n")
+    print(f"  premature timeout observed: mc={after['id']['seqno']} "
+          f"chain_time={after['gen_utime']} tx_lt={tx['transaction_id']['lt']} "
+          f"tx_utime={tx['utime']} aborted={tx['aborted']} "
+          f"exit={tx['compute']['exit_code']} status={status}")
+    if (after["id"]["seqno"] <= before["id"]["seqno"]
+            or int(tx["utime"]) >= deadline or tx["aborted"] is not True
+            or tx["compute"]["exit_code"] != 109
+            or status != "accepted"):
+        raise RuntimeError("premature timeout control not proved before chain deadline")
+    check("premature timeout rejected before chain deadline", True)
+
+
+async def wait_chain_deadline(deadline: int, timeout: float = 120.0) -> None:
+    until = time.monotonic() + timeout
+    while time.monotonic() < until:
+        header = finalized_mc_header()
+        if header["gen_utime"] >= deadline + 5:
+            print(f"  timeout positive: mc={header['id']['seqno']} "
+                  f"chain_time={header['gen_utime']} deadline={deadline}")
+            return
+        await asyncio.sleep(2)
+    raise RuntimeError("chain deadline not observed before positive timeout")
 
 
 async def send_op(operation: str, name: str, frm: str, *extra: str):
@@ -206,7 +396,7 @@ async def wait_balance_at_least(addr: str, target: int, timeout: float = 60.0) -
 
 
 def write_config():
-    CONFIG.write_text(json.dumps({
+    config = {
         "nodes": {},
         "wallets": {},
         "pools": {},
@@ -216,7 +406,12 @@ def write_config():
         "master_wallet": None,
         "tick_interval": 40,
         "log": None,
-    }, indent=2))
+    }
+    CONFIG.write_text(json.dumps(config, indent=2))
+    for path, endpoint in zip(OBSERVER_CONFIGS, OBSERVER_RPCS, strict=True):
+        observer_config = dict(config)
+        observer_config["chain_rpc"] = {"urls": [f"http://{endpoint}/"]}
+        path.write_text(json.dumps(observer_config, indent=2))
 
 
 async def wallet_address(name: str) -> str:
@@ -259,11 +454,11 @@ async def create_task_with_attestor(name: str, creator: str, agent: str, budget:
     return out["address"]
 
 
-async def wait_rpc_ready(timeout: float = 180.0) -> bool:
+async def wait_rpc_ready(timeout: float = 180.0, endpoint: str = RPC) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            if "result" in rpc_call("getMasterchainInfo"):
+            if "result" in rpc_call("getMasterchainInfo", endpoint=endpoint):
                 return True
         except Exception:
             pass
@@ -277,6 +472,15 @@ async def run_checks(faucet) -> None:
         check("json-rpc endpoint ready", False, f"no response from http://{RPC}/jsonRPC")
         return
     print(f"  json-rpc ready at http://{RPC}/jsonRPC")
+    primary_chain = rpc_call("getMasterchainInfo")["result"]["init"]
+    for endpoint in OBSERVER_RPCS:
+        ready = await wait_rpc_ready(endpoint=endpoint)
+        check(f"independent observer RPC {endpoint} ready", ready)
+        if not ready:
+            return
+        observer_chain = rpc_call("getMasterchainInfo", endpoint=endpoint)["result"]["init"]
+        check(f"observer RPC {endpoint} follows the same zerostate",
+              observer_chain == primary_chain)
     await tosctl("wallet", "create", "-n", "creator", "-v", "V3R2", "-w", "0")
     await tosctl("wallet", "create", "-n", "agent", "-v", "V3R2", "-w", "0")
     await tosctl("wallet", "create", "-n", "verifier", "-v", "V3R2", "-w", "0")
@@ -501,6 +705,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "accept", "--name", "e2e-controller",
         "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("accept", "e2e-controller"),
     )
     check("controller accepted task",
           await wait_status("e2e-controller", "accepted") == "accepted")
@@ -508,6 +713,7 @@ async def run_checks(faucet) -> None:
         "agent", "task", "send", "--operation", "result", "--name", "e2e-controller",
         "--via-agent-account", "runtime-agent", "--amount", "0.1",
         "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+        *controller_task_args("result", "e2e-controller"),
     )
     check("controller submitted result",
           await wait_status("e2e-controller", "result_submitted") == "result_submitted")
@@ -523,6 +729,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "claim", "--name", "e2e-claim",
         "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("claim", "e2e-claim"),
     )
     check("controller claimed open task",
           await wait_status("e2e-claim", "accepted") == "accepted")
@@ -533,6 +740,7 @@ async def run_checks(faucet) -> None:
         "agent", "task", "send", "--operation", "result", "--name", "e2e-claim",
         "--via-agent-account", "runtime-agent", "--amount", "0.1",
         "--result-hash", RESULT_HASH, "--evidence-hash", EVIDENCE_HASH, "--yes",
+        *controller_task_args("result", "e2e-claim"),
     )
     check("claim winner submitted result",
           await wait_status("e2e-claim", "result_submitted") == "result_submitted")
@@ -614,6 +822,7 @@ async def run_checks(faucet) -> None:
     await tosctl(
         "agent", "task", "send", "--operation", "reject", "--name", "e2e-reject",
         "--via-agent-account", "runtime-agent", "--amount", "0.1", "--yes",
+        *controller_task_args("reject", "e2e-reject"),
     )
     check("controller rejected task",
           await wait_status("e2e-reject", "rejected") == "rejected")
@@ -638,23 +847,15 @@ async def run_checks(faucet) -> None:
 
     # ---------------- TIMEOUT PATH ----------------
     print("\n=== timeout path ===")
-    short_deadline = int(time.time()) + 75
+    short_deadline = finalized_mc_header()["gen_utime"] + 75
     escrow = await create_task("e2e-timeout", creator, agent, 2, short_deadline, 2.1)
     check("timeout task open", await wait_status("e2e-timeout", "open") == "open")
     await send_op("accept", "e2e-timeout", "agent")
     check("timeout task accepted",
           await wait_status("e2e-timeout", "accepted") == "accepted")
 
-    if time.time() < short_deadline - 20:
-        await send_op("timeout", "e2e-timeout", "creator")
-        await assert_status_stays("e2e-timeout", "accepted", "premature timeout rejected")
-    else:
-        print("  SKIP: premature timeout window already passed")
-
-    wait_for = short_deadline + 5 - time.time()
-    if wait_for > 0:
-        print(f"  waiting {wait_for:.0f}s for the deadline to pass ...")
-        await asyncio.sleep(wait_for)
+    await premature_timeout_control("e2e-timeout", short_deadline, creator)
+    await wait_chain_deadline(short_deadline)
     creator_before = balance(creator)
     await send_op("timeout", "e2e-timeout", "creator")
     check("expired", await wait_status("e2e-timeout", "expired") == "expired")
@@ -750,20 +951,42 @@ async def main() -> int:
     async with Network(install, WORKDIR / "net", base_port=23000) as network:
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        observers = [network.create_full_node() for _ in OBSERVER_RPCS]
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
+        for observer in observers:
+            observer.announce_to(dht)
 
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
+        observer_tasks = [
+            asyncio.create_task(observer.run(StartOptions(args=["--json-rpc-address", endpoint])))
+            for observer, endpoint in zip(observers, OBSERVER_RPCS, strict=True)
+        ]
         try:
             await asyncio.wait_for(network.wait_mc_block(seqno=1), timeout=120)
+            process_map = [
+                {"role": role, "pid": process.process_id,
+                 "rpc": endpoint, "directory": str(process.directory)}
+                for role, process, endpoint in (
+                    ("validator", node, RPC),
+                    ("observer-1", observers[0], OBSERVER_RPCS[0]),
+                    ("observer-2", observers[1], OBSERVER_RPCS[1]),
+                )
+            ]
+            (WORKDIR / "process-map.json").write_text(json.dumps(process_map, indent=2) + "\n")
+            print(f"  three-view process map: {process_map}")
             client = await node.toslib_client()
             faucet = network.zerostate.main_wallet(client)
             await run_checks(faucet)
         finally:
-            for t in (node_task, dht_task):
+            for t in (node_task, dht_task, *observer_tasks):
                 t.cancel()
-            await asyncio.gather(node_task, dht_task, return_exceptions=True)
+            await asyncio.gather(node_task, dht_task, *observer_tasks, return_exceptions=True)
+            await node.stop()
+            for observer in observers:
+                await observer.stop()
+            await dht.stop()
 
     return 1 if failures else 0
 

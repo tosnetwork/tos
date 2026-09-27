@@ -1,15 +1,41 @@
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 import nacl.signing
 from contract import Provider, WalletV1
-from pytosiq_core import Address
+from pytosiq_core import Address, Builder, Cell
 from tosapi import tos_api
 
 from .install import Install, run_fift
 from .key import Key
+from .pq_launch_limits import (
+    MAX_MASTERCHAIN_COMMITTEE,
+    MAX_SHARD_COMMITTEE,
+    MAX_TOTAL_VALIDATORS,
+)
 
 NANOTOS_PER_TOS = 1_000_000_000
+VALIDATOR_ECONOMICS_FAUCET_TOS = 100_000
+
+
+def _launch_validator_counts(validator_count: int, minimum: int) -> dict[str, int]:
+    """Construct Param16 from the enforced cap, refusing before Fift sees it."""
+    if validator_count > MAX_MASTERCHAIN_COMMITTEE:
+        raise ValueError(
+            f"genesis validator count {validator_count} exceeds the enforced launch cap "
+            f"{MAX_MASTERCHAIN_COMMITTEE}"
+        )
+    if not 1 <= minimum <= MAX_MASTERCHAIN_COMMITTEE:
+        raise ValueError(
+            f"minimum validator count {minimum} is outside the enforced launch range "
+            f"1..{MAX_MASTERCHAIN_COMMITTEE}"
+        )
+    return {
+        "max_validators": MAX_TOTAL_VALIDATORS,
+        "max_main_validators": MAX_MASTERCHAIN_COMMITTEE,
+        "min_validators": minimum,
+    }
 
 
 def _shard_json_repr(shard: int):
@@ -30,6 +56,10 @@ class SimplexConsensusConfig:
 
 @dataclass
 class NetworkConfig:
+    # Explicit immutable inputs for reproducible Genesis generation. Both must
+    # be supplied together; ordinary local testnets preserve their old defaults.
+    genesis_time: int | None = None
+    genesis_wallet_seed: bytes | None = field(default=None, repr=False)
     # TEST-HARNESS chain discriminator.  Three preserves the historical local
     # genesis byte-for-byte; isolated same-key multi-genesis experiments must
     # choose another int32 so controller signatures cannot cross replay.
@@ -49,10 +79,10 @@ class NetworkConfig:
     )  # Simplex enabled
     shard_validators_lifetime: int = 100000  # DEV: long lifetime for local testnet
     # TEST-ONLY: normally a one-validator local chain uses a one-hour
-    # bootstrap validator set.  Long-running acceptance tests without a
-    # validator-election exercise must opt in to a longer set explicitly;
-    # otherwise their signatures cease to have an active ConfigParam 34
-    # backing after that hour.  None preserves the historical genesis bytes.
+    # bootstrap validator set. Long-running ordinary tests and accelerated
+    # Stage A fixtures may opt in to a different first-set lifetime; this
+    # does not change ConfigParam 15 or subsequent election durations.
+    # None preserves the historical genesis bytes.
     bootstrap_validator_set_valid_for: int | None = None
     # TEST-ONLY by default: a cheap gas and forwarding schedule, so that a
     # test's wallets never run out of play money. Two kinds of harness must
@@ -73,6 +103,14 @@ class NetworkConfig:
     deployment_fee_schedule: bool = False
     validator_economics_profile: bool = False
     validator_election_stage_a_profile: bool = False
+    # TEST-ONLY: extend the elected-set period for a lifecycle that must
+    # recover an old stake before it can submit another order. None preserves
+    # the Stage A 300/180/60/180 election schedule.
+    validator_election_stage_a_elected_for: int | None = None
+    # TEST-ONLY: F01 can open the accelerated election earlier so four serial
+    # pool orders and a restarted fourth validator fit before Elector close.
+    # None preserves the ordinary Stage A 300/180/60/180 ConfigParam 15.
+    validator_election_stage_a_start_before: int | None = None
     # TEST-ONLY: an accelerated validator-election application experiment may
     # need a larger local faucet than the canonical 100,000-TOS validator
     # bootstrap.  None preserves the canonical/default zerostate exactly.
@@ -88,6 +126,9 @@ class NetworkConfig:
     # override (60 s minimum storage, one win) to rehearse governance
     # activation of ordinary parameters.
     enable_config_voting: bool = False
+    # A launch-gate rehearsal may admit the exact production Controller code
+    # through the ordinary Genesis config! dictionary, never by patching a node.
+    validator_controller_code_hash: bytes | None = None
 
 
 @dataclass
@@ -120,6 +161,48 @@ class Zerostate:
         return WalletV1(provider, self.main_wallet_address, self.main_wallet_key)
 
 
+@dataclass(frozen=True)
+class PqInitialValidator:
+    validator_id: bytes
+    key_id: bytes
+    public_key: bytes
+    adnl_id: bytes
+
+
+def _pq_byte_chain(data: bytes) -> Cell:
+    parts = [data[offset : offset + 127] for offset in range(0, len(data), 127)]
+    tail = Builder().store_bytes(parts[-1]).end_cell()
+    for part in reversed(parts[:-1]):
+        tail = Builder().store_bytes(part).store_ref(tail).end_cell()
+    return tail
+
+
+def _pq_validator_descriptor(validator: PqInitialValidator, weight: int) -> Cell:
+    if not all(
+        len(value) == 32 for value in (validator.validator_id, validator.key_id, validator.adnl_id)
+    ):
+        raise ValueError("post-quantum validator identities must be 32 bytes")
+    if len(validator.public_key) != 1312:
+        raise ValueError("ML-DSA-44 validator public key must be 1312 bytes")
+    packed_key = (
+        Builder()
+        .store_uint(len(validator.public_key), 32)
+        .store_ref(_pq_byte_chain(validator.public_key))
+        .end_cell()
+    )
+    return (
+        Builder()
+        .store_uint(0xB3, 8)
+        .store_bytes(validator.validator_id)
+        .store_uint(1, 16)
+        .store_bytes(validator.key_id)
+        .store_ref(packed_key)
+        .store_uint(weight, 64)
+        .store_bytes(validator.adnl_id)
+        .end_cell()
+    )
+
+
 _TEMPLATE = """
 "TosUtil.fif" include
 "Asm.fif" include
@@ -145,7 +228,7 @@ wc_master setworkchain
 dup dup 31 boc+>B dup "basestate0.boc" B>file
 Bhashu dup =: basestate0_fhash 256 u>B "basestate0.fhash" B>file
 hashu dup =: basestate0_rhash 256 u>B "basestate0.rhash" B>file
-basestate0_rhash basestate0_fhash now {monitor_min_split} {split} dup 0 add-std-workchain-v2
+basestate0_rhash basestate0_fhash {genesis_now} {monitor_min_split} {split} dup 0 add-std-workchain-v2
 
 config.workchains!
 
@@ -345,12 +428,13 @@ config.param_proposals_setup!
 // single-validator localnet can carry an ordinary proposal to acceptance
 // in one voting round. Empty unless the profile opts in.
 {voting_config_param}
+{controller_policy_param}
 
 // deposit bit_pps cell_pps
 TM$100 1 500 config.complaint_prices!
 
 {validators}
-now dup {original_vset_valid_for} + {mc_validators} config.validators!
+{genesis_now} dup {original_vset_valid_for} + {mc_validators} config.validators!
 
 {new_consensus_config}
 config.new_consensus_params_all!
@@ -370,9 +454,6 @@ config.new_consensus_params_all!
  */
 "auto/config-code.fif" include   // code in separate source file
 <b configdict ref,  // initial configuration
-   0 32 u,          // seqno
-   "config-master" +".pk" load-generate-keypair drop
-   B,
    dictnew dict,   // vote dict
 b> // data
 empty_cell  // libraries
@@ -460,15 +541,57 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
 
 
 def create_zerostate(
-    install: Install, state_dir: Path, config: NetworkConfig, validator_keys: list[Key]
+    install: Install,
+    state_dir: Path,
+    config: NetworkConfig,
+    validator_keys: list[Key],
+    pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
+    fixed_time = config.genesis_time
+    wallet_seed = config.genesis_wallet_seed
+    if (fixed_time is None) != (wallet_seed is None):
+        raise ValueError("fixed Genesis requires both time and wallet seed")
+    if fixed_time is not None:
+        if type(fixed_time) is not int or not 0 <= fixed_time <= 0xFFFF_FFFF:
+            raise ValueError("Genesis time must fit uint32")
+        if not isinstance(wallet_seed, bytes) or len(wallet_seed) != 32:
+            raise ValueError("Genesis wallet seed must be exactly 32 bytes")
+    pq_validators = [] if pq_validators is None else pq_validators
+    validator_count = len(validator_keys) + len(pq_validators)
+    if not 1 <= config.shard_validators <= MAX_SHARD_COMMITTEE:
+        raise ValueError(
+            f"shard validator count {config.shard_validators} is outside the enforced launch "
+            f"range 1..{MAX_SHARD_COMMITTEE}"
+        )
+    if pq_validators and validator_keys:
+        raise ValueError(
+            "a bootstrap validator set cannot mix classical and post-quantum descriptors"
+        )
     if config.validator_election_stage_a_profile and not config.validator_economics_profile:
         raise ValueError("validator election Stage A profile requires validator economics profile")
+    stage_a_elected_for = config.validator_election_stage_a_elected_for
+    if stage_a_elected_for is not None:
+        if not config.validator_election_stage_a_profile:
+            raise ValueError("elected-set duration override requires the Stage A profile")
+        if (
+            isinstance(stage_a_elected_for, bool)
+            or not isinstance(stage_a_elected_for, int)
+            or not 240 < stage_a_elected_for <= 0xFFFF_FFFF
+        ):
+            raise ValueError("Stage A elected-set duration must exceed the election lead and close periods")
+    stage_a_start_before = config.validator_election_stage_a_start_before
+    if stage_a_start_before is not None:
+        if not config.validator_election_stage_a_profile:
+            raise ValueError("election start override requires the Stage A profile")
+        if (isinstance(stage_a_start_before, bool)
+                or not isinstance(stage_a_start_before, int)
+                or not 60 < stage_a_start_before < (stage_a_elected_for or 300)):
+            raise ValueError("Stage A election start must be between close and elected-set duration")
     bootstrap_valid_for = config.bootstrap_validator_set_valid_for
     if bootstrap_valid_for is not None:
-        if config.validator_economics_profile:
+        if config.validator_economics_profile and not config.validator_election_stage_a_profile:
             raise ValueError(
-                "bootstrap validator-set lifetime override is only for the ordinary local profile"
+                "bootstrap validator-set lifetime override requires the ordinary local or Stage A profile"
             )
         if (
             isinstance(bootstrap_valid_for, bool)
@@ -492,29 +615,43 @@ def create_zerostate(
             raise ValueError(
                 "validator election experiment faucet balance must be positive integer nanotos"
             )
-    if config.validator_economics_profile and len(validator_keys) != 4:
+    if config.validator_economics_profile and validator_count != 4:
         raise ValueError("validator economics profile requires exactly four genesis validators")
-    if config.validator_economics_profile and len(
-        {key.public_key.key for key in validator_keys}
-    ) != len(validator_keys):
+    profile_public_keys = (
+        [key.public_key.key for key in validator_keys]
+        if validator_keys
+        else [validator.public_key for validator in pq_validators]
+    )
+    if config.validator_economics_profile and len(set(profile_public_keys)) != validator_count:
         raise ValueError("validator economics profile requires unique genesis validator keys")
+
+    validator_counts = _launch_validator_counts(
+        validator_count,
+        4
+        if config.validator_economics_profile
+        else max(1, min(validator_count, config.shard_validators)),
+    )
 
     keys: list[str] = []
     for key in validator_keys:
         keys.append(
             f"B{{{key.public_key.key.hex()}}} B{{{key.id.hex()}}} 256 B>u@ 17 add-adnl-validator"
         )
+    for index, validator in enumerate(pq_validators):
+        descriptor_name = f"pq-validator-{index}.boc"
+        _ = (state_dir / descriptor_name).write_bytes(
+            _pq_validator_descriptor(validator, 17).to_boc()
+        )
+        keys.append(f'17 "{descriptor_name}" file>B B>boc register-validator')
 
     if config.validator_economics_profile:
         profile = {
             "smc3_genesis_balance": "0",
             "elector_genesis_balance": "TM$500",
             "config_genesis_balance": "TM$500",
-            "main_wallet_genesis_balance": "TM$100000",
+            "main_wallet_genesis_balance": f"TM${VALIDATOR_ECONOMICS_FAUCET_TOS}",
             "expected_genesis_supply": "TM$101000",
-            "max_validators": 400,
-            "max_main_validators": 100,
-            "min_validators": 4,
+            **validator_counts,
             "min_stake": "TM$10000",
             "max_stake": "TM$10000000",
             "min_total_stake": "TM$40000",
@@ -526,7 +663,7 @@ def create_zerostate(
             "mc_valgroup_lifetime": 250,
             "shard_valgroup_lifetime": 250,
             "shard_validators_lifetime": 1000,
-            "shard_validators_per_group": 23,
+            "shard_validators_per_group": MAX_SHARD_COMMITTEE,
             "original_vset_valid_for": 131072,
         }
         if config.validator_election_stage_a_profile:
@@ -534,8 +671,12 @@ def create_zerostate(
             # stake, reward, and contract settings while shortening only the
             # election timing and original validator-set lifetime. Never use
             # this profile to generate a production zerostate.
-            profile["election_params"] = "300 180 60 180"
+            profile["election_params"] = (
+                f"{stage_a_elected_for or 300} {stage_a_start_before or 180} 60 180"
+            )
             profile["original_vset_valid_for"] = 600
+            if bootstrap_valid_for is not None:
+                profile["original_vset_valid_for"] = bootstrap_valid_for
             if experiment_faucet_balance is not None:
                 profile["main_wallet_genesis_balance"] = str(experiment_faucet_balance)
                 profile["expected_genesis_supply"] = str(
@@ -551,9 +692,7 @@ def create_zerostate(
                 "elector_genesis_balance - config_genesis_balance -"
             ),
             "expected_genesis_supply": "TM$5000000000",
-            "max_validators": 40,
-            "max_main_validators": 20,
-            "min_validators": max(1, min(len(keys), config.shard_validators)),
+            **validator_counts,
             "min_stake": "TM$10000",
             "max_stake": "TM$100000",
             "min_total_stake": "TM$10000",
@@ -607,14 +746,32 @@ def create_zerostate(
     else:
         voting_config_param = ""
 
+    if config.validator_controller_code_hash is not None:
+        if len(config.validator_controller_code_hash) != 32:
+            raise ValueError("validator controller code hash must be 32 bytes")
+        controller_policy_param = (
+            f"0x{config.validator_controller_code_hash.hex()} "
+            "config.validator_controller_code!\n"
+        )
+    else:
+        controller_policy_param = ""
+
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
     fee_schedule = fee_schedule_for(config)
 
+    if wallet_seed is not None:
+        # Refuse existing custody files rather than replacing an old run's key.
+        # Fift's load-generate-keypair consumes this exact raw 32-byte seed.
+        with (state_dir / "main-wallet.pk").open("xb") as wallet_file:
+            (state_dir / "main-wallet.pk").chmod(0o600)
+            wallet_file.write(wallet_seed)
+
     run_fift(
         install,
         _TEMPLATE.format(
+            genesis_now="now" if fixed_time is None else str(fixed_time),
             monitor_min_split=config.monitor_min_split,
             split=config.split,
             global_id=config.global_id,
@@ -626,9 +783,12 @@ def create_zerostate(
             dns_config_param=dns_config_param,
             voting_config_param=voting_config_param,
             **fee_schedule,
+            controller_policy_param=controller_policy_param,
             **profile,
         ),
         state_dir,
+        **({"env": {**os.environ, "SOURCE_DATE_EPOCH": str(fixed_time)},
+            "retain_script": True} if fixed_time is not None else {}),
     )
 
     pk = (state_dir / "main-wallet.pk").read_bytes()

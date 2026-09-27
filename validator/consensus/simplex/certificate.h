@@ -41,7 +41,11 @@ struct Certificate : td::CntObject {
 
   CntObject* make_copy() const override;
 
-  td::Ref<block::BlockSignatureSet> to_signature_set(const CandidateRef& candidate, const Bus& bus) const
+  // Convert the already verified certificate into the post-quantum block-finality carrier.
+  // The conversion is deliberately fallible because certificates can be restored from
+  // persisted or network state. It copies the signature bytes already in the certificate;
+  // it never signs again.
+  td::Result<td::Ref<block::BlockSignatureSet>> to_signature_set(const CandidateRef& candidate, const Bus& bus) const
     requires td::OneOf<T, NotarizeVote, FinalizeVote>;
 
   tl::VoteSignatureSetRef to_tl_vote_signature_set() const;

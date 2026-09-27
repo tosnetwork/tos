@@ -333,12 +333,12 @@ class CandidateShort {
 class Candidate {
  public:
   tl_object_ptr<tos_api::db_filedb_Key> tl() const {
-    return create_tl_object<tos_api::db_filedb_key_candidate>(
-        create_tl_object<tos_api::db_candidate_id>(source.tl(), create_tl_block_id(block_id), collated_data_file_hash));
+    return create_tl_object<tos_api::db_filedb_key_candidate>(create_tl_object<tos_api::db_candidate_id>(
+        source.value, create_tl_block_id(block_id), collated_data_file_hash));
   }
   FileHash hash() const {
-    return create_hash_tl_object<tos_api::db_filedb_key_candidate>(
-        create_tl_object<tos_api::db_candidate_id>(source.tl(), create_tl_block_id(block_id), collated_data_file_hash));
+    return create_hash_tl_object<tos_api::db_filedb_key_candidate>(create_tl_object<tos_api::db_candidate_id>(
+        source.value, create_tl_block_id(block_id), collated_data_file_hash));
   }
   ShardIdFull shard() const {
     return block_id.shard_full();
@@ -347,7 +347,8 @@ class Candidate {
   std::string filename() const;
   std::string filename_short() const;
 
-  PublicKey source;
+  // The producer's stable identity, not a key: see BlockCandidate::producer.
+  ValidatorId source;
   BlockIdExt block_id;
   FileHash collated_data_file_hash;
 };

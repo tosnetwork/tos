@@ -31,8 +31,8 @@
 #include "crypto/openssl/rand.hpp"
 #include "td/actor/SharedFuture.h"
 #include "td/db/utils/BlobView.h"
-#include "td/utils/format.h"
 #include "td/utils/Random.h"
+#include "td/utils/format.h"
 #include "tos/tos-shard.h"
 #include "vm/boc.h"
 #include "vm/db/StaticBagOfCellsDb.h"
@@ -1585,8 +1585,8 @@ bool Collator::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return fatal_error(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(config_->get_workchain_list(),
+                                                                                       workchain(), *config_);
   if (execution_res.is_error()) {
     return fatal_error(execution_res.move_as_error_prefix("cannot create block for configured workchain: "));
   }
@@ -1905,7 +1905,10 @@ bool Collator::import_new_shard_top_blocks() {
     auto sh_bd = Ref<ShardTopBlockDescrQ>(entry);
     CHECK(sh_bd.not_null());
     int res_flags = 0;
-    auto chk_res = sh_bd->prevalidate(mc_block_id_, mc_state_,
+    // These descriptions were signature-validated by ValidateShardTopBlockDescr
+    // against their governing snapshots before the manager returned them. This
+    // pass rechecks their relationship to the current topology.
+    auto chk_res = sh_bd->prevalidate(mc_block_id_, mc_state_, mc_state_,
                                       ShardTopBlockDescrQ::fail_new | ShardTopBlockDescrQ::fail_too_new, res_flags);
     if (chk_res.is_error()) {
       LOG(DEBUG) << "ShardTopBlockDescr for " << sh_bd->block_id().to_str() << " skipped: res_flags=" << res_flags
@@ -5239,8 +5242,7 @@ bool Collator::create_mc_state_extra() {
                << " contains a configuration that cannot be installed: " << transition_status;
     return fatal_error(transition_status.move_as_error_prefix("attempting to install invalid new configuration: "));
   }
-  if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) ||
-      changed_cfg) {
+  if (block::important_config_parameters_changed(cfg_smc_config, state_extra.config->prefetch_ref()) || changed_cfg) {
     LOG(WARNING) << "global configuration changed, updating";
     vm::CellBuilder cb;
     CHECK(cb.store_bits_bool(config_addr) && cb.store_ref_bool(cfg_smc_config));
@@ -5487,8 +5489,8 @@ bool Collator::update_block_creator_stats() {
     }
   }
   auto has_creator = !params_.creator.is_zero();
-  if (has_creator && !update_block_creator_count(params_.creator.as_bits256().bits(), 0, 1)) {
-    return fatal_error("cannot update CreatorStats for "s + params_.creator.as_bits256().to_hex());
+  if (has_creator && !update_block_creator_count(params_.creator.value.bits(), 0, 1)) {
+    return fatal_error("cannot update CreatorStats for "s + params_.creator.value.to_hex());
   }
   if ((has_creator || block_create_total_) &&
       !update_block_creator_count(td::Bits256::zero().bits(), block_create_total_, has_creator)) {
@@ -6230,10 +6232,10 @@ bool Collator::create_block_extra(Ref<vm::Cell>& block_extra) {
   return cb.store_long_bool(0x4a33f6fdU, 32)                                             // block_extra
          && in_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())   // in_msg_descr:^InMsgDescr
          && out_msg_dict->append_dict_to_bool(cb2) && cb.store_ref_bool(cb2.finalize())  // out_msg_descr:^OutMsgDescr
-         && cb.store_ref_bool(shard_account_blocks_)          // account_blocks:^ShardAccountBlocks
-         && cb.store_bits_bool(rand_seed_)                    // rand_seed:bits256
-         && cb.store_bits_bool(params_.creator.as_bits256())  // created_by:bits256
-         && cb.store_bool_bool(mc)                            // custom:(Maybe
+         && cb.store_ref_bool(shard_account_blocks_)   // account_blocks:^ShardAccountBlocks
+         && cb.store_bits_bool(rand_seed_)             // rand_seed:bits256
+         && cb.store_bits_bool(params_.creator.value)  // created_by:bits256
+         && cb.store_bool_bool(mc)                     // custom:(Maybe
          && (!mc || (create_mc_block_extra(mc_block_extra) && cb.store_ref_bool(mc_block_extra)))  // .. ^McBlockExtra)
          && cb.finalize_to(block_extra);                                                           // = BlockExtra;
 }
@@ -6784,8 +6786,9 @@ void Collator::finalize_stats() {
   stats_.collated_at = td::Clocks::system();
   stats_.attempt = params_.attempt_idx;
   stats_.is_validator = params_.collator_node_id.is_zero();
-  stats_.self = stats_.is_validator ? PublicKey(pubkeys::Ed25519(params_.creator)).compute_short_id()
-                                    : params_.collator_node_id.pubkey_hash();
+  // As a validator this is the producer's own identity; as a collator node it is that
+  // node's key hash, which is a transport identity and a different thing.
+  stats_.self = stats_.is_validator ? PublicKeyHash{params_.creator.value} : params_.collator_node_id.pubkey_hash();
   if (block_limit_status_) {
     stats_.estimated_bytes = (td::uint32)block_limit_status_->estimate_block_size();
     stats_.gas = (td::uint32)block_limit_status_->gas_used;

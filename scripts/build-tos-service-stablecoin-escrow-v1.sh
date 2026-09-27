@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 echo "NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact." >&2
+# These defaults are only a convenience for a developer invoking this script
+# directly. CMake's frozen-artifact rule passes its just-built target paths.
 FUNC_BIN=${FUNC_BIN:-"$REPO_ROOT/build/crypto/func"}
 FIFT_BIN=${FIFT_BIN:-"$REPO_ROOT/build/crypto/fift"}
 OUTPUT=${1:-"$REPO_ROOT/crypto/smartcont/artifacts/tos-service-stablecoin-escrow-v1.boc"}

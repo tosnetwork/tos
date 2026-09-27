@@ -19,10 +19,22 @@
 */
 #include "adnl-ext-client.h"
 #include "adnl-ext-client.hpp"
+#include "td/utils/as.h"
 
 namespace tos {
 
 namespace adnl {
+
+td::int32 traced_lite_function_id(td::Slice data) {
+  auto query = fetch_tl_object<lite_api::liteServer_query>(td::BufferSlice{data}, true);
+  if (query.is_ok()) {
+    data = query.ok()->data_.as_slice();
+  } else {
+    fetch_tl_prefix<lite_api::liteServer_queryPrefix>(data, true).ignore();
+  }
+  fetch_tl_prefix<lite_api::liteServer_waitMasterchainSeqno>(data, true).ignore();
+  return data.size() >= sizeof(td::int32) ? td::as<td::int32>(data.data()) : 0;
+}
 
 void AdnlExtClientImpl::alarm() {
   if (is_closing_) {
@@ -190,6 +202,7 @@ td::actor::ActorOwn<AdnlExtClient> AdnlExtClient::create(AdnlNodeIdFull dst, Pri
 
 td::Status AdnlOutboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(F, fetch_tl_object<lite_api::adnl_message_answer>(std::move(data), true));
+  LOG(DEBUG) << "ADNL_EXT_QUERY client_answer id=" << F->query_id_.to_hex() << " answer_bytes=" << F->answer_.size();
   td::actor::send_closure(ext_client_, &AdnlExtClientImpl::answer_query, F->query_id_, std::move(F->answer_));
   return td::Status::OK();
 }

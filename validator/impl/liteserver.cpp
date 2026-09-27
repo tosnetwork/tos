@@ -2984,6 +2984,14 @@ bool LiteQuery::construct_proof_link_forward_cont(tos::BlockIdExt cur, tos::Bloc
       return fatal_error(cfg_res.move_as_error());
     }
     auto config = cfg_res.move_as_ok();
+    // The forward proof consumer derives the expected post-quantum session
+    // from the same trusted source configuration that supplies the validator
+    // set. Touch both parameters while the Merkle proof builder is recording
+    // accesses so Param29 and the exact selected Param30 cell are present in
+    // the emitted proof. This is proof construction, not signature
+    // verification: the liteserver remains only a serializer here.
+    (void)config->get_consensus_config();
+    (void)config->get_selected_new_consensus_config(next.id.workchain);
     // unpack header of next block
     auto err = block::check_block_header(next_mpb.root(), next);
     if (err.is_error()) {
@@ -3722,8 +3730,8 @@ void LiteQuery::finish_getDispatchQueueMessages(StdSmcAddress addr, LogicalTime 
 void LiteQuery::perform_nonfinal_getCandidate(td::Bits256 source, BlockIdExt blkid, td::Bits256 collated_data_hash) {
   LOG(DEBUG) << "started a nonfinal.getCandidate liteserver query";
   td::actor::send_closure_later(
-      manager_, &ValidatorManager::get_block_candidate_for_litequery, PublicKey{pubkeys::Ed25519{source}}, blkid,
-      collated_data_hash, [Self = actor_id(this)](td::Result<BlockCandidate> R) {
+      manager_, &ValidatorManager::get_block_candidate_for_litequery, ValidatorId{source}, blkid, collated_data_hash,
+      [Self = actor_id(this)](td::Result<BlockCandidate> R) {
         if (R.is_error()) {
           td::actor::send_closure(Self, &LiteQuery::abort_query, R.move_as_error());
         } else {
@@ -3732,7 +3740,7 @@ void LiteQuery::perform_nonfinal_getCandidate(td::Bits256 source, BlockIdExt blk
               Self, &LiteQuery::finish_query,
               create_serialize_tl_object<lite_api::liteServer_nonfinal_candidate>(
                   create_tl_object<lite_api::liteServer_nonfinal_candidateId>(
-                      create_tl_lite_block_id(cand.id), cand.pubkey.as_bits256(), cand.collated_file_hash),
+                      create_tl_lite_block_id(cand.id), cand.producer.value, cand.collated_file_hash),
                   std::move(cand.data), std::move(cand.collated_data)),
               false);
         }

@@ -1,16 +1,11 @@
-# Compile the real production entrypoints, not a reimplementation of quorum or parsing.
-add_executable(test-validator-auth-production
-  test-production.cpp
-  ../../validator/consensus/types.cpp
-  ../../validator/consensus/simplex/votes.cpp
-  ../../validator/consensus/simplex/certificate.cpp
-  ../../validator/consensus/payload.cpp
-  ../../validator/consensus/candidate-codec.cpp
-  ../../validator/consensus/session-compat.cpp)
-target_include_directories(test-validator-auth-production PRIVATE ${PROJECT_SOURCE_DIR}
-  ${PROJECT_SOURCE_DIR}/validator ${PROJECT_SOURCE_DIR}/common)
-target_link_libraries(test-validator-auth-production PRIVATE tos_block keys tos_crypto tdactor tdutils tl_lite_api)
-add_test(NAME validator-auth-production COMMAND test-validator-auth-production)
+# The conformance test for the live Simplex entrypoints lives with the code it exercises,
+# in test/validator/consensus/test-certificate-conformance.cpp. It could not stay here:
+# it was written against Ed25519 validator descriptors and a PeerValidator that carried a
+# classical verify key, and consensus now signs and verifies with ML-DSA-44 only.
+#
+# What remains in this directory is the isolated candidate-authentication experiment, which
+# never depended on the consensus types and is still a separate translation unit from any
+# production path.
 
 # The signer is a separate test library. Production verification remains verify-only.
 set(MLDSA_TEST_SOURCE "${PROJECT_SOURCE_DIR}/third-party/mldsa-native/mldsa")

@@ -33,7 +33,7 @@ A second network then rehearses the OTHER activation path (DNS.md §11):
              fails closed; the Root and Collection deploy; an ordinary
              config-change proposal carrying the Root account id is
              registered with the config contract, the genesis validator
-             votes for it with its validator key, ConfigParam 4 appears,
+             obtains a PQ vote body from the validator node, ConfigParam 4 appears,
              and resolution starts working on the running chain.
 
 Full-lifecycle pieces that need wall-clock time (auction completion after the
@@ -46,17 +46,17 @@ Exit 0 iff every check passes. Run from the repo root:
 """
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
-from tostester.install import Install
-from tostester.network import Network, StartOptions
 from pytosiq_core import (
     Address,
     Cell,
@@ -67,11 +67,19 @@ from pytosiq_core import (
 )
 from pytosiq_core.boc import begin_cell
 from pytosiq_core.tlb.account import StateInit
+from pytosiq_core.tlb.transaction import Transaction
+from tosapi import tos_api
+from tostester.install import Install
+from tostester.network import Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 RPC = "127.0.0.1:19667"
 WORKDIR = REPO / "test/integration/.dns-e2e"
+RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
+REGISTRATION_EVIDENCE = WORKDIR / "registration-evidence.json"
+GOVERNANCE_EVIDENCE = WORKDIR / "governance-evidence.jsonl"
 DNS_DIR = REPO / "crypto/smartcont/dns"
 VECTORS = json.loads((REPO / "domains/packages/protocol/test/vectors.json").read_text())
 
@@ -89,12 +97,222 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def rpc_call(rpc_method: str, **params):
+def rpc_call(rpc_method: str, *, rpc_timeout: float = 10, **params):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": rpc_method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{RPC}/jsonRPC", data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=rpc_timeout) as resp:
+            raw, status = resp.read(), resp.status
+    except urllib.error.HTTPError as error:
+        raw, status = error.read(), error.code
+        record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
+                     "status": status, "request_base64": base64.b64encode(body).decode(),
+                     "response_base64": base64.b64encode(raw).decode()})
+        raise
+    except (TimeoutError, urllib.error.URLError) as error:
+        record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
+                     "transport_error": repr(error),
+                     "request_base64": base64.b64encode(body).decode()})
+        raise
+    record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
+                 "status": status, "request_base64": base64.b64encode(body).decode(),
+                 "response_base64": base64.b64encode(raw).decode()})
+    result = json.loads(raw.decode())
+    if status != 200 or "error" in result or "result" not in result:
+        raise RuntimeError(f"{rpc_method} RPC failed: HTTP {status}, {result}")
+    return result
+
+
+def record_jsonl(path: Path, row: dict) -> None:
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def finalized_mc_header() -> dict:
+    block = rpc_call("getMasterchainInfo")["result"]["last"]
+    header = rpc_call("getBlockHeader", workchain=block["workchain"],
+                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
+    if any(header["id"][field] != block[field]
+           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+        raise RuntimeError("finalized masterchain header did not match its block ID")
+    return {"id": block, "gen_utime": int(header["gen_utime"])}
+
+
+def last_lt(address: str) -> int:
+    info = rpc_call("getAddressInformation", address=address)["result"]
+    return int((info.get("last_transaction_id") or {}).get("lt", 0))
+
+
+def transactions_after(address: str, baseline_lt: int, *, rpc_timeout: float = 10) -> list[dict]:
+    rows = rpc_call("getTransactions", address=address, limit=10,
+                    rpc_timeout=rpc_timeout)["result"]
+    return [row for row in rows if int(row["transaction_id"]["lt"]) > baseline_lt]
+
+
+def same_addr(left: str, right: str) -> bool:
+    try:
+        return (Address(left).to_str(is_user_friendly=False).lower()
+                == Address(right).to_str(is_user_friendly=False).lower())
+    except Exception:
+        return False
+
+
+def exact_config_incoming_body(config_addr: str, config_tx: dict) -> Cell:
+    """Decode the inbound body from the exact raw transaction, not its summary."""
+    tx_id = config_tx["transaction_id"]
+    raw_page = rpc_call("getTransactionsStd", address=config_addr, limit=1,
+                        lt=str(tx_id["lt"]), hash=tx_id["hash"])["result"]
+    rows = raw_page.get("transactions") or []
+    if len(rows) != 1 or rows[0].get("transaction_id") != tx_id or not rows[0].get("data"):
+        raise RuntimeError("Config raw transaction did not match the exact receipt")
+    raw = Transaction.deserialize(Cell.one_from_boc(
+        base64.b64decode(rows[0]["data"], validate=True)).begin_parse())
+    if (raw.cell.hash != base64.b64decode(tx_id["hash"], validate=True)
+            or raw.in_msg is None
+            or raw.in_msg.cell.hash != base64.b64decode(
+                (config_tx.get("in_msg") or {})["hash"], validate=True)):
+        raise RuntimeError("Config raw transaction or inbound message hash differs")
+    return raw.in_msg.body
+
+
+async def governance_receipt(label: str, faucet_addr: str, config_addr: str,
+                             faucet_lt: int, config_lt: int, before_head: dict,
+                             expected_body: Cell) -> dict:
+    """Bind one locally prepared proposal or node-produced vote to Config execution."""
+    deadline = time.monotonic() + 60
+    wallet_tx = config_tx = outgoing = None
+    scanned_wallet = scanned_config = 0
+    while time.monotonic() < deadline:
+        try:
+            wallet_rows = transactions_after(
+                faucet_addr, faucet_lt, rpc_timeout=max(0.1, min(10, deadline - time.monotonic())))
+            config_rows = transactions_after(
+                config_addr, config_lt, rpc_timeout=max(0.1, min(10, deadline - time.monotonic())))
+        except (TimeoutError, urllib.error.URLError):
+            await asyncio.sleep(1)
+            continue
+        scanned_wallet, scanned_config = len(wallet_rows), len(config_rows)
+        sends = [tx for tx in wallet_rows if any(
+            same_addr(msg.get("destination"), config_addr)
+            for msg in tx.get("out_msgs") or [])]
+        if len(sends) > 1:
+            raise RuntimeError(f"{label}: multiple faucet sends to Config")
+        if sends:
+            wallet_tx = sends[0]
+            out_msgs = wallet_tx.get("out_msgs") or []
+            matching = [msg for msg in out_msgs
+                        if same_addr(msg.get("destination"), config_addr)]
+            if (wallet_tx.get("aborted") is not False
+                    or (wallet_tx.get("compute") or {}).get("success") is not True
+                    or (wallet_tx.get("action") or {}).get("success") is not True
+                    or len(out_msgs) != 1 or len(matching) != 1
+                    or not matching[0].get("hash")):
+                raise RuntimeError(f"{label}: faucet did not emit one successful Config message")
+            outgoing = matching[0]
+            matches = [tx for tx in config_rows
+                       if (tx.get("in_msg") or {}).get("hash") == outgoing["hash"]]
+            if len(matches) > 1:
+                raise RuntimeError(f"{label}: duplicate Config incoming message hash")
+            if matches:
+                config_tx = matches[0]
+                incoming = config_tx.get("in_msg") or {}
+                # The summary RPC omits msg_data. The exact raw transaction
+                # carries the representation-level inbound message and body.
+                body = exact_config_incoming_body(config_addr, config_tx)
+                return_hashes = {msg.get("hash") for msg in config_tx.get("out_msgs") or []
+                                 if same_addr(msg.get("destination"), faucet_addr)}
+                other_wallet_rows = [tx for tx in wallet_rows if tx is not wallet_tx]
+                if any((tx.get("in_msg") or {}).get("hash") not in return_hashes
+                       or not same_addr((tx.get("in_msg") or {}).get("source"), config_addr)
+                       or tx.get("out_msgs") for tx in other_wallet_rows):
+                    raise RuntimeError(f"{label}: unrelated faucet transaction after Config send")
+                if (not same_addr(incoming.get("source"), faucet_addr)
+                        or config_tx.get("aborted") is not False
+                        or (config_tx.get("compute") or {}).get("success") is not True
+                        or (config_tx.get("action") or {}).get("success") is not True
+                        or body.hash != expected_body.hash):
+                    raise RuntimeError(f"{label}: Config receipt or body differs from sent authorization")
+                break
+        await asyncio.sleep(1)
+    if config_tx is None:
+        raise RuntimeError(f"{label}: exact Config receipt not observed "
+                           f"(wallet_rows={scanned_wallet}, config_rows={scanned_config})")
+
+    heads = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(heads) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            heads.append(head)
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(heads) != 2:
+        raise RuntimeError(f"{label}: two later finalized masterchain heads not observed")
+    receipt = {"label": label, "faucet_baseline_lt": faucet_lt,
+               "config_baseline_lt": config_lt, "scanned_wallet": scanned_wallet,
+               "scanned_config": scanned_config, "body_hash": expected_body.hash.hex(),
+               "before_head": before_head, "after_heads": heads,
+               "wallet_tx": wallet_tx, "outgoing": outgoing, "config_tx": config_tx}
+    record_jsonl(GOVERNANCE_EVIDENCE, receipt)
+    return receipt
+
+
+async def registration_receipt(faucet_addr: str, collection_addr: str,
+                               faucet_lt: int, collection_lt: int,
+                               before_head: dict, auction_start: int) -> bool:
+    """Return whether the exact registration succeeded; require VM 199 before launch."""
+    deadline = time.monotonic() + 45
+    wallet_tx = collection_tx = None
+    while time.monotonic() < deadline:
+        wallet_rows = transactions_after(faucet_addr, faucet_lt)
+        collection_rows = transactions_after(collection_addr, collection_lt)
+        if len(wallet_rows) > 1 or len(collection_rows) > 1:
+            raise RuntimeError("registration has multiple new wallet or Collection transactions")
+        if wallet_rows and collection_rows:
+            wallet_tx, collection_tx = wallet_rows[0], collection_rows[0]
+            outgoing = [msg for msg in wallet_tx.get("out_msgs") or []
+                        if same_addr(msg.get("destination"), collection_addr)]
+            if (wallet_tx.get("aborted") is not False
+                    or (wallet_tx.get("compute") or {}).get("success") is not True
+                    or (wallet_tx.get("action") or {}).get("success") is not True
+                    or len(outgoing) != 1 or not outgoing[0].get("hash")
+                    or (collection_tx.get("in_msg") or {}).get("hash") != outgoing[0]["hash"]
+                    or not same_addr((collection_tx.get("in_msg") or {}).get("source"), faucet_addr)):
+                raise RuntimeError("registration wallet-to-Collection message did not match")
+            break
+        await asyncio.sleep(1)
+    if wallet_tx is None or collection_tx is None:
+        raise RuntimeError("registration wallet-to-Collection transaction not observed")
+    tx_time = int(collection_tx["utime"])
+    prelaunch = tx_time <= auction_start
+    compute = collection_tx.get("compute") or {}
+    if prelaunch:
+        if (collection_tx.get("aborted") is not True
+                or compute.get("success") is not False
+                or compute.get("exit_code") != 199):
+            raise RuntimeError(f"prelaunch registration expected Collection VM 199: {collection_tx}")
+    elif (collection_tx.get("aborted") is not False
+          or compute.get("success") is not True
+          or (collection_tx.get("action") or {}).get("success") is not True):
+        raise RuntimeError(f"postlaunch registration Collection transaction failed: {collection_tx}")
+    heads = []
+    last_seqno = before_head["id"]["seqno"]
+    while time.monotonic() < deadline and len(heads) < 2:
+        head = finalized_mc_header()
+        if head["id"]["seqno"] > last_seqno:
+            heads.append(head)
+            last_seqno = head["id"]["seqno"]
+        else:
+            await asyncio.sleep(1)
+    if len(heads) != 2:
+        raise RuntimeError("registration did not reach two later finalized heads")
+    REGISTRATION_EVIDENCE.write_text(json.dumps({
+        "before_head": before_head, "after_heads": heads, "auction_start": auction_start,
+        "wallet_tx": wallet_tx, "collection_tx": collection_tx, "prelaunch": prelaunch,
+    }, sort_keys=True, indent=2) + "\n")
+    return prelaunch
 
 
 def min_price(label_bytes: int, now: int, auction_start_time: int) -> int:
@@ -237,6 +455,38 @@ def gen_artifacts() -> dict:
     return addrs
 
 
+def record_provenance(artifacts: dict) -> None:
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    tracked = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True)
+    if tracked.strip():
+        raise RuntimeError("DNS E2E requires a clean committed source tree")
+    paths = {
+        "script": Path(__file__).resolve(),
+        "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
+        "dht_server": BUILD_DIR / "dht-server/dht-server",
+        "fift": BUILD_DIR / "crypto/fift",
+        "func": BUILD_DIR / "crypto/func",
+        "lite_client": BUILD_DIR / "lite-client/lite-client",
+        "gen_deploy": DNS_DIR / "deploy/gen-deploy.fif",
+        "root_source": DNS_DIR / "func/root-dns.fc",
+        "collection_source": DNS_DIR / "func/nft-collection.fc",
+        "item_source": DNS_DIR / "func/nft-item.fc",
+        "root_code": DNS_DIR / "func/build/root-dns-code.fif",
+        "collection_code": DNS_DIR / "func/build/nft-collection-code.fif",
+        "item_code": DNS_DIR / "func/build/nft-item-code.fif",
+        "root_state_init": DNS_DIR / "func/build/root-state-init.boc",
+        "collection_state_init": DNS_DIR / "func/build/collection-state-init.boc",
+    }
+    hashes = {name: {"path": str(path.resolve()),
+                     "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+              for name, path in paths.items()}
+    (WORKDIR / "provenance.json").write_text(json.dumps({
+        "source_commit": head, "root": artifacts["root"],
+        "collection": artifacts["collection"], "artifacts": hashes,
+    }, sort_keys=True, indent=2) + "\n")
+
+
 def state_init_of(cell: Cell) -> StateInit:
     """Split a serialized StateInit cell (b{00110} ^code ^data) into parts."""
     refs = cell.refs
@@ -296,8 +546,7 @@ def config_contract_address() -> str:
     return "-1:" + cell.begin_parse().load_bytes(32).hex()
 
 
-async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
-                                validator_key) -> None:
+async def run_governance_checks(faucet, artifacts: dict, global_config: Path, validator_node) -> None:
     root_addr = artifacts["root"]
     collection_addr = artifacts["collection"]
     root_id = bytes.fromhex(root_addr.split(":")[1])
@@ -322,6 +571,7 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
 
     config_addr = config_contract_address()
     print(f"  config contract: {config_addr}")
+    config_balance_before_proposal = balance(config_addr)
     p11 = rpc_call("getConfigParam", config_id=11).get("result") or {}
     check("ConfigParam 11 (voting setup) present at genesis",
           bool(p11.get("config", {}).get("bytes")))
@@ -346,7 +596,13 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
             .store_ref(proposal)
             .store_bit(1)
             .end_cell())
+    faucet_addr = faucet.address.to_str(is_user_friendly=False)
+    proposal_faucet_lt, proposal_config_lt = last_lt(faucet_addr), last_lt(config_addr)
+    proposal_before_head = finalized_mc_header()
     await faucet.send(transfer_message(faucet, config_addr, 10 * NANO, body))
+    await governance_receipt("ConfigParam 4 proposal", faucet_addr, config_addr,
+                             proposal_faucet_lt, proposal_config_lt,
+                             proposal_before_head, body)
 
     def proposal_registered() -> bool:
         entries = run_get_method(
@@ -354,8 +610,31 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
             [stack_num(int.from_bytes(phash_bytes, "big"))])
         return any(k not in ("null",) for k, _ in entries)
 
-    registered = await async_poll(proposal_registered, timeout=90)
+    height_samples: list[tuple[float, int]] = []
+    poll_started = time.monotonic()
+
+    def proposal_registered_with_height() -> bool:
+        height = int(rpc_call("getMasterchainInfo")["result"]["last"]["seqno"])
+        height_samples.append((round(time.monotonic() - poll_started, 3), height))
+        return proposal_registered()
+
+    registered = await async_poll(proposal_registered_with_height, timeout=90)
+    config_balance_after_proposal = balance(config_addr)
+    print(
+        "  proposal delivery: "
+        f"config_balance_before={config_balance_before_proposal} "
+        f"config_balance_after={config_balance_after_proposal} "
+        f"delta={config_balance_after_proposal - config_balance_before_proposal}"
+    )
+    print(f"  proposal poll masterchain heights: {height_samples}")
     if not registered:
+        try:
+            proposals = rpc_call(
+                "runGetMethodStd", address=config_addr, method="list_proposals", stack=[]
+            ).get("result")
+            print(f"  list_proposals -> {proposals!r}")
+        except Exception as exc:
+            print(f"  list_proposals error: {exc}")
         try:
             entries = run_get_method(
                 config_addr, "get_proposal",
@@ -410,20 +689,30 @@ async def run_governance_checks(faucet, artifacts: dict, global_config: Path,
             print(f"  faucet dump error: {exc}")
     check("proposal registered with the config contract", registered)
 
-    # the genesis validator (index 0 in ConfigParam 34) votes: the vote body
-    # carries an Ed25519 signature over sign_tag(32) idx(16) proposal_hash(256)
-    to_sign = (0x566F7445).to_bytes(4, "big") + (0).to_bytes(2, "big") + phash_bytes
-    signature = validator_key.key.sign(to_sign).signature
-    vote = (begin_cell()
-            .store_uint(0x566F7465, 32)
-            .store_uint(0, 64)
-            .store_bytes(signature)
-            .store_bytes(to_sign)
-            .end_cell())
+    # The node resolves current-set identity, builds the PQ preimage, signs with
+    # its custodied consensus key, and returns the complete contract vote body.
+    request = tos_api.Engine_validator_createProposalVoteRequest(
+        ("0x" + phash_bytes.hex()).encode()
+    )
+    response = request.parse_result(await validator_node.engine_console.request(request))
+    vote = Cell.one_from_boc(response.to_send)
+    vote_faucet_lt, vote_config_lt = last_lt(faucet_addr), last_lt(config_addr)
+    vote_before_head = finalized_mc_header()
     await faucet.send(transfer_message(faucet, config_addr, 1 * NANO, vote))
+    await governance_receipt("ConfigParam 4 PQ vote", faucet_addr, config_addr,
+                             vote_faucet_lt, vote_config_lt, vote_before_head, vote)
 
-    check("ConfigParam 4 appears after the validator vote",
-          await async_poll(lambda: param4_root_id() == root_addr.split(":")[1], timeout=120))
+    activated = await async_poll(lambda: param4_root_id() == root_addr.split(":")[1], timeout=120)
+    if not activated:
+        try:
+            txs = rpc_call("getTransactionsStd", address=config_addr, limit=20)["result"]
+            for tx in txs.get("transactions", []):
+                if tx.get("transaction_type") != "tock":
+                    compact = {k: v for k, v in tx.items() if k != "data"}
+                    print(f"  post-vote config transaction: {compact}")
+        except Exception as exc:
+            print(f"  post-vote transaction dump failed: {exc}")
+    check("ConfigParam 4 appears after the validator vote", activated)
 
     out = lite_client_dnsresolve(global_config, f"{LABEL}.tos")
     check("resolution works on the running chain after activation",
@@ -511,13 +800,18 @@ async def run_checks(faucet, artifacts: dict, global_config: Path) -> None:
     bid = price + 1 * NANO
     print(f"  minimum price now: {price / NANO} TOS; sending {bid / NANO} TOS")
     body = begin_cell().store_uint(0, 32).store_bytes(LABEL.encode()).end_cell()
+    faucet_addr = faucet.address.to_str(is_user_friendly=False)
+    faucet_lt, collection_lt = last_lt(faucet_addr), last_lt(collection_addr)
+    before_head = finalized_mc_header()
     await faucet.send(transfer_message(faucet, collection_addr, bid, body))
+    prelaunch = await registration_receipt(
+        faucet_addr, collection_addr, faucet_lt, collection_lt, before_head,
+        VECTORS["auction_start_time"])
 
-    if now <= VECTORS["auction_start_time"]:
+    if prelaunch:
         # TIP-1 intentionally freezes a future mainnet activation time.  A
         # localnet run before that date must prove the launch gate remains
         # closed instead of waiting for an item that cannot legally deploy.
-        await asyncio.sleep(4)
         check("pre-launch registration is rejected and deploys no Domain Item",
               account_state(item_addr) in ("uninitialized", "nonexist", ""))
         print("  post-launch auction checks require a chain timestamp after "
@@ -563,6 +857,7 @@ async def main() -> int:
     WORKDIR.mkdir(parents=True, exist_ok=True)
 
     artifacts = gen_artifacts()
+    record_provenance(artifacts)
     print(f"root:       {artifacts['root']}")
     print(f"collection: {artifacts['collection']}")
     ok = artifacts["collection"] == VECTORS["collection_address"] \
@@ -580,7 +875,7 @@ async def main() -> int:
         network.config.dns_root_addr = int(artifacts["root"].split(":")[1], 16)
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
@@ -600,9 +895,12 @@ async def main() -> int:
     if "governance" in phases:
       async with Network(install, WORKDIR / "net-gov", base_port=25500) as network:
         network.config.enable_config_voting = True
+        # This phase exercises the PQ vote instruction. Production Genesis
+        # remains at v14 pending a separate, coordinated v16 activation.
+        network.config.global_version = 16
         dht = network.create_dht_node()
         node = network.create_full_node()
-        node.make_initial_validator()
+        make_deterministic_pq_initial_validator(node, 0)
         node.announce_to(dht)
         dht_task = asyncio.create_task(dht.run())
         node_task = asyncio.create_task(node.run(StartOptions(args=["--json-rpc-address", RPC])))
@@ -612,7 +910,7 @@ async def main() -> int:
             faucet = network.zerostate.main_wallet(client)
             lite_cfg = WORKDIR / "liteclient.gov.config.json"
             lite_cfg.write_text(node.liteserver_config.to_json())
-            await run_governance_checks(faucet, artifacts, lite_cfg, node.validator_key)
+            await run_governance_checks(faucet, artifacts, lite_cfg, node)
         finally:
             for t in (node_task, dht_task):
                 t.cancel()

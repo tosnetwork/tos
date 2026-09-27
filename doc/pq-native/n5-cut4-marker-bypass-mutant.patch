@@ -1,0 +1,7 @@
+diff --git a/validator/consensus/simplex/state-resolver.cpp b/validator/consensus/simplex/state-resolver.cpp
+--- a/validator/consensus/simplex/state-resolver.cpp
++++ b/validator/consensus/simplex/state-resolver.cpp
+@@ -364,0 +365,3 @@
++    if (value.has_value()) {
++      co_return Finalization::Idle;  // N05 MUTANT: disregard the persisted finalized marker.
++    }

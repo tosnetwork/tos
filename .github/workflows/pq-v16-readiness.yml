@@ -17,6 +17,11 @@ on:
       # them changes what the jobs below execute.
       - 'test/auth-extensions/**'
       - 'test/mldsa-auth/**'
+      # The account-state ceiling comparison and its probe contract live here, and the
+      # transaction code it compares is what decides which ceiling applies.
+      - 'test/pq-native/account-limit-parity.py'
+      - 'test/pq-native/account-state-limit-probe.fc'
+      - 'crypto/block/transaction.cpp'
       - 'crypto/smartcont/**'
       - 'third-party/mldsa-native/**'
       - 'emulator/**'
@@ -86,6 +91,13 @@ jobs:
         run: |
           python test/pq-readiness/tx_parity.py --build build \
             --signer build-auth-signer/test-mldsa44-sign --out artifacts/tx-parity \
+            --driver tosctl/src/target/release/examples/pq-tx-parity
+      - name: Compare the account-state ceiling across the version that introduces it
+        # Which ceiling applies is decided inside the action phase, so it is compared
+        # the same way: the same account and message through both executors.
+        run: |
+          python test/pq-native/account-limit-parity.py --build build \
+            --out artifacts/account-limit \
             --driver tosctl/src/target/release/examples/pq-tx-parity
       - name: Execute newly deployed SDK accounts and signing paths
         run: |
