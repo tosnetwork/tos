@@ -7,17 +7,17 @@
 #include <string>
 #include <vector>
 
-#include "block/mc-config.h"
 #include "block/block-auto.h"
 #include "block/block-db.h"
+#include "block/mc-config.h"
 #include "common/delay.h"
 #include "quic/quic-sender.h"
-#include "validator/finality-cache-policy.h"
-#include "validator/fabric.h"
-#include "validator/full-node-serializer.hpp"
 #include "validator/downloaders/wait-block-data.hpp"
-#include "validator/impl/shard.hpp"
+#include "validator/fabric.h"
+#include "validator/finality-cache-policy.h"
+#include "validator/full-node-serializer.hpp"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
+#include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
 #include "validator/pending-finality-ingress.h"
 #include "vm/boc.h"
@@ -31,13 +31,28 @@ class PendingFinalityProbeConfig final : public ConfigHolder {
  public:
   explicit PendingFinalityProbeConfig(td::Ref<block::ValidatorSet> set) : set_(std::move(set)) {
   }
-  td::Ref<block::ValidatorSet> get_total_validator_set(int) const override { return set_; }
-  td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull, UnixTime, CatchainSeqno) const override { return set_; }
-  std::pair<UnixTime, UnixTime> get_validator_set_start_stop(int) const override { return {0, 0x7fffffff}; }
-  td::int32 get_global_id() const override { return 0; }
-  td::Result<td::int32> get_config_global_id() const override { return 0; }
-  ValidatorSessionConfig get_consensus_config() const override { return {}; }
-  td::optional<SelectedNewConsensusConfig> get_selected_new_consensus_config(WorkchainId) const override { return {}; }
+  td::Ref<block::ValidatorSet> get_total_validator_set(int) const override {
+    return set_;
+  }
+  td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull, UnixTime, CatchainSeqno) const override {
+    return set_;
+  }
+  std::pair<UnixTime, UnixTime> get_validator_set_start_stop(int) const override {
+    return {0, 0x7fffffff};
+  }
+  td::int32 get_global_id() const override {
+    return 0;
+  }
+  td::Result<td::int32> get_config_global_id() const override {
+    return 0;
+  }
+  ValidatorSessionConfig get_consensus_config() const override {
+    return {};
+  }
+  td::optional<SelectedNewConsensusConfig> get_selected_new_consensus_config(WorkchainId) const override {
+    return {};
+  }
+
  private:
   td::Ref<block::ValidatorSet> set_;
 };
@@ -51,6 +66,7 @@ class PendingFinalityProbeState final : public MasterchainStateQ {
     td::Ref<ConfigHolder> holder = td::make_ref<PendingFinalityProbeConfig>(set_);
     return holder;
   }
+
  private:
   td::Ref<block::ValidatorSet> set_;
 };
@@ -83,8 +99,10 @@ PendingFinalityProbeBlock make_pending_finality_probe_block(CatchainSeqno catcha
   info.min_ref_mc_seqno = previous.seqno();
   info.prev_key_block_seqno = previous.seqno();
   vm::CellBuilder prev_ref;
-  prev_ref.store_long(previous.seqno() * 1000ULL, 64).store_long(previous.seqno(), 32)
-      .store_bits(previous.root_hash.cbits(), 256).store_bits(previous.file_hash.cbits(), 256);
+  prev_ref.store_long(previous.seqno() * 1000ULL, 64)
+      .store_long(previous.seqno(), 32)
+      .store_bits(previous.root_hash.cbits(), 256)
+      .store_bits(previous.file_hash.cbits(), 256);
   info.prev_ref = prev_ref.finalize_novm();
   td::Ref<vm::Cell> info_cell;
   if (!block::gen::t_BlockInfo.cell_pack(info_cell, info)) {
@@ -127,8 +145,14 @@ PendingFinalityProbeBlock make_pending_finality_probe_block(CatchainSeqno catcha
   auto prior_state = vm::CellBuilder{}.store_long(1, 32).finalize_novm();
   auto next_state = vm::CellBuilder{}.store_long(2, 32).finalize_novm();
   auto update = vm::CellBuilder::create_merkle_update(prior_state, next_state);
-  auto root = vm::CellBuilder{}.store_long(0x11ef55aa, 32).store_long(0, 32).store_ref(info_cell)
-                  .store_ref(flow_builder.finalize()).store_ref(update).store_ref(extra_cell).finalize_novm();
+  auto root = vm::CellBuilder{}
+                  .store_long(0x11ef55aa, 32)
+                  .store_long(0, 32)
+                  .store_ref(info_cell)
+                  .store_ref(flow_builder.finalize())
+                  .store_ref(update)
+                  .store_ref(extra_cell)
+                  .finalize_novm();
   auto data = pq_block_signature_test::require_ok(vm::std_boc_serialize(root, 31), "manager-proof-block-boc");
   auto file_hash = block::compute_file_hash(data);
   return {BlockIdExt{masterchainId, shardIdAll, seqno, td::Bits256{root->get_hash().bits()}, file_hash},
@@ -150,8 +174,8 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   void validate_block_broadcast_signatures(BlockBroadcast broadcast, td::Promise<td::Unit> promise) override {
     auto *pending = pending_block_finality_.get_if_exists(broadcast.block_id);
     reached_valid_proof_ = broadcast.sig_set.get() == expected_good_.get() &&
-                           cached_masterchain_block_candidates_.contains(broadcast.block_id) &&
-                           pending != nullptr && pending->size() == 1 && !broadcast.proof.empty();
+                           cached_masterchain_block_candidates_.contains(broadcast.block_id) && pending != nullptr &&
+                           pending->size() == 1 && !broadcast.proof.empty();
     const block::PQFinalityVerificationContext context{expected_set_, broadcast.block_id, expected_session_};
     auto result = block::verify_pq_finality(context, *broadcast.sig_set, block::FinalityRole::Final);
     if (result.is_error()) {
@@ -291,12 +315,12 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     auto now = td::Time::now();
     auto first = pending_block_finality_.admit(
         id, PendingBlockFinalitySender::remote(PublicKeyHash{pq_block_signature_test::hash_of("bad-sender")}),
-        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
-        PendingFinalityCapacity::Shared, false, true, now + 10);
+        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096, PendingFinalityCapacity::Shared,
+        false, true, now + 10);
     auto second = pending_block_finality_.admit(
         id, PendingBlockFinalitySender::remote(PublicKeyHash{pq_block_signature_test::hash_of("good-sender")}),
-        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
-        PendingFinalityCapacity::Shared, false, true, now + 10);
+        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096, PendingFinalityCapacity::Shared,
+        false, true, now + 10);
     auto *pending = pending_block_finality_.get_if_exists(id);
     if (!first.admitted() || !second.admitted() || pending == nullptr || pending->size() != 2) {
       promise.set_value(false);
@@ -322,10 +346,9 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     const auto id = pq_block_signature_test::block_id("manager-actor-bad-block-bytes");
     cached_masterchain_block_candidates_.put(id, td::BufferSlice{"invalid block bytes"});
     auto now = td::Time::now();
-    auto admitted = pending_block_finality_.admit(
-        id, PendingBlockFinalitySender::local_source(),
-        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
-        PendingFinalityCapacity::Shared, false, true, now + 10);
+    auto admitted = pending_block_finality_.admit(id, PendingBlockFinalitySender::local_source(),
+                                                  PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay},
+                                                  4096, PendingFinalityCapacity::Shared, false, true, now + 10);
     auto *pending = pending_block_finality_.get_if_exists(id);
     auto attempt = pending ? pending->begin_processing(now) : decltype(pending->begin_processing(now)){};
     if (!admitted.admitted() || !attempt) {
@@ -343,10 +366,9 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
     const auto id = pq_block_signature_test::block_id("manager-actor-context-expiry");
     cached_masterchain_block_candidates_.put(id, td::BufferSlice{"cached block bytes"});
     const auto now = td::Time::now();
-    auto admitted = pending_block_finality_.admit(
-        id, PendingBlockFinalitySender::local_source(),
-        PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay}, 4096,
-        PendingFinalityCapacity::Shared, false, true, now + 0.2);
+    auto admitted = pending_block_finality_.admit(id, PendingBlockFinalitySender::local_source(),
+                                                  PendingBlockFinalityCandidate{{}, BroadcastSource::consensus_overlay},
+                                                  4096, PendingFinalityCapacity::Shared, false, true, now + 0.2);
     auto *pending = pending_block_finality_.get_if_exists(id);
     auto attempt = pending ? pending->begin_processing(now) : decltype(pending->begin_processing(now)){};
     if (!admitted.admitted() || !attempt) {
@@ -484,7 +506,8 @@ int main() {
     std::atomic<bool> done{false};
     bool passed = false;
     scheduler.run_in_context([&] {
-      probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-finality-manager-probe");
+      probe =
+          td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-finality-manager-probe");
       td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_bad_front,
                               td::PromiseCreator::lambda([&](td::Result<bool> result) {
                                 passed = result.is_ok() && result.ok();
@@ -498,7 +521,8 @@ int main() {
     scheduler.run_in_context([&] { probe.reset(); });
     scheduler.stop();
     if (!done.load(std::memory_order_acquire) || !passed) {
-      std::cerr << "PENDING_FINALITY_MANAGER_ACTOR_FAILURE: bad front evidence erased cached block bytes or blocked the next candidate\n";
+      std::cerr << "PENDING_FINALITY_MANAGER_ACTOR_FAILURE: bad front evidence erased cached block bytes or blocked "
+                   "the next candidate\n";
       return 1;
     }
   }
@@ -522,7 +546,8 @@ int main() {
     scheduler.run_in_context([&] { probe.reset(); });
     scheduler.stop();
     if (!done.load(std::memory_order_acquire) || !passed) {
-      std::cerr << "PENDING_FINALITY_MANAGER_BLOCK_BYTES_FAILURE: malformed candidate bytes were retained or evidence was retired\n";
+      std::cerr << "PENDING_FINALITY_MANAGER_BLOCK_BYTES_FAILURE: malformed candidate bytes were retained or evidence "
+                   "was retired\n";
       return 1;
     }
   }
@@ -546,7 +571,8 @@ int main() {
     scheduler.run_in_context([&] { probe.reset(); });
     scheduler.stop();
     if (!done.load(std::memory_order_acquire) || !passed) {
-      std::cerr << "PENDING_FINALITY_MANAGER_CONTEXT_FAILURE: stale context did not retain inputs until bounded expiry\n";
+      std::cerr
+          << "PENDING_FINALITY_MANAGER_CONTEXT_FAILURE: stale context did not retain inputs until bounded expiry\n";
       return 1;
     }
   }
@@ -585,8 +611,7 @@ int main() {
   using ProofIdentity = tos::validator::PendingBlockProofIdentity;
   using ProofVerdict = tos::validator::PendingBlockProofIdentityVerdict;
   auto proof_action = tos::validator::pending_block_proof_failure_action;
-  if (proof_action(ProofSource::FinalityEvidence, tos::ErrorCode::protoviolation) !=
-          ProofAction::DiscardEvidence ||
+  if (proof_action(ProofSource::FinalityEvidence, tos::ErrorCode::protoviolation) != ProofAction::DiscardEvidence ||
       proof_action(ProofSource::BlockBytes, tos::ErrorCode::protoviolation) != ProofAction::DiscardBlockBytes ||
       proof_action(ProofSource::TrustedContext, tos::ErrorCode::protoviolation) != ProofAction::Retry ||
       proof_action(ProofSource::FinalityEvidence, tos::ErrorCode::notready) != ProofAction::Retry) {
@@ -1061,10 +1086,9 @@ int main() {
   // ingress has no trusted set yet. It must not poison the cached block bytes
   // or strand a later valid certificate behind the same pending queue front.
   auto wrong_set_cell = require_ok(
-      block::BlockSignatureSet::serialize_simplex_pq(clone_pairs(valid_pairs),
-                                                      fixture.validator_set->get_catchain_seqno(),
-                                                      fixture.validator_set->get_validator_set_hash() ^ 1u, weight,
-                                                      fixture.session, Fixture::slot, candidate_data),
+      block::BlockSignatureSet::serialize_simplex_pq(
+          clone_pairs(valid_pairs), fixture.validator_set->get_catchain_seqno(),
+          fixture.validator_set->get_validator_set_hash() ^ 1u, weight, fixture.session, Fixture::slot, candidate_data),
       "wrong-set-final");
   tos::ValidatorWeight parsed_weight = 0;
   auto wrong_set = require_ok(block::BlockSignatureSet::fetch(wrong_set_cell, parsed_weight), "parse-wrong-set-final");
@@ -1072,33 +1096,33 @@ int main() {
   auto manager_block = tos::validator::make_pending_finality_probe_block(
       fixture.validator_set->get_catchain_seqno(), fixture.validator_set->get_validator_set_hash());
   auto manager_candidate = candidate(manager_block.id);
-  auto manager_pairs = fixture.sign(quorum_signers, fixture.session, Fixture::slot, manager_candidate, true,
-                                    manager_block.id);
-  auto manager_good = require_ok(
-      fixture.persisted_final(manager_pairs, fixture.session, Fixture::slot, manager_candidate, weight,
-                              fixture.validator_set->get_validator_set_hash(),
-                              fixture.validator_set->get_catchain_seqno(), fixture.validator_set),
-      "manager-good-final");
-  auto manager_bad_cell = require_ok(
-      block::BlockSignatureSet::serialize_simplex_pq(clone_pairs(manager_pairs),
-                                                      fixture.validator_set->get_catchain_seqno(),
-                                                      fixture.validator_set->get_validator_set_hash() ^ 1u, weight,
-                                                      fixture.session, Fixture::slot, manager_candidate),
-      "manager-bad-final-cell");
+  auto manager_pairs =
+      fixture.sign(quorum_signers, fixture.session, Fixture::slot, manager_candidate, true, manager_block.id);
+  auto manager_good =
+      require_ok(fixture.persisted_final(manager_pairs, fixture.session, Fixture::slot, manager_candidate, weight,
+                                         fixture.validator_set->get_validator_set_hash(),
+                                         fixture.validator_set->get_catchain_seqno(), fixture.validator_set),
+                 "manager-good-final");
+  auto manager_bad_cell = require_ok(block::BlockSignatureSet::serialize_simplex_pq(
+                                         clone_pairs(manager_pairs), fixture.validator_set->get_catchain_seqno(),
+                                         fixture.validator_set->get_validator_set_hash() ^ 1u, weight, fixture.session,
+                                         Fixture::slot, manager_candidate),
+                                     "manager-bad-final-cell");
   tos::ValidatorWeight manager_bad_weight = 0;
-  auto manager_bad = require_ok(block::BlockSignatureSet::fetch(manager_bad_cell, manager_bad_weight),
-                                "manager-bad-final");
-  manager_bad = require_ok(block::BlockSignatureSet::fetch_node_checked(manager_bad->tl()),
-                           "manager-bad-final-node-checked");
-  auto manager_parsed_block = require_ok(tos::validator::create_block(manager_block.id, manager_block.data.clone()),
-                                         "manager-block-parse");
+  auto manager_bad =
+      require_ok(block::BlockSignatureSet::fetch(manager_bad_cell, manager_bad_weight), "manager-bad-final");
+  manager_bad =
+      require_ok(block::BlockSignatureSet::fetch_node_checked(manager_bad->tl()), "manager-bad-final-node-checked");
+  auto manager_parsed_block =
+      require_ok(tos::validator::create_block(manager_block.id, manager_block.data.clone()), "manager-block-parse");
   td::Ref<tos::validator::MasterchainState> manager_state =
       td::make_ref<tos::validator::PendingFinalityProbeState>(manager_block.id, fixture.validator_set);
   tos::validator::PendingBlockProofFailureSource manager_source{};
   auto manager_bad_proof = tos::validator::WaitBlockData::generate_proof(
       manager_block.id, manager_parsed_block->root_cell(), manager_bad, manager_state, manager_source);
   if (manager_bad_proof.is_ok() || manager_source != ProofSource::FinalityEvidence) {
-    std::cerr << "PENDING_FINALITY_MANAGER_FIXTURE_FAILURE: wrong-set evidence did not fail actual proof construction\n";
+    std::cerr
+        << "PENDING_FINALITY_MANAGER_FIXTURE_FAILURE: wrong-set evidence did not fail actual proof construction\n";
     return 1;
   }
   auto manager_good_proof = tos::validator::WaitBlockData::generate_proof(
@@ -1115,14 +1139,13 @@ int main() {
     bool passed = false;
     scheduler.run_in_context([&] {
       probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-real-proof-probe");
-      td::actor::send_closure(
-          probe, &tos::validator::PendingFinalityManagerActorProbe::check_real_proof_queue,
-          tos::validator::PendingFinalityProbeBlock{manager_block.id, manager_block.data.clone()}, manager_bad,
-          manager_good, fixture.validator_set, fixture.session, manager_state,
-          td::PromiseCreator::lambda([&](td::Result<bool> result) {
-            passed = result.is_ok() && result.ok();
-            done.store(true, std::memory_order_release);
-          }));
+      td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_real_proof_queue,
+                              tos::validator::PendingFinalityProbeBlock{manager_block.id, manager_block.data.clone()},
+                              manager_bad, manager_good, fixture.validator_set, fixture.session, manager_state,
+                              td::PromiseCreator::lambda([&](td::Result<bool> result) {
+                                passed = result.is_ok() && result.ok();
+                                done.store(true, std::memory_order_release);
+                              }));
     });
     auto deadline = td::Timestamp::in(5.0);
     while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
@@ -1131,7 +1154,8 @@ int main() {
     scheduler.run_in_context([&] { probe.reset(); });
     scheduler.stop();
     if (!done.load(std::memory_order_acquire) || !passed) {
-      std::cerr << "PENDING_FINALITY_MANAGER_REAL_PROOF_FAILURE: bad finality blocked later valid proof or broadcast callback\n";
+      std::cerr << "PENDING_FINALITY_MANAGER_REAL_PROOF_FAILURE: bad finality blocked later valid proof or broadcast "
+                   "callback\n";
       return 1;
     }
   }
@@ -1141,17 +1165,16 @@ int main() {
     std::atomic<bool> done{false};
     bool passed = false;
     auto stale_set = fixture.make_validator_set(fixture.validator_set->export_vector(),
-                                                 fixture.validator_set->get_catchain_seqno() + 1);
+                                                fixture.validator_set->get_catchain_seqno() + 1);
     scheduler.run_in_context([&] {
       probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-context-recovery");
-      td::actor::send_closure(
-          probe, &tos::validator::PendingFinalityManagerActorProbe::check_real_context_recovery,
-          tos::validator::PendingFinalityProbeBlock{manager_block.id, manager_block.data.clone()}, manager_good,
-          stale_set, fixture.validator_set, fixture.session,
-          td::PromiseCreator::lambda([&](td::Result<bool> result) {
-            passed = result.is_ok() && result.ok();
-            done.store(true, std::memory_order_release);
-          }));
+      td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_real_context_recovery,
+                              tos::validator::PendingFinalityProbeBlock{manager_block.id, manager_block.data.clone()},
+                              manager_good, stale_set, fixture.validator_set, fixture.session,
+                              td::PromiseCreator::lambda([&](td::Result<bool> result) {
+                                passed = result.is_ok() && result.ok();
+                                done.store(true, std::memory_order_release);
+                              }));
     });
     auto deadline = td::Timestamp::in(5.0);
     while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
@@ -1160,7 +1183,8 @@ int main() {
     scheduler.run_in_context([&] { probe.reset(); });
     scheduler.stop();
     if (!done.load(std::memory_order_acquire) || !passed) {
-      std::cerr << "PENDING_FINALITY_MANAGER_CONTEXT_RECOVERY_FAILURE: stale trusted set did not retry with current context\n";
+      std::cerr << "PENDING_FINALITY_MANAGER_CONTEXT_RECOVERY_FAILURE: stale trusted set did not retry with current "
+                   "context\n";
       return 1;
     }
   }
@@ -1170,16 +1194,15 @@ int main() {
     std::atomic<bool> done{false};
     bool passed = false;
     auto stale_set = fixture.make_validator_set(fixture.validator_set->export_vector(),
-                                                 fixture.validator_set->get_catchain_seqno() + 1);
+                                                fixture.validator_set->get_catchain_seqno() + 1);
     scheduler.run_in_context([&] {
       probe = td::actor::create_actor<tos::validator::PendingFinalityManagerActorProbe>("pending-context-expiry-real");
-      td::actor::send_closure(
-          probe, &tos::validator::PendingFinalityManagerActorProbe::check_real_context_expiry,
-          tos::validator::PendingFinalityProbeBlock{manager_block.id, manager_block.data.clone()}, manager_good,
-          stale_set, td::PromiseCreator::lambda([&](td::Result<bool> result) {
-            passed = result.is_ok() && result.ok();
-            done.store(true, std::memory_order_release);
-          }));
+      td::actor::send_closure(probe, &tos::validator::PendingFinalityManagerActorProbe::check_real_context_expiry,
+                              tos::validator::PendingFinalityProbeBlock{manager_block.id, manager_block.data.clone()},
+                              manager_good, stale_set, td::PromiseCreator::lambda([&](td::Result<bool> result) {
+                                passed = result.is_ok() && result.ok();
+                                done.store(true, std::memory_order_release);
+                              }));
     });
     auto deadline = td::Timestamp::in(5.0);
     while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
@@ -1188,7 +1211,8 @@ int main() {
     scheduler.run_in_context([&] { probe.reset(); });
     scheduler.stop();
     if (!done.load(std::memory_order_acquire) || !passed) {
-      std::cerr << "PENDING_FINALITY_MANAGER_REAL_CONTEXT_EXPIRY_FAILURE: expired stale context retained evidence or erased block bytes\n";
+      std::cerr << "PENDING_FINALITY_MANAGER_REAL_CONTEXT_EXPIRY_FAILURE: expired stale context retained evidence or "
+                   "erased block bytes\n";
       return 1;
     }
   }
@@ -1200,7 +1224,9 @@ int main() {
     return 1;
   }
   tos::validator::PendingFinalityStore<int, int, td::Ref<block::BlockSignatureSet>> wrong_set_queue;
-  auto charge = [](const td::Ref<block::BlockSignatureSet> &set) { return serialize_tl_object(set->tl(), true).size(); };
+  auto charge = [](const td::Ref<block::BlockSignatureSet> &set) {
+    return serialize_tl_object(set->tl(), true).size();
+  };
   if (!wrong_set_queue.admit(0, 1, wrong_set, charge(wrong_set), ValidatorCapacity, false, true, NoExpiry).admitted() ||
       !wrong_set_queue.admit(0, 2, valid, charge(valid), ValidatorCapacity, false, true, NoExpiry).admitted()) {
     std::cerr << "PENDING_FINALITY_WRONG_SET_FAILURE: both candidates were not admitted\n";
@@ -1341,7 +1367,8 @@ int main() {
   std::cout << "PENDING_FINALITY_REJECTION_NAME_OK: ingress and store refusals have stable textual names\n";
   std::cout << "PENDING_FINALITY_RETRY_OK: notready retained valid evidence and a later attempt accepted it\n";
   std::cout << "PENDING_FINALITY_TIMEOUT_CLASSIFICATION_OK: verification timeout remains transient\n";
-  std::cout << "PENDING_FINALITY_PROOF_SOURCE_OK: wrong-set evidence is retired without erasing the block, while stale context retries\n";
+  std::cout << "PENDING_FINALITY_PROOF_SOURCE_OK: wrong-set evidence is retired without erasing the block, while stale "
+               "context retries\n";
   std::cout << "PENDING_FINALITY_PERMANENT_OK: protocol violation was discarded without retry\n";
   std::cout << "PENDING_FINALITY_RETRY_DEADLINE_OK: transient evidence freed its slot after "
             << tos::validator::pending_finality_retention_seconds << " seconds\n";

@@ -209,12 +209,10 @@ size_t manager_faults() {
 void report_counts(const std::string& label) {
   std::scoped_lock lock(observations.mutex);
   emit(PSTRING() << "C09_COUNTS " << label << " notarize_votes=" << observations.notarize_votes.size()
-                 << " emitted_signed_notarize=" << observations.emitted_notarize_votes.size()
-                 << " finalize_votes=" << observations.finalize_votes.size()
-                 << " skip_votes=" << observations.skip_votes.size()
-                 << " validations=" << observations.validations.size()
-                 << " manager_state_reads=" << observations.manager_state_reads
-                 << " manager_faults=" << observations.manager_faults
+                 << " emitted_signed_notarize=" << observations.emitted_notarize_votes.size() << " finalize_votes="
+                 << observations.finalize_votes.size() << " skip_votes=" << observations.skip_votes.size()
+                 << " validations=" << observations.validations.size() << " manager_state_reads="
+                 << observations.manager_state_reads << " manager_faults=" << observations.manager_faults
                  << " misbehavior_reports=" << observations.misbehavior_reports);
 }
 
@@ -282,8 +280,8 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
     if (!std::holds_alternative<OutgoingProtocolMessage::BroadcastToAll>(message->recipient)) {
       return;
     }
-    auto signed_vote = simplex::Signed<simplex::Vote>::deserialize(message->message.data.as_slice(),
-                                                                     bus->local_id->idx, *bus);
+    auto signed_vote =
+        simplex::Signed<simplex::Vote>::deserialize(message->message.data.as_slice(), bus->local_id->idx, *bus);
     if (signed_vote.is_error()) {
       return;
     }
@@ -377,7 +375,7 @@ class ControlledManager : public ManagerFacade {
   }
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp,
-                                                          std::optional<CandidateId>) override {
+                                                           std::optional<CandidateId>) override {
     size_t call;
     {
       std::scoped_lock lock(observations.mutex);
@@ -671,16 +669,16 @@ class Driver : public td::actor::Actor {
 
   td::actor::Task<> run_genesis_fault(CandidateRef X, CandidateRef Y, CandidateRef X_alt) {
     fault_code.store(mode_ == Mode::GenesisTimeout ? ErrorCode::timeout
-                     : mode_ == Mode::Permanent ? ErrorCode::protoviolation
-                     : mode_ == Mode::Cancelled ? ErrorCode::cancelled
-                                                : ErrorCode::notready);
+                     : mode_ == Mode::Permanent    ? ErrorCode::protoviolation
+                     : mode_ == Mode::Cancelled    ? ErrorCode::cancelled
+                                                   : ErrorCode::notready);
     // StateResolver now retries the origin read three times before returning
     // notready. Exhaust that inner bound so this test reaches the Consensus
     // try_notarize failure/recovery boundary, rather than being absorbed below it.
-    faults_remaining.store(mode_ == Mode::Permanent || mode_ == Mode::Cancelled
-                               ? 1
-                               : mode_ == Mode::SkipBeforeRecovery ? 12
-                               : mode_ == Mode::ConflictingCertDuringRetry ? 6 : 3);
+    faults_remaining.store(mode_ == Mode::Permanent || mode_ == Mode::Cancelled ? 1
+                           : mode_ == Mode::SkipBeforeRecovery                  ? 12
+                           : mode_ == Mode::ConflictingCertDuringRetry          ? 6
+                                                                                : 3);
     deliver_candidate(X, "first");
     const size_t required_faults = mode_ == Mode::ConflictingCertDuringRetry ? 3 : 1;
     if (!co_await wait_until([&] { return manager_faults() >= required_faults; })) {
@@ -713,7 +711,8 @@ class Driver : public td::actor::Actor {
 
     // Recovery: the resolver answers the same request now.
     auto resolved = co_await bus_.publish<simplex::ResolveState>(ParentId{}).wrap();
-    emit(PSTRING() << "C09_RECOVERY ResolveState(genesis) " << (resolved.is_ok() ? "ok" : resolved.error().to_string()));
+    emit(PSTRING() << "C09_RECOVERY ResolveState(genesis) "
+                   << (resolved.is_ok() ? "ok" : resolved.error().to_string()));
     if (resolved.is_error()) {
       finish(1, "C09_PRECONDITION_FAILED: the resolver did not recover");
     }
@@ -725,8 +724,7 @@ class Driver : public td::actor::Actor {
 
     if (mode_ == Mode::Permanent || mode_ == Mode::Cancelled || mode_ == Mode::SkipBeforeRecovery ||
         mode_ == Mode::ConflictingCertDuringRetry) {
-      bool rejected = votes_after_fault == 0 && votes_after_redelivery == 0 &&
-                      emitted_notarize_votes_for(X->id) == 0;
+      bool rejected = votes_after_fault == 0 && votes_after_redelivery == 0 && emitted_notarize_votes_for(X->id) == 0;
       if (mode_ == Mode::Permanent || mode_ == Mode::Cancelled) {
         rejected = rejected && reads_after_fault == 1 && skip_votes_for(X->id.slot) == 0 && validations_of(X) == 0;
       } else if (mode_ == Mode::SkipBeforeRecovery) {
@@ -734,10 +732,11 @@ class Driver : public td::actor::Actor {
       } else {
         rejected = rejected && is_notarized(X_alt->id) && skip_votes_for(X->id.slot) == 0;
       }
-      emit(PSTRING() << "C05_NEGATIVE mode=" << (mode_ == Mode::Permanent ? "permanent"
-                                                 : mode_ == Mode::Cancelled ? "cancelled"
-                                                 : mode_ == Mode::SkipBeforeRecovery ? "skip-before-recovery"
-                                                                                     : "conflicting-cert-during-retry")
+      emit(PSTRING() << "C05_NEGATIVE mode="
+                     << (mode_ == Mode::Permanent            ? "permanent"
+                         : mode_ == Mode::Cancelled          ? "cancelled"
+                         : mode_ == Mode::SkipBeforeRecovery ? "skip-before-recovery"
+                                                             : "conflicting-cert-during-retry")
                      << " reads_after_fault=" << reads_after_fault << " skip_votes=" << skip_votes_for(X->id.slot)
                      << " notarize=" << votes_after_redelivery << " validations=" << validations_of(X));
       finish(rejected ? 0 : 4, rejected ? "C05_NEGATIVE_OK" : "C05_NEGATIVE_FAILED");
@@ -751,16 +750,16 @@ class Driver : public td::actor::Actor {
     co_await settle();
     report_counts("final");
 
-    emit(PSTRING() << "C09_RESULT mode=" << (mode_ == Mode::GenesisTimeout ? "genesis-timeout"
-                                           : mode_ == Mode::ConflictDuringRetry ? "conflict-during-retry"
-                                                                                 : "genesis-notready")
-                   << " X_notarize_after_fault=" << votes_after_fault
-                   << " X_notarize_after_redelivery=" << votes_after_redelivery
-                   << " X_notarize_final=" << notarize_votes_for(X->id) << " X_finalize=" << finalize_votes_for(X->id)
-                   << " X_validations=" << validations_of(X) << " X_notarized_by_network=" << is_notarized(X->id)
-                   << " Y_notarize=" << notarize_votes_for(Y->id));
-    if (notarize_votes_for(X->id) != 1 || emitted_notarize_votes_for(X->id) != 1 ||
-        finalize_votes_for(X->id) != 1 || validations_of(X) != 1) {
+    emit(PSTRING() << "C09_RESULT mode="
+                   << (mode_ == Mode::GenesisTimeout        ? "genesis-timeout"
+                       : mode_ == Mode::ConflictDuringRetry ? "conflict-during-retry"
+                                                            : "genesis-notready")
+                   << " X_notarize_after_fault=" << votes_after_fault << " X_notarize_after_redelivery="
+                   << votes_after_redelivery << " X_notarize_final=" << notarize_votes_for(X->id)
+                   << " X_finalize=" << finalize_votes_for(X->id) << " X_validations=" << validations_of(X)
+                   << " X_notarized_by_network=" << is_notarized(X->id) << " Y_notarize=" << notarize_votes_for(Y->id));
+    if (notarize_votes_for(X->id) != 1 || emitted_notarize_votes_for(X->id) != 1 || finalize_votes_for(X->id) != 1 ||
+        validations_of(X) != 1) {
       finish(3, "C05_VOTE_COUNT_FAILED: X must be validated and emit one signed notarize vote before finalizing");
     }
     if (mode_ == Mode::ConflictDuringRetry && (misbehavior_reports() != 1 || validations_of(X_alt) != 0)) {
@@ -850,7 +849,11 @@ class Driver : public td::actor::Actor {
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   if (argc != 2) {
-    std::fprintf(stderr, "usage: %s control|genesis-notready|genesis-timeout|ancestor-notready|permanent|cancelled|skip-before-recovery|conflict-during-retry|conflicting-cert-during-retry|exhausted-notready\n", argv[0]);
+    std::fprintf(stderr,
+                 "usage: %s "
+                 "control|genesis-notready|genesis-timeout|ancestor-notready|permanent|cancelled|skip-before-recovery|"
+                 "conflict-during-retry|conflicting-cert-during-retry|exhausted-notready\n",
+                 argv[0]);
     return 2;
   }
   std::string mode_name = argv[1];

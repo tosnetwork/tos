@@ -97,6 +97,7 @@ class BlockHandleLru : public td::ListNode {
 class ValidatorManagerImpl : public ValidatorManager {
   friend class PendingFinalityManagerActorProbe;
   friend class N5ManagerDbFixture;
+
  private:
   // WAITERS
   //

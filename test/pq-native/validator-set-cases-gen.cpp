@@ -49,10 +49,9 @@ td::Bits256 raw_key_id(int algorithm_id, const std::string& public_key) {
 }
 
 // Deliberately builds whatever it is told to, including sets that must be refused.
-td::Ref<vm::Cell> descriptor_with_key_cell(const td::Bits256& validator_id, int algorithm_id,
-                                           const td::Bits256& key_id, td::Ref<vm::Cell> stored_key,
-                                           td::uint64 weight, const td::Bits256& adnl_addr,
-                                           int tag = 0xb3, bool trailing_bit = false) {
+td::Ref<vm::Cell> descriptor_with_key_cell(const td::Bits256& validator_id, int algorithm_id, const td::Bits256& key_id,
+                                           td::Ref<vm::Cell> stored_key, td::uint64 weight,
+                                           const td::Bits256& adnl_addr, int tag = 0xb3, bool trailing_bit = false) {
   vm::CellBuilder cb;
   cb.store_long(tag, 8);
   cb.store_bits_bool(validator_id.cbits(), 256);
@@ -69,14 +68,13 @@ td::Ref<vm::Cell> descriptor_with_key_cell(const td::Bits256& validator_id, int 
 
 td::Ref<vm::Cell> descriptor(const td::Bits256& validator_id, int algorithm_id, const td::Bits256& key_id,
                              const std::string& public_key, td::uint64 weight, const td::Bits256& adnl_addr) {
-  return descriptor_with_key_cell(validator_id, algorithm_id, key_id,
-                                  tos::pq::pack_pq_bytes(td::Slice(public_key), tos::pq::pq_bytes_hard_max).move_as_ok(),
-                                  weight, adnl_addr);
+  return descriptor_with_key_cell(
+      validator_id, algorithm_id, key_id,
+      tos::pq::pack_pq_bytes(td::Slice(public_key), tos::pq::pq_bytes_hard_max).move_as_ok(), weight, adnl_addr);
 }
 
-td::Ref<vm::Cell> validator_set_with_header(const std::vector<td::Ref<vm::Cell>>& descriptors,
-                                            td::uint64 total_weight, int stated_total, int stated_main,
-                                            int first_index = 0) {
+td::Ref<vm::Cell> validator_set_with_header(const std::vector<td::Ref<vm::Cell>>& descriptors, td::uint64 total_weight,
+                                            int stated_total, int stated_main, int first_index = 0) {
   vm::Dictionary dict{16};
   for (std::size_t i = 0; i < descriptors.size(); i++) {
     td::BitArray<16> key;
@@ -130,8 +128,7 @@ int main() {
   emit("valid", "accept", set_four(good_a(), good_b()));
   emit("duplicate-validator-id", "reject", set_four(good_a(), descriptor(vid_a, 1, kid_b, key_b, 7, adnl_b)));
   emit("duplicate-key-id", "reject", set_four(good_a(), descriptor(vid_b, 1, kid_a, key_a, 7, adnl_b)));
-  emit("duplicate-public-key", "reject",
-       set_four(good_a(), descriptor(vid_b, 1, key_id_of(key_a), key_a, 7, adnl_b)));
+  emit("duplicate-public-key", "reject", set_four(good_a(), descriptor(vid_b, 1, key_id_of(key_a), key_a, 7, adnl_b)));
   // Everything else about the second member is distinct, so a shared transport identity is
   // the only thing left that can refuse this set.
   emit("duplicate-adnl", "reject", set_four(good_a(), descriptor(vid_b, 1, kid_b, key_b, 7, adnl_a)));
@@ -162,8 +159,7 @@ int main() {
   // thing that can refuse it.
   emit("weight-over-protocol-cap", "reject",
        set_four(descriptor(vid_a, 1, kid_a, key_a, 0x4000000000000000ULL, adnl_a),
-                descriptor(vid_b, 1, kid_b, key_b, 0x4000000000000000ULL, adnl_b),
-                0x8000000000000018ULL));
+                descriptor(vid_b, 1, kid_b, key_b, 0x4000000000000000ULL, adnl_b), 0x8000000000000018ULL));
   // The old "declared-total-mismatch" row actually changed total *weight*.
   // Keep its bytes and verdict but give it a name that identifies the rule.
   emit("declared-weight-mismatch", "reject", set_four(good_a(), good_b(), 37));

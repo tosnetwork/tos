@@ -3,8 +3,9 @@
 #ifndef TOSLIB_Q01_TEST_NETWORK
 #error Q01 test hook requires its dedicated target
 #endif
-#include "lite-client/ext-client.h"
 #include <memory>
+
+#include "lite-client/ext-client.h"
 namespace toslib {
 struct QueryTraceContext {
   td::uint64 public_request_id{0};
@@ -15,10 +16,10 @@ struct QueryTraceContext {
 class PublicNetworkTestHook {
  public:
   virtual ~PublicNetworkTestHook() = default;
-  virtual td::actor::ActorOwn<liteclient::ExtClient> decorate(
-      td::actor::ActorOwn<liteclient::ExtClient> real, td::uint32 generation) = 0;
+  virtual td::actor::ActorOwn<liteclient::ExtClient> decorate(td::actor::ActorOwn<liteclient::ExtClient> real,
+                                                              td::uint32 generation) = 0;
   virtual void arm(td::uint64 id, std::string nonce, td::Promise<QueryTraceContext> ack) = 0;
-  virtual void send_bound_query(QueryTraceContext context, td::BufferSlice data,
-      td::Timestamp deadline, td::Promise<td::BufferSlice> promise) = 0;
+  virtual void send_bound_query(QueryTraceContext context, td::BufferSlice data, td::Timestamp deadline,
+                                td::Promise<td::BufferSlice> promise) = 0;
 };
-}
+}  // namespace toslib

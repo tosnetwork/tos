@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <cstdio>
 
 #include "adnl/utils.hpp"
@@ -609,8 +609,8 @@ class TestManagerFacade : public ManagerFacade {
                                  int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
                                  bool apply) override;
 
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
-      BlockIdExt block_id, td::Timestamp timeout, std::optional<CandidateId> requesting_candidate) override;
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout,
+                                                           std::optional<CandidateId> requesting_candidate) override;
   td::actor::Task<td::Ref<BlockData>> wait_block_data(BlockIdExt block_id, td::Timestamp timeout) override;
   void send_block_candidate_broadcast(BlockIdExt id, td::BufferSlice data, int mode) override;
 
@@ -680,8 +680,7 @@ class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public 
   template <>
   void handle(simplex::BusHandle, std::shared_ptr<const CandidateGenerated> event) {
     ++CANDIDATES_GENERATED;
-    if (C05_GENESIS_FAULT_BUDGET != 0 && !event->candidate->is_empty() &&
-        event->candidate->block_id().seqno() == 1) {
+    if (C05_GENESIS_FAULT_BUDGET != 0 && !event->candidate->is_empty() && event->candidate->block_id().seqno() == 1) {
       std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
       if (!C05_SIMULTANEOUS_OBSERVATION.first_candidate) {
         C05_SIMULTANEOUS_OBSERVATION.first_candidate = event->candidate->id;
@@ -1732,8 +1731,7 @@ class TestConsensus : public td::actor::Actor {
         candidate_time = C05_SIMULTANEOUS_OBSERVATION.candidate_time;
         cert_time = C05_SIMULTANEOUS_OBSERVATION.notar_cert_time;
       }
-      if (!target || target->slot != 0 || target_parent || target_block.seqno() != 1 ||
-          !accepted_blocks_.contains(1)) {
+      if (!target || target->slot != 0 || target_parent || target_block.seqno() != 1 || !accepted_blocks_.contains(1)) {
         fail("C05 injected first candidate or later recovery block was not observed");
         co_return td::Unit{};
       }
@@ -1774,8 +1772,7 @@ class TestConsensus : public td::actor::Actor {
         }
         auto wanted_vote = serialize_tl_object(simplex::Vote{simplex::NotarizeVote{*target}}.to_tl(), true);
         for (size_t node = 1; node < 4; ++node) {
-          if (fault_reads[node].size() < 4 ||
-              C05_LAST_FAULT_TIME[node].load() - candidate_time <= 1.0) {
+          if (fault_reads[node].size() < 4 || C05_LAST_FAULT_TIME[node].load() - candidate_time <= 1.0) {
             fail(PSTRING() << "C05 node " << node << " did not remain unavailable beyond the one-second window");
             co_return td::Unit{};
           }
@@ -2545,9 +2542,9 @@ class TestConsensus : public td::actor::Actor {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
       }
       if (EMPTY_CHAIN_ORIGIN_FAILURES < 3 || EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES == 0) {
-        empty_chain_restart_error_ = PSTRING() << "permanent origin injection did not reach replay: origin reads="
-                                               << EMPTY_CHAIN_ORIGIN_FAILURES
-                                               << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
+        empty_chain_restart_error_ =
+            PSTRING() << "permanent origin injection did not reach replay: origin reads=" << EMPTY_CHAIN_ORIGIN_FAILURES
+                      << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES;
         co_return td::Unit{};
       }
       if (candidate_record_count(instance) != stopped_count) {
@@ -2564,10 +2561,10 @@ class TestConsensus : public td::actor::Actor {
       LOG(WARNING) << "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=" << EMPTY_CHAIN_ORIGIN_FAILURES
                    << " anchor failures=" << EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES
                    << " candidate records=" << stopped_count << " -> " << after_window;
-      std::fprintf(stderr,
-                   "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=%zu anchor failures=%zu candidate records=%zu -> %zu\n",
-                   EMPTY_CHAIN_ORIGIN_FAILURES.load(), EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load(), stopped_count,
-                   after_window);
+      std::fprintf(
+          stderr,
+          "C03_PERMANENT_ORIGIN_FAIL_CLOSED_OK: origin reads=%zu anchor failures=%zu candidate records=%zu -> %zu\n",
+          EMPTY_CHAIN_ORIGIN_FAILURES.load(), EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load(), stopped_count, after_window);
       std::fflush(stderr);
       empty_chain_restart_completed_ = true;
       co_return td::Unit{};
@@ -2616,8 +2613,9 @@ class TestConsensus : public td::actor::Actor {
     auto final_anchor_failures = EMPTY_CHAIN_MANAGER_ANCHOR_FAILURES.load();
     if (EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES != 0 &&
         final_anchor_failures != EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES) {
-      empty_chain_restart_error_ = PSTRING() << "expected exactly " << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES
-                                             << " transient manager-anchor failures, observed " << final_anchor_failures;
+      empty_chain_restart_error_ = PSTRING()
+                                   << "expected exactly " << EMPTY_CHAIN_MANAGER_ANCHOR_TRANSIENT_FAILURES
+                                   << " transient manager-anchor failures, observed " << final_anchor_failures;
       co_return td::Unit{};
     }
     if (final_anchor_failures != settled_anchor_failures) {
@@ -2627,9 +2625,9 @@ class TestConsensus : public td::actor::Actor {
       co_return td::Unit{};
     }
     if (EMPTY_CHAIN_ORIGIN_FAILURES != EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES) {
-      empty_chain_restart_error_ = PSTRING() << "expected " << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES
-                                             << " transient session-origin failures, observed "
-                                             << EMPTY_CHAIN_ORIGIN_FAILURES;
+      empty_chain_restart_error_ = PSTRING()
+                                   << "expected " << EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES
+                                   << " transient session-origin failures, observed " << EMPTY_CHAIN_ORIGIN_FAILURES;
       co_return td::Unit{};
     }
     LOG(WARNING) << "Long empty-chain restart recovered after " << empty_chain_length
@@ -2886,9 +2884,8 @@ td::actor::Task<> TestManagerFacade::accept_block(BlockIdExt id, td::Ref<BlockDa
   co_return td::Unit{};
 }
 
-td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(BlockIdExt block_id,
-                                                                            td::Timestamp timeout,
-                                                                            std::optional<CandidateId> requesting_candidate) {
+td::actor::Task<td::Ref<vm::Cell>> TestManagerFacade::wait_block_state_root(
+    BlockIdExt block_id, td::Timestamp timeout, std::optional<CandidateId> requesting_candidate) {
   if (C05_GENESIS_FAULT_BUDGET != 0 && block_id == FIRST_PARENT && node_idx_ > 0 && node_idx_ < 4) {
     std::scoped_lock lock(C05_SIMULTANEOUS_OBSERVATION.mutex);
     const auto& target = C05_SIMULTANEOUS_OBSERVATION.first_candidate;

@@ -377,11 +377,11 @@ void adnl_ext_disconnected_query_refuses() {
   scheduler.run_in_context([&] {
     // Name resolution fails, leaving the inner connection empty. Sending
     // directly models the outer client's stale-alive race at this boundary.
-    client = td::actor::create_actor<adnl::AdnlExtClientImpl>(
-        "disconnected-ext-client", server_id, std::string{"invalid-host-name!"},
-        std::make_unique<ExtClientCallback>(ready));
-    td::actor::send_closure(client, &adnl::AdnlExtClientImpl::send_query, "disconnected-race",
-                            td::BufferSlice{"proof"}, td::Timestamp::in(10.0),
+    client = td::actor::create_actor<adnl::AdnlExtClientImpl>("disconnected-ext-client", server_id,
+                                                              std::string{"invalid-host-name!"},
+                                                              std::make_unique<ExtClientCallback>(ready));
+    td::actor::send_closure(client, &adnl::AdnlExtClientImpl::send_query, "disconnected-race", td::BufferSlice{"proof"},
+                            td::Timestamp::in(10.0),
                             td::PromiseCreator::lambda([&](td::Result<td::BufferSlice> result) {
                               answer = std::move(result);
                               completed.store(true, std::memory_order_release);

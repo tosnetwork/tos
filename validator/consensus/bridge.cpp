@@ -80,8 +80,8 @@ class ManagerFacadeImpl : public ManagerFacade {
     co_return td::Unit{};
   }
 
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(
-      BlockIdExt block_id, td::Timestamp timeout, std::optional<CandidateId> requesting_candidate) override {
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout,
+                                                           std::optional<CandidateId> requesting_candidate) override {
     (void)requesting_candidate;
     auto state =
         co_await td::actor::ask(manager_, &ValidatorManager::wait_block_state_short, block_id, 0, timeout, false);

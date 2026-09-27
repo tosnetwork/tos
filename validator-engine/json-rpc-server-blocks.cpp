@@ -16,20 +16,20 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "json-rpc-server-internal.h"
-#include "json-rpc-handler-guard.h"
-
 #include "auto/tl/lite_api.hpp"
-#include "tl/tl_object_parse.h"
 #include "block/block-auto.h"
-#include "block/block.h"
 #include "block/block-parse.h"
+#include "block/block.h"
 #include "block/check-proof.h"
 #include "block/mc-config.h"
+#include "td/utils/crypto.h"
+#include "tl/tl_object_parse.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cp0.h"
 #include "vm/vm.h"
-#include "td/utils/crypto.h"
+
+#include "json-rpc-handler-guard.h"
+#include "json-rpc-server-internal.h"
 
 namespace tos {
 
@@ -491,94 +491,87 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
         auto query = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-            std::move(query),
-            td::PromiseCreator::lambda(
-                [cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
-                 exact_id = std::move(exact_id),
-                 promise = std::move(promise)](
-                    td::Result<td::BufferSlice> R) mutable {
-          if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getBlockHeader: " << R.error(), req_id, cors));
-            return;
-          }
-          auto hdr_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
-              R.move_as_ok(), true);
-          if (hdr_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse blockHeader: " << hdr_r.error(), req_id, cors));
-            return;
-          }
-          auto hdr = hdr_r.move_as_ok();
-
-          // Parse header proof to extract block info fields
-          auto proof_root_r = vm::std_boc_deserialize(hdr->header_proof_.as_slice());
-          if (proof_root_r.is_error()) {
-            // Return just the block ID and raw proof if parsing fails
-            auto result = PSTRING()
-                << "{\"@type\":\"blocks.header\",\"id\":" << id_json
-                << ",\"header_proof\":\"" << td::base64_encode(hdr->header_proof_.as_slice()) << "\"}";
-            promise.set_value(make_json_ok(result, req_id, cors));
-            return;
-          }
-
-          auto virt_r = vm::MerkleProof::virtualize(proof_root_r.move_as_ok());
-          if (virt_r.is_error()) {
-            auto result = PSTRING()
-                << "{\"@type\":\"blocks.header\",\"id\":" << id_json
-                << ",\"header_proof\":\"" << td::base64_encode(hdr->header_proof_.as_slice()) << "\"}";
-            promise.set_value(make_json_ok(result, req_id, cors));
-            return;
-          }
-          auto virt_root = virt_r.move_as_ok();
-
-          // Parse Block structure from virtual root
-          block::gen::Block::Record blk;
-          block::gen::BlockInfo::Record info;
-          bool parsed = tlb::unpack_cell(virt_root, blk) &&
-                        tlb::unpack_cell(blk.info, info);
-
-          td::StringBuilder sb;
-          sb << "{\"@type\":\"blocks.header\",\"id\":" << id_json;
-          if (parsed) {
-            sb << ",\"global_id\":" << blk.global_id
-               << ",\"version\":" << info.version
-               << ",\"after_merge\":" << (info.after_merge ? "true" : "false")
-               << ",\"before_split\":" << (info.before_split ? "true" : "false")
-               << ",\"after_split\":" << (info.after_split ? "true" : "false")
-               << ",\"want_merge\":" << (info.want_merge ? "true" : "false")
-               << ",\"want_split\":" << (info.want_split ? "true" : "false")
-               << ",\"validator_list_hash_short\":" << info.gen_validator_list_hash_short
-               << ",\"catchain_seqno\":" << info.gen_catchain_seqno
-               << ",\"min_ref_mc_seqno\":" << info.min_ref_mc_seqno
-               << ",\"is_key_block\":" << (info.key_block ? "true" : "false")
-               << ",\"prev_key_block_seqno\":" << info.prev_key_block_seqno
-               << ",\"start_lt\":\"" << info.start_lt << "\""
-               << ",\"end_lt\":\"" << info.end_lt << "\""
-               << ",\"gen_utime\":" << info.gen_utime;
-            std::vector<tos::BlockIdExt> previous;
-            tos::BlockIdExt master_ref;
-            bool after_split = false;
-            auto previous_status = block::unpack_block_prev_blk_try(virt_root, exact_id, previous,
-                                                                     master_ref, after_split);
-            if (previous_status.is_ok()) {
-              sb << ",\"prev_blocks\":[";
-              bool first = true;
-              for (const auto& parent : previous) {
-                if (!first) sb << ",";
-                first = false;
-                sb << "{\"@type\":\"tos.blockIdExt\",\"workchain\":" << parent.id.workchain
-                   << ",\"shard\":\"" << static_cast<td::int64>(parent.id.shard) << "\",\"seqno\":" << parent.id.seqno
-                   << ",\"root_hash\":\"" << td::base64_encode(parent.root_hash.as_slice())
-                   << "\",\"file_hash\":\"" << td::base64_encode(parent.file_hash.as_slice()) << "\"}";
+        td::actor::send_closure(
+            self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+            td::PromiseCreator::lambda([cors, req_id = std::move(req_id), id_json = std::move(resolved_id_json),
+                                        exact_id = std::move(exact_id),
+                                        promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
+              if (R.is_error()) {
+                promise.set_value(make_json_error(-32603, PSTRING() << "getBlockHeader: " << R.error(), req_id, cors));
+                return;
               }
-              sb << "]";
-            }
-          }
-          sb << "}";
-          promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
-        }));
+              auto hdr_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
+              if (hdr_r.is_error()) {
+                promise.set_value(
+                    make_json_error(-32603, PSTRING() << "parse blockHeader: " << hdr_r.error(), req_id, cors));
+                return;
+              }
+              auto hdr = hdr_r.move_as_ok();
+
+              // Parse header proof to extract block info fields
+              auto proof_root_r = vm::std_boc_deserialize(hdr->header_proof_.as_slice());
+              if (proof_root_r.is_error()) {
+                // Return just the block ID and raw proof if parsing fails
+                auto result = PSTRING() << "{\"@type\":\"blocks.header\",\"id\":" << id_json << ",\"header_proof\":\""
+                                        << td::base64_encode(hdr->header_proof_.as_slice()) << "\"}";
+                promise.set_value(make_json_ok(result, req_id, cors));
+                return;
+              }
+
+              auto virt_r = vm::MerkleProof::virtualize(proof_root_r.move_as_ok());
+              if (virt_r.is_error()) {
+                auto result = PSTRING() << "{\"@type\":\"blocks.header\",\"id\":" << id_json << ",\"header_proof\":\""
+                                        << td::base64_encode(hdr->header_proof_.as_slice()) << "\"}";
+                promise.set_value(make_json_ok(result, req_id, cors));
+                return;
+              }
+              auto virt_root = virt_r.move_as_ok();
+
+              // Parse Block structure from virtual root
+              block::gen::Block::Record blk;
+              block::gen::BlockInfo::Record info;
+              bool parsed = tlb::unpack_cell(virt_root, blk) && tlb::unpack_cell(blk.info, info);
+
+              td::StringBuilder sb;
+              sb << "{\"@type\":\"blocks.header\",\"id\":" << id_json;
+              if (parsed) {
+                sb << ",\"global_id\":" << blk.global_id << ",\"version\":" << info.version
+                   << ",\"after_merge\":" << (info.after_merge ? "true" : "false")
+                   << ",\"before_split\":" << (info.before_split ? "true" : "false")
+                   << ",\"after_split\":" << (info.after_split ? "true" : "false")
+                   << ",\"want_merge\":" << (info.want_merge ? "true" : "false")
+                   << ",\"want_split\":" << (info.want_split ? "true" : "false")
+                   << ",\"validator_list_hash_short\":" << info.gen_validator_list_hash_short
+                   << ",\"catchain_seqno\":" << info.gen_catchain_seqno
+                   << ",\"min_ref_mc_seqno\":" << info.min_ref_mc_seqno
+                   << ",\"is_key_block\":" << (info.key_block ? "true" : "false")
+                   << ",\"prev_key_block_seqno\":" << info.prev_key_block_seqno << ",\"start_lt\":\"" << info.start_lt
+                   << "\""
+                   << ",\"end_lt\":\"" << info.end_lt << "\""
+                   << ",\"gen_utime\":" << info.gen_utime;
+                std::vector<tos::BlockIdExt> previous;
+                tos::BlockIdExt master_ref;
+                bool after_split = false;
+                auto previous_status =
+                    block::unpack_block_prev_blk_try(virt_root, exact_id, previous, master_ref, after_split);
+                if (previous_status.is_ok()) {
+                  sb << ",\"prev_blocks\":[";
+                  bool first = true;
+                  for (const auto &parent : previous) {
+                    if (!first)
+                      sb << ",";
+                    first = false;
+                    sb << "{\"@type\":\"tos.blockIdExt\",\"workchain\":" << parent.id.workchain << ",\"shard\":\""
+                       << static_cast<td::int64>(parent.id.shard) << "\",\"seqno\":" << parent.id.seqno
+                       << ",\"root_hash\":\"" << td::base64_encode(parent.root_hash.as_slice()) << "\",\"file_hash\":\""
+                       << td::base64_encode(parent.file_hash.as_slice()) << "\"}";
+                  }
+                  sb << "]";
+                }
+              }
+              sb << "}";
+              promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
+            }));
       });
 }
 

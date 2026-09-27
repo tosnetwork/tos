@@ -17,9 +17,10 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "td/utils/as.h"
+
 #include "adnl-ext-client.h"
 #include "adnl-ext-client.hpp"
-#include "td/utils/as.h"
 
 namespace tos {
 

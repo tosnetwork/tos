@@ -76,21 +76,18 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
   slot->cors = opts_.cors_origin;
 
   // Step 2 lambda: query config at a resolved block
-  auto do_query_config = [cors = opts_.cors_origin, config_id, with_proof, slot,
-                          self_id = actor_id(this)](
-      tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
-        std::vector<td::int32> param_list = {config_id};
-        auto inner = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_getConfigParams>(
-                0x10000, std::move(block_id), std::move(param_list)),
-            true);
-        auto query = tos::serialize_tl_object(
-            tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
+  auto do_query_config = [cors = opts_.cors_origin, config_id, with_proof, slot, self_id = actor_id(this)](
+                             tos::tl_object_ptr<tos::lite_api::tosNode_blockIdExt> block_id) mutable {
+    std::vector<td::int32> param_list = {config_id};
+    auto inner = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getConfigParams>(
+                                              0x10000, std::move(block_id), std::move(param_list)),
+                                          true);
+    auto query =
+        tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
 
-        td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-            std::move(query),
-            td::PromiseCreator::lambda(
-                [cors, config_id, with_proof, slot](td::Result<td::BufferSlice> R) mutable {
+    td::actor::send_closure(
+        self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
+        td::PromiseCreator::lambda([cors, config_id, with_proof, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
             slot->settle_error(-32603, PSTRING() << "getConfigParam failed: " << R.error());
             return;
@@ -150,7 +147,8 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
               bool first = true;
               std::size_t validator_index = 0;
               for (const auto& validator : validators->list) {
-                if (!first) decoded << ",";
+                if (!first)
+                  decoded << ",";
                 first = false;
                 // A PQ descriptor's Ed25519 field is a zero placeholder, not
                 // its consensus key. Never expose it as a public key: clients
@@ -158,25 +156,19 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
                 // and transport identity from this decoded view of the BOC.
                 decoded << "{\"index\":" << validator_index++ << ",\"public_key\":";
                 if (validator.is_pq()) {
-                  decoded << "null,\"validator_id\":\""
-                          << td::base64_encode(validator.validator_id.value.as_slice())
-                          << "\",\"key_id\":\""
-                          << td::base64_encode(validator.key_id.value.as_slice())
-                          << "\",\"algorithm_id\":" << validator.algorithm_id
-                          << ",\"pq_public_key\":\""
+                  decoded << "null,\"validator_id\":\"" << td::base64_encode(validator.validator_id.value.as_slice())
+                          << "\",\"key_id\":\"" << td::base64_encode(validator.key_id.value.as_slice())
+                          << "\",\"algorithm_id\":" << validator.algorithm_id << ",\"pq_public_key\":\""
                           << td::base64_encode(td::Slice(validator.pq_public_key)) << "\"";
                 } else {
                   decoded << "\"" << td::base64_encode(validator.pubkey.as_bits256().as_slice())
-                          << "\",\"validator_id\":\""
-                          << td::base64_encode(validator.validator_id.value.as_slice())
-                          << "\",\"key_id\":\""
-                          << td::base64_encode(validator.key_id.value.as_slice())
+                          << "\",\"validator_id\":\"" << td::base64_encode(validator.validator_id.value.as_slice())
+                          << "\",\"key_id\":\"" << td::base64_encode(validator.key_id.value.as_slice())
                           << "\",\"algorithm_id\":0,\"pq_public_key\":null";
                 }
-                decoded << ",\"adnl_address\":\""
-                        << td::base64_encode(validator.adnl_addr.as_slice())
-                        << "\",\"weight\":\"" << validator.weight
-                        << "\",\"cumulative_weight\":\"" << validator.cum_weight << "\"}";
+                decoded << ",\"adnl_address\":\"" << td::base64_encode(validator.adnl_addr.as_slice())
+                        << "\",\"weight\":\"" << validator.weight << "\",\"cumulative_weight\":\""
+                        << validator.cum_weight << "\"}";
               }
               decoded << "]}";
               validator_set_json = decoded.as_cslice().str();
@@ -192,10 +184,8 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
               // Return the ID and raw proofs actually checked above. A separate
               // getBlockHeader(seqno) call may resolve a different fork.
               sb << ",\"block_id\":" << format_block_id_json(*f->id_)
-                 << ",\"state_proof\":"
-                 << td::JsonString(td::Slice(td::base64_encode(f->state_proof_.as_slice())))
-                 << ",\"config_proof\":"
-                 << td::JsonString(td::Slice(td::base64_encode(f->config_proof_.as_slice())));
+                 << ",\"state_proof\":" << td::JsonString(td::Slice(td::base64_encode(f->state_proof_.as_slice())))
+                 << ",\"config_proof\":" << td::JsonString(td::Slice(td::base64_encode(f->config_proof_.as_slice())));
             }
             sb << "}";
             slot->promise.set_value(make_json_ok(sb.as_cslice().str(), slot->req_id, cors));

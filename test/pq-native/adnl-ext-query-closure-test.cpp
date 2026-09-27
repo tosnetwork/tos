@@ -74,11 +74,11 @@ td::uint16 allocate_tcp_port() {
 
 // What the server-side query handler does with each delivered query.
 enum class ServerMode {
-  Echo,           // answer "answer:" + request bytes immediately
-  Hold,           // keep the promise until the test releases it
-  Error,          // fail the ADNL promise (generic error path, no lite contract)
-  LiteError,      // answer with a serialized liteServer_error object
-  Oversized,      // answer with a payload above the framed packet limit
+  Echo,       // answer "answer:" + request bytes immediately
+  Hold,       // keep the promise until the test releases it
+  Error,      // fail the ADNL promise (generic error path, no lite contract)
+  LiteError,  // answer with a serialized liteServer_error object
+  Oversized,  // answer with a payload above the framed packet limit
 };
 
 struct ServerState {
@@ -155,8 +155,10 @@ void clock_record(const char* phase, const std::string& nonce, double deadline) 
   const double before = td::Time::now();
   const double wall = td::Time::system_now();
   const double after = td::Time::now();
-  std::printf("Q02_CALLER_CLOCK phase=%s nonce=%s td_mono_before=%a td_wall=%a td_mono_after=%a deadline_monotonic=%a precision=td-double-seconds\n",
-              phase, nonce.c_str(), before, wall, after, deadline);
+  std::printf(
+      "Q02_CALLER_CLOCK phase=%s nonce=%s td_mono_before=%a td_wall=%a td_mono_after=%a deadline_monotonic=%a "
+      "precision=td-double-seconds\n",
+      phase, nonce.c_str(), before, wall, after, deadline);
   std::fflush(stdout);
 }
 
@@ -258,7 +260,8 @@ class Pair {
                "client connection did not become ready");
   }
 
-  std::shared_ptr<Slot> send(std::string request, double deadline_s, std::string logical, int attempt, std::string retry_of_nonce = "-") {
+  std::shared_ptr<Slot> send(std::string request, double deadline_s, std::string logical, int attempt,
+                             std::string retry_of_nonce = "-") {
     auto slot = std::make_shared<Slot>();
     slot->request = std::move(request);
     slot->logical = std::move(logical);
@@ -268,27 +271,31 @@ class Pair {
       slot->sent_at = td::Time::now();
       slot->deadline = slot->sent_at + deadline_s;
       clock_record("before_send", slot->request, slot->deadline);
-      std::printf("Q02_CALLER_CREATE nonce=%s logical=%s attempt=%d retry_of_nonce=%s pid=%d endpoint=127.0.0.1:%u deadline_s=%.1f\n",
-                  slot->request.c_str(), slot->logical.c_str(), slot->attempt, slot->retry_of_nonce.c_str(), ::getpid(), port_, deadline_s);
+      std::printf(
+          "Q02_CALLER_CREATE nonce=%s logical=%s attempt=%d retry_of_nonce=%s pid=%d endpoint=127.0.0.1:%u "
+          "deadline_s=%.1f\n",
+          slot->request.c_str(), slot->logical.c_str(), slot->attempt, slot->retry_of_nonce.c_str(), ::getpid(), port_,
+          deadline_s);
       std::fflush(stdout);
-      td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, slot->request,
-                              td::BufferSlice{slot->request}, td::Timestamp::at(slot->deadline),
-                              td::PromiseCreator::lambda([slot](td::Result<td::BufferSlice> result) {
-                                std::lock_guard lock(slot->mutex);
-                                if (slot->completions.load(std::memory_order_acquire) == 0) {
-                                  slot->result = std::move(result);
-                                  slot->completed_at = td::Time::now();
-                                  clock_record("terminal", slot->request, slot->deadline);
-                                }
-                                slot->completions.fetch_add(1, std::memory_order_acq_rel);
-                                std::printf("Q02_CALLER_TERMINAL nonce=%s logical=%s attempt=%d retry_of_nonce=%s pid=%d outcome=%s code=%d answer_match=%d elapsed_ms=%.3f\n",
-                                            slot->request.c_str(), slot->logical.c_str(), slot->attempt, slot->retry_of_nonce.c_str(), ::getpid(),
-                                            slot->result.is_ok() ? "value" : "error",
-                                            slot->result.is_ok() ? 0 : slot->result.error().code(),
-                                            slot->result.is_ok() && slot->result.ok().as_slice().str() == expected_answer(slot->request),
-                                            1000.0 * (slot->completed_at - slot->sent_at));
-                                std::fflush(stdout);
-                              }));
+      td::actor::send_closure(
+          client_, &adnl::AdnlExtClient::send_query, slot->request, td::BufferSlice{slot->request},
+          td::Timestamp::at(slot->deadline), td::PromiseCreator::lambda([slot](td::Result<td::BufferSlice> result) {
+            std::lock_guard lock(slot->mutex);
+            if (slot->completions.load(std::memory_order_acquire) == 0) {
+              slot->result = std::move(result);
+              slot->completed_at = td::Time::now();
+              clock_record("terminal", slot->request, slot->deadline);
+            }
+            slot->completions.fetch_add(1, std::memory_order_acq_rel);
+            std::printf(
+                "Q02_CALLER_TERMINAL nonce=%s logical=%s attempt=%d retry_of_nonce=%s pid=%d outcome=%s code=%d "
+                "answer_match=%d elapsed_ms=%.3f\n",
+                slot->request.c_str(), slot->logical.c_str(), slot->attempt, slot->retry_of_nonce.c_str(), ::getpid(),
+                slot->result.is_ok() ? "value" : "error", slot->result.is_ok() ? 0 : slot->result.error().code(),
+                slot->result.is_ok() && slot->result.ok().as_slice().str() == expected_answer(slot->request),
+                1000.0 * (slot->completed_at - slot->sent_at));
+            std::fflush(stdout);
+          }));
       clock_record("after_send", slot->request, slot->deadline);
     });
     return slot;
@@ -429,7 +436,6 @@ std::string request_tag(const std::string& name, size_t index) {
   return name + "#" + std::to_string(index) + "#" + std::to_string(td::Random::fast_uint64());
 }
 
-
 // Fixed before invocation in the resource manifest; unique within each run.
 std::string nonce(int token) {
   return std::string(63, '0') + static_cast<char>('0' + token);
@@ -440,8 +446,10 @@ std::string nonce(int token) {
 class AbsentConnection final : public adnl::AdnlExtClientImpl {
  public:
   using AdnlExtClientImpl::AdnlExtClientImpl;
-  void start_up() override {}
-  void alarm() override {}
+  void start_up() override {
+  }
+  void alarm() override {
+  }
 };
 
 void disconnected_refusal() {
@@ -452,24 +460,26 @@ void disconnected_refusal() {
   slot->request = nonce(1);
   auto id = adnl::AdnlNodeIdFull{PrivateKey{privkeys::Ed25519::random()}.compute_public_key()};
   scheduler.run_in_context([&] {
-    client = td::actor::create_actor<AbsentConnection>("q02-absent", id,
-        std::string{"127.0.0.1:1"}, std::make_unique<ReadyCallback>(transitions));
+    client = td::actor::create_actor<AbsentConnection>("q02-absent", id, std::string{"127.0.0.1:1"},
+                                                       std::make_unique<ReadyCallback>(transitions));
     slot->sent_at = td::Time::now();
     slot->deadline = slot->sent_at + 10.0;
     clock_record("before_send", slot->request, slot->deadline);
-    std::printf("Q02_CALLER_CREATE nonce=%s logical=absent attempt=0 retry_of_nonce=- pid=%d deadline_s=10.0\n", slot->request.c_str(), ::getpid());
-    td::actor::send_closure(client, &adnl::AdnlExtClientImpl::send_query, slot->request,
-        td::BufferSlice{slot->request}, td::Timestamp::at(slot->deadline),
-        td::PromiseCreator::lambda([slot](td::Result<td::BufferSlice> result) {
+    std::printf("Q02_CALLER_CREATE nonce=%s logical=absent attempt=0 retry_of_nonce=- pid=%d deadline_s=10.0\n",
+                slot->request.c_str(), ::getpid());
+    td::actor::send_closure(
+        client, &adnl::AdnlExtClientImpl::send_query, slot->request, td::BufferSlice{slot->request},
+        td::Timestamp::at(slot->deadline), td::PromiseCreator::lambda([slot](td::Result<td::BufferSlice> result) {
           std::lock_guard lock(slot->mutex);
           slot->result = std::move(result);
           slot->completed_at = td::Time::now();
-                                  clock_record("terminal", slot->request, slot->deadline);
+          clock_record("terminal", slot->request, slot->deadline);
           slot->completions.fetch_add(1, std::memory_order_acq_rel);
-          std::printf("Q02_CALLER_TERMINAL nonce=%s logical=absent attempt=0 retry_of_nonce=- pid=%d outcome=%s code=%d elapsed_ms=%.3f\n",
+          std::printf(
+              "Q02_CALLER_TERMINAL nonce=%s logical=absent attempt=0 retry_of_nonce=- pid=%d outcome=%s code=%d "
+              "elapsed_ms=%.3f\n",
               slot->request.c_str(), ::getpid(), slot->result.is_ok() ? "value" : "error",
-              slot->result.is_ok() ? 0 : slot->result.error().code(),
-              1000.0 * (slot->completed_at - slot->sent_at));
+              slot->result.is_ok() ? 0 : slot->result.error().code(), 1000.0 * (slot->completed_at - slot->sent_at));
           std::fflush(stdout);
         }));
     clock_record("after_send", slot->request, slot->deadline);
@@ -477,11 +487,12 @@ void disconnected_refusal() {
   const auto bound = td::Timestamp::in(11.0);
   while (!slot->completions.load(std::memory_order_acquire)) {
     scheduler.run(0.01);
-    require(!bound.is_in_past(), "absent caller did not complete within unchanged 10s deadline plus observation margin");
+    require(!bound.is_in_past(),
+            "absent caller did not complete within unchanged 10s deadline plus observation margin");
   }
-  require(slot->completions == 1 && slot->result.is_error() &&
-          slot->result.error().code() == ErrorCode::cancelled &&
-          slot->result.error().message() == "conn not ready", "absent query retained to timeout instead of cancelled refusal");
+  require(slot->completions == 1 && slot->result.is_error() && slot->result.error().code() == ErrorCode::cancelled &&
+              slot->result.error().message() == "conn not ready",
+          "absent query retained to timeout instead of cancelled refusal");
   require(slot->completed_at - slot->sent_at < 1.0, "absent refusal waited for query deadline");
   require(transitions->load() == 0, "absent test unexpectedly connected");
   scheduler.run_in_context([&] { client.reset(); });
@@ -509,8 +520,10 @@ struct RawPeer {
     port = ntohs(address.sin_port);
   }
   ~RawPeer() {
-    if (accepted >= 0) ::close(accepted);
-    if (listener >= 0) ::close(listener);
+    if (accepted >= 0)
+      ::close(accepted);
+    if (listener >= 0)
+      ::close(listener);
   }
 };
 
@@ -602,11 +615,13 @@ void dead_nonempty_refusal() {
                               slot->result = std::move(result);
                               slot->completed_at = td::Time::now();
                               slot->completions.fetch_add(1, std::memory_order_acq_rel);
-                              std::printf("Q02_CALLER_TERMINAL nonce=%s logical=dead-nonempty attempt=0 retry_of_nonce=- pid=%d outcome=%s code=%d message=%s elapsed_ms=%.3f\n",
-                                          slot->request.c_str(), ::getpid(), slot->result.is_ok() ? "value" : "error",
-                                          slot->result.is_ok() ? 0 : slot->result.error().code(),
-                                          slot->result.is_ok() ? "-" : slot->result.error().message().str().c_str(),
-                                          1000.0 * (slot->completed_at - slot->sent_at));
+                              std::printf(
+                                  "Q02_CALLER_TERMINAL nonce=%s logical=dead-nonempty attempt=0 retry_of_nonce=- "
+                                  "pid=%d outcome=%s code=%d message=%s elapsed_ms=%.3f\n",
+                                  slot->request.c_str(), ::getpid(), slot->result.is_ok() ? "value" : "error",
+                                  slot->result.is_ok() ? 0 : slot->result.error().code(),
+                                  slot->result.is_ok() ? "-" : slot->result.error().message().str().c_str(),
+                                  1000.0 * (slot->completed_at - slot->sent_at));
                               std::fflush(stdout);
                             }));
   });
@@ -631,7 +646,8 @@ void dead_nonempty_refusal() {
   scheduler.run_in_context([&] { client.reset(); });
   scheduler.run(0.1);
   scheduler.stop();
-  std::printf("Q02_REGRESSION case=dead-nonempty outcome=cancelled production_deadline_s=10.0 historical_attribution=false\n");
+  std::printf(
+      "Q02_REGRESSION case=dead-nonempty outcome=cancelled production_deadline_s=10.0 historical_attribution=false\n");
 }
 
 void tcp_controls() {
@@ -662,7 +678,9 @@ void tcp_controls() {
   require(unanswered->completions == 1 && outcome_of(*unanswered) == Outcome::Timeout,
           "late answer resurrected a completed caller");
   require(pair.delivered_count() == 3, "TCP handler delivery count mismatch");
-  std::printf("Q02_CONTROL transport=tcp positive_answer_match=true controlled_unanswered=true explicit_retry_answer_match=true repair_acceptance=false\n");
+  std::printf(
+      "Q02_CONTROL transport=tcp positive_answer_match=true controlled_unanswered=true "
+      "explicit_retry_answer_match=true repair_acceptance=false\n");
 }
 }  // namespace
 
@@ -670,9 +688,13 @@ int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(DEBUG));
   const std::string only = argc > 1 ? argv[1] : "all";
   require(only == "all" || only == "absent" || only == "dead" || only == "tcp", "unknown case");
-  if (only == "all" || only == "absent") disconnected_refusal();
-  if (only == "all" || only == "dead") dead_nonempty_refusal();
-  if (only == "all" || only == "tcp") tcp_controls();
-  std::printf("Q02_SCOPE controlled-adnl-mechanism historical_cause=false application_success=false q02_signoff=false\n");
+  if (only == "all" || only == "absent")
+    disconnected_refusal();
+  if (only == "all" || only == "dead")
+    dead_nonempty_refusal();
+  if (only == "all" || only == "tcp")
+    tcp_controls();
+  std::printf(
+      "Q02_SCOPE controlled-adnl-mechanism historical_cause=false application_success=false q02_signoff=false\n");
   return 0;
 }

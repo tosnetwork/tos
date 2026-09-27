@@ -273,10 +273,10 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
         co_return error;
       }
       if (attempt + 1 == MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS) {
-        co_return td::Status::Error(
-            ErrorCode::notready, PSTRING() << "Simplex consensus: parent state of " << candidate->id
-                                           << " unavailable after " << MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS
-                                           << " attempts: " << error);
+        co_return td::Status::Error(ErrorCode::notready, PSTRING() << "Simplex consensus: parent state of "
+                                                                   << candidate->id << " unavailable after "
+                                                                   << MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS
+                                                                   << " attempts: " << error);
       }
       auto delay = std::min(NOTARIZE_STATE_RESOLVE_RETRY_DELAY * static_cast<double>(attempt + 1),
                             MAX_NOTARIZE_STATE_RESOLVE_RETRY_DELAY);

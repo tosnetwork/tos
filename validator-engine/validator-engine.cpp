@@ -50,8 +50,8 @@
 #include "td/utils/TsFileLog.h"
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
-#include "td/utils/misc.h"
 #include "td/utils/memory-tracker.h"
+#include "td/utils/misc.h"
 #include "td/utils/overloaded.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/rlimit.h"
@@ -63,18 +63,17 @@
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "tos/tos-types.h"
-
-#include "errorcode.h"
-
-#include "wallet-index.h"
-#include "wallet-index-writer.h"
-#include "validator/wc0-block-hook.h"
-#include "overlay-manager.h"
-#include "overlays.h"
 #include "validator/impl/config.hpp"
 #include "validator/measurement/measurement-contract.h"
 #include "validator/state-download-buffer.h"
+#include "validator/wc0-block-hook.h"
+
+#include "errorcode.h"
+#include "overlay-manager.h"
+#include "overlays.h"
 #include "validator-engine.hpp"
+#include "wallet-index-writer.h"
+#include "wallet-index.h"
 
 #if TD_DARWIN || TD_LINUX
 #include <unistd.h>

@@ -937,7 +937,8 @@ bool TestNode::show_help(std::string command) {
          "getkeyconfig <block-id-ext> [<param>...]\tShows specified or all configuration parameters from the "
          "previous key block with respect to <block-id-ext>\n"
          "saveconfig <filename> [<block-id-ext>]\tSaves all configuration parameters into specified file\n"
-         "saveblkproofchain <prefix> <from-id> <target-id>\tRetains raw PQ chain requests/responses for offline replay\n"
+         "saveblkproofchain <prefix> <from-id> <target-id>\tRetains raw PQ chain requests/responses for offline "
+         "replay\n"
          "gethead <block-id-ext>\tShows block header for <block-id-ext>\n"
          "getblock <block-id-ext>\tDownloads block\n"
          "dumpblock <block-id-ext>\tDownloads and dumps specified block\n"
@@ -3408,8 +3409,8 @@ void TestNode::got_block_header(tos::BlockIdExt blkid, td::BufferSlice data, int
   show_new_blkids();
 }
 
-bool TestNode::get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode,
-                              std::string capture_prefix, unsigned capture_index) {
+bool TestNode::get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode, std::string capture_prefix,
+                               unsigned capture_index) {
   if (!capture_prefix.empty() && (capture_index >= 32 || !(mode & 1) || to.seqno() <= from.seqno())) {
     return set_error("Z01 chain capture needs an advancing exact target and at most32responses");
   }
@@ -3436,31 +3437,32 @@ bool TestNode::get_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mod
                                    mode & 0xfff, tos::create_tl_lite_block_id(from), tos::create_tl_lite_block_id(to)),
                                true);
   if (!capture_prefix.empty()) {
-    auto saved = write_chain_original(capture_prefix + "-" + std::to_string(capture_index) + ".request.tl",
-                                      b.as_slice());
-    if (saved.is_error()) return set_error(saved.move_as_error());
+    auto saved =
+        write_chain_original(capture_prefix + "-" + std::to_string(capture_index) + ".request.tl", b.as_slice());
+    if (saved.is_error())
+      return set_error(saved.move_as_error());
   }
   return envelope_send_query(std::move(b), [Self = actor_id(this), from, to, mode, capture_prefix,
-                                          capture_index](td::Result<td::BufferSlice> res) {
+                                            capture_index](td::Result<td::BufferSlice> res) {
     if (res.is_error()) {
       LOG(ERROR) << "cannot obtain block proof for " << ((mode & 1) ? to.to_str() : "last masterchain block")
                  << " starting from " << from.to_str() << " from server : " << res.move_as_error().to_string();
     } else {
-      td::actor::send_closure_later(Self, &TestNode::got_block_proof, from, to, mode, res.move_as_ok(),
-                                  capture_prefix, capture_index);
+      td::actor::send_closure_later(Self, &TestNode::got_block_proof, from, to, mode, res.move_as_ok(), capture_prefix,
+                                    capture_index);
     }
   });
 }
 
 void TestNode::got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mode, td::BufferSlice pchain,
-                              std::string capture_prefix, unsigned capture_index) {
+                               std::string capture_prefix, unsigned capture_index) {
   if (!capture_prefix.empty()) {
     if (capture_index >= 32 || pchain.size() > 16 * 1024 * 1024) {
       LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: response count or size limit exceeded";
       return;
     }
-    auto saved = write_chain_original(capture_prefix + "-" + std::to_string(capture_index) + ".response.tl",
-                                      pchain.as_slice());
+    auto saved =
+        write_chain_original(capture_prefix + "-" + std::to_string(capture_index) + ".response.tl", pchain.as_slice());
     if (saved.is_error()) {
       LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: raw response write failed: " << saved;
       return;
@@ -3513,8 +3515,8 @@ void TestNode::got_block_proof(tos::BlockIdExt from, tos::BlockIdExt to, int mod
     return;
   }
   if (!capture_prefix.empty()) {
-    const auto receipt = "Z01_CHAIN_CAPTURE_OK segments=" + std::to_string(capture_index + 1) +
-                         " target=" + to.to_str() + "\n";
+    const auto receipt =
+        "Z01_CHAIN_CAPTURE_OK segments=" + std::to_string(capture_index + 1) + " target=" + to.to_str() + "\n";
     auto saved = write_chain_original(capture_prefix + ".complete", receipt);
     if (saved.is_error()) {
       LOG(ERROR) << "Z01_CHAIN_CAPTURE_REJECT: completion receipt write failed: " << saved;

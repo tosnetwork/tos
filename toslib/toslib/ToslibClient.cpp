@@ -2472,9 +2472,11 @@ class RunEmulator : public ToslibQueryActor {
 
 ToslibClient::ToslibClient(td::unique_ptr<ToslibCallback> callback
 #ifdef TOSLIB_Q01_TEST_NETWORK
-                           , std::shared_ptr<PublicNetworkTestHook> hook
+                           ,
+                           std::shared_ptr<PublicNetworkTestHook> hook
 #endif
-                           ) : callback_(std::move(callback)) {
+                           )
+    : callback_(std::move(callback)) {
 #ifdef TOSLIB_Q01_TEST_NETWORK
   test_hook_ = std::move(hook);
 #endif
@@ -2533,7 +2535,8 @@ void ToslibClient::init_ext_client() {
     ext_client_outbound_ = {};
     raw_client_ = liteclient::ExtClient::create(config_.lite_servers, nullptr);
 #ifdef TOSLIB_Q01_TEST_NETWORK
-    if (test_hook_) raw_client_ = test_hook_->decorate(std::move(raw_client_), config_generation_);
+    if (test_hook_)
+      raw_client_ = test_hook_->decorate(std::move(raw_client_), config_generation_);
 #endif
   }
 }
@@ -2637,9 +2640,10 @@ void ToslibClient::test_arm(td::uint64 id, std::string nonce, td::Promise<QueryT
 #endif
 void ToslibClient::request(td::uint64 id, toslib_api::object_ptr<toslib_api::Function> function
 #ifdef TOSLIB_Q01_TEST_NETWORK
-                           , QueryTraceContext trace_context
+                           ,
+                           QueryTraceContext trace_context
 #endif
-                           ) {
+) {
   VLOG(toslib_query) << "Toslib got query " << td::tag("id", id) << " " << to_string(function);
   if (function == nullptr) {
     LOG(ERROR) << "Receive empty static request";
@@ -2679,12 +2683,11 @@ void ToslibClient::request(td::uint64 id, toslib_api::object_ptr<toslib_api::Fun
       return promise.set_error(td::Status::Error("Q01 public request context differs"));
     }
     td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>> typed =
-        promise.wrap([](object_ptr<toslib_api::blocks_masterchainInfo> value) -> Object {
-      return std::move(value);
-    });
-    auto status = do_request(static_cast<const toslib_api::blocks_getMasterchainInfo&>(*function),
-                             std::move(typed), trace_context);
-    if (status.is_error()) typed.set_error(std::move(status));
+        promise.wrap([](object_ptr<toslib_api::blocks_masterchainInfo> value) -> Object { return std::move(value); });
+    auto status = do_request(static_cast<const toslib_api::blocks_getMasterchainInfo&>(*function), std::move(typed),
+                             trace_context);
+    if (status.is_error())
+      typed.set_error(std::move(status));
     return;
   }
 #endif
@@ -6236,9 +6239,10 @@ td::Status ToslibClient::do_request(const toslib_api::getConfigAll& request,
 td::Status ToslibClient::do_request(const toslib_api::blocks_getMasterchainInfo& masterchain_info,
                                     td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>>&& promise
 #ifdef TOSLIB_Q01_TEST_NETWORK
-                                    , QueryTraceContext trace_context
+                                    ,
+                                    QueryTraceContext trace_context
 #endif
-                                    ) {
+) {
   client_.send_query(tos::lite_api::liteServer_getMasterchainInfo(),
                      promise.wrap([](lite_api_ptr<tos::lite_api::liteServer_masterchainInfo>&& masterchain_info) {
                        return toslib_api::make_object<toslib_api::blocks_masterchainInfo>(
@@ -6246,9 +6250,10 @@ td::Status ToslibClient::do_request(const toslib_api::blocks_getMasterchainInfo&
                            to_toslib_api(*masterchain_info->init_));
                      })
 #ifdef TOSLIB_Q01_TEST_NETWORK
-                     , -1, trace_context
+                         ,
+                     -1, trace_context
 #endif
-                     );
+  );
   return td::Status::OK();
 }
 
