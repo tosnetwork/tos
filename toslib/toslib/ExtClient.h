@@ -69,9 +69,10 @@ class ExtClient {
   template <class QueryT>
   void send_query(QueryT query, td::Promise<typename QueryT::ReturnType> promise, td::int32 seq_no = -1
 #ifdef TOSLIB_Q01_TEST_NETWORK
-                  , QueryTraceContext trace_context = {}
+                  ,
+                  QueryTraceContext trace_context = {}
 #endif
-                  ) {
+  ) {
     auto raw_query = tos::serialize_tl_object(&query, true);
     td::uint32 tag = td::Random::fast_uint32();
     VLOG(lite_server) << "send query to liteserver: " << tag << " " << to_string(query);
@@ -85,7 +86,8 @@ class ExtClient {
         tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(raw_query)), true);
 
     send_raw_query(
-        std::move(liteserver_query), [promise = std::move(promise), tag](td::Result<td::BufferSlice> R) mutable {
+        std::move(liteserver_query),
+        [promise = std::move(promise), tag](td::Result<td::BufferSlice> R) mutable {
           auto res = [&]() -> td::Result<typename QueryT::ReturnType> {
             LOG_IF(ERROR, R.is_error()) << "failed to send query to liteserver: " << R.error();
             TRY_RESULT_PREFIX(data, std::move(R), ToslibError::LiteServerNetwork());
@@ -102,9 +104,10 @@ class ExtClient {
           promise.set_result(std::move(res));
         }
 #ifdef TOSLIB_Q01_TEST_NETWORK
-        , trace_context
+        ,
+        trace_context
 #endif
-        );
+    );
   }
 
   void force_change_liteserver() {
@@ -121,8 +124,9 @@ class ExtClient {
 
   void send_raw_query(td::BufferSlice query, td::Promise<td::BufferSlice> promise
 #ifdef TOSLIB_Q01_TEST_NETWORK
-                      , QueryTraceContext trace_context = {}
+                      ,
+                      QueryTraceContext trace_context = {}
 #endif
-                      );
+  );
 };
 }  // namespace toslib

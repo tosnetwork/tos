@@ -32,14 +32,10 @@
 
 namespace tos {
 
-static std::string build_wallet_json(bool is_wallet, td::int64 balance,
-                                     const std::string& account_state,
-                                     const std::string& wallet_type,
-                                     td::int32 seqno,
-                                     td::uint64 last_lt, const std::string& last_hash_b64,
-                                     const std::string& observed_mc_block,
-                                     const std::string& observed_shard_block,
-                                     td::int64 wallet_id = -1) {
+static std::string build_wallet_json(bool is_wallet, td::int64 balance, const std::string& account_state,
+                                     const std::string& wallet_type, td::int32 seqno, td::uint64 last_lt,
+                                     const std::string& last_hash_b64, const std::string& observed_mc_block,
+                                     const std::string& observed_shard_block, td::int64 wallet_id = -1) {
   td::StringBuilder sb;
   sb << "{\"@type\":\"ext.accounts.walletInformation\""
      << ",\"wallet\":" << (is_wallet ? "true" : "false")
@@ -48,8 +44,7 @@ static std::string build_wallet_json(bool is_wallet, td::int64 balance,
      << ",\"last_transaction_id\":{\"@type\":\"internal.transactionId\""
      << ",\"lt\":\"" << last_lt << "\""
      << ",\"hash\":" << td::JsonString(td::Slice(last_hash_b64)) << "}"
-     << ",\"observed_masterchain_block\":" << observed_mc_block
-     << ",\"observed_shard_block\":" << observed_shard_block;
+     << ",\"observed_masterchain_block\":" << observed_mc_block << ",\"observed_shard_block\":" << observed_shard_block;
   if (is_wallet) {
     sb << ",\"wallet_type\":" << td::JsonString(td::Slice(wallet_type));
     if (seqno >= 0) {
@@ -2154,11 +2149,10 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
       bool is_wallet = !wallet_type.empty();
 
       if (!is_wallet) {
-        promise_inner.set_value(make_json_ok(
-            build_wallet_json(false, parsed.balance, parsed.state_str, "",
-                              -1, parsed.last_trans_lt, parsed.last_trans_hash_b64,
-                              observed_mc_block, observed_shard_block),
-            req_id_inner, cors));
+        promise_inner.set_value(
+            make_json_ok(build_wallet_json(false, parsed.balance, parsed.state_str, "", -1, parsed.last_trans_lt,
+                                           parsed.last_trans_hash_b64, observed_mc_block, observed_shard_block),
+                         req_id_inner, cors));
         return;
       }
 
@@ -2169,9 +2163,8 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
       auto params_boc = vm::std_boc_serialize(cb.finalize());
       if (params_boc.is_error()) {
         promise_inner.set_value(make_json_ok(
-            build_wallet_json(true, parsed.balance, parsed.state_str, wallet_type,
-                              -1, parsed.last_trans_lt, parsed.last_trans_hash_b64,
-                              observed_mc_block, observed_shard_block),
+            build_wallet_json(true, parsed.balance, parsed.state_str, wallet_type, -1, parsed.last_trans_lt,
+                              parsed.last_trans_hash_b64, observed_mc_block, observed_shard_block),
             req_id_inner, cors));
         return;
       }
@@ -2188,38 +2181,34 @@ void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::str
       auto run_query = tos::serialize_tl_object(
           tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(run_inner)), true);
 
-      td::actor::send_closure(self_id, &JsonRpcServer::send_liteserver_query,
-          std::move(run_query),
-          td::PromiseCreator::lambda(
-              [cors, balance = parsed.balance, account_state = parsed.state_str,
-               last_lt = parsed.last_trans_lt, last_hash = parsed.last_trans_hash_b64,
-               observed_mc_block, observed_shard_block,
-               wallet_type = std::move(wallet_type),
-               req_id_inner = std::move(req_id_inner), promise_inner = std::move(promise_inner)](
-                  td::Result<td::BufferSlice> R) mutable {
-        td::int32 seqno = -1;
-        if (R.is_ok()) {
-          auto rr = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
-              R.move_as_ok(), true);
-          if (rr.is_ok()) {
-            auto rr_val = rr.move_as_ok();
-            if (rr_val->exit_code_ == 0 && !rr_val->result_.empty()) {
-              auto stk_r = parse_get_method_result_stack(rr_val->result_.as_slice());
-              if (stk_r.is_ok()) {
-                auto stk = stk_r.move_as_ok();
-                if (stk->depth() > 0 && stk->at(0).is_int()) {
-                  seqno = static_cast<td::int32>(stk->at(0).as_int()->to_long());
+      td::actor::send_closure(
+          self_id, &JsonRpcServer::send_liteserver_query, std::move(run_query),
+          td::PromiseCreator::lambda([cors, balance = parsed.balance, account_state = parsed.state_str,
+                                      last_lt = parsed.last_trans_lt, last_hash = parsed.last_trans_hash_b64,
+                                      observed_mc_block, observed_shard_block, wallet_type = std::move(wallet_type),
+                                      req_id_inner = std::move(req_id_inner),
+                                      promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
+            td::int32 seqno = -1;
+            if (R.is_ok()) {
+              auto rr = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(R.move_as_ok(), true);
+              if (rr.is_ok()) {
+                auto rr_val = rr.move_as_ok();
+                if (rr_val->exit_code_ == 0 && !rr_val->result_.empty()) {
+                  auto stk_r = parse_get_method_result_stack(rr_val->result_.as_slice());
+                  if (stk_r.is_ok()) {
+                    auto stk = stk_r.move_as_ok();
+                    if (stk->depth() > 0 && stk->at(0).is_int()) {
+                      seqno = static_cast<td::int32>(stk->at(0).as_int()->to_long());
+                    }
+                  }
                 }
               }
             }
-          }
-        }
-        promise_inner.set_value(make_json_ok(
-            build_wallet_json(true, balance, account_state, wallet_type,
-                              seqno, last_lt, last_hash,
-                              observed_mc_block, observed_shard_block),
-            req_id_inner, cors));
-      }));
+            promise_inner.set_value(
+                make_json_ok(build_wallet_json(true, balance, account_state, wallet_type, seqno, last_lt, last_hash,
+                                               observed_mc_block, observed_shard_block),
+                             req_id_inner, cors));
+          }));
     }));
   };
 

@@ -78,16 +78,15 @@ constexpr PendingBlockProofIdentityVerdict pending_block_proof_identity_verdict(
 }
 
 constexpr PendingBlockProofFailureAction pending_block_proof_failure_action(PendingBlockProofFailureSource source,
-                                                                           int error_code) {
+                                                                            int error_code) {
   if (source == PendingBlockProofFailureSource::TrustedContext) {
     return PendingBlockProofFailureAction::Retry;
   }
   if (error_code == ErrorCode::notready || error_code == ErrorCode::timeout) {
     return PendingBlockProofFailureAction::Retry;
   }
-  return source == PendingBlockProofFailureSource::FinalityEvidence
-             ? PendingBlockProofFailureAction::DiscardEvidence
-             : PendingBlockProofFailureAction::DiscardBlockBytes;
+  return source == PendingBlockProofFailureSource::FinalityEvidence ? PendingBlockProofFailureAction::DiscardEvidence
+                                                                    : PendingBlockProofFailureAction::DiscardBlockBytes;
 }
 struct PendingFinalityAttemptToken {
   std::uint64_t queue_generation{0};

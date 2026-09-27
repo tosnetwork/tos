@@ -17,12 +17,13 @@
 #include "td/actor/actor.h"
 #include "td/utils/crypto.h"
 #include "td/utils/port/path.h"
+#include "tl-utils/tl-utils.hpp"
 #include "validator/consensus/bus.h"
 #include "validator/consensus/db-path.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/consensus/simplex/certificate.h"
-#include "tl-utils/tl-utils.hpp"
 #include "vm/boc.h"
+
 #include "n5-manager-db-fixture.h"
 
 using namespace tos;
@@ -69,7 +70,7 @@ std::shared_ptr<sx::Bus> make_trusted_bus(ValidatorSessionId session_id) {
   return trusted;
 }
 
-std::optional<FinalCertFixture> make_verified_finalcert(const sx::Bus& trusted) {
+std::optional<FinalCertFixture> make_verified_finalcert(const sx::Bus &trusted) {
   std::vector<pq::ValidatorPQKeyStore> stores;
   for (size_t index = 0; index < trusted.validator_set.size(); ++index) {
     auto store = pq::ValidatorPQKeyStore::from_seed(std::string(32, static_cast<char>(0x40 + index)));
@@ -88,15 +89,15 @@ std::optional<FinalCertFixture> make_verified_finalcert(const sx::Bus& trusted) 
     if (!signature) {
       return std::nullopt;
     }
-    signatures.push_back(create_tl_object<sx::tl::voteSignature>(static_cast<int>(index),
-                                                                 td::BufferSlice(signature->signature)));
+    signatures.push_back(
+        create_tl_object<sx::tl::voteSignature>(static_cast<int>(index), td::BufferSlice(signature->signature)));
   }
   auto cert_tl = create_tl_object<sx::tl::certificate>(
       vote.to_tl(), create_tl_object<sx::tl::voteSignatureSet>(std::move(signatures)));
   auto verified = sx::Certificate<sx::Vote>::from_tl(std::move(*cert_tl), trusted);
   if (verified.is_error()) {
-    std::cerr << "N5_FINALCERT_FIXTURE_FAILED: production certificate verification: "
-              << verified.error().to_string() << '\n';
+    std::cerr << "N5_FINALCERT_FIXTURE_FAILED: production certificate verification: " << verified.error().to_string()
+              << '\n';
     return std::nullopt;
   }
   auto cert = verified.move_as_ok();
@@ -112,14 +113,12 @@ std::string consensus_path(const std::string &root, ValidatorSessionId session_i
 
 class N5FinalCertPublisher final : public td::actor::Actor {
  public:
-  void write(sx::BusHandle bus, sx::CertificateRef<sx::Vote> cert,
-             td::Promise<td::Unit> promise) {
+  void write(sx::BusHandle bus, sx::CertificateRef<sx::Vote> cert, td::Promise<td::Unit> promise) {
     write_inner(std::move(bus), std::move(cert), std::move(promise)).start().detach();
   }
 
  private:
-  td::actor::Task<> write_inner(sx::BusHandle bus, sx::CertificateRef<sx::Vote> cert,
-                               td::Promise<td::Unit> promise) {
+  td::actor::Task<> write_inner(sx::BusHandle bus, sx::CertificateRef<sx::Vote> cert, td::Promise<td::Unit> promise) {
     // This invokes simplex/db.cpp::process(SaveCertificate), including its
     // production db_key_vote(hash(inner TL)) / db_cert(inner TL) write.
     auto result = co_await bus.publish<sx::SaveCertificate>(std::move(cert)).wrap();
@@ -137,8 +136,7 @@ class N5FinalCertPublisher final : public td::actor::Actor {
   }
 };
 
-bool write_finalcert_journal(const std::string &path, ValidatorSessionId session_id,
-                             const FinalCertFixture &fixture) {
+bool write_finalcert_journal(const std::string &path, ValidatorSessionId session_id, const FinalCertFixture &fixture) {
   td::actor::Scheduler scheduler({1});
   td::actor::Runtime runtime;
   sx::Db::register_in(runtime);
@@ -154,10 +152,9 @@ bool write_finalcert_journal(const std::string &path, ValidatorSessionId session
     trusted->db = consensus::open_rocksdb_consensus_db(path);
     bus = runtime.start(std::move(trusted), "n5-finalcert-journal");
     publisher = td::actor::create_actor<N5FinalCertPublisher>("n5-finalcert-publisher");
-    td::actor::send_closure(publisher, &N5FinalCertPublisher::write, bus, fixture.cert,
-                            td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
-                              result.emplace(std::move(outcome));
-                            }));
+    td::actor::send_closure(
+        publisher, &N5FinalCertPublisher::write, bus, fixture.cert,
+        td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) { result.emplace(std::move(outcome)); }));
   });
   auto deadline = td::Timestamp::in(30.0);
   while (!result.has_value() && !deadline.is_in_past()) {
@@ -168,14 +165,16 @@ bool write_finalcert_journal(const std::string &path, ValidatorSessionId session
     std::cerr << "N5_FINALCERT_JOURNAL_FAILED: "
               << (result.has_value() ? result->error().to_string() : "writer timeout") << '\n';
   }
-  scheduler.run_in_context([&] { publisher.reset(); bus = {}; });
+  scheduler.run_in_context([&] {
+    publisher.reset();
+    bus = {};
+  });
   scheduler.stop();
   return ok;
 }
 
-bool read_finalcert_journal(const std::string &path, ValidatorSessionId session_id,
-                            td::Slice expected_inner_tl, bool expect_present,
-                            std::string *failure_out = nullptr) {
+bool read_finalcert_journal(const std::string &path, ValidatorSessionId session_id, td::Slice expected_inner_tl,
+                            bool expect_present, std::string *failure_out = nullptr) {
   // DbImpl constructs a KeyValueAsync actor, so even snapshot-only reads must
   // open it inside an actor scheduler. This is the same actor boundary Bridge
   // uses when it creates its bus and journal.
@@ -212,8 +211,7 @@ bool read_finalcert_journal(const std::string &path, ValidatorSessionId session_
       return;
     }
     auto verified = sx::Certificate<sx::Vote>::from_tl(std::move(*parsed.ok()->cert_), *trusted);
-    if (verified.is_error() ||
-        !std::holds_alternative<sx::FinalizeVote>(verified.ok()->vote.vote)) {
+    if (verified.is_error() || !std::holds_alternative<sx::FinalizeVote>(verified.ok()->vote.vote)) {
       failure = "recovered FinalCert fails production certificate verification";
       return;
     }
@@ -231,23 +229,19 @@ bool read_finalcert_journal(const std::string &path, ValidatorSessionId session_
   return matched;
 }
 
-bool run_actor(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::BufferSlice boc,
-               const std::string &root, bool write, bool expect_present,
-               std::string *failure_out = nullptr) {
+bool run_actor(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::BufferSlice boc, const std::string &root,
+               bool write, bool expect_present, std::string *failure_out = nullptr) {
   td::actor::Scheduler scheduler({1});
   td::actor::ActorOwn<N5ManagerDbFixture> manager;
   std::optional<td::Result<td::Unit>> result;
   scheduler.run_in_context([&] {
     manager = td::actor::create_actor<N5ManagerDbFixture>("n5-manager-db", id, root);
-    auto done = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) {
-      result.emplace(std::move(outcome));
-    });
+    auto done = td::PromiseCreator::lambda([&](td::Result<td::Unit> outcome) { result.emplace(std::move(outcome)); });
     if (write) {
-      td::actor::send_closure(manager, &N5ManagerDbFixture::seed_zerostate, id, state, std::move(boc),
-                              std::move(done));
+      td::actor::send_closure(manager, &N5ManagerDbFixture::seed_zerostate, id, state, std::move(boc), std::move(done));
     } else {
-      td::actor::send_closure(manager, &N5ManagerDbFixture::read_zerostate, id, id.root_hash,
-                              expect_present, std::move(done));
+      td::actor::send_closure(manager, &N5ManagerDbFixture::read_zerostate, id, id.root_hash, expect_present,
+                              std::move(done));
     }
   });
   auto deadline = td::Timestamp::in(30.0);
@@ -268,10 +262,14 @@ bool run_actor(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::BufferSlice 
   return ok;
 }
 
-bool cold_child(char *program, const char *boc_path, const std::string &root,
-                const std::string &expected_path, std::string mode) {
-  char *args[] = {program, mode.data(), const_cast<char *>(boc_path),
-                  const_cast<char *>(root.c_str()), const_cast<char *>(expected_path.c_str()), nullptr};
+bool cold_child(char *program, const char *boc_path, const std::string &root, const std::string &expected_path,
+                std::string mode) {
+  char *args[] = {program,
+                  mode.data(),
+                  const_cast<char *>(boc_path),
+                  const_cast<char *>(root.c_str()),
+                  const_cast<char *>(expected_path.c_str()),
+                  nullptr};
   pid_t pid = -1;
   const int spawn_error = posix_spawn(&pid, program, nullptr, nullptr, args, environ);
   if (spawn_error != 0) {
@@ -289,12 +287,13 @@ bool cold_child(char *program, const char *boc_path, const std::string &root,
 }  // namespace
 
 int main(int argc, char **argv) {
-  const bool child = argc == 5 && (std::string_view(argv[1]) == "--reopen-present" ||
-                                    std::string_view(argv[1]) == "--reopen-absent" ||
-                                    std::string_view(argv[1]) == "--reopen-missing-control" ||
-                                    std::string_view(argv[1]) == "--write");
+  const bool child =
+      argc == 5 && (std::string_view(argv[1]) == "--reopen-present" || std::string_view(argv[1]) == "--reopen-absent" ||
+                    std::string_view(argv[1]) == "--reopen-missing-control" || std::string_view(argv[1]) == "--write");
   if (!(argc == 2 || child)) {
-    std::cerr << "usage: n5-manager-db-fixture-test GENESIS_BOC | --write|--reopen-present|--reopen-absent|--reopen-missing-control GENESIS_BOC ROOT EXPECTED_FINALCERT_TL\n";
+    std::cerr
+        << "usage: n5-manager-db-fixture-test GENESIS_BOC | "
+           "--write|--reopen-present|--reopen-absent|--reopen-missing-control GENESIS_BOC ROOT EXPECTED_FINALCERT_TL\n";
     return 2;
   }
   const char *boc_path = child ? argv[2] : argv[1];
@@ -341,8 +340,7 @@ int main(int argc, char **argv) {
         return 1;
       }
       std::cout << "N5_FINALCERT_PUBLISH_RETURNED session=" << session_id.to_hex()
-                << " key_hash=" << fixture->hash.to_hex()
-                << " tl_bytes=" << fixture->inner_tl.size() << '\n';
+                << " key_hash=" << fixture->hash.to_hex() << " tl_bytes=" << fixture->inner_tl.size() << '\n';
       std::cout << "N5_DUAL_DB_WRITER_EXIT_OK root=" << argv[3] << '\n';
       return 0;
     }
@@ -365,8 +363,7 @@ int main(int argc, char **argv) {
         return 1;
       }
       std::string cert_failure;
-      if (read_finalcert_journal(consensus_path(argv[3], session_id), session_id,
-                                 expected_tl, true, &cert_failure) ||
+      if (read_finalcert_journal(consensus_path(argv[3], session_id), session_id, expected_tl, true, &cert_failure) ||
           cert_failure != "FinalCert journal key absent") {
         std::cerr << "N5_FINALCERT_JOURNAL_FAILED: wrong-root positive read did not fail on the exact key\n";
         return 1;
@@ -380,8 +377,8 @@ int main(int argc, char **argv) {
     if (!read_finalcert_journal(consensus_path(argv[3], session_id), session_id, expected_tl, present)) {
       return 1;
     }
-    std::cout << (present ? "N5_MANAGER_DB_COLD_READ_OK" : "N5_MANAGER_DB_EMPTY_ROOT_OK")
-              << " root=" << argv[3] << " state=" << id.root_hash.to_hex() << '\n';
+    std::cout << (present ? "N5_MANAGER_DB_COLD_READ_OK" : "N5_MANAGER_DB_EMPTY_ROOT_OK") << " root=" << argv[3]
+              << " state=" << id.root_hash.to_hex() << '\n';
     std::cout << (present ? "N5_CONSENSUS_DB_COLD_READ_OK" : "N5_CONSENSUS_DB_EMPTY_ROOT_OK")
               << " path=" << consensus_path(argv[3], session_id) << '\n';
     return 0;

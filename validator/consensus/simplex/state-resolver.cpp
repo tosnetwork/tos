@@ -4,14 +4,14 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <unordered_set>
+
 #include "consensus/utils.h"
 #include "crypto/block/block.h"
 #include "td/actor/SharedFuture.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/memory-tracker.h"
-
-#include <unordered_set>
 
 #include "bus.h"
 #include "completed-lru.h"
@@ -373,8 +373,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     co_return Finalization::Finalized;
   }
 
-  td::actor::Task<ResolvedState> resolve_state_inner(ParentId id,
-                                                     std::optional<CandidateId> requesting_candidate) {
+  td::actor::Task<ResolvedState> resolve_state_inner(ParentId id, std::optional<CandidateId> requesting_candidate) {
     std::vector<CandidateRef> candidates_to_apply;
     std::optional<double> gen_utime_exact;
     std::optional<ChainStateRef> state;
@@ -413,8 +412,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       auto resolved_candidate = co_await owning_bus().publish<ResolveCandidate>(*id).wrap();
       if (resolved_candidate.is_error()) {
         co_return td::Status::Error(resolved_candidate.error().code(),
-                                    PSTRING() << "Simplex state-resolver: cannot resolve exact ancestor " << *id
-                                              << ": " << resolved_candidate.error().message());
+                                    PSTRING() << "Simplex state-resolver: cannot resolve exact ancestor " << *id << ": "
+                                              << resolved_candidate.error().message());
       }
       auto candidate = resolved_candidate.move_as_ok().candidate;
       if (candidate->id != *id) {
@@ -447,9 +446,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       if (!reconstruct_from_candidate_data && (co_await finalization_of(*id, true)) == Finalization::Finalized) {
         auto genesis = co_await genesis_.get();
         auto manager_state =
-            co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                              {candidate->block_id()}, genesis->state->min_mc_block_id(),
-                                              requesting_candidate)
+            co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard, {candidate->block_id()},
+                                              genesis->state->min_mc_block_id(), requesting_candidate)
                 .wrap();
         if (manager_state.is_ok()) {
           state = manager_state.move_as_ok();
@@ -492,7 +490,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         BlockIdExt mc_block_id;
         bool after_split = false;
         auto unpack_status = block::unpack_block_prev_blk_try(block_result.move_as_ok()->root_cell(), oldest.id,
-                                                               base_blocks, mc_block_id, after_split);
+                                                              base_blocks, mc_block_id, after_split);
         if (unpack_status.is_error() || base_blocks.empty() || base_blocks.size() > 2) {
           co_return td::Status::Error(ErrorCode::protoviolation,
                                       PSTRING() << "Simplex state-resolver: oldest candidate " << oldest.id.to_str()
@@ -509,10 +507,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       // only its read-only manager lookup, for a bounded number of attempts;
       // never substitute the newer Start tip when it remains unavailable.
       for (unsigned attempt = 0; attempt < 3; ++attempt) {
-        auto manager_state =
-            co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard,
-                                              base_blocks, genesis->state->min_mc_block_id(), requesting_candidate)
-                .wrap();
+        auto manager_state = co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard, base_blocks,
+                                                               genesis->state->min_mc_block_id(), requesting_candidate)
+                                 .wrap();
         if (manager_state.is_ok()) {
           state = manager_state.move_as_ok();
           break;
@@ -522,9 +519,10 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
           co_return error;
         }
         if (attempt == 2) {
-          co_return td::Status::Error(ErrorCode::notready,
-                                      PSTRING() << "Simplex state-resolver: exact predecessor state unavailable after 3 attempts: "
-                                                << error.message());
+          co_return td::Status::Error(
+              ErrorCode::notready,
+              PSTRING() << "Simplex state-resolver: exact predecessor state unavailable after 3 attempts: "
+                        << error.message());
         }
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }

@@ -116,8 +116,7 @@ td::Result<BlockProofRoot> generate_block_proof_root_impl(BlockIdExt id, td::Ref
     }
   }
 
-  return BlockProofRoot{std::move(proof), info.gen_utime, info.gen_validator_list_hash_short,
-                        info.gen_catchain_seqno};
+  return BlockProofRoot{std::move(proof), info.gen_utime, info.gen_validator_list_hash_short, info.gen_catchain_seqno};
 }
 
 td::Result<td::BufferSlice> serialize_block_proof(BlockIdExt id, td::Ref<vm::Cell> proof, bool has_signatures,
@@ -411,10 +410,10 @@ td::Result<td::BufferSlice> WaitBlockData::generate_proof(BlockIdExt id, td::Ref
   // certificate. Conversely, once the trusted set agrees with the block
   // header, a differing carrier set identifies the independently received
   // evidence as the bad input.
-  const auto identity_verdict = pending_block_proof_identity_verdict(
-      {proof_root.catchain_seqno, proof_root.validator_set_hash},
-      {vset->get_catchain_seqno(), vset->get_validator_set_hash()},
-      {signatures->get_catchain_seqno(), signatures->get_validator_set_hash()});
+  const auto identity_verdict =
+      pending_block_proof_identity_verdict({proof_root.catchain_seqno, proof_root.validator_set_hash},
+                                           {vset->get_catchain_seqno(), vset->get_validator_set_hash()},
+                                           {signatures->get_catchain_seqno(), signatures->get_validator_set_hash()});
   if (identity_verdict == PendingBlockProofIdentityVerdict::ContextMismatch) {
     return td::Status::Error(ErrorCode::notready, "validator set context does not match block header");
   }

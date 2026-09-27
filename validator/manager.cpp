@@ -1002,10 +1002,10 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
   const auto attempt_token = finality.token;
   PendingBlockProofFailureSource proof_failure_source = PendingBlockProofFailureSource::BlockBytes;
   td::Result<td::BufferSlice> proof =
-      block_id.is_masterchain() ? WaitBlockData::generate_proof(block_id, block.ok()->root_cell(),
-                                                                finality->evidence.sig_set, last_masterchain_state_,
-                                                                proof_failure_source)
-                                : WaitBlockData::generate_proof_link(block_id, block.ok()->root_cell());
+      block_id.is_masterchain()
+          ? WaitBlockData::generate_proof(block_id, block.ok()->root_cell(), finality->evidence.sig_set,
+                                          last_masterchain_state_, proof_failure_source)
+          : WaitBlockData::generate_proof_link(block_id, block.ok()->root_cell());
   if (proof.is_error()) {
     failed_pending_block_proof(block_id, attempt_token, proof_failure_source, proof.move_as_error());
     return;
@@ -1041,9 +1041,8 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
       });
 }
 
-void ValidatorManagerImpl::failed_pending_block_proof(BlockIdExt block_id,
-                                                       PendingFinalityAttemptToken attempt_token,
-                                                       PendingBlockProofFailureSource source, td::Status error) {
+void ValidatorManagerImpl::failed_pending_block_proof(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token,
+                                                      PendingBlockProofFailureSource source, td::Status error) {
   auto pending = pending_block_finality_.get_if_exists(block_id);
   if (pending == nullptr || !pending->is_processing(attempt_token)) {
     return;
