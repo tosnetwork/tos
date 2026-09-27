@@ -651,7 +651,9 @@ void unit_checks() {
 }  // namespace
 
 int main(int argc, char** argv) {
-  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(WARNING));
+  // "trace" as a second argument keeps the server's per-query ADNL_EXT_QUERY lines.
+  const bool trace = argc > 2 && std::string(argv[2]) == "trace";
+  SET_VERBOSITY_LEVEL(trace ? VERBOSITY_NAME(DEBUG) : VERBOSITY_NAME(WARNING));
   const std::string only = argc > 1 ? argv[1] : "all";
   const std::vector<std::pair<std::string, void (*)()>> cases = {
       {"unit", unit_checks},
