@@ -193,7 +193,7 @@ def test_admission_drop_warnings_are_counted_per_node(tmp_path: Path) -> None:
     dropped.write_bytes(
         b"[2][t 0][adnl-ext-server.cpp:65][!inconn]\t"
         + LITE_ADMISSION_DROP_MARKER.encode()
-        + b"127.0.0.1: per-connection admission limit exceeded\n"
+        + b"127.0.0.1: per_connection_rate (answered)\n"
     )
     assert lite_admission_drop_warnings({"node-1": clean, "node-2": dropped}) == {
         "node-1": 0,

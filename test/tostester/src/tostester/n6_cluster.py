@@ -42,9 +42,9 @@ LITE_CONNECTION_LIMITS = re.compile(
 # its last block with one getMasterchainInfo; a height poll is one getMasterchainInfo.
 LITE_QUERIES_PER_LOOKUP = 3
 LITE_QUERIES_PER_HEIGHT_POLL = 1
-# The server logs the first drop on each connection at warning level, which nodes started at
-# the default verbosity keep; later drops on the same connection are debug-only.
-LITE_ADMISSION_DROP_MARKER = "Dropping external query from "
+# The server logs the first refused query on each connection at warning level, which nodes
+# started at the default verbosity keep; later refusals on the same connection are debug-only.
+LITE_ADMISSION_DROP_MARKER = "Refused external query from "
 LITE_ADMISSION_LOG_MAX_BYTES = 64 * 1024 * 1024
 T = TypeVar("T")
 

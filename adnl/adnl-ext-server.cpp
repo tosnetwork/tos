@@ -26,22 +26,37 @@ namespace tos {
 
 namespace adnl {
 
+namespace {
+
+ExtQueryFailureKind admission_failure_kind(ExtAdmission admission) {
+  switch (admission) {
+    case ExtAdmission::PerConnectionRateLimited:
+      return ExtQueryFailureKind::PerConnectionRateLimit;
+    case ExtAdmission::PerConnectionInflightLimited:
+      return ExtQueryFailureKind::PerConnectionInflightLimit;
+    case ExtAdmission::PerIpInflightLimited:
+      return ExtQueryFailureKind::PerIpInflightLimit;
+    case ExtAdmission::ServerInflightLimited:
+    case ExtAdmission::Acquired:
+      break;
+  }
+  return ExtQueryFailureKind::ServerInflightLimit;
+}
+
+}  // namespace
+
 td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(f, fetch_tl_object<tos_api::adnl_message_query>(std::move(data), true));
-  if (!query_limits_.try_acquire()) {
-    LOG(DEBUG) << "ADNL_EXT_QUERY server_ingress id=" << f->query_id_.to_hex() << " peer=" << peer_ip_
-               << " admission=drop reason=per-connection-limit";
-    // Reject only this query. Returning an error from process_packet stops the
-    // whole multiplexed TCP connection and discards unrelated in-flight work.
-    log_dropped_query("per-connection admission limit exceeded");
-    return td::Status::OK();
+  auto connection_admission = query_limits_.try_acquire();
+  if (connection_admission != ExtAdmission::Acquired) {
+    // Nothing was acquired, so nothing is released.
+    return reject_or_close(f->query_id_,
+                           ExtQueryFailure{admission_failure_kind(connection_admission), td::Status::OK()});
   }
-  if (!server_query_limits_->try_acquire(peer_ip_)) {
-    LOG(DEBUG) << "ADNL_EXT_QUERY server_ingress id=" << f->query_id_.to_hex() << " peer=" << peer_ip_
-               << " admission=drop reason=server-or-per-ip-limit";
+  auto server_admission = server_query_limits_->try_acquire(peer_ip_);
+  if (server_admission != ExtAdmission::Acquired) {
     query_limits_.release();
-    log_dropped_query("server or per-IP in-flight limit exceeded");
-    return td::Status::OK();
+    return reject_or_close(f->query_id_, ExtQueryFailure{admission_failure_kind(server_admission), td::Status::OK()});
   }
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), query_id = f->query_id_, peer_ip = peer_ip_,
@@ -50,6 +65,7 @@ td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
         td::actor::send_closure(SelfId, &AdnlInboundConnection::query_finished, query_id, std::move(R));
       });
   auto source_id = remote_id_.is_zero() ? anonymous_remote_id_ : remote_id_;
+  outcomes_.accepted++;
   LOG(DEBUG) << "ADNL_EXT_QUERY server_ingress id=" << f->query_id_.to_hex() << " peer=" << peer_ip_
              << " admission=accepted";
   td::actor::send_closure(peer_table_, &AdnlPeerTable::deliver_query, source_id, local_id_, std::move(f->query_),
@@ -57,21 +73,72 @@ td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
   return td::Status::OK();
 }
 
-void AdnlInboundConnection::log_dropped_query(td::Slice reason) {
-  // A client that keeps sending past its budget would otherwise turn every
-  // rejected query into a log line, so only the first drop per connection is
-  // surfaced at warning level; the running total is reported when it closes.
-  if (dropped_queries_++ == 0) {
-    LOG(WARNING) << "Dropping external query from " << peer_ip_ << ": " << reason;
-  } else {
-    LOG(DEBUG) << "Dropping external query from " << peer_ip_ << ": " << reason;
+bool AdnlInboundConnection::send_failure_answer(td::Bits256 query_id, const ExtQueryFailure &failure) {
+  auto encoder = failure_policy_->encoder();
+  if (!encoder) {
+    return false;
+  }
+  // The per-connection budget is checked before the shared one so a connection that
+  // is already over its own budget cannot consume the IP and server allowance.
+  auto now = td::Timestamp::now();
+  if (!failure_replies_.check(now) || !failure_policy_->reply_limits().try_acquire(peer_ip_, now)) {
+    return false;
+  }
+  failure_replies_.insert(now);
+  auto encoded = encoder->encode(failure);
+  if (encoded.is_error() || encoded.ok().size() > kMaxExtQueryFailurePayloadBytes) {
+    return false;
+  }
+  auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, encoded.move_as_ok());
+  return send(serialize_tl_object(answer, true));
+}
+
+td::Status AdnlInboundConnection::reject_or_close(td::Bits256 query_id, ExtQueryFailure failure) {
+  auto kind = failure.kind;
+  bool replied = send_failure_answer(query_id, failure);
+  note_failure(query_id, kind, replied);
+  if (replied) {
+    return td::Status::OK();
+  }
+  // Closing gives every query on this connection a prompt transport failure
+  // instead of leaving this one to the client's timeout.
+  return td::Status::Error(ErrorCode::notready, PSTRING() << "external query " << query_id.to_hex() << " refused ("
+                                                          << ext_query_failure_kind_name(kind)
+                                                          << ") without an answer; closing");
+}
+
+void AdnlInboundConnection::note_failure(td::Bits256 query_id, ExtQueryFailureKind kind, bool replied) {
+  switch (kind) {
+    case ExtQueryFailureKind::HandlerError:
+      (replied ? outcomes_.handler_error_reply : outcomes_.handler_error_close)++;
+      break;
+    case ExtQueryFailureKind::ResponseTooLarge:
+      (replied ? outcomes_.response_too_large_reply : outcomes_.response_too_large_close)++;
+      break;
+    default:
+      (replied ? outcomes_.rejected_reply : outcomes_.rejected_close)++;
+      break;
+  }
+  LOG(DEBUG) << "ADNL_EXT_QUERY server_reject id=" << query_id.to_hex() << " peer=" << peer_ip_
+             << " reason=" << ext_query_failure_kind_name(kind) << " response_sent=" << replied
+             << " connection_closed=" << !replied;
+  // A client that keeps sending past its budget would otherwise turn every refused
+  // query into a log line, so only the first per connection is surfaced at warning
+  // level; the totals are reported when the connection closes.
+  if (failures_logged_++ == 0) {
+    LOG(WARNING) << "Refused external query from " << peer_ip_ << ": " << ext_query_failure_kind_name(kind)
+                 << (replied ? " (answered)" : " (closing connection)");
   }
 }
 
 void AdnlInboundConnection::tear_down() {
-  if (dropped_queries_ > 0) {
-    LOG(INFO) << "External connection from " << peer_ip_ << " closed after " << dropped_queries_
-              << " dropped queries";
+  if (failures_logged_ > 0) {
+    LOG(INFO) << "External connection from " << peer_ip_ << " closed: accepted=" << outcomes_.accepted
+              << " rejected_reply=" << outcomes_.rejected_reply << " rejected_close=" << outcomes_.rejected_close
+              << " handler_error_reply=" << outcomes_.handler_error_reply
+              << " handler_error_close=" << outcomes_.handler_error_close
+              << " response_too_large_reply=" << outcomes_.response_too_large_reply
+              << " response_too_large_close=" << outcomes_.response_too_large_close;
   }
   AdnlExtConnection::tear_down();
 }
@@ -79,16 +146,29 @@ void AdnlInboundConnection::tear_down() {
 void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result) {
   query_limits_.release();
   if (result.is_error()) {
-    LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=error response_sent=false"
+    LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=error"
                << " reason=" << result.error();
-    LOG(INFO) << "failed ext query: " << result.error();
+    auto status = reject_or_close(query_id, ExtQueryFailure{ExtQueryFailureKind::HandlerError, result.move_as_error()});
+    if (status.is_error()) {
+      LOG(INFO) << status;
+      stop();
+    }
     return;
   }
   LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=success response_ready=true";
   auto answer = create_tl_object<tos_api::adnl_message_answer>(query_id, result.move_as_ok());
   bool enqueued = send(serialize_tl_object(answer, true));
-  LOG(DEBUG) << "ADNL_EXT_QUERY server_answer_enqueue id=" << query_id.to_hex()
-             << " enqueued=" << enqueued;
+  LOG(DEBUG) << "ADNL_EXT_QUERY server_answer_enqueue id=" << query_id.to_hex() << " enqueued=" << enqueued;
+  if (enqueued) {
+    return;
+  }
+  // The result could not be framed (typically larger than an external packet may
+  // carry). Answer the same ID with a small failure instead, or close.
+  auto status = reject_or_close(query_id, ExtQueryFailure{ExtQueryFailureKind::ResponseTooLarge, td::Status::OK()});
+  if (status.is_error()) {
+    LOG(INFO) << status;
+    stop();
+  }
 }
 
 td::Status AdnlInboundConnection::process_init_packet(td::BufferSlice data) {
@@ -246,6 +326,10 @@ void AdnlExtServerImpl::tcp_port_listening(td::uint16 port, td::Status status) {
   listening_waiters_.clear();
 }
 
+void AdnlExtServerImpl::set_query_failure_encoder(std::shared_ptr<const ExtQueryFailureEncoder> encoder) {
+  failure_policy_->set_encoder(std::move(encoder));
+}
+
 void AdnlExtServerImpl::add_local_id(AdnlNodeIdShort id) {
   local_ids_.insert(id);
 }
@@ -294,11 +378,10 @@ void AdnlExtServerImpl::accepted(td::SocketFd fd) {
   // the call, so neither depends on the order the arguments below happen to be
   // evaluated in.
   auto identity = make_ext_connection_identity(std::move(peer_ip));
-  td::actor::create_actor<AdnlInboundConnection>(td::actor::ActorOptions().with_name("inconn").with_poll(),
-                                                 std::move(fd), peer_table_, actor_id(this),
-                                                 AdnlNodeIdShort{identity.anonymous_id},
-                                                 identity.peer_ip, query_limits_,
-                                                 std::make_unique<Callback>(actor_id(this), identity.peer_ip))
+  td::actor::create_actor<AdnlInboundConnection>(
+      td::actor::ActorOptions().with_name("inconn").with_poll(), std::move(fd), peer_table_, actor_id(this),
+      AdnlNodeIdShort{identity.anonymous_id}, identity.peer_ip, query_limits_, failure_policy_,
+      std::make_unique<Callback>(actor_id(this), identity.peer_ip))
       .release();
 }
 

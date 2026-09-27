@@ -26,42 +26,46 @@ TEST(LiteServerAdmission, ConnectionCapsAreReleased) {
 }
 
 TEST(LiteServerAdmission, PerConnectionRateAndInflightCapsCompose) {
+  using adnl::ExtAdmission;
   adnl::ExtConnectionQueryLimits limits(1.0, 2, 1);
   auto now = td::Timestamp::at(100.0);
-  EXPECT(limits.try_acquire(now));
-  EXPECT(!limits.try_acquire(now));
+  EXPECT(limits.try_acquire(now) == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire(now) == ExtAdmission::PerConnectionInflightLimited);
   limits.release();
-  EXPECT(limits.try_acquire(now));
+  EXPECT(limits.try_acquire(now) == ExtAdmission::Acquired);
   limits.release();
-  EXPECT(!limits.try_acquire(now));
-  EXPECT(limits.try_acquire(td::Timestamp::at(101.1)));
+  EXPECT(limits.try_acquire(now) == ExtAdmission::PerConnectionRateLimited);
+  EXPECT(limits.inflight() == 0);
+  EXPECT(limits.try_acquire(td::Timestamp::at(101.1)) == ExtAdmission::Acquired);
 }
 
 TEST(LiteServerAdmission, ServerQueryCapsComposeAcrossIps) {
+  using adnl::ExtAdmission;
   adnl::ExtServerQueryLimits limits(3, 2);
-  EXPECT(limits.try_acquire("192.0.2.1"));
-  EXPECT(limits.try_acquire("192.0.2.1"));
-  EXPECT(!limits.try_acquire("192.0.2.1"));
-  EXPECT(limits.try_acquire("192.0.2.2"));
-  EXPECT(!limits.try_acquire("192.0.2.3"));
+  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::PerIpInflightLimited);
+  EXPECT(limits.try_acquire("192.0.2.2") == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire("192.0.2.3") == ExtAdmission::ServerInflightLimited);
   limits.release("192.0.2.1");
-  EXPECT(limits.try_acquire("192.0.2.3"));
+  EXPECT(limits.try_acquire("192.0.2.3") == ExtAdmission::Acquired);
   EXPECT(limits.inflight() == 3);
 }
 
 TEST(LiteServerAdmission, ServerQueryReleaseIsIdempotentPerIp) {
+  using adnl::ExtAdmission;
   adnl::ExtServerQueryLimits limits(2, 2);
   // Releasing an address that never acquired, or releasing more often than it
   // acquired, must not underflow and must not free capacity held by others.
   limits.release("192.0.2.9");
   EXPECT(limits.inflight() == 0);
-  EXPECT(limits.try_acquire("192.0.2.1"));
-  EXPECT(limits.try_acquire("192.0.2.2"));
+  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire("192.0.2.2") == ExtAdmission::Acquired);
   limits.release("192.0.2.1");
   limits.release("192.0.2.1");
   EXPECT(limits.inflight() == 1);
-  EXPECT(limits.try_acquire("192.0.2.3"));
-  EXPECT(!limits.try_acquire("192.0.2.1"));
+  EXPECT(limits.try_acquire("192.0.2.3") == ExtAdmission::Acquired);
+  EXPECT(limits.try_acquire("192.0.2.1") == ExtAdmission::ServerInflightLimited);
   limits.release("192.0.2.2");
   limits.release("192.0.2.3");
   EXPECT(limits.inflight() == 0);

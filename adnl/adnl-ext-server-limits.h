@@ -14,6 +14,15 @@
 
 namespace tos::adnl {
 
+// Outcome of admitting one external query; every denial names the budget that refused it.
+enum class ExtAdmission {
+  Acquired,
+  PerConnectionRateLimited,
+  PerConnectionInflightLimited,
+  PerIpInflightLimited,
+  ServerInflightLimited,
+};
+
 inline td::Bits256 external_peer_ip_identity(td::Slice peer_ip) {
   std::string material = "tos-adnl-ext-ip:";
   material.append(peer_ip.data(), peer_ip.size());
@@ -86,13 +95,16 @@ class ExtConnectionQueryLimits {
       : rate_(window, max_queries_per_window), max_inflight_(max_inflight) {
   }
 
-  bool try_acquire(td::Timestamp now = td::Timestamp::now()) {
-    if (inflight_ >= max_inflight_ || !rate_.check(now)) {
-      return false;
+  ExtAdmission try_acquire(td::Timestamp now = td::Timestamp::now()) {
+    if (inflight_ >= max_inflight_) {
+      return ExtAdmission::PerConnectionInflightLimited;
+    }
+    if (!rate_.check(now)) {
+      return ExtAdmission::PerConnectionRateLimited;
     }
     rate_.insert(now);
     ++inflight_;
-    return true;
+    return ExtAdmission::Acquired;
   }
 
   void release() {
@@ -117,16 +129,19 @@ class ExtServerQueryLimits {
       : max_inflight_(max_inflight), max_inflight_per_ip_(max_inflight_per_ip) {
   }
 
-  bool try_acquire(const std::string &peer_ip) {
+  ExtAdmission try_acquire(const std::string &peer_ip) {
     std::lock_guard lock(mutex_);
+    if (inflight_ >= max_inflight_) {
+      return ExtAdmission::ServerInflightLimited;
+    }
     auto it = inflight_per_ip_.find(peer_ip);
     size_t per_ip = it == inflight_per_ip_.end() ? 0 : it->second;
-    if (inflight_ >= max_inflight_ || per_ip >= max_inflight_per_ip_) {
-      return false;
+    if (per_ip >= max_inflight_per_ip_) {
+      return ExtAdmission::PerIpInflightLimited;
     }
     ++inflight_;
     ++inflight_per_ip_[peer_ip];
-    return true;
+    return ExtAdmission::Acquired;
   }
 
   void release(const std::string &peer_ip) {

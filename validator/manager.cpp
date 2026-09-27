@@ -43,6 +43,7 @@
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
+#include "lite-client/lite-ext-query-failure.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
 #include "td/db/RocksDb.h"
@@ -1210,6 +1211,10 @@ void ValidatorManagerImpl::add_ext_server_port(td::uint16 port) {
 
 void ValidatorManagerImpl::created_ext_server(td::actor::ActorOwn<adnl::AdnlExtServer> server) {
   lite_server_ = std::move(server);
+  // Installed before any port is added, so every Lite query this server refuses is
+  // answered with a same-ID liteServer.error from its first connection on.
+  td::actor::send_closure(lite_server_, &adnl::AdnlExtServer::set_query_failure_encoder,
+                          liteclient::LiteExtQueryFailureEncoder::create());
   for (auto &id : pending_ext_ids_) {
     td::actor::send_closure(lite_server_, &adnl::AdnlExtServer::add_local_id, id);
   }

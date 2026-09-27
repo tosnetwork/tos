@@ -865,6 +865,12 @@ target_include_directories(test-adnl-ext-query-closure PRIVATE ${CMAKE_CURRENT_S
 target_link_libraries(test-adnl-ext-query-closure PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
                       tdutils tdactor)
 
+add_executable(test-adnl-ext-query-refusal test/pq-native/adnl-ext-query-refusal-test.cpp)
+target_include_directories(test-adnl-ext-query-refusal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-query-refusal PRIVATE adnl dht keyring keys tl_api tl_lite_api tl-lite-utils
+                      tdutils tdactor)
+
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1438,6 +1444,7 @@ add_test(NAME pending-finality-retry-policy-source
 set_tests_properties(pending-finality-retry-policy-source PROPERTIES LABELS "source-guard")
 tos_test(test-pq-lite-forward-proof)
 tos_test(test-adnl-ext-query-closure)
+tos_test(test-adnl-ext-query-refusal)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
 tos_test(test-msg-envelope)
