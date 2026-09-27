@@ -42,8 +42,8 @@ use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_for
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
     AgentAccountContract, CapabilityRegistryContract, ChainProvider, DisputeContract,
-    MasterchainCheckpoint, NominatorPoolWrapper, NominatorPoolWrapperImpl, ServiceActorContract,
-    TaskEscrowContract, contract_provider_from,
+    MasterchainCheckpoint, ServiceActorContract, TaskEscrowContract,
+    read_nominator_pool_snapshot_at,
 };
 
 const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
@@ -53,8 +53,8 @@ const DNS_ITEM_CODE_DEPTH: u16 = 11;
 
 use crate::indexer::store::{
     AddressRefresh, AddressTouch, BatchPhase, BlockFullId, DnsDomainHistoryRecord,
-    ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord, IndexerStore, ScannedTarget,
-    ServiceRequestRecord, ShardStep,
+    ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord, IndexerStore, LedgerStatus,
+    ScannedTarget, ServiceRequestRecord, ShardStep,
 };
 use crate::runtime_config::RuntimeConfig;
 
@@ -332,6 +332,19 @@ async fn scan_new_blocks(
             );
             store.reset_canonical_index()?;
         }
+    }
+    // Lifetime ledger totals without canonical provenance are rebuilt by a
+    // replay of the whole index from genesis; they stay unavailable until it
+    // completes.
+    if store.nominator_ledger_state()?.status == LedgerStatus::RebuildRequired {
+        if store.canonical_state()?.is_some() || store.pending_batch()?.is_some() {
+            tracing::warn!(
+                target: "indexer",
+                "nominator ledger lacks canonical provenance; replaying the index from genesis",
+            );
+            store.reset_canonical_index()?;
+        }
+        store.begin_nominator_ledger_rebuild()?;
     }
     // A batch left pending by an earlier tick or process is resumed only if
     // its anchor is still the chain's block at that height.
@@ -767,6 +780,7 @@ async fn drain_address_refresh(
             }
         }
     }
+    store.settle_nominator_ledger()?;
     Ok(())
 }
 
@@ -811,6 +825,9 @@ async fn visit_address(
         }
     };
 
+    if kind == NOMINATOR_POOL_KIND {
+        return refresh_nominator_pool(chain_provider, store, address, refresh).await;
+    }
     if kind == "dns_domain" {
         return decode_dns_domain(
             chain_provider,
@@ -988,108 +1005,114 @@ async fn decode_and_store(
                 dto_json: serde_json::to_string(&CapabilityRegistryRecordDto::from(&data))?,
             })
         }
-        "contract.pool.nominator" => {
-            let address_value = address.parse::<MsgAddressInt>()?;
-            let wrapper = NominatorPoolWrapperImpl::new(
-                contract_provider_from(chain_provider.clone()),
-                address_value,
-            );
-            let data = wrapper.get_pool_data().await?;
-            let nominators = wrapper.list_nominators().await?;
-            let nominator_stake = nominators
-                .iter()
-                .map(|position| position.amount.saturating_add(position.pending_deposit))
-                .sum::<u64>();
-
-            // What guard 68 would compare against for the next new depositor:
-            // the depth of the dictionary as it stands now, against the bound
-            // derived from a count that has already been incremented.
-            let addresses: Vec<[u8; 32]> = nominators
-                .iter()
-                .filter_map(|position| {
-                    let hex_part = position.address.split(':').nth(1)?;
-                    let bytes = hex::decode(hex_part).ok()?;
-                    <[u8; 32]>::try_from(bytes.as_slice()).ok()
-                })
-                .collect();
-            let depth_headroom = deposit_depth_bound(data.nominators_count.saturating_add(1))
-                - nominator_dictionary_depth(&addresses)
-                - 1;
-            let status = match data.state {
-                0 => "idle",
-                1 => "staking",
-                2 => "staked",
-                _ => "unknown",
-            };
-            let dto = NominatorPoolRecordDto {
-                state: data.state,
-                nominators_count: data.nominators_count,
-                stake_amount_sent: data.stake_amount_sent.to_string(),
-                validator_amount: data.validator_amount.to_string(),
-                nominator_stake: nominator_stake.to_string(),
-                total_balance_at_risk: data
-                    .validator_amount
-                    .saturating_add(nominator_stake)
-                    .to_string(),
-                validator_address: format!("0:{}", hex::encode(data.validator_address)),
-                validator_reward_share_bps: data.validator_reward_share,
-                max_nominators_count: data.max_nominators_count,
-                min_validator_stake: data.min_validator_stake.to_string(),
-                min_nominator_stake: data.min_nominator_stake.to_string(),
-                stake_at: data.stake_at,
-                saved_validator_set_hash: hex::encode(data.saved_validator_set_hash),
-                validator_set_changes_count: data.validator_set_changes_count,
-                validator_set_change_time: data.validator_set_change_time,
-                stake_held_for: data.stake_held_for,
-                capacity_headroom: data
-                    .max_nominators_count
-                    .saturating_sub(data.nominators_count.min(u32::from(u16::MAX)) as u16),
-                deposit_depth_headroom: depth_headroom,
-                accepting_deposits: u32::from(data.max_nominators_count) > data.nominators_count
-                    && depth_headroom > 0,
-                nominators,
-            };
-
-            // Attribute this observation before the record is overwritten: the
-            // contract's ledger says what a depositor is owed now, and the
-            // difference from the last observation is the only place the reason
-            // for the change is still visible. A withdrawal deletes the entry
-            // outright, so nothing can be reconstructed after the fact.
-            let observed_positions: Vec<(String, u64, u64)> = dto
-                .nominators
-                .iter()
-                .map(|position| {
-                    (position.address.clone(), position.amount, position.pending_deposit)
-                })
-                .collect();
-            if let Err(error) = store.observe_nominator_positions(
-                address,
-                dto.state,
-                common::time_format::now(),
-                &observed_positions,
-            ) {
-                tracing::warn!(
-                    target: "indexer",
-                    pool = %address,
-                    error = %format!("{error:#}"),
-                    "could not attribute nominator positions"
-                );
-            }
-            store.upsert(&IndexedRecord {
-                address: address.to_owned(),
-                kind: kind.to_owned(),
-                creator: Some(dto.validator_address.clone()),
-                counterparty: None,
-                status: Some(status.to_owned()),
-                deadline: (data.stake_at > 0 && data.stake_held_for > 0)
-                    .then_some(u64::from(data.stake_at).saturating_add(data.stake_held_for)),
-                last_seqno: seqno,
-                updated_at: now,
-                dto_json: serde_json::to_string(&dto)?,
-            })
+        NOMINATOR_POOL_KIND => {
+            anyhow::bail!("nominator pools are only refreshed at an exact published checkpoint")
         }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
     }
+}
+
+/// Refreshes one nominator pool from a snapshot pinned to the exact
+/// published masterchain block its touches became canonical in, and folds
+/// that snapshot into the lifetime ledger. Any failure -- including a node
+/// that cannot serve the historical state -- leaves the refresh pending, so
+/// the ledger never advances past an observation it could not make.
+async fn refresh_nominator_pool(
+    chain_provider: &Arc<dyn ChainProvider>,
+    store: &IndexerStore,
+    address: &str,
+    refresh: &AddressRefresh,
+) -> anyhow::Result<()> {
+    let address_value = address.parse::<MsgAddressInt>()?;
+    let snapshot = read_nominator_pool_snapshot_at(
+        chain_provider.as_ref(),
+        &address_value,
+        &refresh.checkpoint,
+    )
+    .await?;
+    let data = snapshot.pool;
+    let nominators = snapshot.nominators;
+    let nominator_stake = nominators.iter().fold(0u64, |total, position| {
+        total.saturating_add(position.amount.saturating_add(position.pending_deposit))
+    });
+
+    // What guard 68 would compare against for the next new depositor:
+    // the depth of the dictionary as it stands now, against the bound
+    // derived from a count that has already been incremented.
+    let addresses: Vec<[u8; 32]> = nominators
+        .iter()
+        .filter_map(|position| {
+            let hex_part = position.address.split(':').nth(1)?;
+            let bytes = hex::decode(hex_part).ok()?;
+            <[u8; 32]>::try_from(bytes.as_slice()).ok()
+        })
+        .collect();
+    let depth_headroom = deposit_depth_bound(data.nominators_count.saturating_add(1))
+        .saturating_sub(nominator_dictionary_depth(&addresses))
+        .saturating_sub(1);
+    let status = match data.state {
+        0 => "idle",
+        1 => "staking",
+        2 => "staked",
+        _ => "unknown",
+    };
+    let dto = NominatorPoolRecordDto {
+        state: data.state,
+        nominators_count: data.nominators_count,
+        stake_amount_sent: data.stake_amount_sent.to_string(),
+        validator_amount: data.validator_amount.to_string(),
+        nominator_stake: nominator_stake.to_string(),
+        total_balance_at_risk: data.validator_amount.saturating_add(nominator_stake).to_string(),
+        validator_address: format!("0:{}", hex::encode(data.validator_address)),
+        validator_reward_share_bps: data.validator_reward_share,
+        max_nominators_count: data.max_nominators_count,
+        min_validator_stake: data.min_validator_stake.to_string(),
+        min_nominator_stake: data.min_nominator_stake.to_string(),
+        stake_at: data.stake_at,
+        saved_validator_set_hash: hex::encode(data.saved_validator_set_hash),
+        validator_set_changes_count: data.validator_set_changes_count,
+        validator_set_change_time: data.validator_set_change_time,
+        stake_held_for: data.stake_held_for,
+        capacity_headroom: data
+            .max_nominators_count
+            .saturating_sub(u16::try_from(data.nominators_count).unwrap_or(u16::MAX)),
+        deposit_depth_headroom: depth_headroom,
+        accepting_deposits: u32::from(data.max_nominators_count) > data.nominators_count
+            && depth_headroom > 0,
+        nominators,
+    };
+
+    // Attribute this observation before the record is overwritten: the
+    // contract's ledger says what a depositor is owed now, and the
+    // difference from the last observation is the only place the reason
+    // for the change is still visible. A withdrawal deletes the entry
+    // outright, so the ledger zeroes whoever is missing.
+    let observed_positions: Vec<(String, u64, u64)> = dto
+        .nominators
+        .iter()
+        .map(|position| (position.address.clone(), position.amount, position.pending_deposit))
+        .collect();
+    let now = time_format::now();
+    store.observe_nominator_snapshot(
+        address,
+        dto.state,
+        now,
+        &observed_positions,
+        &refresh.checkpoint,
+        refresh.touch_count,
+    )?;
+    store.upsert(&IndexedRecord {
+        address: address.to_owned(),
+        kind: NOMINATOR_POOL_KIND.to_owned(),
+        creator: Some(dto.validator_address.clone()),
+        counterparty: None,
+        status: Some(status.to_owned()),
+        deadline: (data.stake_at > 0 && data.stake_held_for > 0)
+            .then_some(u64::from(data.stake_at).saturating_add(data.stake_held_for)),
+        last_seqno: refresh.last_block_seqno,
+        updated_at: now,
+        dto_json: serde_json::to_string(&dto)?,
+    })
 }
 
 async fn decode_dns_domain(

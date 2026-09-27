@@ -30,9 +30,15 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 #[path = "store_canonical.rs"]
 mod canonical;
+#[path = "store_ledger.rs"]
+mod ledger;
 pub use canonical::{
     AddressRefresh, AddressTouch, BatchPhase, PendingBatch, ScannedTarget, ShardStep,
     shards_intersect,
+};
+pub use ledger::{
+    LedgerAvailability, LedgerStatus, NominatorLedgerReport, NominatorLedgerState,
+    attribution_complete,
 };
 
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
@@ -56,6 +62,13 @@ pub struct NominatorLedgerRecord {
     pub last_pending: u64,
     pub first_seen_at: u64,
     pub updated_at: u64,
+    /// Observation intervals in which the pool changed more than once, so a
+    /// single end-of-interval snapshot could not attribute each change.
+    pub coverage_gap_count: u64,
+    /// The published masterchain block of the last observation.
+    pub last_mc_seqno: Option<u32>,
+    pub last_mc_root_hash: Option<String>,
+    pub last_mc_file_hash: Option<String>,
 }
 
 /// `MIGRATIONS[i]` transforms a database at schema version `i + 1` into
@@ -141,12 +154,16 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
 /// no record of which masterchain height was completely assembled when they
 /// were written, so none of them can be declared published after the fact:
 /// the explorer history is replayed from genesis under the new watermark.
+/// The v10 nominator ledger was built from latest-state reads that no
+/// checkpoint binds, so it is marked for a genesis rebuild and cannot be
+/// served until that replay completes.
 fn migrate_to_canonical_publication(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
     conn.execute_batch(TRAVERSAL_SCHEMA)?;
     for table in CANONICAL_PROGRESS_TABLES {
         conn.execute(&format!("DELETE FROM {table}"), [])?;
     }
+    ledger::migrate_nominator_ledger(conn)?;
     conn.execute_batch(
         "DELETE FROM explorer_transactions;
          DELETE FROM explorer_blocks;
@@ -209,6 +226,10 @@ const NOMINATOR_LEDGER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS nominator_ledg
         last_pool_state INTEGER NOT NULL DEFAULT 0,
         first_seen_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        last_mc_seqno INTEGER,
+        last_mc_root_hash TEXT,
+        last_mc_file_hash TEXT,
+        coverage_gap_count INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(pool_address, nominator_address)
     );
     CREATE INDEX IF NOT EXISTS idx_nominator_ledger_address
@@ -591,6 +612,7 @@ impl IndexerStore {
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
         conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
         conn.execute_batch(TRAVERSAL_SCHEMA)?;
+        conn.execute_batch(ledger::NOMINATOR_LEDGER_STATE_SCHEMA)?;
         Ok(())
     }
 
@@ -899,10 +921,6 @@ impl IndexerStore {
         Ok(())
     }
 
-    /// Clears all chain-derived state after a confirmed masterchain reorg.
-    /// A full replay is intentionally conservative: contract snapshots and
-    /// lifecycle evidence may also have originated on a retired branch and
-    /// cannot be repaired safely from a short explorer-only rewind.
     /// The highest new-request id ever scanned for a service, kept as one
     /// meta row per service. Ids probed and found absent are deliberately
     /// NOT stored as lifecycle rows -- a contract reporting a fabricated
@@ -933,6 +951,12 @@ impl IndexerStore {
         Ok(())
     }
 
+    /// Clears all chain-derived state after a confirmed masterchain reorg.
+    /// A full replay is intentionally conservative: contract snapshots and
+    /// lifecycle evidence may also have originated on a retired branch and
+    /// cannot be repaired safely from a short explorer-only rewind. The
+    /// nominator ledger is marked for a genesis rebuild in the same
+    /// transaction, so its totals stop being served immediately.
     pub fn reset_canonical_index(&self) -> anyhow::Result<()> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
@@ -944,6 +968,9 @@ impl IndexerStore {
         for table in CANONICAL_PROGRESS_TABLES {
             tx.execute(&format!("DELETE FROM {table}"), [])?;
         }
+        // Totals built on the replaced history stop being servable in the
+        // same transaction that forgets that history.
+        ledger::mark_rebuild_required(&tx)?;
         tx.execute(
             "DELETE FROM indexer_meta
              WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'filehash:%'
@@ -1392,134 +1419,14 @@ impl IndexerStore {
     }
 
     /// One depositor's standing in one pool, as attributed so far.
+    /// Raw ledger rows for one depositor. Whether they may be served is
+    /// decided by [`Self::nominator_ledger_report`].
     pub fn nominator_ledger_entries(
         &self,
         nominator_address: &str,
     ) -> anyhow::Result<Vec<NominatorLedgerRecord>> {
         let conn = self.lock()?;
-        let mut statement = conn.prepare(
-            "SELECT pool_address, nominator_address, deposited_total, rewarded_total,
-                    unattributed_total, last_amount, last_pending, first_seen_at, updated_at
-             FROM nominator_ledger
-             WHERE nominator_address = ?1
-             ORDER BY pool_address",
-        )?;
-        let rows = statement.query_map(params![nominator_address], |row| {
-            Ok(NominatorLedgerRecord {
-                pool_address: row.get(0)?,
-                nominator_address: row.get(1)?,
-                deposited_total: row.get::<_, i64>(2)? as u64,
-                rewarded_total: row.get::<_, i64>(3)? as u64,
-                unattributed_total: row.get::<_, i64>(4)? as u64,
-                last_amount: row.get::<_, i64>(5)? as u64,
-                last_pending: row.get::<_, i64>(6)? as u64,
-                first_seen_at: row.get::<_, i64>(7)? as u64,
-                updated_at: row.get::<_, i64>(8)? as u64,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    }
-
-    /// Fold one observation of a pool's depositors into the ledger.
-    ///
-    /// Attribution follows pool.fc's own rules for where a change can come
-    /// from: while the pool is idle a deposit lands directly in `amount`;
-    /// while it is staked a deposit lands in `pending_deposit`; and a
-    /// distribution moves the pending amount plus the round's reward into
-    /// `amount` and clears pending. Anything the previous observation cannot
-    /// account for is recorded as unattributed instead of being called a
-    /// reward.
-    pub fn observe_nominator_positions(
-        &self,
-        pool_address: &str,
-        pool_state: i32,
-        observed_at: u64,
-        positions: &[(String, u64, u64)],
-    ) -> anyhow::Result<()> {
-        let mut conn = self.lock()?;
-        let tx = conn.transaction()?;
-        for (nominator, amount, pending) in positions {
-            let previous: Option<(i64, i64, i64)> = tx
-                .query_row(
-                    "SELECT last_amount, last_pending, last_pool_state
-                     FROM nominator_ledger
-                     WHERE pool_address = ?1 AND nominator_address = ?2",
-                    params![pool_address, nominator],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()?;
-
-            let (mut deposited, mut rewarded, mut unattributed) = (0i64, 0i64, 0i64);
-            match previous {
-                None => {
-                    // First sight of this depositor. Everything they hold was
-                    // put there before anyone was watching, so it is a
-                    // deposit only in the sense that it is not a reward this
-                    // ledger observed.
-                    deposited = (*amount as i64).saturating_add(*pending as i64);
-                }
-                Some((last_amount, last_pending, last_state)) => {
-                    // Chain-controlled values: keep the delta math saturating
-                    // so a hostile or corrupt observation cannot overflow.
-                    let amount_delta = (*amount as i64).saturating_sub(last_amount);
-                    let pending_delta = (*pending as i64).saturating_sub(last_pending);
-                    let distribution_happened = last_state != POOL_STATE_IDLE
-                        && i64::from(pool_state) == POOL_STATE_IDLE
-                        && *pending == 0;
-
-                    if distribution_happened {
-                        // amount grew by the pending deposit plus this
-                        // round's share of the reward.
-                        let reward = amount_delta.saturating_sub(last_pending);
-                        if reward >= 0 {
-                            rewarded = reward;
-                        } else {
-                            // A loss round, or an observation gap that hid a
-                            // withdrawal. Either way it is not a reward.
-                            unattributed = reward;
-                        }
-                    } else if pending_delta > 0 {
-                        deposited = pending_delta;
-                        if amount_delta != 0 {
-                            unattributed = amount_delta;
-                        }
-                    } else if amount_delta > 0 && last_state == POOL_STATE_IDLE {
-                        deposited = amount_delta;
-                    } else if amount_delta != 0 || pending_delta != 0 {
-                        unattributed = amount_delta.saturating_add(pending_delta);
-                    }
-                }
-            }
-
-            tx.execute(
-                "INSERT INTO nominator_ledger
-                    (pool_address, nominator_address, deposited_total, rewarded_total,
-                     unattributed_total, last_amount, last_pending, last_pool_state,
-                     first_seen_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-                 ON CONFLICT(pool_address, nominator_address) DO UPDATE SET
-                    deposited_total = deposited_total + ?3,
-                    rewarded_total = rewarded_total + ?4,
-                    unattributed_total = unattributed_total + ?5,
-                    last_amount = excluded.last_amount,
-                    last_pending = excluded.last_pending,
-                    last_pool_state = excluded.last_pool_state,
-                    updated_at = excluded.updated_at",
-                params![
-                    pool_address,
-                    nominator,
-                    deposited.max(0),
-                    rewarded.max(0),
-                    unattributed.unsigned_abs() as i64,
-                    *amount as i64,
-                    *pending as i64,
-                    pool_state,
-                    observed_at as i64,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        read_ledger_entries(&conn, nominator_address)
     }
 
     pub fn upsert_service_request(&self, record: &ServiceRequestRecord) -> anyhow::Result<()> {
@@ -1618,6 +1525,60 @@ impl IndexerStore {
             .collect();
         Ok((max_id, stored, active))
     }
+}
+
+fn read_ledger_entries(
+    conn: &Connection,
+    nominator_address: &str,
+) -> anyhow::Result<Vec<NominatorLedgerRecord>> {
+    let mut statement = conn.prepare(
+        "SELECT pool_address, nominator_address, deposited_total, rewarded_total,
+                unattributed_total, last_amount, last_pending, first_seen_at, updated_at,
+                coverage_gap_count, last_mc_seqno, last_mc_root_hash, last_mc_file_hash
+         FROM nominator_ledger
+         WHERE nominator_address = ?1
+         ORDER BY pool_address",
+    )?;
+    let rows = statement.query_map(params![nominator_address], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            [
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ],
+            row.get::<_, Option<u32>>(10)?,
+            row.get::<_, Option<String>>(11)?,
+            row.get::<_, Option<String>>(12)?,
+        ))
+    })?;
+    rows.map(|row| {
+        let (pool_address, nominator_address, numbers, seqno, root_hash, file_hash) = row?;
+        let [deposited, rewarded, unattributed, amount, pending, first_seen, updated, gaps] =
+            numbers.map(u64::try_from);
+        Ok(NominatorLedgerRecord {
+            pool_address,
+            nominator_address,
+            deposited_total: deposited?,
+            rewarded_total: rewarded?,
+            unattributed_total: unattributed?,
+            last_amount: amount?,
+            last_pending: pending?,
+            first_seen_at: first_seen?,
+            updated_at: updated?,
+            coverage_gap_count: gaps?,
+            last_mc_seqno: seqno,
+            last_mc_root_hash: root_hash,
+            last_mc_file_hash: file_hash,
+        })
+    })
+    .collect()
 }
 
 fn read_canonical_state(conn: &Connection) -> anyhow::Result<Option<MasterchainCheckpoint>> {
@@ -2480,7 +2441,38 @@ mod tests {
 
 #[cfg(test)]
 mod nominator_ledger_tests {
-    use super::IndexerStore;
+    use super::{IndexerStore, LedgerStatus, MasterchainCheckpoint};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Checkpoints only need to increase; every test store publishes far
+    /// ahead of them.
+    static NEXT_CHECKPOINT: AtomicU32 = AtomicU32::new(1);
+
+    fn checkpoint() -> MasterchainCheckpoint {
+        MasterchainCheckpoint {
+            seqno: NEXT_CHECKPOINT.fetch_add(1, Ordering::Relaxed),
+            root_hash: "00".repeat(32),
+            file_hash: "00".repeat(32),
+        }
+    }
+
+    /// A ledger replaying from genesis over published history.
+    fn ledger_store() -> IndexerStore {
+        let store = IndexerStore::open_in_memory().unwrap();
+        assert!(store.begin_nominator_ledger_rebuild().unwrap());
+        store.publish_through_for_tests(u32::MAX >> 1).unwrap();
+        store
+    }
+
+    fn observe(
+        store: &IndexerStore,
+        pool: &str,
+        state: i32,
+        at: u64,
+        positions: &[(String, u64, u64)],
+    ) -> anyhow::Result<()> {
+        store.observe_nominator_snapshot(pool, state, at, positions, &checkpoint(), 1)
+    }
 
     const POOL: &str = "-1:aaaa";
     const ALICE: &str = "0:1111";
@@ -2498,8 +2490,8 @@ mod nominator_ledger_tests {
         // Whatever a depositor already holds when the indexer first sees them
         // was put there before anyone was watching. Calling it a reward would
         // invent profit out of a cold start.
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.deposited_total, 2_000);
@@ -2509,9 +2501,9 @@ mod nominator_ledger_tests {
 
     #[test]
     fn a_deposit_while_idle_lands_in_the_principal() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 3_500, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 3_500, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.deposited_total, 3_500, "2000 seen plus 1500 deposited");
@@ -2520,11 +2512,9 @@ mod nominator_ledger_tests {
 
     #[test]
     fn a_deposit_while_staked_lands_in_pending() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store
-            .observe_nominator_positions(POOL, STAKED, 200, &[(ALICE.into(), 2_000, 500)])
-            .unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, STAKED, 200, &[(ALICE.into(), 2_000, 500)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.deposited_total, 2_500);
@@ -2536,11 +2526,9 @@ mod nominator_ledger_tests {
         // pool.fc folds pending into the principal and adds the round's share
         // in the same step, so the reward is the growth beyond what was
         // already pending -- not the whole delta.
-        let store = IndexerStore::open_in_memory().unwrap();
-        store
-            .observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 500)])
-            .unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 2_600, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, STAKED, 100, &[(ALICE.into(), 2_000, 500)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 2_600, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.rewarded_total, 100, "2600 - 2000 - 500 pending");
@@ -2550,9 +2538,9 @@ mod nominator_ledger_tests {
 
     #[test]
     fn a_losing_round_is_not_recorded_as_a_reward() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 1_800, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 1_800, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.rewarded_total, 0);
@@ -2564,9 +2552,9 @@ mod nominator_ledger_tests {
         // The principal shrank while the pool was idle, which no rule accounts
         // for -- an unobserved withdrawal and redeposit, most likely. It must
         // not quietly reduce or inflate the earnings figure.
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 1_500, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 1_500, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.rewarded_total, 0);
@@ -2576,27 +2564,13 @@ mod nominator_ledger_tests {
 
     #[test]
     fn rewards_accumulate_across_rounds() {
-        let store = IndexerStore::open_in_memory().unwrap();
+        let store = ledger_store();
         let mut principal = 1_000u64;
-        store.observe_nominator_positions(POOL, IDLE, 0, &[(ALICE.into(), principal, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 0, &[(ALICE.into(), principal, 0)]).unwrap();
         for round in 1..=3u64 {
-            store
-                .observe_nominator_positions(
-                    POOL,
-                    STAKED,
-                    round * 10,
-                    &[(ALICE.into(), principal, 0)],
-                )
-                .unwrap();
+            observe(&store, POOL, STAKED, round * 10, &[(ALICE.into(), principal, 0)]).unwrap();
             principal += 50;
-            store
-                .observe_nominator_positions(
-                    POOL,
-                    IDLE,
-                    round * 10 + 5,
-                    &[(ALICE.into(), principal, 0)],
-                )
-                .unwrap();
+            observe(&store, POOL, IDLE, round * 10 + 5, &[(ALICE.into(), principal, 0)]).unwrap();
         }
 
         let entry = only(&store, ALICE);
@@ -2608,12 +2582,257 @@ mod nominator_ledger_tests {
 
     #[test]
     fn positions_are_tracked_per_pool() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions("-1:bbbb", IDLE, 100, &[(ALICE.into(), 700, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, "-1:bbbb", IDLE, 100, &[(ALICE.into(), 700, 0)]).unwrap();
 
         let rows = store.nominator_ledger_entries(ALICE).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.iter().map(|r| r.deposited_total).sum::<u64>(), 2_700);
+    }
+
+    const BOB: &str = "0:2222";
+
+    #[test]
+    fn a_depositor_who_left_the_pool_is_zeroed_and_a_redeposit_counts_from_zero() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0), (BOB.into(), 500, 0)])
+            .unwrap();
+        // Alice withdrew everything; pool.fc deletes her dictionary entry.
+        observe(&store, POOL, IDLE, 200, &[(BOB.into(), 500, 0)]).unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!((alice.last_amount, alice.last_pending), (0, 0), "current amount is zero");
+        assert_eq!(alice.deposited_total, 2_000, "lifetime totals survive the exit");
+        assert_eq!(alice.unattributed_total, 0, "a full exit is not unexplained");
+        // She comes back with 700: a deposit measured from zero, not from 2000.
+        observe(&store, POOL, IDLE, 300, &[(ALICE.into(), 700, 0), (BOB.into(), 500, 0)]).unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.deposited_total, 2_700);
+        assert_eq!(alice.unattributed_total, 0);
+        assert_eq!(alice.last_amount, 700);
+        // Returning while the pool is staked lands in pending, also from zero.
+        observe(&store, POOL, STAKED, 400, &[(BOB.into(), 500, 0)]).unwrap();
+        observe(&store, POOL, STAKED, 500, &[(ALICE.into(), 0, 300), (BOB.into(), 500, 0)])
+            .unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.deposited_total, 3_000);
+        assert_eq!(alice.unattributed_total, 0);
+    }
+
+    #[test]
+    fn more_than_one_touch_in_an_interval_is_a_coverage_gap_for_every_row() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0), (BOB.into(), 100, 0)])
+            .unwrap();
+        // Two transactions hit the pool before the next pinned snapshot: the
+        // final state is known, the order of what produced it is not.
+        store
+            .observe_nominator_snapshot(
+                POOL,
+                IDLE,
+                200,
+                &[(ALICE.into(), 2_500, 0)],
+                &checkpoint(),
+                2,
+            )
+            .unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.coverage_gap_count, 1);
+        assert_eq!(alice.last_amount, 2_500, "the final snapshot is still recorded");
+        let bob = only(&store, BOB);
+        assert_eq!(bob.coverage_gap_count, 1, "a zeroed row shares the interval's gap");
+        assert!(!super::attribution_complete(true, &alice));
+        // One touch per interval afterwards adds nothing.
+        observe(&store, POOL, IDLE, 300, &[(ALICE.into(), 2_600, 0)]).unwrap();
+        assert_eq!(only(&store, ALICE).coverage_gap_count, 1);
+    }
+
+    #[test]
+    fn attribution_is_complete_only_for_a_valid_ledger_without_gaps_or_unexplained_change() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        let clean = only(&store, ALICE);
+        assert!(super::attribution_complete(true, &clean));
+        assert!(!super::attribution_complete(false, &clean), "never while not valid");
+        let unexplained = super::NominatorLedgerRecord { unattributed_total: 1, ..clean.clone() };
+        assert!(!super::attribution_complete(true, &unexplained));
+        let gap = super::NominatorLedgerRecord { coverage_gap_count: 1, ..clean };
+        assert!(!super::attribution_complete(true, &gap));
+    }
+
+    #[test]
+    fn replaying_the_same_checkpoint_does_not_double_count() {
+        let store = ledger_store();
+        let first = checkpoint();
+        let second = checkpoint();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 1, &[(ALICE.into(), 1_000, 0)], &first, 1)
+            .unwrap();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 2, &[(ALICE.into(), 1_500, 0)], &second, 1)
+            .unwrap();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 3, &[(ALICE.into(), 1_500, 0)], &second, 1)
+            .unwrap();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 4, &[(ALICE.into(), 9_999, 0)], &first, 1)
+            .unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.deposited_total, 1_500);
+        assert_eq!(alice.last_amount, 1_500);
+        assert_eq!(alice.last_mc_seqno, Some(second.seqno));
+    }
+
+    #[test]
+    fn observations_are_refused_until_a_rebuild_starts_and_must_be_published() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.publish_through_for_tests(10).unwrap();
+        let error = observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1, 0)]).unwrap_err();
+        assert!(error.to_string().contains("must be rebuilt"), "{error}");
+        assert!(store.begin_nominator_ledger_rebuild().is_err(), "a rebuild starts at genesis");
+        let store = IndexerStore::open_in_memory().unwrap();
+        assert!(store.begin_nominator_ledger_rebuild().unwrap());
+        store.publish_through_for_tests(10).unwrap();
+        let beyond = MasterchainCheckpoint { seqno: 11, ..checkpoint() };
+        assert!(store.observe_nominator_snapshot(POOL, IDLE, 1, &[], &beyond, 1).is_err());
+        let forked =
+            MasterchainCheckpoint { seqno: 10, root_hash: "11".repeat(32), ..checkpoint() };
+        assert!(
+            store.observe_nominator_snapshot(POOL, IDLE, 1, &[], &forked, 1).is_err(),
+            "the published height itself must match exactly"
+        );
+    }
+
+    #[test]
+    fn amounts_beyond_the_storable_range_are_refused_not_wrapped() {
+        let store = ledger_store();
+        let error = observe(&store, POOL, IDLE, 1, &[(ALICE.into(), u64::MAX, 0)]).unwrap_err();
+        assert!(error.to_string().contains("range"), "{error}");
+        assert!(store.nominator_ledger_entries(ALICE).unwrap().is_empty());
+        let error = observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1, 0), (ALICE.into(), 2, 0)])
+            .unwrap_err();
+        assert!(error.to_string().contains("twice"), "{error}");
+    }
+
+    #[test]
+    fn a_canonical_reset_makes_the_ledger_unavailable_in_the_same_step() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1_000, 0)]).unwrap();
+        store.set_remote_mc_tip(1).unwrap();
+        store.settle_nominator_ledger().unwrap();
+        assert_eq!(store.nominator_ledger_state().unwrap().status, LedgerStatus::Valid);
+        store.reset_canonical_index().unwrap();
+        let state = store.nominator_ledger_state().unwrap();
+        assert_eq!(state.status, LedgerStatus::RebuildRequired);
+        assert_eq!(state.as_of, None);
+        let report = store.nominator_ledger_report(ALICE).unwrap();
+        assert!(matches!(
+            report.availability,
+            super::LedgerAvailability::Unavailable {
+                code: "nominator_ledger_rebuild_required",
+                ..
+            }
+        ));
+        assert!(store.begin_nominator_ledger_rebuild().unwrap());
+        assert!(store.nominator_ledger_entries(ALICE).unwrap().is_empty(), "old totals are gone");
+    }
+
+    #[test]
+    fn serving_requires_a_valid_ledger_anchored_at_the_published_checkpoint() {
+        use super::LedgerAvailability::{Available, Unavailable};
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1_000, 0)]).unwrap();
+        let code =
+            |store: &IndexerStore| match store.nominator_ledger_report(ALICE).unwrap().availability
+            {
+                Available { caught_up, .. } => {
+                    if caught_up {
+                        "available"
+                    } else {
+                        "available_lagging"
+                    }
+                }
+                Unavailable { code, .. } => code,
+            };
+        assert_eq!(code(&store), "nominator_ledger_rebuilding");
+        let published = store.canonical_state().unwrap().unwrap();
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&published)).unwrap();
+        store.set_remote_mc_tip(published.seqno).unwrap();
+        assert_eq!(code(&store), "available");
+        store.set_remote_mc_tip(published.seqno + 5).unwrap();
+        assert_eq!(code(&store), "available_lagging", "chain tip ahead of the index");
+        let behind = MasterchainCheckpoint { seqno: published.seqno - 1, ..published.clone() };
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&behind)).unwrap();
+        assert_eq!(code(&store), "nominator_ledger_behind_index");
+        let forked = MasterchainCheckpoint { root_hash: "77".repeat(32), ..published.clone() };
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&forked)).unwrap();
+        assert_eq!(code(&store), "nominator_ledger_not_canonical");
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, None).unwrap();
+        assert_eq!(code(&store), "nominator_ledger_not_canonical");
+    }
+
+    /// A database written by a v10 binary: its ledger looks complete, but
+    /// nothing binds it to canonical history.
+    #[test]
+    fn a_v10_ledger_is_never_served_before_a_genesis_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v10.sqlite");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE indexer_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 CREATE TABLE indexed_contracts (address TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                    creator TEXT, counterparty TEXT, status TEXT, deadline INTEGER,
+                    last_seqno INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                    dto_json TEXT NOT NULL);
+                 CREATE TABLE service_request_lifecycle (service_address TEXT NOT NULL,
+                    request_id TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL,
+                    dto_json TEXT NOT NULL, PRIMARY KEY(service_address, request_id));
+                 CREATE TABLE nominator_ledger (pool_address TEXT NOT NULL,
+                    nominator_address TEXT NOT NULL,
+                    deposited_total INTEGER NOT NULL DEFAULT 0,
+                    rewarded_total INTEGER NOT NULL DEFAULT 0,
+                    unattributed_total INTEGER NOT NULL DEFAULT 0,
+                    last_amount INTEGER NOT NULL DEFAULT 0,
+                    last_pending INTEGER NOT NULL DEFAULT 0,
+                    last_pool_state INTEGER NOT NULL DEFAULT 0,
+                    first_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                    PRIMARY KEY(pool_address, nominator_address));",
+            )
+            .unwrap();
+            conn.execute_batch(super::EXPLORER_SCHEMA).unwrap();
+            conn.execute_batch(super::EXPLORER_ORDER_INDEX_SCHEMA).unwrap();
+            conn.execute_batch(super::DNS_HISTORY_SCHEMA).unwrap();
+            conn.execute_batch(
+                "INSERT INTO indexer_meta VALUES ('schema_version', '10');
+                 INSERT INTO indexer_meta VALUES ('checkpoint:-1:-9223372036854775808', '900');
+                 INSERT INTO nominator_ledger (pool_address, nominator_address, deposited_total,
+                    rewarded_total, unattributed_total, last_amount, first_seen_at, updated_at)
+                    VALUES ('-1:aaaa', '0:1111', 1000, 250, 0, 1250, 1, 2);
+                 INSERT INTO explorer_blocks VALUES (-1, -9223372036854775808, 900, 'r', 'f', 1, 1, 900);",
+            )
+            .unwrap();
+        }
+        let store = IndexerStore::open(&path).unwrap();
+        let state = store.nominator_ledger_state().unwrap();
+        assert_eq!(state.status, LedgerStatus::RebuildRequired);
+        assert_eq!(state.as_of, None);
+        let report = store.nominator_ledger_report(ALICE).unwrap();
+        assert_eq!(report.entries.len(), 1, "the old row is still on disk");
+        assert_eq!(report.entries[0].last_mc_seqno, None, "with no provenance");
+        assert!(matches!(
+            report.availability,
+            super::LedgerAvailability::Unavailable {
+                code: "nominator_ledger_rebuild_required",
+                ..
+            }
+        ));
+        assert_eq!(store.canonical_state().unwrap(), None, "the explorer replays from genesis");
+        assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 0);
+        assert!(store.explorer_block_root(-1, i64::MIN, 900).unwrap().is_none());
+        drop(store);
+        // Reopening at v11 does not re-run the migration or revive the ledger.
+        let store = IndexerStore::open(&path).unwrap();
+        assert_eq!(store.nominator_ledger_state().unwrap().status, LedgerStatus::RebuildRequired);
     }
 }
