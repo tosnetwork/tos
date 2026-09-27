@@ -3,25 +3,37 @@
 import copy
 import sys
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import x02_partial_sequence as partial
 
 EXPECTED_DIRECTIONS = (
-    "node1>node2/adnl", "node1>node2/quic",
-    "node1>node3/adnl", "node1>node3/quic",
-    "node1>node4/adnl", "node1>node4/quic",
-    "node2>node1/adnl", "node2>node1/quic",
-    "node2>node3/adnl", "node2>node3/quic",
-    "node2>node4/adnl", "node2>node4/quic",
-    "node3>node1/adnl", "node3>node1/quic",
-    "node3>node2/adnl", "node3>node2/quic",
-    "node3>node4/adnl", "node3>node4/quic",
-    "node4>node1/adnl", "node4>node1/quic",
-    "node4>node2/adnl", "node4>node2/quic",
-    "node4>node3/adnl", "node4>node3/quic",
+    "node1>node2/adnl",
+    "node1>node2/quic",
+    "node1>node3/adnl",
+    "node1>node3/quic",
+    "node1>node4/adnl",
+    "node1>node4/quic",
+    "node2>node1/adnl",
+    "node2>node1/quic",
+    "node2>node3/adnl",
+    "node2>node3/quic",
+    "node2>node4/adnl",
+    "node2>node4/quic",
+    "node3>node1/adnl",
+    "node3>node1/quic",
+    "node3>node2/adnl",
+    "node3>node2/quic",
+    "node3>node4/adnl",
+    "node3>node4/quic",
+    "node4>node1/adnl",
+    "node4>node1/quic",
+    "node4>node2/adnl",
+    "node4>node2/quic",
+    "node4>node3/adnl",
+    "node4>node3/quic",
 )
 
 
@@ -29,29 +41,38 @@ class PartialSequenceTests(unittest.TestCase):
     def setUp(self):
         self.policy = partial.candidate_policy("535214d5836c5f09f45975689acb8daf8c37c7ae")
         # Independent literal vectors: seed=1, direction ordinal modulo four.
-        self.rows = [{"direction": direction, "index": index,
-                      "packet_sha256": "a" * 64,
-                      "dropped": index % 4 == (3, 2, 1, 0)[ordinal % 4]}
-                     for ordinal, direction in enumerate(EXPECTED_DIRECTIONS)
-                     for index in range(8)]
+        self.rows = [
+            {
+                "direction": direction,
+                "index": index,
+                "packet_sha256": "a" * 64,
+                "dropped": index % 4 == (3, 2, 1, 0)[ordinal % 4],
+            }
+            for ordinal, direction in enumerate(EXPECTED_DIRECTIONS)
+            for index in range(8)
+        ]
 
     def test_literal_vectors_and_scope(self):
         self.assertEqual(partial.DIRECTIONS, EXPECTED_DIRECTIONS)
         result = partial.verify_selection_trace(self.policy, self.rows)
         self.assertEqual(len(result["counts"]), 24)
-        self.assertTrue(all(row == {"seen": 8, "dropped": 2, "passed": 6}
-                            for row in result["counts"].values()))
+        self.assertTrue(
+            all(row == {"seen": 8, "dropped": 2, "passed": 6} for row in result["counts"].values())
+        )
         self.assertIs(result["live_packet_hits_verified"], False)
         self.assertIs(result["chain_thresholds_verified"], False)
 
     def test_literal_direction_selection(self):
         for direction, expected in (
-                ("node1>node2/adnl", [False, False, False, True]),
-                ("node1>node2/quic", [False, False, True, False]),
-                ("node1>node3/adnl", [False, True, False, False]),
-                ("node1>node3/quic", [True, False, False, False])):
-            self.assertEqual([partial.selected_drop(self.policy, direction, index)
-                              for index in range(4)], expected)
+            ("node1>node2/adnl", [False, False, False, True]),
+            ("node1>node2/quic", [False, False, True, False]),
+            ("node1>node3/adnl", [False, True, False, False]),
+            ("node1>node3/quic", [True, False, False, False]),
+        ):
+            self.assertEqual(
+                [partial.selected_drop(self.policy, direction, index) for index in range(4)],
+                expected,
+            )
 
     def test_swapped_direction_mapping_rejects_literal_trace(self):
         changed = list(EXPECTED_DIRECTIONS)
@@ -64,9 +85,12 @@ class PartialSequenceTests(unittest.TestCase):
                 partial.verify_selection_trace(mutant_policy, self.rows)
 
     def test_wrong_seed_rate_threshold_and_halt_claim(self):
-        for field, value in (("seed_hex", "0" * 32),
-                             ("rate", {"numerator": 1, "denominator": 2}),
-                             ("halt_claim", True), ("chain_thresholds", {})):
+        for field, value in (
+            ("seed_hex", "0" * 32),
+            ("rate", {"numerator": 1, "denominator": 2}),
+            ("halt_claim", True),
+            ("chain_thresholds", {}),
+        ):
             policy = copy.deepcopy(self.policy)
             policy[field] = value
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "differs"):

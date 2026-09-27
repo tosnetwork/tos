@@ -6,24 +6,31 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import sys
 import types
 import unittest
 import urllib.error
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-
-SOURCE = Path(os.environ.get(
-    "E13_SOURCE_PATH",
-    Path(__file__).resolve().parents[2] / "scripts/service-actor-e2e.py",
-))
+SOURCE = Path(
+    os.environ.get(
+        "E13_SOURCE_PATH",
+        Path(__file__).resolve().parents[2] / "scripts/service-actor-e2e.py",
+    )
+)
 spec = importlib.util.spec_from_file_location("e13_service", SOURCE)
 e13 = importlib.util.module_from_spec(spec)
-stubs = {name: types.ModuleType(name) for name in (
-    "tostester", "tostester.install", "tostester.network",
-    "tostester.pq_initial_validator", "pytosiq_core",
-)}
+stubs = {
+    name: types.ModuleType(name)
+    for name in (
+        "tostester",
+        "tostester.install",
+        "tostester.network",
+        "tostester.pq_initial_validator",
+        "pytosiq_core",
+    )
+}
 stubs["tostester.install"].Install = object
 stubs["tostester.network"].Network = object
 stubs["tostester.network"].StartOptions = object
@@ -42,49 +49,98 @@ def head(seqno):
 
 
 def wallet_tx():
-    return {"transaction_id": {"lt": "11"}, "aborted": False,
-            "compute": {"success": True}, "action": {"success": True},
-            "out_msgs": [{"destination": "0:service", "hash": "message-hash"}]}
+    return {
+        "transaction_id": {"lt": "11"},
+        "aborted": False,
+        "compute": {"success": True},
+        "action": {"success": True},
+        "out_msgs": [{"destination": "0:service", "hash": "message-hash"}],
+    }
 
 
 def service_tx(code=1923, message_hash="message-hash"):
-    return {"transaction_id": {"lt": "21"}, "aborted": True,
-            "compute": {"success": False, "exit_code": code},
-            "in_msg": {"hash": message_hash, "source": "0:payer"},
-            "out_msgs": [{"hash": "bounce-hash", "source": "0:service",
-                          "destination": "0:payer", "bounced": True}]}
+    return {
+        "transaction_id": {"lt": "21"},
+        "aborted": True,
+        "compute": {"success": False, "exit_code": code},
+        "in_msg": {"hash": message_hash, "source": "0:payer"},
+        "out_msgs": [
+            {
+                "hash": "bounce-hash",
+                "source": "0:service",
+                "destination": "0:payer",
+                "bounced": True,
+            }
+        ],
+    }
 
 
 def bounce_tx(message_hash="bounce-hash"):
-    return {"transaction_id": {"lt": "12"}, "in_msg": {
-        "hash": message_hash, "source": "0:service", "destination": "0:payer",
-        "bounced": True}, "out_msgs": []}
+    return {
+        "transaction_id": {"lt": "12"},
+        "in_msg": {
+            "hash": message_hash,
+            "source": "0:service",
+            "destination": "0:payer",
+            "bounced": True,
+        },
+        "out_msgs": [],
+    }
 
 
 class ServiceNegativeTests(unittest.TestCase):
-    def run_case(self, *, expected=1923, transaction=None, send_error=None,
-                 wallet=None, bounce=None, extra=None, states=None, operation="call"):
-        with patch.object(e13, "service_show", new=AsyncMock(
-            side_effect=states or [STATE, STATE, STATE]
-        )), patch.object(e13, "finalized_mc_header",
-                         side_effect=[head(10), head(11), head(12)]), patch.object(
-            e13, "last_lt", side_effect=[10, 20]
-        ), patch.object(e13, "transactions_after", side_effect=[
-            [wallet or wallet_tx(), bounce or bounce_tx(), *(extra or [])],
-            [transaction or service_tx()]
-        ]), patch.object(e13, "same_addr", side_effect=lambda a, b: a == b), patch.object(
-            e13, "send_op", new=AsyncMock(side_effect=send_error, return_value="submitted")
-        ), patch.object(e13, "record_jsonl") as record, patch.object(e13, "check") as check:
-            asyncio.run(e13.rejected_operation(
-                "outsider call", "0:service", "0:payer", expected,
-                "svc-1", "outsider", operation, "--request-hash", "aa" * 32))
+    def run_case(
+        self,
+        *,
+        expected=1923,
+        transaction=None,
+        send_error=None,
+        wallet=None,
+        bounce=None,
+        extra=None,
+        states=None,
+        operation="call",
+    ):
+        with (
+            patch.object(
+                e13, "service_show", new=AsyncMock(side_effect=states or [STATE, STATE, STATE])
+            ),
+            patch.object(e13, "finalized_mc_header", side_effect=[head(10), head(11), head(12)]),
+            patch.object(e13, "last_lt", side_effect=[10, 20]),
+            patch.object(
+                e13,
+                "transactions_after",
+                side_effect=[
+                    [wallet or wallet_tx(), bounce or bounce_tx(), *(extra or [])],
+                    [transaction or service_tx()],
+                ],
+            ),
+            patch.object(e13, "same_addr", side_effect=lambda a, b: a == b),
+            patch.object(
+                e13, "send_op", new=AsyncMock(side_effect=send_error, return_value="submitted")
+            ),
+            patch.object(e13, "record_jsonl") as record,
+            patch.object(e13, "check") as check,
+        ):
+            asyncio.run(
+                e13.rejected_operation(
+                    "outsider call",
+                    "0:service",
+                    "0:payer",
+                    expected,
+                    "svc-1",
+                    "outsider",
+                    operation,
+                    "--request-hash",
+                    "aa" * 32,
+                )
+            )
             return record, check
 
     def test_exact_vm_exit_and_two_final_heads(self):
         record, check = self.run_case()
         record.assert_called_once()
-        self.assertEqual(record.call_args.args[1]["bounce_tx"]["in_msg"]["hash"],
-                         "bounce-hash")
+        self.assertEqual(record.call_args.args[1]["bounce_tx"]["in_msg"]["hash"], "bounce-hash")
         check.assert_called_once_with("outsider call", True)
 
     def test_wrong_bounce_hash_is_refused(self):
@@ -96,8 +152,10 @@ class ServiceNegativeTests(unittest.TestCase):
             self.run_case(extra=[bounce_tx()])
 
     def test_extra_wallet_outbound_is_refused(self):
-        extra = {"transaction_id": {"lt": "13"}, "out_msgs": [
-            {"destination": "0:other", "hash": "other-send"}]}
+        extra = {
+            "transaction_id": {"lt": "13"},
+            "out_msgs": [{"destination": "0:other", "hash": "other-send"}],
+        }
         with self.assertRaisesRegex(RuntimeError, "unrelated or duplicate"):
             self.run_case(extra=[extra])
 
@@ -115,7 +173,8 @@ class ServiceNegativeTests(unittest.TestCase):
         timeout = RuntimeError(
             "tosctl agent service send failed:\n"
             "OK Service Actor call message submitted to 0:service\n"
-            "Error: timed out waiting for the Service Actor call to land")
+            "Error: timed out waiting for the Service Actor call to land"
+        )
         record, check = self.run_case(send_error=timeout)
         self.assertTrue(record.call_args.args[1]["cli_post_submit_timeout"])
         self.assertIn("message submitted to", record.call_args.args[1]["receipt"])
@@ -127,8 +186,11 @@ class ServiceNegativeTests(unittest.TestCase):
 
     def test_timeout_without_submit_marker_is_transport_failure(self):
         with self.assertRaisesRegex(RuntimeError, "timed out waiting"):
-            self.run_case(send_error=RuntimeError(
-                "Error: timed out waiting for the Service Actor call to land"))
+            self.run_case(
+                send_error=RuntimeError(
+                    "Error: timed out waiting for the Service Actor call to land"
+                )
+            )
 
     def test_wrong_vm_code_does_not_count(self):
         with self.assertRaisesRegex(RuntimeError, "expected VM exit 1923"):
@@ -153,11 +215,13 @@ class ServiceNegativeTests(unittest.TestCase):
 
     def test_http_error_body_and_status_are_retained(self):
         error_body = b'{"result":{"status":"pending"}}'
-        error = urllib.error.HTTPError("http://127.0.0.1/", 503, "unavailable", {},
-                                      io.BytesIO(error_body))
-        with patch.object(e13.urllib.request, "urlopen", side_effect=error), patch.object(
-            e13, "record_jsonl"
-        ) as record:
+        error = urllib.error.HTTPError(
+            "http://127.0.0.1/", 503, "unavailable", {}, io.BytesIO(error_body)
+        )
+        with (
+            patch.object(e13.urllib.request, "urlopen", side_effect=error),
+            patch.object(e13, "record_jsonl") as record,
+        ):
             status, body = e13.http_get("/services/0:service/requests/1")
         error.close()
         self.assertEqual(status, 503)

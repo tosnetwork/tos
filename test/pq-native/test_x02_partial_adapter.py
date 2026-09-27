@@ -1,10 +1,10 @@
-import struct
 import json
-import tempfile
+import struct
 import sys
+import tempfile
 import unittest
-from unittest import mock
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import x02_partial_adapter as adapter
@@ -23,31 +23,37 @@ class AdapterTests(unittest.TestCase):
     def setUp(self):
         self.endpoints = {}
         for ordinal, direction in enumerate(selection.DIRECTIONS):
-            self.endpoints[direction] = ("127.0.0.1", 32000 + ordinal,
-                                         "127.0.0.2", 33000 + ordinal)
+            self.endpoints[direction] = ("127.0.0.1", 32000 + ordinal, "127.0.0.2", 33000 + ordinal)
         self.raw = bytes.fromhex("4500001d00004000401100007f0000017f000002")
         self.raw += struct.pack("!HHHH", 32000, 33000, 9, 0) + b"x"
         self.ledger = Ledger()
-        self.engine = adapter.DecisionAdapter(selection.candidate_policy("a" * 40),
-                                              self.endpoints, self.ledger)
+        self.engine = adapter.DecisionAdapter(
+            selection.candidate_policy("a" * 40), self.endpoints, self.ledger
+        )
         self.direction = "node1>node2/adnl"
 
     def test_decisions_are_persisted_before_submission(self):
         seen = []
+
         def submit(dropped):
             self.assertEqual(self.ledger.rows[-1]["event"], "intent")
             seen.append(dropped)
+
         for index in range(4):
             self.engine.decide(self.direction, index, self.raw, submit)
         self.assertEqual(seen, [False, False, False, True])
-        self.assertEqual(self.engine.counts[self.direction],
-                         {"seen": 4, "submitted_drop": 1, "submitted_accept": 3})
-        self.assertEqual([row["event"] for row in self.ledger.rows],
-                         ["intent", "verdict_submitted"] * 4)
+        self.assertEqual(
+            self.engine.counts[self.direction],
+            {"seen": 4, "submitted_drop": 1, "submitted_accept": 3},
+        )
+        self.assertEqual(
+            [row["event"] for row in self.ledger.rows], ["intent", "verdict_submitted"] * 4
+        )
 
     def test_submission_failure_retains_pending_and_poisons_adapter(self):
         def fail(dropped):
             raise RuntimeError("backend failure")
+
         with self.assertRaisesRegex(RuntimeError, "backend failure"):
             self.engine.decide(self.direction, 7, self.raw, fail)
         self.assertIsNotNone(self.engine.pending)
@@ -76,6 +82,7 @@ class AdapterTests(unittest.TestCase):
     def test_ledger_failure_never_submits(self):
         def fail(row):
             raise OSError("disk full")
+
         self.ledger.append = fail
         submitted = []
         with self.assertRaisesRegex(OSError, "disk full"):
@@ -85,10 +92,12 @@ class AdapterTests(unittest.TestCase):
 
     def test_submission_then_completion_ledger_failure_is_uncertain(self):
         append = self.ledger.append
+
         def fail_completion(row):
             if row["event"] == "verdict_submitted":
                 raise OSError("completion record failed")
             append(row)
+
         self.ledger.append = fail_completion
         submitted = []
         with self.assertRaisesRegex(OSError, "completion record failed"):
@@ -102,6 +111,7 @@ class AdapterTests(unittest.TestCase):
         def reenter(dropped):
             with self.assertRaisesRegex(ValueError, "failed or busy"):
                 self.engine.decide(self.direction, 1, self.raw, lambda verdict: None)
+
         with self.assertRaisesRegex(ValueError, "poisoned during submission"):
             self.engine.decide(self.direction, 0, self.raw, reenter)
         self.assertTrue(self.engine.failed)
@@ -112,20 +122,25 @@ class AdapterTests(unittest.TestCase):
             path = Path(directory) / "ledger.jsonl"
             ledger = adapter.DurableLedger(path)
             stream = ledger.stream
+
             class ShortWriter:
                 def write(self, raw):
                     return stream.write(raw[:3])
+
                 def fileno(self):
                     return stream.fileno()
+
                 def close(self):
                     stream.close()
+
             ledger.stream = ShortWriter()
             try:
                 ledger.append({"event": "intent", "packet_hex": self.raw.hex()})
             finally:
                 ledger.close()
-            self.assertEqual(json.loads(path.read_text()),
-                             {"event": "intent", "packet_hex": self.raw.hex()})
+            self.assertEqual(
+                json.loads(path.read_text()), {"event": "intent", "packet_hex": self.raw.hex()}
+            )
             with self.assertRaises(FileExistsError):
                 adapter.DurableLedger(path)
 

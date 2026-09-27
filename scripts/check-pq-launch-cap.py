@@ -138,6 +138,8 @@ for name, (path, marker) in markers.items():
 cpp = "\n".join(path.read_text() for path in (root / "validator").rglob("*.cpp"))
 for symbol in ("IValidatorGroup::create_bridge(", "IValidatorGroup::create_bridge_observer("):
     if cpp.count(symbol) != 2:  # one definition in bridge.cpp, one admitted call in manager.cpp
-        fail(f"committee-forming path count changed for {symbol}: found {cpp.count(symbol)}, expected 2")
+        fail(
+            f"committee-forming path count changed for {symbol}: found {cpp.count(symbol)}, expected 2"
+        )
 
 print(f"PQ_LAUNCH_CAP_SOURCE_OK: {len(markers)} cap bindings and 2 actor constructors are pinned")

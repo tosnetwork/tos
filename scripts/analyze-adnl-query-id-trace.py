@@ -34,7 +34,9 @@ def classify(lines: list[str]) -> str:
     if len(stages) != len(lines):
         return "invalid_duplicate_query_stage"
     if "client_refuse" in stages:
-        if any(stage in stages for stage in ("client_transmit", "server_ingress", "client_timeout")):
+        if any(
+            stage in stages for stage in ("client_transmit", "server_ingress", "client_timeout")
+        ):
             return "invalid_refused_query_progressed"
         if "reason=no-live-connection pending_queries=0" not in stages["client_refuse"]:
             return "invalid_refusal_without_empty_query_map"
@@ -50,9 +52,15 @@ def classify(lines: list[str]) -> str:
         if "client_answer" in stages or "client_complete" in stages:
             return "unproven_answer_without_raw_attribution"
         return "incomplete_without_timeout"
-    if "server_ingress" in stages and "admission=drop reason=per-connection-limit" in stages["server_ingress"]:
+    if (
+        "server_ingress" in stages
+        and "admission=drop reason=per-connection-limit" in stages["server_ingress"]
+    ):
         return "server_per_connection_admission_drop"
-    if "server_ingress" in stages and "admission=drop reason=server-or-per-ip-limit" in stages["server_ingress"]:
+    if (
+        "server_ingress" in stages
+        and "admission=drop reason=server-or-per-ip-limit" in stages["server_ingress"]
+    ):
         return "server_or_per_ip_admission_drop"
     if "server_completion" in stages and "response_sent=false" in stages["server_completion"]:
         return "server_completion_without_answer"
@@ -80,9 +88,13 @@ def analyze(client_log: Path, node_logs: list[Path]) -> dict[str, object]:
 
 def self_test() -> None:
     query_id = "A" * 64
+
     def lines(*events: str) -> list[str]:
-        return [f"ADNL_EXT_QUERY {event.split()[0]} id={query_id} "
-                + " ".join(event.split()[1:]) for event in events]
+        return [
+            f"ADNL_EXT_QUERY {event.split()[0]} id={query_id} " + " ".join(event.split()[1:])
+            for event in events
+        ]
+
     cases = {
         "client_no_connection_fail_fast": lines(
             "client_create connection_present=false",

@@ -6,17 +6,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test/tostester/src"))
-SPEC = importlib.util.spec_from_file_location("z01_lite_quartet", ROOT / "scripts/z01_lite_quartet.py")
+SPEC = importlib.util.spec_from_file_location(
+    "z01_lite_quartet", ROOT / "scripts/z01_lite_quartet.py"
+)
 assert SPEC and SPEC.loader
 lite = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(lite)
 
 # Mimics lite-client batch mode: exit 0 whenever the liteserver answered, and
 # save files only in the places the production client writes them.
-FAKE_LITE = r'''
+FAKE_LITE = r"""
 import os, sys, shutil
 args = sys.argv[1:]
 db = args[args.index("-D") + 1] if "-D" in args else None
@@ -36,7 +37,7 @@ elif command.startswith("saveconfig "):
         size = os.path.getsize(filename)
         print(f"saved configuration dictionary into file `{filename}` ({size} bytes written)")
 sys.exit(0)
-'''
+"""
 
 
 def exact(file_hash: str) -> tuple:
@@ -91,13 +92,17 @@ class LiteQuartet(unittest.TestCase):
         self.arm("ok", block)
         out = self.dir / "ok"
         out.mkdir()
-        row = lite.fetch_block(self.fake, self.config, exact(file_hash), out, "b12", [sys.executable])
+        row = lite.fetch_block(
+            self.fake, self.config, exact(file_hash), out, "b12", [sys.executable]
+        )
         self.assertEqual(Path(row["path"]).read_bytes(), block)
 
         self.arm("ok", b"other bytes")
         out = self.dir / "wrong"
         out.mkdir()
-        with self.assertRaisesRegex(lite.LiteError, "saved block bytes differ from the full-ID file hash"):
+        with self.assertRaisesRegex(
+            lite.LiteError, "saved block bytes differ from the full-ID file hash"
+        ):
             # The fake names the file by the requested hash but writes other bytes.
             lite.fetch_block(self.fake, self.config, exact(file_hash), out, "b12", [sys.executable])
 
@@ -113,24 +118,27 @@ class LiteQuartet(unittest.TestCase):
         self.arm("ok", raw)
         out = self.dir / "config-ok"
         out.mkdir()
-        row = lite.fetch_proven_config(self.fake, self.config, exact("ab" * 32), out, "c12",
-                                       hashes, [sys.executable])
+        row = lite.fetch_proven_config(
+            self.fake, self.config, exact("ab" * 32), out, "c12", hashes, [sys.executable]
+        )
         self.assertEqual(row["param_cell_hashes"], hashes)
 
         wrong = {**hashes, "30": "00" * 32}
         out = self.dir / "config-wrong"
         out.mkdir()
         with self.assertRaisesRegex(lite.LiteError, "proven parameter cells differ"):
-            lite.fetch_proven_config(self.fake, self.config, exact("ab" * 32), out, "c12",
-                                     wrong, [sys.executable])
+            lite.fetch_proven_config(
+                self.fake, self.config, exact("ab" * 32), out, "c12", wrong, [sys.executable]
+            )
 
         missing, _ = config_dictionary({16: b"p16", 28: b"p28"})
         self.arm("ok", missing)
         out = self.dir / "config-missing"
         out.mkdir()
         with self.assertRaisesRegex(lite.LiteError, "ConfigParam30 is absent"):
-            lite.fetch_proven_config(self.fake, self.config, exact("ab" * 32), out, "c12",
-                                     hashes, [sys.executable])
+            lite.fetch_proven_config(
+                self.fake, self.config, exact("ab" * 32), out, "c12", hashes, [sys.executable]
+            )
 
         # Exit 0 without the post-verification save (lite-client's behavior when
         # the proof fails after a successful transport reply) must be refused.
@@ -138,8 +146,9 @@ class LiteQuartet(unittest.TestCase):
         out = self.dir / "config-unverified"
         out.mkdir()
         with self.assertRaisesRegex(lite.LiteError, "did not report the proven dictionary save"):
-            lite.fetch_proven_config(self.fake, self.config, exact("ab" * 32), out, "c12",
-                                     hashes, [sys.executable])
+            lite.fetch_proven_config(
+                self.fake, self.config, exact("ab" * 32), out, "c12", hashes, [sys.executable]
+            )
 
 
 if __name__ == "__main__":

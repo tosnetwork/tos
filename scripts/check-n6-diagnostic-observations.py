@@ -80,7 +80,9 @@ def main() -> int:
                 "colocated-launch-committee-finalcert-tail changed field "
                 f"{field}: expected={expected!r} actual={finalcert.get(field)!r}"
             )
-    tail_join = observations["colocated-launch-committee-finalcert-tail"].get("stage_resource_join", {})
+    tail_join = observations["colocated-launch-committee-finalcert-tail"].get(
+        "stage_resource_join", {}
+    )
     for field, expected in {
         "source_artifact_sha256": expected_finalcert["artifact_sha256"],
         "candidate_slot": 713,
@@ -88,11 +90,16 @@ def main() -> int:
         "skip_certificate_slots_observed_by_all_21_validators": [713, 714, 715],
     }.items():
         if tail_join.get(field) != expected:
-            fail(f"FinalCert stage/resource join changed {field}: expected={expected!r} actual={tail_join.get(field)!r}")
+            fail(
+                f"FinalCert stage/resource join changed {field}: expected={expected!r} actual={tail_join.get(field)!r}"
+            )
     if observations["colocated-launch-committee-finalcert-tail"]["status"] == "OPEN":
         if tail_join.get("cause_identified") is not False:
             fail("open FinalCert tail cannot claim a cause before a run-evidenced diagnosis")
-    if tail_join.get("cause_identified") is False and tail_join.get("recommended_parameter_changes") != []:
+    if (
+        tail_join.get("cause_identified") is False
+        and tail_join.get("recommended_parameter_changes") != []
+    ):
         fail("FinalCert tail cannot recommend parameter changes without an identified cause")
     expected_command = (
         "python3 scripts/analyze-n6-finalcert-tail.py "

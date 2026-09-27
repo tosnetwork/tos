@@ -9743,16 +9743,10 @@ pub(crate) async fn send_wallet_message(
     // misreport a successful shard transaction as a failed operation. Sign
     // once and confirm that exact external message and destination; never
     // rebroadcast on an ambiguous observation timeout.
-    let boc = build_wallet_message_boc(wallet, destination.clone(), amount, body, bounce, seqno)
-        .await?;
-    confirm_prepared_wallet_message(
-        rpc_client,
-        &boc,
-        owner_address,
-        &destination,
-        DEPLOY_TIMEOUT,
-    )
-    .await
+    let boc =
+        build_wallet_message_boc(wallet, destination.clone(), amount, body, bounce, seqno).await?;
+    confirm_prepared_wallet_message(rpc_client, &boc, owner_address, &destination, DEPLOY_TIMEOUT)
+        .await
 }
 
 /// Build and sign a wallet message without broadcasting it. Returns the
@@ -10000,8 +9994,10 @@ mod exact_deploy_wallet_transaction_tests {
             .split_once("pub(crate) async fn build_wallet_message_boc(")
             .unwrap()
             .0;
-        assert!(shared.find("build_wallet_message_boc(").unwrap()
-            < shared.find("confirm_prepared_wallet_message(").unwrap());
+        assert!(
+            shared.find("build_wallet_message_boc(").unwrap()
+                < shared.find("confirm_prepared_wallet_message(").unwrap()
+        );
         assert_eq!(shared.matches("confirm_prepared_wallet_message(").count(), 1);
         assert!(!shared.contains("wait_for_seqno_change("));
         assert!(!shared.contains("rpc_client.send_boc("));
@@ -10052,8 +10048,10 @@ mod exact_deploy_wallet_transaction_tests {
             .split_once("impl AgentWalletStatusCmd {")
             .unwrap()
             .0;
-        assert!(owner_send.find(".build_message(").unwrap()
-            < owner_send.find("confirm_prepared_wallet_message(").unwrap());
+        assert!(
+            owner_send.find(".build_message(").unwrap()
+                < owner_send.find("confirm_prepared_wallet_message(").unwrap()
+        );
         assert_eq!(owner_send.matches("confirm_prepared_wallet_message(").count(), 1);
         assert!(!owner_send.contains("wait_for_seqno_change("));
         assert!(!owner_send.contains("rpc_client.send_boc("));

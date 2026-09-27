@@ -67,8 +67,11 @@ def adnl_from_controller_relay(transactions: list, pool: Address, query_id: int)
     for raw in transactions:
         tx = lifecycle_module._decoded_transaction(raw)
         message = tx.in_msg
-        if (message is None or not isinstance(message.info, lifecycle_module.InternalMsgInfo)
-                or message.info.src != pool):
+        if (
+            message is None
+            or not isinstance(message.info, lifecycle_module.InternalMsgInfo)
+            or message.info.src != pool
+        ):
             continue
         body = message.body.begin_parse()
         if body.remaining_bits < 32 + 64 + 32 + 32 + 256 + 16:
@@ -88,8 +91,11 @@ def wallet_pool_stake_orders(transactions: list, wallet: Address) -> list[int]:
     orders = []
     for raw in transactions:
         message = lifecycle_module._decoded_transaction(raw).in_msg
-        if (message is None or not isinstance(message.info, lifecycle_module.InternalMsgInfo)
-                or message.info.src != wallet):
+        if (
+            message is None
+            or not isinstance(message.info, lifecycle_module.InternalMsgInfo)
+            or message.info.src != wallet
+        ):
             continue
         body = message.body.begin_parse()
         if body.remaining_bits >= 96 and body.load_uint(32) == 0x4E73744B:
@@ -99,29 +105,42 @@ def wallet_pool_stake_orders(transactions: list, wallet: Address) -> list[int]:
 
 def observed_json_rpc(address: str, method: str, params: dict) -> dict:
     """Keep the exact JSON-RPC error envelope rather than a generic failure."""
-    payload = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-    ).encode()
+    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     request = urllib.request.Request(
-        f"http://{address}/jsonRPC", data=payload,
+        f"http://{address}/jsonRPC",
+        data=payload,
         headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(request, timeout=8) as response:
             raw = response.read().decode(errors="replace")
-            return {"http_status": response.status, "raw_response": raw,
-                    "response": json.loads(raw)}
+            return {
+                "http_status": response.status,
+                "raw_response": raw,
+                "response": json.loads(raw),
+            }
     except urllib.error.HTTPError as error:
         raw = error.read().decode(errors="replace")
-        return {"http_status": error.code, "raw_response": raw,
-                "response": json.loads(raw)}
+        return {"http_status": error.code, "raw_response": raw, "response": json.loads(raw)}
 
 
-async def cli(binary: Path, config: Path, env: dict[str, str], *args: str,
-              answers: bytes = b"", timeout: int = 120) -> str:
+async def cli(
+    binary: Path,
+    config: Path,
+    env: dict[str, str],
+    *args: str,
+    answers: bytes = b"",
+    timeout: int = 120,
+) -> str:
     process = await asyncio.create_subprocess_exec(
-        str(binary), *args, "-c", str(config), stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
+        str(binary),
+        *args,
+        "-c",
+        str(config),
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     try:
         out, err = await asyncio.wait_for(process.communicate(answers), timeout)
@@ -137,7 +156,9 @@ async def cli(binary: Path, config: Path, env: dict[str, str], *args: str,
 
 async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> None:
     life = lifecycle_module.PoolLifecycle(
-        Install(args.build_dir, REPO), run_dir, args.base_port,
+        Install(args.build_dir, REPO),
+        run_dir,
+        args.base_port,
         campaign_run_id="pq-config-wallet-product-first-stake",
         product_rpc_address=f"127.0.0.1:{args.rpc_port}",
     )
@@ -187,18 +208,22 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         deployment_path = run_dir / "controller-deployment-transaction.boc"
         deployment_path.write_bytes(deployment_tx.data)
         report["deployment_transaction"] = {
-            "path": str(deployment_path), "sha256": sha256(deployment_path),
+            "path": str(deployment_path),
+            "sha256": sha256(deployment_path),
             "lt": str(deployment_tx.transaction_id.lt),
             "hash": deployment_tx.transaction_id.hash.hex(),
         }
 
         subprocess.run(
             [str(binary), "config", "generate", "-o", str(config)],
-            check=True, capture_output=True, text=True,
+            check=True,
+            capture_output=True,
+            text=True,
         )
         document = json.loads(config.read_text())
         document["chain_rpc"] = {
-            "urls": [f"http://127.0.0.1:{args.rpc_port}/jsonRPC"], "api_key": None
+            "urls": [f"http://127.0.0.1:{args.rpc_port}/jsonRPC"],
+            "api_key": None,
         }
         document["master_wallet"] = None
         document["nodes"]["validator-1"] = {
@@ -219,57 +244,95 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         }
         config.write_text(json.dumps(document, indent=2) + "\n")
         config.chmod(0o600)
-        await cli(binary, config, env, "wallet", "create", "--name", "operator",
-                  "--version", "V1R3", "--workchain=-1")
+        await cli(
+            binary,
+            config,
+            env,
+            "wallet",
+            "create",
+            "--name",
+            "operator",
+            "--version",
+            "V1R3",
+            "--workchain=-1",
+        )
         listed = json.loads(await cli(binary, config, env, "wallet", "ls", "--format", "json"))
         wallet_text = next(item["address"] for item in listed if item["name"] == "operator")
         wallet = Address(wallet_text)
         report["product_wallet"] = lifecycle_module.raw_address(wallet)
         faucet = life.network.zerostate.main_wallet(life.client)
-        await life.send(faucet, dest=wallet, amount=100 * NANO,
-                        body=Cell.empty(), label="product-wallet-fund")
+        await life.send(
+            faucet, dest=wallet, amount=100 * NANO, body=Cell.empty(), label="product-wallet-fund"
+        )
         await cli(binary, config, env, "wallet", "activate", "--name", "operator")
         active = await life.retry(
-            lambda: life.client.raw_get_account_state(wallet), timeout=60,
-            description="product wallet active", predicate=lambda value: bool(value.code),
+            lambda: life.client.raw_get_account_state(wallet),
+            timeout=60,
+            description="product wallet active",
+            predicate=lambda value: bool(value.code),
         )
         report["product_wallet_code_sha256"] = hashlib.sha256(active.code).hexdigest()
 
         pool = make_pool_fixture(life.single_pool_code, wallet, controller.address)
-        await life.send(faucet, dest=pool.address, amount=10 * NANO,
-                        body=Cell.empty(), init=pool.state_init,
-                        label="product-single-pool-deploy")
+        await life.send(
+            faucet,
+            dest=pool.address,
+            amount=10 * NANO,
+            body=Cell.empty(),
+            init=pool.state_init,
+            label="product-single-pool-deploy",
+        )
         await life.retry(
-            lambda: life.client.raw_get_account_state(pool.address), timeout=60,
+            lambda: life.client.raw_get_account_state(pool.address),
+            timeout=60,
             description="product single-nominator pool active",
             predicate=lambda value: bool(value.code),
         )
         # Capital provisioning is fixture work, not the product stake path.
         # The real operator wallet must still authorize and send the stake.
-        await life.send(faucet, dest=pool.address,
-                        amount=lifecycle_module.SUPPORT_POOL_CAPITAL,
-                        body=Cell.empty(), label="product-single-pool-capital")
+        await life.send(
+            faucet,
+            dest=pool.address,
+            amount=lifecycle_module.SUPPORT_POOL_CAPITAL,
+            body=Cell.empty(),
+            label="product-single-pool-capital",
+        )
         pool_capital = await life.retry(
-            lambda: life.balance(pool.address), timeout=60,
-            description="product pool capital", predicate=lambda value: value >= STAKE,
+            lambda: life.balance(pool.address),
+            timeout=60,
+            description="product pool capital",
+            predicate=lambda value: value >= STAKE,
         )
         report["product_pool_capital_nanotos"] = pool_capital
 
         document = json.loads(config.read_text())
         document["pools"]["product-pool"] = {
-            "kind": "snp", "address": lifecycle_module.raw_address(pool.address),
+            "kind": "snp",
+            "address": lifecycle_module.raw_address(pool.address),
             "owner": lifecycle_module.raw_address(wallet),
             "controller": lifecycle_module.raw_address(controller.address),
         }
         document["bindings"]["validator-1"] = {
-            "wallet": "operator", "pool": "product-pool", "enable": False,
+            "wallet": "operator",
+            "pool": "product-pool",
+            "enable": False,
             "status": "idle",
         }
         config.write_text(json.dumps(document, indent=2) + "\n")
         birth = run_dir / "controller-birth-state-init.boc"
         report["birth_import_output"] = await cli(
-            binary, config, env, "config", "bind", "import-birth", "--node",
-            "validator-1", "--transaction-boc", str(deployment_path), "--output", str(birth),
+            binary,
+            config,
+            env,
+            "config",
+            "bind",
+            "import-birth",
+            "--node",
+            "validator-1",
+            "--transaction-boc",
+            str(deployment_path),
+            "--output",
+            str(birth),
         )
         report["birth_artifact"] = {"path": str(birth), "sha256": sha256(birth)}
         document = json.loads(config.read_text())
@@ -296,24 +359,31 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             config.chmod(0o600)
 
         election = await life.retry(
-            life.stakeable_election_id, timeout=900,
+            life.stakeable_election_id,
+            timeout=900,
             description="open Elector acceptance window",
-            predicate=lambda value: value > 0, interval=1,
+            predicate=lambda value: value > 0,
+            interval=1,
         )
         report["election_id"] = election
         # Preserve the node's actual TVM stack encoding before the product
         # CLI parses it. In particular FunC nil is not always a list entry.
         participant_raw = await asyncio.to_thread(
             lifecycle_module.json_rpc_call,
-            f"127.0.0.1:{args.rpc_port}", "runGetMethodStd",
-            {"address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
-             "method": "participant_list_extended", "stack": []},
+            f"127.0.0.1:{args.rpc_port}",
+            "runGetMethodStd",
+            {
+                "address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
+                "method": "participant_list_extended",
+                "stack": [],
+            },
         )
         participant_path = run_dir / "participant-list-extended-raw-open.json"
         participant_path.write_text(json.dumps(participant_raw, indent=2) + "\n")
         raw_stack = participant_raw["result"]["stack"]
         report["participant_list_raw"] = {
-            "path": str(participant_path), "sha256": sha256(participant_path),
+            "path": str(participant_path),
+            "sha256": sha256(participant_path),
             "exit_code": participant_raw["result"]["exit_code"],
             "index4_type": raw_stack[4]["@type"],
         }
@@ -330,8 +400,18 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         if args.caller == "config-wallet":
             try:
                 report["stake_cli_output"] = await cli(
-                    binary, config, env, "config", "wallet", "stake", "--binding", "validator-1",
-                    "--amount", f"{STAKE / NANO:.9f}", answers=b"y\ny\n", timeout=150,
+                    binary,
+                    config,
+                    env,
+                    "config",
+                    "wallet",
+                    "stake",
+                    "--binding",
+                    "validator-1",
+                    "--amount",
+                    f"{STAKE / NANO:.9f}",
+                    answers=b"y\ny\n",
+                    timeout=150,
                 )
             except Exception as error:
                 cli_error = error
@@ -340,9 +420,14 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             log_path = run_dir / "tosctl-election-daemon.log"
             daemon_log = log_path.open("wb")
             daemon = await asyncio.create_subprocess_exec(
-                str(binary), "service", "-c", str(config),
-                stdin=asyncio.subprocess.DEVNULL, stdout=daemon_log,
-                stderr=asyncio.subprocess.STDOUT, env=env,
+                str(binary),
+                "service",
+                "-c",
+                str(config),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=daemon_log,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
             )
             report["daemon"] = {"pid": daemon.pid, "log_path": str(log_path)}
             deadline = time.monotonic() + 150
@@ -366,26 +451,33 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
 
         participant_params = {
             "address": lifecycle_module.raw_address(lifecycle_module.ELECTOR),
-            "method": "participant_list_extended", "stack": [],
+            "method": "participant_list_extended",
+            "stack": [],
         }
         participant_after = None
         for attempt in range(5):
             try:
                 observation = await asyncio.to_thread(
-                    observed_json_rpc, f"127.0.0.1:{args.rpc_port}",
-                    "runGetMethodStd", participant_params,
+                    observed_json_rpc,
+                    f"127.0.0.1:{args.rpc_port}",
+                    "runGetMethodStd",
+                    participant_params,
                 )
             except Exception as error:
                 observation = {"transport_error": repr(error)}
             attempt_path = run_dir / f"participant-list-after-attempt-{attempt}.json"
             attempt_path.write_text(json.dumps(observation, indent=2) + "\n")
-            report.setdefault("participant_list_after_attempts", []).append({
-                "path": str(attempt_path), "sha256": sha256(attempt_path),
-            })
+            report.setdefault("participant_list_after_attempts", []).append(
+                {
+                    "path": str(attempt_path),
+                    "sha256": sha256(attempt_path),
+                }
+            )
             participant_after = observation.get("response", {}).get("result")
             if participant_after is not None:
                 report["participant_list_after_raw"] = {
-                    "path": str(attempt_path), "sha256": sha256(attempt_path),
+                    "path": str(attempt_path),
+                    "sha256": sha256(attempt_path),
                     "exit_code": participant_after.get("exit_code"),
                     "index4_type": participant_after["stack"][4]["@type"],
                 }
@@ -403,15 +495,21 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
             life.client, pool.address, pool_baseline
         )
-        controller_txs, controller_pages, controller_complete, _ = (
-            await lifecycle_module._transactions_since(
-                life.client, controller.address, controller_baseline
-            )
+        (
+            controller_txs,
+            controller_pages,
+            controller_complete,
+            _,
+        ) = await lifecycle_module._transactions_since(
+            life.client, controller.address, controller_baseline
         )
         report["transaction_coverage"] = {
-            "pool_count": len(pool_txs), "pool_pages": pool_pages,
-            "pool_complete": pool_complete, "controller_count": len(controller_txs),
-            "controller_pages": controller_pages, "controller_complete": controller_complete,
+            "pool_count": len(pool_txs),
+            "pool_pages": pool_pages,
+            "pool_complete": pool_complete,
+            "controller_count": len(controller_txs),
+            "controller_pages": controller_pages,
+            "controller_complete": controller_complete,
         }
         for name, transactions in (("pool", pool_txs), ("controller", controller_txs)):
             path = run_dir / f"product-stake-{name}-transactions.json"
@@ -425,7 +523,9 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         orders = wallet_pool_stake_orders(pool_txs, wallet)
         report["stake_feedback"] = {"pool_order_query_ids": orders}
         if cli_error is not None and len(orders) != 1:
-            raise RuntimeError(f"product CLI failed before an exact pool order was observed: {cli_error}")
+            raise RuntimeError(
+                f"product CLI failed before an exact pool order was observed: {cli_error}"
+            )
         if len(orders) != 1:
             raise RuntimeError(f"expected one product stake order, found {len(orders)}")
         query_id = orders[0]
@@ -439,25 +539,25 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         feedback_deadline = time.monotonic() + 45
         while reply is None and time.monotonic() < feedback_deadline:
             await asyncio.sleep(1)
-            pool_txs, pool_pages, pool_complete, _ = (
-                await lifecycle_module._transactions_since(
-                    life.client, pool.address, pool_baseline
-                )
+            pool_txs, pool_pages, pool_complete, _ = await lifecycle_module._transactions_since(
+                life.client, pool.address, pool_baseline
             )
             if not pool_complete:
                 raise RuntimeError("pool feedback transaction window is incomplete")
             reply = lifecycle_module.elector_reply(pool_txs, query_id)
         pool_path = run_dir / "product-stake-pool-transactions.json"
-        pool_path.write_text(
-            json.dumps([tx.to_dict() for tx in pool_txs], indent=2) + "\n"
+        pool_path.write_text(json.dumps([tx.to_dict() for tx in pool_txs], indent=2) + "\n")
+        report["transaction_coverage"].update(
+            {
+                "pool_count": len(pool_txs),
+                "pool_pages": pool_pages,
+                "pool_complete": pool_complete,
+                "pool_raw_sha256": sha256(pool_path),
+            }
         )
-        report["transaction_coverage"].update({
-            "pool_count": len(pool_txs), "pool_pages": pool_pages,
-            "pool_complete": pool_complete,
-            "pool_raw_sha256": sha256(pool_path),
-        })
         report["stake_feedback"] = {
-            "query_id": query_id, "elector_reply": reply,
+            "query_id": query_id,
+            "elector_reply": reply,
             "pool_order_seen": True,
             "feedback_window_seconds": 45,
             "classification": "ELECTOR_REPLY_OBSERVED" if reply is not None else "INCONCLUSIVE",
@@ -475,7 +575,10 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
             report["daemon"]["log_sha256"] = sha256(log_path)
         if cli_error is not None:
             raise RuntimeError(f"product CLI failed after exact feedback capture: {cli_error}")
-        if args.caller == "config-wallet" and "Stake accepted by elector" not in report["stake_cli_output"]:
+        if (
+            args.caller == "config-wallet"
+            and "Stake accepted by elector" not in report["stake_cli_output"]
+        ):
             raise RuntimeError("product command did not report Elector participant acceptance")
         if reply is None or reply[0] != 0xF374484C:
             raise RuntimeError(f"exact Elector STAKE_ACCEPTED not observed: {reply}")
@@ -487,15 +590,19 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         # actual controller relay message, not fixture node.validator_key.
         adnl = adnl_from_controller_relay(controller_txs, pool.address, query_id)
         selection = await life.retry(
-            life.config34_selection, timeout=900,
+            life.config34_selection,
+            timeout=900,
             description="product controller and ADNL paired in live Config34",
-            predicate=lambda value: value.utime_since == election and
-            (controller_hex, adnl.hex()) in value.validator_adnl_pairs,
+            predicate=lambda value: (
+                value.utime_since == election
+                and (controller_hex, adnl.hex()) in value.validator_adnl_pairs
+            ),
             interval=5,
         )
         report["live_config34"] = {
             "utime_since": selection.utime_since,
-            "controller_id": controller_hex, "adnl_id": adnl.hex(),
+            "controller_id": controller_hex,
+            "adnl_id": adnl.hex(),
             "pairs": selection.validator_adnl_pairs,
         }
         config34_path = run_dir / "live-config34.txt"
@@ -524,8 +631,9 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", type=Path, default=REPO / "build")
     parser.add_argument("--tosctl", type=Path, default=REPO / "tosctl/src/target/debug/tosctl")
-    parser.add_argument("--run-root", type=Path,
-                        default=REPO / "test/integration/.pq-tosctl-config-wallet-product")
+    parser.add_argument(
+        "--run-root", type=Path, default=REPO / "test/integration/.pq-tosctl-config-wallet-product"
+    )
     parser.add_argument("--base-port", type=int, default=25100)
     parser.add_argument("--rpc-port", type=int, default=25120)
     parser.add_argument("--service-port", type=int, default=25130)
@@ -534,8 +642,12 @@ async def main() -> int:
     reserve_ports(*range(args.base_port, args.base_port + 17), args.rpc_port, args.service_port)
     run_dir = (args.run_root / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")).resolve()
     run_dir.mkdir(parents=True, exist_ok=False)
-    report = {"schema": "tos.pq.product-first-stake.v2", "passed": False,
-              "run_dir": str(run_dir), "failures": []}
+    report = {
+        "schema": "tos.pq.product-first-stake.v2",
+        "passed": False,
+        "run_dir": str(run_dir),
+        "failures": [],
+    }
     try:
         await product_run(args, run_dir, report)
     except Exception as error:  # preserve raw artifacts and bounded failure

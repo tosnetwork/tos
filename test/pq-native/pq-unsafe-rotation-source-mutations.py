@@ -17,7 +17,9 @@ def run_guard() -> subprocess.CompletedProcess[str]:
 
 baseline = run_guard()
 if baseline.returncode != 0:
-    raise SystemExit(f"PQ_UNSAFE_ROTATION_MUTATION_FAILURE: baseline guard is red: {baseline.stderr}")
+    raise SystemExit(
+        f"PQ_UNSAFE_ROTATION_MUTATION_FAILURE: baseline guard is red: {baseline.stderr}"
+    )
 
 
 def mutate(relative: str, change, expected: str) -> None:
@@ -25,7 +27,9 @@ def mutate(relative: str, change, expected: str) -> None:
     original = path.read_text()
     changed = change(original)
     if changed == original:
-        raise SystemExit(f"PQ_UNSAFE_ROTATION_MUTATION_FAILURE: mutation did not apply to {relative}")
+        raise SystemExit(
+            f"PQ_UNSAFE_ROTATION_MUTATION_FAILURE: mutation did not apply to {relative}"
+        )
     try:
         path.write_text(changed)
         result = run_guard()
@@ -84,6 +88,8 @@ mutate(
     move_count_before_refusal,
     "nonzero rotation refusal no longer precedes active PQ group counting and creation",
 )
+
+
 def inject_old_hash(text: str) -> str:
     marker = "if (destroyed_validator_sessions_.contains(val_group_id)) {"
     if text.count(marker) != 2:  # current and future groups; change only current
@@ -94,7 +100,10 @@ def inject_old_hash(text: str) -> str:
 mutate(manager_path, inject_old_hash, "local rotation hash again overwrites consensus session")
 mutate(
     ".github/workflows/branch-chain-python.yml",
-    replace_once("uv run python test/integration/test_pq_unsafe_rotation_refusal.py", "uv run python test/integration/test_basic.py"),
+    replace_once(
+        "uv run python test/integration/test_pq_unsafe_rotation_refusal.py",
+        "uv run python test/integration/test_basic.py",
+    ),
     "every-push process regression invocation absent or duplicated",
 )
 mutate(
@@ -103,4 +112,6 @@ mutate(
     "process regression lost zero-rotation masterchain stats control",
 )
 
-print("PQ_UNSAFE_ROTATION_MUTATIONS_OK: zero-allow, nonzero-refuse, ordering, hash and CI bindings were killable")
+print(
+    "PQ_UNSAFE_ROTATION_MUTATIONS_OK: zero-allow, nonzero-refuse, ordering, hash and CI bindings were killable"
+)

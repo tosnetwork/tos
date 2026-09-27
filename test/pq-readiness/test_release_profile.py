@@ -13,10 +13,11 @@ different ceiling from the same source is a second answer to "what does this
 binary implement", and the activation evidence then has to carry which one was
 built. One source commit, one ceiling.
 """
+
 import os
-from pathlib import Path
 import subprocess
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PROBE = """
@@ -32,26 +33,39 @@ int main() {
 def ceiling(*flags: str) -> tuple[int, int]:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        source = root / 'probe.cpp'
+        source = root / "probe.cpp"
         source.write_text(PROBE)
-        subprocess.run([os.environ.get('CXX', 'c++'), '-std=c++17', '-I', str(ROOT),
-                        str(source), *flags, '-o', str(root / 'probe')], check=True)
-        supported, minimum = subprocess.check_output([str(root / 'probe')], text=True).split()
+        subprocess.run(
+            [
+                os.environ.get("CXX", "c++"),
+                "-std=c++17",
+                "-I",
+                str(ROOT),
+                str(source),
+                *flags,
+                "-o",
+                str(root / "probe"),
+            ],
+            check=True,
+        )
+        supported, minimum = subprocess.check_output([str(root / "probe")], text=True).split()
         return int(supported), int(minimum)
 
 
 supported, minimum = ceiling()
 if supported != 16:
-    raise SystemExit(f'the advertised ceiling is {supported}, not 16')
+    raise SystemExit(f"the advertised ceiling is {supported}, not 16")
 if supported != minimum:
-    raise SystemExit(f'ceiling {supported} and opcode gate {minimum} disagree; the shipped '
-                     'tools and the instruction would not match')
+    raise SystemExit(
+        f"ceiling {supported} and opcode gate {minimum} disagree; the shipped "
+        "tools and the instruction would not match"
+    )
 
 # The removed option must stay removed. Defining it again has to change nothing,
 # or a v15 binary can be produced from a commit whose evidence says v16.
-for revived in ('-DTOS_PQ_V16_CANDIDATE=1', '-DTOS_PQ_V16_CANDIDATE=0'):
+for revived in ("-DTOS_PQ_V16_CANDIDATE=1", "-DTOS_PQ_V16_CANDIDATE=0"):
     again, _ = ceiling(revived)
     if again != supported:
-        raise SystemExit(f'{revived} still selects a different ceiling ({again})')
+        raise SystemExit(f"{revived} still selects a different ceiling ({again})")
 
-print(f'PASS: one ceiling ({supported}), matching the opcode gate, with no build profile to select')
+print(f"PASS: one ceiling ({supported}), matching the opcode gate, with no build profile to select")

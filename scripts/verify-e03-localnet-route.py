@@ -9,15 +9,15 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import signal
 import socket
 import subprocess
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
+from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -35,8 +35,12 @@ def rpc(rpc_addr, method, **params):
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as error:
         status, raw = error.code, error.read()
-    return {"url": url, "request_body": body.decode(), "status": status,
-            "response_body": raw.decode()}
+    return {
+        "url": url,
+        "request_body": body.decode(),
+        "status": status,
+        "response_body": raw.decode(),
+    }
 
 
 def wait_for_log(path, pattern, process, timeout):
@@ -61,8 +65,11 @@ def wallet_balances(transcript, wallet):
     balances = []
     for row in transcript:
         request = json.loads(row["request_body"])
-        if (row["status"] == 200 and request["method"] == "getAddressInformation"
-                and request["params"].get("address") == wallet):
+        if (
+            row["status"] == 200
+            and request["method"] == "getAddressInformation"
+            and request["params"].get("address") == wallet
+        ):
             balances.append(int(json.loads(row["response_body"])["result"]["balance"]))
     return balances
 
@@ -85,34 +92,66 @@ def demo(workdir, rpc_port, control_port, base_port):
     network_dir = workdir / "network"
     transcript = workdir / "http-transcript.jsonl"
     output = workdir / "localnet.stdout.log"
-    command = [sys.executable, "-u", str(REPO / "scripts/localnet-jsonrpc.py"),
-               "--demo", "--validators", "1", "--rpc", f"127.0.0.1:{rpc_port}",
-               "--control", f"127.0.0.1:{control_port}", "--base-port", str(base_port),
-               "--workdir", str(network_dir)]
+    command = [
+        sys.executable,
+        "-u",
+        str(REPO / "scripts/localnet-jsonrpc.py"),
+        "--demo",
+        "--validators",
+        "1",
+        "--rpc",
+        f"127.0.0.1:{rpc_port}",
+        "--control",
+        f"127.0.0.1:{control_port}",
+        "--base-port",
+        str(base_port),
+        "--workdir",
+        str(network_dir),
+    ]
     environment = {**os.environ, "E03_HTTP_TRANSCRIPT": str(transcript)}
-    environment["PYTHONPATH"] = str(REPO / "test/tostester/src") + os.pathsep + environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = (
+        str(REPO / "test/tostester/src") + os.pathsep + environment.get("PYTHONPATH", "")
+    )
     with output.open("wb") as log:
-        process = subprocess.Popen(command, cwd=REPO, env=environment, stdout=log,
-                                   stderr=subprocess.STDOUT, start_new_session=True)
+        process = subprocess.Popen(
+            command,
+            cwd=REPO,
+            env=environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
         try:
-            wallet = wait_for_log(output, r"\[demo\] new wallet address: (\S+)", process, 180).group(1)
+            wallet = wait_for_log(
+                output, r"\[demo\] new wallet address: (\S+)", process, 180
+            ).group(1)
             wait_for_log(output, r"\[localnet\] resident; press Ctrl-C to exit\.", process, 120)
             masterchain = rpc(f"127.0.0.1:{rpc_port}", "getMasterchainInfo")
             address_info = rpc(f"127.0.0.1:{rpc_port}", "getAddressInformation", address=wallet)
-            (workdir / "external-jsonrpc.json").write_text(json.dumps(
-                {"getMasterchainInfo": masterchain, "getAddressInformation": address_info}, indent=2) + "\n")
+            (workdir / "external-jsonrpc.json").write_text(
+                json.dumps(
+                    {"getMasterchainInfo": masterchain, "getAddressInformation": address_info},
+                    indent=2,
+                )
+                + "\n"
+            )
             replies = [json.loads(row) for row in transcript.read_text().splitlines()]
             balances = wallet_balances(replies, wallet)
             assert len(balances) >= 2 and balances[-1] > balances[0], (
-                f"demo wallet did not gain balance: {balances}")
+                f"demo wallet did not gain balance: {balances}"
+            )
             masterchain_value = json.loads(masterchain["response_body"])
             address_value = json.loads(address_info["response_body"])
             assert masterchain["status"] == 200 and masterchain_value.get("ok") is True
             assert address_info["status"] == 200 and address_value.get("ok") is True
             assert masterchain_value.get("result", {}).get("last", {}).get("seqno", 0) > 0
             assert int(address_value["result"]["balance"]) >= balances[-1]
-            result = {"command": command, "wallet": wallet, "balances": balances,
-                      "masterchain_seqno": masterchain_value["result"]["last"]["seqno"]}
+            result = {
+                "command": command,
+                "wallet": wallet,
+                "balances": balances,
+                "masterchain_seqno": masterchain_value["result"]["last"]["seqno"],
+            }
         finally:
             exit_code = stop(process)
     result["exit_code"] = exit_code
@@ -122,25 +161,61 @@ def demo(workdir, rpc_port, control_port, base_port):
 
 def toscan(workdir, tosctl, rpc_port, control_port, explorer_port, base_port):
     proxy_port = explorer_port + 1
-    for port in (rpc_port, control_port, explorer_port, proxy_port, *range(base_port, base_port + 17)):
+    for port in (
+        rpc_port,
+        control_port,
+        explorer_port,
+        proxy_port,
+        *range(base_port, base_port + 17),
+    ):
         checked_port(port)
     workdir.mkdir(parents=True, exist_ok=False)
     output = workdir / "toscan.stdout.log"
     transcript = workdir / "http-transcript.jsonl"
-    command = [sys.executable, "-u", str(REPO / "scripts/toscan-explorer-e2e.py"),
-               "--workdir", str(workdir / "network"), "--tosctl", str(tosctl),
-               "--rpc-port", str(rpc_port), "--control-port", str(control_port),
-               "--explorer-port", str(explorer_port), "--base-port", str(base_port)]
-    environment = {**os.environ, "E03_HTTP_TRANSCRIPT": str(transcript),
-                   "E03_TOSCTL_RPC_ORIGIN": f"http://127.0.0.1:{proxy_port}"}
-    environment["PYTHONPATH"] = str(REPO / "test/tostester/src") + os.pathsep + environment.get("PYTHONPATH", "")
-    proxy_environment = {**environment,
-                         "E03_HTTP_TRANSCRIPT": str(workdir / "tosctl-http-transcript.jsonl")}
+    command = [
+        sys.executable,
+        "-u",
+        str(REPO / "scripts/toscan-explorer-e2e.py"),
+        "--workdir",
+        str(workdir / "network"),
+        "--tosctl",
+        str(tosctl),
+        "--rpc-port",
+        str(rpc_port),
+        "--control-port",
+        str(control_port),
+        "--explorer-port",
+        str(explorer_port),
+        "--base-port",
+        str(base_port),
+    ]
+    environment = {
+        **os.environ,
+        "E03_HTTP_TRANSCRIPT": str(transcript),
+        "E03_TOSCTL_RPC_ORIGIN": f"http://127.0.0.1:{proxy_port}",
+    }
+    environment["PYTHONPATH"] = (
+        str(REPO / "test/tostester/src") + os.pathsep + environment.get("PYTHONPATH", "")
+    )
+    proxy_environment = {
+        **environment,
+        "E03_HTTP_TRANSCRIPT": str(workdir / "tosctl-http-transcript.jsonl"),
+    }
     with (workdir / "proxy.stdout.log").open("wb") as proxy_log, output.open("wb") as log:
         proxy = subprocess.Popen(
-            [sys.executable, "-u", str(REPO / "scripts/e03_http_proxy.py"),
-             "--port", str(proxy_port), "--upstream", f"http://127.0.0.1:{rpc_port}"],
-            cwd=REPO, env=proxy_environment, stdout=proxy_log, stderr=subprocess.STDOUT,
+            [
+                sys.executable,
+                "-u",
+                str(REPO / "scripts/e03_http_proxy.py"),
+                "--port",
+                str(proxy_port),
+                "--upstream",
+                f"http://127.0.0.1:{rpc_port}",
+            ],
+            cwd=REPO,
+            env=proxy_environment,
+            stdout=proxy_log,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
         try:
@@ -154,12 +229,20 @@ def toscan(workdir, tosctl, rpc_port, control_port, explorer_port, base_port):
                 if time.monotonic() >= deadline:
                     raise TimeoutError("E03 tosctl HTTP proxy did not listen")
                 time.sleep(0.05)
-            completed = subprocess.run(command, cwd=REPO, env=environment, stdout=log,
-                                       stderr=subprocess.STDOUT, timeout=900)
+            completed = subprocess.run(
+                command,
+                cwd=REPO,
+                env=environment,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=900,
+            )
         finally:
             stop(proxy)
     assert completed.returncode == 0, f"TOSCAN route exited {completed.returncode}"
-    assert "TOSCAN REAL-CHAIN GATE: PASS" in output.read_text(), "TOSCAN did not report its route gate"
+    assert "TOSCAN REAL-CHAIN GATE: PASS" in output.read_text(), (
+        "TOSCAN did not report its route gate"
+    )
     return {"command": command, "exit_code": completed.returncode}
 
 
@@ -170,16 +253,25 @@ def main():
     args = parser.parse_args()
     root = args.workdir.resolve()
     root.mkdir(parents=True, exist_ok=False)
-    report = {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
-              "binaries": {name: sha256(path) for name, path in {
-                  "validator-engine": REPO / "build/validator-engine/validator-engine",
-                  "dht-server": REPO / "build/dht-server/dht-server",
-                  "lite-client": REPO / "build/lite-client/lite-client",
-                  "tosctl": args.tosctl.resolve(),
-              }.items()}}
+    report = {
+        "source_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+        ).strip(),
+        "binaries": {
+            name: sha256(path)
+            for name, path in {
+                "validator-engine": REPO / "build/validator-engine/validator-engine",
+                "dht-server": REPO / "build/dht-server/dht-server",
+                "lite-client": REPO / "build/lite-client/lite-client",
+                "tosctl": args.tosctl.resolve(),
+            }.items()
+        },
+    }
     try:
         report["demo"] = demo(root / "demo", 19545, 19745, 28500)
-        report["toscan"] = toscan(root / "toscan", args.tosctl.resolve(), 19451, 19452, 19453, 26900)
+        report["toscan"] = toscan(
+            root / "toscan", args.tosctl.resolve(), 19451, 19452, 19453, 26900
+        )
         report["passed"] = True
     except Exception as error:
         report["passed"] = False

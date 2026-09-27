@@ -3,8 +3,8 @@ import json
 import unittest
 
 from tosapi import tos_api
-from tostester.key import Key
 from toslib.engine_console import EngineConsoleClient
+from tostester.key import Key
 
 
 class FakeRequest:
@@ -38,18 +38,25 @@ class RawConsoleReceipt(unittest.TestCase):
     def test_public_binding_derived_from_actual_console_config(self):
         server = Key()
         client = Key()
+
         class Toslib:
             def engine_console_create(self, loop, config):
                 return 1
+
             def engine_console_is_error(self, handle):
                 return False
+
             def engine_console_destroy(self, handle):
                 pass
+
         class Loop:
             loop = 0
+
         config = tos_api.EngineConsoleClient_config(
-            address="127.0.0.1:26604", server_public_key=server.public_key,
-            client_private_key=client.private_key)
+            address="127.0.0.1:26604",
+            server_public_key=server.public_key,
+            client_private_key=client.private_key,
+        )
         console = EngineConsoleClient(Toslib(), Loop(), config)
         try:
             binding = console.public_binding()
@@ -66,7 +73,9 @@ class RawConsoleReceipt(unittest.TestCase):
         try:
             parsed, request, response = asyncio.run(client.request_with_raw(FakeRequest()))
             self.assertEqual(request, client._toslib.request_bytes)
-            self.assertEqual(response, b'{"@type":"consensus.noncriticalParamsOverrideList","overrides":[]}')
+            self.assertEqual(
+                response, b'{"@type":"consensus.noncriticalParamsOverrideList","overrides":[]}'
+            )
             self.assertEqual(parsed, json.loads(response))
             self.assertEqual(asyncio.run(client.request(FakeRequest())), parsed)
             self.assertEqual(client._toslib.destroyed, 2)

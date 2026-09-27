@@ -9,10 +9,10 @@ as a successful X02 fault-window verdict.
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import subprocess
 import sys
 import types
+from pathlib import Path
 
 import x02_fault_evidence as current
 
@@ -22,8 +22,7 @@ def sha256(path: Path) -> str:
 
 
 def old_parser(commit: str) -> types.ModuleType:
-    source = subprocess.check_output(
-        ["git", "show", f"{commit}:scripts/x02_fault_evidence.py"])
+    source = subprocess.check_output(["git", "show", f"{commit}:scripts/x02_fault_evidence.py"])
     module = types.ModuleType("x02_d4d_old")
     module.__file__ = "scripts/x02_fault_evidence.py"
     exec(compile(source, module.__file__, "exec"), module.__dict__)
@@ -57,38 +56,58 @@ def replay(root: Path, old_commit: str) -> dict:
             if old_header_red != "unaccounted tc filter shares the validator peer interface":
                 raise ValueError("old parser did not reject the first real flower header")
         if index == 8:
-            if (snapshot.get("capture_error") !=
-                    "ValueError('common height regressed below anchor')"
-                    or snapshot.get("common_seqno") != 42
-                    or snapshot.get("anchor_common_seqno") != 47
-                    or snapshot["rpc"].get("range_headers") != {}):
+            if (
+                snapshot.get("capture_error")
+                != "ValueError('common height regressed below anchor')"
+                or snapshot.get("common_seqno") != 42
+                or snapshot.get("anchor_common_seqno") != 47
+                or snapshot["rpc"].get("range_headers") != {}
+            ):
                 raise ValueError("sample-08 is not the retained incomplete recovery record")
             try:
                 current.verify_snapshot(
-                    snapshot, policy, snapshot["policy_sha256"], seen, journals,
-                    global_ids, generations, tips, previous["post_journals"])
+                    snapshot,
+                    policy,
+                    snapshot["policy_sha256"],
+                    seen,
+                    journals,
+                    global_ids,
+                    generations,
+                    tips,
+                    previous["post_journals"],
+                )
             except ValueError as exc:
                 if str(exc) != "range-header node set differs from live phase":
                     raise
                 incomplete_error = str(exc)
             else:
                 raise ValueError("incomplete sample-08 unexpectedly verified")
-            return {"passed": True, "old_commit": old_commit,
-                    "old_first_header_red": old_header_red,
-                    "complete_snapshots": complete,
-                    "sample_08": {"sha256": sha256(paths[0]),
-                                  "incomplete_error": incomplete_error},
-                    "policy_sha256": sha256(policy_path),
-                    "current_parser_sha256": sha256(Path(current.__file__)),
-                    "replay_source_sha256": sha256(Path(__file__))}
+            return {
+                "passed": True,
+                "old_commit": old_commit,
+                "old_first_header_red": old_header_red,
+                "complete_snapshots": complete,
+                "sample_08": {"sha256": sha256(paths[0]), "incomplete_error": incomplete_error},
+                "policy_sha256": sha256(policy_path),
+                "current_parser_sha256": sha256(Path(current.__file__)),
+                "replay_source_sha256": sha256(Path(__file__)),
+            }
         if snapshot.get("capture_error"):
             raise ValueError(f"sample-{index:02d} has a capture error")
         parsed = current.verify_snapshot(
-            snapshot, policy, snapshot["policy_sha256"], seen, journals,
-            global_ids, generations, tips,
-            previous["post_journals"] if previous else None)
-        complete.append({"sample": index, "sha256": sha256(paths[0]),
-                         "common_seqno": parsed["common"][2]})
+            snapshot,
+            policy,
+            snapshot["policy_sha256"],
+            seen,
+            journals,
+            global_ids,
+            generations,
+            tips,
+            previous["post_journals"] if previous else None,
+        )
+        complete.append(
+            {"sample": index, "sha256": sha256(paths[0]), "common_seqno": parsed["common"][2]}
+        )
         previous = snapshot
     raise AssertionError("unreachable")
 
@@ -101,8 +120,9 @@ def main() -> int:
     try:
         result = replay(args.run_root, args.old_commit)
     except Exception as exc:
-        print(json.dumps({"passed": False, "error": f"{type(exc).__name__}: {exc}"},
-                         sort_keys=True))
+        print(
+            json.dumps({"passed": False, "error": f"{type(exc).__name__}: {exc}"}, sort_keys=True)
+        )
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0

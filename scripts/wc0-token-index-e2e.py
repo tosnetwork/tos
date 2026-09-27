@@ -21,27 +21,33 @@ claims. Exit code 0 iff both scenarios pass.
 
 Run from the repository root: uv run python scripts/wc0-token-index-e2e.py
 """
+
 import asyncio
 import base64
 import hashlib
 import json
 import logging
-import os
 import shutil
 import subprocess
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
+from contract import tos
+from pytosiq_core import (
+    Address,
+    Cell,
+    InternalMsgInfo,
+    MessageAny,
+    StateInit,
+    WalletMessage,
+    begin_cell,
+)
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
-from contract import tos
-from pytosiq_core import (
-    Address, Cell, InternalMsgInfo, MessageAny, StateInit, WalletMessage, begin_cell,
-)
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -69,13 +75,27 @@ def rpc_call(rpc_method: str, **params):
             raw, status = resp.read(), resp.status
     except urllib.error.HTTPError as error:
         raw, status = error.read(), error.code
-        record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
-                     "status": status, "request_base64": base64.b64encode(body).decode(),
-                     "response_base64": base64.b64encode(raw).decode()})
+        record_jsonl(
+            RPC_TRANSCRIPT,
+            {
+                "method": rpc_method,
+                "params": params,
+                "status": status,
+                "request_base64": base64.b64encode(body).decode(),
+                "response_base64": base64.b64encode(raw).decode(),
+            },
+        )
         raise
-    record_jsonl(RPC_TRANSCRIPT, {"method": rpc_method, "params": params,
-                 "status": status, "request_base64": base64.b64encode(body).decode(),
-                 "response_base64": base64.b64encode(raw).decode()})
+    record_jsonl(
+        RPC_TRANSCRIPT,
+        {
+            "method": rpc_method,
+            "params": params,
+            "status": status,
+            "request_base64": base64.b64encode(body).decode(),
+            "response_base64": base64.b64encode(raw).decode(),
+        },
+    )
     result = json.loads(raw.decode())
     if status != 200 or "error" in result or "result" not in result:
         raise RuntimeError(f"{rpc_method} RPC failed: HTTP {status}, {result}")
@@ -98,37 +118,67 @@ def sha256_file(path: Path) -> str:
 def record_provenance() -> None:
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
     tracked = subprocess.check_output(
-        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True)
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=REPO, text=True
+    )
     if tracked.strip():
         raise RuntimeError("wc0 index source tree has uncommitted tracked changes")
-    build_command = ["cmake", "--build", str(REPO / "build"),
-                     "--target", "slice1_gas_parity_contracts"]
+    build_command = [
+        "cmake",
+        "--build",
+        str(REPO / "build"),
+        "--target",
+        "slice1_gas_parity_contracts",
+    ]
     build = subprocess.run(build_command, cwd=REPO, capture_output=True)
-    (WORKDIR / "boc-build.json").write_text(json.dumps({
-        "command": build_command, "exit_code": build.returncode,
-        "stdout_base64": base64.b64encode(build.stdout).decode(),
-        "stderr_base64": base64.b64encode(build.stderr).decode(),
-    }, sort_keys=True, indent=2) + "\n")
+    (WORKDIR / "boc-build.json").write_text(
+        json.dumps(
+            {
+                "command": build_command,
+                "exit_code": build.returncode,
+                "stdout_base64": base64.b64encode(build.stdout).decode(),
+                "stderr_base64": base64.b64encode(build.stderr).decode(),
+            },
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    )
     if build.returncode != 0:
         raise RuntimeError("jetton BOC build failed; see boc-build.json")
-    paths = [Path(__file__).resolve(), MINTER_BOC, WALLET_BOC,
-             REPO / "CMakeLists.txt",
-             REPO / "crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc",
-             REPO / "crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc",
-             REPO / "build/crypto/func", REPO / "build/crypto/fift",
-             REPO / "build/validator-engine/validator-engine"]
+    paths = [
+        Path(__file__).resolve(),
+        MINTER_BOC,
+        WALLET_BOC,
+        REPO / "CMakeLists.txt",
+        REPO / "crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc",
+        REPO / "crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc",
+        REPO / "build/crypto/func",
+        REPO / "build/crypto/fift",
+        REPO / "build/validator-engine/validator-engine",
+    ]
     hashes = {str(path.relative_to(REPO)): sha256_file(path) for path in paths}
     (WORKDIR / "provenance.json").write_text(
-        json.dumps({"source_head": head, "build_command": build_command,
-                    "sha256": hashes}, sort_keys=True, indent=2) + "\n")
+        json.dumps(
+            {"source_head": head, "build_command": build_command, "sha256": hashes},
+            sort_keys=True,
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 def finalized_mc_header() -> dict:
     block = rpc_call("getMasterchainInfo")["result"]["last"]
-    header = rpc_call("getBlockHeader", workchain=block["workchain"],
-                      shard=str(block["shard"]), seqno=block["seqno"])["result"]
-    if any(header["id"][field] != block[field]
-           for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")):
+    header = rpc_call(
+        "getBlockHeader",
+        workchain=block["workchain"],
+        shard=str(block["shard"]),
+        seqno=block["seqno"],
+    )["result"]
+    if any(
+        header["id"][field] != block[field]
+        for field in ("workchain", "shard", "seqno", "root_hash", "file_hash")
+    ):
         raise RuntimeError("finalized masterchain header did not match its block ID")
     return {"id": block, "gen_utime": int(header["gen_utime"])}
 
@@ -145,14 +195,22 @@ def transactions_after(address: str, baseline_lt: int) -> list[dict]:
 
 def same_addr(left: str, right: str) -> bool:
     try:
-        return (Address(left).to_str(is_user_friendly=False).lower()
-                == Address(right).to_str(is_user_friendly=False).lower())
+        return (
+            Address(left).to_str(is_user_friendly=False).lower()
+            == Address(right).to_str(is_user_friendly=False).lower()
+        )
     except Exception:
         return False
 
 
-async def observe_edge(label: str, sender: str, target: str, sender_lt: int,
-                       target_lt: int, require_target_success: bool) -> dict:
+async def observe_edge(
+    label: str,
+    sender: str,
+    target: str,
+    sender_lt: int,
+    target_lt: int,
+    require_target_success: bool,
+) -> dict:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         sender_rows = transactions_after(sender, sender_lt)
@@ -161,23 +219,31 @@ async def observe_edge(label: str, sender: str, target: str, sender_lt: int,
             raise RuntimeError(f"{label}: multiple new sender or target transactions")
         if sender_rows and target_rows:
             sent, received = sender_rows[0], target_rows[0]
-            outgoing = [msg for msg in sent.get("out_msgs") or []
-                        if same_addr(msg.get("destination"), target)]
-            if (sent.get("aborted") is not False
-                    or (sent.get("compute") or {}).get("success") is not True
-                    or (sent.get("action") or {}).get("success") is not True
-                    or len(outgoing) != 1
-                    or not outgoing[0].get("hash")
-                    or (received.get("in_msg") or {}).get("hash") != outgoing[0]["hash"]
-                    or not same_addr((received.get("in_msg") or {}).get("source"), sender)):
+            outgoing = [
+                msg
+                for msg in sent.get("out_msgs") or []
+                if same_addr(msg.get("destination"), target)
+            ]
+            if (
+                sent.get("aborted") is not False
+                or (sent.get("compute") or {}).get("success") is not True
+                or (sent.get("action") or {}).get("success") is not True
+                or len(outgoing) != 1
+                or not outgoing[0].get("hash")
+                or (received.get("in_msg") or {}).get("hash") != outgoing[0]["hash"]
+                or not same_addr((received.get("in_msg") or {}).get("source"), sender)
+            ):
                 raise RuntimeError(f"{label}: sender-to-target message did not match")
             if require_target_success and (
-                    received.get("aborted") is not False
-                    or (received.get("compute") or {}).get("success") is not True
-                    or (received.get("action") or {}).get("success") is not True):
+                received.get("aborted") is not False
+                or (received.get("compute") or {}).get("success") is not True
+                or (received.get("action") or {}).get("success") is not True
+            ):
                 raise RuntimeError(f"{label}: target transaction did not succeed")
-            record_jsonl(CHAIN_EVIDENCE, {"label": label, "sender_tx": sent,
-                         "target_tx": received, "outgoing": outgoing[0]})
+            record_jsonl(
+                CHAIN_EVIDENCE,
+                {"label": label, "sender_tx": sent, "target_tx": received, "outgoing": outgoing[0]},
+            )
             return received
         await asyncio.sleep(1)
     raise RuntimeError(f"{label}: exact sender-to-target transaction not observed")
@@ -209,7 +275,8 @@ def stack_entry_kind(entry) -> str:
         return entry[0]
     if isinstance(entry, dict):
         return {
-            "tvm.stackEntryNumber": "num", "tvm.stackEntryCell": "cell",
+            "tvm.stackEntryNumber": "num",
+            "tvm.stackEntryCell": "cell",
             "tvm.stackEntrySlice": "slice",
         }.get(entry.get("@type"), "")
     return ""
@@ -225,8 +292,7 @@ def stack_address(entry) -> str:
 
 
 def getter_stack(address: str, method: str, stack: list) -> list:
-    result = rpc_call("runGetMethodStd", address=address, method=method,
-                      stack=stack)["result"]
+    result = rpc_call("runGetMethodStd", address=address, method=method, stack=stack)["result"]
     if result.get("exit_code") not in (0, 1) or not isinstance(result.get("stack"), list):
         raise RuntimeError(f"{method} did not succeed at {address}")
     return result["stack"]
@@ -253,16 +319,21 @@ def verify_indexed_wallet(wallet: str, owner: str, master: str) -> None:
 
 
 def indexed_entry(owner: str, master: str) -> dict | None:
-    matches = [row for row in get_jettons(owner)
-               if row.get("jetton_master", "").lower() == master.lower()]
+    matches = [
+        row for row in get_jettons(owner) if row.get("jetton_master", "").lower() == master.lower()
+    ]
     if len(matches) > 1:
         raise RuntimeError("duplicate jetton master rows in owner index")
     if not matches:
         return None
     entry = matches[0]
     wallet = entry.get("jetton_wallet", "")
-    if (not wallet.startswith("0:") or len(wallet) != 66
-            or wallet[2:] == "0" * 64 or int(entry.get("last_lt", 0)) <= 0):
+    if (
+        not wallet.startswith("0:")
+        or len(wallet) != 66
+        or wallet[2:] == "0" * 64
+        or int(entry.get("last_lt", 0)) <= 0
+    ):
         raise RuntimeError("indexed jetton row lacks an observed wallet transaction")
     if rpc_call("getAddressState", address=wallet)["result"] != "active":
         raise RuntimeError("indexed jetton wallet is not active")
@@ -270,8 +341,9 @@ def indexed_entry(owner: str, master: str) -> dict | None:
     return entry
 
 
-async def victim_index_after_canary(victim: str, canary_owner: str,
-                                    master: str) -> tuple[dict, list]:
+async def victim_index_after_canary(
+    victim: str, canary_owner: str, master: str
+) -> tuple[dict, list]:
     canary = await poll(lambda: indexed_entry(canary_owner, master), timeout=90)
     if not isinstance(canary, dict):
         raise RuntimeError("post-forgery canary mint was not indexed")
@@ -280,8 +352,9 @@ async def victim_index_after_canary(victim: str, canary_owner: str,
 
 def check_attacker_self_index(attacker: str, failures: list[str]) -> None:
     jettons = get_jettons(attacker)
-    record_jsonl(CHAIN_EVIDENCE, {"label": "attacker self index",
-                 "attacker": attacker, "jettons": jettons})
+    record_jsonl(
+        CHAIN_EVIDENCE, {"label": "attacker self index", "attacker": attacker, "jettons": jettons}
+    )
     if jettons:
         print(f"[reject] FAIL — attacker self jetton list: {jettons}")
         failures.append("attacker self-claim was indexed")
@@ -290,11 +363,16 @@ def check_attacker_self_index(attacker: str, failures: list[str]) -> None:
 def require_later_same_shard(forged_tx: dict, canary_tx: dict) -> None:
     forged = forged_tx.get("block_id") or {}
     canary = canary_tx.get("block_id") or {}
-    if (not forged.get("root_hash") or not forged.get("file_hash")
-            or not canary.get("root_hash") or not canary.get("file_hash")
-            or forged.get("workchain") != 0 or canary.get("workchain") != 0
-            or forged.get("shard") != canary.get("shard")
-            or int(canary.get("seqno", 0)) <= int(forged.get("seqno", 0))):
+    if (
+        not forged.get("root_hash")
+        or not forged.get("file_hash")
+        or not canary.get("root_hash")
+        or not canary.get("file_hash")
+        or forged.get("workchain") != 0
+        or canary.get("workchain") != 0
+        or forged.get("shard") != canary.get("shard")
+        or int(canary.get("seqno", 0)) <= int(forged.get("seqno", 0))
+    ):
         raise RuntimeError("post-forgery canary is not in a later block of the same shard")
 
 
@@ -307,14 +385,22 @@ def require_forged_block_indexed(victim: str, forged_tx: dict) -> dict:
         tx_hash = base64.b64decode(tx_id["hash"], validate=True)
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError("forged transaction lacks an exact LT/hash") from error
-    if (lt <= 0 or len(tx_hash) != 32 or block_id.get("workchain") != 0
-            or not block_id.get("root_hash") or not block_id.get("file_hash")):
+    if (
+        lt <= 0
+        or len(tx_hash) != 32
+        or block_id.get("workchain") != 0
+        or not block_id.get("root_hash")
+        or not block_id.get("file_hash")
+    ):
         raise RuntimeError("forged transaction lacks a full wc0 block and hash")
     event_id = f"{lt}:{tx_hash.hex()}"
     event = rpc_call("getAccountEvent", address=victim, event_id=event_id)["result"]
-    if (str(event.get("event_id", "")).lower() != event_id or int(event.get("lt", 0)) != lt
-            or event.get("hash", "").lower() != tx_hash.hex()
-            or event.get("@type") != "wallet.accountEvent"):
+    if (
+        str(event.get("event_id", "")).lower() != event_id
+        or int(event.get("lt", 0)) != lt
+        or event.get("hash", "").lower() != tx_hash.hex()
+        or event.get("@type") != "wallet.accountEvent"
+    ):
         raise RuntimeError("forged transaction index receipt differs from raw transaction")
     try:
         raw_cell = Cell.one_from_boc(base64.b64decode(event["raw_transaction"], validate=True))
@@ -322,8 +408,16 @@ def require_forged_block_indexed(victim: str, forged_tx: dict) -> dict:
         raise RuntimeError("forged transaction index receipt lacks raw BOC") from error
     if raw_cell.hash != tx_hash:
         raise RuntimeError("forged transaction index BOC hash differs from raw transaction")
-    record_jsonl(CHAIN_EVIDENCE, {"label": "forged exact index receipt", "account": victim,
-                 "block_id": block_id, "transaction_id": tx_id, "event": event})
+    record_jsonl(
+        CHAIN_EVIDENCE,
+        {
+            "label": "forged exact index receipt",
+            "account": victim,
+            "block_id": block_id,
+            "transaction_id": tx_id,
+            "event": event,
+        },
+    )
     return event
 
 
@@ -350,19 +444,19 @@ def mint_body(owner: Address, master: Address, jetton_amount: int, forward_ton: 
     master_msg = (
         begin_cell()
         .store_uint(OP_INTERNAL_TRANSFER, 32)
-        .store_uint(0, 64)               # query_id
+        .store_uint(0, 64)  # query_id
         .store_coins(jetton_amount)
-        .store_address(master)           # from_address
-        .store_address(owner)            # response_address (non-none → excesses)
-        .store_coins(forward_ton)        # forward_ton_amount
-        .store_bit(0)                    # forward_payload: inline empty
+        .store_address(master)  # from_address
+        .store_address(owner)  # response_address (non-none → excesses)
+        .store_coins(forward_ton)  # forward_ton_amount
+        .store_bit(0)  # forward_payload: inline empty
         .end_cell()
     )
     return (
         begin_cell()
         .store_uint(OP_MINT, 32)
-        .store_uint(0, 64)               # query_id
-        .store_address(owner)            # to_address
+        .store_uint(0, 64)  # query_id
+        .store_address(owner)  # to_address
         .store_coins(forward_ton + 100_000_000)  # TOS forwarded to the wallet
         .store_ref(master_msg)
         .end_cell()
@@ -374,10 +468,10 @@ def forged_notification_body(fake_from: Address) -> Cell:
     return (
         begin_cell()
         .store_uint(OP_TRANSFER_NOTIFICATION, 32)
-        .store_uint(0, 64)               # query_id
-        .store_coins(1000)               # jetton amount (claimed)
-        .store_address(fake_from)        # from
-        .store_bit(0)                    # forward_payload: inline empty
+        .store_uint(0, 64)  # query_id
+        .store_coins(1000)  # jetton amount (claimed)
+        .store_address(fake_from)  # from
+        .store_bit(0)  # forward_payload: inline empty
         .end_cell()
     )
 
@@ -387,9 +481,16 @@ def internal_message(dest: Address, value, body: Cell, src: Address) -> WalletMe
         send_mode=3,
         message=MessageAny(
             info=InternalMsgInfo(
-                ihr_disabled=True, bounce=False, bounced=False,
-                src=src, dest=dest, value=value,
-                ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+                ihr_disabled=True,
+                bounce=False,
+                bounced=False,
+                src=src,
+                dest=dest,
+                value=value,
+                ihr_fee=0,
+                fwd_fee=0,
+                created_lt=0,
+                created_at=0,
             ),
             init=None,
             body=body,
@@ -441,21 +542,33 @@ async def main() -> int:
             print(f"[accept] jetton master: {master_addr.to_str()}")
 
             # Deploy the master (faucet → master with StateInit).
-            await faucet.send(WalletMessage(
-                send_mode=3,
-                message=MessageAny(
-                    info=InternalMsgInfo(
-                        ihr_disabled=True, bounce=False, bounced=False,
-                        src=faucet.address, dest=master_addr, value=tos(2),
-                        ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+            await faucet.send(
+                WalletMessage(
+                    send_mode=3,
+                    message=MessageAny(
+                        info=InternalMsgInfo(
+                            ihr_disabled=True,
+                            bounce=False,
+                            bounced=False,
+                            src=faucet.address,
+                            dest=master_addr,
+                            value=tos(2),
+                            ihr_fee=0,
+                            fwd_fee=0,
+                            created_lt=0,
+                            created_at=0,
+                        ),
+                        init=master_si,
+                        body=Cell.empty(),
                     ),
-                    init=master_si,
-                    body=Cell.empty(),
-                ),
-            ))
+                )
+            )
             master_active = await poll(
-                lambda: rpc_call("getAddressState", address=master_addr.to_str())
-                .get("result") == "active")
+                lambda: (
+                    rpc_call("getAddressState", address=master_addr.to_str()).get("result")
+                    == "active"
+                )
+            )
             print(f"[accept] master active: {master_active}")
             if master_active is not True:
                 raise RuntimeError("jetton master deployment was not observed active")
@@ -466,13 +579,23 @@ async def main() -> int:
             master_raw = master_addr.to_str(is_user_friendly=False)
             mint_sender_lt, mint_target_lt = last_lt(faucet_addr), last_lt(master_raw)
             mint_before_head = finalized_mc_header()
-            await faucet.send(internal_message(
-                master_addr, tos(1), mint_body(owner, master_addr, 1000, 0), faucet.address))
-            await observe_edge("genuine mint", faucet_addr, master_raw,
-                               mint_sender_lt, mint_target_lt, True)
+            await faucet.send(
+                internal_message(
+                    master_addr, tos(1), mint_body(owner, master_addr, 1000, 0), faucet.address
+                )
+            )
+            await observe_edge(
+                "genuine mint", faucet_addr, master_raw, mint_sender_lt, mint_target_lt, True
+            )
             mint_heads = await later_final_heads(mint_before_head)
-            record_jsonl(CHAIN_EVIDENCE, {"label": "genuine mint finality",
-                         "before_head": mint_before_head, "after_heads": mint_heads})
+            record_jsonl(
+                CHAIN_EVIDENCE,
+                {
+                    "label": "genuine mint finality",
+                    "before_head": mint_before_head,
+                    "after_heads": mint_heads,
+                },
+            )
 
             want_master = "0:" + master_si.serialize().hash.hex()
 
@@ -486,12 +609,16 @@ async def main() -> int:
             # ---------------- REJECT: forged notification ----------------
             print("\n=== REJECT: forged notification from a non-wallet must NOT be indexed ===")
             from contract import WalletV1Blueprint  # mirror localnet script's import
+
             attacker_bp = WalletV1Blueprint(workchain=0)
             attacker = await faucet.deploy(attacker_bp, tos(2))
             print(f"[reject] attacker (plain wallet): {attacker_bp.address.to_str()}")
             attacker_active = await poll(
-                lambda: rpc_call("getAddressState", address=attacker_bp.address.to_str())
-                .get("result") == "active")
+                lambda: (
+                    rpc_call("getAddressState", address=attacker_bp.address.to_str()).get("result")
+                    == "active"
+                )
+            )
             if attacker_active is not True:
                 raise RuntimeError("attacker plain wallet was not observed active")
 
@@ -502,12 +629,22 @@ async def main() -> int:
             victim_raw = victim.to_str(is_user_friendly=False)
             forged_sender_lt, forged_target_lt = last_lt(attacker_raw), last_lt(victim_raw)
             forged_before_head = finalized_mc_header()
-            await attacker.send(internal_message(
-                victim, tos(0.2), forged_notification_body(attacker_bp.address),
-                attacker_bp.address))
+            await attacker.send(
+                internal_message(
+                    victim,
+                    tos(0.2),
+                    forged_notification_body(attacker_bp.address),
+                    attacker_bp.address,
+                )
+            )
             forged_target_tx = await observe_edge(
-                "forged notification", attacker_raw, victim_raw,
-                forged_sender_lt, forged_target_lt, False)
+                "forged notification",
+                attacker_raw,
+                victim_raw,
+                forged_sender_lt,
+                forged_target_lt,
+                False,
+            )
             forged_heads = await later_final_heads(forged_before_head)
 
             # A later genuine mint must reach this same index before an empty
@@ -518,33 +655,61 @@ async def main() -> int:
                 raise RuntimeError("canary owner index was nonempty before its mint")
             canary_sender_lt, canary_target_lt = last_lt(faucet_addr), last_lt(master_raw)
             canary_before_head = finalized_mc_header()
-            await faucet.send(internal_message(
-                master_addr, tos(1), mint_body(canary_owner, master_addr, 1000, 0),
-                faucet.address))
+            await faucet.send(
+                internal_message(
+                    master_addr,
+                    tos(1),
+                    mint_body(canary_owner, master_addr, 1000, 0),
+                    faucet.address,
+                )
+            )
             canary_master_tx = await observe_edge(
-                "post-forgery canary mint", faucet_addr, master_raw,
-                canary_sender_lt, canary_target_lt, True)
+                "post-forgery canary mint",
+                faucet_addr,
+                master_raw,
+                canary_sender_lt,
+                canary_target_lt,
+                True,
+            )
             canary_heads = await later_final_heads(canary_before_head)
             require_later_same_shard(forged_target_tx, canary_master_tx)
             canary_entry, victim_js = await victim_index_after_canary(
-                victim_raw, canary_raw, want_master)
-            record_jsonl(CHAIN_EVIDENCE, {"label": "post-forgery canary indexed",
-                         "canary_master_tx": canary_master_tx,
-                         "canary_entry": canary_entry, "victim_jettons": victim_js})
+                victim_raw, canary_raw, want_master
+            )
+            record_jsonl(
+                CHAIN_EVIDENCE,
+                {
+                    "label": "post-forgery canary indexed",
+                    "canary_master_tx": canary_master_tx,
+                    "canary_entry": canary_entry,
+                    "victim_jettons": victim_js,
+                },
+            )
             require_forged_block_indexed(victim_raw, forged_target_tx)
             owner_js = get_jettons(owner.to_str())
-            owner_control = any(j.get("jetton_master", "").lower() == want_master.lower()
-                                for j in owner_js)
-            record_jsonl(CHAIN_EVIDENCE, {"label": "forged notification finality",
-                         "before_head": forged_before_head, "after_heads": forged_heads,
-                         "canary_before_head": canary_before_head,
-                         "forged_target_tx": forged_target_tx,
-                         "canary_master_tx": canary_master_tx,
-                         "canary_after_heads": canary_heads,
-                         "canary_owner": canary_raw, "canary_entry": canary_entry,
-                         "victim_jettons": victim_js, "owner_jettons": owner_js})
+            owner_control = any(
+                j.get("jetton_master", "").lower() == want_master.lower() for j in owner_js
+            )
+            record_jsonl(
+                CHAIN_EVIDENCE,
+                {
+                    "label": "forged notification finality",
+                    "before_head": forged_before_head,
+                    "after_heads": forged_heads,
+                    "canary_before_head": canary_before_head,
+                    "forged_target_tx": forged_target_tx,
+                    "canary_master_tx": canary_master_tx,
+                    "canary_after_heads": canary_heads,
+                    "canary_owner": canary_raw,
+                    "canary_entry": canary_entry,
+                    "victim_jettons": victim_js,
+                    "owner_jettons": owner_js,
+                },
+            )
             if not owner_control:
-                raise RuntimeError("positive owner index control disappeared during rejection check")
+                raise RuntimeError(
+                    "positive owner index control disappeared during rejection check"
+                )
             if victim_js:
                 print(f"[reject] FAIL — victim wrongly indexed: {victim_js}")
                 failures.append("forged notification was indexed")

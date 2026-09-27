@@ -21,8 +21,8 @@ from tostester.n6_cluster import (  # noqa: E402
     SustainedObservationConfig,
     _is_lite_transport_error,
     _masterchain_heights,
-    _resource_monitor,
     _require_structured_finalization,
+    _resource_monitor,
     _simplex_session_log_paths,
     _structured_masterchain_timing,
     _sustained_timing_split,
@@ -601,7 +601,8 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
         batches = [json.loads(line) for line in path.read_text().splitlines()]
         for batch in batches:
             batch["events"] = [
-                item for item in batch["events"]
+                item
+                for item in batch["events"]
                 if item.get("event", {}).get("@type") != "consensus.simplex.stats.certObserved"
             ]
         attempted_path = directory / f"attempted-only-{node_name}-session.jsonl"
@@ -612,7 +613,10 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
         attempted_only["analysis_available"] is False
         and attempted_only["run_count"] is None
         and attempted_only["skip_votes_per_node"]["node-a"] == 17
-        and all(item["coincides_with_skip_run"] is None for item in attempted_only["interval_correlations"]),
+        and all(
+            item["coincides_with_skip_run"] is None
+            for item in attempted_only["interval_correlations"]
+        ),
         "a Voted(skipVote) attempt without a SkipCert was claimed as a skip run",
     )
 
@@ -640,8 +644,7 @@ def check_simplex_skip_run_correlation(directory: Path) -> None:
     )
     require(
         "consensus.simplex.stats.certObserved(skipVote)" in unavailable["reason"]
-        and "attempted votes cannot establish a certified skip run"
-        in unavailable["reason"]
+        and "attempted votes cannot establish a certified skip run" in unavailable["reason"]
         and all(
             item["coincides_with_skip_run"] is None for item in unavailable["interval_correlations"]
         ),
@@ -890,25 +893,34 @@ def check_sustained_timing_split(directory: Path) -> None:
         consensus[5]["block_accepted_wall_unix_ns_by_node"]["node-a"] - 1_558_129
     )
     overlap = _sustained_timing_split(
-        observed, overlapping, consensus, list(nodes), barriers,
+        observed,
+        overlapping,
+        consensus,
+        list(nodes),
+        barriers,
         wall_clocks_comparable=True,
     )
     require(
-        overlap["per_height"]["5"]["block_accepted_to_node_exposure_ms"]["node-a"]
-        == -1.558129
-        and overlap["per_height"]["5"]["exposure_before_block_accepted_trace_nodes"]
-        == ["node-a"]
+        overlap["per_height"]["5"]["block_accepted_to_node_exposure_ms"]["node-a"] == -1.558129
+        and overlap["per_height"]["5"]["exposure_before_block_accepted_trace_nodes"] == ["node-a"]
         and overlap["block_accepted_trace_is_visibility_prerequisite"] is False,
         "signed exposure overlap was rejected or hidden",
     )
     for invalid_queries, invalid_barriers, expected in (
-        ([event for event in queries if event["node"] != "node-b"], barriers,
-         "no successful lite query exposed"),
+        (
+            [event for event in queries if event["node"] != "node-b"],
+            barriers,
+            "no successful lite query exposed",
+        ),
         (queries, [], "no all-node barrier exposed"),
     ):
         try:
             _sustained_timing_split(
-                observed, invalid_queries, consensus, list(nodes), invalid_barriers,
+                observed,
+                invalid_queries,
+                consensus,
+                list(nodes),
+                invalid_barriers,
                 wall_clocks_comparable=True,
             )
         except RuntimeError as error:
@@ -920,7 +932,11 @@ def check_sustained_timing_split(directory: Path) -> None:
         for height, item in consensus.items()
     }
     incomplete = _sustained_timing_split(
-        observed, queries, missing_acceptance, list(nodes), barriers,
+        observed,
+        queries,
+        missing_acceptance,
+        list(nodes),
+        barriers,
         wall_clocks_comparable=True,
     )
     require(
@@ -939,7 +955,8 @@ def check_sustained_timing_split(directory: Path) -> None:
     for name, path in logs.items():
         payload = json.loads(path.read_text())
         payload["events"] = [
-            event for event in payload["events"]
+            event
+            for event in payload["events"]
             if event["event"]["@type"] != "consensus.simplex.stats.certObserved"
         ]
         missing_path = directory / f"no-cert-{name}.jsonl"
@@ -950,8 +967,10 @@ def check_sustained_timing_split(directory: Path) -> None:
     try:
         _require_structured_finalization(observed, without_cert)
     except RuntimeError as error:
-        require("structured finalization is missing" in str(error),
-                "missing certificate consumer failed for an unrelated reason")
+        require(
+            "structured finalization is missing" in str(error),
+            "missing certificate consumer failed for an unrelated reason",
+        )
     else:
         raise AssertionError("structured finalization consumer accepted missing certificates")
 

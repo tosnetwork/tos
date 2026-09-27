@@ -66,7 +66,8 @@ def main() -> int:
         re.search(
             r"(?m)^\s*run: uv run pytest -q test/pq-native/test_e04_negative_windows\.py\s*$",
             text,
-        ) is not None,
+        )
+        is not None,
         "E04 exact cancellation and expiry behavior gate is absent",
     )
     require(
@@ -94,7 +95,10 @@ def main() -> int:
         ("test-n5-cut1-finalcert-recovery", "FinalCert write-after bootstrap recovery"),
         ("test-n5-cut2-signatures-recovery", "#13 signature write-after bootstrap recovery"),
         ("test-n5-cut3-proof-recovery", "BlockProof write-after bootstrap recovery"),
-        ("test-n5-cut4-finalized-replay", "finalized marker cold replay without duplicate acceptance"),
+        (
+            "test-n5-cut4-finalized-replay",
+            "finalized marker cold replay without duplicate acceptance",
+        ),
         ("test-n5-cut5-full-root-rebuild", "DB/archive-only full-root rebuild"),
         ("test-n5-cut6-check-proof", "cold persisted PQ CheckProof acceptance and tamper refusal"),
         ("test-n5-cold-continuation", "cold continuation through a second FinalCert"),
@@ -110,7 +114,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-accept-block COMMAND test-c04-real-state-proof "
             r"--n5-accept\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 AcceptBlock CTest is absent or no longer invokes the production-fixture mode",
     )
     require(
@@ -118,7 +123,8 @@ def main() -> int:
             r"tos_test\(test-n5-manager-db-fixture\s+"
             r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 FinalCert journal CTest is absent",
     )
     require(
@@ -126,7 +132,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-joined-finalcert COMMAND test-c04-real-state-proof "
             r"--n5-joined\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 same-FinalCert actor CTest is absent or no longer invokes its joined mode",
     )
     require(
@@ -134,7 +141,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cut1-finalcert-recovery COMMAND test-c04-real-state-proof "
             r"--n5-cut1\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 write-after recovery CTest is absent or no longer invokes its cut1 mode",
     )
     require(
@@ -142,7 +150,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cut2-signatures-recovery COMMAND test-c04-real-state-proof "
             r"--n5-cut2\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 #13 write-after recovery CTest is absent or no longer invokes its cut2 mode",
     )
     require(
@@ -150,7 +159,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cut3-proof-recovery COMMAND test-c04-real-state-proof "
             r"--n5-cut3\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 BlockProof write-after recovery CTest is absent or no longer invokes its cut3 mode",
     )
     require(
@@ -158,7 +168,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cut4-finalized-replay COMMAND test-c04-real-state-proof "
             r"--n5-cut4\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 finalized marker replay CTest is absent or no longer invokes its cut4 mode",
     )
     require(
@@ -166,7 +177,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cut5-full-root-rebuild COMMAND test-c04-real-state-proof "
             r"--n5-cut5\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 DB/archive-only full-root rebuild CTest is absent or no longer invokes its cut5 mode",
     )
     require(
@@ -174,7 +186,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cut6-check-proof COMMAND test-c04-real-state-proof "
             r"--n5-cut6\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 CheckProof CTest is absent or no longer invokes its cut6 mode",
     )
     require(
@@ -182,7 +195,8 @@ def main() -> int:
             r"(?s)add_test\(NAME test-n5-cold-continuation COMMAND test-c04-real-state-proof "
             r"--n5-continue\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
             cmake,
-        ) is not None,
+        )
+        is not None,
         "N5 cold continuation CTest is absent or no longer invokes its seq2 mode",
     )
     c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
@@ -198,10 +212,11 @@ def main() -> int:
         require(
             re.search(rf"(?m)^\s*NAME {re.escape(test_name)}\s*$", consensus_tests) is not None
             and re.search(
-                rf'(?m)^set_tests_properties\({re.escape(test_name)} PROPERTIES\s*\n'
+                rf"(?m)^set_tests_properties\({re.escape(test_name)} PROPERTIES\s*\n"
                 rf'\s*ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS={fault_count}"\)\s*$',
                 consensus_tests,
-            ) is not None,
+            )
+            is not None,
             f"C05 four-node behavior CTest is absent or has wrong fault budget: {test_name}",
         )
     for test_name in RESTART_ORIGIN_TESTS:
@@ -228,7 +243,8 @@ def main() -> int:
             r"(?m)^\s*run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib "
             r"exact_deploy_wallet_transaction_tests --locked --no-default-features\s*$",
             rust_job.group("body"),
-        ) is not None,
+        )
+        is not None,
         "E04 exact wallet confirmation behavior gate is absent",
     )
     zero_stats = text.find("ccache --zero-stats")

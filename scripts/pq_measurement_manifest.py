@@ -239,7 +239,7 @@ def _memory_and_swap() -> tuple[int, bool]:
         for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
             name, raw = line.split(":", 1)
             values[name] = int(raw.strip().split()[0]) * 1024
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return 0, False
     return values.get("MemTotal", 0), values.get("SwapTotal", 0) != 0
 
@@ -299,13 +299,17 @@ def validate_open_correctness_questions(path: Path, *, release: bool) -> None:
         raise ManifestError("correctness-question registry schema_version is not 1")
     required = registry.get("required_question_ids")
     questions = registry.get("questions")
-    if not isinstance(required, list) or not all(isinstance(item, str) and item for item in required):
+    if not isinstance(required, list) or not all(
+        isinstance(item, str) and item for item in required
+    ):
         raise ManifestError("correctness-question registry has invalid required_question_ids")
     if not isinstance(questions, dict):
         raise ManifestError("correctness-question registry questions is not an object")
     for question_id in REQUIRED_CORRECTNESS_QUESTION_IDS:
         if question_id not in required:
-            raise ManifestError(f"correctness-question registry dropped required entry {question_id}")
+            raise ManifestError(
+                f"correctness-question registry dropped required entry {question_id}"
+            )
     if set(required) != set(questions):
         missing = sorted(set(required) - set(questions))
         unrequired = sorted(set(questions) - set(required))
@@ -322,12 +326,18 @@ def validate_open_correctness_questions(path: Path, *, release: bool) -> None:
             if not isinstance(question.get(field), str) or not question[field]:
                 raise ManifestError(f"correctness question {question_id} lacks {field}")
         commit = question["observed_commit"]
-        if len(commit) < 9 or len(commit) > 40 or any(ch not in "0123456789abcdef" for ch in commit):
+        if (
+            len(commit) < 9
+            or len(commit) > 40
+            or any(ch not in "0123456789abcdef" for ch in commit)
+        ):
             raise ManifestError(f"correctness question {question_id} has invalid observed_commit")
         status = question["status"]
         if status == "OPEN":
             if question.get("resolved_by") not in (None, ""):
-                raise ManifestError(f"open correctness question {question_id} already names resolved_by")
+                raise ManifestError(
+                    f"open correctness question {question_id} already names resolved_by"
+                )
             open_questions.append(question_id)
         elif status == "RESOLVED":
             resolved_by = question.get("resolved_by")
@@ -358,7 +368,9 @@ def validate_open_measurement_gaps(path: Path, *, release: bool) -> None:
         raise ManifestError("measurement-gap registry schema_version is not 1")
     required = registry.get("required_gap_ids")
     gaps = registry.get("gaps")
-    if not isinstance(required, list) or not all(isinstance(item, str) and item for item in required):
+    if not isinstance(required, list) or not all(
+        isinstance(item, str) and item for item in required
+    ):
         raise ManifestError("measurement-gap registry has invalid required_gap_ids")
     if not isinstance(gaps, dict):
         raise ManifestError("measurement-gap registry gaps is not an object")
@@ -406,7 +418,9 @@ def validate_open_measurement_gaps(path: Path, *, release: bool) -> None:
         raise ManifestError("release-grade measurement refuses " + "; ".join(refusals))
 
 
-def _validate_measured_gap_resolution(gap_id: str, gap: dict[str, Any], _registry_path: Path) -> None:
+def _validate_measured_gap_resolution(
+    gap_id: str, gap: dict[str, Any], _registry_path: Path
+) -> None:
     if not isinstance(gap.get("resolved_by"), str) or not gap["resolved_by"]:
         raise ManifestError(f"resolved measurement gap {gap_id} lacks resolved_by evidence")
     resolution_kind = gap.get("resolution_kind")
@@ -478,7 +492,9 @@ def create_manifest(
     dirty = bool(_run_git(repo, "status", "--porcelain", "--untracked-files=all"))
     if mode == "release":
         if correctness_questions_path is None:
-            raise ManifestError("release-grade measurement requires a correctness-question registry")
+            raise ManifestError(
+                "release-grade measurement requires a correctness-question registry"
+            )
         validate_open_correctness_questions(correctness_questions_path, release=True)
         if measurement_gaps_path is None:
             raise ManifestError("release-grade measurement requires a measurement-gap registry")

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 import tostester.network as network_module
 from tostester.network import FullNode
-from types import SimpleNamespace
 from tostester.pq_initial_validator import (
     make_deterministic_pq_initial_validator,
     make_deterministic_pq_spare_validator,
@@ -68,7 +69,8 @@ def test_four_genesis_one_spare_topology_is_constructed_by_distinct_calls() -> N
 def test_full_node_spare_custody_does_not_mark_genesis(monkeypatch) -> None:
     observed = []
     monkeypatch.setattr(
-        FullNode, "_provision_pq_validator",
+        FullNode,
+        "_provision_pq_validator",
         lambda _self, validator_id, seed: observed.append((validator_id, seed)),
     )
     node = object.__new__(FullNode)
@@ -85,8 +87,9 @@ def test_full_node_spare_custody_does_not_mark_genesis(monkeypatch) -> None:
 def test_network_zerostate_receives_four_pq_initial_validators_not_spare(
     monkeypatch, tmp_path
 ) -> None:
-    initial = [SimpleNamespace(is_initial_validator=True, pq_initial_validator=index)
-               for index in range(4)]
+    initial = [
+        SimpleNamespace(is_initial_validator=True, pq_initial_validator=index) for index in range(4)
+    ]
     spare = SimpleNamespace(is_initial_validator=False, pq_initial_validator=4)
     network = object.__new__(network_module.Network)
     network._status = network_module._Status.INITED

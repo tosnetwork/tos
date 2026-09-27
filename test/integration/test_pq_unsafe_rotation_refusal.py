@@ -19,21 +19,22 @@ import time
 from pathlib import Path
 
 from nacl.signing import SigningKey
-from tostester.install import Install
-from tostester.key import Key
-from tostester.network import Network, StartOptions
-
 from test_manager_session_identity import (
     FIXED_PQ_SEED,
     FIXED_VALIDATOR_ID,
     FIXED_VALIDATOR_SEED,
 )
+from tostester.install import Install
+from tostester.key import Key
+from tostester.network import Network, StartOptions
 
 GROUP_CREATED = re.compile(
     r"Created validator group \(-1,8000000000000000\)\.0:(?P<session>[A-Za-z0-9+/]{43}=)"
 )
 ROTATION_REFUSED = "refusing to create PQ Simplex validator group"
-TRUSTED_SESSION_MISMATCH = "pq finality: carried session_id does not match trusted expected session_id"
+TRUSTED_SESSION_MISMATCH = (
+    "pq finality: carried session_id does not match trusted expected session_id"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,7 +76,10 @@ async def wait_for_decision(
                 session_id = base64.b64decode(match.group("session"), validate=True).hex().upper()
                 if not rotated and successful_masterchain_stats(session_log_path):
                     if TRUSTED_SESSION_MISMATCH in log:
-                        return {"decision": "zero_rotation_proof_mismatch", "session_id": session_id}
+                        return {
+                            "decision": "zero_rotation_proof_mismatch",
+                            "session_id": session_id,
+                        }
                     return {"decision": "masterchain_stats_success", "session_id": session_id}
             if not rotated and ROTATION_REFUSED in log:
                 return {"decision": "zero_rotation_refused"}
@@ -107,9 +111,13 @@ async def observe(
             key_file.chmod(0o600)
         await dht.run(StartOptions(threads=1, verbosity=3))
         await node.run(
-            StartOptions(threads=2, verbosity=3, args=("--unsafe-catchain-rotate", f"0:0:{rotation_tag}"))
+            StartOptions(
+                threads=2, verbosity=3, args=("--unsafe-catchain-rotate", f"0:0:{rotation_tag}")
+            )
         )
-        result = await wait_for_decision(node.log_path, node.session_log_path, timeout, rotated=rotation_tag != 0)
+        result = await wait_for_decision(
+            node.log_path, node.session_log_path, timeout, rotated=rotation_tag != 0
+        )
         result["log_path"] = str(node.log_path)
         result["session_log_path"] = str(node.session_log_path)
         return result
@@ -130,7 +138,9 @@ async def main() -> int:
     artifact_dir.mkdir(parents=True)
     install = Install(args.build_dir.resolve(), root)
     zero = await observe(install, artifact_dir / "zero", args.base_port, 0, args.timeout)
-    nonzero = await observe(install, artifact_dir / "nonzero", args.base_port + 100, 1, args.timeout)
+    nonzero = await observe(
+        install, artifact_dir / "nonzero", args.base_port + 100, 1, args.timeout
+    )
     summary = {"source_commit": source_commit, "zero_rotation": zero, "nonzero_rotation": nonzero}
     (artifact_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     if zero["decision"] != "masterchain_stats_success":

@@ -31,7 +31,9 @@ if proposal.get("status") != "REVIEW_PROPOSAL_NOT_ACCEPTANCE_CRITERIA":
 if set(proposal.get("owner_decisions", {})) != {"release_hardware_profile", "headroom_fractions"}:
     fail("proposal must leave exactly hardware profile and headroom fractions to the owner")
 hardware = proposal["owner_decisions"]["release_hardware_profile"]
-if hardware.get("status") != "PROVISIONING_REQUIRED" or set(hardware.get("required_fields", [])) != {
+if hardware.get("status") != "PROVISIONING_REQUIRED" or set(
+    hardware.get("required_fields", [])
+) != {
     "cpu_model",
     "cpu_governor",
     "turbo_or_boost_enabled",
@@ -71,8 +73,7 @@ if "throttling" not in hardware.get("rationale", "") or "thermals" not in hardwa
     fail("release hardware proposal does not explain why frequency policy affects timing evidence")
 observed_host = hardware.get("observed_nonqualifying_host", {})
 if observed_host.get("network_link") != (
-    "100 Mbps symmetric (In 100.0 Mbps / Out 100.0 Mbps), "
-    "MAC fa:16:3e:7c:0e:03, /23 subnet"
+    "100 Mbps symmetric (In 100.0 Mbps / Out 100.0 Mbps), MAC fa:16:3e:7c:0e:03, /23 subnet"
 ):
     fail("release hardware proposal does not retain the owner-supplied network link")
 if (
@@ -265,7 +266,10 @@ if (
     )
 
 expected_resolved_proposals = {
-    "max_p99_persisted_finality_ms": (1300, "floor(2600 * (1 - headroom_fractions.finality_window))"),
+    "max_p99_persisted_finality_ms": (
+        1300,
+        "floor(2600 * (1 - headroom_fractions.finality_window))",
+    ),
     "max_p99_block_signature_verify_ms": (
         1000,
         "floor(2000 * (1 - headroom_fractions.block_signature_timeout))",
@@ -275,12 +279,18 @@ expected_resolved_proposals = {
         80,
         "floor(400 * (1 - headroom_fractions.authority_slot))",
     ),
-    "max_finalized_height_stall_ms": (5000, "floor(10000 * (1 - headroom_fractions.finality_window))"),
+    "max_finalized_height_stall_ms": (
+        5000,
+        "floor(10000 * (1 - headroom_fractions.finality_window))",
+    ),
     "max_cpu_fraction": (0.65, "1 - headroom_fractions.cpu"),
     "max_rss_fraction": (0.70, "1 - headroom_fractions.rss"),
     "max_network_fraction": (0.50, "1 - headroom_fractions.network"),
     "max_disk_busy_fraction": (0.60, "1 - headroom_fractions.disk_busy"),
-    "max_finalization_backpressure_fraction": (0.10, "1 - headroom_fractions.finalization_backpressure"),
+    "max_finalization_backpressure_fraction": (
+        0.10,
+        "1 - headroom_fractions.finalization_backpressure",
+    ),
 }
 for name, (value, formula) in expected_resolved_proposals.items():
     entry = proposed_criteria[name]

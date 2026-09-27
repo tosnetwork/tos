@@ -1,10 +1,9 @@
-import json
 import hashlib
+import json
 import traceback
 from typing import cast, final
 
 from nacl.signing import SigningKey
-
 from tosapi import tos_api
 
 from tl import JSONSerializable, TLRequest
@@ -31,7 +30,9 @@ class EngineConsoleClient:
         if config.server_public_key is not None and config.client_private_key is not None:
             self._binding = {
                 "address": config.address,
-                "server_key_id_hex": hashlib.sha256(prefix + config.server_public_key.key).hexdigest(),
+                "server_key_id_hex": hashlib.sha256(
+                    prefix + config.server_public_key.key
+                ).hexdigest(),
                 "client_key_id_hex": hashlib.sha256(
                     prefix + SigningKey(config.client_private_key.key).verify_key.encode()
                 ).hexdigest(),

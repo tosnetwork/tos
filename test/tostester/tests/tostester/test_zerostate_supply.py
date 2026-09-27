@@ -45,9 +45,7 @@ EXPECTED_VALIDATOR_COUNT = 4
 EXPECTED_SIMPLEX_PARAMS = (400, 4, 1000, 250)
 EXPECTED_SIMPLEX_PROTOCOL_VERSION = 2
 EXPECTED_MAINNET_GENESIS_UTIME = 1_789_434_000
-DNS_VECTORS = json.loads(
-    (REPO / "domains/packages/protocol/test/vectors.json").read_text()
-)
+DNS_VECTORS = json.loads((REPO / "domains/packages/protocol/test/vectors.json").read_text())
 EXPECTED_DNS_ROOT_ID = DNS_VECTORS["root_address"].removeprefix("-1:")
 
 
@@ -122,8 +120,7 @@ def _positive_account_balances(state: ShardStateUnsplit) -> list[int]:
     return sorted(
         shard_account.account.storage.balance.tomis
         for shard_account in accounts.values()
-        if shard_account.account is not None
-        and shard_account.account.storage.balance.tomis > 0
+        if shard_account.account is not None and shard_account.account.storage.balance.tomis > 0
     )
 
 
@@ -256,10 +253,7 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
     zerostate = create_zerostate(install, stage_a_dir, config, keys)
     state = _load_masterchain_state(zerostate.masterchain.file)
 
-    assert (
-        state.total_balance.tomis
-        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
-    )
+    assert state.total_balance.tomis == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
@@ -280,15 +274,13 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
     # The accelerated profile must retain the production candidate's
     # validator count, stake rules, rewards, minter, and catchain settings.
     assert _config(state, 16, ConfigParam16).min_validators == 4
-    assert _config(state, 17, ConfigParam17).min_stake == (
-        10_000 * NANOTOS_PER_TOS
-    )
+    assert _config(state, 17, ConfigParam17).min_stake == (10_000 * NANOTOS_PER_TOS)
     rewards = _config(state, 14, ConfigParam14)
     assert rewards.masterchain_block_fee == 39_496_630
     assert rewards.basechain_block_fee == 23_233_312
-    assert _config(state, 2, ConfigParam2).minter_addr == _config(
-        state, 0, ConfigParam0
-    ).config_addr
+    assert (
+        _config(state, 2, ConfigParam2).minter_addr == _config(state, 0, ConfigParam0).config_addr
+    )
     catchain = _config(state, 28, ConfigParam28)
     assert (
         catchain.mc_catchain_lifetime,
@@ -342,23 +334,29 @@ def test_f01_stage_a_start_override_is_encoded_in_genesis_param15(tmp_path):
         param15.elections_end_before,
         param15.stake_held_for,
     ) == (300, 240, 60, 180)
-    assert _config(state, 34, ConfigParam34).cur_validators.utime_until - (
-        _config(state, 34, ConfigParam34).cur_validators.utime_since
-    ) == 600
+    assert (
+        _config(state, 34, ConfigParam34).cur_validators.utime_until
+        - (_config(state, 34, ConfigParam34).cur_validators.utime_since)
+        == 600
+    )
     for start in (False, 60, 300, 301):
         with pytest.raises(ValueError, match="Stage A election start"):
             create_zerostate(
-                install, tmp_path / f"bad-{start}",
+                install,
+                tmp_path / f"bad-{start}",
                 NetworkConfig(
                     validator_economics_profile=True,
                     validator_election_stage_a_profile=True,
                     validator_election_stage_a_start_before=start,
-                ), [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
+                ),
+                [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)],
             )
     with pytest.raises(ValueError, match="requires the Stage A profile"):
         create_zerostate(
-            install, tmp_path / "not-stage-a",
-            NetworkConfig(validator_election_stage_a_start_before=240), [Key()]
+            install,
+            tmp_path / "not-stage-a",
+            NetworkConfig(validator_election_stage_a_start_before=240),
+            [Key()],
         )
 
 
@@ -438,9 +436,7 @@ def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path)
             tmp_path / "not-stage-a",
             NetworkConfig(
                 validator_economics_profile=True,
-                validator_election_experiment_faucet_balance_nanotos=(
-                    experiment_balance
-                ),
+                validator_election_experiment_faucet_balance_nanotos=(experiment_balance),
             ),
             keys,
         )
@@ -489,10 +485,7 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     zerostate = create_zerostate(install, tmp_path, config, keys)
     state = _load_masterchain_state(zerostate.masterchain.file)
 
-    assert (
-        state.total_balance.tomis
-        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
-    )
+    assert state.total_balance.tomis == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
@@ -619,7 +612,11 @@ def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_pat
     )
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
-        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        command,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
         env=_mainnet_genesis_env(),
     )
 
@@ -686,30 +683,29 @@ def test_canonical_genesis_sets_a_stake_proportional_punishment_schedule(tmp_pat
 
 def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join(key.public_key.key for key in keys)
-    )
+    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys))
 
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
-        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        command,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
         env=_mainnet_genesis_env(),
     )
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
     assert state.gen_utime == EXPECTED_MAINNET_GENESIS_UTIME
-    assert (
-        state.total_balance.tomis
-        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
-    )
+    assert state.total_balance.tomis == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
         100_000 * NANOTOS_PER_TOS,
     ]
-    assert _config(state, 2, ConfigParam2).minter_addr == _config(
-        state, 0, ConfigParam0
-    ).config_addr
+    assert (
+        _config(state, 2, ConfigParam2).minter_addr == _config(state, 0, ConfigParam0).config_addr
+    )
     assert _config(state, 4, ConfigParam4).dns_root_addr_hex == EXPECTED_DNS_ROOT_ID
     assert 3 not in state.custom.config.config
     canonical_rewards = _config(state, 14, ConfigParam14)
@@ -726,16 +722,17 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     ) == (250, 250, 1000, 21)
     validator_set = _config(state, 34, ConfigParam34).cur_validators
     assert validator_set.total == EXPECTED_VALIDATOR_COUNT
-    assert [
-        validator_set.list[index].adnl_addr
-        for index in range(EXPECTED_VALIDATOR_COUNT)
-    ] == [key.id for key in keys]
+    assert [validator_set.list[index].adnl_addr for index in range(EXPECTED_VALIDATOR_COUNT)] == [
+        key.id for key in keys
+    ]
 
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join(key.public_key.key for key in keys[:3])
-    )
+    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys[:3]))
     failed = subprocess.run(
-        command, cwd=tmp_path, check=False, capture_output=True, text=True,
+        command,
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
         env=_mainnet_genesis_env(),
     )
     assert failed.returncode != 0
@@ -745,13 +742,15 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         b"".join([keys[0].public_key.key] * EXPECTED_VALIDATOR_COUNT)
     )
     failed = subprocess.run(
-        command, cwd=tmp_path, check=False, capture_output=True, text=True,
+        command,
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
         env=_mainnet_genesis_env(),
     )
     assert failed.returncode != 0
-    assert "genesis validator public keys must be unique" in (
-        failed.stderr + failed.stdout
-    )
+    assert "genesis validator public keys must be unique" in (failed.stderr + failed.stdout)
 
 
 def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):
@@ -762,22 +761,26 @@ def test_canonical_genesis_rejects_a_different_timestamp(tmp_path):
     env["SOURCE_DATE_EPOCH"] = str(EXPECTED_MAINNET_GENESIS_UTIME + 1)
     failed = subprocess.run(
         _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif"),
-        cwd=tmp_path, check=False, capture_output=True, text=True, env=env,
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
     )
     assert failed.returncode != 0
-    assert "SOURCE_DATE_EPOCH must be 1789434000" in (
-        failed.stderr + failed.stdout
-    )
+    assert "SOURCE_DATE_EPOCH must be 1789434000" in (failed.stderr + failed.stdout)
 
 
 def test_validator_rewards_are_the_only_native_tos_issuance_path(tmp_path):
     keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join(key.public_key.key for key in keys)
-    )
+    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys))
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
-        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        command,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
         env=_mainnet_genesis_env(),
     )
 
@@ -802,12 +805,14 @@ def test_canonical_genesis_makes_global_id_mandatory_and_critical(tmp_path):
     is absent, so the canonical genesis must forbid installing a configuration
     without it and must require a critical vote to change it."""
     keys = [Key() for _ in range(EXPECTED_VALIDATOR_COUNT)]
-    (tmp_path / "validator-keys.pub").write_bytes(
-        b"".join(key.public_key.key for key in keys)
-    )
+    (tmp_path / "validator-keys.pub").write_bytes(b"".join(key.public_key.key for key in keys))
     command = _create_state_command(REPO / "crypto/smartcont/gen-zerostate.fif")
     subprocess.run(
-        command, cwd=tmp_path, check=True, capture_output=True, text=True,
+        command,
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
         env=_mainnet_genesis_env(),
     )
 

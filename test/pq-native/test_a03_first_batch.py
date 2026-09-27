@@ -3,11 +3,10 @@ import hashlib
 import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("first_batch", ROOT / "scripts/a03_first_batch.py")
@@ -66,7 +65,9 @@ class FirstBatchTest(unittest.TestCase):
         self.assertIn("F01:ci-query: missing or SHA mismatch", self.check(batch))
 
     def stale(self, path):
-        return json.loads(subprocess.check_output(["git", "show", f"{STALE_X01_COMMIT}:{path}"], cwd=ROOT))
+        return json.loads(
+            subprocess.check_output(["git", "show", f"{STALE_X01_COMMIT}:{path}"], cwd=ROOT)
+        )
 
     def test_stale_offline_x01_entry_red_against_signed_row(self):
         batch = copy.deepcopy(self.original)
@@ -85,10 +86,14 @@ class FirstBatchTest(unittest.TestCase):
         batch = copy.deepcopy(self.original)
         batch["snapshot_sha256"] = hashlib.sha256(payload).hexdigest()
         errors = first_batch.validate(batch, snapshot, payload, ROOT, MEMO)
-        self.assertEqual(["X01: snapshot status ▶ differs from task table ✅",
-                          "Z01: snapshot owner PQ differs from task table PQ + PG + Mac",
-                          "Z01: snapshot status □ differs from task table ▶"],
-                         [e for e in errors if e.startswith(("snapshot", "X01: snapshot", "Z01: snapshot"))])
+        self.assertEqual(
+            [
+                "X01: snapshot status ▶ differs from task table ✅",
+                "Z01: snapshot owner PQ differs from task table PQ + PG + Mac",
+                "Z01: snapshot status □ differs from task table ▶",
+            ],
+            [e for e in errors if e.startswith(("snapshot", "X01: snapshot", "Z01: snapshot"))],
+        )
 
     def test_open_row_cannot_be_promoted_by_signed_evidence(self):
         snapshot = copy.deepcopy(self.snapshot)
@@ -115,8 +120,17 @@ class FirstBatchTest(unittest.TestCase):
         batch = copy.deepcopy(self.original)
         batch["entries"]["X01"]["command"]["reported_exit"] = 1
         self.assertIn("X01: natural command exit not in original console", self.check(batch))
-        self.assertEqual(0, first_batch.console_exit_code(b'Script done on 2026-09-25 19:03:50+00:00 [COMMAND_EXIT_CODE="0"]\n'))
-        self.assertIsNone(first_batch.console_exit_code(b'Script done on now [COMMAND_EXIT_CODE="0"]\nScript done on later [COMMAND_EXIT_CODE="1"]\n'))
+        self.assertEqual(
+            0,
+            first_batch.console_exit_code(
+                b'Script done on 2026-09-25 19:03:50+00:00 [COMMAND_EXIT_CODE="0"]\n'
+            ),
+        )
+        self.assertIsNone(
+            first_batch.console_exit_code(
+                b'Script done on now [COMMAND_EXIT_CODE="0"]\nScript done on later [COMMAND_EXIT_CODE="1"]\n'
+            )
+        )
         self.assertIsNone(first_batch.console_exit_code(b'log mentions COMMAND_EXIT_CODE="0"\n'))
 
     def test_x01_independent_review_required(self):
@@ -154,12 +168,17 @@ class FirstBatchTest(unittest.TestCase):
             run["headSha"] = item["head_sha"] = STALE_X01_COMMIT
             path = Path(temp) / "run.json"
             path.write_bytes(json.dumps(run).encode())
-            item["raw"] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            item["raw"] = {
+                "path": str(path),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            }
             self.assertIn("X01:ci:0: run identity/outcome mismatch", self.check(batch))
 
     def test_f01_exact_source_ci_contradicts_retained_empty_query(self):
         batch = copy.deepcopy(self.original)
-        batch["entries"]["F01"]["ci"][0]["head_sha"] = batch["entries"]["F01"]["source_blobs"][0]["commit"]
+        batch["entries"]["F01"]["ci"][0]["head_sha"] = batch["entries"]["F01"]["source_blobs"][0][
+            "commit"
+        ]
         self.assertIn("F01: exact-source no-CI query missing or contradicted", self.check(batch))
 
     def test_each_id_requires_scope_and_invalidation_conditions(self):

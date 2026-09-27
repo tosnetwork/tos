@@ -2,16 +2,16 @@
 
 import hashlib
 import json
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "test/tostester/src"))
-from scripts.z01_fixed_inputs import load, SCHEMA
+from scripts.z01_fixed_inputs import SCHEMA, load  # noqa: E402
 
 
 class CustodyInputs(unittest.TestCase):
@@ -22,11 +22,21 @@ class CustodyInputs(unittest.TestCase):
             path.write_bytes(raw)
             path.chmod(0o600)
             return {"path": path.name, "sha256": hashlib.sha256(raw).hexdigest()}
-        manifest = {"schema": SCHEMA, "scope": "development-fixed",
-                    "genesis_time": 1790395200, "wallet_seed": entry(1),
-                    "validators": [{"validator_id": f"{index + 1:064x}",
-                                    "adnl_seed": entry(2 + index * 2),
-                                    "pq_seed": entry(3 + index * 2)} for index in range(4)]}
+
+        manifest = {
+            "schema": SCHEMA,
+            "scope": "development-fixed",
+            "genesis_time": 1790395200,
+            "wallet_seed": entry(1),
+            "validators": [
+                {
+                    "validator_id": f"{index + 1:064x}",
+                    "adnl_seed": entry(2 + index * 2),
+                    "pq_seed": entry(3 + index * 2),
+                }
+                for index in range(4)
+            ],
+        }
         path = directory / "inputs.json"
         path.write_text(json.dumps(manifest))
         return path, hashlib.sha256(path.read_bytes()).hexdigest(), manifest
@@ -83,12 +93,14 @@ class CustodyInputs(unittest.TestCase):
 
 class FixedGenerator(unittest.TestCase):
     def test_epoch_and_wallet_are_consumed_before_fift(self):
-        from tostester.zerostate import NetworkConfig, create_zerostate
-        from tostester.key import Key
         from nacl.signing import SigningKey
+        from tostester.key import Key
+        from tostester.zerostate import NetworkConfig, create_zerostate
+
         seed = bytes([19]) * 32
-        config = NetworkConfig(validator_economics_profile=True,
-                               genesis_time=1790395200, genesis_wallet_seed=seed)
+        config = NetworkConfig(
+            validator_economics_profile=True, genesis_time=1790395200, genesis_wallet_seed=seed
+        )
         keys = [Key(SigningKey(bytes([index + 20]) * 32)) for index in range(4)]
         captured = {}
 
@@ -98,7 +110,10 @@ class FixedGenerator(unittest.TestCase):
             self.assertEqual((directory / "main-wallet.pk").stat().st_mode & 0o777, 0o600)
             raise RuntimeError("fixed-input-boundary")
 
-        with tempfile.TemporaryDirectory() as temp, patch("tostester.zerostate.run_fift", stop_at_fift):
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            patch("tostester.zerostate.run_fift", stop_at_fift),
+        ):
             with self.assertRaisesRegex(RuntimeError, "fixed-input-boundary"):
                 create_zerostate(None, Path(temp), config, keys)
         self.assertIn("basestate0_fhash 1790395200", captured["code"])
@@ -108,9 +123,12 @@ class FixedGenerator(unittest.TestCase):
 
     def test_incomplete_or_out_of_range_freeze_refused_before_fift(self):
         from tostester.zerostate import NetworkConfig, create_zerostate
-        cases = [(NetworkConfig(genesis_time=1790395200), "both time and wallet"),
-                 (NetworkConfig(genesis_time=1 << 32, genesis_wallet_seed=bytes(32)), "fit uint32"),
-                 (NetworkConfig(genesis_time=True, genesis_wallet_seed=bytes(32)), "fit uint32")]
+
+        cases = [
+            (NetworkConfig(genesis_time=1790395200), "both time and wallet"),
+            (NetworkConfig(genesis_time=1 << 32, genesis_wallet_seed=bytes(32)), "fit uint32"),
+            (NetworkConfig(genesis_time=True, genesis_wallet_seed=bytes(32)), "fit uint32"),
+        ]
         with tempfile.TemporaryDirectory() as temp, patch("tostester.zerostate.run_fift") as fift:
             for config, message in cases:
                 with self.assertRaisesRegex(ValueError, message):

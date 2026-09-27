@@ -2,11 +2,11 @@
 
 import importlib.util
 import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 import threading
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 
 def load_proxy():
@@ -21,7 +21,11 @@ class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):
         raw = self.rfile.read(int(self.headers["Content-Length"]))
         status = 500 if b'"fail"' in raw else 200
-        body = b'{"ok":false,"error":"precise failure"}' if status == 500 else b'{"ok":true,"result":7}'
+        body = (
+            b'{"ok":false,"error":"precise failure"}'
+            if status == 500
+            else b'{"ok":true,"result":7}'
+        )
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -45,7 +49,10 @@ def test_proxy_retains_exact_request_response_and_status(tmp_path, monkeypatch):
         url = f"http://127.0.0.1:{proxy.server_port}/jsonRPC"
         good = b'{"method":"getWalletInformation"}'
         bad = b'{"method":"fail"}'
-        assert urllib.request.urlopen(urllib.request.Request(url, data=good)).read() == b'{"ok":true,"result":7}'
+        assert (
+            urllib.request.urlopen(urllib.request.Request(url, data=good)).read()
+            == b'{"ok":true,"result":7}'
+        )
         try:
             urllib.request.urlopen(urllib.request.Request(url, data=bad))
             raise AssertionError("HTTP 500 was not forwarded")
@@ -55,7 +62,8 @@ def test_proxy_retains_exact_request_response_and_status(tmp_path, monkeypatch):
         assert [row["status"] for row in rows] == [200, 500]
         assert [row["request_body"] for row in rows] == [good.decode(), bad.decode()]
         assert [row["response_body"] for row in rows] == [
-            '{"ok":true,"result":7}', '{"ok":false,"error":"precise failure"}'
+            '{"ok":true,"result":7}',
+            '{"ok":false,"error":"precise failure"}',
         ]
     finally:
         proxy.shutdown()

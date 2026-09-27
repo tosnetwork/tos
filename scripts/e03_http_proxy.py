@@ -6,9 +6,9 @@ records that missing boundary without changing either the node or tosctl.
 """
 
 import argparse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from e03_http_trace import record
 
@@ -25,7 +25,9 @@ def make_handler(upstream):
         def forward(self, body):
             url = upstream.rstrip("/") + self.path
             request = urllib.request.Request(
-                url, data=body, method=self.command,
+                url,
+                data=body,
+                method=self.command,
                 headers={"Content-Type": self.headers.get("Content-Type", "application/json")},
             )
             try:

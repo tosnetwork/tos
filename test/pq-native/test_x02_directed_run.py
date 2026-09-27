@@ -2,39 +2,50 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("x02_directed_run",
-                                              REPO / "scripts/x02_directed_run.py")
-import sys
+spec = importlib.util.spec_from_file_location(
+    "x02_directed_run", REPO / "scripts/x02_directed_run.py"
+)
+import sys  # noqa: E402
+
 sys.path.insert(0, str(REPO / "scripts"))
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
 
 
 HOST_NETNS = "net:[4026531840]"
-ACCESS = {"cap_eff": (1 << 12) | (1 << 13), "netns": "net:[4026532999]",
-          "host_netns": HOST_NETNS, "euid": 1000}
+ACCESS = {
+    "cap_eff": (1 << 12) | (1 << 13),
+    "netns": "net:[4026532999]",
+    "host_netns": HOST_NETNS,
+    "euid": 1000,
+}
 
 
 def policy():
     edges = [("three_of_four", f"r{i}") for i in range(1, 13)]
     edges += [("two_of_four", f"r{i}") for i in range(13, 21)]
-    return {"source_commit": "a" * 40, "clsact": {
-        "interface": "lo", "cleanup_argv": ["tc", "qdisc", "del", "dev", "lo", "clsact"]},
+    return {
+        "source_commit": "a" * 40,
+        "clsact": {
+            "interface": "lo",
+            "cleanup_argv": ["tc", "qdisc", "del", "dev", "lo", "clsact"],
+        },
         "thresholds": {"two_drain_seconds": 30, "recovery_min_delta": 2},
-        "rules": [{"id": name, "phase": phase,
-                   "remove_argv": ["tc", "filter", "del", name]}
-                  for phase, name in edges]}
+        "rules": [
+            {"id": name, "phase": phase, "remove_argv": ["tc", "filter", "del", name]}
+            for phase, name in edges
+        ],
+    }
 
 
 class DirectedRunTests(unittest.TestCase):
-    def exercise(self, fail_at=None, verifier_passed=True, root_qdisc="noqueue",
-                 heights=None):
+    def exercise(self, fail_at=None, verifier_passed=True, root_qdisc="noqueue", heights=None):
         current = [0.0]
         heights = heights or [100, 100, 102, 102, 102, 102, 102, 102, 104]
         index = [0]
@@ -63,18 +74,19 @@ class DirectedRunTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory(prefix="x02-directed-") as directory:
             root = Path(directory) / "run"
-            with (patch.object(runner.x02, "require_source_commit"),
-                  patch.object(runner, "private_net_admin", return_value=ACCESS) as access,
-                  patch.object(runner.x02, "capture_tc", side_effect=tc),
-                  patch.object(runner.x02, "command_json", side_effect=tc_json),
-                  patch.object(runner.x02, "has_clsact", return_value=False),
-                  patch.object(runner.x02, "fault_event", side_effect=event) as fault_mock,
-                  patch.object(runner.x02, "capture", side_effect=sample),
-                  patch.object(runner.x02, "verify",
-                               return_value={"passed": verifier_passed}),
-                  patch.object(runner.x02, "run_raw", return_value={"exit": 0}),
-                  patch.object(runner.time, "sleep", side_effect=sleep),
-                  patch.object(runner.time, "monotonic", side_effect=lambda: current[0])):
+            with (
+                patch.object(runner.x02, "require_source_commit"),
+                patch.object(runner, "private_net_admin", return_value=ACCESS) as access,
+                patch.object(runner.x02, "capture_tc", side_effect=tc),
+                patch.object(runner.x02, "command_json", side_effect=tc_json),
+                patch.object(runner.x02, "has_clsact", return_value=False),
+                patch.object(runner.x02, "fault_event", side_effect=event) as fault_mock,
+                patch.object(runner.x02, "capture", side_effect=sample),
+                patch.object(runner.x02, "verify", return_value={"passed": verifier_passed}),
+                patch.object(runner.x02, "run_raw", return_value={"exit": 0}),
+                patch.object(runner.time, "sleep", side_effect=sleep),
+                patch.object(runner.time, "monotonic", side_effect=lambda: current[0]),
+            ):
                 if root_qdisc != "noqueue":
                     with self.assertRaisesRegex(ValueError, "pre-existing root qdisc"):
                         runner.collect(policy(), "b" * 64, root, HOST_NETNS)
@@ -103,30 +115,28 @@ class DirectedRunTests(unittest.TestCase):
         result, _cleanup, paths = self.exercise(heights=heights)
         self.assertEqual(result["status"], "passed")
         self.assertEqual(result["snapshots"], 11)
-        self.assertEqual(len([path for path in paths
-                              if path.name.endswith("-recovery.json")]), 4)
+        self.assertEqual(len([path for path in paths if path.name.endswith("-recovery.json")]), 4)
 
     def test_recovery_h48_then_h49_meets_frozen_h47_target(self):
         heights = [41, 42, 43, 46, 47, 47, 47, 47, 48, 49]
         result, _cleanup, paths = self.exercise(heights=heights)
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(len([path for path in paths
-                              if path.name.endswith("-recovery.json")]), 2)
+        self.assertEqual(len([path for path in paths if path.name.endswith("-recovery.json")]), 2)
 
     def test_first_recovery_h49_needs_no_extra_sample(self):
         heights = [41, 42, 43, 46, 47, 47, 47, 47, 49]
         result, _cleanup, paths = self.exercise(heights=heights)
         self.assertEqual(result["status"], "passed")
-        self.assertEqual(len([path for path in paths
-                              if path.name.endswith("-recovery.json")]), 1)
+        self.assertEqual(len([path for path in paths if path.name.endswith("-recovery.json")]), 1)
 
     def test_h42_to_h44_cannot_replace_h47_anchor_and_times_out(self):
         heights = [41, 42, 43, 46, 47, 47, 47, 47, 42] + [44] * 25
         result, _cleanup, paths = self.exercise(heights=heights)
         self.assertEqual(result["status"], "failed")
         self.assertIn("180 seconds", result["error"])
-        self.assertGreaterEqual(len([path for path in paths
-                                     if path.name.endswith("-recovery.json")]), 2)
+        self.assertGreaterEqual(
+            len([path for path in paths if path.name.endswith("-recovery.json")]), 2
+        )
         self.assertFalse(any(path.name == "verdict.json" for path in paths))
 
     def test_failure_removes_only_installed_rules_and_clsact(self):
@@ -159,8 +169,10 @@ class DirectedRunTests(unittest.TestCase):
 
 
 def status(cap_eff: int) -> str:
-    return (f"Name:\tpython3\nCapInh:\t0000000000000000\nCapPrm:\t{cap_eff:016x}\n"
-            f"CapEff:\t{cap_eff:016x}\nCapBnd:\t{cap_eff:016x}\nCapAmb:\t{cap_eff:016x}\n")
+    return (
+        f"Name:\tpython3\nCapInh:\t0000000000000000\nCapPrm:\t{cap_eff:016x}\n"
+        f"CapEff:\t{cap_eff:016x}\nCapBnd:\t{cap_eff:016x}\nCapAmb:\t{cap_eff:016x}\n"
+    )
 
 
 class PrivateNetAdminTests(unittest.TestCase):
@@ -168,7 +180,9 @@ class PrivateNetAdminTests(unittest.TestCase):
 
     def test_the_ordinary_worker_with_exactly_net_admin_and_net_raw_is_accepted(self):
         access = runner.private_net_admin(HOST_NETNS, status((1 << 12) | (1 << 13)), self.PRIVATE)
-        self.assertEqual((access["cap_eff"], access["netns"]), ((1 << 12) | (1 << 13), self.PRIVATE))
+        self.assertEqual(
+            (access["cap_eff"], access["netns"]), ((1 << 12) | (1 << 13), self.PRIVATE)
+        )
 
     def test_root_with_the_full_capability_set_is_refused(self):
         with self.assertRaisesRegex(ValueError, "exactly NET_ADMIN and NET_RAW"):
@@ -180,16 +194,22 @@ class PrivateNetAdminTests(unittest.TestCase):
                 runner.private_net_admin(HOST_NETNS, status(cap_eff), self.PRIVATE)
 
     def test_the_host_network_namespace_is_refused(self):
-        for netns, host in ((HOST_NETNS, HOST_NETNS), (self.PRIVATE, ""), (self.PRIVATE, "4026531840")):
+        for netns, host in (
+            (HOST_NETNS, HOST_NETNS),
+            (self.PRIVATE, ""),
+            (self.PRIVATE, "4026531840"),
+        ):
             with self.assertRaisesRegex(ValueError, "host network namespace"):
                 runner.private_net_admin(host, status((1 << 12) | (1 << 13)), netns)
 
     def test_collect_refuses_before_creating_output_or_touching_tc(self):
         with tempfile.TemporaryDirectory(prefix="x02-directed-") as directory:
             root = Path(directory) / "run"
-            with (patch.object(runner.x02, "require_source_commit"),
-                  patch.object(runner.x02, "capture_tc") as tc,
-                  patch.object(runner.x02, "fault_event") as event):
+            with (
+                patch.object(runner.x02, "require_source_commit"),
+                patch.object(runner.x02, "capture_tc") as tc,
+                patch.object(runner.x02, "fault_event") as event,
+            ):
                 with self.assertRaisesRegex(ValueError, "host network namespace|exactly NET_ADMIN"):
                     runner.collect(policy(), "b" * 64, root, HOST_NETNS)
             self.assertFalse(root.exists())

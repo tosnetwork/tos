@@ -17,13 +17,18 @@ root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().paren
 manager = (root / "validator/manager.cpp").read_text()
 active_begin = "active_validator_groups_master_ = active_validator_groups_shard_ = 0;"
 future_begin = "if (allow_validate_) {\n    for (auto &shard : future_shards)"
-require(manager.count(active_begin) == 1 and manager.count(future_begin) == 1, "manager group regions changed")
+require(
+    manager.count(active_begin) == 1 and manager.count(future_begin) == 1,
+    "manager group regions changed",
+)
 active = manager.split(active_begin, 1)[1].split(future_begin, 1)[0]
 collapsed = re.sub(r"\s+", " ", active)
 
 condition = "rotation_tag != 0"
 refusal = "refusing to create PQ Simplex validator group for "
-group_count = "++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_)"
+group_count = (
+    "++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_)"
+)
 derivation = "auto val_group_id = block::derive_validator_session_identity"
 creation = "auto entry = find_or_create_validator_group()"
 for name, marker in (
@@ -35,13 +40,20 @@ for name, marker in (
 ):
     require(collapsed.count(marker) == 1, f"{name} count={collapsed.count(marker)}, expected=1")
 require(
-    collapsed.index(condition) < collapsed.index(refusal) < collapsed.index(group_count)
-    < collapsed.index(derivation) < collapsed.index(creation),
+    collapsed.index(condition)
+    < collapsed.index(refusal)
+    < collapsed.index(group_count)
+    < collapsed.index(derivation)
+    < collapsed.index(creation),
     "nonzero rotation refusal no longer precedes active PQ group counting and creation",
 )
-require("val_group_id = sha256_bits256" not in active, "local rotation hash again overwrites consensus session")
 require(
-    "check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno())" in active,
+    "val_group_id = sha256_bits256" not in active,
+    "local rotation hash again overwrites consensus session",
+)
+require(
+    "check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno())"
+    in active,
     "active-group refusal no longer consults the effective rotation tag",
 )
 
@@ -56,10 +68,13 @@ for name, marker in (
     require(marker in test, f"process regression lost {name}")
 workflow = (root / ".github/workflows/branch-chain-python.yml").read_text()
 invocation = "uv run python test/integration/test_pq_unsafe_rotation_refusal.py"
-require(workflow.count(invocation) == 1, "every-push process regression invocation absent or duplicated")
+require(
+    workflow.count(invocation) == 1, "every-push process regression invocation absent or duplicated"
+)
 engine = (root / "validator-engine/validator-engine.cpp").read_text()
 require(
-    '"forceful DANGEROUS classical catchain rotation; PQ rejects a nonzero tag before group creation"' in engine,
+    '"forceful DANGEROUS classical catchain rotation; PQ rejects a nonzero tag before group creation"'
+    in engine,
     "CLI help again presents unsafe PQ rotation as available",
 )
 

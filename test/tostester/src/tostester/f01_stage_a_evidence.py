@@ -9,7 +9,6 @@ from typing import Any, Awaitable, Callable
 
 from pytosiq_core import Cell
 
-
 FINALIZED = re.compile(
     r"BlockFinalizedInMasterchain.*?"
     r"\{block=\(-1,8000000000000000,(?P<height>\d+)\):"
@@ -31,7 +30,10 @@ def config34_hash(response: dict[str, Any]) -> str:
 
 async def locate_transition(
     read_at: Callable[[int], Awaitable[dict[str, Any]]],
-    lower: int, upper: int, before_hash: str, after_hash: str,
+    lower: int,
+    upper: int,
+    before_hash: str,
+    after_hash: str,
 ) -> int:
     """Find the first post-change MC height, with both neighbors rechecked."""
     if lower < 0 or upper <= lower or before_hash == after_hash:
@@ -69,8 +71,10 @@ def extract_finalized_log(path: Path) -> dict[str, Any]:
             if stamp is None:
                 raise ValueError(f"{path}:{number}: finalization marker lacks a host timestamp")
             record = {
-                "height": int(match["height"]), "root_hash": match["root"].lower(),
-                "file_hash": match["file"].lower(), "line": number,
+                "height": int(match["height"]),
+                "root_hash": match["root"].lower(),
+                "file_hash": match["file"].lower(),
+                "line": number,
                 "at": stamp.group(1),
             }
             first = record if first is None else first
@@ -78,16 +82,26 @@ def extract_finalized_log(path: Path) -> dict[str, Any]:
             count += 1
     if not count:
         raise ValueError(f"{path}: no native BlockFinalizedInMasterchain marker")
-    return {"path": str(path), "sha256": digest.hexdigest(), "markers": count,
-            "first": first, "last": last}
+    return {
+        "path": str(path),
+        "sha256": digest.hexdigest(),
+        "markers": count,
+        "first": first,
+        "last": last,
+    }
 
 
-def write_manifest(path: Path, *, source: dict, nodes: list[dict],
-                   transitions: list[dict]) -> None:
+def write_manifest(path: Path, *, source: dict, nodes: list[dict], transitions: list[dict]) -> None:
     if len(nodes) != 4 or len({node["node_name"] for node in nodes}) != 4:
         raise ValueError("F01 capture requires four distinct validator node identities")
-    for field in ("node_data_dir", "controller_id_hex", "pq_validator_id_hex",
-                  "pq_key_id_hex", "adnl_id_hex", "rpc_address"):
+    for field in (
+        "node_data_dir",
+        "controller_id_hex",
+        "pq_validator_id_hex",
+        "pq_key_id_hex",
+        "adnl_id_hex",
+        "rpc_address",
+    ):
         values = [node.get(field) for node in nodes]
         if any(not isinstance(value, str) or not value for value in values):
             raise ValueError(f"F01 capture lacks per-node {field}")
@@ -108,15 +122,19 @@ def write_manifest(path: Path, *, source: dict, nodes: list[dict],
         if not isinstance(generations, list) or len(generations) != len(segments):
             raise ValueError("F01 capture lacks one process identity per raw log segment")
         for index, (generation, segment) in enumerate(zip(generations, segments)):
-            if (not isinstance(generation, dict)
-                    or generation.get("node_name") != node["node_name"]
-                    or generation.get("node_data_dir") != node["node_data_dir"]
-                    or generation.get("generation") != index
-                    or not all(type(generation.get(field)) is int and generation[field] > 0
-                               for field in ("pid", "proc_start_ticks", "exe_device", "exe_inode"))
-                    or not isinstance(generation.get("exe_path"), str)
-                    or not generation["exe_path"]
-                    or segment.get("process") != generation):
+            if (
+                not isinstance(generation, dict)
+                or generation.get("node_name") != node["node_name"]
+                or generation.get("node_data_dir") != node["node_data_dir"]
+                or generation.get("generation") != index
+                or not all(
+                    type(generation.get(field)) is int and generation[field] > 0
+                    for field in ("pid", "proc_start_ticks", "exe_device", "exe_inode")
+                )
+                or not isinstance(generation.get("exe_path"), str)
+                or not generation["exe_path"]
+                or segment.get("process") != generation
+            ):
                 raise ValueError("F01 capture raw log is not bound to its process generation")
             identity = (generation["pid"], generation["proc_start_ticks"])
             if identity in process_ids:
@@ -124,24 +142,27 @@ def write_manifest(path: Path, *, source: dict, nodes: list[dict],
             process_ids.add(identity)
             node_dir = Path(node["node_data_dir"]).resolve(strict=True)
             node_dir_stat = node_dir.stat()
-            cwd_identity = (generation.get("proc_cwd_device"),
-                            generation.get("proc_cwd_inode"))
-            if (not isinstance(generation.get("proc_cwd_link"), str)
-                    or not generation["proc_cwd_link"]
-                    or not Path(generation["proc_cwd_link"]).is_absolute()
-                    or Path(generation["proc_cwd_link"]).resolve(strict=True) != node_dir
-                    or generation.get("proc_cwd_realpath") != str(node_dir)
-                    or any(type(value) is not int or value <= 0 for value in cwd_identity)
-                    or cwd_identity != (node_dir_stat.st_dev, node_dir_stat.st_ino)):
+            cwd_identity = (generation.get("proc_cwd_device"), generation.get("proc_cwd_inode"))
+            if (
+                not isinstance(generation.get("proc_cwd_link"), str)
+                or not generation["proc_cwd_link"]
+                or not Path(generation["proc_cwd_link"]).is_absolute()
+                or Path(generation["proc_cwd_link"]).resolve(strict=True) != node_dir
+                or generation.get("proc_cwd_realpath") != str(node_dir)
+                or any(type(value) is not int or value <= 0 for value in cwd_identity)
+                or cwd_identity != (node_dir_stat.st_dev, node_dir_stat.st_ino)
+            ):
                 raise ValueError("F01 process cwd differs from its node DB directory")
-            if (cwd_identity in cwd_owners
-                    and cwd_owners[cwd_identity] != node["node_name"]):
+            if cwd_identity in cwd_owners and cwd_owners[cwd_identity] != node["node_name"]:
                 raise ValueError("F01 capture aliases a validator process cwd")
             cwd_owners[cwd_identity] = node["node_name"]
         for log in [combined, *segments]:
-            if (not isinstance(log, dict) or not log.get("path")
-                    or not isinstance(log.get("sha256"), str)
-                    or re.fullmatch(r"[0-9a-f]{64}", log["sha256"]) is None):
+            if (
+                not isinstance(log, dict)
+                or not log.get("path")
+                or not isinstance(log.get("sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", log["sha256"]) is None
+            ):
                 raise ValueError("F01 capture has malformed raw log provenance")
             resolved = Path(log["path"]).resolve(strict=True)
             if resolved in log_paths:
@@ -155,6 +176,10 @@ def write_manifest(path: Path, *, source: dict, nodes: list[dict],
         log_hashes.add(digest)
     if len(transitions) < 1:
         raise ValueError("F01 capture has no ConfigParam 34 transition")
-    report = {"schema": "tos.f01.stage-a-capture.v1", "source": source,
-              "validators": nodes, "transitions": transitions}
+    report = {
+        "schema": "tos.f01.stage-a-capture.v1",
+        "source": source,
+        "validators": nodes,
+        "transitions": transitions,
+    }
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

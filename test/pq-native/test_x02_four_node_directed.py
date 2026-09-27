@@ -71,7 +71,9 @@ class ScenarioBindingTests(unittest.TestCase):
     def test_p_keeps_its_reviewed_420_600_preset(self):
         argv = closure.expected_stage_argv(binding("P"))
         self.assertEqual(argv[6:16], OLD_P_ARGV_TAIL)
-        self.assertEqual(closure.expected_host_files(binding("P")), {"/usr/bin/bwrap", "/usr/sbin/nft"})
+        self.assertEqual(
+            closure.expected_host_files(binding("P")), {"/usr/bin/bwrap", "/usr/sbin/nft"}
+        )
 
     def test_d_gets_900_s_primary_the_same_tail_and_a_pinned_tc(self):
         argv = closure.expected_stage_argv(binding("D"))

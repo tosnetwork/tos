@@ -32,9 +32,10 @@ if not binary.is_file():
     fail(f"benchmark binary is missing: {binary}")
 
 commit = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
-if subprocess.run(["git", "-C", repo, "diff", "--quiet"]).returncode != 0 or subprocess.run(
-    ["git", "-C", repo, "diff", "--cached", "--quiet"]
-).returncode != 0:
+if (
+    subprocess.run(["git", "-C", repo, "diff", "--quiet"]).returncode != 0
+    or subprocess.run(["git", "-C", repo, "diff", "--cached", "--quiet"]).returncode != 0
+):
     fail("diagnostic result must still identify a clean source commit")
 criteria = repo / "doc/pq-native/N6-ACCEPTANCE-CRITERIA.json"
 criteria_sha256 = hashlib.sha256(criteria.read_bytes()).hexdigest()

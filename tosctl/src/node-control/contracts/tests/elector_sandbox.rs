@@ -18,7 +18,7 @@
 //! messages, so it is driven the way the chain drives it.
 
 use chain_block::{Account, ConfigParams, MsgAddressInt, ShardStateUnsplit, TransactionTickTock};
-use tos_sandbox::{generate_zerostate_state, Blockchain};
+use tos_sandbox::{Blockchain, generate_zerostate_state};
 
 /// The zerostate is generated rather than fixtured, so these tests run against the
 /// contracts and the configuration the chain would actually launch with.
@@ -1264,11 +1264,15 @@ fn govern_install_with(
         if z01_capture {
             for (tx_index, (_, transaction)) in result.transactions.iter().enumerate() {
                 if let Some(dir) = &z01_dir {
-                    let raw = chain_block::write_boc(&transaction.serialize().expect("Z01 transaction cell"))
-                        .expect("Z01 transaction BOC");
+                    let raw = chain_block::write_boc(
+                        &transaction.serialize().expect("Z01 transaction cell"),
+                    )
+                    .expect("Z01 transaction BOC");
                     std::fs::write(
-                        dir.join(format!("vote-{query_base:04x}-{round}-{tx_index}.boc")), raw,
-                    ).expect("save Z01 transaction BOC");
+                        dir.join(format!("vote-{query_base:04x}-{round}-{tx_index}.boc")),
+                        raw,
+                    )
+                    .expect("save Z01 transaction BOC");
                 }
                 eprintln!(
                     "z01_governance_vote param={param_id} query={} account={} lt={} tx_hash={} first_tx_compute_exit={}",
@@ -1335,7 +1339,9 @@ fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
             // Genesis already has the exact 21 boundary. Start each governance
             // proposal at a valid 20 so acceptance must change the stored cell.
             set_contract_parameter(&mut chain, 28, catchain_limits(20));
-            chain.blockchain.set_config(configuration_from_contract(&chain))
+            chain
+                .blockchain
+                .set_config(configuration_from_contract(&chain))
                 .expect("the VM adopts the Param28 test baseline");
         }
         let before = configuration_parameters_hash(&chain);
@@ -1345,7 +1351,8 @@ fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
             std::fs::write(
                 dir.join(format!("config-before-{query:04x}.boc")),
                 chain_block::write_boc(&cell).expect("Z01 before config BOC"),
-            ).expect("save Z01 before config BOC");
+            )
+            .expect("save Z01 before config BOC");
         }
         let value_hash = value.repr_hash();
         let expected = value.clone();
@@ -1356,19 +1363,35 @@ fn governance_accepts_the_launch_boundary_and_refuses_every_ceiling_above_it() {
             std::fs::write(
                 dir.join(format!("config-after-{query:04x}.boc")),
                 chain_block::write_boc(cell).expect("Z01 after config BOC"),
-            ).expect("save Z01 after config BOC");
+            )
+            .expect("save Z01 after config BOC");
         }
         if query == 0x2800 {
-            assert_eq!(actual, Some(expected), "governance did not store the exact Param28=21 cell");
+            assert_eq!(
+                actual,
+                Some(expected),
+                "governance did not store the exact Param28=21 cell"
+            );
         } else if query == 0x2801 {
-            assert_eq!(actual, Some(catchain_limits(20)), "governance changed Param28 after the 22 proposal");
+            assert_eq!(
+                actual,
+                Some(catchain_limits(20)),
+                "governance changed Param28 after the 22 proposal"
+            );
         }
         eprintln!(
             "z01_governance param={param} query={query} value_hash={} actual_hash={} before={} after={} decided={} installed={}",
             hex::encode(value_hash.as_slice()),
-            hex::encode(actual.as_ref().map(|cell| cell.repr_hash().as_slice().to_vec()).unwrap_or_default()),
-            hex::encode(before), hex::encode(after),
-            outcome.decided, outcome.installed,
+            hex::encode(
+                actual
+                    .as_ref()
+                    .map(|cell| cell.repr_hash().as_slice().to_vec())
+                    .unwrap_or_default()
+            ),
+            hex::encode(before),
+            hex::encode(after),
+            outcome.decided,
+            outcome.installed,
         );
         let changed = after != before;
         (outcome, changed)
@@ -2704,7 +2727,7 @@ fn complaint_voters(chain: &Chain, election: u32, complaint: &[u8; 32]) -> Vec<u
 #[test]
 fn a_pools_money_reaches_an_election_through_a_real_controller() {
     use chain_block::IBitstring;
-    use contracts::nominator::{new_stake_with_witness, NewStakeParams};
+    use contracts::nominator::{NewStakeParams, new_stake_with_witness};
 
     let (mut chain, _treasury, election) = open_election("pool-e2e", 200_000 * TOS);
     raise_to_post_quantum_version(&mut chain);
@@ -2857,7 +2880,7 @@ struct MultiNominatorStakeProbe {
 }
 
 fn multi_nominator_first_stake_probe(stake_amount: u64) -> MultiNominatorStakeProbe {
-    use contracts::nominator::{new_stake_with_witness, NewStakeParams};
+    use contracts::nominator::{NewStakeParams, new_stake_with_witness};
 
     fn amount_sent(
         result: &tos_sandbox::SendResult,

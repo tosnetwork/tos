@@ -68,15 +68,12 @@ from pytosiq_core import (  # noqa: E402
     WalletMessage,
 )
 from pytosiq_core.boc.deserialize import BocError  # noqa: E402
-from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
 from pytosiq_core.tlb.config import ConfigParam8  # noqa: E402
+from pytosiq_core.tlb.tlb import TlbError  # noqa: E402
+from tosapi import tos_api, toslib_api  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.key import Key  # noqa: E402
 from tostester.network import FullNode, Network, StartOptions  # noqa: E402
-from tostester.pq_initial_validator import (  # noqa: E402
-    make_deterministic_pq_initial_validator,
-    make_deterministic_pq_spare_validator,
-)
 from tostester.pq_election_fixture import (  # noqa: E402
     ControllerFixture,
     PoolFixture,
@@ -90,8 +87,11 @@ from tostester.pq_election_fixture import (  # noqa: E402
     participant_ids_from_runmethod,
     require_pq_stake_authorization_binding,
 )
+from tostester.pq_initial_validator import (  # noqa: E402
+    make_deterministic_pq_initial_validator,
+    make_deterministic_pq_spare_validator,
+)
 from tostester.zerostate import VALIDATOR_ECONOMICS_FAUCET_TOS  # noqa: E402
-from tosapi import tos_api, toslib_api  # noqa: E402
 
 T = TypeVar("T")
 
@@ -117,7 +117,9 @@ ELECTOR_CONFIRMATION_ALLOWANCE = 1 * NANO
 # The multi-nominator pool forwards the exact order amount. Its controller's
 # forwarding fee comes out of that value before the Elector reserves 1 TOS.
 CONTROLLER_FORWARDING_ALLOWANCE = 1 * NANO
-POOL_STAKE_VALUE = NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE + CONTROLLER_FORWARDING_ALLOWANCE
+POOL_STAKE_VALUE = (
+    NETWORK_MIN_STAKE + ELECTOR_CONFIRMATION_ALLOWANCE + CONTROLLER_FORWARDING_ALLOWANCE
+)
 # ConfigParam 40's worst tier is TM$2500 plus a quarter of the stake, so the
 # validator has to have posted at least that before pool.fc will stake.
 VALIDATOR_OWN_DEPOSIT = 5_100 * NANO
@@ -245,7 +247,10 @@ def _queued_stake_refusal(transactions: list[Any], query_id: int) -> dict[str, A
             continue
         description = transaction.description
         compute = getattr(description, "compute_ph", None)
-        if getattr(description, "aborted", None) is True and getattr(compute, "exit_code", None) == 85:
+        if (
+            getattr(description, "aborted", None) is True
+            and getattr(compute, "exit_code", None) == 85
+        ):
             return {
                 "transaction_lt": str(transaction.lt),
                 "transaction_boc_base64": base64.b64encode(raw_transaction.data).decode(),
@@ -283,7 +288,8 @@ async def _transactions_since(
                     raise RuntimeError("pre-order transaction hash changed in history page")
                 baseline_in_page = True
         transactions.extend(
-            item for item in response.transactions
+            item
+            for item in response.transactions
             if item.transaction_id is not None and item.transaction_id.lt > baseline.lt
         )
         if baseline_in_page:
@@ -292,7 +298,9 @@ async def _transactions_since(
         if previous is None or previous.lt >= cursor.lt:
             raise RuntimeError("transaction history did not advance toward the pre-order cursor")
         if previous.lt < baseline.lt:
-            raise RuntimeError("history page crossed the pre-order cursor without its exact transaction")
+            raise RuntimeError(
+                "history page crossed the pre-order cursor without its exact transaction"
+            )
         cursor = previous
     return transactions, pages, False, latest_cursor
 
@@ -320,7 +328,7 @@ def stakeable_election_id_from_live_status(
         end += 1
     if depth:
         raise ValueError("participant_list_extended has an unterminated result stack")
-    stack = participant_output[start.end():end - 1]
+    stack = participant_output[start.end() : end - 1]
     prefix = re.match(r"\s*(\d+)\s+(\d+)\s+", stack)
     suffix = re.search(r"\s+(-?\d+)\s+(-?\d+)\s*$", stack)
     if prefix is None or suffix is None:
@@ -333,10 +341,16 @@ def stakeable_election_id_from_live_status(
 
 
 def recoverable_support_election_ids(
-    *, submitted: set[int], recovered: set[int], current_set_id: int,
-    current_set_hash: int, known_set_hashes: dict[int, int],
-    retired_past: dict[int, dict[str, int]], live_past: dict[int, dict[str, int]],
-    chain_utime: int, credit: int,
+    *,
+    submitted: set[int],
+    recovered: set[int],
+    current_set_id: int,
+    current_set_hash: int,
+    known_set_hashes: dict[int, int],
+    retired_past: dict[int, dict[str, int]],
+    live_past: dict[int, dict[str, int]],
+    chain_utime: int,
+    credit: int,
 ) -> list[int]:
     """Require a retired set's observed *reset* unfreeze time and actual credit.
 
@@ -349,9 +363,13 @@ def recoverable_support_election_ids(
         observed = retired_past.get(election_id)
         set_hash = known_set_hashes.get(election_id)
         if (
-            election_id == current_set_id or set_hash is None or observed is None
-            or observed["vset_hash"] != set_hash or current_set_hash == set_hash
-            or election_id in live_past or chain_utime < observed["unfreeze_at"]
+            election_id == current_set_id
+            or set_hash is None
+            or observed is None
+            or observed["vset_hash"] != set_hash
+            or current_set_hash == set_hash
+            or election_id in live_past
+            or chain_utime < observed["unfreeze_at"]
         ):
             continue
         eligible.append(election_id)
@@ -359,8 +377,11 @@ def recoverable_support_election_ids(
 
 
 def support_keeper_poll_seconds(
-    *, chain_utime: int, retired_past: dict[int, dict[str, int]],
-    submitted: dict[int, set[int]], recovered: dict[int, set[int]],
+    *,
+    chain_utime: int,
+    retired_past: dict[int, dict[str, int]],
+    submitted: dict[int, set[int]],
+    recovered: dict[int, set[int]],
 ) -> int:
     """Poll near an actual retired-set unfreeze before the next window closes.
 
@@ -383,9 +404,14 @@ def elector_credit_from_output(output: str) -> int:
 
 
 def support_election_retention_state(
-    election_id: int, *, current_set_id: int, known_set_hashes: dict[int, int],
-    live_past: dict[int, dict[str, int]], retired_past: dict[int, dict[str, int]],
-    chain_utime: int, credit: int,
+    election_id: int,
+    *,
+    current_set_id: int,
+    known_set_hashes: dict[int, int],
+    live_past: dict[int, dict[str, int]],
+    retired_past: dict[int, dict[str, int]],
+    chain_utime: int,
+    credit: int,
 ) -> str:
     set_hash = known_set_hashes.get(election_id)
     if set_hash is None:
@@ -396,7 +422,9 @@ def support_election_retention_state(
     if record is not None:
         if record["vset_hash"] != set_hash:
             return "past-hash-mismatch"
-        return "retired-frozen" if chain_utime < record["unfreeze_at"] else "retired-awaiting-unfreeze"
+        return (
+            "retired-frozen" if chain_utime < record["unfreeze_at"] else "retired-awaiting-unfreeze"
+        )
     observed = retired_past.get(election_id)
     if observed is None or observed["vset_hash"] != set_hash:
         return "retired-reset-unobserved"
@@ -412,7 +440,8 @@ def pool_controller_bounce(
     for raw_transaction in transactions:
         raw_message = raw_transaction.in_msg
         if (
-            raw_message is None or raw_message.source is None
+            raw_message is None
+            or raw_message.source is None
             or Address(raw_message.source.account_address) != controller
         ):
             continue
@@ -435,7 +464,8 @@ def controller_relay_result(
     for raw_transaction in transactions:
         raw_message = raw_transaction.in_msg
         if (
-            raw_message is None or raw_message.source is None
+            raw_message is None
+            or raw_message.source is None
             or Address(raw_message.source.account_address) != pool
         ):
             continue
@@ -917,21 +947,18 @@ def require_lifecycle_funding_budget(*, integrated: bool, agent_count: int) -> d
     """Refuse a fixture whose known Genesis transfers or pool principals cannot fit."""
     if agent_count != OPENFOX_AGENT_COUNT:
         raise ValueError(f"lifecycle needs {OPENFOX_AGENT_COUNT} agent nominators")
-    faucet = (
-        INTEGRATED_FAUCET_FUNDING
-        if integrated else VALIDATOR_ECONOMICS_FAUCET_TOS * NANO
-    )
+    faucet = INTEGRATED_FAUCET_FUNDING if integrated else VALIDATOR_ECONOMICS_FAUCET_TOS * NANO
     primary_wallet = INTEGRATED_POOL_VALIDATOR_FUNDING if integrated else POOL_VALIDATOR_FUNDING
     support_wallet = INTEGRATED_DIRECT_VALIDATOR_FUNDING if integrated else DIRECT_VALIDATOR_FUNDING
     nominators = (
         agent_count * INTEGRATED_OWNER_FUNDING
         + CONTROL_NOMINATOR_COUNT * (INTEGRATED_NOMINATOR_DEPOSIT + 2 * NANO)
-        if integrated else (agent_count + CONTROL_NOMINATOR_COUNT) * NOMINATOR_FUNDING
+        if integrated
+        else (agent_count + CONTROL_NOMINATOR_COUNT) * NOMINATOR_FUNDING
     )
     controller_deployments = 5 * 10 * NANO
     committed = (
-        primary_wallet + 4 * support_wallet + nominators
-        + RESCUER_FUNDING + controller_deployments
+        primary_wallet + 4 * support_wallet + nominators + RESCUER_FUNDING + controller_deployments
     )
     faucet_fee_reserve = 100 * NANO
     if committed + faucet_fee_reserve > faucet:
@@ -945,9 +972,7 @@ def require_lifecycle_funding_budget(*, integrated: bool, agent_count: int) -> d
             "support wallet cannot fund deployment plus two pool stakes: "
             f"required={support_need} funded={support_wallet}"
         )
-    primary_own_deposit = (
-        INTEGRATED_VALIDATOR_OWN_DEPOSIT if integrated else VALIDATOR_OWN_DEPOSIT
-    )
+    primary_own_deposit = INTEGRATED_VALIDATOR_OWN_DEPOSIT if integrated else VALIDATOR_OWN_DEPOSIT
     primary_need = POOL_DEPLOY_VALUE + primary_own_deposit + 2 * POOL_STAKE_GAS
     if primary_wallet < primary_need:
         raise ValueError(
@@ -969,15 +994,13 @@ def require_lifecycle_funding_budget(*, integrated: bool, agent_count: int) -> d
 def parse_pq_validator_adnl_pairs(output: str) -> list[tuple[str, str]]:
     """Keep each PQ controller ID paired with the ADNL in its own Config34 record."""
     markers = list(re.finditer(r"\bvalidator_pq\b", output))
-    identities = list(re.finditer(
-        r"\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})", output
-    ))
+    identities = list(re.finditer(r"\bvalidator_pq\s+validator_id:x([0-9A-Fa-f]{64})", output))
     if len(markers) != len(identities):
         raise ValueError("ConfigParam 34 has a PQ record without a validator ID")
     pairs: list[tuple[str, str]] = []
     for index, identity in enumerate(identities):
         end = identities[index + 1].start() if index + 1 < len(identities) else len(output)
-        adnl = re.findall(r"\badnl_addr:x([0-9A-Fa-f]{64})", output[identity.end():end])
+        adnl = re.findall(r"\badnl_addr:x([0-9A-Fa-f]{64})", output[identity.end() : end])
         if len(adnl) != 1:
             raise ValueError(
                 f"ConfigParam 34 PQ validator {identity.group(1)} has {len(adnl)} ADNL IDs"
@@ -1453,7 +1476,7 @@ def match_agent_pool_transaction(
         boc = base64.b64decode(encoded, validate=True)
         transaction_cell = Cell.one_from_boc(boc)
         transaction = Transaction.deserialize(transaction_cell.begin_parse())
-    except (TypeError, ValueError, TlbError, BocError, IndexError):
+    except TypeError, ValueError, TlbError, BocError, IndexError:
         return None
     if transaction.account_addr != sender.hash_part or getattr(
         transaction.description, "aborted", True
@@ -2231,17 +2254,27 @@ class PoolLifecycle:
             # Keep the exact getter and chain-time read used by the final
             # pre-send decision, rather than inferring it from a keeper poll.
             path = self.artifacts_dir / f"pool-stake-pre-send-window-{capture_query_id}.json"
-            raw = json.dumps({
-                "query_id": str(capture_query_id),
-                "chain_utime": state.sync_utime,
-                "participant_list_extended": output,
-                "stakeable_election_id": selected,
-            }, indent=2, sort_keys=True).encode() + b"\n"
+            raw = (
+                json.dumps(
+                    {
+                        "query_id": str(capture_query_id),
+                        "chain_utime": state.sync_utime,
+                        "participant_list_extended": output,
+                        "stakeable_election_id": selected,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ).encode()
+                + b"\n"
+            )
             path.write_bytes(raw)
             self.event(
-                "pool_stake_pre_send_window", query_id=capture_query_id,
-                chain_utime=state.sync_utime, stakeable_election_id=selected,
-                raw_path=str(path), raw_sha256=hashlib.sha256(raw).hexdigest(),
+                "pool_stake_pre_send_window",
+                query_id=capture_query_id,
+                chain_utime=state.sync_utime,
+                stakeable_election_id=selected,
+                raw_path=str(path),
+                raw_sha256=hashlib.sha256(raw).hexdigest(),
             )
         return selected
 
@@ -2631,13 +2664,23 @@ class PoolLifecycle:
 
     def prepare_pq_election_fixture(self) -> None:
         """Bind five admitted controller identities before Genesis is assembled."""
-        require_pq_stake_authorization_binding(
-            tos_api.Engine_validator_pqStakeAuthorization
-        )
+        require_pq_stake_authorization_binding(tos_api.Engine_validator_pqStakeAuthorization)
         builder = subprocess.run(
-            ["cargo", "build", "--manifest-path", "tosctl/src/Cargo.toml",
-             "-p", "contracts", "--example", "pq_pool_stake_order", "--locked"],
-            cwd=REPO, text=True, capture_output=True, check=False,
+            [
+                "cargo",
+                "build",
+                "--manifest-path",
+                "tosctl/src/Cargo.toml",
+                "-p",
+                "contracts",
+                "--example",
+                "pq_pool_stake_order",
+                "--locked",
+            ],
+            cwd=REPO,
+            text=True,
+            capture_output=True,
+            check=False,
         )
         if builder.returncode:
             raise RuntimeError(
@@ -2646,14 +2689,19 @@ class PoolLifecycle:
         self.controller_code = compile_controller_code(
             self.install, self.artifacts_dir / "compiled-controller"
         )
-        self.single_pool_code = Cell.one_from_boc(bytes.fromhex(
-            (REPO / "crypto/smartcont/single-nominator-pool/single-nominator-code.hex")
-            .read_text().strip()
-        ))
+        self.single_pool_code = Cell.one_from_boc(
+            bytes.fromhex(
+                (REPO / "crypto/smartcont/single-nominator-pool/single-nominator-code.hex")
+                .read_text()
+                .strip()
+            )
+        )
         self.controllers = [
             make_controller_fixture(
-                self.install, self.artifacts_dir / "controller-keys",
-                self.controller_code, index,
+                self.install,
+                self.artifacts_dir / "controller-keys",
+                self.controller_code,
+                index,
             )
             for index in range(5)
         ]
@@ -2676,9 +2724,7 @@ class PoolLifecycle:
             # single-nominator pool beyond the ordinary lifecycle fixture.
             # Make that test-only genesis budget explicit instead of letting
             # a faucet send advance seqno while its unfunded out-message fails.
-            network.config.validator_election_experiment_faucet_balance_nanotos = (
-                150_000 * NANO
-            )
+            network.config.validator_election_experiment_faucet_balance_nanotos = 150_000 * NANO
         network.config.shard_validators = 4
         network.config.validator_economics_profile = True
         network.config.validator_election_stage_a_profile = True
@@ -2769,8 +2815,10 @@ class PoolLifecycle:
         if version.version != 16:
             raise AssertionError(f"live PQ fixture version {version.version}, expected 16")
         self.event(
-            "controller_policy_read_back", parameter=47,
-            admitted_code_hash=self.controller_code.hash.hex(), global_version=version.version,
+            "controller_policy_read_back",
+            parameter=47,
+            admitted_code_hash=self.controller_code.hash.hex(),
+            global_version=version.version,
         )
 
     async def deploy_integrated_agent_accounts(self, faucet: WalletV1) -> None:
@@ -3113,15 +3161,20 @@ class PoolLifecycle:
         faucet = self.network.zerostate.main_wallet(self.client)
         for index, controller in enumerate(self.controllers):
             await self.send(
-                faucet, dest=controller.address, amount=10 * NANO,
-                body=Cell.empty(), init=controller.state_init,
+                faucet,
+                dest=controller.address,
+                amount=10 * NANO,
+                body=Cell.empty(),
+                init=controller.state_init,
                 label=f"controller-{index + 1}-deploy",
             )
+
             async def controller_code() -> bytes:
                 return (await self.client.raw_get_account_state(controller.address)).code
 
             code_boc = await self.retry(
-                controller_code, timeout=60,
+                controller_code,
+                timeout=60,
                 description=f"controller {index + 1} deployment",
                 predicate=bool,
             )
@@ -3190,15 +3243,20 @@ class PoolLifecycle:
             )
             self.support_pools[index] = pool
             await self.send(
-                wallet, dest=pool.address, amount=10 * NANO,
-                body=Cell.empty(), init=pool.state_init,
+                wallet,
+                dest=pool.address,
+                amount=10 * NANO,
+                body=Cell.empty(),
+                init=pool.state_init,
                 label=f"support-pool-{index + 1}-deploy",
             )
+
             async def support_pool_code() -> bytes:
                 return (await self.client.raw_get_account_state(pool.address)).code
 
             code_boc = await self.retry(
-                support_pool_code, timeout=60,
+                support_pool_code,
+                timeout=60,
                 description=f"support pool {index + 1} deployment",
                 predicate=bool,
             )
@@ -3212,19 +3270,25 @@ class PoolLifecycle:
             # network rotating while the primary pool waits to recover.
             capital = SUPPORT_POOL_CAPITAL
             await self.send(
-                wallet, dest=pool.address, amount=capital,
-                body=Cell.empty(), label=f"support-pool-{index + 1}-capital",
+                wallet,
+                dest=pool.address,
+                amount=capital,
+                body=Cell.empty(),
+                label=f"support-pool-{index + 1}-capital",
             )
             observed_capital = await self.retry(
-                lambda: self.balance(pool.address), timeout=60,
+                lambda: self.balance(pool.address),
+                timeout=60,
                 description=f"support pool {index + 1} funded",
                 predicate=lambda value: value >= capital,
             )
             self.event(
-                "support_pool_ready", validator=index + 1,
+                "support_pool_ready",
+                validator=index + 1,
                 pool=raw_address(pool.address),
                 controller=raw_address(self.controllers[index].address),
-                code_hash=actual_code.hex(), capital_nanotos=observed_capital,
+                code_hash=actual_code.hex(),
+                capital_nanotos=observed_capital,
             )
 
     async def deposit(self) -> None:
@@ -3491,14 +3555,18 @@ class PoolLifecycle:
             return _queued_stake_refusal(transactions, query_id) if complete else None
 
         refused = await self.retry(
-            refusal, timeout=120, description="queued stake order rejected by pool VM85",
+            refusal,
+            timeout=120,
+            description="queued stake order rejected by pool VM85",
             predicate=lambda value: value is not None,
         )
         data = await self.pool_data()
         self.check(
             "a queued withdrawal keeps the pool out of the next election",
             refused is not None and data.state == POOL_STATE_IDLE,
-            state=data.state_name, query_id=query_id, refusal=refused,
+            state=data.state_name,
+            query_id=query_id,
+            refusal=refused,
         )
 
     async def drain_withdraw_queue(self) -> None:
@@ -3573,7 +3641,8 @@ class PoolLifecycle:
             if known_hash is not None and record["vset_hash"] != known_hash:
                 raise RuntimeError(f"support election {election_id} past vset hash changed")
             if (
-                election_id != current_id and known_hash is not None
+                election_id != current_id
+                and known_hash is not None
                 and record["unfreeze_at"] > elector_state.sync_utime
             ):
                 # This is the actual time reset by update_active_vset_id,
@@ -3589,7 +3658,8 @@ class PoolLifecycle:
             account = await self.client.raw_get_account_state(pool.address)
             pool_raw = await self.runmethod(raw_address(pool.address), "get_pool_data")
             credit_raw = await self.runmethod(
-                raw_address(ELECTOR), "compute_returned_stake",
+                raw_address(ELECTOR),
+                "compute_returned_stake",
                 "0x" + pool.address.hash_part.hex(),
             )
             pools[index] = {
@@ -3604,9 +3674,11 @@ class PoolLifecycle:
             }
             pools[index]["election_retention"] = {
                 election_id: support_election_retention_state(
-                    election_id, current_set_id=current_id,
+                    election_id,
+                    current_set_id=current_id,
                     known_set_hashes=self.support_set_hashes,
-                    live_past=past, retired_past=self.support_retired_past,
+                    live_past=past,
+                    retired_past=self.support_retired_past,
                     chain_utime=elector_state.sync_utime,
                     credit=pools[index]["elector_credit_nanotos"],
                 )
@@ -3650,13 +3722,19 @@ class PoolLifecycle:
         # by the next keeper tick merely because its credit remains visible.
         self.support_recovery_attempted[index].update(election_ids)
         self.event(
-            "support_recovery_order", index=index, election_ids=election_ids,
-            query_id=query_id, credit_nanotos=credit,
+            "support_recovery_order",
+            index=index,
+            election_ids=election_ids,
+            query_id=query_id,
+            credit_nanotos=credit,
             balance_before_nanotos=owner["balance_nanotos"],
-            baseline_lt=str(baseline.lt), baseline_hash=baseline.hash.hex(),
+            baseline_lt=str(baseline.lt),
+            baseline_hash=baseline.hash.hex(),
         )
         await self.send(
-            self.wallets[index], dest=pool.address, amount=NANO,
+            self.wallets[index],
+            dest=pool.address,
+            amount=NANO,
             body=pool_message(0x47657424, query_id),
             label=f"support-pool-{index}-recover-stake",
         )
@@ -3667,11 +3745,15 @@ class PoolLifecycle:
                 self.client, pool.address, baseline
             )
             last_scan = {
-                "transactions_scanned": len(transactions), "pages_scanned": pages,
-                "baseline_covered": complete, "latest_lt": str(latest.lt),
+                "transactions_scanned": len(transactions),
+                "pages_scanned": pages,
+                "baseline_covered": complete,
+                "latest_lt": str(latest.lt),
             }
             if not complete:
-                raise RuntimeError(f"support pool {index} recovery history is incomplete: {last_scan}")
+                raise RuntimeError(
+                    f"support pool {index} recovery history is incomplete: {last_scan}"
+                )
             reply = elector_reply(transactions, query_id)
             if reply is not None:
                 opcode, detail = reply
@@ -3679,20 +3761,28 @@ class PoolLifecycle:
                 for transaction in transactions:
                     message = transaction.in_msg
                     if (
-                        message is None or message.source is None
+                        message is None
+                        or message.source is None
                         or Address(message.source.account_address) != ELECTOR
                         or not isinstance(message.msg_data, toslib_api.Msg_dataRaw)
                     ):
                         continue
                     body = Cell.one_from_boc(message.msg_data.body).begin_parse()
-                    if body.remaining_bits >= 96 and body.load_uint(32) == opcode \
-                            and body.load_uint(64) == query_id:
+                    if (
+                        body.remaining_bits >= 96
+                        and body.load_uint(32) == opcode
+                        and body.load_uint(64) == query_id
+                    ):
                         reply_boc = message.msg_data.body.hex()
                         break
                 self.event(
-                    "support_recovery_reply", index=index, query_id=query_id,
-                    opcode=f"0x{opcode:08x}", detail=detail,
-                    reply_boc_hex=reply_boc, **last_scan,
+                    "support_recovery_reply",
+                    index=index,
+                    query_id=query_id,
+                    opcode=f"0x{opcode:08x}",
+                    detail=detail,
+                    reply_boc_hex=reply_boc,
+                    **last_scan,
                 )
                 if opcode != 0xF96F7324 or detail != 0 or reply_boc is None:
                     raise AssertionError(
@@ -3701,19 +3791,25 @@ class PoolLifecycle:
                     )
                 await self.retry(
                     lambda: self.elector_returned_stake_for(pool.address),
-                    timeout=60, description=f"support pool {index} credit consumed",
+                    timeout=60,
+                    description=f"support pool {index} credit consumed",
                     predicate=lambda value: value == 0,
                 )
                 balance_after = await self.retry(
-                    lambda: self.balance(pool.address), timeout=60,
+                    lambda: self.balance(pool.address),
+                    timeout=60,
                     description=f"support pool {index} credit returned to owner",
                     predicate=lambda value: value >= owner["balance_nanotos"] + credit - 2 * NANO,
                 )
                 self.support_recovered[index].update(election_ids)
                 self.event(
-                    "support_pool_recovered", index=index, election_ids=election_ids,
-                    query_id=query_id, balance_before_nanotos=owner["balance_nanotos"],
-                    balance_after_nanotos=balance_after, credit_nanotos=credit,
+                    "support_pool_recovered",
+                    index=index,
+                    election_ids=election_ids,
+                    query_id=query_id,
+                    balance_before_nanotos=owner["balance_nanotos"],
+                    balance_after_nanotos=balance_after,
+                    credit_nanotos=credit,
                 )
                 await self.support_chain_snapshot(f"support-{index}-recovered")
                 return
@@ -3743,11 +3839,12 @@ class PoolLifecycle:
                         credit=pool["elector_credit_nanotos"],
                     )
                     if eligible and not any(
-                        election in self.support_recovery_attempted[index]
-                        for election in eligible
+                        election in self.support_recovery_attempted[index] for election in eligible
                     ):
                         await self.recover_support_pool(index, eligible, snapshot)
-                        pool["balance_nanotos"] = await self.balance(self.support_pools[index].address)
+                        pool["balance_nanotos"] = await self.balance(
+                            self.support_pools[index].address
+                        )
                     if not election_id or election_id in self.support_submitted[index]:
                         continue
                     if pool["balance_nanotos"] < POOL_STAKE_VALUE + MIN_TOS_FOR_STORAGE:
@@ -3789,10 +3886,14 @@ class PoolLifecycle:
             raise AssertionError(f"validator {index + 1} authorization differs from its bound key")
         return build_production_pool_stake_order(
             REPO / "tosctl/src/target/debug/examples/pq_pool_stake_order",
-            query_id=time.time_ns() if query_id is None else query_id, stake_amount=POOL_STAKE_VALUE,
-            stake_at=election_id, max_factor=MAX_FACTOR,
-            adnl_addr=node.validator_key.id, algorithm_id=auth.algorithm_id,
-            public_key=auth.public_key, signature=auth.signature,
+            query_id=time.time_ns() if query_id is None else query_id,
+            stake_amount=POOL_STAKE_VALUE,
+            stake_at=election_id,
+            max_factor=MAX_FACTOR,
+            adnl_addr=node.validator_key.id,
+            algorithm_id=auth.algorithm_id,
+            public_key=auth.public_key,
+            signature=auth.signature,
             witness=controller.birth_witness,
         )
 
@@ -3801,12 +3902,16 @@ class PoolLifecycle:
         pool = self.support_pools[index]
         body = await self.authorized_pool_order(index, election_id, pool.address)
         await self.send(
-            self.wallets[index], dest=pool.address, amount=POOL_STAKE_GAS,
-            body=body, label=f"support-validator-{index}-pool-stake",
+            self.wallets[index],
+            dest=pool.address,
+            amount=POOL_STAKE_GAS,
+            body=body,
+            label=f"support-validator-{index}-pool-stake",
         )
         controller_id = int.from_bytes(self.controllers[index].address.hash_part, "big")
         await self.retry(
-            lambda: self.elector_participant_ids(), timeout=120,
+            lambda: self.elector_participant_ids(),
+            timeout=120,
             description=f"support controller {index + 1} accepted by Elector",
             predicate=lambda ids: controller_id in ids,
         )
@@ -3826,12 +3931,12 @@ class PoolLifecycle:
         cursor_evidence: dict[str, Any] = {}
         if label in ("pool-stake", "pool-stake-after-drain", "stake-blocked-by-queue"):
             assert self.client is not None
-            pool_cursor = (await self.client.raw_get_account_state(
-                self.pool_address
-            )).last_transaction_id
-            controller_cursor = (await self.client.raw_get_account_state(
-                self.controllers[0].address
-            )).last_transaction_id
+            pool_cursor = (
+                await self.client.raw_get_account_state(self.pool_address)
+            ).last_transaction_id
+            controller_cursor = (
+                await self.client.raw_get_account_state(self.controllers[0].address)
+            ).last_transaction_id
             if pool_cursor is None or controller_cursor is None:
                 raise RuntimeError("cannot establish pre-order pool/controller transaction cursors")
             self.stake_feedback_baselines[query_id] = (pool_cursor, controller_cursor)
@@ -3846,12 +3951,18 @@ class PoolLifecycle:
                 f"pool stake election window closed or changed before send: {election_id}"
             )
         self.event(
-            "pool_stake_order", label=label, election_id=election_id,
-            query_id=query_id, **cursor_evidence,
+            "pool_stake_order",
+            label=label,
+            election_id=election_id,
+            query_id=query_id,
+            **cursor_evidence,
         )
         await self.send(
-            self.wallets[0], dest=self.pool_address, amount=POOL_STAKE_GAS,
-            body=body, label=label,
+            self.wallets[0],
+            dest=self.pool_address,
+            amount=POOL_STAKE_GAS,
+            body=body,
+            label=label,
         )
         return query_id
 
@@ -3861,18 +3972,24 @@ class PoolLifecycle:
         controller_address = self.controllers[0].address
         pool_baseline, controller_baseline = self.stake_feedback_baselines[query_id]
         details: dict[str, Any] = {
-            "label": label, "query_id": query_id,
-            "elector_reply": None, "controller_bounce": None,
+            "label": label,
+            "query_id": query_id,
+            "elector_reply": None,
+            "controller_bounce": None,
             "controller_relay": None,
             "pool_order_transaction_lt": None,
-            "pool_transactions_scanned": 0, "controller_transactions_scanned": 0,
-            "pool_pages_scanned": 0, "controller_pages_scanned": 0,
-            "pool_window_complete": False, "controller_window_complete": False,
+            "pool_transactions_scanned": 0,
+            "controller_transactions_scanned": 0,
+            "pool_pages_scanned": 0,
+            "controller_pages_scanned": 0,
+            "pool_window_complete": False,
+            "controller_window_complete": False,
             "pool_pre_order_cursor_lt": str(pool_baseline.lt),
             "pool_pre_order_cursor_hash": pool_baseline.hash.hex(),
             "controller_pre_order_cursor_lt": str(controller_baseline.lt),
             "controller_pre_order_cursor_hash": controller_baseline.hash.hex(),
-            "pool_latest_cursor_lt": None, "controller_latest_cursor_lt": None,
+            "pool_latest_cursor_lt": None,
+            "controller_latest_cursor_lt": None,
             "collection_errors": {},
         }
         try:
@@ -3906,10 +4023,12 @@ class PoolLifecycle:
         except Exception as error:  # noqa: BLE001 - preserve the original stake timeout
             details["collection_errors"]["controller"] = repr(error)
         details["classification"] = (
-            "INCONCLUSIVE" if not details["pool_window_complete"]
-            or details["pool_order_transaction_lt"] is None
-            else "ELECTOR_REPLY_OBSERVED" if details["elector_reply"] is not None
-            else "CONTROLLER_BOUNCE_OBSERVED" if details["controller_bounce"] is not None
+            "INCONCLUSIVE"
+            if not details["pool_window_complete"] or details["pool_order_transaction_lt"] is None
+            else "ELECTOR_REPLY_OBSERVED"
+            if details["elector_reply"] is not None
+            else "CONTROLLER_BOUNCE_OBSERVED"
+            if details["controller_bounce"] is not None
             else "INCONCLUSIVE"
         )
         self.event("pool_stake_feedback", **details)

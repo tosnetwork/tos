@@ -76,8 +76,14 @@ def run(coro):
 
 
 def wait(nodes, timeout=3.0):
-    return n6._wait_all_heights(nodes, 3, timeout, transport_retry_counts={n.name: {} for n in nodes},
-                                transport_retry_budget_seconds=2.0, transport_retry_delay_seconds=0.01)
+    return n6._wait_all_heights(
+        nodes,
+        3,
+        timeout,
+        transport_retry_counts={n.name: {} for n in nodes},
+        transport_retry_budget_seconds=2.0,
+        transport_retry_delay_seconds=0.01,
+    )
 
 
 class StartupNotSynced(unittest.TestCase):
@@ -88,7 +94,9 @@ class StartupNotSynced(unittest.TestCase):
     def test_persistent_not_synced_fails_at_the_startup_deadline(self):
         nodes = [Node("a", [], tail=None), Node("b", [])]
         nodes[0].client.tail = ToslibError(500, NOT_SYNCED)
-        with self.assertRaisesRegex(TimeoutError, "still refusing: LITE_SERVER_NOTREADY: node not synced"):
+        with self.assertRaisesRegex(
+            TimeoutError, "still refusing: LITE_SERVER_NOTREADY: node not synced"
+        ):
             run(wait(nodes, timeout=0.6))
 
     def test_other_code_500_error_is_raised_at_once(self):
@@ -110,8 +118,16 @@ class StartupNotSynced(unittest.TestCase):
     def test_network_errors_keep_the_transport_retry_and_its_count(self):
         nodes = [Node("a", [ToslibError(500, "LITE_SERVER_NETWORKconn not ready")] * 2)]
         counts = {"a": {}}
-        result = run(n6._wait_all_heights(nodes, 3, 3.0, transport_retry_counts=counts,
-                                          transport_retry_budget_seconds=2.0, transport_retry_delay_seconds=0.01))
+        result = run(
+            n6._wait_all_heights(
+                nodes,
+                3,
+                3.0,
+                transport_retry_counts=counts,
+                transport_retry_budget_seconds=2.0,
+                transport_retry_delay_seconds=0.01,
+            )
+        )
         self.assertEqual((result, counts["a"]["get_masterchain_info"]), ([5], 2))
 
     def test_sustained_polling_still_raises_not_synced(self):

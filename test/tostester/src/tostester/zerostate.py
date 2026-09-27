@@ -1,5 +1,5 @@
-from dataclasses import dataclass, field
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import nacl.signing
@@ -525,15 +525,21 @@ def create_zerostate(
             or not isinstance(stage_a_elected_for, int)
             or not 240 < stage_a_elected_for <= 0xFFFF_FFFF
         ):
-            raise ValueError("Stage A elected-set duration must exceed the election lead and close periods")
+            raise ValueError(
+                "Stage A elected-set duration must exceed the election lead and close periods"
+            )
     stage_a_start_before = config.validator_election_stage_a_start_before
     if stage_a_start_before is not None:
         if not config.validator_election_stage_a_profile:
             raise ValueError("election start override requires the Stage A profile")
-        if (isinstance(stage_a_start_before, bool)
-                or not isinstance(stage_a_start_before, int)
-                or not 60 < stage_a_start_before < (stage_a_elected_for or 300)):
-            raise ValueError("Stage A election start must be between close and elected-set duration")
+        if (
+            isinstance(stage_a_start_before, bool)
+            or not isinstance(stage_a_start_before, int)
+            or not 60 < stage_a_start_before < (stage_a_elected_for or 300)
+        ):
+            raise ValueError(
+                "Stage A election start must be between close and elected-set duration"
+            )
     bootstrap_valid_for = config.bootstrap_validator_set_valid_for
     if bootstrap_valid_for is not None:
         if config.validator_economics_profile and not config.validator_election_stage_a_profile:
@@ -697,8 +703,7 @@ def create_zerostate(
         if len(config.validator_controller_code_hash) != 32:
             raise ValueError("validator controller code hash must be 32 bytes")
         controller_policy_param = (
-            f"0x{config.validator_controller_code_hash.hex()} "
-            "config.validator_controller_code!\n"
+            f"0x{config.validator_controller_code_hash.hex()} config.validator_controller_code!\n"
         )
     else:
         controller_policy_param = ""
@@ -731,8 +736,11 @@ def create_zerostate(
             **profile,
         ),
         state_dir,
-        **({"env": {**os.environ, "SOURCE_DATE_EPOCH": str(fixed_time)},
-            "retain_script": True} if fixed_time is not None else {}),
+        **(
+            {"env": {**os.environ, "SOURCE_DATE_EPOCH": str(fixed_time)}, "retain_script": True}
+            if fixed_time is not None
+            else {}
+        ),
     )
 
     pk = (state_dir / "main-wallet.pk").read_bytes()

@@ -6,7 +6,6 @@ import json
 import re
 from pathlib import Path
 
-
 CERTIFICATE = re.compile(
     r"consensus\.(?P<node>\d+)\.(?P<instance>\d+)\.SimplexPool.*"
     r"Obtained certificate for (?:(?P<notar>NotarizeVote\{id=\{(?P<notar_slot>\d+))"
