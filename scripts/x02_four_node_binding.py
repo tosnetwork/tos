@@ -14,6 +14,12 @@ BINARY_PATHS = ('crypto/create-state', 'crypto/pq/tos-pq-consensus-key',
                 'validator-engine-console/validator-engine-console',
                 'blockchain-explorer/blockchain-explorer', 'crypto/func', 'crypto/fift',
                 'toslib/libtoslibjson.so', 'tosctl/pq_pool_stake_order')
+# One committed binding per run selects its fault scenario and Stage A window:
+# P = deterministic partial loss, D = 100% directed isolation. D's fixed fault sequence
+# lasts up to about 405 s, so it gets a 900 s primary window; both keep the 600 s tail.
+SCENARIO_WINDOWS = {'P': {'duration': 420, 'settlement_tail': 600},
+                    'D': {'duration': 900, 'settlement_tail': 600}}
+TC_PATH = '/usr/sbin/tc'
 
 
 def require(value, reason):
@@ -21,17 +27,39 @@ def require(value, reason):
         raise ValueError(reason)
 
 
+def scenario_windows(binding):
+    require(binding.get('scenario') in SCENARIO_WINDOWS, 'binding names no known fault scenario')
+    return SCENARIO_WINDOWS[binding['scenario']]
+
+
+def expected_stage_argv(binding):
+    windows = scenario_windows(binding)
+    return ['--mode', 'experiment', '--stage', 'a', '--build-dir', binding['build_root'],
+            '--base-port', '32600', '--rpc-base-port', '34600',
+            '--duration-seconds', str(windows['duration']),
+            '--settlement-tail-seconds', str(windows['settlement_tail']), '--sample-interval', '5',
+            '--output-root', binding['stage_output'],
+            '--pq-pool-stake-order-binary', str(Path(binding['build_root']) / 'tosctl/pq_pool_stake_order')]
+
+
+def expected_host_files(binding):
+    """Host executables pinned by digest: bwrap always; tc only for the directed scenario."""
+    scenario_windows(binding)
+    return {binding['bwrap_path'], *((TC_PATH,) if binding['scenario'] == 'D' else ()),
+            *(("/usr/sbin/nft",) if binding['scenario'] == 'P' else ())}
+
+
 def verify_binding(binding, host=False):
-    require(binding['schema'] == 'tos.x02.four-node-binding.v1', 'binding schema differs')
+    require(binding['schema'] == 'tos.x02.four-node-binding.v2', 'binding schema differs')
+    scenario_windows(binding)
+    require(binding.get('partial_engine') == ('nft-ordinal-v1' if binding['scenario'] == 'P' else None),
+            'partial fault engine differs from the frozen scenario')
     require(re.fullmatch('[0-9a-f]{40}', binding['native_source_sha']) is not None,
             'native source provenance absent')
-    require(binding['stage_argv'] == [
-        '--mode', 'experiment', '--stage', 'a', '--build-dir', binding['build_root'],
-        '--base-port', '32600', '--rpc-base-port', '34600', '--duration-seconds', '420',
-        '--settlement-tail-seconds', '600', '--sample-interval', '5',
-        '--output-root', binding['stage_output'],
-        '--pq-pool-stake-order-binary', str(Path(binding['build_root']) / 'tosctl/pq_pool_stake_order')],
-        'full StageA argv differs from fixed preset')
+    require(binding['stage_argv'] == expected_stage_argv(binding),
+            'full StageA argv differs from fixed preset')
+    require(isinstance(binding['host_files'], dict) and set(binding['host_files']) == expected_host_files(binding),
+            'pinned host executables differ from the scenario')
     require(binding['python_version'][:2] >= [3, 14], 'StageA requires Python at least3.14')
     require(Path(binding['interpreter']).is_absolute()
             and Path(binding['build_root']).is_absolute()
@@ -44,9 +72,9 @@ def verify_binding(binding, host=False):
                 'e7670133c59160614fdedb04dd8ae03ba4be74c2a4841518f3ccec92cde4f3ee',
             'native snapshot differs from actual frozen f1f source/binary')
     if host:
-        receipt = binding['host_files'][binding['bwrap_path']]
-        require(hashlib.sha256(Path(binding['bwrap_path']).read_bytes()).hexdigest() == receipt['sha256'],
-                'ordinary mount sandbox executable differs')
+        for name, receipt in sorted(binding['host_files'].items()):
+            require(hashlib.sha256(Path(name).read_bytes()).hexdigest() == receipt['sha256'],
+                    'pinned host executable differs: ' + name)
     os_release = Path(binding['rootfs_root']) / 'etc/os-release'
     require('VERSION_ID="24.04"' in os_release.read_text(), 'StageA rootfs is not U24')
     files = binding['files']

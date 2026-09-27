@@ -72,6 +72,7 @@ from tostester.f01_stage_a_evidence import (  # noqa: E402
     config34_hash, extract_finalized_log, locate_transition, write_manifest,
 )
 from x01_window_evidence import validate as validate_x01_window  # noqa: E402
+from x02_config34_proof import verify_bundle as verify_config34_bundle  # noqa: E402
 from tostester.pq_initial_validator import (  # noqa: E402
     make_deterministic_pq_initial_validator,
 )
@@ -469,6 +470,8 @@ class ValidatorElectionRehearsal:
         self.experiment_current_config34_hash: int | None = None
         self.experiment_past_elections: dict[int, dict[str, int]] | None = None
         self.election_allocations: dict[int, dict[str, Any]] = {}
+        # Each node's own answers to PQ stake authorizations, by election and validator.
+        self.pq_authorization_records: dict[int, dict[str, list[dict[str, Any]]]] = {}
         self.recovery_records: list[dict[str, Any]] = []
         self.rpc_readiness: list[dict[str, Any]] = []
 
@@ -2589,6 +2592,8 @@ class ValidatorElectionRehearsal:
         allocation["config34"] = self.config34_evidence(config)
         allocation["config34_artifact"] = self.file_provenance(config_path)
         allocation["rpc_config34_consensus"] = rpc_consensus
+        allocation["config34_proof"] = await self.capture_config34_same_block_proof(config.utime_since)
+        allocation["pq_authorizations"] = self.pq_authorization_records.get(config.utime_since, {})
         allocation["elector_snapshots"].append(
             await self.capture_elector_snapshot(f"election-{config.utime_since}-activated")
         )
@@ -3194,6 +3199,7 @@ class ValidatorElectionRehearsal:
             raise AssertionError(f"validator {index + 1} node authorized the wrong consensus key")
         if auth.public_key != controller.consensus.public_key or auth.algorithm_id != 1:
             raise AssertionError(f"validator {index + 1} authorization differs from the bound key")
+        self.record_pq_authorization(index, election_id, query_id, auth)
         signature = auth.signature
         if corrupt_signature_for_negative:
             if not signature:
@@ -3212,6 +3218,103 @@ class ValidatorElectionRehearsal:
             witness=controller.birth_witness,
         )
         return body, auth.key_id
+
+    def record_pq_authorization(self, index: int, election_id: int, query_id: int, auth: Any) -> dict[str, Any]:
+        """Retain the node's own authorization answer and the process that gave it.
+
+        X02 binds each live PID to this public identity instead of to readiness rows;
+        the coordinator separately proves that the PID owns this console port.
+        """
+        node = self.nodes[index]
+        pid = node.process_id
+        if pid is None:
+            raise AssertionError(f"validator {index + 1} answered an authorization without a live process")
+        stat_raw = Path(f"/proc/{pid}/stat").read_bytes()
+        record = {
+            "schema": "tos.x02.pq-authorization.v1",
+            "validator_index": index + 1,
+            "election_id": election_id,
+            "query_id": query_id,
+            "validator_id_hex": auth.validator_id.hex(),
+            "key_id_hex": auth.key_id.hex(),
+            "algorithm_id": auth.algorithm_id,
+            "public_key_hex": auth.public_key.hex(),
+            "control_port": node.transport_ports[2],
+            "node_pid": pid,
+            "node_start_ticks": int(stat_raw.rsplit(b") ", 1)[1].split()[19]),
+            "recorded_at": utc_now(),
+        }
+        path = self.artifacts_dir / (
+            f"pq-authorization-{election_id}-validator-{index + 1}-query-{query_id}.json")
+        with path.open("x") as stream:
+            json.dump(record, stream, sort_keys=True)
+        provenance = self.file_provenance(path)
+        self.pq_authorization_records.setdefault(election_id, {}).setdefault(
+            str(index + 1), []).append(provenance)
+        return provenance
+
+    async def capture_config34_same_block_proof(self, election_id: int) -> dict[str, Any]:
+        """Retain lite bytes proving the active Config34 from one exact masterchain block.
+
+        The reply's full ID must equal the header's; the bundle is verified here and again,
+        independently, by the X02 coordinator from the retained files.
+        """
+        assert self.experiment is not None
+        seqno = await self.masterchain_seqno()
+        address = self.experiment.rpc_addresses[0]
+        # The proof binds the block root; no raw block BOC is served over JSON-RPC, so the
+        # file hash is bound by all four nodes answering the same full ID for this height.
+        headers = [(await asyncio.to_thread(json_rpc_call, rpc, "getBlockHeader", {
+            "workchain": -1, "shard": str(-(1 << 63)), "seqno": seqno})) for rpc in self.experiment.rpc_addresses]
+        full = headers[0]["result"]["id"]
+        if any(header["result"]["id"] != full for header in headers):
+            raise AssertionError("the four nodes disagree on the full block ID at the Config34 proof height")
+        reply = (await asyncio.to_thread(json_rpc_call, address, "getConfigParam", {
+            "param": 34, "seqno": seqno, "with_proof": True}))["result"]
+        if reply.get("@type") != "configInfo" or reply.get("block_id") != full:
+            raise AssertionError("Config34 proof resolved to another full block ID")
+        directory = self.artifacts_dir / f"election-{election_id}-config34-proof"
+        directory.mkdir()
+        files = {
+            "param": base64.b64decode(reply["config"]["bytes"], validate=True),
+            "state_proof": base64.b64decode(reply["state_proof"], validate=True),
+            "config_proof": base64.b64decode(reply["config_proof"], validate=True),
+        }
+        bundle: dict[str, Any] = {
+            "block_id": {
+                "workchain": full["workchain"], "shard": full["shard"], "seqno": full["seqno"],
+                "root_hash": base64.b64decode(full["root_hash"], validate=True).hex(),
+                "file_hash": base64.b64decode(full["file_hash"], validate=True).hex(),
+            },
+            "source_rpc": address,
+            "headers": [],
+        }
+        for index, (rpc, header) in enumerate(zip(self.experiment.rpc_addresses, headers), 1):
+            raw_header = json.dumps(header, sort_keys=True).encode()
+            path = directory / f"header-node{index}.json"
+            with path.open("xb") as stream:
+                stream.write(raw_header)
+            bundle["headers"].append({"rpc": rpc, "path": f"{directory.name}/{path.name}",
+                                      "sha256": hashlib.sha256(raw_header).hexdigest()})
+        for name, raw in files.items():
+            path = directory / f"{name}.boc"
+            with path.open("xb") as stream:
+                stream.write(raw)
+            bundle[name] = {"path": f"{directory.name}/{name}.boc",
+                            "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+        rows = [{"controller_id_hex": controller.address.hash_part.hex(),
+                 "consensus_key_id_hex": controller.consensus.key_id.hex(),
+                 "adnl_id_hex": node.validator_key.id.hex()}
+                for controller, node in zip(self.controllers, self.nodes)]
+        verdict = verify_config34_bundle(
+            bundle, self.artifacts_dir.resolve(strict=True), rows, election_id,
+            list(self.experiment.rpc_addresses),
+        )
+        if int(verdict["config34_cell_hash"], 16) != self.experiment_current_config34_hash:
+            raise AssertionError("proven Config34 cell differs from the active Config34")
+        bundle["stage_a_verdict"] = verdict["verdict"]
+        bundle["config34_cell_hash_hex"] = verdict["config34_cell_hash"]
+        return bundle
 
     async def request_pq_authorization(
         self, index: int, request: Any, *, retry_restart_transients: bool,
@@ -3985,7 +4088,7 @@ class ValidatorElectionRehearsal:
         self.run_dir.mkdir(parents=True, exist_ok=False)
         self.network_dir.mkdir()
         self.artifacts_dir.mkdir()
-        if self.pq_election:
+        if self.pq_election and self.pq_pool_stake_order_binary is None:
             # Compile before the chain starts: the election window must not be
             # spent building a diagnostic executable. Its only encoding call
             # is the production nominator::new_stake_with_witness builder.

@@ -526,7 +526,7 @@ class X02IsolationTests(unittest.TestCase):
                           f"{height}):{block(height)['root_hash']}:"
                           f"{block(height)['file_hash']}}}")
                 append_marker(snapshots[0]["journals"][node["name"]], node, marker)
-        with self.assertRaisesRegex(ValueError, "predates node4 cut or fault segment"):
+        with self.assertRaisesRegex(ValueError, "fault segment|two consecutive native finalized heights"):
             verify_fixture(pol, snapshots, events)
 
     def test_preremoval_native_markers_cannot_count_as_recovery(self):

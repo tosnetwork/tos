@@ -1,6 +1,7 @@
 """No-network controls for X02's exact-rule orchestration and cleanup."""
 
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -13,6 +14,11 @@ import sys
 sys.path.insert(0, str(REPO / "scripts"))
 runner = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner)
+
+
+HOST_NETNS = "net:[4026531840]"
+ACCESS = {"cap_eff": (1 << 12) | (1 << 13), "netns": "net:[4026532999]",
+          "host_netns": HOST_NETNS, "euid": 1000}
 
 
 def policy():
@@ -58,7 +64,7 @@ class DirectedRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="x02-directed-") as directory:
             root = Path(directory) / "run"
             with (patch.object(runner.x02, "require_source_commit"),
-                  patch.object(runner.os, "geteuid", return_value=0),
+                  patch.object(runner, "private_net_admin", return_value=ACCESS) as access,
                   patch.object(runner.x02, "capture_tc", side_effect=tc),
                   patch.object(runner.x02, "command_json", side_effect=tc_json),
                   patch.object(runner.x02, "has_clsact", return_value=False),
@@ -71,11 +77,14 @@ class DirectedRunTests(unittest.TestCase):
                   patch.object(runner.time, "monotonic", side_effect=lambda: current[0])):
                 if root_qdisc != "noqueue":
                     with self.assertRaisesRegex(ValueError, "pre-existing root qdisc"):
-                        runner.collect(policy(), "b" * 64, root)
+                        runner.collect(policy(), "b" * 64, root, HOST_NETNS)
                     fault_mock.assert_not_called()
                     return None, None, sorted(root.iterdir())
-                result = runner.collect(policy(), "b" * 64, root)
+                result = runner.collect(policy(), "b" * 64, root, HOST_NETNS)
+            access.assert_called_once_with(HOST_NETNS)
+            self.elapsed = current[0]
             self.assertTrue((root / "result.json").exists())
+            self.assertEqual(json.loads((root / "invocation.json").read_text())["access"], ACCESS)
             return result, root.joinpath("cleanup.json").read_text(), sorted(root.iterdir())
 
     def test_complete_twenty_rule_run_retains_all_events_and_samples(self):
@@ -147,6 +156,45 @@ class DirectedRunTests(unittest.TestCase):
     def test_verifier_must_explicitly_pass(self):
         result, _cleanup, _paths = self.exercise(verifier_passed=False)
         self.assertEqual(result["status"], "failed")
+
+
+def status(cap_eff: int) -> str:
+    return (f"Name:\tpython3\nCapInh:\t0000000000000000\nCapPrm:\t{cap_eff:016x}\n"
+            f"CapEff:\t{cap_eff:016x}\nCapBnd:\t{cap_eff:016x}\nCapAmb:\t{cap_eff:016x}\n")
+
+
+class PrivateNetAdminTests(unittest.TestCase):
+    PRIVATE = "net:[4026532999]"
+
+    def test_the_ordinary_worker_with_exactly_net_admin_and_net_raw_is_accepted(self):
+        access = runner.private_net_admin(HOST_NETNS, status((1 << 12) | (1 << 13)), self.PRIVATE)
+        self.assertEqual((access["cap_eff"], access["netns"]), ((1 << 12) | (1 << 13), self.PRIVATE))
+
+    def test_root_with_the_full_capability_set_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "exactly NET_ADMIN and NET_RAW"):
+            runner.private_net_admin(HOST_NETNS, status((1 << 41) - 1), self.PRIVATE)
+
+    def test_net_admin_alone_or_an_extra_capability_is_refused(self):
+        for cap_eff in (1 << 12, (1 << 12) | (1 << 13) | (1 << 21), 0):
+            with self.assertRaisesRegex(ValueError, "exactly NET_ADMIN and NET_RAW"):
+                runner.private_net_admin(HOST_NETNS, status(cap_eff), self.PRIVATE)
+
+    def test_the_host_network_namespace_is_refused(self):
+        for netns, host in ((HOST_NETNS, HOST_NETNS), (self.PRIVATE, ""), (self.PRIVATE, "4026531840")):
+            with self.assertRaisesRegex(ValueError, "host network namespace"):
+                runner.private_net_admin(host, status((1 << 12) | (1 << 13)), netns)
+
+    def test_collect_refuses_before_creating_output_or_touching_tc(self):
+        with tempfile.TemporaryDirectory(prefix="x02-directed-") as directory:
+            root = Path(directory) / "run"
+            with (patch.object(runner.x02, "require_source_commit"),
+                  patch.object(runner.x02, "capture_tc") as tc,
+                  patch.object(runner.x02, "fault_event") as event):
+                with self.assertRaisesRegex(ValueError, "host network namespace|exactly NET_ADMIN"):
+                    runner.collect(policy(), "b" * 64, root, HOST_NETNS)
+            self.assertFalse(root.exists())
+            tc.assert_not_called()
+            event.assert_not_called()
 
 
 if __name__ == "__main__":

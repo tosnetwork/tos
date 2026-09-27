@@ -9,6 +9,7 @@ import importlib.machinery
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 
 
@@ -45,13 +46,13 @@ def main():
                 ('CapEff', 'CapPrm', 'CapInh', 'CapAmb'))
             and int(fields['CapBnd'], 16) == 0
             and int(fields['NoNewPrivs']) == 1, 'child capability/NNP verification failed')
-    for fd in (3, 4):
+    for fd in range(3, 64):
         try:
-            os.fstat(fd)
+            info = os.fstat(fd)
         except OSError:
             pass
         else:
-            raise ValueError('queue descriptor leaked into StageA child')
+            require(not stat.S_ISSOCK(info.st_mode), 'socket descriptor leaked into StageA child')
     raw = args.binding.read_bytes()
     require(hashlib.sha256(raw).hexdigest() == args.binding_sha256,
             'child binding bytes changed')

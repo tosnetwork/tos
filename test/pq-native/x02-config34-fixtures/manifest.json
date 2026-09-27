@@ -1,0 +1,49 @@
+{
+ "purpose": "offline regressions for the X02 Config34 proof and identity checks; real retained bytes only",
+ "z01_seq11_quartet": {
+  "source_dir": "/datax/n6-unit-agents/Z01/evidence/f1f-live-v5/live/attempt-0/node-1",
+  "native_verdict": "Z01_CONFIG_PROOF_OK seqno=11 root=944F0E7095C7BACB5D4CBED23785BAF9C4B30A606ED36E7B916F6865BAFF7C0C file=78099EA7E95C42FE8BEDC2CDA8F67FB0D162A67ED0F13644E6DE3D177FF839EC param30=A922FC0CB6BACFEE2D49645DA25394F069447D8C250E4A0FB5ED75BA23CDD9E5",
+  "files": {
+   "z01-seq11-block.boc": "78099ea7e95c42fe8bedc2cda8f67fb0d162a67ed0f13644e6de3d177ff839ec",
+   "z01-seq11-state-proof.boc": "581a1d985d44c90b448209f86af3457b6b81b1e4846bc4d285d7aa48a418125f",
+   "z01-seq11-config-proof.boc": "a7321adab2585e4466514df4e3ffa3c22b469b6fb6d6481e2d84f681cb46bb12",
+   "z01-seq11-param30.boc": "44db75af6b19aab097d903b33179e6579eb1ce68c130833403453ab217ec978a"
+  }
+ },
+ "config34_cells": {
+  "source": "/datax/tos-n6/test/integration/.x01-stage-a-b20783d50-20260925/20260925T174726Z/artifacts/f01-finality/config34-rpc.jsonl",
+  "note": "JSON-RPC getConfigParam 34 config cell bytes; no proof retained",
+  "by_utime_since": {
+   "1790358449": {
+    "seqno": 3,
+    "node": "node-1",
+    "sha256": "8209f080fdc4806940b85829442117ce2d413be9ef58c5f01132b7ea71b8bf1b"
+   },
+   "1790359049": {
+    "seqno": 93,
+    "node": "node-1",
+    "sha256": "9736f595895360b801b102328f9d5360cc5b71620dee341266210f63bdf4f853"
+   },
+   "1790359349": {
+    "seqno": 136,
+    "node": "node-1",
+    "sha256": "16a782d2e43b3e86f970aa41238b47ce3bcf3df0f68178a92385c18934d38bd2"
+   },
+   "1790359649": {
+    "seqno": 180,
+    "node": "node-1",
+    "sha256": "9561108eb072ad14189e5b9dd100bd879982525c57008fe58ef8393ea526b473"
+   }
+  }
+ },
+ "z01_seq12_quartet": {
+  "source_dir": "/datax/n6-unit-agents/Z01/evidence/f1f-live-v5/live/attempt-0/node-1",
+  "native_verdict": "Z01_CONFIG_PROOF_OK seqno=12 root=4A77BA6D3D146F6DEBE31C3E9600E44D3609991857D8155B2711DFC3E9554F87 file=C4B33E125A555681BE0D93C0C0D473D9D05C32D905C4B9EC197AF7DF52F6EE11 param30=A922FC0CB6BACFEE2D49645DA25394F069447D8C250E4A0FB5ED75BA23CDD9E5",
+  "files": {
+   "z01-seq12-block.boc": "c4b33e125a555681be0d93c0c0d473d9d05c32d905c4b9ec197af7df52f6ee11",
+   "z01-seq12-state-proof.boc": "a9a9b3018b0f821a4b35834f1d50d5cd6bfec50e549d9c212ef3de414d538efd",
+   "z01-seq12-config-proof.boc": "5fb7b2655e62b2629d7b5c504a8b4a854a68b44ce9e143fba6e9e625e8dfdedc",
+   "z01-seq12-param30.boc": "44db75af6b19aab097d903b33179e6579eb1ce68c130833403453ab217ec978a"
+  }
+ }
+}

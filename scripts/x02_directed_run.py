@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Run one frozen X02 100% directed peer cut on an already-live Stage A network.
 
-Requires CAP_NET_ADMIN. Every tc action and RPC/native snapshot is written
-before a verdict; on any error, only this policy's installed rules are removed.
-This does not start a validator network or prove partial packet loss.
+Runs as the ordinary worker inside a private network namespace holding exactly
+CAP_NET_ADMIN and CAP_NET_RAW; root or the host namespace is refused. Every tc
+action and RPC/native snapshot is written before a verdict; on any error, only
+this policy's installed rules are removed. This does not start a validator
+network or prove partial packet loss.
 """
 
 from __future__ import annotations
@@ -16,6 +18,25 @@ import sys
 import time
 
 import x02_fault_evidence as x02
+
+# CAP_NET_ADMIN (12) and CAP_NET_RAW (13): the worker's whole effective set.
+WORKER_CAPABILITIES = (1 << 12) | (1 << 13)
+
+
+def private_net_admin(host_netns: str, status: str | None = None,
+                      netns: str | None = None) -> dict:
+    """Require exactly the worker capabilities in a namespace that is not the host's."""
+    status = Path("/proc/self/status").read_text() if status is None else status
+    netns = os.readlink("/proc/self/ns/net") if netns is None else netns
+    caps = {line.split(":", 1)[0]: int(line.split(":", 1)[1], 16)
+            for line in status.splitlines() if line.startswith("Cap")}
+    x02.require(caps.get("CapEff") == WORKER_CAPABILITIES,
+                "X02 tc injection requires exactly NET_ADMIN and NET_RAW")
+    x02.require(isinstance(host_netns, str) and host_netns.startswith("net:[")
+                and netns.startswith("net:[") and netns != host_netns,
+                "X02 tc injection refuses the host network namespace")
+    return {"cap_eff": caps["CapEff"], "netns": netns, "host_netns": host_netns,
+            "euid": os.geteuid()}
 
 
 def write_once(path: Path, value: dict) -> None:
@@ -35,9 +56,9 @@ def common_height(snapshot: dict) -> int:
     return snapshot["common_seqno"]
 
 
-def collect(policy: dict, sha: str, root: Path) -> dict:
+def collect(policy: dict, sha: str, root: Path, host_netns: str) -> dict:
     x02.require_source_commit(policy)
-    x02.require(os.geteuid() == 0, "X02 tc injection requires root/CAP_NET_ADMIN")
+    access = private_net_admin(host_netns)
     x02.require(not root.exists(), "X02 output directory already exists")
     root.mkdir(parents=True)
     events: list[dict] = []
@@ -47,7 +68,7 @@ def collect(policy: dict, sha: str, root: Path) -> dict:
     attempted_install: str | None = None
     attempted_clsact = False
     write_once(root / "invocation.json", {"argv": sys.argv,
-               "euid": os.geteuid(), "pid": os.getpid(),
+               "euid": os.geteuid(), "access": access, "pid": os.getpid(),
                "source_commit": policy["source_commit"], "policy_sha256": sha})
     before = x02.capture_tc(policy)
     write_once(root / "tc-before.json", before)
@@ -183,9 +204,10 @@ def main() -> None:
     parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--policy-sha256", required=True)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument("--host-netns", required=True)
     args = parser.parse_args()
     policy = x02.read_policy(args.policy, args.policy_sha256)
-    result = collect(policy, args.policy_sha256, args.output_dir)
+    result = collect(policy, args.policy_sha256, args.output_dir, args.host_netns)
     print(json.dumps(result, sort_keys=True))
     x02.require(result["status"] == "passed", "X02 directed fault run failed; originals retained")
 

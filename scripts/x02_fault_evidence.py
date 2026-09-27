@@ -1488,16 +1488,24 @@ def verify(policy: dict, policy_sha: str, snapshots: list[dict], events: list[di
     anchor3 = phases["baseline"][-1][1]["common"][2]
     node4_cut_installed_at = max(event_rows[(r["id"], "install")][1]
                                  for r in three_rules)
-    for name in live3:
-        for height in range(anchor3 + 1, three[-1]["common"][2] + 1):
+    post_cut_heights = []
+    for height in range(anchor3 + 1, three[-1]["common"][2] + 1):
+        post_cut = True
+        for name in live3:
             value = three[-1]["range_ids"][name].get(height)
             require(value is not None, "3/4 per-height full ID is absent")
             marker = three[-1]["journal_seen"][name].get(value[2])
             require(marker is not None and marker[:2] == (value[3], value[4]),
                     "3/4 per-height full ID lacks native finalized marker")
-            require(marker[3] == "three_of_four" and node4_cut_installed_at < marker[2]
-                    and marker[2] <= marker[5],
-                    "3/4 native finalized marker predates node4 cut or fault segment")
+            require(marker[3] == "three_of_four" and marker[2] <= marker[5],
+                    "3/4 native finalized marker differs from fault segment")
+            post_cut &= node4_cut_installed_at < marker[2]
+        if post_cut:
+            post_cut_heights.append(height)
+    require(len(post_cut_heights) >= 2
+            and post_cut_heights[-2:] == list(range(three[-1]["common"][2] - 1,
+                                                 three[-1]["common"][2] + 1)),
+            "3/4 lacks two consecutive native finalized heights after node4 cut")
     require((max(three[-1]["tip_times"][n] for n in live3)
              - node4_cut_installed_at) / 1e9 <= thresholds["three_max_seconds"],
             "3/4 common progress missed 120-second window")
