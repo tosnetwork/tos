@@ -374,14 +374,15 @@ const TRAVERSAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS canonical_shard_front
         PRIMARY KEY(batch_mc_seqno, address)
     );
     CREATE TABLE IF NOT EXISTS indexer_address_refresh (
-        address TEXT PRIMARY KEY,
+        address TEXT NOT NULL,
         touch_count INTEGER NOT NULL,
         last_block_seqno INTEGER NOT NULL,
         last_gen_utime INTEGER NOT NULL,
         mc_seqno INTEGER NOT NULL,
         mc_root_hash TEXT NOT NULL,
         mc_file_hash TEXT NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0
+        attempts INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(address, mc_seqno)
     );";
 
 /// Tables holding canonical progress; emptied together whenever the index
@@ -2799,7 +2800,12 @@ mod nominator_ledger_tests {
         store.set_remote_mc_tip(published.seqno).unwrap();
         assert_eq!(code(&store), "available");
         store.set_remote_mc_tip(published.seqno + 5).unwrap();
-        assert_eq!(code(&store), "available_lagging", "chain tip ahead of the index");
+        assert_eq!(
+            code(&store),
+            "nominator_ledger_behind_chain",
+            "an index behind the chain tip is never served as a success"
+        );
+        store.set_remote_mc_tip(published.seqno).unwrap();
         let behind = MasterchainCheckpoint { seqno: published.seqno - 1, ..published.clone() };
         store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&behind)).unwrap();
         assert_eq!(code(&store), "nominator_ledger_behind_index");

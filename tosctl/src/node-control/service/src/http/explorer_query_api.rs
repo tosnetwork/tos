@@ -654,7 +654,8 @@ pub struct ExplorerNominatorPositionsResponse {
 /// over canonical history and anchored at the published masterchain block.
 /// Otherwise the answer is 503 with a stable `kind`:
 /// `nominator_ledger_rebuild_required`, `nominator_ledger_rebuilding`,
-/// `nominator_ledger_behind_index` or `nominator_ledger_not_canonical`.
+/// `nominator_ledger_behind_index`, `nominator_ledger_behind_chain` or
+/// `nominator_ledger_not_canonical`.
 #[utoipa::path(get, path = "/explorer/staking/nominator/{address}", params(
     ("address" = String, Path, description = "basechain address of the depositor")
 ), responses(

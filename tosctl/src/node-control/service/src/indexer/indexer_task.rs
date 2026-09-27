@@ -28,7 +28,7 @@
 //! these kinds is *always* re-decoded when it reappears in a later block,
 //! since that is exactly how a status change (accept/settle/rule/...)
 //! becomes visible.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -750,15 +750,37 @@ async fn drain_address_refresh(
     probe_budget: &ProbeBudget,
     limit: usize,
 ) -> anyhow::Result<()> {
-    for refresh in store.address_refresh_queue(limit)? {
+    let queue = store.address_refresh_queue(limit)?;
+    // The queue is ordered by height. An address whose earlier observation is
+    // still owed is not observed at a later height in the same pass: a pool is
+    // folded in strictly in height order, and an unreadable height keeps it
+    // (and the ledger) waiting rather than being skipped.
+    let mut waiting: HashSet<String> = HashSet::new();
+    let mut latest: HashMap<String, u32> = HashMap::new();
+    for refresh in &queue {
+        let entry = latest.entry(refresh.address.clone()).or_insert(refresh.checkpoint.seqno);
+        *entry = (*entry).max(refresh.checkpoint.seqno);
+    }
+    for refresh in queue {
+        if waiting.contains(&refresh.address) {
+            continue;
+        }
         let kind_before = store.kind_of(&refresh.address)?;
+        let ledger_relevant = match kind_before.as_deref() {
+            None | Some("unclassified") => true,
+            Some(kind) => kind == NOMINATOR_POOL_KIND,
+        };
+        // Other contract kinds read latest state, so only their last queued
+        // height needs a visit.
+        if !ledger_relevant
+            && latest.get(&refresh.address).is_some_and(|seqno| *seqno > refresh.checkpoint.seqno)
+        {
+            store.complete_address_refresh(&refresh)?;
+            continue;
+        }
         match visit_address(chain_provider, store, known, &refresh, probe_budget).await {
             Ok(()) => store.complete_address_refresh(&refresh)?,
             Err(e) => {
-                let ledger_relevant = match kind_before.as_deref() {
-                    None | Some("unclassified") => true,
-                    Some(kind) => kind == NOMINATOR_POOL_KIND,
-                };
                 if ledger_relevant {
                     tracing::warn!(
                         target: "indexer",
@@ -768,6 +790,7 @@ async fn drain_address_refresh(
                         "failed to index account; keeping it for another attempt"
                     );
                     store.defer_address_refresh(&refresh)?;
+                    waiting.insert(refresh.address.clone());
                 } else {
                     tracing::warn!(
                         target: "indexer",

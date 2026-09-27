@@ -458,10 +458,17 @@ impl IndexerStore {
                         code: "nominator_ledger_not_canonical",
                         reason: "a ledger row is not bound to published history".to_owned(),
                     }
+                } else if tip.is_some_and(|tip| published.seqno >= tip) {
+                    LedgerAvailability::Available { caught_up: true, as_of }
                 } else {
-                    LedgerAvailability::Available {
-                        caught_up: tip.is_some_and(|tip| published.seqno >= tip),
-                        as_of,
+                    // Clients may ignore freshness fields, so amounts from an index
+                    // that trails the chain are never served as a success.
+                    LedgerAvailability::Unavailable {
+                        code: "nominator_ledger_behind_chain",
+                        reason: format!(
+                            "the index has published masterchain {} and the chain is further ahead",
+                            published.seqno
+                        ),
                     }
                 }
             }

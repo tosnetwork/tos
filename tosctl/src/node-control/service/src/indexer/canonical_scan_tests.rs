@@ -1226,7 +1226,7 @@ async fn a_nominator_list_read_from_the_wrong_block_is_never_folded_in() {
 }
 
 #[tokio::test]
-async fn a_recovered_pinned_read_counts_the_missed_interval_as_a_gap() {
+async fn an_unreadable_historical_height_keeps_the_ledger_unavailable() {
     let chain = FakeChain::new();
     // The node no longer serves height 1's state, only height 2 onwards.
     chain.with(|s| s.oldest_servable_seqno = 2);
@@ -1234,14 +1234,53 @@ async fn a_recovered_pinned_read_counts_the_missed_interval_as_a_gap() {
     let store = IndexerStore::open_in_memory().unwrap();
     run_until(&chain, &store, &limits(10, 100), 1, 2).await;
     assert_eq!(api(&store, ALICE_KEY).0, 503);
-    // Another touch at height 2 becomes readable; that one snapshot cannot
-    // say what happened at height 1 in between.
+    // A later touch at a readable height does not stand in for height 1: the
+    // pool is never observed at height 2 while height 1 is still owed.
     pool_height(&chain, 2, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_200, 0)]));
     run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    for _ in 0..3 {
+        run_tick(&chain, &store, &limits(10, 100)).await.unwrap();
+    }
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 503, "{}", response.1);
+    // Still replaying from genesis: the replay cannot finish past the owed height.
+    let kind = response.1["error"]["kind"].as_str().unwrap_or_default().to_owned();
+    assert!(
+        kind == "nominator_ledger_rebuilding" || kind == "nominator_ledger_behind_index",
+        "{kind}"
+    );
+    let reads = chain.with(|s| s.pinned_reads.clone());
+    assert!(reads.iter().all(|(_, seqno)| *seqno == 1), "no observation skipped ahead: {reads:?}");
+}
+
+#[tokio::test]
+async fn a_transient_read_failure_delays_but_skips_no_height() {
+    let chain = FakeChain::new();
+    chain.with(|s| s.oldest_servable_seqno = 2);
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 1, 2).await;
+    pool_height(&chain, 2, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_200, 0)]));
+    run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    assert_eq!(api(&store, ALICE_KEY).0, 503);
+    // Height 1 becomes readable again: it is observed first, then height 2,
+    // and the served amount is height 2's, not a stale height 1 value.
+    chain.with(|s| s.oldest_servable_seqno = 0);
+    for _ in 0..3 {
+        run_tick(&chain, &store, &limits(10, 100)).await.unwrap();
+    }
     let response = api(&store, ALICE_KEY);
     assert_eq!(response.0, 200, "{}", response.1);
-    assert_eq!(response.1["result"][0]["coverage_gap_count"], 1);
-    assert_eq!(response.1["attribution_complete"], false);
-    let reads = chain.with(|s| s.pinned_reads.clone());
-    assert!(reads.iter().all(|(_, seqno)| *seqno == 2), "{reads:?}");
+    assert_eq!(response.1["result"][0]["amount"], "1200", "height 2's amount, not height 1's");
+    assert_eq!(response.1["result"][0]["coverage_gap_count"], 0);
+    let reads: Vec<u32> = chain.with(|s| {
+        s.pinned_reads
+            .iter()
+            .filter(|(method, _)| method == "list_nominators")
+            .map(|(_, seqno)| *seqno)
+            .collect()
+    });
+    let first_two = reads.iter().position(|seqno| *seqno == 2).expect("height 2 observed");
+    assert!(reads[..first_two].contains(&1), "height 1 observed before height 2: {reads:?}");
+    assert!(!reads[first_two..].contains(&1), "no height observed out of order: {reads:?}");
 }

@@ -685,13 +685,13 @@ impl IndexerStore {
                  mc_seqno, mc_root_hash, mc_file_hash, attempts)
              SELECT address, touch_count, last_block_seqno, last_gen_utime, ?1, ?2, ?3, 0
              FROM indexer_touched_address WHERE batch_mc_seqno = ?1
-             ON CONFLICT(address) DO UPDATE SET
-                touch_count = touch_count + excluded.touch_count,
-                last_block_seqno = MAX(last_block_seqno, excluded.last_block_seqno),
-                last_gen_utime = MAX(last_gen_utime, excluded.last_gen_utime),
-                mc_seqno = excluded.mc_seqno,
+             ON CONFLICT(address, mc_seqno) DO UPDATE SET
+                touch_count = excluded.touch_count,
+                last_block_seqno = excluded.last_block_seqno,
+                last_gen_utime = excluded.last_gen_utime,
                 mc_root_hash = excluded.mc_root_hash,
-                mc_file_hash = excluded.mc_file_hash",
+                mc_file_hash = excluded.mc_file_hash,
+                attempts = 0",
             params![anchor.seqno, anchor.root_hash, anchor.file_hash],
         )?;
         clear_batch_metadata(&tx)?;
@@ -756,14 +756,14 @@ impl IndexerStore {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
-    /// Removes a refresh row, but only if it is still the one that was
-    /// processed: a later publish may have merged new touches into it.
+    /// Removes the refresh row for one address at one published height. Rows
+    /// of later heights for the same address stay queued: each published
+    /// height is observed at its own checkpoint, never folded into another.
     pub fn complete_address_refresh(&self, refresh: &AddressRefresh) -> anyhow::Result<()> {
         let conn = self.lock()?;
         conn.execute(
-            "DELETE FROM indexer_address_refresh
-             WHERE address = ?1 AND mc_seqno = ?2 AND touch_count = ?3",
-            params![refresh.address, refresh.checkpoint.seqno, refresh.touch_count],
+            "DELETE FROM indexer_address_refresh WHERE address = ?1 AND mc_seqno = ?2",
+            params![refresh.address, refresh.checkpoint.seqno],
         )?;
         Ok(())
     }
