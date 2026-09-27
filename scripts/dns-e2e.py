@@ -232,7 +232,7 @@ async def governance_receipt(
             config_rows = transactions_after(
                 config_addr, config_lt, rpc_timeout=max(0.1, min(10, deadline - time.monotonic()))
             )
-        except TimeoutError, urllib.error.URLError:
+        except (TimeoutError, urllib.error.URLError):
             await asyncio.sleep(1)
             continue
         scanned_wallet, scanned_config = len(wallet_rows), len(config_rows)
