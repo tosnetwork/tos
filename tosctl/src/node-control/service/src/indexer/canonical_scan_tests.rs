@@ -64,6 +64,9 @@ pub(super) struct ChainState {
     pub(super) shards: HashMap<u32, Vec<BlockIdExt>>,
     pub(super) pools: HashMap<String, BTreeMap<u32, PoolFixture>>,
     pub(super) historical_get_methods: bool,
+    /// Pinned reads below this masterchain seqno fail, like a node that has
+    /// pruned older state.
+    pub(super) oldest_servable_seqno: u32,
     pub(super) wrong_identity_method: Option<String>,
     pub(super) fail_get_shards: bool,
     pub(super) fail_parents_of: HashSet<Key>,
@@ -229,7 +232,10 @@ impl ChainProvider for FakeChain {
         checkpoint: &MasterchainCheckpoint,
     ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
         let mut s = self.state.lock().unwrap();
-        anyhow::ensure!(s.historical_get_methods, "historical state is unavailable");
+        anyhow::ensure!(
+            s.historical_get_methods && checkpoint.seqno >= s.oldest_servable_seqno,
+            "historical state is unavailable"
+        );
         let master = s
             .blocks
             .get(&(-1, MC, checkpoint.seqno))
@@ -930,4 +936,251 @@ async fn pruning_right_behind_the_watermark_never_costs_traversal_progress() {
     for block in &blocks {
         assert_eq!(chain.scans_of(block), 1, "block {} re-walked after pruning", block.seqno);
     }
+}
+
+// ─── Nominator ledger ─────────────────────────────────────────────────────
+
+const POOL_HEX: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+const ALICE_KEY: [u8; 32] = [0xA1; 32];
+const BOB_KEY: [u8; 32] = [0xB0; 32];
+const IDLE: i32 = 0;
+const STAKED: i32 = 2;
+
+fn pool_address() -> String {
+    format!("-1:{POOL_HEX}")
+}
+
+fn nominator(key: [u8; 32]) -> String {
+    format!("0:{}", hex::encode(key))
+}
+
+/// Masterchain block `seqno` on `fork` in which the pool has `touches`
+/// transactions and, from then on, the given state.
+fn pool_height(
+    chain: &FakeChain,
+    seqno: u32,
+    fork: u8,
+    touches: usize,
+    fixture: Option<PoolFixture>,
+) -> BlockIdExt {
+    let master = chain.add_master(seqno, fork, &[]);
+    for touch in 0..touches {
+        chain.add_tx(&master, POOL_HEX, &format!("tx-pool-{seqno}-{fork}-{touch}"));
+    }
+    if let Some(fixture) = fixture {
+        chain.with(|s| s.pools.entry(pool_address()).or_default().insert(seqno, fixture));
+    }
+    master
+}
+
+fn fixture(state: i32, nominators: &[([u8; 32], u64, u64)]) -> Option<PoolFixture> {
+    Some(PoolFixture { state, nominators: nominators.to_vec() })
+}
+
+/// The API's answer, as the JSON body a client would receive, with the
+/// HTTP status.
+fn api(store: &IndexerStore, who: [u8; 32]) -> (u16, serde_json::Value) {
+    match crate::http::explorer_query_api::nominator_positions_response(store, nominator(who)) {
+        Ok(response) => (200, serde_json::to_value(response).unwrap()),
+        Err(error) => (
+            error.status().as_u16(),
+            serde_json::json!({"ok": false, "error": {"kind": error.kind(), "message": error.message()}}),
+        ),
+    }
+}
+
+fn record_response(name: &str, response: &(u16, serde_json::Value)) {
+    if let Ok(dir) = std::env::var("INDEXER_TRACE_DIR") {
+        let body = serde_json::to_string_pretty(&serde_json::json!({
+            "http_status": response.0,
+            "body": response.1,
+        }))
+        .unwrap();
+        std::fs::write(format!("{dir}/{name}.json"), body + "\n").unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_ledger_fork_switch_is_unavailable_then_carries_only_the_new_fork() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    pool_height(&chain, 2, 0, 1, fixture(STAKED, &[(ALICE_KEY, 1_000, 0)]));
+    // Fork A: the round pays Alice 100.
+    pool_height(&chain, 3, 0xA, 1, fixture(IDLE, &[(ALICE_KEY, 1_100, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 3, 2).await;
+    let on_a = api(&store, ALICE_KEY);
+    record_response("ledger-fork-a-valid", &on_a);
+    assert_eq!(on_a.0, 200, "{}", on_a.1);
+    assert_eq!(on_a.1["rewarded_total"], "100");
+    assert_eq!(on_a.1["attribution_complete"], true);
+    assert_eq!(on_a.1["caught_up"], true);
+    assert_eq!(on_a.1["as_of_mc_seqno"], 3);
+    assert_eq!(on_a.1["as_of_mc_root_hash"], hex_of(&block_id(-1, MC, 3, 0xA)));
+
+    // Height 3 is reorganized onto fork B, where the round paid nothing.
+    pool_height(&chain, 3, 0xB, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    pool_height(&chain, 4, 0xB, 0, None);
+    let outcome = run_tick(&chain, &store, &limits(1, 100)).await.unwrap();
+    assert_eq!(outcome.published_mc_seqno, 1, "the replay restarts from genesis");
+    let during = api(&store, ALICE_KEY);
+    record_response("ledger-fork-switch-unavailable", &during);
+    assert_eq!(during.0, 503);
+    assert_eq!(during.1["error"]["kind"], "nominator_ledger_rebuilding");
+
+    run_until(&chain, &store, &limits(10, 100), 4, 2).await;
+    let on_b = api(&store, ALICE_KEY);
+    record_response("ledger-fork-b-valid", &on_b);
+    assert_eq!(on_b.0, 200, "{}", on_b.1);
+    assert_eq!(on_b.1["rewarded_total"], "0", "fork A's reward must not survive");
+    assert_eq!(on_b.1["result"][0]["deposited_total"], "1000");
+    assert_eq!(on_b.1["result"][0]["amount"], "1000");
+    assert_eq!(on_b.1["result"][0]["last_mc_root_hash"], hex_of(&block_id(-1, MC, 3, 0xB)));
+    assert_eq!(on_b.1["as_of_mc_seqno"], 4);
+    assert_eq!(on_b.1["as_of_mc_root_hash"], hex_of(&block_id(-1, MC, 4, 0xB)));
+    // Every pool read was pinned to the height that made its touch canonical.
+    let reads = chain.with(|s| s.pinned_reads.clone());
+    assert!(reads.iter().all(|(_, seqno)| (1..=3).contains(seqno)), "{reads:?}");
+}
+
+#[tokio::test]
+async fn a_migrated_v10_ledger_is_not_complete_before_the_replay_finishes() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    pool_height(&chain, 2, 0, 0, None);
+    pool_height(&chain, 3, 0, 0, None);
+    let (_dir, path) = temp_db();
+    crate::indexer::store::write_v10_database_for_tests(&path).unwrap();
+    let store = IndexerStore::open_for_tests(&path).unwrap();
+    let Err(before) =
+        crate::http::explorer_query_api::nominator_positions_response(&store, "0:1111".to_owned())
+    else {
+        panic!("a migrated v10 ledger was served before any replay");
+    };
+    assert_eq!(before.kind(), "nominator_ledger_rebuild_required");
+    run_tick(&chain, &store, &limits(1, 100)).await.unwrap();
+    assert_eq!(api(&store, ALICE_KEY).1["error"]["kind"], "nominator_ledger_rebuilding");
+    run_until(&chain, &store, &limits(10, 100), 3, 2).await;
+    let after = api(&store, ALICE_KEY);
+    assert_eq!(after.0, 200, "{}", after.1);
+    assert_eq!(after.1["attribution_complete"], true);
+    assert_eq!(after.1["result"][0]["deposited_total"], "1000");
+    let old =
+        crate::http::explorer_query_api::nominator_positions_response(&store, "0:1111".to_owned())
+            .unwrap();
+    assert!(old.result.is_empty(), "the unprovable v10 row is gone");
+}
+
+#[tokio::test]
+async fn a_full_withdrawal_zeroes_the_position_and_a_redeposit_starts_from_zero() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0), (BOB_KEY, 50, 0)]));
+    pool_height(&chain, 2, 0, 1, fixture(IDLE, &[(BOB_KEY, 50, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    let gone = api(&store, ALICE_KEY);
+    assert_eq!(gone.0, 200, "{}", gone.1);
+    assert_eq!(gone.1["result"][0]["amount"], "0", "a withdrawn position is not still held");
+    assert_eq!(gone.1["result"][0]["deposited_total"], "1000");
+    pool_height(&chain, 3, 0, 1, fixture(IDLE, &[(ALICE_KEY, 300, 0), (BOB_KEY, 50, 0)]));
+    run_until(&chain, &store, &limits(10, 100), 3, 2).await;
+    let back = api(&store, ALICE_KEY);
+    assert_eq!(back.1["result"][0]["amount"], "300");
+    assert_eq!(back.1["result"][0]["deposited_total"], "1300");
+    assert_eq!(back.1["result"][0]["unattributed_total"], "0");
+    assert_eq!(back.1["attribution_complete"], true);
+}
+
+#[tokio::test]
+async fn several_touches_in_one_interval_make_attribution_incomplete() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    // A deposit and a second transaction land in one masterchain height.
+    pool_height(&chain, 2, 0, 2, fixture(IDLE, &[(ALICE_KEY, 1_500, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    let response = api(&store, ALICE_KEY);
+    record_response("ledger-coverage-gap", &response);
+    assert_eq!(response.0, 200);
+    assert_eq!(response.1["result"][0]["coverage_gap_count"], 1);
+    assert_eq!(response.1["result"][0]["unattributed_total"], "0");
+    assert_eq!(response.1["result"][0]["attribution_complete"], false);
+    assert_eq!(response.1["attribution_complete"], false);
+}
+
+#[tokio::test]
+async fn unexplained_change_makes_attribution_incomplete() {
+    let chain = FakeChain::new();
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    // Principal shrinks while idle with the dictionary entry still present:
+    // no pool.fc rule explains it.
+    pool_height(&chain, 2, 0, 1, fixture(IDLE, &[(ALICE_KEY, 800, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 200);
+    assert_eq!(response.1["result"][0]["unattributed_total"], "200");
+    assert_eq!(response.1["result"][0]["coverage_gap_count"], 0);
+    assert_eq!(response.1["attribution_complete"], false);
+}
+
+async fn assert_ledger_stays_unavailable(chain: &Arc<FakeChain>) {
+    pool_height(chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    pool_height(chain, 2, 0, 0, None);
+    let store = IndexerStore::open_in_memory().unwrap();
+    for _ in 0..3 {
+        run_tick(chain, &store, &limits(10, 100)).await.unwrap();
+    }
+    assert_eq!(store.published_mc_seqno().unwrap(), 2, "the explorer is not held back");
+    let response = api(&store, ALICE_KEY);
+    record_response("ledger-historical-unavailable", &response);
+    assert_eq!(response.0, 503);
+    assert_eq!(response.1["error"]["kind"], "nominator_ledger_rebuilding");
+    assert!(store.nominator_ledger_entries(&nominator(ALICE_KEY)).unwrap().is_empty());
+    assert_eq!(store.address_refresh_queue(10).unwrap().len(), 1, "the observation is retried");
+}
+
+#[tokio::test]
+async fn without_historical_state_the_ledger_stays_unavailable() {
+    let chain = FakeChain::new();
+    chain.with(|s| s.historical_get_methods = false);
+    assert_ledger_stays_unavailable(&chain).await;
+    assert!(chain.with(|s| s.pinned_reads.is_empty()));
+}
+
+#[tokio::test]
+async fn a_pool_data_read_from_the_wrong_block_is_never_folded_in() {
+    let chain = FakeChain::new();
+    chain.with(|s| s.wrong_identity_method = Some("get_pool_data".to_owned()));
+    assert_ledger_stays_unavailable(&chain).await;
+}
+
+#[tokio::test]
+async fn a_nominator_list_read_from_the_wrong_block_is_never_folded_in() {
+    let chain = FakeChain::new();
+    chain.with(|s| s.wrong_identity_method = Some("list_nominators".to_owned()));
+    assert_ledger_stays_unavailable(&chain).await;
+    // The first half of the snapshot was read, and still nothing was kept.
+    assert!(chain.with(|s| s.pinned_reads.iter().any(|(method, _)| method == "get_pool_data")));
+}
+
+#[tokio::test]
+async fn a_recovered_pinned_read_counts_the_missed_interval_as_a_gap() {
+    let chain = FakeChain::new();
+    // The node no longer serves height 1's state, only height 2 onwards.
+    chain.with(|s| s.oldest_servable_seqno = 2);
+    pool_height(&chain, 1, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_000, 0)]));
+    let store = IndexerStore::open_in_memory().unwrap();
+    run_until(&chain, &store, &limits(10, 100), 1, 2).await;
+    assert_eq!(api(&store, ALICE_KEY).0, 503);
+    // Another touch at height 2 becomes readable; that one snapshot cannot
+    // say what happened at height 1 in between.
+    pool_height(&chain, 2, 0, 1, fixture(IDLE, &[(ALICE_KEY, 1_200, 0)]));
+    run_until(&chain, &store, &limits(10, 100), 2, 2).await;
+    let response = api(&store, ALICE_KEY);
+    assert_eq!(response.0, 200, "{}", response.1);
+    assert_eq!(response.1["result"][0]["coverage_gap_count"], 1);
+    assert_eq!(response.1["attribution_complete"], false);
+    let reads = chain.with(|s| s.pinned_reads.clone());
+    assert!(reads.iter().all(|(_, seqno)| *seqno == 2), "{reads:?}");
 }

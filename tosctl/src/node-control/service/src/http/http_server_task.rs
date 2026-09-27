@@ -420,6 +420,12 @@ impl AppError {
         Self::with_kind(axum::http::StatusCode::SERVICE_UNAVAILABLE, "rpc_unavailable", message)
     }
 
+    /// The data exists but cannot be served truthfully right now; `kind` is a
+    /// stable machine-readable reason clients can branch on.
+    pub(crate) fn unavailable(kind: &'static str, message: impl Into<String>) -> Self {
+        Self::with_kind(axum::http::StatusCode::SERVICE_UNAVAILABLE, kind, message)
+    }
+
     /// The get-method call succeeded but the returned TVM stack did not
     /// decode into the expected contract data shape.
     pub(crate) fn invalid_contract_state(message: impl Into<String>) -> Self {
@@ -433,6 +439,11 @@ impl AppError {
     /// A chain query exceeded its per-request timeout budget.
     pub(crate) fn timeout(message: impl Into<String>) -> Self {
         Self::with_kind(axum::http::StatusCode::GATEWAY_TIMEOUT, "timeout", message)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn status(&self) -> axum::http::StatusCode {
+        self.status
     }
 
     pub(crate) fn message(&self) -> &str {

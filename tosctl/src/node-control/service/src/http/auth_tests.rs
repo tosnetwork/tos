@@ -637,6 +637,53 @@ async fn explorer_block_lookup_accepts_the_nodes_base64_hash_format() {
 }
 
 #[tokio::test]
+async fn nominator_totals_fail_closed_until_the_ledger_is_canonical() {
+    use crate::indexer::store::LedgerStatus;
+    let st = state_no_auth().await;
+    let alice = format!("0:{}", "a1".repeat(32));
+    let uri = format!("/explorer/staking/nominator/{alice}");
+
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 503);
+    let body = json(response).await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"]["kind"], "nominator_ledger_rebuild_required");
+
+    // Replaying: rows exist but must not be served.
+    let store = &st.indexer_store;
+    assert!(store.begin_nominator_ledger_rebuild().unwrap());
+    store.publish_through_for_tests(5).unwrap();
+    let published = store.canonical_state().unwrap().unwrap();
+    store
+        .observe_nominator_snapshot("-1:pool", 0, 1, &[(alice.clone(), 900, 0)], &published, 1)
+        .unwrap();
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(json(response).await["error"]["kind"], "nominator_ledger_rebuilding");
+
+    // Valid and anchored at the published block: served with provenance.
+    store.set_remote_mc_tip(5).unwrap();
+    assert_eq!(store.settle_nominator_ledger().unwrap().status, LedgerStatus::Valid);
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body = json(response).await;
+    assert_eq!(body["as_of_mc_seqno"], 5);
+    assert_eq!(body["as_of_mc_root_hash"], "00".repeat(32));
+    assert_eq!(body["as_of_mc_file_hash"], "00".repeat(32));
+    assert_eq!(body["caught_up"], true);
+    assert_eq!(body["attribution_complete"], true);
+    assert_eq!(body["result"][0]["amount"], "900");
+    assert_eq!(body["result"][0]["coverage_gap_count"], 0);
+    assert_eq!(body["result"][0]["last_mc_seqno"], 5);
+
+    // The index moves on while the pool's next observation is not folded in.
+    store.publish_through_for_tests(6).unwrap();
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(json(response).await["error"]["kind"], "nominator_ledger_behind_index");
+}
+
+#[tokio::test]
 async fn login_endpoint_always_public() {
     let st = state_with_auth().await;
     let resp = app(st)

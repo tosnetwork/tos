@@ -1527,6 +1527,45 @@ impl IndexerStore {
     }
 }
 
+/// Writes a database exactly as a v10 binary left it: a ledger that looks
+/// complete, explorer history and checkpoints, and no provenance anywhere.
+#[cfg(test)]
+pub(crate) fn write_v10_database_for_tests(path: &Path) -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open(path)?;
+    conn.execute_batch(
+        "CREATE TABLE indexer_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE TABLE indexed_contracts (address TEXT PRIMARY KEY, kind TEXT NOT NULL,
+            creator TEXT, counterparty TEXT, status TEXT, deadline INTEGER,
+            last_seqno INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            dto_json TEXT NOT NULL);
+         CREATE TABLE service_request_lifecycle (service_address TEXT NOT NULL,
+            request_id TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL,
+            dto_json TEXT NOT NULL, PRIMARY KEY(service_address, request_id));
+         CREATE TABLE nominator_ledger (pool_address TEXT NOT NULL,
+            nominator_address TEXT NOT NULL,
+            deposited_total INTEGER NOT NULL DEFAULT 0,
+            rewarded_total INTEGER NOT NULL DEFAULT 0,
+            unattributed_total INTEGER NOT NULL DEFAULT 0,
+            last_amount INTEGER NOT NULL DEFAULT 0,
+            last_pending INTEGER NOT NULL DEFAULT 0,
+            last_pool_state INTEGER NOT NULL DEFAULT 0,
+            first_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            PRIMARY KEY(pool_address, nominator_address));",
+    )?;
+    conn.execute_batch(EXPLORER_SCHEMA)?;
+    conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA)?;
+    conn.execute_batch(DNS_HISTORY_SCHEMA)?;
+    conn.execute_batch(
+        "INSERT INTO indexer_meta VALUES ('schema_version', '10');
+         INSERT INTO indexer_meta VALUES ('checkpoint:-1:-9223372036854775808', '900');
+         INSERT INTO nominator_ledger (pool_address, nominator_address, deposited_total,
+            rewarded_total, unattributed_total, last_amount, first_seen_at, updated_at)
+            VALUES ('-1:aaaa', '0:1111', 1000, 250, 0, 1250, 1, 2);
+         INSERT INTO explorer_blocks VALUES (-1, -9223372036854775808, 900, 'r', 'f', 1, 1, 900);",
+    )?;
+    Ok(())
+}
+
 fn read_ledger_entries(
     conn: &Connection,
     nominator_address: &str,
@@ -2777,42 +2816,7 @@ mod nominator_ledger_tests {
     fn a_v10_ledger_is_never_served_before_a_genesis_replay() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("v10.sqlite");
-        {
-            let conn = rusqlite::Connection::open(&path).unwrap();
-            conn.execute_batch(
-                "CREATE TABLE indexer_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                 CREATE TABLE indexed_contracts (address TEXT PRIMARY KEY, kind TEXT NOT NULL,
-                    creator TEXT, counterparty TEXT, status TEXT, deadline INTEGER,
-                    last_seqno INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                    dto_json TEXT NOT NULL);
-                 CREATE TABLE service_request_lifecycle (service_address TEXT NOT NULL,
-                    request_id TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL,
-                    dto_json TEXT NOT NULL, PRIMARY KEY(service_address, request_id));
-                 CREATE TABLE nominator_ledger (pool_address TEXT NOT NULL,
-                    nominator_address TEXT NOT NULL,
-                    deposited_total INTEGER NOT NULL DEFAULT 0,
-                    rewarded_total INTEGER NOT NULL DEFAULT 0,
-                    unattributed_total INTEGER NOT NULL DEFAULT 0,
-                    last_amount INTEGER NOT NULL DEFAULT 0,
-                    last_pending INTEGER NOT NULL DEFAULT 0,
-                    last_pool_state INTEGER NOT NULL DEFAULT 0,
-                    first_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-                    PRIMARY KEY(pool_address, nominator_address));",
-            )
-            .unwrap();
-            conn.execute_batch(super::EXPLORER_SCHEMA).unwrap();
-            conn.execute_batch(super::EXPLORER_ORDER_INDEX_SCHEMA).unwrap();
-            conn.execute_batch(super::DNS_HISTORY_SCHEMA).unwrap();
-            conn.execute_batch(
-                "INSERT INTO indexer_meta VALUES ('schema_version', '10');
-                 INSERT INTO indexer_meta VALUES ('checkpoint:-1:-9223372036854775808', '900');
-                 INSERT INTO nominator_ledger (pool_address, nominator_address, deposited_total,
-                    rewarded_total, unattributed_total, last_amount, first_seen_at, updated_at)
-                    VALUES ('-1:aaaa', '0:1111', 1000, 250, 0, 1250, 1, 2);
-                 INSERT INTO explorer_blocks VALUES (-1, -9223372036854775808, 900, 'r', 'f', 1, 1, 900);",
-            )
-            .unwrap();
-        }
+        super::write_v10_database_for_tests(&path).unwrap();
         let store = IndexerStore::open(&path).unwrap();
         let state = store.nominator_ledger_state().unwrap();
         assert_eq!(state.status, LedgerStatus::RebuildRequired);
