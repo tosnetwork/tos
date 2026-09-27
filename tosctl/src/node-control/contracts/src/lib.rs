@@ -79,8 +79,8 @@ pub use liquid_controller::{
 };
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{
-    NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl,
-    NominatorPosition,
+    NominatorData, NominatorPoolData, NominatorPoolSnapshot, NominatorPoolWrapper,
+    NominatorPoolWrapperImpl, NominatorPosition, read_nominator_pool_snapshot_at,
 };
 pub use prediction_market::{
     PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,

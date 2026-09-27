@@ -13,7 +13,7 @@
 use super::http_server_task::{ApiErrorResponse, AppError, AppState};
 use crate::indexer::{
     DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
-    ListFilters,
+    IndexerStore, LedgerAvailability, ListFilters, attribution_complete,
 };
 use crate::runtime_config::RuntimeConfig;
 use axum::extract::{Path, Query, State};
@@ -609,9 +609,16 @@ pub struct ExplorerNominatorPositionDto {
     /// because a total that silently absorbs what it could not account for is
     /// worse than one that says so.
     pub unattributed_total: String,
-    /// False when unattributed_total is non-zero: the earnings figure is then
-    /// a lower bound rather than the whole story.
+    /// Observation intervals in which the pool changed more than once, so one
+    /// end-of-interval snapshot could not attribute each change.
+    pub coverage_gap_count: u64,
+    /// True only when unattributed_total and coverage_gap_count are both
+    /// zero; otherwise the earnings figure is a lower bound.
     pub attribution_complete: bool,
+    /// Published masterchain block of this position's last observation.
+    pub last_mc_seqno: u32,
+    pub last_mc_root_hash: String,
+    pub last_mc_file_hash: String,
     pub first_seen_at: u64,
     pub updated_at: u64,
 }
@@ -620,6 +627,13 @@ pub struct ExplorerNominatorPositionDto {
 pub struct ExplorerNominatorPositionsResponse {
     pub ok: bool,
     pub address: String,
+    /// The published masterchain block the totals are exact as of.
+    pub as_of_mc_seqno: u32,
+    pub as_of_mc_root_hash: String,
+    pub as_of_mc_file_hash: String,
+    /// Whether the published index had reached the chain tip seen by the
+    /// indexer's last tick. The totals are exact as of `as_of_*` either way.
+    pub caught_up: bool,
     /// Sum of rewarded_total across pools.
     pub rewarded_total: String,
     /// True only if every position's attribution is complete.
@@ -635,6 +649,13 @@ pub struct ExplorerNominatorPositionsResponse {
 /// outright, so it cannot be reconstructed afterwards either. The indexer
 /// therefore attributes each change as it observes it, and this reports the
 /// result along with how much of it it could not explain.
+///
+/// Lifetime totals are served only from a valid ledger replayed from genesis
+/// over canonical history and anchored at the published masterchain block.
+/// Otherwise the answer is 503 with a stable `kind`:
+/// `nominator_ledger_rebuild_required`, `nominator_ledger_rebuilding`,
+/// `nominator_ledger_behind_index`, `nominator_ledger_behind_chain` or
+/// `nominator_ledger_not_canonical`.
 #[utoipa::path(get, path = "/explorer/staking/nominator/{address}", params(
     ("address" = String, Path, description = "basechain address of the depositor")
 ), responses(
@@ -644,37 +665,63 @@ pub async fn nominator_positions(
     State(state): State<AppState>,
     Path(address): Path<String>,
 ) -> Result<axum::Json<ExplorerNominatorPositionsResponse>, AppError> {
-    let entries = state.indexer_store.nominator_ledger_entries(&address).map_err(index_error)?;
+    nominator_positions_response(&state.indexer_store, address).map(axum::Json)
+}
+
+/// The nominator endpoint's decision, separated from the HTTP plumbing.
+pub(crate) fn nominator_positions_response(
+    store: &IndexerStore,
+    address: String,
+) -> Result<ExplorerNominatorPositionsResponse, AppError> {
+    let report = store.nominator_ledger_report(&address).map_err(index_error)?;
+    let (as_of, caught_up) = match report.availability {
+        LedgerAvailability::Available { as_of, caught_up } => (as_of, caught_up),
+        LedgerAvailability::Unavailable { code, reason } => {
+            return Err(AppError::unavailable(code, reason));
+        }
+    };
 
     let mut rewarded_total = 0u64;
-    let mut attribution_complete = true;
-    let result = entries
-        .into_iter()
-        .map(|entry| {
-            rewarded_total = rewarded_total.saturating_add(entry.rewarded_total);
-            let complete = entry.unattributed_total == 0;
-            attribution_complete &= complete;
-            ExplorerNominatorPositionDto {
-                pool_address: entry.pool_address,
-                amount: entry.last_amount.to_string(),
-                pending_deposit: entry.last_pending.to_string(),
-                deposited_total: entry.deposited_total.to_string(),
-                rewarded_total: entry.rewarded_total.to_string(),
-                unattributed_total: entry.unattributed_total.to_string(),
-                attribution_complete: complete,
-                first_seen_at: entry.first_seen_at,
-                updated_at: entry.updated_at,
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut all_complete = true;
+    let mut result = Vec::with_capacity(report.entries.len());
+    for entry in report.entries {
+        let Some(last_mc_seqno) = entry.last_mc_seqno else {
+            return Err(AppError::unavailable(
+                "nominator_ledger_not_canonical",
+                "a ledger row carries no canonical provenance",
+            ));
+        };
+        rewarded_total = rewarded_total.saturating_add(entry.rewarded_total);
+        let complete = attribution_complete(true, &entry);
+        all_complete &= complete;
+        result.push(ExplorerNominatorPositionDto {
+            pool_address: entry.pool_address,
+            amount: entry.last_amount.to_string(),
+            pending_deposit: entry.last_pending.to_string(),
+            deposited_total: entry.deposited_total.to_string(),
+            rewarded_total: entry.rewarded_total.to_string(),
+            unattributed_total: entry.unattributed_total.to_string(),
+            coverage_gap_count: entry.coverage_gap_count,
+            attribution_complete: complete,
+            last_mc_seqno,
+            last_mc_root_hash: entry.last_mc_root_hash.unwrap_or_default(),
+            last_mc_file_hash: entry.last_mc_file_hash.unwrap_or_default(),
+            first_seen_at: entry.first_seen_at,
+            updated_at: entry.updated_at,
+        });
+    }
 
-    Ok(axum::Json(ExplorerNominatorPositionsResponse {
+    Ok(ExplorerNominatorPositionsResponse {
         ok: true,
         address,
+        as_of_mc_seqno: as_of.seqno,
+        as_of_mc_root_hash: as_of.root_hash,
+        as_of_mc_file_hash: as_of.file_hash,
+        caught_up,
         rewarded_total: rewarded_total.to_string(),
-        attribution_complete,
+        attribution_complete: all_complete,
         result,
-    }))
+    })
 }
 
 #[utoipa::path(get, path = "/explorer/transactions", params(ExplorerPageQuery), responses(
