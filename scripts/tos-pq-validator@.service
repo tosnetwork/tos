@@ -1,0 +1,23 @@
+[Unit]
+Description=TOS local PQ validator %i
+After=network.target tos-pq-dht.service
+Wants=tos-pq-dht.service
+[Service]
+User=tos
+Group=tos
+UMask=0077
+WorkingDirectory=/data/testnet/node%i
+ExecStart=/usr/local/bin/tos-validator-engine -C /data/tos-global.json -c /data/testnet/node%i/config.json -D /data/testnet/node%i -f /usr/local/share/tos/fift/lib --initial-sync-delay 5 --session-logs /data/testnet/node%i/session-logs --quic-flood-control -1 --json-rpc-address 127.0.0.1:801%i -l /data/testnet/node%i/log -t 4
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=30
+LimitNOFILE=65536
+CPUQuota=400%
+MemoryMax=4G
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

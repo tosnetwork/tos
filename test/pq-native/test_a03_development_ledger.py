@@ -14,7 +14,7 @@ SPEC = importlib.util.spec_from_file_location("ledger", ROOT / "scripts/a03_deve
 ledger_module = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(ledger_module)
 COMMIT = "84a30e4268f94e894497e402d97058cadcbb876d"
-MEMO = Path(os.environ.get("A03_MEMO_REPO", "/home/tomi/memo"))
+MEMO = Path(os.environ.get("A03_MEMO_REPO", ROOT.parent / "memo"))
 # Last tree whose snapshot still froze memo 331c92ec with X01 open and Z01 unstarted.
 STALE_SNAPSHOT_COMMIT = "a1d3ea8a1574345a4412672bfd43fecde64418df"
 

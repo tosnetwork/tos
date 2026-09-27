@@ -46,7 +46,7 @@ node_masterchain_seqno() {
 check_node() {
   local node="$1"
   local active
-  active="$($SUDO systemctl is-active "tos-validator@$node" 2>/dev/null || true)"
+  active="$($SUDO systemctl is-active "tos-pq-validator@$node" 2>/dev/null || true)"
   if [ "$active" != "active" ]; then
     echo "node $node inactive: $active" >&2
     return 1
@@ -67,30 +67,30 @@ check_all_nodes() {
 
 collect_logs() {
   local n svc
-  $SUDO journalctl -u tos-dht --no-pager -n 2000 > "$ARTIFACT_DIR/tos-dht.log" 2>&1 || true
+  $SUDO journalctl -u tos-pq-dht --no-pager -n 2000 > "$ARTIFACT_DIR/tos-pq-dht.log" 2>&1 || true
   for n in $(seq 1 "$NODE_COUNT"); do
-    svc="tos-validator@$n"
+    svc="tos-pq-validator@$n"
     $SUDO journalctl -u "$svc" --no-pager -n 2000 > "$ARTIFACT_DIR/tos-validator_$n.log" 2>&1 || true
   done
   # shellcheck disable=SC2046
-  $SUDO systemctl status tos-dht $(for n in $(seq 1 "$NODE_COUNT"); do echo "tos-validator@$n"; done) \
+  $SUDO systemctl status tos-pq-dht $(for n in $(seq 1 "$NODE_COUNT"); do echo "tos-pq-validator@$n"; done) \
     --no-pager > "$ARTIFACT_DIR/systemd-status.txt" 2>&1 || true
 }
 
 run_catchup_probe() {
-  # Stop the highest-numbered node (a pure validator; node 1 also hosts the
-  # DHT bootstrap). With NODE_COUNT=4 the remaining 3 (weight 51) still exceed
+  # Stop the highest-numbered node (a pure validator; DHT bootstrap runs in its own
+  # separate service). With NODE_COUNT=4 the remaining 3 (weight 51) still exceed
   # the quorum threshold (quorum_threshold(68)=46), so the chain keeps
   # producing while the stopped node falls behind and must catch up on restart.
   local probe_node="$NODE_COUNT"
   echo
   echo "### catch-up probe: stop node $probe_node for ${CATCHUP_LAG_SECONDS}s, then restart and wait"
-  $SUDO systemctl stop "tos-validator@$probe_node"
+  $SUDO systemctl stop "tos-pq-validator@$probe_node"
   sleep "$CATCHUP_LAG_SECONDS"
   local target
   target="$(node_masterchain_seqno 1 || true)"
   echo "target masterchain seqno from node 1 after lag: $target"
-  $SUDO systemctl start "tos-validator@$probe_node"
+  $SUDO systemctl start "tos-pq-validator@$probe_node"
   local deadline=$((SECONDS + CATCHUP_TIMEOUT_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     local b
@@ -142,8 +142,8 @@ restart_node=1
 while [ "$SECONDS" -lt "$deadline" ]; do
   check_all_nodes
   if [ "$RESTART_INTERVAL_SECONDS" -gt 0 ] && [ "$SECONDS" -ge "$next_restart" ]; then
-    echo "restarting tos-validator@$restart_node"
-    $SUDO systemctl restart "tos-validator@$restart_node"
+    echo "restarting tos-pq-validator@$restart_node"
+    $SUDO systemctl restart "tos-pq-validator@$restart_node"
     restart_node=$((restart_node % NODE_COUNT + 1))
     next_restart=$((SECONDS + RESTART_INTERVAL_SECONDS))
   fi

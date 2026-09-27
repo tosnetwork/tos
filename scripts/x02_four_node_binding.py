@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import stat
+import subprocess
 from pathlib import Path
 
 BINARY_PATHS = (
@@ -30,6 +32,18 @@ SCENARIO_WINDOWS = {
     "D": {"duration": 900, "settlement_tail": 600},
 }
 TC_PATH = "/usr/sbin/tc"
+
+
+def repository_git_common_root():
+    """Bind to this checkout's actual Git metadata, including linked worktrees."""
+    repo = Path(__file__).resolve().parents[1]
+    output = subprocess.check_output(
+        ["/usr/bin/git", "-C", str(repo), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        env={key: value for key, value in os.environ.items() if not key.startswith("GIT_")},
+        text=True,
+        timeout=10,
+    )
+    return str(Path(output.strip()).resolve(strict=True))
 
 
 def require(value, reason):
@@ -107,7 +121,7 @@ def verify_binding(binding, host=False):
     )
     require(
         binding["rootfs_root"] == "/datax/n6-unit-agents/Z02/u24-rootfs"
-        and binding["git_common_root"] == "/home/tomi/tos/.git"
+        and binding["git_common_root"] == repository_git_common_root()
         and binding["bwrap_path"] == "/usr/bin/bwrap",
         "sandbox paths differ from fixed interface",
     )

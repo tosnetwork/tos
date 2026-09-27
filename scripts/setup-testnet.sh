@@ -1,364 +1,132 @@
 #!/usr/bin/env bash
-#
-# setup-testnet.sh - Set up a local TOS testnet using the tested Python infrastructure.
-#
-# Usage:
-#   sudo VALIDATORS=3 GENESIS_VALIDATORS=4 \
-#     VALIDATOR_ECONOMICS_PROFILE=1 ./scripts/setup-testnet.sh [--clean]
-#
-# The zero-state pins the canonical TIP-1 DNS Root from the shared vectors by
-# default. Set DNS_ROOT_ADDR=-1:<64-hex-id> for a reviewed local DNS profile,
-# or DNS_ROOT_ADDR=none only when explicitly rehearsing fail-closed absence.
-
+# Install a persistent four-validator PQ local network and development shielded pool.
 set -euo pipefail
-
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD="$REPO_ROOT/build"
-DATA="/data"
-LOCKFILE="/tmp/tos-setup.lock"
-INSTALL_BIN="/usr/local/bin"
-INSTALL_SHARE="/usr/local/share/tos"
-
-[ "$(id -u)" -eq 0 ] || { echo "ERROR: run with sudo"; exit 1; }
-exec 200>"$LOCKFILE"
-flock -n 200 || { echo "ERROR: another setup is running"; exit 1; }
-
-for bin in validator-engine/validator-engine dht-server/dht-server \
-           validator-engine-console/validator-engine-console \
-           lite-client/lite-client utils/generate-random-id; do
-    [ -x "$BUILD/$bin" ] || { echo "ERROR: $BUILD/$bin not found. Run ninja."; exit 1; }
-done
-
-# ── Clean ─────────────────────────────────────────────────────────
-if [ "${1:-}" = "--clean" ]; then
-    echo "Stopping services..."
-    "$REPO_ROOT/scripts/testnet-ctl.sh" stop 2>/dev/null || true
-    echo "Cleaning $DATA/..."
-    # Wipe a generous validator range so a reconfigure from a larger deployment
-    # cannot leave stale validator directories on disk.
-    for d in zerostate dht testnet; do rm -rf "${DATA:?}/$d"; done
-    for i in $(seq 1 20); do rm -rf "${DATA:?}/tos$i"; done
-    rm -f "${DATA:?}/tos-global.json"
-fi
-
-# ── System user ───────────────────────────────────────────────────
-id -u tos &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin tos
-echo "System user 'tos' ready."
-
-# ── Install binaries ──────────────────────────────────────────────
-echo "Installing binaries to $INSTALL_BIN..."
-install -m0755 "$BUILD/validator-engine/validator-engine"                "$INSTALL_BIN/tos-validator-engine"
-install -m0755 "$BUILD/dht-server/dht-server"                           "$INSTALL_BIN/tos-dht-server"
-install -m0755 "$BUILD/validator-engine-console/validator-engine-console" "$INSTALL_BIN/tos-validator-console"
-install -m0755 "$BUILD/lite-client/lite-client"                          "$INSTALL_BIN/tos-lite-client"
-install -m0755 "$BUILD/utils/generate-random-id"                         "$INSTALL_BIN/tos-genkey"
-
-mkdir -p "$INSTALL_SHARE/fift/lib" "$INSTALL_SHARE/smartcont/auto"
-cp -r "$REPO_ROOT/crypto/fift/lib"/* "$INSTALL_SHARE/fift/lib/"
-cp "$REPO_ROOT/crypto/smartcont"/*.fif "$INSTALL_SHARE/smartcont/" 2>/dev/null || true
-cp "$BUILD/crypto/smartcont"/auto/* "$INSTALL_SHARE/smartcont/auto/"
-cp "$REPO_ROOT/crypto/smartcont"/stdlib.fc "$INSTALL_SHARE/smartcont/" 2>/dev/null || true
-
-# ── Run Python setup (uses the tested network.py infrastructure) ──
-echo ""
-echo "Running network setup via Python..."
-mkdir -p "$DATA/testnet"
-chown tos:tos "$DATA" "$DATA/testnet"
-
-# Python script that uses the tested tostester infrastructure
-cd "$REPO_ROOT"
-# Under sudo, the caller's ~/.local/bin is off PATH. Resolve uv from the
-# invoking user without overriding HOME; use an explicit uv cache directory
-# and pass the repository path to the embedded Python process.
-UV_HOME="$HOME"
-UV=$(command -v uv 2>/dev/null || true)
-if [ -n "${SUDO_USER:-}" ]; then
-    CALLER_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-    if [ -n "$CALLER_HOME" ]; then
-        UV_HOME="$CALLER_HOME"
-        for cand in "$CALLER_HOME/.local/bin/uv" "$CALLER_HOME/.cargo/bin/uv"; do
-            [ -x "$cand" ] && UV="$cand" && break
-        done
-    fi
-fi
-if [ -z "$UV" ] || [ ! -x "$UV" ]; then
-    echo "ERROR: uv not found. Install it: https://docs.astral.sh/uv/"
-    exit 1
-fi
-REPO_ROOT="$REPO_ROOT" \
-UV_CACHE_DIR="$UV_HOME/.cache/uv" \
-VALIDATORS="${VALIDATORS:-1}" \
-GENESIS_VALIDATORS="${GENESIS_VALIDATORS:-${VALIDATORS:-1}}" \
-VALIDATOR_ECONOMICS_PROFILE="${VALIDATOR_ECONOMICS_PROFILE:-0}" \
-DNS_ROOT_ADDR="${DNS_ROOT_ADDR:-}" \
-"$UV" run python3 <<'PYEOF'
-import asyncio, json, os, sys, base64, hashlib
-from pathlib import Path
-from ipaddress import IPv4Address
-
-from tostester.install import Install
-from tostester.network import Network, FullNode
-
-REPO = Path(os.environ.get("REPO_ROOT", Path.home() / "tos"))
-BUILD = REPO / "build"
-DATA = Path("/data")
-TESTNET = DATA / "testnet"
-VALIDATORS = int(os.environ.get("VALIDATORS", "1"))
-GENESIS_VALIDATORS = int(os.environ.get("GENESIS_VALIDATORS", str(VALIDATORS)))
-VALIDATOR_ECONOMICS_PROFILE = os.environ.get(
-    "VALIDATOR_ECONOMICS_PROFILE", "0"
-) == "1"
-DNS_ROOT_ADDR = os.environ.get("DNS_ROOT_ADDR", "").strip().lower()
-if not DNS_ROOT_ADDR:
-    vectors = json.loads(
-        (REPO / "domains/packages/protocol/test/vectors.json").read_text()
-    )
-    DNS_ROOT_ADDR = vectors["root_address"].strip().lower()
-elif DNS_ROOT_ADDR == "none":
-    DNS_ROOT_ADDR = ""
-if VALIDATORS < 1:
-    raise SystemExit("VALIDATORS must be >= 1")
-if GENESIS_VALIDATORS < VALIDATORS:
-    raise SystemExit("GENESIS_VALIDATORS must be >= VALIDATORS")
-if VALIDATOR_ECONOMICS_PROFILE and GENESIS_VALIDATORS != 4:
-    raise SystemExit(
-        "VALIDATOR_ECONOMICS_PROFILE=1 requires GENESIS_VALIDATORS=4"
-    )
-if DNS_ROOT_ADDR:
-    if DNS_ROOT_ADDR.startswith("-1:"):
-        DNS_ROOT_ADDR = DNS_ROOT_ADDR[3:]
-    if len(DNS_ROOT_ADDR) != 64 or any(c not in "0123456789abcdef" for c in DNS_ROOT_ADDR):
-        raise SystemExit("DNS_ROOT_ADDR must be a 64-character hex account id")
-
-install = Install(BUILD, REPO)
-
-async def setup():
-    async with Network(install, TESTNET) as network:
-        network.config.shard_validators = GENESIS_VALIDATORS
-        network.config.validator_economics_profile = VALIDATOR_ECONOMICS_PROFILE
-        if DNS_ROOT_ADDR:
-            network.config.dns_root_addr = int(DNS_ROOT_ADDR, 16)
-        # Create DHT node
-        dht = network.create_dht_node()
-
-        # Create the complete genesis validator set. A smaller VALIDATORS value
-        # may be exported and run to exercise the one-offline-validator case
-        # of the four-validator production profile.
-        nodes = []
-        for _ in range(GENESIS_VALIDATORS):
-            node = network.create_full_node()
-            node.make_initial_validator()
-            node.announce_to(dht)
-            nodes.append(node)
-        running_nodes = nodes[:VALIDATORS]
-
-        # Trigger zerostate generation
-        zs = network._get_or_generate_zerostate()
-        print(f"Zero state generated:")
-        print(f"  root_hash: {base64.b64encode(zs.masterchain.root_hash).decode()}")
-        print(f"  file_hash: {base64.b64encode(zs.masterchain.file_hash).decode()}")
-
-        # Prepare each node's directory (without starting the processes)
-        # This creates keyring, static symlinks, config files
-        for i, node in enumerate(running_nodes):
-            # Populate static dir
-            static_dir = node._directory / "static"
-            static_dir.mkdir(exist_ok=True)
-            for state in (zs.masterchain, zs.shardchain):
-                link = static_dir / state.file_hash.hex().upper()
-                if not link.exists():
-                    link.symlink_to(state.file)
-
-        from tosapi import tos_api
-
-        # Build global config (for validator-engine)
-        global_config = tos_api.Config_global(
-            dht=tos_api.Dht_config_global(
-                static_nodes=tos_api.Dht_nodes(nodes=[dht._signed_address]),
-                k=6, a=3,
-            ),
-            validator=zs.as_validator_config(),
-        )
-
-        # Convert to dict and manually add liteservers (for lite-client compatibility)
-        gc_dict = json.loads(global_config.to_json())
-        ip_int = int(IPv4Address("127.0.0.1"))
-        gc_dict["liteservers"] = [
-            {
-                "ip": ip_int,
-                "port": n._liteserver_addr.port,
-                "id": {"@type": "pub.ed25519", "key": base64.b64encode(n._liteserver_key.public_key.key).decode()},
-            }
-            for n in running_nodes
-        ]
-        gc_path = DATA / "tos-global.json"
-        gc_path.write_text(json.dumps(gc_dict, indent=2))
-
-        # Export per-node configs
-        for i, node in enumerate(running_nodes):
-            idx = i + 1
-            svc_dir = DATA / f"tos{idx}"
-            svc_dir.mkdir(exist_ok=True)
-
-            # Symlink keyring and static
-            for item in ["keyring", "static"]:
-                src = node._directory / item
-                dst = svc_dir / item
-                if dst.is_symlink():
-                    dst.unlink()
-                if not dst.exists():
-                    os.symlink(src, dst)
-
-            # Write local config
-            (svc_dir / "config.json").write_text(node._local_config.to_json())
-
-            # Console pub key
-            node._engine_console_server_key.write_pub_key_file(svc_dir / "console-server.pub")
-
-            print(f"  tos{idx}: dir={node._directory}")
-            print(f"    validator:  127.0.0.1:{node._addr.port}")
-            print(f"    liteserver: 127.0.0.1:{node._liteserver_addr.port}")
-            print(f"    console:    127.0.0.1:{node._engine_console_addr.port}")
-
-        # DHT node config
-        dht_dir = DATA / "dht"
-        dht_dir.mkdir(exist_ok=True)
-        if not (dht_dir / "keyring").exists():
-            os.symlink(dht._directory / "keyring", dht_dir / "keyring")
-        (dht_dir / "config.json").write_text(dht._local_config.to_json())
-
-        # Port info for systemd generation.
-        port_info = {"dht_port": dht._addr.port, "nodes": [
-            {"idx": i+1, "validator_port": n._addr.port,
-             "liteserver_port": n._liteserver_addr.port,
-             "console_port": n._engine_console_addr.port,
-             "json_rpc_port": 8011 + i}
-            for i, n in enumerate(running_nodes)
-        ]}
-        (DATA / "testnet-ports.json").write_text(json.dumps(port_info, indent=2))
-
-        print(f"\n  Running validators: {VALIDATORS}")
-        print(f"  Genesis validators: {GENESIS_VALIDATORS}")
-        print(f"  Validator economics profile: {VALIDATOR_ECONOMICS_PROFILE}")
-        print(f"  DNS root ConfigParam 4: {DNS_ROOT_ADDR or 'absent'}")
-        print(f"  Global config: {gc_path}")
-        print(f"  DHT config: {dht_dir / 'config.json'}")
-
-asyncio.run(setup())
-PYEOF
-
-echo ""
-echo "Setting permissions..."
-chown -R tos:tos "$DATA"
-# Lock down keyrings
-find "$DATA" -name keyring -type d -exec chmod 0700 {} \;
-find "$DATA" -name keyring -type d -exec sh -c 'chmod 0600 "$1"/*' _ {} \;
-chmod 0644 "$DATA/tos-global.json"
-
-# ── Generate systemd units from port info ─────────────────────────
-echo "Generating systemd service files..."
-
-PORTS=$(cat "$DATA/testnet-ports.json")
-DHT_PORT=$(echo "$PORTS" | python3 -c "import json,sys; print(json.load(sys.stdin)['dht_port'])")
-
-# DHT service
-cat > /etc/systemd/system/tos-dht.service <<SVCEOF
-[Unit]
-Description=TOS DHT Server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=tos
-Group=tos
-UMask=0077
-WorkingDirectory=/data/dht
-ExecStart=$INSTALL_BIN/tos-dht-server \\
-  --global-config /data/tos-global.json \\
-  --local-config /data/dht/config.json \\
-  --db /data/dht \\
-  --threads 2
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
-ProtectSystem=full
-ProtectHome=true
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-
-# Validator services
-VALIDATOR_IDS=$(echo "$PORTS" | python3 -c "import json,sys; print(' '.join(str(n['idx']) for n in json.load(sys.stdin)['nodes']))")
-VALIDATOR_SERVICES=""
-for i in $VALIDATOR_IDS; do
-    NODE_DIR="$DATA/tos$i"
-    JSON_RPC_PORT=$(echo "$PORTS" | python3 -c "import json,sys; data=json.load(sys.stdin); print(next(n['json_rpc_port'] for n in data['nodes'] if n['idx'] == $i))")
-
-    cat > "/etc/systemd/system/tos-validator@${i}.service" <<SVCEOF
-[Unit]
-Description=TOS Validator Node $i
-After=network-online.target tos-dht.service
-Wants=network-online.target tos-dht.service
-
-[Service]
-Type=simple
-User=tos
-Group=tos
-UMask=0077
-WorkingDirectory=$NODE_DIR
-ExecStart=$INSTALL_BIN/tos-validator-engine \\
-  -C /data/tos-global.json \\
-  -c $NODE_DIR/config.json \\
-  -D $NODE_DIR \\
-  -f $INSTALL_SHARE/fift/lib \\
-  --initial-sync-delay 5 \\
-  --session-logs $NODE_DIR/session-logs \\
-  --quic-flood-control -1 \\
-  --json-rpc-address 127.0.0.1:$JSON_RPC_PORT \\
-  -l $NODE_DIR/log \\
-  -t 4
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=65536
-ProtectSystem=full
-ProtectHome=true
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-SVCEOF
-    VALIDATOR_SERVICES="$VALIDATOR_SERVICES tos-validator@$i"
-done
-
-systemctl daemon-reload
-for i in $(seq 1 20); do
-    case " $VALIDATOR_IDS " in
-        *" $i "*) ;;
-        *)
-            systemctl disable "tos-validator@$i" 2>/dev/null || true
-            rm -f "/etc/systemd/system/tos-validator@${i}.service"
-            ;;
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD="$REPO/build"
+CLEAN=0
+DO_BUILD=0
+for arg in "$@"; do
+    case "$arg" in
+        --clean) CLEAN=1 ;;
+        --build) DO_BUILD=1 ;;
+        *) echo "Usage: sudo $0 [--build] [--clean]"; exit 2 ;;
     esac
 done
+[[ $EUID -eq 0 ]] || { echo 'Run with sudo'; exit 1; }
+exec 9>/run/lock/tos-pq-setup.lock
+flock -n 9 || { echo 'Another setup is running'; exit 1; }
+CALLER="${SUDO_USER:-root}"
+CALLER_HOME="$(getent passwd "$CALLER" | cut -d: -f6)"
+UV="$(command -v uv || true)"
+[[ -n "$UV" ]] || UV="$CALLER_HOME/.local/bin/uv"
+[[ -x "$UV" ]] || { echo 'uv is required'; exit 1; }
+CARGO="$CALLER_HOME/.cargo/bin/cargo"
+cd "$REPO"
+if [[ $DO_BUILD == 1 ]]; then
+    # Reserve 32 cores and 48 GiB before starting a cold native build.
+    python3 - <<'CHECK'
+import os, time
+from pathlib import Path
+m = dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
+total = int(m['MemTotal'].split()[0]); available = int(m['MemAvailable'].split()[0])
+def sample():
+    return list(map(int, Path('/proc/stat').read_text().splitlines()[0].split()[1:9]))
+a=sample(); time.sleep(1); b=sample(); d=[y-x for x,y in zip(a,b)]
+busy=os.cpu_count()*(1-(d[3]+d[4])/max(1,sum(d)))
+print(f'Build admission: CPU used {busy:.1f}/{os.cpu_count()}, memory available {available/1024**2:.1f} GiB')
+if busy + 32 > os.cpu_count()*2/3 or total-available+48*1024**2 > total*2/3:
+    raise SystemExit('Build resource budget unavailable; wait before rebuilding')
+CHECK
+    sudo -u "$CALLER" cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-21 \
+        -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH=x86-64 \
+        -DTOS_USE_JEMALLOC=ON -DTOS_PRODUCTION_BUILD=ON
+    sudo -u "$CALLER" cmake --build build --parallel 32 --target gen_fif create-state \
+        fift func toslibjson generate-random-id tos-pq-consensus-key dht-server \
+        validator-engine-console validator-engine lite-client
+    (cd tools/shielded-pool-circuit/crosscheck && sudo -u "$CALLER" "$CARGO" build \
+        --release --locked -j2 --bin local_pool)
+fi
+for binary in validator-engine/validator-engine dht-server/dht-server \
+    validator-engine-console/validator-engine-console lite-client/lite-client \
+    utils/generate-random-id crypto/pq/tos-pq-consensus-key crypto/create-state \
+    crypto/fift crypto/func toslib/libtoslibjson.so; do
+    [[ -f "$BUILD/$binary" ]] || { echo "Missing $BUILD/$binary; run --build"; exit 1; }
+done
+POOL_GENERATOR="$REPO/tools/shielded-pool-circuit/crosscheck/target/release/local_pool"
+[[ -x "$POOL_GENERATOR" ]] || { echo 'Missing local_pool generator; run --build'; exit 1; }
+# Finish preparation before touching the old data or services.
+"$UV" run python test/tostester/generate_tl.py
+STAGING="$(mktemp -d /var/tmp/tos-pq-pool.XXXXXX)"
+trap 'rm -rf "$STAGING"' EXIT
+TOS_ROOT="$REPO" "$POOL_GENERATOR" "$REPO" "$STAGING/pool"
+"$UV" run python -c 'from pathlib import Path; import sys; from tostester.install import Install; from toslib import ToslibClient; Install(Path(sys.argv[1]), Path(sys.argv[2])).toslibjson' "$BUILD" "$REPO"
+[[ ! -L /data ]] || { echo '/data must not be a symlink'; exit 1; }
+if [[ -d /data ]] && [[ -n "$(find /data -mindepth 1 -maxdepth 1 -print -quit)" ]] && [[ $CLEAN != 1 ]]; then
+    echo '/data contains an existing network. Use --clean to replace all of its data.'; exit 1
+fi
+for unit in tos-dht tos-pq-dht; do systemctl disable --now "$unit" 2>/dev/null || true; done
+for i in $(seq 1 20); do
+    for prefix in tos-validator tos-pq-validator; do
+        systemctl stop "$prefix@$i" 2>/dev/null || true
+        systemctl disable "$prefix@$i" 2>/dev/null || true
+    done
+done
+for unit in tos-dht tos-pq-dht tos-validator@{1,2,3,4} tos-pq-validator@{1,2,3,4}; do
+    pid=$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)
+    [[ -z "$pid" || "$pid" == 0 ]] || { echo "Refusing to reset data: $unit still owns PID $pid"; exit 1; }
+done
+# Retire the old classical units and their per-instance overrides.
+rm -f /etc/systemd/system/tos-dht.service /etc/systemd/system/tos-validator@*.service
+rm -rf /etc/systemd/system/tos-validator@*.service.d
+systemctl disable --now tos-rss-monitor.timer 2>/dev/null || true
+if [[ $CLEAN == 1 ]]; then
+    # Literal fixed root: never derive this destructive target from an environment variable.
+    mkdir -p /data
+    find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+fi
+id tos >/dev/null 2>&1 || useradd --system --home-dir /data --shell /usr/sbin/nologin tos
+mkdir -p /data /usr/local/share/tos/fift/lib /usr/local/share/tos/smartcont
+chmod 0755 /data
+for pair in 'validator-engine/validator-engine:validator-engine' 'dht-server/dht-server:dht-server' \
+    'validator-engine-console/validator-engine-console:validator-console' 'lite-client/lite-client:lite-client' \
+    'utils/generate-random-id:genkey' 'crypto/pq/tos-pq-consensus-key:pq-consensus-key' \
+    'crypto/create-state:create-state' 'crypto/fift:fift' 'crypto/func:func'; do
+    install -m755 "$BUILD/${pair%%:*}" "/usr/local/bin/tos-${pair##*:}"
+done
+cp -a crypto/fift/lib/. /usr/local/share/tos/fift/lib/
+cp -a crypto/smartcont/. /usr/local/share/tos/smartcont/
+cp -a "$BUILD/crypto/smartcont/auto" /usr/local/share/tos/smartcont/
+cp -a "$STAGING/pool" /data/shielded-pool
+"$UV" run python scripts/local_pq_testnet.py prepare
+chown -R tos:tos /data
+chmod 0755 /data/shielded-pool /data/configs
+chmod 0644 /data/shielded-pool/* /data/configs/*
+find /data/testnet -name 'pq-consensus.seed' -exec chmod 0600 {} +
+find /data/testnet -name keyring -type d -exec chmod 0700 {} +
+chmod 0700 /data/testnet/state
+install -m644 "$REPO/scripts/tos-pq-dht.service" /etc/systemd/system/tos-pq-dht.service
+install -m644 "$REPO/scripts/tos-pq-validator@.service" /etc/systemd/system/tos-pq-validator@.service
 systemctl daemon-reload
-systemctl enable tos-dht $VALIDATOR_SERVICES
-
-echo ""
-echo "=========================================="
-echo " Setup complete!"
-echo ""
-echo " Start:   ./scripts/testnet-ctl.sh start"
-echo " Stop:    ./scripts/testnet-ctl.sh stop"
-echo " Status:  ./scripts/testnet-ctl.sh status"
-echo " Logs:    ./scripts/testnet-ctl.sh logs"
-echo ""
-echo " Lite client:"
-echo "   tos-lite-client -C $DATA/tos-global.json"
-echo "=========================================="
-
-flock -u 200
+systemd-analyze verify tos-pq-dht.service tos-pq-validator@1.service
+python3 - <<'CHECK'
+import os, socket, time
+from pathlib import Path
+def sample():
+    return list(map(int, Path('/proc/stat').read_text().splitlines()[0].split()[1:9]))
+a=sample(); time.sleep(1); b=sample(); d=[y-x for x,y in zip(a,b)]
+busy=os.cpu_count()*(1-(d[3]+d[4])/max(1,sum(d)))
+m=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
+total=int(m['MemTotal'].split()[0]); available=int(m['MemAvailable'].split()[0])
+print(f'Network admission: CPU used {busy:.1f}/{os.cpu_count()}, memory available {available/1024**2:.1f} GiB')
+if busy+18 > os.cpu_count()*2/3 or total-available+17*1024**2 > total*2/3:
+    raise SystemExit('Network resource budget unavailable')
+for port in [*range(2001,2014), *range(8011,8015)]:
+    for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+        with socket.socket(socket.AF_INET, kind) as s:
+            s.bind(('127.0.0.1',port))
+CHECK
+systemctl enable --now tos-pq-dht tos-pq-validator@{1,2,3,4}
+"$UV" run python scripts/local_pq_testnet.py deploy
+chown -R tos:tos /data/shielded-pool
+printf '\nFour PQ validators and the local development pool are running.\n'
+"$REPO/scripts/testnet-ctl.sh" status

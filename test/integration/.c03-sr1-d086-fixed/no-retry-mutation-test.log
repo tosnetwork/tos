@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/tos-n6/build
-Test project /home/tomi/tos-n6/build
+Internal ctest changing into directory: /workspace/tos-n6/build
+Test project /workspace/tos-n6/build
     Start 223: test-consensus-simplex2-pq-restart-transient-origin
 1/1 Test #223: test-consensus-simplex2-pq-restart-transient-origin ...***Failed   10.68 sec
 [1;33m[ 2][t 0][2026-09-24 10:56:06.515509720][candidate-codec.cpp:41][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000698 compression=none original_size=46 compressed_size=46[0m
@@ -32,23 +32,23 @@ Test project /home/tomi/tos-n6/build
 [1;31m[ 0][t 2][2026-09-24 10:56:16.480336519][test-consensus.cpp:763][!test-consensus]	Test consensus error: [Error : 0 : expected 2 transient session-origin failures, observed 1][0m
 [pid 1080351] [time 1790247376] Signal: 6
 ------- Stack Backtrace -------
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x28e217)[0x62e36853c217]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x13a7ad)[0x62e3683e87ad]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x28e217)[0x62e36853c217]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x13a7ad)[0x62e3683e87ad]
 /lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7d88f5042520]
 /lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7d88f50969bc]
 /lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7d88f5042476]
 /lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7d88f50287f3]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x294367)[0x62e368542367]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x2948d7)[0x62e3685428d7]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x293ae7)[0x62e368541ae7]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x28418c)[0x62e36853218c]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x21526f)[0x62e3684c326f]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x2856a2)[0x62e3685336a2]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x2853f2)[0x62e3685333f2]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x28bca4)[0x62e368539ca4]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x28aa13)[0x62e368538a13]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x28aa4e)[0x62e368538a4e]
-/home/tomi/tos-n6/build/test/validator/consensus/test-consensus(+0x211de0)[0x62e3684bfde0]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x294367)[0x62e368542367]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x2948d7)[0x62e3685428d7]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x293ae7)[0x62e368541ae7]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x28418c)[0x62e36853218c]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x21526f)[0x62e3684c326f]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x2856a2)[0x62e3685336a2]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x2853f2)[0x62e3685333f2]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x28bca4)[0x62e368539ca4]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x28aa13)[0x62e368538a13]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x28aa4e)[0x62e368538a4e]
+/workspace/tos-n6/build/test/validator/consensus/test-consensus(+0x211de0)[0x62e3684bfde0]
 /lib/x86_64-linux-gnu/libc.so.6(+0x94a83)[0x7d88f5094a83]
 /lib/x86_64-linux-gnu/libc.so.6(+0x1268e0)[0x7d88f51268e0]
 -------------------------------

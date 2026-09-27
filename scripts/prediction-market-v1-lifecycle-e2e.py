@@ -602,7 +602,7 @@ class Lifecycle:
             "maximum_outstanding": 8, "maximum_signed_boc_bytes": 64 << 10,
             "minimum_no_bounce_masterchain_blocks": 8,
         }
-        trusted_dir = Path(tempfile.mkdtemp(prefix=".tos-prediction-relay-crash-", dir="/home/tomi"))
+        trusted_dir = Path(tempfile.mkdtemp(prefix=".tos-prediction-relay-crash-", dir=Path.home()))
         trusted_dir.chmod(0o700)
         try:
             trusted_tosctl = trusted_dir / "tosctl"
@@ -757,7 +757,7 @@ class Lifecycle:
             return
         report_dir = self.workdir / "openfox-evidence"
         report_dir.mkdir(mode=0o700)
-        trusted_dir = Path(tempfile.mkdtemp(prefix=".tos-prediction-gate-", dir="/home/tomi"))
+        trusted_dir = Path(tempfile.mkdtemp(prefix=".tos-prediction-gate-", dir=Path.home()))
         trusted_dir.chmod(0o700)
         trusted_tosctl = trusted_dir / "tosctl"
         shutil.copyfile(self.tosctl, trusted_tosctl)

@@ -77,7 +77,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/test_manager_session_identity.py",
+            "path": "/workspace/tos-n6/test/integration/test_manager_session_identity.py",
             "sha256": "4e7a6d22d620413dda81cbdcd031dac587f180e97603ac8f558711706a8dd4e8",
             "cited_by": "pq-native/N6-MAC-N08-A2B646C80-N5-CLOSEOUT-AUDIT-20260924.md"
           }
@@ -123,23 +123,23 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-cut1-green.raw.log",
+            "path": "/workspace/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-cut1-green.raw.log",
             "sha256": "761f90a6d47a5477b9bc034f2429252fa6bc1f67f4708c43157114c6aed9204a",
             "cited_by": "pq-native/N6-MAC-N02-B1E6C2BB9-CUT1-REVIEW-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-bootstrap-red.raw.log",
+            "path": "/workspace/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-bootstrap-red.raw.log",
             "sha256": "9a8522e20be8524fd804e8ade6e6c5f3719f981139a3fe58a57f02b806cf433b",
             "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-save-red.raw.log",
+            "path": "/workspace/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-no-save-red.raw.log",
             "sha256": "8a5519561e5c829e96f2ef4352f339e1937549623b1d4136782bb49e96141417",
             "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
             "role": "no-save-mutant-red"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-cut1-final-green.raw.log",
+            "path": "/workspace/tos-n6/test/integration/.n5-manager-db-fixture-20260924/b1e6c2bb9-cut1-final-green.raw.log",
             "sha256": "4a155708ad3753c0c5b6f9d9346a4764fa084353e9457ed4451d3daee7aede6c",
             "cited_by": "pq-native/N6-MAC-N02-114474C02-CUT1-MUTANTS-REVIEW-20260924.md",
             "role": "final-restored-green"
@@ -207,7 +207,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.n5-manager-db-fixture-20260924/df3a6b037-cut2-green.raw.log",
+            "path": "/workspace/tos-n6/test/integration/.n5-manager-db-fixture-20260924/df3a6b037-cut2-green.raw.log",
             "sha256": "03e10449cbf6163fdfb7357b84c6d996e9fa99c36aaaf72c07edfefd8ef7178d",
             "cited_by": "pq-native/N6-MAC-N03-DF3A6B037-CUT2-REVIEW-20260924.md"
           }
@@ -373,7 +373,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/test_manager_session_identity.py",
+            "path": "/workspace/tos-n6/test/integration/test_manager_session_identity.py",
             "sha256": "4e7a6d22d620413dda81cbdcd031dac587f180e97603ac8f558711706a8dd4e8",
             "cited_by": "pq-native/N6-MAC-N08-A2B646C80-N5-CLOSEOUT-AUDIT-20260924.md"
           }
@@ -407,12 +407,12 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json",
+            "path": "/workspace/tos-n6/test/integration/.pq-default-launch-gate-final/20260923T141145Z/report.json",
             "sha256": "a5f8491276fa2718e1898fdd2d8bbd533edba3cfb56c114fc920bf142eb871cf",
             "cited_by": "pq-native/N6-MAC-E01-RESULT-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.pq-nominator-pool-t3/1af-fast-poll/20260924T034230Z/report.json",
+            "path": "/workspace/tos-n6/test/integration/.pq-nominator-pool-t3/1af-fast-poll/20260924T034230Z/report.json",
             "sha256": "31fe07ddcb7bf0c1f06b135dc4b58d4fd9cefb2b14478c595df54ed06404c8ca",
             "cited_by": "pq-native/N6-MAC-E01-RESULT-20260924.md"
           }
@@ -446,31 +446,31 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/getattr-red.log",
+            "path": "/workspace/tos-n6/test/integration/.e17-initial-validator-guard-20260924/getattr-red.log",
             "sha256": "cabe859eaa03f65f8b5f13b3577def34d1e00594c29ae19d14179b886972461e",
             "role": "getattr-mutant-red",
             "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/bound-method-red.log",
+            "path": "/workspace/tos-n6/test/integration/.e17-initial-validator-guard-20260924/bound-method-red.log",
             "sha256": "9c3f0fb7569dc0da89efb070e9093bf06eaa9ade5e3d9bd20bc2f40e840dd241",
             "role": "bound-method-mutant-red",
             "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/spare-red.log",
+            "path": "/workspace/tos-n6/test/integration/.e17-initial-validator-guard-20260924/spare-red.log",
             "sha256": "297cfc39ed7f1a29648b210af6d681e95da0171ea31d3df119cf72ecff4f418e",
             "role": "spare-mutant-red",
             "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/n6-import-red.log",
+            "path": "/workspace/tos-n6/test/integration/.e17-initial-validator-guard-20260924/n6-import-red.log",
             "sha256": "58f5416015425d9db050a6432af94d1e7eef60f609ea463f620f84ee0300e225",
             "role": "n6-import-mutant-red",
             "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e17-initial-validator-guard-20260924/removed-call-red.log",
+            "path": "/workspace/tos-n6/test/integration/.e17-initial-validator-guard-20260924/removed-call-red.log",
             "sha256": "86f65a41d32cb4b68e49a8adde2258ec05f9866ceda7187375bb9f253bf58685",
             "role": "removed-call-mutant-red",
             "cited_by": "pq-native/N6-MAC-E17-A2B646C80-INITIAL-VALIDATOR-GUARD-REVIEW-20260924.md"
@@ -505,12 +505,12 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/build/simplex2-release/e02-4dd8f00a2-20260925T002527Z/run/summary.json",
+            "path": "/workspace/tos-n6/build/simplex2-release/e02-4dd8f00a2-20260925T002527Z/run/summary.json",
             "sha256": "c63fcac801654ee9c43c260af814c470444fba727306661e86d8a9839034cf82",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/test_simplex2_release.py",
+            "path": "/workspace/tos-n6/test/integration/test_simplex2_release.py",
             "sha256": "0fb8ff2154b118e837485b46fc6a72941a8f7ddff46d49094d667679990bc5c6",
             "cited_by": "pq-native/N6-MAC-E02-4DD8F00A2-EXACT-RUN-FOLLOWUP-20260925.md"
           }
@@ -547,7 +547,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e03-localnet-3f8c7301e-20260925/report.json",
+            "path": "/workspace/tos-n6/test/integration/.e03-localnet-3f8c7301e-20260925/report.json",
             "sha256": "e3f7498b79ecc09c83ebf485b977a54a5c1f6e538c8971a92897f8ab41d03fba",
             "cited_by": "task_table"
           }
@@ -582,7 +582,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e04-agent-wallet-0e2f4bc90-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e04-agent-wallet-0e2f4bc90-20260925-console.typescript",
             "sha256": "32bb1061b00ed567a7a96b460e8be588e944cc9512c36d263d87610020e58b10",
             "cited_by": "task_table"
           }
@@ -624,7 +624,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e05-agent-query-api-c5b77a3c8-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e05-agent-query-api-c5b77a3c8-20260925-console.typescript",
             "sha256": "d23a002757222ed8b17d0bbe54c83aa61db010fd749f5ce45200d7190de0f8cb",
             "cited_by": "pq-native/N6-MAC-E05-FILTER-EXACT-RUN-REVIEW-20260925.md"
           }
@@ -670,22 +670,22 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-console.typescript",
             "sha256": "9c33d842610e600480b0e0afe7b4b9dd697e6358578b105f63d958a65a47b2d7",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-network/http-transcript.jsonl",
+            "path": "/workspace/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-network/http-transcript.jsonl",
             "sha256": "a137dd4e3b66a0fd53bcef0ae7323c03bfc020f713ef6161eaa8825b9cc6de6c",
             "cited_by": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-network/manifest.json",
+            "path": "/workspace/tos-n6/test/integration/.e06-agent-chain-index-d6d5b37f5-20260925-network/manifest.json",
             "sha256": "3ba577af16d91e7c67fa3e7293fb60ef2269b2f8748f4d9ce8ac12fd77cc91fb",
             "cited_by": "pq-native/N6-MAC-E06-EXACT-RUN-REVIEW-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e06-cursor-direction-mutant-20260925.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e06-cursor-direction-mutant-20260925.typescript",
             "sha256": "35019991b71c192dee58082bf3e4d66bf1ff2451dbcdfd8c3b3a62ae0fe49111",
             "cited_by": "pq-native/N6-MAC-E06-CURSOR-CI-FOLLOWUP-20260925.md"
           }
@@ -734,12 +734,12 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e07-task-escrow-f21f0c726-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e07-task-escrow-f21f0c726-20260925-console.typescript",
             "sha256": "9b458d8fe64d8fb70999ae3d1c43e59ab77663547d89ee33e477b4b9f3d37153",
             "cited_by": "pq-native/N6-MAC-E07-F21-EXACT-RUN-REVIEW-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e07-bounce-hash-mutant-f21f0c726-20260925.log",
+            "path": "/workspace/tos-n6/test/integration/.e07-bounce-hash-mutant-f21f0c726-20260925.log",
             "sha256": "5c3e6ee254ca320e6584faae166d7309adf486bcd31603a1846e8bd2ed225779",
             "cited_by": "pq-native/N6-MAC-E07-F21-EXACT-RUN-REVIEW-20260925.md"
           }
@@ -773,7 +773,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e08-proof-attestation-f5808d03d-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e08-proof-attestation-f5808d03d-20260925-console.typescript",
             "sha256": "5b6708adb70b1899caa6ce6eaf6fc068f6bcfa6ff0124de2d78a27125ca049f3",
             "cited_by": "pq-native/N6-MAC-E08-F580-EXACT-RUN-REVIEW-20260925.md"
           }
@@ -807,7 +807,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e09-capability-registry-e1dd48d6f-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e09-capability-registry-e1dd48d6f-20260925-console.typescript",
             "sha256": "3c5d1fe3cc005059bcf6bd2f08ddd1093bad05f63a726acc1f047652ecea1e0a",
             "cited_by": "pq-native/N6-MAC-E09-E1DD-EXACT-RUN-REVIEW-20260925.md"
           }
@@ -841,7 +841,7 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e10-composed-a859bb515-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e10-composed-a859bb515-20260925-console.typescript",
             "sha256": "6927596f2df2e58e4c8186ef5409110cb2312adbf9619b34e7ecbc6b91a15409",
             "cited_by": "pq-native/N6-MAC-E10-A859-EXACT-RUN-REVIEW-20260925.md"
           }
@@ -887,12 +887,12 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/report.json",
+            "path": "/workspace/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/report.json",
             "sha256": "40833cd44a1f268c2e20dee4e7c9804c7301433504f2b360970a2f8f8f50b1fb",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-2d7e4cd7d-20260925-forensic/elector-transactions.raw.json",
+            "path": "/workspace/tos-n6/test/integration/.e11-stage-a-2d7e4cd7d-20260925-forensic/elector-transactions.raw.json",
             "sha256": "a6127e7c0a99596319d92f86fcb0f7b6a154d60cd10a91c3d00251a517ce693e",
             "cited_by": "pq-native/N6-MAC-E11-D6BB-EXACT-TREE-RECOVERY-REVIEW-20260925.md"
           }
@@ -934,12 +934,12 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e12-dispute-11ddcad18-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e12-dispute-11ddcad18-20260925-console.typescript",
             "sha256": "913c6ebacf4ea12f50bcd5b63a186eb6e9add2ead875daed3548e44e8ea29809",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e12-dispute-11ddcad18-20260925-network/manifest.json",
+            "path": "/workspace/tos-n6/test/integration/.e12-dispute-11ddcad18-20260925-network/manifest.json",
             "sha256": "31dfc241e148559e05ae379e49d078d4b06b5eeca1963a64fb84da8dbe74e988",
             "cited_by": "pq-native/N6-MAC-E12-11DD-EXACT-RUN-REVIEW-20260925.md"
           }
@@ -977,27 +977,27 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e13-service-f881e8d0a-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e13-service-f881e8d0a-20260925-console.typescript",
             "sha256": "3fced6594ba257aa7c197eb56bf5c83ef8b79bf633c2774a11bbeea7b4792a33",
             "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e13-service-9d754b254-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e13-service-9d754b254-20260925-console.typescript",
             "sha256": "c5875903bbdb6a8f91d19dc8493202c127f9bfb90d8d19c8342f588ac0977206",
             "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e13-service-b6486b7b3-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e13-service-b6486b7b3-20260925-console.typescript",
             "sha256": "bd3baa0053346ac8a51d4f2d0077894e2546fe86b74059dc8306744a8ae3e39e",
             "cited_by": "pq-native/N6-MAC-E13-F881-9D-CURSOR-FAILURE-REVIEW-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/fift",
+            "path": "/workspace/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/fift",
             "sha256": "37e0b3be30e96faf99db7061917dcf3a3950fd1ae1a6c8a7524ee52c0c0280ef",
             "cited_by": "pq-native/N6-PG-E13-FAA-EXACT-FIFT-FUNC-SNAPSHOT-20260925.md"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/func",
+            "path": "/workspace/tos-n6/test/integration/.e11-stage-a-d6bb1aaf1-20260925/20260925T093159Z/artifact-snapshot/build/crypto/func",
             "sha256": "d47ff59584adb975d8b813542b1b2aef7a3caf0320ec30008696b673a9dec5fd",
             "cited_by": "pq-native/N6-PG-E13-FAA-EXACT-FIFT-FUNC-SNAPSHOT-20260925.md"
           }
@@ -1115,12 +1115,12 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-console.typescript",
             "sha256": "7d5922ca5d0dfadf3a2fed593f4e6eb2830af35d75eecc208aede3fe0172d620",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
+            "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
             "sha256": "c4ad6b36eaf185d2be34cd308229913d6f89d48cc84c1c1ab88ebb0bb1705c88",
             "cited_by": "task_table"
           }
@@ -1794,17 +1794,17 @@
         ],
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925-console.typescript",
             "sha256": "51e67651e5c535aa9f816cd9cfedf47d57bdd488c4cce4c803359799d7503980",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/report.json",
+            "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/report.json",
             "sha256": "7cb8f9b04ce322c413055c8b391d81503bffe9b34a0fa2eab66ccc86db163762",
             "cited_by": "task_table"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/capture-manifest.json",
+            "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/capture-manifest.json",
             "sha256": "26053156186a422f61e6ac0626e4f5b3e04fd60ac17a9f9ce171136f06ac6bc5",
             "cited_by": "task_table"
           }
@@ -1888,42 +1888,42 @@
         "source": "Direct links in fixed task-table row and linked report only; no inferred acceptance.",
         "local_raw_artifacts": [
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925-console.typescript",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925-console.typescript",
             "sha256": "132c15355fc834717ae5061490bc75a82b1345f0f0e2244c6aa2435578ac0ff8",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/report.json",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/report.json",
             "sha256": "7256ad9697a3288532423e5c4b06a0fff60f570db2753a651a13bb5009fdb10f",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/policy.json",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/policy.json",
             "sha256": "976c1cc502e5d76a185ad0152f47a2f881e1a6ad58aeaca01865714a98171442",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/trace.json",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/trace.json",
             "sha256": "c390f7ac83a086ab4d9581867e2d26918a40aa6da89c4d4a7cf8e1531467b4ec",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/rpc.jsonl",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/rpc.jsonl",
             "sha256": "4c45efebd84e2274acb2486e2a5e3d94e97f1b8ff6ea3466d086a3c078f8c666",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/check.json",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/check.json",
             "sha256": "d1bd442c99001ff14e534ca3a4bc1ad17aad7165df050874edcfd16bec5ae7a6",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/capture-manifest.json",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/capture-manifest.json",
             "sha256": "b24c41d32b227abd34ed526be298eaf5a53a2354563ed359f04b4dfb4495dd2a",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },
           {
-            "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/f01-finality/capture-manifest.json",
+            "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/f01-finality/capture-manifest.json",
             "sha256": "2be7c717e935355948ff9eab0ef32238887f423fe202cb5c89e63d6863d62719",
             "cited_by": "pq-native/evidence/x01-6e8-original-sha256.txt"
           },

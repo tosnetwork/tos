@@ -140,7 +140,7 @@ def _load_nodes(args: argparse.Namespace) -> list[Node]:
         return [
             Node(
                 name=f"validator-{index}",
-                service=f"tos-validator@{index}",
+                service=f"tos-pq-validator@{index}",
                 region="local",
             )
             for index in range(1, args.local_systemd_nodes + 1)

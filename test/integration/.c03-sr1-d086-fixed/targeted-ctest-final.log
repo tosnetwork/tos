@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/tos-n6/build
-Test project /home/tomi/tos-n6/build
+Internal ctest changing into directory: /workspace/tos-n6/build
+Test project /workspace/tos-n6/build
       Start 194: test-consensus-simplex2-pq-state-resolver-catch-up
  1/10 Test #194: test-consensus-simplex2-pq-state-resolver-catch-up ......................   Passed    4.15 sec
       Start 195: test-consensus-simplex2-pq-finality-e2e-single

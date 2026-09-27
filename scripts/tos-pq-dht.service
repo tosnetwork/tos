@@ -1,0 +1,22 @@
+[Unit]
+Description=TOS local PQ DHT
+After=network.target
+[Service]
+User=tos
+Group=tos
+UMask=0077
+WorkingDirectory=/data/testnet/node0
+ExecStart=/usr/local/bin/tos-dht-server -C /data/tos-global.json -c /data/testnet/node0/config.json -D /data/testnet/node0 -t 2
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=30
+LimitNOFILE=65536
+CPUQuota=200%
+MemoryMax=1G
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

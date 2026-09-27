@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/tos-n6/build
-Test project /home/tomi/tos-n6/build
+Internal ctest changing into directory: /workspace/tos-n6/build
+Test project /workspace/tos-n6/build
       Start   1: test-quorum-static-grep
  1/39 Test   #1: test-quorum-static-grep ........................   Passed    0.05 sec
       Start  47: n6-manifest-completeness

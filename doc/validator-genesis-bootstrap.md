@@ -137,19 +137,15 @@ balances.
 
 ## Local three-process fault-tolerance rehearsal
 
-The local test infrastructure can commit four genesis identities while running
-only three validator processes:
+The local installer now prepares four PQ genesis identities and four independent
+services. To rehearse one unavailable validator, stop its own service after setup:
 
 ```bash
-sudo env \
-  VALIDATORS=3 \
-  GENESIS_VALIDATORS=4 \
-  VALIDATOR_ECONOMICS_PROFILE=1 \
-  ./scripts/setup-testnet.sh --clean
-
-./scripts/testnet-ctl.sh start
+sudo ./scripts/setup-testnet.sh --clean
+sudo systemctl stop tos-pq-validator@4
 ```
 
+See [Local PQ network](Local-PQ-Network.md) for the local development profile.
 This is deliberately a one-offline-validator test. It must prove that:
 
 - all three running nodes converge on the same masterchain and workchain

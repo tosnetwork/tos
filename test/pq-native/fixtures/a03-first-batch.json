@@ -15,77 +15,77 @@
       ],
       "raw": [
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-console.typescript",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-console.typescript",
           "sha256": "7d5922ca5d0dfadf3a2fed593f4e6eb2830af35d75eecc208aede3fe0172d620"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/report.json",
           "sha256": "c4ad6b36eaf185d2be34cd308229913d6f89d48cc84c1c1ab88ebb0bb1705c88"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790348791414184765.json",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790348791414184765.json",
           "sha256": "5e12a1544ecda5bf68b08fba609487942d3d85f3302c0ed226772f63d129c6e8"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790349985272467639.json",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/artifacts/pool-stake-pre-send-window-1790349985272467639.json",
           "sha256": "3639809e338da619f6b4d24577b5df7e64e4980aafd45eb2b8c1fd9bb1f1786d"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node1/log",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node1/log",
           "sha256": "3353806922d55fd9537977808fb3a8ed38a4065755c836357f06de295a92be40"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node2/log",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/node2/log",
           "sha256": "293efe843ca5506672e19a3dd5e75145f1f6f3b971736cec0c2583f084b1d0fc"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/state/zerostate.boc",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/network/state/zerostate.boc",
           "sha256": "478f1294bed7d5510d7e9c17301bb4f82eb2e4913e4d128a308832c43deaf56c"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/initial-config15-34.typescript",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network/20260925T144913Z/initial-config15-34.typescript",
           "sha256": "1074866b886d54b85f510393ce0fbaef6843edb210201d2d94406d6a2b1cbdf5"
         }
       ],
       "binaries": [
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/create-state",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/create-state",
           "sha256": "64794dff6c422069994491bb189d6be9559094b9185da2c71033bf71917a210f"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/dht-server",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/dht-server",
           "sha256": "fd76bc835664b97fac56ced447b5f9310d8f6539ec24e3fc1422ec769f64d94d"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/fift",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/fift",
           "sha256": "ec4f335608595622b828ca96abd1b4fff8d4f2882d7be6ab46ccb5c05c30d51d"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/func",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/func",
           "sha256": "3ad2f14b31183c1021c5f6e76ce02b00a5ba075e0086aaadc0ceabba0bcc5cd7"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/generate-random-id",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/generate-random-id",
           "sha256": "58d0fd9691e7ee1e7557991f6db71ef70b437014c6d3d5a743404da3502ef281"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/lite-client",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/lite-client",
           "sha256": "264410d28452ecb7c477a5cb35db03fd014b3a773b3fcf09168c3c6b75bfeade"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/pq_pool_stake_order",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/pq_pool_stake_order",
           "sha256": "71465af030fc0436e9678314fde4261346ba08d39bb4a1cf16d9c044193a2caa"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/tos-pq-consensus-key",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/tos-pq-consensus-key",
           "sha256": "039811cd49d0b2d6f4232a5ea46e8cd025fd8ddd5d7fe37ee46b292992ba5c6b"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/validator-engine",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/validator-engine",
           "sha256": "186fef777bba20168fb48efb43fd78d2945cb16a565a10630e165dc1bbabaa3a"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/validator-engine-console",
+          "path": "/workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-binaries/validator-engine-console",
           "sha256": "5fbe9840edc008bb29336c2cb0d0d8c724052f6acb410eb37a46b366d49c5c11"
         }
       ],
@@ -130,7 +130,7 @@
         "kind": "real_chain",
         "argv": null,
         "argv_gap": "The original E16 console header does not record launch argv; the documented command is reviewer prose, not an OS or run receipt.",
-        "reported_argv_text": "env PYTHONPATH=test/tostester/src uv run python -u scripts/nominator-pool-lifecycle-e2e.py --build-dir /home/tomi/tos-n6/build --run-dir /home/tomi/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network --base-port 25000 --campaign-run-id n6-e16-84a30e426 --agent-manifest /home/tomi/tos-n6/test/integration/.pq-nominator-pool-t3/diagnostic-agent-manifest.json",
+        "reported_argv_text": "env PYTHONPATH=test/tostester/src uv run python -u scripts/nominator-pool-lifecycle-e2e.py --build-dir /workspace/tos-n6/build --run-dir /workspace/tos-n6/test/integration/.e16-nominator-pool-84a30e426-20260925-network --base-port 25000 --campaign-run-id n6-e16-84a30e426 --agent-manifest /workspace/tos-n6/test/integration/.pq-nominator-pool-t3/diagnostic-agent-manifest.json",
         "reported_exit": 0,
         "exit_raw_role": "console",
         "exit_raw_marker": "COMMAND_EXIT_CODE=\"0\""
@@ -168,23 +168,23 @@
       ],
       "raw": [
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925-console.typescript",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925-console.typescript",
           "sha256": "51e67651e5c535aa9f816cd9cfedf47d57bdd488c4cce4c803359799d7503980"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/report.json",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/report.json",
           "sha256": "7cb8f9b04ce322c413055c8b391d81503bffe9b34a0fa2eab66ccc86db163762"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/manifest.json",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifact-snapshot/manifest.json",
           "sha256": "d8ac4b80b3a8ff0ec5abf8f33e6b8896e78bf4e623b333d3dc2201d8d6c2e31b"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/capture-manifest.json",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/capture-manifest.json",
           "sha256": "26053156186a422f61e6ac0626e4f5b3e04fd60ac17a9f9ce171136f06ac6bc5"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/config34-rpc.jsonl",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/config34-rpc.jsonl",
           "sha256": "8420331f38837aa988f20050432b09b8b00e630f68882af96440aa32b9150e68"
         },
         {
@@ -192,15 +192,15 @@
           "sha256": "60ce3df964688a35dcffa486a654af73dce0d874f2518eecdacedbead5650739"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-89.json",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-89.json",
           "sha256": "87894e5cbd293e1d03a764845ccec1bfd4d47a1f41d45ed096b5396e7fb7203a"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-131.json",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-131.json",
           "sha256": "adfd715975ff54c8ee3a7b6838aa0ebaa5f8de2cbc7ae371574c207cc6a30c35"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-172.json",
+          "path": "/workspace/tos-n6/test/integration/.f01-stage-a-2e1a51ad9-20260925/20260925T171818Z/artifacts/f01-finality/check-172.json",
           "sha256": "33e1ae352ce05c764e556302c677c0fbc6cadac657fbf9ff5f20ddfc4ee537f6"
         }
       ],
@@ -342,39 +342,39 @@
       ],
       "raw": [
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925-console.typescript",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925-console.typescript",
           "sha256": "132c15355fc834717ae5061490bc75a82b1345f0f0e2244c6aa2435578ac0ff8"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/report.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/report.json",
           "sha256": "7256ad9697a3288532423e5c4b06a0fff60f570db2753a651a13bb5009fdb10f"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/policy.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/policy.json",
           "sha256": "976c1cc502e5d76a185ad0152f47a2f881e1a6ad58aeaca01865714a98171442"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/trace.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/trace.json",
           "sha256": "c390f7ac83a086ab4d9581867e2d26918a40aa6da89c4d4a7cf8e1531467b4ec"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/rpc.jsonl",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/rpc.jsonl",
           "sha256": "4c45efebd84e2274acb2486e2a5e3d94e97f1b8ff6ea3466d086a3c078f8c666"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/check.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/check.json",
           "sha256": "d1bd442c99001ff14e534ca3a4bc1ad17aad7165df050874edcfd16bec5ae7a6"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/capture-manifest.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/x01-fault-window/capture-manifest.json",
           "sha256": "b24c41d32b227abd34ed526be298eaf5a53a2354563ed359f04b4dfb4495dd2a"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/f01-finality/capture-manifest.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifacts/f01-finality/capture-manifest.json",
           "sha256": "2be7c717e935355948ff9eab0ef32238887f423fe202cb5c89e63d6863d62719"
         },
         {
-          "path": "/home/tomi/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/manifest.json",
+          "path": "/workspace/tos-n6/test/integration/.x01-stage-a-6e863142b-20260925/20260925T183819Z/artifact-snapshot/manifest.json",
           "sha256": "41f52c45fd2493600432e5fe6194d3249fe5e79955306ccca211750475c17f6e"
         },
         {

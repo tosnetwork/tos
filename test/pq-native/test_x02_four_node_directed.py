@@ -10,6 +10,7 @@ import datetime
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -465,6 +466,31 @@ class DirectedCleanupTests(unittest.TestCase):
             commands, evidence = self.evidence([leftover, leftover])
             with self.assertRaisesRegex(ValueError, "remains after fallback cleanup"):
                 four_node.directed_tc_cleanup(evidence, self.POLICY, [])
+
+
+class PortableGitBindingTest(unittest.TestCase):
+    def test_linked_worktree_binds_actual_common_root_and_ignores_git_override(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, worktree = root / "repo", root / "worktree"
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "-c", "user.name=Tests", "-c",
+                 "user.email=tests@localhost", "commit", "-q", "--allow-empty", "-m", "Fixture"],
+                check=True,
+            )
+            subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "--detach", str(worktree)], check=True)
+            with patch.object(closure, "__file__", str(worktree / "scripts/binding.py")), patch.dict(
+                os.environ, {"GIT_DIR": str(root / "untrusted")}
+            ):
+                self.assertEqual(str((repo / ".git").resolve()), closure.repository_git_common_root())
+
+    def test_missing_repository_metadata_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            closure, "__file__", str(Path(directory) / "scripts/binding.py")
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                closure.repository_git_common_root()
 
 
 if __name__ == "__main__":
