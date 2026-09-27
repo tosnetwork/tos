@@ -502,7 +502,6 @@ def _punishment_params(election_params: str) -> str:
     return f"TM$62.5 16777216 640 1024 {unpunishable} {long} 4096 4096 {medium} 1024 1024"
 
 
-
 def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     """The four ConfigParam 20/21/24/25 lines the zerostate is rendered with.
 
@@ -515,28 +514,20 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     """
     if config.deployment_fee_schedule:
         return {
-            "gas_prices":
-                "436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
-            "mc_gas_prices":
-                "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
-                " config.mc_gas_prices!",
-            "fwd_prices":
-                "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
-            "mc_fwd_prices":
-                "10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/"
-                " config.mc_fwd_prices!",
+            "gas_prices": "436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
+            "mc_gas_prices": "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
+            " config.mc_gas_prices!",
+            "fwd_prices": "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
+            "mc_fwd_prices": "10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/"
+            " config.mc_fwd_prices!",
         }
     return {
-        "gas_prices":
-            "// DEV-SPECIFIC: cheaper gas for tests (deployment: 436907/655360000)\n"
-            "10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!",
-        "mc_gas_prices":
-            "10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!",
-        "fwd_prices":
-            "// DEV-SPECIFIC: cheaper forwarding for tests (deployment: 66667/10000000)\n"
-            "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
-        "mc_fwd_prices":
-            "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!",
+        "gas_prices": "// DEV-SPECIFIC: cheaper gas for tests (deployment: 436907/655360000)\n"
+        "10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!",
+        "mc_gas_prices": "10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!",
+        "fwd_prices": "// DEV-SPECIFIC: cheaper forwarding for tests (deployment: 66667/10000000)\n"
+        "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
+        "mc_fwd_prices": "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!",
     }
 
 
