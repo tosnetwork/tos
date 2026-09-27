@@ -202,7 +202,7 @@ def validate(batch, snapshot, snapshot_bytes, source_repo, memo_repo):
                 continue
             try:
                 run = json.loads(raw)
-            except UnicodeDecodeError, json.JSONDecodeError:
+            except (UnicodeDecodeError, json.JSONDecodeError):
                 errors.append(f"{label}:ci:{n}: malformed run JSON")
                 continue
             equivalent = run.get("headSha") == source_commit or (

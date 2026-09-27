@@ -197,7 +197,7 @@ def proven_config_param(
                 value_deserializer=lambda src: src.load_ref(),
             )
         )
-    except ProofRefused, ProofError:
+    except (ProofRefused, ProofError):
         raise
     except Exception as error:  # a pruned path inside the dictionary cannot be walked
         raise ProofRefused(

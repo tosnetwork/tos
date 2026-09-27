@@ -3148,7 +3148,7 @@ class ValidatorElectionRehearsal:
                     logical_bytes += stat.st_size
                     allocated_bytes += stat.st_blocks * 512
                     file_count += 1
-            except FileNotFoundError, PermissionError:
+            except (FileNotFoundError, PermissionError):
                 continue
         return {
             "network_storage_logical_bytes": logical_bytes,
@@ -3240,7 +3240,7 @@ class ValidatorElectionRehearsal:
                             "cpu_system_ticks": int(stat_fields[12]),
                         }
                     )
-                except FileNotFoundError, PermissionError, ProcessLookupError:
+                except (FileNotFoundError, PermissionError, ProcessLookupError):
                     continue
             sample["validator_processes"] = processes
             try:

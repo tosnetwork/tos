@@ -25,6 +25,9 @@ members = [
 
 [tool.ruff]
 line-length = 100
+# Scripts also run under the system python3 of the CI images, so keep syntax that
+# older interpreters parse (for example parenthesised multi-type except clauses).
+target-version = "py312"
 include = ["test/integration/**/*.py", "test/tostester/**/*.py"]
 # Evidence records pin these files by their exact bytes (sha256), and the A03
 # ledger re-hashes the working tree; reformatting them would break those
