@@ -308,8 +308,8 @@ td::Status DhtUpdateRuleOverlayNodes::check_value(const DhtValue &value) {
     }
     TRY_RESULT(pub, adnl::AdnlNodeIdFull::create(node->id_));
     auto sig = std::move(node->signature_);
-    auto obj =
-        create_tl_object<tos_api::overlay_node_toSign>(pub.compute_short_id().tl(), node->overlay_, node->flags_, node->version_);
+    auto obj = create_tl_object<tos_api::overlay_node_toSign>(pub.compute_short_id().tl(), node->overlay_, node->flags_,
+                                                              node->version_);
     if (node->overlay_ != value.key().key().public_key_hash().bits256_value()) {
       return td::Status::Error(ErrorCode::protoviolation, "bad overlay id");
     }
