@@ -152,7 +152,7 @@ mod tests {
 
     fn signed_node(
         key: &Arc<dyn KeyOption>,
-        overlay: &super::super::OverlayShortId,
+        overlay: &Arc<super::super::OverlayShortId>,
         version: i32,
         flags: i32,
         certificate: MemberCertificate,
