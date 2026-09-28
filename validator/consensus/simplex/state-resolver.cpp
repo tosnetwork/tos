@@ -256,10 +256,14 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                           .finalizations_stalled_permanently = finalizations_stalled_permanently_,
                                           .slot_attempts = 0};
     for (const auto& [id, state] : finalized_blocks_) {
+      result.inflight_waiters += state.waiters.size();
       if (id.slot != query->slot) {
         continue;
       }
       result.slot_attempts = std::max(result.slot_attempts, state.attempts);
+    }
+    for (const auto& [_, state] : state_cache_) {
+      result.state_waiters += state.promises.size();
     }
     co_return result;
   }

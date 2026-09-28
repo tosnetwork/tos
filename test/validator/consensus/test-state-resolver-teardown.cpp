@@ -11,20 +11,26 @@
 // the block accepter, whose FinalizeBlock handling is held open by the test so the first
 // finalization attempt stays InFlight for as long as the scenario needs.
 //
-// Scenario:
+// Scenario, each step confirmed through the resolver's own QueryFinalizationState before
+// the next one starts, so the stop always lands on the intended state:
 //   1. A full candidate X on the genesis state is stored and a finalization certificate
 //      for it is observed; finalize_blocks(X) runs until FinalizeBlock is held.
 //   2. The same finalization is observed again: the second finalize_blocks(X) finds the
-//      entry InFlight and registers a waiter.
+//      entry InFlight and registers a waiter (inflight_waiters == 1, two started, none
+//      settled).
 //   3. ResolveState(X) is requested: resolve_state_inner asks finalization_of(X), which
-//      also finds InFlight and registers a waiter.
-//   4. StopRequested is published, the driver drops its bus handle, and the held
-//      FinalizeBlock is failed with `cancelled` the way a stopped accepter fails it.
+//      also finds InFlight and registers a waiter (inflight_waiters == 2).
+//   4. StopRequested is published and the driver drops its bus handle. The held
+//      FinalizeBlock is NOT released yet: the resolver has to tear down with the attempt
+//      still in flight and both waiters still registered.
+//   5. ResolveState(X) completing with `cancelled` is the barrier that proves the
+//      resolver's teardown ran and failed its waiters. Only then is the held request
+//      failed with `cancelled`, the way a stopped accepter's pending reply ends.
 //
-// Expected: ResolveState(X) completes with `cancelled`; no manager request is made after
-// the stop; the bus destructs (its stop promise completes) within the deadline, which
-// proves the resolver holds nothing. Before the teardown fix, the waiters woken during
-// tear_down re-registered themselves on the list being walked: the bus never stopped.
+// Expected: no manager request after the stop; the bus destructs (its stop promise
+// completes) within the deadline, which proves the resolver holds nothing. Before the
+// teardown fix, the waiters woken during tear_down re-registered themselves on the list
+// being walked: the resolver crashed there, or the bus never stopped.
 
 #include <atomic>
 #include <cstdio>
@@ -47,6 +53,7 @@
 #include "crypto/pq/consensus-pq-signer.h"
 #include "td/actor/BusRuntime.h"
 #include "td/actor/coro_utils.h"
+#include "td/utils/port/signals.h"
 #include "vm/boc.h"
 
 #include "block-auto.h"
@@ -107,8 +114,9 @@ std::string id_str(const CandidateId& id) {
 
 struct Observations {
   std::mutex mutex;
+  // FinalizeBlock requests parked by the accepter stand-in, released only by the driver.
+  std::vector<td::actor::StartedTask<td::Unit>::ExternalPromise> held;
   size_t held_finalizations = 0;
-  size_t released_finalizations = 0;
   size_t manager_requests = 0;
   size_t manager_requests_after_stop = 0;
 };
@@ -150,9 +158,10 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
   }
 };
 
-// Stands in for the block accepter. Every FinalizeBlock is held open until the actor stops,
-// when the held requests are failed with `cancelled`, exactly what a stopped accepter's
-// pending manager reply turns into.
+// Stands in for the block accepter. Every FinalizeBlock is parked with the driver, which
+// decides when it is failed with `cancelled` (what a stopped accepter's pending manager
+// reply turns into). Stopping this actor does not release anything by itself: the driver
+// needs the request to outlive the resolver's teardown.
 class HoldingAccepter : public td::actor::SpawnsWith<simplex::Bus>, public td::actor::ConnectsTo<simplex::Bus> {
  public:
   TOS_RUNTIME_DEFINE_EVENT_HANDLER();
@@ -165,29 +174,14 @@ class HoldingAccepter : public td::actor::SpawnsWith<simplex::Bus>, public td::a
   template <>
   td::actor::Task<> process(simplex::BusHandle, std::shared_ptr<FinalizeBlock> event) {
     auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
-    held_.push_back(std::move(promise));
     {
       std::scoped_lock lock(observations.mutex);
+      observations.held.push_back(std::move(promise));
       ++observations.held_finalizations;
     }
     emit(PSTRING() << "C10_FINALIZE_HELD " << id_str(event->candidate->id));
     co_return co_await std::move(task);
   }
-
-  void tear_down() override {
-    auto held = std::move(held_);
-    held_.clear();
-    for (auto& promise : held) {
-      {
-        std::scoped_lock lock(observations.mutex);
-        ++observations.released_finalizations;
-      }
-      promise.set_error(td::Status::Error(ErrorCode::cancelled, "accepter stopped"));
-    }
-  }
-
- private:
-  std::vector<td::actor::StartedTask<td::Unit>::ExternalPromise> held_;
 };
 
 class MemoryDb : public consensus::Db {
@@ -391,6 +385,44 @@ class Driver : public td::actor::Actor {
     co_return td::Unit{};
   }
 
+  // The resolver's own view of what is parked on it. Polled until `ready` accepts it or the
+  // deadline passes; a query that fails (the resolver is gone) counts as not ready.
+  template <typename F>
+  td::actor::Task<bool> wait_resolver(F ready, double timeout = STEP_TIMEOUT) {
+    auto deadline = td::Timestamp::in(timeout);
+    while (true) {
+      auto result = co_await bus_.publish<simplex::QueryFinalizationState>(td::uint32{0}).wrap();
+      if (result.is_ok() && ready(result.ok())) {
+        co_return true;
+      }
+      if (deadline.is_in_past()) {
+        if (result.is_ok()) {
+          const auto& r = result.ok();
+          emit(PSTRING() << "C10_RESOLVER_STATE started=" << r.finalizations_started
+                         << " settled=" << r.finalizations_settled << " inflight_waiters=" << r.inflight_waiters
+                         << " state_waiters=" << r.state_waiters);
+        }
+        co_return false;
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.005));
+    }
+  }
+
+  // Fail every parked FinalizeBlock with `cancelled`, as a stopped accepter's pending
+  // manager reply ends. Returns how many were released.
+  size_t release_held() {
+    std::vector<td::actor::StartedTask<td::Unit>::ExternalPromise> held;
+    {
+      std::scoped_lock lock(observations.mutex);
+      held = std::move(observations.held);
+      observations.held.clear();
+    }
+    for (auto& promise : held) {
+      promise.set_error(td::Status::Error(ErrorCode::cancelled, "accepter stopped"));
+    }
+    return held.size();
+  }
+
   void start_node() {
     std::vector<PeerValidator> validators;
     ValidatorWeight total_weight = 0;
@@ -473,36 +505,55 @@ class Driver : public td::actor::Actor {
     if (!co_await wait_until([&] { return held_finalizations() >= 1; })) {
       finish(1, "C10_PRECONDITION_FAILED: the first finalization never reached FinalizeBlock");
     }
+    if (!co_await wait_resolver([](const simplex::QueryFinalizationState::Result& r) {
+          return r.finalizations_started == 1 && r.finalizations_settled == 0 && r.inflight_waiters == 0;
+        })) {
+      finish(1, "C10_PRECONDITION_FAILED: the resolver does not report one unsettled finalization");
+    }
     emit("C10_STEP first finalization is InFlight");
 
     // 2. Second finalization of the same candidate: registers a waiter on the InFlight entry.
     bus_.publish<simplex::FinalizationObserved>(X->id, cert);
-    co_await settle();
+    if (!co_await wait_resolver([](const simplex::QueryFinalizationState::Result& r) {
+          return r.finalizations_started == 2 && r.finalizations_settled == 0 && r.inflight_waiters == 1;
+        })) {
+      finish(1, "C10_PRECONDITION_FAILED: the second finalization did not register a waiter");
+    }
+    emit("C10_STEP second finalization is waiting on the first");
 
     // 3. ResolveState(X): finalization_of(X) registers another waiter on the same entry.
     auto resolve = bus_.publish<simplex::ResolveState>(ParentId{X->id}).start();
-    co_await settle();
-    if (held_finalizations() != 1) {
-      finish(1, PSTRING() << "C10_PRECONDITION_FAILED: expected exactly one held finalization, got "
-                          << held_finalizations());
+    if (!co_await wait_resolver([](const simplex::QueryFinalizationState::Result& r) {
+          return r.finalizations_started == 2 && r.finalizations_settled == 0 && r.inflight_waiters == 2;
+        })) {
+      finish(1, "C10_PRECONDITION_FAILED: ResolveState did not register a waiter on the in-flight finalization");
+    }
+    if (resolve.await_ready()) {
+      finish(1, "C10_PRECONDITION_FAILED: ResolveState completed before the stop");
     }
     size_t requests_before_stop;
     {
       std::scoped_lock lock(observations.mutex);
       requests_before_stop = observations.manager_requests;
+      if (observations.held.size() != 1) {
+        finish(1, PSTRING() << "C10_PRECONDITION_FAILED: expected exactly one held finalization, got "
+                            << observations.held.size());
+      }
     }
-    emit(PSTRING() << "C10_STEP waiters registered; manager_requests=" << requests_before_stop);
+    emit(PSTRING() << "C10_STEP attempt in flight, two waiters registered; manager_requests=" << requests_before_stop);
 
-    // 4. Stop the group and drop the driver's own references, as the bridge does.
+    // 4. Stop the group and drop the driver's own references, as the bridge does. The held
+    //    FinalizeBlock stays held: the resolver must tear down on exactly this state.
     stop_published.store(true);
     bus_.publish<StopRequested>();
     std::weak_ptr<simplex::Bus> weak_bus = bus_ptr_;
     bus_ptr_.reset();
     bus_ = {};
-    emit("C10_STEP StopRequested published, driver handle dropped");
+    emit("C10_STEP StopRequested published, driver handle dropped, FinalizeBlock still held");
 
-    // ResolveState(X) must end, and end with the teardown cancellation. Before the fix its
-    // waiter was re-registered on a list nobody drains any more, and this never completed.
+    // 5. ResolveState(X) completing is the barrier: its waiter was failed by the resolver's
+    //    teardown. Before the fix the waiter was re-registered on a list nobody drains any
+    //    more, and this never completed.
     if (!co_await wait_until([&] { return resolve.await_ready(); })) {
       finish(2, "C10_FAILED: ResolveState never completed after the stop (stranded waiter)");
     }
@@ -516,6 +567,15 @@ class Driver : public td::actor::Actor {
              PSTRING() << "C10_FAILED: ResolveState ended with " << resolved.error().code() << " instead of cancelled");
     }
 
+    // The resolver has torn down; only now does the external dependency end, as a stopped
+    // accepter's pending manager reply would. It must still be held at this point.
+    size_t released = release_held();
+    if (released != 1) {
+      finish(1, PSTRING() << "C10_PRECONDITION_FAILED: expected to release exactly one held finalization, got "
+                          << released);
+    }
+    emit("C10_STEP held FinalizeBlock released with cancelled");
+
     // The bus must destruct: every actor gone, every coroutine frame released.
     if (!co_await wait_until([&] { return bus_stopped_->await_ready(); })) {
       emit(PSTRING() << "C10_BUS_STILL_ALIVE bus_refs=" << weak_bus.use_count());
@@ -525,11 +585,9 @@ class Driver : public td::actor::Actor {
     co_await settle();
 
     size_t after_stop;
-    size_t released;
     {
       std::scoped_lock lock(observations.mutex);
       after_stop = observations.manager_requests_after_stop;
-      released = observations.released_finalizations;
     }
     emit(PSTRING() << "C10_RESULT bus_expired=" << weak_bus.expired() << " released_finalizations=" << released
                    << " manager_requests_after_stop=" << after_stop);
@@ -547,6 +605,9 @@ class Driver : public td::actor::Actor {
 
 int main() {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
+  // A crash inside the resolver's teardown is one of the two outcomes this test guards
+  // against; print where it happened.
+  td::set_default_failure_signal_handler().ensure();
   td::actor::Scheduler scheduler({2});
   td::actor::ActorOwn<Driver> driver;
   scheduler.run_in_context([&] {
