@@ -743,7 +743,8 @@ impl DhtNode {
             fail!("Member certificate in public overlay DHT value")
         }
         OverlayUtils::verify_node(&overlay_short_id, node_descriptor)?;
-        let nodes = OverlayNodesDescriptor { nodes: vec![node_descriptor.clone()].into() }.into_boxed();
+        let nodes =
+            OverlayNodesDescriptor { nodes: vec![node_descriptor.clone()].into() }.into_boxed();
         let key = Self::dht_key_from_key_id(&overlay_short_id, "nodes");
         let value = DhtValue {
             key: DhtKeyDescription {
@@ -1175,12 +1176,12 @@ impl DhtNode {
         }
         add_counted_object_to_map_with_update(&network.storage, dht_key_id, |old_value| {
             let object = merge_overlay_nodes(
-                old_value.map(|old| &old.object), &value, &nodes, Version::get(),
+                old_value.map(|old| &old.object),
+                &value,
+                &nodes,
+                Version::get(),
             )?;
-            let ret = ValueObject {
-                object,
-                counter: self.allocated.values.clone().into(),
-            };
+            let ret = ValueObject { object, counter: self.allocated.values.clone().into() };
             #[cfg(feature = "telemetry")]
             self.telemetry.values.update(self.allocated.values.load(Ordering::Relaxed));
             log::trace!(target: TARGET, "Store Overlay Nodes result {:?}", ret.object);
