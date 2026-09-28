@@ -1,4 +1,5 @@
 /* Copyright (c) 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
+#include <algorithm>
 #include <atomic>
 #include <map>
 #include <mutex>
@@ -474,17 +475,26 @@ class Fixture {
                                 done = true;
                               }));
     });
-    while (!done)
-      pump();
-    for (unsigned i = 0; i < 100; ++i) {
-      pump();
-      size_t expected = 0;
-      for (const auto& bus : buses)
-        expected +=
+    wait_for([&] { return done.load(); }, "manager advance did not complete");
+    // An equal historical Bus/overlay count is not evidence that this update's
+    // new groups have started. Wait for every registered live session too.
+    std::map<ValidatorSessionId, size_t> required;
+    for (const auto& id : entries())
+      ++required[id];
+    for (const auto& id : entries(true))
+      ++required[id];
+    wait_for([&] {
+      std::map<ValidatorSessionId, size_t> observed;
+      size_t expected_overlays = 0;
+      for (const auto& bus : buses) {
+        ++observed[bus->session_id];
+        expected_overlays +=
             (bus->is_validator() || bus->config.observers_in_private_overlay()) + bus->config.enable_block_sync();
-      if (overlays.size() == expected)
-        break;
-    }
+      }
+      return overlays.size() == expected_overlays &&
+             std::all_of(required.begin(), required.end(),
+                         [&](const auto& row) { return observed[row.first] >= row.second; });
+    }, "registered sessions or their overlays did not start");
   }
   std::vector<ValidatorSessionId> entries(bool future = false) {
     std::optional<std::vector<ValidatorSessionId>> result;
@@ -500,8 +510,7 @@ class Fixture {
       else
         td::actor::send_closure(manager_, &TwostepManagerProbe::inspect, std::move(promise));
     });
-    while (!done)
-      pump();
+    wait_for([&] { return done.load(); }, "manager inspection did not complete");
     return *result;
   }
   std::string preflight() {
@@ -514,8 +523,7 @@ class Fixture {
                                 done = true;
                               }));
     });
-    while (!done)
-      pump();
+    wait_for([&] { return done.load(); }, "manager preflight did not complete");
     return *answer;
   }
   void refuse_factories(std::set<adnl::AdnlNodeIdShort> relays) {
@@ -609,6 +617,17 @@ class Fixture {
   }
 
  private:
+  template <class Predicate>
+  void wait_for(Predicate ready, const char* failure) {
+    // RootDb uses worker threads; retain the bounded worker-progress pump rather
+    // than letting a lost promise hang the test process indefinitely.
+    for (unsigned round = 0; round < 1000; ++round) {
+      pump();
+      if (ready())
+        return;
+    }
+    LOG_CHECK(ready()) << failure;
+  }
   std::vector<BusHandle> observed_buses_;
   std::vector<Observation> observed_overlays_;
   std::vector<ReceivedCandidate> observed_received_;
@@ -618,8 +637,8 @@ class Fixture {
   td::actor::ActorOwn<keyring::Keyring> keys_;
   td::actor::ActorOwn<adnl::TestLoopbackNetworkManager> net_;
   td::actor::ActorOwn<adnl::Adnl> adnl_;
-  td::actor::ActorOwn<FixtureQuicSender> sender_;
   td::actor::ActorOwn<rldp2::Rldp> rldp_;
+  td::actor::ActorOwn<FixtureQuicSender> sender_;
   td::actor::ActorOwn<ObservedOverlays> overlays_;
   td::actor::ActorOwn<TwostepManagerProbe> manager_;
 };
@@ -681,21 +700,44 @@ TEST(TwostepWiring, TotalSetSwitchRecreatesActiveAndObservers) {
   f.hold(f.old, 0);
   f.hold(f.next, 0);
   f.hold(f.next, 1);
-  f.advance(f.initial());
+  auto outgoing = f.initial();
+  // The prebuilt and promoted committees must be identical. Otherwise a member
+  // change alone makes their IDs differ and masks broken key-block binding.
+  outgoing.future = f.next.set(2, 1);
+  f.advance(outgoing);
   const auto tentative = f.entries(true);
   ASSERT_EQ(tentative.size(), 1u);
+  auto prepared = std::find_if(f.buses.begin(), f.buses.end(), [&](const auto& bus) {
+    return bus->is_validator() && bus->session_id == tentative[0];
+  });
+  ASSERT_TRUE(prepared != f.buses.end());
+  ASSERT_TRUE((*prepared)->all_current_validators == f.current.ids());
   auto incoming = f.initial();
   incoming.previous = f.current.set(1);
   incoming.current = f.next.set(2);
   incoming.next = {};
-  incoming.committee = f.next.set(2, 1);
+  incoming.committee = outgoing.future;
   incoming.future = {};
+  auto identity = [&](BlockSeqno key, bool new_ids) {
+    auto snapshot = outgoing;
+    snapshot.new_ids = new_ids;
+    auto options = block::validator_session_options_hash(StateConfig(snapshot).get_consensus_config());
+    return block::derive_validator_session_identity(
+               3, options, hash("protocol-2"), ShardIdFull{masterchainId},
+               incoming.committee->get_catchain_seqno(), incoming.committee->export_vector(), 0, key, new_ids)
+        .session_id;
+  };
+  ASSERT_TRUE(tentative[0] == identity(0, true));
+  ASSERT_TRUE(identity(0, true) != identity(2, true));
+  ASSERT_TRUE(identity(0, false) == identity(2, false));
   auto begin = f.buses.size();
   f.advance(incoming, 2, true);
   auto active = f.entries();
   ASSERT_TRUE(!active.empty());
-  for (const auto& id : active)
+  for (const auto& id : active) {
     ASSERT_TRUE(id != tentative[0]);
+    ASSERT_TRUE(id == identity(2, true));
+  }
   ASSERT_TRUE(f.buses.size() > begin);
   for (size_t i = begin; i < f.buses.size(); ++i)
     ASSERT_TRUE(f.buses[i]->all_current_validators == f.next.ids());
@@ -705,18 +747,27 @@ TEST(TwostepWiring, TotalSetSwitchRecreatesActiveAndObservers) {
 TEST(TwostepWiring, SameEpochTentativeCanBeReused) {
   Fixture f;
   f.hold(f.current, 0);
-  f.hold(f.next, 0);
-  f.advance(f.initial());
+  f.hold(f.current, 2);  // a current-total-set observer outside the committee
+  auto before = f.initial();
+  before.next = {};
+  before.future = f.current.set(2, 2);
+  // Both committees come from the same current total set, with no election or
+  // key-block change. Do not promote the disjoint next epoch's committee here.
+  for (const auto& member : before.future->export_vector())
+    ASSERT_TRUE(before.current->is_validator(member.validator_id));
+  f.advance(before);
   auto tentative = f.entries(true);
   ASSERT_EQ(tentative.size(), 1u);
   auto count = f.buses.size();
-  auto within = f.initial();
-  within.committee = f.next.set(2);
+  auto within = before;
+  within.committee = before.future;
   within.future = {};
   f.advance(within, 2, false);
   auto active = f.entries();
-  ASSERT_TRUE(std::find(active.begin(), active.end(), tentative[0]) != active.end());
-  ASSERT_EQ(f.buses.size(), count + 1);  // outgoing local validator becomes an observer
+  ASSERT_EQ(active.size(), 2u);  // promoted validator and recreated observer
+  for (const auto& id : active)
+    ASSERT_TRUE(id == tentative[0]);
+  ASSERT_EQ(f.buses.size(), count + 1);  // only the observer needs a new Bus
   for (const auto& bus : f.buses)
     ASSERT_TRUE(bus->all_current_validators == f.current.ids());
 }

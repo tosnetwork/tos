@@ -249,16 +249,19 @@ class Fixture {
       for (size_t i = 0; i < destinations.size(); ++i)
         ASSERT_TRUE(seqnos.contains(static_cast<int>(i)));
   }
-  void expect_fec_symbols(size_t k) const {
+  void expect_fec_symbols(size_t k_target, size_t source_symbols) const {
     CHECK(!captures_.empty());
+    CHECK(first_.size() >= 5);
+    ASSERT_EQ((first_.size() - 1) / 2, k_target);
     for (const auto& frame : captures_) {
       td::Slice bytes = frame.as_slice();
       fetch_tl_prefix<tos_api::overlay_message>(bytes, true).ensure();
       auto fec = fetch_tl_object<tos_api::overlay_broadcastTwostepFec>(bytes, true).move_as_ok();
-      ASSERT_EQ(fec->part_.size(), (payload_.size() + k - 1) / k);
-      ASSERT_EQ((payload_.size() + fec->part_.size() - 1) / fec->part_.size(), k);
+      ASSERT_EQ(fec->part_.size(), (payload_.size() + k_target - 1) / k_target);
+      ASSERT_EQ((payload_.size() + fec->part_.size() - 1) / fec->part_.size(), source_symbols);
     }
-    LOG(INFO) << "first hops=" << first_.size() << " K=" << k << " online=" << online_;
+    LOG(INFO) << "first hops=" << first_.size() << " k_target=" << k_target << " K=" << source_symbols
+              << " online=" << online_;
   }
   void expect_delivery(bool remote) const {
     for (size_t i = 0; i < online_; ++i) {
@@ -340,16 +343,28 @@ TEST(Twostep, OfflineNonCurrentRelays) {
     for (size_t i = 1; i < 21; ++i)
       ids.push_back(i);
     f.expect_hops(ids, true);
-    f.expect_fec_symbols(9);
+    f.expect_fec_symbols(9, 9);
     f.expect_delivery(false);
   }
   {
     Fixture f(21, 7, {0, 1, 2, 3, 4, 5, 6});
     f.send();
     f.expect_hops({1, 2, 3, 4, 5, 6}, true);
-    f.expect_fec_symbols(2);
+    f.expect_fec_symbols(2, 2);
     f.expect_delivery(true);
   }
+}
+TEST(Twostep, FecRoundingUsesTransmittedPartSize) {
+  // Generic-overlay arithmetic fixture, not a 63-validator consensus launch.
+  // Only the source is online: assert emitted parameters, not remote decoding.
+  Fixture f(63, 1, {});
+  f.send(513);
+  std::vector<size_t> destinations;
+  for (size_t i = 1; i < 63; ++i)
+    destinations.push_back(i);
+  f.expect_hops(destinations, true);
+  f.expect_fec_symbols(30, 29);  // part_size=18; ceil(513/18)=29, not 30
+  f.expect_delivery(false);
 }
 TEST(Twostep, EmptyDefault) {
   Fixture f(7, 7, {});
