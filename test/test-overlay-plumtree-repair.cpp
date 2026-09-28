@@ -78,6 +78,23 @@ class RepairOverlay : public OverlayImpl {
       CHECK(task.await_ready());
       return task.await_resume().is_ok();
     };
+    auto submit_fec = [&](int id, int peer, int part_index, bool valid) {
+      auto broadcast_id = td::sha256_bits256(td::Slice(std::to_string(id)));
+      auto hash = td::sha256_bits256(td::Slice(PSTRING() << "fec-part-" << part_index));
+      auto timestamp = td::Clocks::system();
+      auto tree_index = part_index + 1;
+      auto to_sign = create_serialize_tl_object<tos_api::overlay_broadcastPlumtreeFec_toSign>(
+          broadcast_id, timestamp, part_index, tree_index, 1000, hash);
+      auto signature = key.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok();
+      if (!valid)
+        signature.as_slice().fill('x');
+      auto message = create_tl_object<tos_api::overlay_broadcastPlumtreeIHave>(
+          broadcast_id, timestamp, part_index, tree_index, key.compute_public_key().tl(), Certificate::empty_tl(),
+          timestamp, 1000, hash, std::move(signature));
+      auto task = b.process_ihave(this, peers[peer], std::move(message)).start_immediate();
+      CHECK(task.await_ready());
+      return task.await_resume().is_ok();
+    };
     if (benchmark) {
       std::vector<tl_object_ptr<tos_api::overlay_broadcastPlumtreeSimple>> payloads;
       double cpu_ms = 0;
@@ -130,6 +147,20 @@ class RepairOverlay : public OverlayImpl {
     }
     CHECK(!submit(0, 0, 1000, false));
     CHECK(b.repair_diagnostics_for_test().pending_parts == 0);  // Invalid first announcement cannot seed trust.
+
+    // Authentication is per missing FEC part, not merely per broadcast. A
+    // valid IHAVE for part 0 must not let a forged first IHAVE for part 1 seed
+    // repair state without a source-signature check.
+    CHECK(submit_fec(100, 0, 0, true));
+    auto cross_part_diag = b.repair_diagnostics_for_test();
+    auto checks_after_part0 = cross_part_diag.immediate_checks;
+    CHECK(!submit_fec(100, 1, 1, false));
+    cross_part_diag = b.repair_diagnostics_for_test();
+    CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 1);
+    CHECK(submit_fec(100, 2, 1, true));
+    cross_part_diag = b.repair_diagnostics_for_test();
+    CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 2);
+
     CHECK(submit(1, 1, 1000, true));
     CHECK(submit(1, 2, 2000, false));  // Canonical forged signature is deferred, never used for a query.
     CHECK(submit(1, 3, 3000, true));

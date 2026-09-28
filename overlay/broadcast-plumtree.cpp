@@ -1802,12 +1802,17 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_ihave(OverlayImpl *overlay, 
     to_sign = make_fec_payload_to_sign(control.broadcast_id, msg->payload_timestamp_, part_index, tree_index, data_size,
                                        msg->data_hash_);
   }
-  auto authenticated = missing_parts_.lower_bound(MissingPartKey{control.broadcast_id, 0, 0});
-  bool known_broadcast = has_state(control.broadcast_id) ||
-                         (authenticated != missing_parts_.end() &&
-                          std::get<0>(authenticated->first) == control.broadcast_id);
-  // Only the current fixed-size network signature format can be retained lazily.
-  bool defer_signature = known_broadcast && source_key.is_ed25519() && msg->signature_.size() == 64 &&
+  // Every missing part needs at least one authenticated advertisement.
+  // Authentication of another part in the same FEC broadcast is not sufficient:
+  // otherwise forged cross-part IHAVEs could occupy this part's repair targets
+  // without possessing a valid source signature.
+  bool has_authenticated_target =
+      existing_missing != missing_parts_.end() &&
+      std::any_of(existing_missing->second->repair_targets.begin(), existing_missing->second->repair_targets.end(),
+                  [](const auto &target) { return target.signature_verified; });
+  // Only redundant candidates for an already authenticated missing part may
+  // retain the current fixed-size network signature for lazy verification.
+  bool defer_signature = has_authenticated_target && source_key.is_ed25519() && msg->signature_.size() == 64 &&
                          to_sign.size() <= 88;
   if (!defer_signature) {
     ++immediate_signature_checks_;
