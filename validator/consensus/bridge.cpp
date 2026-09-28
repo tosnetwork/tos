@@ -5,6 +5,7 @@
  */
 
 #include <cerrno>
+#include <mutex>
 
 #include "block/validator-session-members.h"
 #include "td/db/RocksDb.h"
@@ -24,6 +25,34 @@
 namespace tos::validator {
 
 namespace consensus {
+
+namespace {
+std::mutex bridge_bus_observer_mutex;
+std::function<void(BusHandle)> bridge_bus_observer;
+}  // namespace
+void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer) {
+  std::lock_guard lock(bridge_bus_observer_mutex);
+  bridge_bus_observer = std::move(observer);
+}
+
+std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
+    const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current) {
+  if (!current) {
+    return std::nullopt;
+  }
+  if (current->empty()) {
+    LOG(ERROR) << "two-step relays: empty snapshot; using legacy relays";
+    return std::nullopt;
+  }
+  for (const auto& id : *current) {
+    if (std::find(members.begin(), members.end(), id) == members.end()) {
+      LOG(ERROR) << "two-step relays: snapshot contains a non-member; using legacy relays";
+      return std::nullopt;
+    }
+  }
+  return current;
+}
+
 namespace {
 
 class ManagerFacadeImpl : public ManagerFacade {
@@ -280,6 +309,7 @@ struct BridgeCreationParams {
 
   td::Ref<block::ValidatorSet> validator_set;
   std::vector<adnl::AdnlNodeIdShort> all_validators;
+  std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators;
   std::optional<tos::ValidatorId> local_id;
   adnl::AdnlNodeIdShort local_adnl_id;
   std::string db_suffix;
@@ -372,6 +402,7 @@ class BridgeImpl final : public IValidatorGroup {
     bus->pq_signer = params_.pq_signer;
     bus->validator_opts = params_.validator_opts;
     bus->all_validators = params_.all_validators;
+    bus->all_current_validators = params_.all_current_validators;
 
     bool found = false;
     size_t idx = 0;
@@ -451,6 +482,14 @@ class BridgeImpl final : public IValidatorGroup {
     simplex::DefaultCollatorSchedule::provide_for(runtime);
 
     bus_ = runtime.start(bus, params_.name);
+    std::function<void(BusHandle)> observer;
+    {
+      std::lock_guard lock(bridge_bus_observer_mutex);
+      observer = bridge_bus_observer;
+    }
+    if (observer) {
+      observer(bus_);
+    }
   }
 
  private:
@@ -669,10 +708,13 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
     td::Ref<block::ValidatorSet> validator_set, BlockSeqno last_key_block_seqno, NewConsensusConfig config,
     td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
     td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-    std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
+    std::vector<adnl::AdnlNodeIdShort> all_validators,
+    std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
     td::actor::ActorId<ValidatorManager> validator_manager, td::actor::ActorId<CollationManager> collation_manager,
     bool create_session, bool allow_unsafe_self_blocks_resync, td::Ref<ValidatorManagerOptions> opts,
     bool monitoring_shard) {
+  all_current_validators =
+      consensus::normalize_twostep_relay_snapshot(all_validators, std::move(all_current_validators));
   LOG_CHECK(config.protocol_version_supported())
       << "Unsupported Simplex protocol version " << config.protocol_version << " (maximum supported is "
       << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
@@ -695,6 +737,7 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
       .validator_opts = opts,
       .validator_set = std::move(validator_set),
       .all_validators = std::move(all_validators),
+      .all_current_validators = std::move(all_current_validators),
       .local_id = std::move(local_id),
       .local_adnl_id = local_adnl_id,
       .db_suffix = "",
@@ -713,8 +756,11 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge_observer(
     td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender,
     td::actor::ActorId<overlay::Overlays> overlays, std::vector<adnl::AdnlNodeIdShort> all_validators,
-    std::string db_root, td::actor::ActorId<ValidatorManager> validator_manager, td::Ref<ValidatorManagerOptions> opts,
+    std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+    td::actor::ActorId<ValidatorManager> validator_manager, td::Ref<ValidatorManagerOptions> opts,
     bool monitoring_shard) {
+  all_current_validators =
+      consensus::normalize_twostep_relay_snapshot(all_validators, std::move(all_current_validators));
   LOG_CHECK(config.protocol_version_supported())
       << "Unsupported Simplex protocol version " << config.protocol_version << " (maximum supported is "
       << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
@@ -732,6 +778,7 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge_observer(
       .validator_opts = opts,
       .validator_set = std::move(validator_set),
       .all_validators = std::move(all_validators),
+      .all_current_validators = std::move(all_current_validators),
       .local_id = std::nullopt,
       .local_adnl_id = local_adnl_id,
       .db_suffix = PSTRING() << ".observer." << local_adnl_id.pubkey_hash(),

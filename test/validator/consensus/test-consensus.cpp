@@ -1128,9 +1128,12 @@ class TestConsensus : public td::actor::Actor {
     bus->pq_signer = nodes_[node_idx].pq_store;
     bus->validator_opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
     bus->validator_set = validators_;
+    std::set<adnl::AdnlNodeIdShort> current_relays;
     for (const auto& validator : validators_) {
       bus->all_validators.push_back(validator.adnl_id);
+      current_relays.insert(validator.adnl_id);
     }
+    bus->all_current_validators = std::move(current_relays);
     bus->total_weight = total_weight_;
     bus->local_id = validators_[node_idx];
     bus->local_adnl_id = nodes_[node_idx].adnl_id;

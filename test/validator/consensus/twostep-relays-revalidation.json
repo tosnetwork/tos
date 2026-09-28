@@ -1,0 +1,1230 @@
+{
+  "superseded_by": {
+    "ruling": "R7",
+    "evidence": "twostep-relays-r7-validation-20260928.md",
+    "historical_only": true
+  },
+  "reviewed_commit": "7c2c154bdfc4095cf8a716910e733875a4e3ea77",
+  "tested_commit": "4f149960f0d58b19a9cc8dd4dbc7cccb7fbcc318",
+  "original_implementation_evidence": "twostep-relays-validation.json",
+  "production_changed_since_review": false,
+  "build_configuration": "Clang 21.1.8 / Release / USE_QUIC=ON",
+  "mutations": {
+    "native_revision": "7c2c154bdfc4095cf8a716910e733875a4e3ea77",
+    "classes": 16,
+    "executions": 19,
+    "all_compiled_killed_and_restored": true,
+    "cases": [
+      {
+        "name": "manager-stale-key-block",
+        "file": "validator/manager.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "TotalSetSwitchRecreatesActiveAndObservers"
+            ],
+            "exit": 1,
+            "intended_failure": "id != tentative[0]",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:22.623343125][test-twostep-wiring.cpp:738]\tExpectation failed: id != tentative[0]!"
+            ]
+          }
+        ],
+        "original_sha256": "94201251a620211756e89cc1edf8e6e64694628cd61cb1da488e785ef501264c",
+        "mutated_sha256": "7f70d81e4d22e9636ee002f5b6b057157bf5b799d9bd792045c530e2e65e0c7f",
+        "admission": {
+          "cpu_used": 6.563674321503122,
+          "cores": 192,
+          "memory_used_gib": 12.289009094238281,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "selector-without-sort",
+        "file": "crypto/block/validator-session-members.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test-current-validator-adnl-ids",
+              "--filter",
+              "OffsetAndTransportIdentity"
+            ],
+            "exit": 1,
+            "intended_failure": "result == std::vector<td::Bits256>",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:28.249608319][test-current-validator-adnl-ids.cpp:42]\tExpectation failed: result == std::vector<td::Bits256>({bits(60), bits(61), bits(62)})!"
+            ]
+          }
+        ],
+        "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+        "mutated_sha256": "9f352acae75c0e316a74377a9a2421fc1077e4672d62de2a2110bcc075023d12",
+        "admission": {
+          "cpu_used": 5.667711598746081,
+          "cores": 192,
+          "memory_used_gib": 12.517463684082031,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-current-validator-adnl-ids",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "sender-persistent",
+        "file": "overlay/broadcast-twostep.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test-overlay-twostep-relays",
+              "--filter",
+              "CurrentRelaysAndObserverDelivery"
+            ],
+            "exit": 1,
+            "intended_failure": "first_.size()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:30.885395624][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (8 != 6)"
+            ]
+          },
+          {
+            "command": [
+              "$REPO/build/test-overlay-twostep-relays",
+              "--filter",
+              "SimpleRelayCountFallback"
+            ],
+            "exit": 1,
+            "intended_failure": "first_.size()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:31.596746058][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (6 != 3)"
+            ]
+          },
+          {
+            "command": [
+              "$REPO/build/test-overlay-twostep-relays",
+              "--filter",
+              "OfflineNonCurrentRelays"
+            ],
+            "exit": 1,
+            "intended_failure": "first_.size()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:32.351583410][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (20 != 6)"
+            ]
+          }
+        ],
+        "original_sha256": "42cf044b445be95c3a514257482b61f2879cbe219a89b415a909b412dfb712ee",
+        "mutated_sha256": "a4706381b2b3482910f9cbfdd51a506e3f7109bce380eff5d00626980526af0b",
+        "admission": {
+          "cpu_used": 0.6976382039968811,
+          "cores": 192,
+          "memory_used_gib": 12.607257843017578,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-overlay-twostep-relays",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "selector-offset--1",
+        "file": "crypto/block/validator-session-members.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test-current-validator-adnl-ids",
+              "--filter",
+              ""
+            ],
+            "exit": 1,
+            "intended_failure": "Expectation failed",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:34.211197353][test-current-validator-adnl-ids.cpp:41]\tExpectation failed: calls == std::vector<int>{0}!"
+            ]
+          }
+        ],
+        "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+        "mutated_sha256": "b8f0f8577faef7dc645383765296388a752b320f7768b9bf85a94729022ffde1",
+        "admission": {
+          "cpu_used": 5.70743155149934,
+          "cores": 192,
+          "memory_used_gib": 12.686962127685547,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-current-validator-adnl-ids",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "selector-offset-1",
+        "file": "crypto/block/validator-session-members.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test-current-validator-adnl-ids",
+              "--filter",
+              ""
+            ],
+            "exit": 1,
+            "intended_failure": "Expectation failed",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:35.996578124][test-current-validator-adnl-ids.cpp:41]\tExpectation failed: calls == std::vector<int>{0}!"
+            ]
+          }
+        ],
+        "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+        "mutated_sha256": "8312d2ab7468ec0be41dfa15ba4aeb2d01596dca993a38ac9a517f793f3adce0",
+        "admission": {
+          "cpu_used": 2.09508963367108,
+          "cores": 192,
+          "memory_used_gib": 12.70779800415039,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-current-validator-adnl-ids",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "selector-union",
+        "file": "crypto/block/validator-session-members.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test-current-validator-adnl-ids",
+              "--filter",
+              ""
+            ],
+            "exit": 1,
+            "intended_failure": "Expectation failed",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:37.783537857][test-current-validator-adnl-ids.cpp:41]\tExpectation failed: calls == std::vector<int>{0}!"
+            ]
+          }
+        ],
+        "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+        "mutated_sha256": "50c3395593d7c39ba33020c32a6b3002655012fa78fac8d13ac977e2cf398e98",
+        "admission": {
+          "cpu_used": 4.750000000000007,
+          "cores": 192,
+          "memory_used_gib": 12.810089111328125,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-current-validator-adnl-ids",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "predicate-nonpermanent",
+        "file": "overlay/overlay-peers.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test-overlay-twostep-relays",
+              "--filter",
+              "KnownNonPermanentPeer"
+            ],
+            "exit": 1,
+            "intended_failure": "!is_twostep_intermediate_node",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:31:40.001400113][test-overlay-twostep-relays.cpp:38][!relay overlay]\tCheck `!is_twostep_intermediate_node(non_permanent_id_)` failed"
+            ]
+          }
+        ],
+        "original_sha256": "8f98d90cc7ce95ac3b62c91af049c9a3f06cc8a96d88d61600b6f79c58c81e64",
+        "mutated_sha256": "61ada7d66008a62e60f813af0e81c348a934074d3b20378652cef6c64dee3569",
+        "admission": {
+          "cpu_used": 2.8962288686606,
+          "cores": 192,
+          "memory_used_gib": 12.832305908203125,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-overlay-twostep-relays",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "factory-drop-active",
+        "file": "validator/consensus/bridge.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ManagerActiveObserverAndOptions"
+            ],
+            "exit": 1,
+            "intended_failure": "!params_.all_current_validators.empty()",
+            "matched": [
+              "[ 0][t 1][2026-09-28 09:32:01.513388007][bridge.cpp:399][!valgroup(-1,8000000000000000).1]\tCheck `!params_.all_current_validators.empty()` failed"
+            ]
+          }
+        ],
+        "original_sha256": "66bc36a82bb5921c30f57784b00ab12f4dcaa75d5de30b5421eaed9b7cc16a22",
+        "mutated_sha256": "10785bee569fa059d90d8a0473254a6323f1ec5c8d3dd97f155983a1831fb6e7",
+        "admission": {
+          "cpu_used": 6.004691164972641,
+          "cores": 192,
+          "memory_used_gib": 12.904365539550781,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "factory-drop-observer",
+        "file": "validator/consensus/bridge.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ManagerActiveObserverAndOptions"
+            ],
+            "exit": 1,
+            "intended_failure": "!params_.all_current_validators.empty()",
+            "matched": [
+              "[ 0][t 1][2026-09-28 09:32:24.649093956][bridge.cpp:399][!valgroup(-1,8000000000000000).observer.1]\tCheck `!params_.all_current_validators.empty()` failed"
+            ]
+          }
+        ],
+        "original_sha256": "66bc36a82bb5921c30f57784b00ab12f4dcaa75d5de30b5421eaed9b7cc16a22",
+        "mutated_sha256": "b61bb8a8cfc23ed85fa1b172e49233124cad40433e8e704ec89688537c39c110",
+        "admission": {
+          "cpu_used": 3.8999999999999915,
+          "cores": 192,
+          "memory_used_gib": 12.684562683105469,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "bus-drop",
+        "file": "validator/consensus/bridge.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ManagerActiveObserverAndOptions"
+            ],
+            "exit": 1,
+            "intended_failure": "!bus.all_current_validators.empty()",
+            "matched": [
+              "[ 0][t 1][2026-09-28 09:32:45.145778525][private-overlay.cpp:99][!valgroup(-1,8000000000000000).1.PrivateOverlay]\tCheck `!bus.all_current_validators.empty()` failed"
+            ]
+          }
+        ],
+        "original_sha256": "66bc36a82bb5921c30f57784b00ab12f4dcaa75d5de30b5421eaed9b7cc16a22",
+        "mutated_sha256": "52e931727ad15842abe8c22f0c049d2dd767bf31d356d6773c692c322d9f43f6",
+        "admission": {
+          "cpu_used": 5.0078247261345865,
+          "cores": 192,
+          "memory_used_gib": 12.565723419189453,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "manager-union",
+        "file": "validator/manager.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ManagerActiveObserverAndOptions"
+            ],
+            "exit": 1,
+            "intended_failure": "bus->all_current_validators == f.current.ids()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:32:50.285957807][test-twostep-wiring.cpp:656]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+            ]
+          }
+        ],
+        "original_sha256": "94201251a620211756e89cc1edf8e6e64694628cd61cb1da488e785ef501264c",
+        "mutated_sha256": "d84952df6ca0e9f67acd4fec5b2875ab5b13e00d18dbd7933c11faf937239d46",
+        "admission": {
+          "cpu_used": 2.751433038040652,
+          "cores": 192,
+          "memory_used_gib": 12.59707260131836,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "bridge-union",
+        "file": "validator/consensus/bridge.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ManagerActiveObserverAndOptions"
+            ],
+            "exit": 1,
+            "intended_failure": "bus->all_current_validators == f.current.ids()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:33:14.386052685][test-twostep-wiring.cpp:656]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+            ]
+          }
+        ],
+        "original_sha256": "66bc36a82bb5921c30f57784b00ab12f4dcaa75d5de30b5421eaed9b7cc16a22",
+        "mutated_sha256": "8c31f2f51520ade20649f161faffb8141bf05bce301091d6f577a108b0f316be",
+        "admission": {
+          "cpu_used": 5.716375032645594,
+          "cores": 192,
+          "memory_used_gib": 12.738304138183594,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "private-option-drop",
+        "file": "validator/consensus/private-overlay.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ProtocolTwoCandidateThroughManagerObservers"
+            ],
+            "exit": 1,
+            "intended_failure": "first_hops == remote",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:33:36.274891656][test-twostep-wiring.cpp:596]\tExpectation failed: first_hops == remote!"
+            ]
+          }
+        ],
+        "original_sha256": "ccdc353ae6e55cba31b35b3a2c242e641d781f11b9f4c10c88d9b451a40864d6",
+        "mutated_sha256": "a8d94d9d430107d621d16f10a9d61726c7b61abd7ce38d5320d997d563eaa35d",
+        "admission": {
+          "cpu_used": 0.998439937597503,
+          "cores": 192,
+          "memory_used_gib": 12.659664154052734,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "blocksync-option-drop",
+        "file": "validator/consensus/block-sync-overlay.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ProtocolOneBlockSyncCandidateThroughManagerObservers"
+            ],
+            "exit": 1,
+            "intended_failure": "row.relays == f.current.ids()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:33:53.718587601][test-twostep-wiring.cpp:796]\tExpectation failed: row.relays == f.current.ids()!"
+            ]
+          }
+        ],
+        "original_sha256": "5d109544bfb9a300596f9c175b3acc299d593348a5f87f4d6f90c2d66e00160a",
+        "mutated_sha256": "fb4f9508e7ea49d42b8391f3244646626b3b5a1be7a89ae5a77cbd6ebece0cb0",
+        "admission": {
+          "cpu_used": 4.248893517313206,
+          "cores": 192,
+          "memory_used_gib": 12.654777526855469,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "epoch-prerequisite-bypass",
+        "file": "validator/manager.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "EpochRefusalAndRecovery"
+            ],
+            "exit": 1,
+            "intended_failure": "f.entries().empty()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:33:58.231015334][test-twostep-wiring.cpp:674]\tExpectation failed: f.entries().empty()!"
+            ]
+          },
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "LegacyIdsRefusedEvenForExistingAndTentativeGroups"
+            ],
+            "exit": 1,
+            "intended_failure": "f.entries().empty()",
+            "matched": [
+              "[ 0][t 0][2026-09-28 09:33:59.315204292][test-twostep-wiring.cpp:837]\tExpectation failed: f.entries().empty()!"
+            ]
+          }
+        ],
+        "original_sha256": "94201251a620211756e89cc1edf8e6e64694628cd61cb1da488e785ef501264c",
+        "mutated_sha256": "1361e1986173f03604869d5f8d386e8d81e40ac055d8239f8f16f6b379e5d9cf",
+        "admission": {
+          "cpu_used": 2.5513288170922266,
+          "cores": 192,
+          "memory_used_gib": 12.71236801147461,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      },
+      {
+        "name": "observer-empty-check-drop",
+        "file": "validator/manager.cpp",
+        "build_exit": 0,
+        "tests": [
+          {
+            "command": [
+              "$REPO/build/test/validator/consensus/test-twostep-wiring",
+              "--filter",
+              "ObserverCreationFailureIsNotStarted"
+            ],
+            "exit": 1,
+            "intended_failure": "!empty()",
+            "matched": [
+              "[ 0][t 1][2026-09-28 09:34:04.151126393][ActorOwn.h:81][!relay manager]\tCheck `!empty()` failed"
+            ]
+          }
+        ],
+        "original_sha256": "94201251a620211756e89cc1edf8e6e64694628cd61cb1da488e785ef501264c",
+        "mutated_sha256": "b33c75c378e75ccf760ec3892b93326a0249f747e601b883a786782a5378ceb6",
+        "admission": {
+          "cpu_used": 2.9507684292784617,
+          "cores": 192,
+          "memory_used_gib": 12.799217224121094,
+          "memory_total_gib": 125.47024917602539,
+          "additional_cpu": 8,
+          "additional_memory_gib": 16
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "build",
+          "--target",
+          "test-twostep-wiring",
+          "-j8"
+        ],
+        "killed": true,
+        "restored": true
+      }
+    ]
+  },
+  "focused_native_cases": 20,
+  "focused_ctests": 3,
+  "initial_focused_run": {
+    "revision": "7c2c154bdfc4095cf8a716910e733875a4e3ea77",
+    "exit": 0,
+    "passed": 3,
+    "seconds": 12.47,
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "--output-on-failure",
+      "-R",
+      "^(test-overlay-twostep-relays|test-current-validator-adnl-ids|test-twostep-wiring)$"
+    ]
+  },
+  "clean_build": {
+    "exit": 0,
+    "targets": 45,
+    "command": [
+      "cmake",
+      "--build",
+      "build",
+      "--target",
+      "create-state",
+      "plumtree-graph-sim",
+      "test-certificate-conformance",
+      "test-config-transition",
+      "test-consensus",
+      "test-consensus-config-admission",
+      "test-consensus-db-path",
+      "test-consensus-key-file",
+      "test-consensus-verify",
+      "test-current-validator-adnl-ids",
+      "test-merkle-prospective-notar",
+      "test-node-consensus-membership",
+      "test-overlay-broadcast-capacity",
+      "test-overlay-content-metrics",
+      "test-overlay-peer-cleanup",
+      "test-overlay-plumtree-policy",
+      "test-overlay-plumtree-repair",
+      "test-overlay-plumtree-stats",
+      "test-overlay-twostep-relays",
+      "test-pq-block-signature-conformance",
+      "test-pq-block-signature-no-legacy",
+      "test-pq-block-signature-vectors",
+      "test-pq-broadcast-semantics",
+      "test-pq-bytes",
+      "test-pq-carrier-capacity",
+      "test-pq-consensus",
+      "test-pq-lite-forward-proof",
+      "test-pq-signature-persistence",
+      "test-pq-signature-tl-vectors",
+      "test-pq-signer",
+      "test-pq-vote-body",
+      "test-simplex-carrier-bound",
+      "test-twostep-wiring",
+      "test-validator-auth-policy",
+      "test-validator-cleanup",
+      "test-validator-cleanup-integration",
+      "test-validator-cleanup-statedb",
+      "test-validator-cleanup-worker",
+      "test-validator-options",
+      "test-validator-transport-authority",
+      "tos-pq-consensus-key",
+      "validator-session-derivation-vectors-gen",
+      "test-c04-real-state-proof",
+      "test-n5-manager-db-fixture",
+      "test-notarize-after-transient-resolve",
+      "-j8"
+    ],
+    "admission": {
+      "cpu_used": 4.611047300824886,
+      "cores": 192,
+      "memory_used_gib": 12.589363098144531,
+      "memory_total_gib": 125.47024917602539,
+      "additional_cpu": 8,
+      "additional_memory_gib": 16
+    }
+  },
+  "strict_syntax_checks": [
+    {
+      "file": "test-current-validator-adnl-ids.cpp",
+      "command": [
+        "/usr/bin/clang++-21",
+        "-DSODIUM_STATIC",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_INTERNAL_COMPILE=1",
+        "-D_TOSLIB_COMPILE=1",
+        "-I$REPO/crypto",
+        "-I$REPO/crypto/block",
+        "-I$REPO/crypto/..",
+        "-I$REPO/build/third-party/secp256k1/include",
+        "-I$REPO/build/third-party/sodium/include",
+        "-I$REPO/tdutils",
+        "-I$REPO/build/tdutils",
+        "-I$REPO/tddb",
+        "-I$REPO/tdactor",
+        "-I$REPO/tl",
+        "-I$REPO/tl/..",
+        "-I$REPO/tl/../crypto",
+        "-I$REPO/tl/generate",
+        "-I$REPO/crypto/pq",
+        "-I$REPO/keys/..",
+        "-I$REPO/tl-utils/..",
+        "-isystem",
+        "$REPO/build/third-party/openssl/include",
+        "-isystem",
+        "$REPO/third-party/abseil-cpp",
+        "-march=x86-64",
+        "-fno-omit-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-O3",
+        "-DNDEBUG",
+        "-fPIE",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wcast-qual",
+        "-Wsign-compare",
+        "-Wvla",
+        "-Wnon-virtual-dtor",
+        "-Wconversion",
+        "-Wno-tautological-compare",
+        "-Wno-unused-parameter",
+        "-Wno-sign-conversion",
+        "-Wno-unused-private-field",
+        "-Wno-redundant-move",
+        "-std=c++20",
+        "$REPO/test/test-current-validator-adnl-ids.cpp",
+        "-Werror",
+        "-fsyntax-only"
+      ],
+      "exit": 0
+    },
+    {
+      "file": "test-overlay-twostep-relays.cpp",
+      "command": [
+        "/usr/bin/clang++-21",
+        "-DSODIUM_STATIC",
+        "-DTDDB_USE_ROCKSDB",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_INTERNAL_COMPILE=1",
+        "-D_TOSLIB_COMPILE=1",
+        "-I$REPO/overlay",
+        "-I$REPO/overlay/..",
+        "-I$REPO/tdutils",
+        "-I$REPO/build/tdutils",
+        "-I$REPO/tdactor",
+        "-I$REPO/adnl/..",
+        "-I$REPO/crypto",
+        "-I$REPO/crypto/..",
+        "-I$REPO/build/third-party/secp256k1/include",
+        "-I$REPO/build/third-party/sodium/include",
+        "-I$REPO/tddb",
+        "-I$REPO/crypto/block",
+        "-I$REPO/tl",
+        "-I$REPO/tl/..",
+        "-I$REPO/tl/../crypto",
+        "-I$REPO/tl/generate",
+        "-I$REPO/crypto/pq",
+        "-I$REPO/keys/..",
+        "-I$REPO/tl-utils/..",
+        "-I$REPO/tdnet",
+        "-I$REPO/third-party/rocksdb/include",
+        "-I$REPO/keyring/..",
+        "-I$REPO/common",
+        "-I$REPO/common/..",
+        "-I$REPO/dht",
+        "-I$REPO/dht/..",
+        "-I$REPO/fec",
+        "-I$REPO/fec/..",
+        "-I$REPO/tdfec",
+        "-I$REPO/tdfec/..",
+        "-isystem",
+        "$REPO/build/third-party/openssl/include",
+        "-isystem",
+        "$REPO/third-party/abseil-cpp",
+        "-march=x86-64",
+        "-fno-omit-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-O3",
+        "-DNDEBUG",
+        "-fPIE",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wcast-qual",
+        "-Wsign-compare",
+        "-Wvla",
+        "-Wnon-virtual-dtor",
+        "-Wconversion",
+        "-Wno-tautological-compare",
+        "-Wno-unused-parameter",
+        "-Wno-sign-conversion",
+        "-Wno-unused-private-field",
+        "-Wno-redundant-move",
+        "-std=c++20",
+        "$REPO/test/test-overlay-twostep-relays.cpp",
+        "-Werror",
+        "-fsyntax-only"
+      ],
+      "exit": 0
+    },
+    {
+      "file": "test-twostep-wiring.cpp",
+      "command": [
+        "/usr/bin/clang++-21",
+        "-DNGTCP2_STATICLIB",
+        "-DSODIUM_STATIC",
+        "-DTDDB_USE_ROCKSDB",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_INTERNAL_COMPILE=1",
+        "-D_TOSLIB_COMPILE=1",
+        "-I$REPO",
+        "-I$REPO/crypto",
+        "-I$REPO/validator",
+        "-I$REPO/validator/..",
+        "-I$REPO/validator/../crypto",
+        "-I$REPO/crypto/pq",
+        "-I$REPO/tdutils",
+        "-I$REPO/build/tdutils",
+        "-I$REPO/tdactor",
+        "-I$REPO/adnl/..",
+        "-I$REPO/crypto/..",
+        "-I$REPO/build/third-party/secp256k1/include",
+        "-I$REPO/build/third-party/sodium/include",
+        "-I$REPO/tddb",
+        "-I$REPO/crypto/block",
+        "-I$REPO/tl",
+        "-I$REPO/tl/..",
+        "-I$REPO/tl/../crypto",
+        "-I$REPO/tl/generate",
+        "-I$REPO/keys/..",
+        "-I$REPO/tl-utils/..",
+        "-I$REPO/tdnet",
+        "-I$REPO/third-party/rocksdb/include",
+        "-I$REPO/keyring/..",
+        "-I$REPO/common",
+        "-I$REPO/common/..",
+        "-I$REPO/dht",
+        "-I$REPO/dht/..",
+        "-I$REPO/tdfec",
+        "-I$REPO/tdfec/..",
+        "-I$REPO/overlay",
+        "-I$REPO/overlay/..",
+        "-I$REPO/quic",
+        "-I$REPO/quic/..",
+        "-I$REPO/metrics/..",
+        "-I$REPO/toslib",
+        "-I$REPO/toslib/..",
+        "-I$REPO/http/..",
+        "-I$REPO/third-party/ngtcp2/lib/includes",
+        "-I$REPO/build/third-party/ngtcp2/lib/includes",
+        "-I$REPO/third-party/ngtcp2/lib",
+        "-I$REPO/third-party/ngtcp2/crypto/includes",
+        "-I$REPO/build/third-party/ngtcp2/crypto/includes",
+        "-I$REPO/third-party/ngtcp2/crypto",
+        "-I$REPO/build/third-party/ngtcp2/crypto",
+        "-I$REPO/validator/impl",
+        "-I$REPO/validator/impl/..",
+        "-I$REPO/validator/impl/../crypto",
+        "-isystem",
+        "$REPO/build/third-party/openssl/include",
+        "-isystem",
+        "$REPO/third-party/abseil-cpp",
+        "-march=x86-64",
+        "-fno-omit-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-O3",
+        "-DNDEBUG",
+        "-fPIE",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wcast-qual",
+        "-Wsign-compare",
+        "-Wvla",
+        "-Wnon-virtual-dtor",
+        "-Wconversion",
+        "-Wno-tautological-compare",
+        "-Wno-unused-parameter",
+        "-Wno-sign-conversion",
+        "-Wno-unused-private-field",
+        "-Wno-redundant-move",
+        "-std=c++20",
+        "$REPO/test/validator/consensus/test-twostep-wiring.cpp",
+        "-Werror",
+        "-fsyntax-only"
+      ],
+      "exit": 0
+    }
+  ],
+  "regressions": {
+    "tests": 124,
+    "failed": 0,
+    "skipped": 0,
+    "names": [
+      "plumtree-graph-sim-smoke",
+      "plumtree-graph-sim-simple-smoke",
+      "plumtree-graph-sim-loss",
+      "plumtree-graph-sim-simple-loss",
+      "plumtree-graph-sim-partition-recovery",
+      "plumtree-graph-sim-selective-forwarding",
+      "plumtree-graph-sim-rotating-outage",
+      "plumtree-graph-sim-simple-selective-forwarding",
+      "plumtree-graph-sim-simple-rotating-outage",
+      "plumtree-graph-sim-fec-stress",
+      "plumtree-graph-sim-simple-stress",
+      "test-overlay-plumtree-stats",
+      "test-overlay-content-metrics",
+      "test-overlay-peer-cleanup",
+      "test-overlay-plumtree-policy",
+      "test-overlay-twostep-relays",
+      "test-current-validator-adnl-ids",
+      "test-overlay-plumtree-repair",
+      "test-overlay-broadcast-capacity",
+      "test-pq-signature-persistence",
+      "test-validator-transport-authority",
+      "test-c04-real-state-proof",
+      "test-n5-accept-block",
+      "test-n5-joined-finalcert",
+      "test-n5-cut1-finalcert-recovery",
+      "test-n5-cut2-signatures-recovery",
+      "test-n5-cut3-proof-recovery",
+      "test-n5-cut4-finalized-replay",
+      "test-n5-cut5-full-root-rebuild",
+      "test-n5-cut6-check-proof",
+      "test-n5-cold-continuation",
+      "test-n5-manager-db-fixture",
+      "test-pq-lite-forward-proof",
+      "test-config-transition",
+      "test-consensus-db-path",
+      "test-validator-cleanup",
+      "test-validator-cleanup-statedb",
+      "test-validator-cleanup-worker",
+      "test-validator-cleanup-integration",
+      "test-node-consensus-membership",
+      "test-validator-options",
+      "test-consensus-config-admission",
+      "validator-session-assembly-source",
+      "consensus-key-tool",
+      "pq-consensus",
+      "consensus-key-file",
+      "pq-signer",
+      "pq-bytes",
+      "pq-vote-body",
+      "validator-session-derivation",
+      "validator-session-param30",
+      "validator-session-global-id",
+      "validator-session-local-override",
+      "validator-session-governing-snapshot",
+      "validator-session-session-path",
+      "validator-session-constructor-selection",
+      "validator-session-manager-assembly",
+      "validator-session-state-global-id",
+      "simplex-carrier-bound",
+      "pq-node-finality-carrier-capacity",
+      "pq-lite-forward-proof-carrier-capacity",
+      "pq-broadcast-semantic-roundtrip",
+      "pq-signature-tl-vectors",
+      "pq-block-signature-vectors",
+      "pq-block-signature-conformance",
+      "pq-finality-boundary-source",
+      "pq-block-signature-no-legacy",
+      "test-validator-auth-policy",
+      "test-twostep-wiring",
+      "consensus-verify",
+      "simplex-preimages",
+      "c05-notarize-control",
+      "c05-notarize-genesis-notready",
+      "c05-notarize-genesis-timeout",
+      "c05-notarize-ancestor-notready",
+      "c05-notarize-permanent",
+      "c05-notarize-cancelled",
+      "c05-notarize-skip-before-recovery",
+      "c05-notarize-conflict-during-retry",
+      "c05-notarize-conflicting-cert-during-retry",
+      "c05-notarize-exhausted-notready",
+      "test-consensus-simplex2-candidate-relay-eviction",
+      "test-consensus-simplex2-state-resolver-cache-unit",
+      "test-consensus-simplex2-state-resolver-inflight-admission-unit",
+      "test-consensus-simplex2-merkle-exact-parent-height-control",
+      "test-consensus-simplex2-candidate-resolver-retention-unit",
+      "test-consensus-simplex2-candidate-resolver-interleaving-unit",
+      "test-consensus-simplex2-db-finalized-slot-dedup-unit",
+      "test-consensus-validator-manager-resource-policy-unit",
+      "test-consensus-simplex2-pq-state-resolver-catch-up",
+      "test-consensus-simplex2-pq-finality-e2e-single",
+      "test-consensus-simplex2-pq-finality-e2e-multi",
+      "test-consensus-simplex2-pq-finality-e2e-21",
+      "test-consensus-simplex2-pq-finality-e2e-100",
+      "test-consensus-simplex2-pq-finality-retry",
+      "test-consensus-simplex2-pq-finality-transient-recovery",
+      "test-consensus-simplex2-pq-finality-backpressure",
+      "test-consensus-simplex2-pq-finality-permanent",
+      "test-consensus-simplex2-pq-malicious-observer",
+      "test-consensus-simplex2-pq-relay-loop",
+      "test-consensus-simplex2-pq-adaptive-byzantine",
+      "test-consensus-simplex2-pq-manager-ingress-adversarial",
+      "test-consensus-simplex2-pq-byzantine-relay",
+      "test-consensus-simplex2-pq-query-abuse",
+      "test-consensus-simplex2-pq-loss",
+      "test-consensus-simplex2-pq-restart",
+      "test-consensus-simplex2-pq-partition",
+      "test-consensus-simplex2-merkle-prospective-notar-exact-ancestor",
+      "test-consensus-simplex2-merkle-prospective-notar-bounded-refusal",
+      "test-consensus-simplex2-merkle-prospective-notar-control",
+      "test-consensus-simplex2-merkle-peer-notar-leader-path",
+      "test-consensus-simplex2-merkle-prospective-notar-gate-control",
+      "simplex-exact-ancestor-source-guard",
+      "consensus-no-fallback",
+      "test-consensus-simplex2-vote-journal",
+      "test-consensus-simplex2-pq-empty-chain-restart",
+      "test-consensus-simplex2-pq-restart-transient-anchor",
+      "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
+      "test-consensus-simplex2-pq-restart-transient-origin",
+      "test-consensus-simplex2-pq-restart-permanent-origin",
+      "c05-notarize-simultaneous-recovery",
+      "c05-notarize-simultaneous-overbudget",
+      "test-consensus-simplex2-codec-boundary",
+      "test-consensus-simplex2-genesis-config"
+    ],
+    "reported_seconds": "72",
+    "exit": 0,
+    "real_seconds": 72.35,
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "--output-on-failure",
+      "-j4",
+      "--output-junit",
+      "$REPO/build/twostep-validation-7c2c154b/regressions.xml",
+      "-R",
+      "^(plumtree\\-graph\\-sim\\-smoke|plumtree\\-graph\\-sim\\-simple\\-smoke|plumtree\\-graph\\-sim\\-loss|plumtree\\-graph\\-sim\\-simple\\-loss|plumtree\\-graph\\-sim\\-partition\\-recovery|plumtree\\-graph\\-sim\\-selective\\-forwarding|plumtree\\-graph\\-sim\\-rotating\\-outage|plumtree\\-graph\\-sim\\-simple\\-selective\\-forwarding|plumtree\\-graph\\-sim\\-simple\\-rotating\\-outage|plumtree\\-graph\\-sim\\-fec\\-stress|plumtree\\-graph\\-sim\\-simple\\-stress|test\\-overlay\\-plumtree\\-stats|test\\-overlay\\-content\\-metrics|test\\-overlay\\-peer\\-cleanup|test\\-overlay\\-plumtree\\-policy|test\\-overlay\\-twostep\\-relays|test\\-current\\-validator\\-adnl\\-ids|test\\-overlay\\-plumtree\\-repair|test\\-overlay\\-broadcast\\-capacity|test\\-pq\\-signature\\-persistence|test\\-validator\\-transport\\-authority|test\\-pq\\-lite\\-forward\\-proof|test\\-config\\-transition|test\\-consensus\\-db\\-path|test\\-validator\\-cleanup|test\\-validator\\-cleanup\\-statedb|test\\-validator\\-cleanup\\-worker|test\\-validator\\-cleanup\\-integration|test\\-node\\-consensus\\-membership|test\\-validator\\-options|test\\-consensus\\-config\\-admission|validator\\-session\\-assembly\\-source|consensus\\-key\\-tool|pq\\-consensus|consensus\\-key\\-file|pq\\-signer|pq\\-bytes|pq\\-vote\\-body|validator\\-session\\-derivation|validator\\-session\\-param30|validator\\-session\\-global\\-id|validator\\-session\\-local\\-override|validator\\-session\\-governing\\-snapshot|validator\\-session\\-session\\-path|validator\\-session\\-constructor\\-selection|validator\\-session\\-manager\\-assembly|validator\\-session\\-state\\-global\\-id|simplex\\-carrier\\-bound|pq\\-node\\-finality\\-carrier\\-capacity|pq\\-lite\\-forward\\-proof\\-carrier\\-capacity|pq\\-broadcast\\-semantic\\-roundtrip|pq\\-signature\\-tl\\-vectors|pq\\-block\\-signature\\-vectors|pq\\-block\\-signature\\-conformance|pq\\-finality\\-boundary\\-source|pq\\-block\\-signature\\-no\\-legacy|test\\-validator\\-auth\\-policy|test\\-twostep\\-wiring|consensus\\-verify|simplex\\-preimages|test\\-consensus\\-simplex2\\-candidate\\-relay\\-eviction|test\\-consensus\\-simplex2\\-state\\-resolver\\-cache\\-unit|test\\-consensus\\-simplex2\\-state\\-resolver\\-inflight\\-admission\\-unit|test\\-consensus\\-simplex2\\-merkle\\-exact\\-parent\\-height\\-control|test\\-consensus\\-simplex2\\-candidate\\-resolver\\-retention\\-unit|test\\-consensus\\-simplex2\\-candidate\\-resolver\\-interleaving\\-unit|test\\-consensus\\-simplex2\\-db\\-finalized\\-slot\\-dedup\\-unit|test\\-consensus\\-validator\\-manager\\-resource\\-policy\\-unit|test\\-consensus\\-simplex2\\-pq\\-state\\-resolver\\-catch\\-up|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-single|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-multi|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-21|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-100|test\\-consensus\\-simplex2\\-pq\\-finality\\-retry|test\\-consensus\\-simplex2\\-pq\\-finality\\-transient\\-recovery|test\\-consensus\\-simplex2\\-pq\\-finality\\-backpressure|test\\-consensus\\-simplex2\\-pq\\-finality\\-permanent|test\\-consensus\\-simplex2\\-pq\\-malicious\\-observer|test\\-consensus\\-simplex2\\-pq\\-relay\\-loop|test\\-consensus\\-simplex2\\-pq\\-adaptive\\-byzantine|test\\-consensus\\-simplex2\\-pq\\-manager\\-ingress\\-adversarial|test\\-consensus\\-simplex2\\-pq\\-byzantine\\-relay|test\\-consensus\\-simplex2\\-pq\\-query\\-abuse|test\\-consensus\\-simplex2\\-pq\\-loss|test\\-consensus\\-simplex2\\-pq\\-restart|test\\-consensus\\-simplex2\\-pq\\-partition|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-exact\\-ancestor|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-bounded\\-refusal|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-control|test\\-consensus\\-simplex2\\-merkle\\-peer\\-notar\\-leader\\-path|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-gate\\-control|simplex\\-exact\\-ancestor\\-source\\-guard|consensus\\-no\\-fallback|test\\-consensus\\-simplex2\\-vote\\-journal|test\\-consensus\\-simplex2\\-pq\\-empty\\-chain\\-restart|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-anchor|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-anchor\\-zerostate\\-control|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-origin|test\\-consensus\\-simplex2\\-pq\\-restart\\-permanent\\-origin|test\\-consensus\\-simplex2\\-codec\\-boundary|test\\-consensus\\-simplex2\\-genesis\\-config|test\\-c04\\-real\\-state\\-proof|test\\-n5\\-accept\\-block|test\\-n5\\-joined\\-finalcert|test\\-n5\\-cut1\\-finalcert\\-recovery|test\\-n5\\-cut2\\-signatures\\-recovery|test\\-n5\\-cut3\\-proof\\-recovery|test\\-n5\\-cut4\\-finalized\\-replay|test\\-n5\\-cut5\\-full\\-root\\-rebuild|test\\-n5\\-cut6\\-check\\-proof|test\\-n5\\-cold\\-continuation|test\\-n5\\-manager\\-db\\-fixture|c05\\-notarize\\-control|c05\\-notarize\\-genesis\\-notready|c05\\-notarize\\-genesis\\-timeout|c05\\-notarize\\-ancestor\\-notready|c05\\-notarize\\-permanent|c05\\-notarize\\-cancelled|c05\\-notarize\\-skip\\-before\\-recovery|c05\\-notarize\\-conflict\\-during\\-retry|c05\\-notarize\\-conflicting\\-cert\\-during\\-retry|c05\\-notarize\\-exhausted\\-notready|c05\\-notarize\\-simultaneous\\-recovery|c05\\-notarize\\-simultaneous\\-overbudget)$"
+    ]
+  },
+  "source_guards": {
+    "tests": 39,
+    "failed": 0,
+    "skipped": 0,
+    "names": [
+      "test-quorum-static-grep",
+      "n6-manifest-completeness",
+      "n6-acceptance-criteria",
+      "n6-threshold-proposal",
+      "pq-launch-cap-source",
+      "pq-launch-cap-mutations",
+      "n6-microbench-results",
+      "n6-cluster-runner",
+      "branch-chain-python-ci-source",
+      "n6-diagnostic-observations",
+      "n6-skip-vote-semantics",
+      "lite-query-error-response-source",
+      "adnl-query-id-trace-source",
+      "adnl-query-id-analysis",
+      "pq-stake-auth-response-source",
+      "tosctl-pq-stake-builder-source",
+      "tosctl-election-chain-reads-source",
+      "dns-pq-vote-source",
+      "pq-e2e-initial-validators-source",
+      "pq-election-fixture-source",
+      "classical-stake-callers-source",
+      "nominator-pool-pq-route-source",
+      "config-genesis-data-layout-source",
+      "config-validator-set-parity-source",
+      "validator-id-key-hash-source",
+      "n6-scale-sweep-cardinality",
+      "finality-evidence-admission-source",
+      "finality-evidence-admission-marker-mutations",
+      "pending-finality-retry-policy-source",
+      "jsonrpc-route-gating",
+      "benchmark-exclusion-source",
+      "frozen-boc-toolchain-resolution",
+      "quic-ctest-isolation-source",
+      "validator-session-assembly-source",
+      "pq-unsafe-rotation-source",
+      "pq-unsafe-rotation-source-mutations",
+      "pq-finality-boundary-source",
+      "simplex-exact-ancestor-source-guard",
+      "consensus-no-fallback"
+    ],
+    "reported_seconds": "24",
+    "exit": 0,
+    "real_seconds": 24.46,
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "--output-on-failure",
+      "--no-tests=error",
+      "--output-junit",
+      "$REPO/build/twostep-validation-7c2c154b/source-guards.xml",
+      "-L",
+      "source-guard"
+    ]
+  },
+  "unique_ctests": 159,
+  "ctest_executions": 163,
+  "test_admission": {
+    "cpu_used": 3.6880676479799632,
+    "cores": 192,
+    "memory_used_gib": 12.424102783203125,
+    "memory_total_gib": 125.47024917602539,
+    "additional_cpu": 16,
+    "additional_memory_gib": 16
+  },
+  "rotation_source_guard": {
+    "old_exit": 1,
+    "new_exit": 0,
+    "mutations": 7,
+    "old_failure": "PQ_UNSAFE_ROTATION_SOURCE_FAILURE: manager group regions changed",
+    "new_result": "PQ_UNSAFE_ROTATION_SOURCE_OK: nonzero tag refusal precedes active group creation; the process regression is scheduled on every branch push and CLI help names the PQ refusal",
+    "mutation_result": "PQ_UNSAFE_ROTATION_MUTATIONS_OK: zero-allow, nonzero-refuse, ordering, hash and CI bindings were killable"
+  },
+  "runtime_excerpts": [
+    "refusing validator and observer groups: [Error : 0 : two-step relays: snapshot-at-creation requires new_catchain_ids=true]",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: current total validator set is missing or empty]",
+    "rotation old tentative=4NDTW4fJUSCPeuyGzVuDH310pNJAtVGGAEhMc/VS4Mk= new active=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ=",
+    "candidate first hops=1 observers=2",
+    "candidate first hops=6 observers=6",
+    "candidate first hops=6 observers=6",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot is empty]",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot is empty]",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot contains a non-member]",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot contains a non-member]",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: current total validator set is missing or empty]",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: snapshot-at-creation requires new_catchain_ids=true]",
+    "first hops=20 k_target=9 K=9 online=7",
+    "first hops=6 k_target=2 K=2 online=7",
+    "first hops=62 k_target=30 K=29 online=1"
+  ],
+  "raw_evidence_sha256": {
+    "focused-build.log": "dc0b749fa1c1964e4afef2134ede2ce0c167509216105a70e4d59800129fb500",
+    "focused-test.log": "544d82a17b1ae24fb0fc4779b992493ac6a64d56602b23ee235695a12ff7f9a7",
+    "final-build.log": "f2e1b3ccff82b9e0b8e70d5ebaae1f1e9aedb46146d4568b4eead0082cb7e8e9",
+    "final-test.log": "0c71b332f1166dfc5248d43b6d029c625cd832362a5263909b60ffdb717f4995",
+    "regressions.xml": "a9f34eb1703b8c6c4233b251e3cf9347638d45449ff6fc700a7f5271515a20d5",
+    "regression-full-output.log": "761bdb1ec0d83ccaabd7125646c641ffd977d717d2aff253e3b8abf37c81cf6d",
+    "source-guards.log": "66ee10df917e8354f9ef378b85f0b35585401f71a77b9972af6b9b7bedd8e8a7",
+    "source-guards.xml": "57ac3facdccb31c9406d133434b11f176c74cae9cef87ad13ccbbfe27ce5cc22",
+    "source-guards-full-output.log": "88f1743b3dd00a08decca16d01b2ca5a7520cbebdd96075c65a5ec0950361f90"
+  },
+  "deployment": false,
+  "merge": false,
+  "remote_ci": "pending; not promoted from earlier heads"
+}

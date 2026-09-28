@@ -3492,6 +3492,9 @@ void ValidatorManagerImpl::update_shards() {
               .started = false,
               .cc_seqno = val_set->get_catchain_seqno(),
           };
+          if (entry.actor.empty()) {
+            continue;
+          }
           LOG(INFO) << "Created observer group " << shard.to_str() << "." << entry.cc_seqno << " at " << local_adnl_id;
         }
         if (!entry.started) {
@@ -3760,12 +3763,13 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
     return {};
   }
 
-  return IValidatorGroup::create_bridge(PSTRING() << "valgroup" << shard.to_str(), shard, local_vid,
-                                        std::move(pq_signer), session_id, validator_set, key_seqno, config, keyring_,
-                                        adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
-                                        get_collation_manager(adnl_id), init_session,
-                                        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
-                                        opts_->need_monitor(shard, last_masterchain_state_));
+  auto current_relays = get_twostep_relay_snapshot();
+  return IValidatorGroup::create_bridge(
+      PSTRING() << "valgroup" << shard.to_str(), shard, local_vid, std::move(pq_signer), session_id, validator_set,
+      key_seqno, config, keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), std::move(current_relays),
+      db_root_, actor_id(this), get_collation_manager(adnl_id), init_session,
+      opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
+      opts_->need_monitor(shard, last_masterchain_state_));
 }
 
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group(
@@ -3779,10 +3783,11 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group
                << " members, above launch ceiling " << committee_ceiling;
     return {};
   }
+  auto current_relays = get_twostep_relay_snapshot();
   return IValidatorGroup::create_bridge_observer(
       PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
-      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
-      opts_, opts_->need_monitor(shard, last_masterchain_state_));
+      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), std::move(current_relays),
+      db_root_, actor_id(this), opts_, opts_->need_monitor(shard, last_masterchain_state_));
 }
 
 std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
@@ -3802,6 +3807,30 @@ std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
       }
       result.emplace(block::validator_adnl_identity(descr));
     }
+  }
+  return result;
+}
+
+std::optional<std::set<adnl::AdnlNodeIdShort>> ValidatorManagerImpl::get_twostep_relay_snapshot() const {
+  const auto state = last_masterchain_state_;
+  if (state.is_null()) {
+    LOG(WARNING) << "two-step relays: no masterchain state; using legacy relays";
+    return std::nullopt;
+  }
+  const consensus::ValidatorSessionOptions session_opts{state->get_consensus_config()};
+  if (!session_opts.new_catchain_ids) {
+    LOG(WARNING) << "two-step relays: new_catchain_ids=false; using legacy relays";
+    return std::nullopt;
+  }
+  const auto ids =
+      block::current_validator_adnl_ids([state](int offset) { return state->get_total_validator_set(offset); });
+  if (ids.empty()) {
+    LOG(WARNING) << "two-step relays: current total validator set is missing or empty; using legacy relays";
+    return std::nullopt;
+  }
+  std::set<adnl::AdnlNodeIdShort> result;
+  for (const auto &id : ids) {
+    result.emplace(id);
   }
   return result;
 }

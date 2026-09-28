@@ -1,4 +1,12 @@
 add_executable(test-consensus test-consensus.cpp)
+if(USE_QUIC)
+  add_executable(test-twostep-wiring ../../test-td-main.cpp test-twostep-wiring.cpp
+      ../../plumtree/transport.cpp ../../plumtree/scheduler.cpp ../../plumtree/util.cpp)
+  target_include_directories(test-twostep-wiring PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/crypto)
+  target_link_libraries(test-twostep-wiring PRIVATE validator validator-common validator-db full-node quic tos_validator tos_block tos_crypto
+      tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay dht tl_api tdactor tdutils)
+  add_test(NAME test-twostep-wiring COMMAND test-twostep-wiring)
+endif()
 target_link_libraries(test-consensus PRIVATE
     adnl
     adnltest

@@ -97,6 +97,7 @@ class BlockHandleLru : public td::ListNode {
 class ValidatorManagerImpl : public ValidatorManager {
   friend class PendingFinalityManagerActorProbe;
   friend class N5ManagerDbFixture;
+  friend class TwostepManagerProbe;
 
  private:
   // WAITERS
@@ -254,6 +255,8 @@ class ValidatorManagerImpl : public ValidatorManager {
                                                              NewConsensusConfig config);
   std::set<adnl::AdnlNodeIdShort> get_observer_adnl_ids(td::Ref<block::ValidatorSet> validator_set) const;
   std::vector<adnl::AdnlNodeIdShort> get_all_validator_adnl_ids() const;
+  // std::nullopt: use the legacy relay policy (all permanent peers).
+  std::optional<std::set<adnl::AdnlNodeIdShort>> get_twostep_relay_snapshot() const;
   td::actor::ActorId<CollationManager> get_collation_manager(adnl::AdnlNodeIdShort adnl_id);
 
   struct ValidatorGroupEntry {

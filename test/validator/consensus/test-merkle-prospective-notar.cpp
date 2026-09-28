@@ -602,9 +602,12 @@ class Driver : public td::actor::Actor {
     bus->manager = manager;
     bus->pq_signer = signers_.at(local);
     bus->validator_set = validators;
+    std::set<adnl::AdnlNodeIdShort> current_relays;
     for (const auto& validator : validators) {
       bus->all_validators.push_back(validator.adnl_id);
+      current_relays.insert(validator.adnl_id);
     }
+    bus->all_current_validators = std::move(current_relays);
     bus->total_weight = total_weight;
     bus->local_id = validators.at(local);
     bus->local_adnl_id = validators.at(local).adnl_id;

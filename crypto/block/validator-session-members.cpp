@@ -14,6 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
+#include <algorithm>
 #include <cstring>
 #include <keys/keys.hpp>
 #include <set>
@@ -75,6 +76,20 @@ td::Bits256 validator_adnl_identity(const tos::ValidatorDescr& descr) {
   // Only a classical descriptor can leave it implicit; a post-quantum one is refused at
   // decode without an explicit address.
   return tos::PublicKey{tos::pubkeys::Ed25519{descr.classical_key()}}.compute_short_id().bits256_value();
+}
+
+std::vector<td::Bits256> current_validator_adnl_ids(const std::function<td::Ref<ValidatorSet>(int)>& get_total_set) {
+  const auto current = get_total_set(0);
+  if (current.is_null()) {
+    return {};
+  }
+  std::vector<td::Bits256> result;
+  for (const auto& descr : current->export_vector()) {
+    result.push_back(validator_adnl_identity(descr));
+  }
+  std::sort(result.begin(), result.end());
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
 }
 
 td::Status validate_simplex_pq_validator_set(const ValidatorSet& set) {
