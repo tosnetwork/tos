@@ -55,6 +55,45 @@ std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
 
 namespace {
 
+// Wait for the consensus bus to stop. Every 10 s without completion, report the
+// remaining bus handle count and the spawned actors whose objects are still
+// alive, so a session that never releases can be attributed.
+td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waiter,
+                                                  std::weak_ptr<simplex::Bus> weak_bus,
+                                                  std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
+                                                  std::string name) {
+  for (int waited = 0; !waiter.await_ready() && waited < 120; waited += 10) {
+    co_await td::actor::coro_sleep(td::Timestamp::in(10.0));
+    if (waiter.await_ready()) {
+      break;
+    }
+    td::StringBuilder sb;
+    sb << "MEMORY_DIAGNOSTICS bus-stop-pending group=" << name << " waited_s=" << (waited + 10)
+       << " bus_handles=" << weak_bus.use_count() << " live_actors=";
+    bool first = true;
+    if (auto node = weak_node.lock()) {
+      for (const auto& owned : node->owned_actors) {
+        if (owned.installer.expired()) {
+          continue;
+        }
+        auto info = owned.id.actor_info_ptr();
+        sb << (first ? "" : ",") << (info ? info->get_name() : td::CSlice("?"));
+        first = false;
+      }
+    }
+    if (first) {
+      sb << "none";
+    }
+    LOG(WARNING) << sb.as_cslice();
+  }
+  co_await std::move(waiter);
+  co_return td::Unit{};
+}
+
+}  // namespace
+
+namespace {
+
 class ManagerFacadeImpl : public ManagerFacade {
  public:
   ManagerFacadeImpl(td::actor::ActorId<ValidatorManager> manager,
@@ -579,8 +618,11 @@ class BridgeImpl final : public IValidatorGroup {
       LOG(INFO) << "Destroying validator group";
       bus_.publish<StopRequested>();
       co_await bus_->db->close();
+      auto weak_bus = bus_.weak_for_diagnostics();
+      auto bus_node = bus_.node_for_diagnostics();
       bus_ = {};
-      co_await std::move(stop_waiter_.value());
+      co_await await_bus_stop_with_diagnostics(std::move(stop_waiter_.value()), std::move(weak_bus),
+                                               std::move(bus_node), params_.name);
       LOG(INFO) << "Consensus bus stopped";
       td::RocksDb::destroy(db_path() + "/db/").ignore();
       td::rmrf(db_path()).ignore();
@@ -625,8 +667,11 @@ class BridgeImpl final : public IValidatorGroup {
       LOG(INFO) << "Closing validator group for retirement (no delete)";
       bus_.publish<StopRequested>();
       co_await bus_->db->close();
+      auto weak_bus = bus_.weak_for_diagnostics();
+      auto bus_node = bus_.node_for_diagnostics();
       bus_ = {};
-      co_await std::move(stop_waiter_.value());
+      co_await await_bus_stop_with_diagnostics(std::move(stop_waiter_.value()), std::move(weak_bus),
+                                               std::move(bus_node), params_.name);
       LOG(INFO) << "Consensus bus stopped (retirement close)";
       auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
                                             params_.session_id, params_.db_suffix);
