@@ -80,7 +80,8 @@ class RepairOverlay : public OverlayImpl {
     };
     auto submit_fec = [&](int id, int peer, int part_index, bool valid) {
       auto broadcast_id = td::sha256_bits256(td::Slice(std::to_string(id)));
-      auto hash = td::sha256_bits256(td::Slice(PSTRING() << "fec-part-" << part_index));
+      auto part_label = std::string("fec-part-") + std::to_string(part_index);
+      auto hash = td::sha256_bits256(td::Slice(part_label));
       auto timestamp = td::Clocks::system();
       auto tree_index = part_index + 1;
       auto to_sign = create_serialize_tl_object<tos_api::overlay_broadcastPlumtreeFec_toSign>(
@@ -160,12 +161,16 @@ class RepairOverlay : public OverlayImpl {
     CHECK(submit_fec(100, 2, 1, true));
     cross_part_diag = b.repair_diagnostics_for_test();
     CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 2);
+    auto checks_after_cross_part = cross_part_diag.immediate_checks;
+    b.flush_repairs_for_test(this);
+    CHECK(b.repair_diagnostics_for_test().pending_parts == 0);
+    state->requests.clear();
 
     CHECK(submit(1, 1, 1000, true));
     CHECK(submit(1, 2, 2000, false));  // Canonical forged signature is deferred, never used for a query.
     CHECK(submit(1, 3, 3000, true));
     auto diag = b.repair_diagnostics_for_test();
-    CHECK(diag.immediate_checks == 2 && diag.deferred_checks == 0 && diag.targets == 3);
+    CHECK(diag.immediate_checks == checks_after_cross_part + 1 && diag.deferred_checks == 0 && diag.targets == 3);
     CHECK(diag.retained_auth_bytes == 2 * (36 + 84 + 64));
     CHECK(!submit(1, 4, 3000, true, 65));  // Noncanonical signatures cannot bypass eager validation.
     b.flush_repairs_for_test(this);
