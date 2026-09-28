@@ -23,6 +23,7 @@
 #include "adnl/adnl-node-id.hpp"
 #include "adnl/adnl-node.h"
 #include "auto/tl/tos_api.h"
+#include "overlay/overlay-node-version.h"
 #include "td/utils/Status.h"
 #include "td/utils/Time.h"
 #include "td/utils/port/signals.h"
@@ -219,8 +220,8 @@ void OverlayImpl::add_peer(OverlayNode node, bool verified, bool checked_signatu
     return;
   }
   auto t = td::Clocks::system();
-  if (node.version() + Overlays::overlay_peer_ttl() < t || node.version() > t + 60) {
-    VLOG(OVERLAY_INFO) << this << ": ignoring node of too old version " << node.version();
+  if (!overlay_node_version_is_fresh(node.version(), static_cast<td::int64>(t))) {
+    VLOG(OVERLAY_INFO) << this << ": ignoring node outside freshness window " << node.version();
     return;
   }
 
@@ -296,9 +297,9 @@ void OverlayImpl::process_pending_peers() {
   while (peer_list_.pending_peers_.size() > 0 && process_pending_peers_rate_limiter_.check(td::Timestamp::now())) {
     OverlayNode node = std::move(*peer_list_.pending_peers_.get_random());
     peer_list_.pending_peers_.remove(node.adnl_id_short());
-    if (node.version() + Overlays::overlay_peer_ttl() < td::Clocks::system()) {
-      VLOG(OVERLAY_INFO) << this << ": dropping pending node " << node.adnl_id_short() << " of too old version "
-                         << node.version();
+    if (!overlay_node_version_is_fresh(node.version(), static_cast<td::int64>(td::Clocks::system()))) {
+      VLOG(OVERLAY_INFO) << this << ": dropping pending node " << node.adnl_id_short()
+                         << " outside freshness window with version " << node.version();
       continue;
     }
     process_pending_peers_rate_limiter_.insert(td::Timestamp::now());
@@ -668,7 +669,7 @@ bool OverlayImpl::peer_receives_plumtree_broadcasts(adnl::AdnlNodeIdShort peer_i
   auto *node = peer->get_node();
   if (overlay_type_ == OverlayType::Public) {
     auto now = td::Clocks::system();
-    if (!node->has_full_id() || node->version() + Overlays::overlay_peer_ttl() < now || node->version() > now + 60) {
+    if (!node->has_full_id() || !overlay_node_version_is_fresh(node->version(), static_cast<td::int64>(now))) {
       return false;
     }
   }

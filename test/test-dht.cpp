@@ -26,6 +26,7 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <limits>
 #include <memory>
 #include <set>
 
@@ -429,6 +430,37 @@ int main() {
     CHECK(tos::fetch_tl_object<tos::tos_api::overlay_nodes>(dht_value.value().as_slice(), true)
               .move_as_ok()
               ->nodes_.size() == 1);
+
+    // Valid signatures do not permit stale or far-future discovery records.
+    auto signed_value = [&](td::int32 version, td::int32 flags) {
+      auto signed_bytes = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
+          tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), flags, version);
+      auto nodes = tos::create_tl_object<tos::tos_api::overlay_nodes>();
+      nodes->nodes_.push_back(tos::create_tl_object<tos::tos_api::overlay_node>(
+          pub.tl(), overlay_short_id.tl(), flags, version,
+          pk.create_decryptor().move_as_ok()->sign(signed_bytes.as_slice()).move_as_ok(),
+          tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>()));
+      return tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(nodes, true), ttl,
+                                td::BufferSlice()};
+    };
+    auto current_time = static_cast<td::int32>(td::Clocks::system());
+    auto fresh_value = signed_value(current_time, 2);
+    fresh_value.check().ensure();
+    CHECK(fresh_value.check_is_acceptable());
+    for (auto version : {current_time - 601, current_time + 120, std::numeric_limits<td::int32>::max(),
+                         std::numeric_limits<td::int32>::min(), -1}) {
+      auto invalid = signed_value(version, 0);
+      invalid.check().ensure_error();
+      CHECK(!invalid.check_is_acceptable());
+    }
+    // An already cached future description must not pin the old receive policy.
+    auto poisoned_cache = signed_value(std::numeric_limits<td::int32>::max(), 0);
+    poisoned_cache.update(std::move(fresh_value)).ensure();
+    auto recovered =
+        tos::fetch_tl_object<tos::tos_api::overlay_nodes>(poisoned_cache.value().as_slice(), true).move_as_ok();
+    CHECK(recovered->nodes_.size() == 1);
+    CHECK(recovered->nodes_[0]->version_ == current_time);
+    CHECK(recovered->nodes_[0]->flags_ == 2);
 
     obj->nodes_.clear();
     {

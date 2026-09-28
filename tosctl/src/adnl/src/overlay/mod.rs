@@ -80,7 +80,7 @@ use tl_api::{
 use tl_api::{BoxedSerialize, Constructor};
 
 mod member_certificate;
-use member_certificate::{validate_member_certificate, RootMembers};
+use member_certificate::{merge_authenticated_node, validate_member_certificate, RootMembers};
 
 mod broadcast;
 use broadcast::{
@@ -1328,13 +1328,11 @@ impl OverlayNode {
             overlay.neighbours.put(ret.clone())?;
         }
         add_counted_object_to_map_with_update(&overlay.nodes, ret.clone(), |old_node| {
-            if let Some(old_node) = old_node {
-                if old_node.node.version >= descriptor.version {
-                    return Ok(None);
-                }
-            }
+            let Some(merged) = merge_authenticated_node(old_node.map(|old| old.node.as_ref()), descriptor)? else {
+                return Ok(None);
+            };
             let ret = NodeObject {
-                node: Arc::new(descriptor.clone()),
+                node: Arc::new(merged),
                 counter: self.allocated.peers.clone().into(),
             };
             #[cfg(feature = "telemetry")]

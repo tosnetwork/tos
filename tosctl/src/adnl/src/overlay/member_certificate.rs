@@ -10,10 +10,47 @@ use tl_api::{
     serialize_boxed,
     tos::{
         adnl::id::short::Short as AdnlShortId,
-        overlay::{membercertificate::MemberCertificate, membercertificateid::MemberCertificateId},
+        overlay::{
+            membercertificate::MemberCertificate, membercertificateid::MemberCertificateId,
+            node::Node as NodeDescriptor, MemberCertificate as MemberCertificateBoxed,
+        },
     },
     IntoBoxed,
 };
+
+// Both inputs must have passed descriptor and certificate authentication. The
+// policy signature excludes the independently signed membership certificate.
+// Merge against the current map entry so concurrent renewals cannot regress it.
+pub(super) fn merge_authenticated_node(
+    old: Option<&NodeDescriptor>,
+    incoming: &NodeDescriptor,
+) -> Result<Option<NodeDescriptor>> {
+    let Some(old) = old else {
+        return Ok(Some(incoming.clone()));
+    };
+    if old.id != incoming.id || old.overlay != incoming.overlay {
+        fail!("Cannot merge descriptions of different overlay members");
+    }
+    let mut merged = if incoming.version > old.version { incoming.clone() } else { old.clone() };
+    let renewed = match (&old.certificate, &incoming.certificate) {
+        (
+            MemberCertificateBoxed::Overlay_EmptyMemberCertificate,
+            MemberCertificateBoxed::Overlay_MemberCertificate(_),
+        ) => true,
+        (
+            MemberCertificateBoxed::Overlay_MemberCertificate(prior),
+            MemberCertificateBoxed::Overlay_MemberCertificate(new),
+        ) => new.expire_at > prior.expire_at,
+        _ => false,
+    };
+    merged.certificate =
+        if renewed { incoming.certificate.clone() } else { old.certificate.clone() };
+    if &merged == old {
+        Ok(None)
+    } else {
+        Ok(Some(merged))
+    }
+}
 
 pub(super) struct SlaveInfo {
     node_id: Arc<KeyId>,
@@ -111,6 +148,95 @@ mod tests {
             expire_at: expiry,
             signature: issuer.sign(&serialize_boxed(&signed)?)?.into(),
         })
+    }
+
+    fn signed_node(
+        key: &Arc<dyn KeyOption>,
+        overlay: &super::super::OverlayShortId,
+        version: i32,
+        flags: i32,
+        certificate: MemberCertificate,
+    ) -> Result<NodeDescriptor> {
+        let overlay_hash = UInt256::with_array(*overlay.data());
+        let signed =
+            super::super::OverlayUtils::get_node_to_sign(key, &overlay_hash, flags, version);
+        let node = NodeDescriptor {
+            id: key.try_into()?,
+            overlay: overlay_hash,
+            flags,
+            version,
+            signature: key.sign(&serialize_boxed(&signed)?)?.into(),
+            certificate: certificate.into_boxed(),
+        };
+        super::super::OverlayUtils::verify_node(overlay, &node)?;
+        Ok(node)
+    }
+
+    #[test]
+    fn certificate_renewal_is_independent_of_signed_policy_version() -> Result<()> {
+        let issuer = Ed25519KeyOption::generate()?;
+        let peer = Ed25519KeyOption::generate()?;
+        let overlay = super::super::OverlayShortId::from_data([7; 32]);
+        let now = super::super::Version::get();
+        for version in [now, now - 1] {
+            let roots = HashMap::from([(issuer.id().clone(), lockfree::map::Map::new())]);
+            let old_cert = signed_certificate(&issuer, peer.id(), now + 100, 0)?;
+            let renewed = signed_certificate(&issuer, peer.id(), now + 200, 0)?;
+            let old = signed_node(&peer, &overlay, now, 0, old_cert.clone())?;
+            validate_member_certificate(&roots, 1, peer.id(), &old_cert, now as u32)?;
+            // Even a valid signature over changed flags cannot change a policy
+            // at the same or an older version, but its renewal must be retained.
+            let incoming = signed_node(&peer, &overlay, version, 2, renewed.clone())?;
+            validate_member_certificate(&roots, 1, peer.id(), &renewed, now as u32)?;
+            let merged =
+                merge_authenticated_node(Some(&old), &incoming)?.expect("renewal was discarded");
+            assert_eq!(merged.flags, old.flags);
+            assert_eq!(merged.version, old.version);
+            assert_eq!(merged.signature, old.signature);
+            super::super::OverlayUtils::verify_node(&overlay, &merged)?;
+            let MemberCertificateBoxed::Overlay_MemberCertificate(cert) = &merged.certificate
+            else {
+                panic!("renewal is absent");
+            };
+            assert_eq!(cert, &renewed);
+            // This is the same validation used when ordinary traffic falls
+            // back to the retained certificate after the slot cache advanced.
+            validate_member_certificate(&roots, 1, peer.id(), cert, now as u32)?;
+            assert!(
+                validate_member_certificate(&roots, 1, peer.id(), &old_cert, now as u32).is_err()
+            );
+            assert!(merge_authenticated_node(Some(&merged), &incoming)?.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn newer_policy_cannot_roll_back_a_concurrent_certificate_renewal() -> Result<()> {
+        let issuer = Ed25519KeyOption::generate()?;
+        let peer = Ed25519KeyOption::generate()?;
+        let overlay = super::super::OverlayShortId::from_data([7; 32]);
+        let now = super::super::Version::get();
+        let roots = HashMap::from([(issuer.id().clone(), lockfree::map::Map::new())]);
+        let prior = signed_certificate(&issuer, peer.id(), now + 100, 0)?;
+        let renewed = signed_certificate(&issuer, peer.id(), now + 200, 0)?;
+        let pending_policy = signed_node(&peer, &overlay, now + 1, 2, prior.clone())?;
+        validate_member_certificate(&roots, 1, peer.id(), &prior, now as u32)?;
+        // A renewal arrives between authentication and the map update callback.
+        let current = signed_node(&peer, &overlay, now, 0, renewed.clone())?;
+        validate_member_certificate(&roots, 1, peer.id(), &renewed, now as u32)?;
+        let merged =
+            merge_authenticated_node(Some(&current), &pending_policy)?.expect("policy discarded");
+        assert_eq!(merged.version, now + 1);
+        assert_eq!(merged.flags, 2);
+        assert_eq!(merged.signature, pending_policy.signature);
+        assert_eq!(merged.certificate, renewed.clone().into_boxed());
+        super::super::OverlayUtils::verify_node(&overlay, &merged)?;
+        validate_member_certificate(&roots, 1, peer.id(), &renewed, now as u32)?;
+        assert!(merge_authenticated_node(Some(&merged), &current)?.is_none());
+        let mut alien = pending_policy.clone();
+        alien.overlay = UInt256::with_array([8; 32]);
+        assert!(merge_authenticated_node(Some(&merged), &alien).is_err());
+        Ok(())
     }
 
     #[test]

@@ -1,5 +1,8 @@
+#include <limits>
+
 #include "adnl/adnl-node-id.hpp"
 #include "overlay/broadcast-plumtree.hpp"
+#include "overlay/overlay-node-version.h"
 #include "overlay/overlay.hpp"
 #include "td/utils/tests.h"
 
@@ -197,4 +200,19 @@ TEST(Overlay, LegacyNodeLayoutIsNotAProtocolFallback) {
   old_vector.as_slice().substr(0, 8).copy_from(encoded.as_slice().substr(0, 8));
   old_vector.as_slice().substr(8).copy_from(old.as_slice().substr(4));
   ASSERT_TRUE(tos::fetch_tl_object<tos::tos_api::overlay_nodes>(old_vector.as_slice(), true).is_error());
+}
+
+TEST(Overlay, DescriptorFreshnessBoundaries) {
+  constexpr std::int64_t now = 1800000000;
+  for (std::int32_t version : {1800000000 - 600, 1800000000, 1800000000 + 60}) {
+    ASSERT_TRUE(tos::overlay::overlay_node_version_is_fresh(version, now));
+  }
+  for (std::int32_t version : {std::numeric_limits<std::int32_t>::min(), -1, 1800000000 - 601, 1800000000 + 61,
+                               std::numeric_limits<std::int32_t>::max()}) {
+    ASSERT_TRUE(!tos::overlay::overlay_node_version_is_fresh(version, now));
+  }
+  // Arithmetic still works at the signed wire timestamp's upper boundary.
+  constexpr auto upper = std::numeric_limits<std::int32_t>::max();
+  ASSERT_TRUE(tos::overlay::overlay_node_version_is_fresh(upper, upper));
+  ASSERT_TRUE(!tos::overlay::overlay_node_version_is_fresh(upper - 601, upper));
 }
