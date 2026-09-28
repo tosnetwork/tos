@@ -317,7 +317,9 @@ td::Status DhtUpdateRuleOverlayNodes::check_value(const DhtValue &value) {
     TRY_RESULT(E, pub.pubkey().create_encryptor());
     TRY_STATUS(E->check_signature(B.as_slice(), sig.as_slice()));
   }
-  if (!has_fresh_node) {
+  // Empty values remain valid merge accumulators, but check_is_acceptable()
+  // never exposes them as usable discovery records.
+  if (!L->nodes_.empty() && !has_fresh_node) {
     return td::Status::Error(ErrorCode::protoviolation, "overlay nodes value has no fresh records");
   }
   return td::Status::OK();

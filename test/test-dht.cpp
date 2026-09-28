@@ -336,6 +336,7 @@ int main() {
     dht_value =
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
     dht_value.check().ensure();
+    CHECK(!dht_value.check_is_acceptable());
 
     for (td::uint32 i = 0; i < 100; i++) {
       auto pk = tos::PrivateKey{tos::privkeys::Ed25519::random()};

@@ -57,7 +57,7 @@ class RepairOverlay : public OverlayImpl {
   void run_checks(PrivateKey key, std::shared_ptr<RepairTestState> state, bool benchmark) {
     auto &b = OverlayImplPlumtreeRepairTest::broadcasts(*this);
     std::vector<adnl::AdnlNodeIdShort> peers;
-    for (int i = 0; i < 20; ++i)
+    for (int i = 0; i < 24; ++i)
       peers.emplace_back(PrivateKey{privkeys::Ed25519::random()}.compute_public_key().compute_short_id());
     b.add_peer_state_for_test(peers.back());  // Keep real IHAVEs pending until repair time.
     auto submit = [&](int id, int peer, int size, bool valid, int signature_size = 64) {
@@ -171,13 +171,15 @@ class RepairOverlay : public OverlayImpl {
     // Authentication is per missing FEC part, not merely per broadcast. A
     // valid IHAVE for part 0 must not let a forged first IHAVE for part 1 seed
     // repair state without a source-signature check.
-    CHECK(submit_fec(100, 0, 0, true));
+    // Earlier malformed-signature cases ban peers 0, 2 and 4. Use independent
+    // peers so this regression measures part authentication, not the ban list.
+    CHECK(submit_fec(100, 20, 0, true));
     auto cross_part_diag = b.repair_diagnostics_for_test();
     auto checks_after_part0 = cross_part_diag.immediate_checks;
-    CHECK(!submit_fec(100, 1, 1, false));
+    CHECK(!submit_fec(100, 21, 1, false));
     cross_part_diag = b.repair_diagnostics_for_test();
     CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 1);
-    CHECK(submit_fec(100, 2, 1, true));
+    CHECK(submit_fec(100, 22, 1, true));
     cross_part_diag = b.repair_diagnostics_for_test();
     CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 2);
     b.flush_repairs_for_test(this);
