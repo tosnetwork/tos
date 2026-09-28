@@ -10,6 +10,7 @@
 
 #include "block/validator-session-members.h"
 #include "td/db/RocksDb.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
 #include "tos/lite-tl.hpp"
@@ -58,9 +59,11 @@ namespace {
 
 // Report, every 10 s, a consensus bus that has not stopped yet: the remaining
 // references to the bus and the spawned actors whose objects are still alive.
-// It runs beside the real wait and never delays it; it ends as soon as the
-// stop completes. The reference count includes the one the bus tree node
-// itself holds, so a bus kept alive by a single surviving actor shows two.
+// It runs beside the real wait and never delays it, and stops reporting at its
+// next wake-up after the stop completes. It runs on the scheduler, not on the
+// bridge actor, so it holds no reference that would keep the bridge alive.
+// The reference count includes the one the bus tree node itself holds, so a
+// bus kept alive by a single surviving actor shows two.
 td::actor::Task<> report_bus_stop_pending(std::shared_ptr<std::atomic<bool>> stopped,
                                           std::weak_ptr<simplex::Bus> weak_bus,
                                           std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
@@ -93,14 +96,25 @@ td::actor::Task<> report_bus_stop_pending(std::shared_ptr<std::atomic<bool>> sto
 }
 
 // Wait for the consensus bus to stop, with the pending-stop report running
-// alongside. The wait itself is the plain await it always was.
+// alongside. The wait itself is the plain await it always was; a stop that has
+// already completed takes the fast path with no reporter at all.
 td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waiter, std::weak_ptr<simplex::Bus> weak_bus,
                                                   std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
                                                   std::string name) {
+  if (waiter.await_ready()) {
+    co_await std::move(waiter);
+    co_return td::Unit{};
+  }
   auto stopped = std::make_shared<std::atomic<bool>>(false);
-  report_bus_stop_pending(stopped, std::move(weak_bus), std::move(weak_node), std::move(name)).start().detach();
+  // Whichever way this coroutine ends (completion, error or cancellation), the
+  // reporter must learn that there is nothing left to watch.
+  SCOPE_EXIT {
+    stopped->store(true, std::memory_order_release);
+  };
+  auto reporter = report_bus_stop_pending(stopped, std::move(weak_bus), std::move(weak_node), std::move(name));
+  reporter.set_executor(td::actor::Executor::on_scheduler());
+  std::move(reporter).start().detach();
   co_await std::move(waiter);
-  stopped->store(true, std::memory_order_release);
   co_return td::Unit{};
 }
 
