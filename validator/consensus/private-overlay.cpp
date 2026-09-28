@@ -96,6 +96,8 @@ class PrivateOverlayImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
     options.private_ping_peers_ = true;
     options.twostep_broadcast_sender_ = adnl_sender_;
     options.send_twostep_broadcast_ = true;
+    CHECK(!bus.all_current_validators.empty());
+    options.twostep_intermediate_nodes_ = bus.all_current_validators;
     options.allow_old_broadcasts_ = false;
 
     td::actor::send_closure(overlays_, &overlay::Overlays::create_private_overlay_ex, local_adnl_id_,

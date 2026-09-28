@@ -16,6 +16,7 @@
 */
 #pragma once
 
+#include <functional>
 #include <vector>
 
 #include "auto/tl/tos_api.h"
@@ -64,6 +65,9 @@ td::Bits256 validator_adnl_identity(const tos::ValidatorDescr& descr);
 td::Status validate_pq_consensus_descriptor(const tos::ValidatorDescr& descr);
 
 class ValidatorSet;
+
+// Transport identities from the current total set, independent of the committee.
+std::vector<td::Bits256> current_validator_adnl_ids(const std::function<td::Ref<ValidatorSet>(int)>& get_total_set);
 
 // Whether a whole validator set can run a post-quantum Simplex session.
 //

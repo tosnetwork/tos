@@ -3167,6 +3167,11 @@ void ValidatorManagerImpl::update_shards() {
                << launch_config;
     allow_validate_ = false;
   }
+  const auto current_relays = get_current_validator_adnl_ids();
+  const bool groups_eligible = allow_validate_ && current_relays.is_ok();
+  if (current_relays.is_error()) {
+    LOG(ERROR) << "refusing validator and observer groups: " << current_relays.error();
+  }
   auto exp_vec = last_masterchain_state_->get_shards();
   auto config = last_masterchain_state_->get_consensus_config();
   consensus::ValidatorSessionOptions opts{config};
@@ -3291,7 +3296,7 @@ void ValidatorManagerImpl::update_shards() {
 
   active_validator_groups_master_ = active_validator_groups_shard_ = 0;
   adnl::AdnlNodeIdShort mc_validator_adnl_id = adnl::AdnlNodeIdShort::zero();
-  if (allow_validate_) {
+  if (groups_eligible) {
     for (auto &desc : new_shards) {
       auto shard = desc.first;
       if (force_recover && !desc.first.is_masterchain()) {
@@ -3383,7 +3388,7 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
-  if (allow_validate_) {
+  if (groups_eligible) {
     for (auto &shard : future_shards) {
       auto val_set = last_masterchain_state_->get_next_validator_set(shard);
       if (val_set.is_null()) {
@@ -3424,7 +3429,7 @@ void ValidatorManagerImpl::update_shards() {
   }
 
   std::map<ObserverGroupId, ValidatorGroupEntry> new_observer_groups;
-  if (allow_validate_) {
+  if (groups_eligible) {
     for (const auto &[shard, prev] : new_shards) {
       auto selected_config = last_masterchain_state_->get_selected_new_consensus_config(shard.workchain);
       if (!selected_config || !selected_config.value().config.protocol_version_supported()) {
@@ -3492,6 +3497,9 @@ void ValidatorManagerImpl::update_shards() {
               .started = false,
               .cc_seqno = val_set->get_catchain_seqno(),
           };
+          if (entry.actor.empty()) {
+            continue;
+          }
           LOG(INFO) << "Created observer group " << shard.to_str() << "." << entry.cc_seqno << " at " << local_adnl_id;
         }
         if (!entry.started) {
@@ -3551,6 +3559,10 @@ void ValidatorManagerImpl::update_shards() {
 
   std::vector<CleanupEntry> ids_to_remove;
   for (auto &[id, tentative_group] : next_validator_groups_) {
+    if (!groups_eligible) {
+      ids_to_remove.push_back({id, "consensus startup prerequisites are not met"});
+      continue;
+    }
     for (auto &[active_id, active_group] : validator_groups_) {
       if (active_group.shard.workchain != tentative_group.shard.workchain) {
         continue;
@@ -3705,6 +3717,12 @@ void ValidatorManagerImpl::updated_init_block(BlockIdExt last_rotate_block_id,
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_group(
     ValidatorSessionId session_id, ShardIdFull shard, td::Ref<block::ValidatorSet> validator_set, BlockSeqno key_seqno,
     NewConsensusConfig config, consensus::ValidatorSessionOptions opts, bool init_session) {
+  auto current_relays = get_current_validator_adnl_ids();
+  if (current_relays.is_error()) {
+    LOG(ERROR) << "refusing consensus group creation: " << current_relays.error();
+    return {};
+  }
+
   td::actor::send_closure(ext_message_pool_, &ExtMessagePool::cleanup_external_messages, shard);
 
   auto validator_id = get_validator_id(shard, validator_set);
@@ -3760,17 +3778,23 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
     return {};
   }
 
-  return IValidatorGroup::create_bridge(PSTRING() << "valgroup" << shard.to_str(), shard, local_vid,
-                                        std::move(pq_signer), session_id, validator_set, key_seqno, config, keyring_,
-                                        adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
-                                        get_collation_manager(adnl_id), init_session,
-                                        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
-                                        opts_->need_monitor(shard, last_masterchain_state_));
+  return IValidatorGroup::create_bridge(
+      PSTRING() << "valgroup" << shard.to_str(), shard, local_vid, std::move(pq_signer), session_id, validator_set,
+      key_seqno, config, keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), current_relays.move_as_ok(),
+      db_root_, actor_id(this), get_collation_manager(adnl_id), init_session,
+      opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
+      opts_->need_monitor(shard, last_masterchain_state_));
 }
 
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group(
     ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
     td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config) {
+  auto current_relays = get_current_validator_adnl_ids();
+  if (current_relays.is_error()) {
+    LOG(ERROR) << "refusing consensus group creation: " << current_relays.error();
+    return {};
+  }
+
   const auto committee_ceiling = shard.is_masterchain() ? tos::pq::launch_limits::max_masterchain_committee
                                                         : tos::pq::launch_limits::max_shard_committee;
   const auto committee_size = validator_set->export_vector().size();
@@ -3781,8 +3805,8 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group
   }
   return IValidatorGroup::create_bridge_observer(
       PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
-      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
-      opts_, opts_->need_monitor(shard, last_masterchain_state_));
+      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), current_relays.move_as_ok(),
+      db_root_, actor_id(this), opts_, opts_->need_monitor(shard, last_masterchain_state_));
 }
 
 std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
@@ -3802,6 +3826,27 @@ std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
       }
       result.emplace(block::validator_adnl_identity(descr));
     }
+  }
+  return result;
+}
+
+td::Result<std::set<adnl::AdnlNodeIdShort>> ValidatorManagerImpl::get_current_validator_adnl_ids() const {
+  const auto state = last_masterchain_state_;
+  if (state.is_null()) {
+    return td::Status::Error("two-step relays: no masterchain state");
+  }
+  const consensus::ValidatorSessionOptions session_opts{state->get_consensus_config()};
+  if (!session_opts.new_catchain_ids) {
+    return td::Status::Error("two-step relays: snapshot-at-creation requires new_catchain_ids=true");
+  }
+  const auto ids =
+      block::current_validator_adnl_ids([state](int offset) { return state->get_total_validator_set(offset); });
+  if (ids.empty()) {
+    return td::Status::Error("two-step relays: current total validator set is missing or empty");
+  }
+  std::set<adnl::AdnlNodeIdShort> result;
+  for (const auto &id : ids) {
+    result.emplace(id);
   }
   return result;
 }

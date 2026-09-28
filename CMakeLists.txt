@@ -720,6 +720,11 @@ target_link_libraries(test-overlay-plumtree-repair PRIVATE overlay tdutils tdact
 add_executable(test-overlay-plumtree-policy test/test-td-main.cpp test/test-overlay-plumtree-policy.cpp
   test/plumtree/transport.cpp test/plumtree/scheduler.cpp)
 target_link_libraries(test-overlay-plumtree-policy PRIVATE overlay tdutils tdactor adnl adnltest tl_api dht fec)
+add_executable(test-overlay-twostep-relays test/test-td-main.cpp test/test-overlay-twostep-relays.cpp
+  test/plumtree/transport.cpp test/plumtree/scheduler.cpp test/plumtree/util.cpp)
+target_link_libraries(test-overlay-twostep-relays PRIVATE overlay tdutils tdactor adnl adnltest tl_api dht fec)
+add_executable(test-current-validator-adnl-ids test/test-td-main.cpp test/test-current-validator-adnl-ids.cpp)
+target_link_libraries(test-current-validator-adnl-ids PRIVATE tos_block tos_crypto tdutils)
 add_executable(plumtree-graph-sim
   test/plumtree/plumtree-graph-sim.cpp
   test/plumtree/graph.cpp
@@ -1273,6 +1278,8 @@ tos_test(test-overlay-plumtree-stats)
 tos_test(test-overlay-content-metrics)
 tos_test(test-overlay-peer-cleanup)
 tos_test(test-overlay-plumtree-policy)
+tos_test(test-overlay-twostep-relays)
+tos_test(test-current-validator-adnl-ids)
 tos_test(test-overlay-plumtree-repair)
 tos_test(test-overlay-broadcast-capacity)
 tos_test(test-download-state-budget)

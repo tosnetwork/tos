@@ -308,6 +308,8 @@ struct OverlayOptions {
   bool private_ping_peers_ = false;
   td::uint32 max_pending_peers_ = 100;
 
+  // Empty: all permanent peers. Non-empty: restrict to these permanent peers.
+  std::set<adnl::AdnlNodeIdShort> twostep_intermediate_nodes_ = {};
   td::actor::ActorId<adnl::AdnlSenderEx> twostep_broadcast_sender_ = {};
   bool send_twostep_broadcast_ = false;
   bool allow_old_broadcasts_ = true;  // non-twostep broadcasts

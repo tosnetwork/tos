@@ -1130,6 +1130,7 @@ class TestConsensus : public td::actor::Actor {
     bus->validator_set = validators_;
     for (const auto& validator : validators_) {
       bus->all_validators.push_back(validator.adnl_id);
+      bus->all_current_validators.insert(validator.adnl_id);
     }
     bus->total_weight = total_weight_;
     bus->local_id = validators_[node_idx];

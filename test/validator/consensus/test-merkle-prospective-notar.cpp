@@ -604,6 +604,7 @@ class Driver : public td::actor::Actor {
     bus->validator_set = validators;
     for (const auto& validator : validators) {
       bus->all_validators.push_back(validator.adnl_id);
+      bus->all_current_validators.insert(validator.adnl_id);
     }
     bus->total_weight = total_weight;
     bus->local_id = validators.at(local);

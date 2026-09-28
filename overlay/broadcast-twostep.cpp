@@ -51,7 +51,7 @@ constexpr int VERBOSITY_NAME(TWOSTEP_INFO) = verbosity_DEBUG;
 constexpr int VERBOSITY_NAME(TWOSTEP_DEBUG) = verbosity_DEBUG;
 
 static constexpr size_t FEC_MIN_BYTES = 513;
-static constexpr size_t FEC_MIN_OTHER_NODES = 5;
+static constexpr size_t FEC_MIN_INTERMEDIATE_NODES = 5;
 
 static constexpr size_t fec_k(size_t other_nodes) {
   LOG_CHECK(other_nodes > 2) << "other_nodes=" << other_nodes;
@@ -133,16 +133,16 @@ void BroadcastsTwostep::send(OverlayImpl *overlay, PublicKeyHash send_as, td::Bu
   size_t data_size = data.size();
   td::Bits256 data_hash = sha256_bits256(data.as_slice());
   td::uint32 date = static_cast<td::uint32>(td::Clocks::system());
-  std::vector<adnl::AdnlNodeIdShort> other_nodes;
+  std::vector<adnl::AdnlNodeIdShort> intermediate_nodes;
   overlay->iterate_all_peers([&](const adnl::AdnlNodeIdShort &peer_id, OverlayPeer &peer) {
-    if (overlay->is_persistent_node(peer_id) && peer_id != overlay->local_id()) {
-      other_nodes.push_back(peer_id);
+    if (overlay->is_twostep_intermediate_node(peer_id) && peer_id != overlay->local_id()) {
+      intermediate_nodes.push_back(peer_id);
     }
   });
   td::Bits256 broadcast_id;
-  bool use_fec = data_size >= FEC_MIN_BYTES && other_nodes.size() >= FEC_MIN_OTHER_NODES;
+  bool use_fec = data_size >= FEC_MIN_BYTES && intermediate_nodes.size() >= FEC_MIN_INTERMEDIATE_NODES;
   if (use_fec) {
-    size_t k = fec_k(other_nodes.size());
+    size_t k = fec_k(intermediate_nodes.size());
     size_t part_size = (data_size + k - 1) / k;
     CHECK(part_size < data_size);
     broadcast_id = get_tl_object_sha_bits256(create_tl_object<tos_api::overlay_broadcastTwostep_id>(
@@ -150,7 +150,7 @@ void BroadcastsTwostep::send(OverlayImpl *overlay, PublicKeyHash send_as, td::Bu
         static_cast<td::int32>(data_size), static_cast<td::int32>(part_size), extra.clone()));
     VLOG(TWOSTEP_INFO) << "twostep START sender broadcast_id=" << broadcast_id.to_hex()
                        << " data_hash=" << data_hash.to_hex() << " data_size=" << data_size
-                       << " recipients=" << other_nodes.size() << " mode=FEC";
+                       << " recipients=" << intermediate_nodes.size() << " mode=FEC";
     auto R = td::raptorq::Encoder::create(part_size, data.clone());
     if (R.is_error()) {
       VLOG(TWOSTEP_WARNING) << "cannot create FEC encoder: " << R.move_as_error();
@@ -158,7 +158,7 @@ void BroadcastsTwostep::send(OverlayImpl *overlay, PublicKeyHash send_as, td::Bu
     }
     auto encoder = R.move_as_ok();
     encoder->precalc();
-    for (size_t i = 0; i < other_nodes.size(); i++) {
+    for (size_t i = 0; i < intermediate_nodes.size(); i++) {
       td::uint32 seqno = static_cast<std::uint32_t>(i);
       td::BufferSlice part(part_size);
       td::Status S = encoder->gen_symbol(seqno, part.as_slice());
@@ -173,7 +173,7 @@ void BroadcastsTwostep::send(OverlayImpl *overlay, PublicKeyHash send_as, td::Bu
           .flags = flags,
           .date = date,
           .src = adnl::AdnlNodeIdShort(send_as),
-          .dst = other_nodes[i],
+          .dst = intermediate_nodes[i],
           .data_hash = data_hash,
           .data_size = static_cast<td::uint32>(data_size),
           .seqno = seqno,
@@ -193,7 +193,7 @@ void BroadcastsTwostep::send(OverlayImpl *overlay, PublicKeyHash send_as, td::Bu
         static_cast<std::int32_t>(data_size), static_cast<std::int32_t>(data_size), extra.clone()));
     VLOG(TWOSTEP_INFO) << "twostep START sender broadcast_id=" << broadcast_id.to_hex()
                        << " data_hash=" << data_hash.to_hex() << " data_size=" << data_size
-                       << " recipients=" << other_nodes.size() << " mode=simple";
+                       << " recipients=" << intermediate_nodes.size() << " mode=simple";
     td::BufferSlice to_sign =
         create_serialize_tl_object<tos_api::overlay_broadcastTwostepSimple_toSign>(broadcast_id, data.clone());
     BroadcastTwostepDataSimple passdata{
@@ -201,7 +201,7 @@ void BroadcastsTwostep::send(OverlayImpl *overlay, PublicKeyHash send_as, td::Bu
         .flags = flags,
         .date = date,
         .src = adnl::AdnlNodeIdShort(send_as),
-        .dsts = std::move(other_nodes),
+        .dsts = std::move(intermediate_nodes),
         .data = data.clone(),
         .extra = extra.clone(),
     };

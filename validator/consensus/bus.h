@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <functional>
 #include <variant>
 
 #include "consensus/misbehavior.h"
@@ -238,6 +239,7 @@ class Bus : public td::actor::Bus {
   std::optional<PeerValidator> local_id;
   adnl::AdnlNodeIdShort local_adnl_id;
   std::vector<adnl::AdnlNodeIdShort> all_validators;
+  std::set<adnl::AdnlNodeIdShort> all_current_validators;
 
   NewConsensusConfig config;
 
@@ -251,6 +253,10 @@ class Bus : public td::actor::Bus {
 };
 
 using BusHandle = td::actor::BusHandle<Bus>;
+
+// Observation-only seam: called after the real bridge has populated and started
+// its bus. Tests install it before scheduling actors and clear it after teardown.
+void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer);
 
 struct BlockAccepter {
   static void register_in(td::actor::Runtime&);
