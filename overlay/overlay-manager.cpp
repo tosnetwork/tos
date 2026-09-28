@@ -24,6 +24,7 @@
 #include "auto/tl/tos_api.hpp"
 #include "td/actor/actor.h"
 #include "td/actor/common.h"
+#include "td/actor/coro_utils.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
@@ -436,6 +437,7 @@ void OverlayManager::send_broadcast(adnl::AdnlNodeIdShort local_id, OverlayIdSho
 void OverlayManager::send_broadcast_ex(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id, PublicKeyHash send_as,
                                        td::uint32 flags, td::BufferSlice object) {
   CHECK(object.size() <= Overlays::max_simple_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -459,6 +461,7 @@ void OverlayManager::send_broadcast_fec_with_extra(adnl::AdnlNodeIdShort local_i
                                                    PublicKeyHash send_as, td::uint32 flags, td::BufferSlice object,
                                                    td::BufferSlice extra) {
   CHECK(object.size() <= Overlays::max_fec_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -472,6 +475,7 @@ void OverlayManager::send_broadcast_fec_with_extra(adnl::AdnlNodeIdShort local_i
 void OverlayManager::send_broadcast_plumtree_fec(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id,
                                                  PublicKeyHash send_as, td::uint32 flags, td::BufferSlice object) {
   CHECK(object.size() <= Overlays::max_fec_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -486,6 +490,7 @@ void OverlayManager::send_broadcast_plumtree(adnl::AdnlNodeIdShort local_id, Ove
                                              PublicKeyHash send_as, td::uint32 flags, td::Bits256 broadcast_id,
                                              td::BufferSlice object) {
   CHECK(object.size() <= Overlays::max_fec_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -690,6 +695,27 @@ void OverlayManager::forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort 
     return;
   }
   td::actor::send_closure(it2->second.overlay, &Overlay::forget_peer, peer_id);
+}
+
+void OverlayManager::collect(metrics::MetricsPromise promise) {
+  connect(std::move(promise), collect_coro());
+}
+
+td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro() {
+  std::vector<td::actor::StartedTask<td::Unit>> drains;
+  for (const auto &[_, by_overlay] : overlays_) {
+    for (const auto &[__, desc] : by_overlay) {
+      drains.push_back(td::actor::ask(desc.overlay.get(), &Overlay::collect_metrics));
+    }
+  }
+  // A dying overlay flushes its remaining delta in tear_down before its ask fails.
+  co_await td::actor::all_wrap(std::move(drains));
+  co_return std::move(broadcasts_in_.collect("in")).join(broadcasts_out_.collect("out"));
+}
+
+void OverlayManager::absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) {
+  broadcasts_in_ += delta;
+  done.set_value(td::Unit{});
 }
 
 Certificate::Certificate(PublicKey issued_by, td::int32 expire_at, td::uint32 max_size, td::uint32 flags,

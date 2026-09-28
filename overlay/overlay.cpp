@@ -541,6 +541,16 @@ void OverlayImpl::start_up() {
   update_peers_mtu();
 }
 
+void OverlayImpl::tear_down() {
+  if (!manager_.empty()) {
+    td::actor::send_closure(manager_, &Overlays::absorb_broadcasts, drain_metrics(), td::Promise<td::Unit>{});
+  }
+}
+
+void OverlayImpl::collect_metrics(td::Promise<td::Unit> done) {
+  td::actor::send_closure(manager_, &Overlays::absorb_broadcasts, drain_metrics(), std::move(done));
+}
+
 void OverlayImpl::update_peers_mtu() {
   auto sender =
       !opts_.twostep_broadcast_sender_.empty() ? opts_.twostep_broadcast_sender_ : opts_.plumtree_broadcast_sender_;
@@ -928,6 +938,7 @@ void OverlayImpl::receive_plumtree_repair_response(adnl::AdnlNodeIdShort from, t
 }
 
 void OverlayImpl::deliver_broadcast(PublicKeyHash source, td::BufferSlice data, td::BufferSlice extra) {
+  delivered_.account(data.as_slice());
   callback_->receive_broadcast_with_extra(source, overlay_id_, std::move(data), std::move(extra));
 }
 

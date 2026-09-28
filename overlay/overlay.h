@@ -33,6 +33,10 @@ namespace overlay {
 
 class Overlay : public td::actor::Actor {
  public:
+  virtual void collect_metrics(td::Promise<td::Unit> done) {
+    done.set_value(td::Unit());
+  }
+
   using BroadcastHash = td::Bits256;
   using BroadcastDataHash = td::Bits256;
   using BroadcastPartHash = td::Bits256;

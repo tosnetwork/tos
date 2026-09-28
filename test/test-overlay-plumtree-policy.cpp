@@ -17,6 +17,8 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <cstdio>
+
 #include "adnl/adnl-test-loopback-implementation.h"
 #include "adnl/adnl.h"
 #include "common/errorlog.h"
@@ -37,6 +39,9 @@ class OverlayImplPlumtreePolicyTest {
   static void admit(OverlayImpl &overlay, OverlayNode node) {
     overlay.add_peer(std::move(node), true);
   }
+  static PlumtreeRepairDiagnostics diagnostics(OverlayImpl &overlay) {
+    return overlay.broadcasts_plumtree_.repair_diagnostics_for_test();
+  }
   static td::uint32 flags(OverlayImpl &overlay) {
     // Discovery is covered by DHT tests; this test supplies verified peers directly.
     overlay.next_dht_query_ = td::Timestamp::never();
@@ -48,6 +53,9 @@ class PolicyOverlay : public OverlayImpl {
   using OverlayImpl::OverlayImpl;
   void admit(OverlayNode node) {
     OverlayImplPlumtreePolicyTest::admit(*this, std::move(node));
+  }
+  void diagnostics(td::Promise<PlumtreeRepairDiagnostics> promise) {
+    promise.set_value(OverlayImplPlumtreePolicyTest::diagnostics(*this));
   }
   void check_flags(td::uint32 expected) {
     CHECK(OverlayImplPlumtreePolicyTest::flags(*this) == expected);
@@ -228,6 +236,21 @@ TEST(Overlay, PublicPlumtreeSourcesAndObserver) {
       pump_scheduler(scheduler);
     }
   }
+  PlumtreeRepairDiagnostics observer_diagnostics;
+  bool got_diagnostics = false;
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(actors[2], &PolicyOverlay::diagnostics,
+                            td::PromiseCreator::lambda([&](td::Result<PlumtreeRepairDiagnostics> result) {
+                              observer_diagnostics = result.move_as_ok();
+                              got_diagnostics = true;
+                            }));
+  });
+  pump_scheduler(scheduler, 64);
+  ASSERT_TRUE(got_diagnostics);
+  std::printf(
+      "Three-actor delivery workload: observer_deliveries=4 ihave_immediate_checks=%llu ihave_repair_checks=%llu\n",
+      static_cast<unsigned long long>(observer_diagnostics.immediate_checks),
+      static_cast<unsigned long long>(observer_diagnostics.deferred_checks));
   ASSERT_TRUE(payloads_to_observer > 0);
   ASSERT_TRUE(repairs > 0);
   scheduler.run_in_context(
@@ -250,6 +273,69 @@ TEST(Overlay, PublicPlumtreeSourcesAndObserver) {
     pump(3);
     ASSERT_EQ(delivery->expected_remaining_count(), 0u);
   }
+  auto scrape = [&] {
+    std::optional<metrics::MetricSet> set;
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(
+          manager, &Overlays::collect,
+          td::PromiseCreator::lambda([&](td::Result<metrics::MetricSet> result) { set = result.move_as_ok(); }));
+    });
+    pump_scheduler(scheduler, 64);
+    CHECK(set.has_value());
+    return std::move(*set);
+  };
+  auto value = [](const metrics::MetricSet &set, const std::string &name, const std::string &direction) {
+    double total = 0;
+    for (const auto &family : set.families)
+      if (family.name == name) {
+        for (const auto &metric : family.metrics) {
+          bool matches = false;
+          for (const auto &label : metric.label_set.labels)
+            matches |= label.key == "direction" && label.val == direction;
+          if (matches)
+            for (const auto &sample : metric.samples)
+              total += sample.value;
+        }
+      }
+    return total;
+  };
+  auto first_scrape = scrape();
+  // Four Plumtree broadcasts deliver both to their local origin and the observer;
+  // each ordinary broadcast delivers to all three actors (8*8000 + 3*(700+8000)).
+  CHECK(value(first_scrape, "overlay_broadcast_bytes_total", "in") == 90100);
+  CHECK(value(first_scrape, "overlay_broadcast_bytes_total", "out") == 40700);
+  CHECK(value(first_scrape, "overlay_broadcast_messages_total", "in") == 14);
+  auto repeat_scrape = scrape();
+  CHECK(value(repeat_scrape, "overlay_broadcast_bytes_total", "in") == 90100);
+  // An overlay removed before its next scrape must flush its remaining delta once.
+  auto last_payload = create_serialize_tl_object<tos_api::dht_ping>(42);
+  auto last_size = static_cast<double>(last_payload.size());
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(actors[2], &OverlayImpl::deliver_broadcast, keys[0].compute_short_id(),
+                            std::move(last_payload), td::BufferSlice{});
+  });
+  pump_scheduler(scheduler, 64);
+  scheduler.run_in_context([&] { td::actor::send_closure(manager, &Overlays::delete_overlay, ids[2], overlay_id); });
+  pump_scheduler(scheduler, 64);
+  auto after_removal = scrape();
+  CHECK(value(after_removal, "overlay_broadcast_bytes_total", "in") == 90100 + last_size);
+  CHECK(value(after_removal, "overlay_broadcast_messages_total", "in") == 15);
+  // Outgoing counters describe attempts, even if the addressed overlay no longer exists.
+  scheduler.run_in_context([&] {
+    auto payload = create_serialize_tl_object<tos_api::dht_ping>(42);
+    td::actor::send_closure(manager, &Overlays::send_broadcast_ex, ids[2], overlay_id, keys[2].compute_short_id(), 0,
+                            payload.clone());
+    td::actor::send_closure(manager, &Overlays::send_broadcast_fec_ex, ids[2], overlay_id, keys[2].compute_short_id(),
+                            0, payload.clone());
+    td::actor::send_closure(manager, &Overlays::send_broadcast_plumtree_fec, ids[2], overlay_id,
+                            keys[2].compute_short_id(), 0, payload.clone());
+    td::actor::send_closure(manager, &Overlays::send_broadcast_plumtree, ids[2], overlay_id, keys[2].compute_short_id(),
+                            0, td::Bits256::zero(), payload.clone());
+  });
+  pump_scheduler(scheduler, 64);
+  auto after_attempts = scrape();
+  CHECK(value(after_attempts, "overlay_broadcast_bytes_total", "out") == 40700 + 4 * last_size);
+  CHECK(value(after_attempts, "overlay_broadcast_bytes_total", "in") == 90100 + last_size);
   scheduler.run_in_context([&] {
     manager.reset();
     sender.reset();

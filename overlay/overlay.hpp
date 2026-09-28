@@ -236,6 +236,8 @@ class OverlayImpl : public Overlay {
 
   void alarm() override;
   void start_up() override;
+  void tear_down() override;
+  void collect_metrics(td::Promise<td::Unit> done) override;
 
   void on_ping_result(adnl::AdnlNodeIdShort peer, bool success, double store_ping_time = -1.0);
   void receive_random_peers(adnl::AdnlNodeIdShort src, td::Result<td::BufferSlice> R, double elapsed);
@@ -506,6 +508,11 @@ class OverlayImpl : public Overlay {
   td::Timestamp private_ping_peers_at_ = td::Timestamp::now();
 
   std::unique_ptr<Overlays::Callback> callback_;
+  // Delivered application content; the manager accumulates actor-owned deltas.
+  metrics::TlTrafficBucket delivered_;
+  metrics::TlTrafficBucket drain_metrics() {
+    return std::exchange(delivered_, {});
+  }
 
   BroadcastsSimple broadcasts_simple_;
   BroadcastsFec broadcasts_fec_;
