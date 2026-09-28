@@ -193,12 +193,14 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       return builder_.size();
     }
 
-    // Only retain the protocol header in diagnostics, never a complete payload.
+    // Retain only the outer TL constructor. QuicSender is generic, so a
+    // larger raw prefix could expose application payloads in INFO logs.
     std::string diagnostic_prefix() const {
       std::string prefix;
+      constexpr std::size_t constructor_size = sizeof(td::int32);
       builder_.for_each([&](td::Slice part) {
-        if (prefix.size() < 64) {
-          prefix.append(part.data(), std::min(part.size(), 64 - prefix.size()));
+        if (prefix.size() < constructor_size) {
+          prefix.append(part.data(), std::min(part.size(), constructor_size - prefix.size()));
         }
       });
       return prefix;
