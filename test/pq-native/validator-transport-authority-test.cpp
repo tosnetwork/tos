@@ -24,7 +24,7 @@ void require(bool condition, const std::string &message) {
 
 td::Bits256 fill(unsigned char value) {
   td::Bits256 result;
-  std::memset(result.data(), value, result.size());
+  std::memset(result.data(), value, result.as_slice().size());
   return result;
 }
 
@@ -70,6 +70,17 @@ int main() {
   tos::ValidatorDescr before{
       validator_id, 1, key_id_before, std::string(1312, '\x11'), 10, transport_id.bits256_value()};
   tos::ValidatorDescr after{validator_id, 1, key_id_after, std::string(1312, '\x22'), 10, transport_id.bits256_value()};
+  const std::set<tos::PublicKeyHash> configured_adnl{transport_id.pubkey_hash()};
+  auto pq_local = tos::validator::local_pq_validator_adnl_ids({before}, validator_id, key_id_before, configured_adnl);
+  require(pq_local == std::set{transport_id}, "PQ-only custody did not register its transport identity");
+  require(tos::validator::local_pq_validator_adnl_ids({before}, validator_id, key_id_after, configured_adnl).empty(),
+          "rotated consensus key registered an identity whose custody is not held");
+  require(tos::validator::local_pq_validator_adnl_ids({before}, tos::ValidatorId{fill(0x42)}, key_id_before,
+                                                      configured_adnl)
+              .empty(),
+          "another validator identity registered this node's transport key");
+  require(tos::validator::local_pq_validator_adnl_ids({before}, validator_id, key_id_before, {}).empty(),
+          "missing configured ADNL key registered validator transport authority");
   auto fast_sync_authority = tos::validator::fast_sync_validator_transport_authority({before});
   auto &roots = fast_sync_authority.roots;
   require(roots.size() == 1 && roots[0] == transport_id.pubkey_hash(),
@@ -78,8 +89,10 @@ int main() {
           "fast-sync validator membership did not use the explicit ADNL identity");
 
   tos::validator::ValidatorAdnlRefCounts local_validator_adnl_ids;
-  require(tos::validator::add_validator_adnl_reference(local_validator_adnl_ids, transport_id),
-          "startup registration was not the first reference");
+  for (auto id : pq_local) {
+    require(tos::validator::add_validator_adnl_reference(local_validator_adnl_ids, id),
+            "PQ-only startup registration was not the first reference");
+  }
   auto certificate = issue_certificate(roots, local_validator_adnl_ids, transport_key, recipient_id);
   require(certificate.has_value(), "matching validator ADNL key did not issue a certificate");
   require(certificate->check_signature(recipient_id).is_ok(), "issued validator ADNL certificate did not verify");

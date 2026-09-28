@@ -25,6 +25,24 @@ inline PublicKeyHash validator_transport_root(const ValidatorDescr &descr) {
   return PublicKeyHash{block::validator_adnl_identity(descr)};
 }
 
+// Register only transport keys of the PQ identity and consensus key actually
+// held by this node. Other configured ADNL keys do not confer validator roles.
+inline std::set<adnl::AdnlNodeIdShort> local_pq_validator_adnl_ids(const std::vector<ValidatorDescr> &validators,
+                                                                   ValidatorId validator_id, ConsensusKeyId held_key,
+                                                                   const std::set<PublicKeyHash> &configured_adnl_ids) {
+  std::set<adnl::AdnlNodeIdShort> result;
+  for (const auto &descr : validators) {
+    if (!descr.is_pq() || descr.validator_id != validator_id || descr.key_id != held_key) {
+      continue;
+    }
+    auto root = validator_transport_root(descr);
+    if (!root.is_zero() && configured_adnl_ids.contains(root)) {
+      result.emplace(root);
+    }
+  }
+  return result;
+}
+
 inline bool add_validator_adnl_reference(ValidatorAdnlRefCounts &ids, adnl::AdnlNodeIdShort id) {
   return ++ids[id] == 1;
 }

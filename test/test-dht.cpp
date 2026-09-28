@@ -411,6 +411,33 @@ int main() {
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
     dht_value.check().ensure();
 
+    // A validly signed record may age before a delayed republish. Exercise
+    // send_store directly, as the periodic republish path does.
+    auto stale_date = static_cast<td::int32>(td::Clocks::system() - 3600);
+    auto stale_to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
+        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 0, stale_date);
+    auto stale_nodes = tos::create_tl_object<tos::tos_api::overlay_nodes>();
+    stale_nodes->nodes_.push_back(tos::create_tl_object<tos::tos_api::overlay_node>(
+        pub.tl(), overlay_short_id.tl(), 0, stale_date,
+        pk.create_decryptor().move_as_ok()->sign(stale_to_sign.as_slice()).move_as_ok(),
+        tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>()));
+    tos::dht::DhtValue stale_value{dht_key_description.clone(), tos::serialize_tl_object(stale_nodes, true), ttl,
+                                   td::BufferSlice()};
+    std::atomic<bool> stale_store_done{false};
+    bool stale_store_rejected = false;
+    scheduler.run_in_context([&] {
+      td::actor::send_closure(
+          td::actor::actor_dynamic_cast<tos::dht::DhtMemberImpl>(retry_dht.get()), &tos::dht::DhtMemberImpl::send_store,
+          std::move(stale_value), [&](td::Result<td::Unit> result) {
+            stale_store_rejected =
+                result.is_error() && result.error().message().str().find("no fresh records") != std::string::npos;
+            stale_store_done = true;
+          });
+    });
+    wait_for(stale_store_done, "aged overlay republish refusal");
+    CHECK(stale_store_rejected);
+    LOG(ERROR) << "aged overlay republish refused without terminating DHT actor";
+
     obj->nodes_[0]->flags_ = 2;
     auto policy_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
         tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 2, date);
