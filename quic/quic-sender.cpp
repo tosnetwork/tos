@@ -78,9 +78,8 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     if (status.is_error()) {
       auto prefix = state.diagnostic_prefix();
-      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " local_id=" << local_id
-                << " peer_id=" << peer_id << " head=" << td::format::as_hex_dump<0>(td::Slice(prefix))
-                << " due to " << status.error();
+      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " local_id=" << local_id << " peer_id=" << peer_id
+                << " head=" << td::format::as_hex_dump<0>(td::Slice(prefix)) << " due to " << status.error();
       fail_stream(state, status.clone());
       return status;
     }
