@@ -12,10 +12,9 @@
 use crate::{common::add_unbound_object_to_map, telemetry::Metric};
 use crate::{
     common::{
-        add_counted_object_to_map, add_counted_object_to_map_with_update,
-        hash, hash_boxed, AdnlPeers, AsyncReceiver,
-        CountedObject, Counter, Query, QueryAnswer, QueryResult, Subscriber, TaggedByteSlice,
-        TaggedTlObject, Version,
+        add_counted_object_to_map, add_counted_object_to_map_with_update, hash, hash_boxed,
+        AdnlPeers, AsyncReceiver, CountedObject, Counter, Query, QueryAnswer, QueryResult,
+        Subscriber, TaggedByteSlice, TaggedTlObject, Version,
     },
     declare_counted,
     node::{AddressCache, AddressCacheWithBads, AdnlNode, AdnlSendMethod, BadPolicy, IpAddress},
@@ -575,26 +574,39 @@ impl Overlay {
                     let MemberCertificateBoxed::Overlay_MemberCertificate(cert) =
                         &guard.val().node.certificate
                     else {
-                        fail!("Empty certificate for known peer {peer} in overlay {}", self.overlay_id)
+                        fail!(
+                            "Empty certificate for known peer {peer} in overlay {}",
+                            self.overlay_id
+                        )
                     };
                     return self.validate_certificate(peer, cert);
                 }
-                fail!("Cannot validate {peer} with empty certificate in the overlay {}", self.overlay_id)
+                fail!(
+                    "Cannot validate {peer} with empty certificate in the overlay {}",
+                    self.overlay_id
+                )
             }
         }
     }
 
-    fn check_node_certificate(&self, peer: &Arc<KeyId>, certificate: &MemberCertificateBoxed) -> Result<()> {
+    fn check_node_certificate(
+        &self,
+        peer: &Arc<KeyId>,
+        certificate: &MemberCertificateBoxed,
+    ) -> Result<()> {
         // A descriptor replaces cached state, so its OWN certificate must pass.
         // It must never borrow validity from a different cached descriptor.
         match (&self.overlay_type, certificate) {
             (OverlayType::Public, MemberCertificateBoxed::Overlay_EmptyMemberCertificate) => Ok(()),
             (OverlayType::Public, _) => fail!("Member certificate in public overlay"),
-            (OverlayType::CertifiedMembers { .. }, MemberCertificateBoxed::Overlay_MemberCertificate(cert)) => {
-                self.validate_certificate(peer, cert)
-            }
-            (OverlayType::CertifiedMembers { root_members, .. }, MemberCertificateBoxed::Overlay_EmptyMemberCertificate)
-                if root_members.contains_key(peer) => Ok(()),
+            (
+                OverlayType::CertifiedMembers { .. },
+                MemberCertificateBoxed::Overlay_MemberCertificate(cert),
+            ) => self.validate_certificate(peer, cert),
+            (
+                OverlayType::CertifiedMembers { root_members, .. },
+                MemberCertificateBoxed::Overlay_EmptyMemberCertificate,
+            ) if root_members.contains_key(peer) => Ok(()),
             _ => fail!("Missing or invalid member certificate in overlay node description"),
         }
     }
@@ -929,7 +941,8 @@ impl Overlay {
     // }
 
     fn validate_certificate(&self, peer: &Arc<KeyId>, cert: &MemberCertificate) -> Result<()> {
-        let OverlayType::CertifiedMembers { max_slaves, root_members, .. } = &self.overlay_type else {
+        let OverlayType::CertifiedMembers { max_slaves, root_members, .. } = &self.overlay_type
+        else {
             fail!("Overlay type is not certificated members")
         };
         validate_member_certificate(root_members, *max_slaves, peer, cert, UnixTime::now() as u32)
@@ -1328,13 +1341,13 @@ impl OverlayNode {
             overlay.neighbours.put(ret.clone())?;
         }
         add_counted_object_to_map_with_update(&overlay.nodes, ret.clone(), |old_node| {
-            let Some(merged) = merge_authenticated_node(old_node.map(|old| old.node.as_ref()), descriptor)? else {
+            let Some(merged) =
+                merge_authenticated_node(old_node.map(|old| old.node.as_ref()), descriptor)?
+            else {
                 return Ok(None);
             };
-            let ret = NodeObject {
-                node: Arc::new(merged),
-                counter: self.allocated.peers.clone().into(),
-            };
+            let ret =
+                NodeObject { node: Arc::new(merged), counter: self.allocated.peers.clone().into() };
             #[cfg(feature = "telemetry")]
             self.telemetry.peers.update(self.allocated.peers.load(Ordering::Relaxed));
             Ok(Some(ret))
@@ -2391,7 +2404,10 @@ mod receive_policy_tests {
         }
         let flags = 4;
         let sign = OverlayUtils::get_node_to_sign(
-            &key, &UInt256::with_array(*overlay.data()), flags, version,
+            &key,
+            &UInt256::with_array(*overlay.data()),
+            flags,
+            version,
         );
         let node = NodeDescriptor {
             id: (&key).try_into()?,
@@ -2425,7 +2441,10 @@ mod receive_policy_tests {
         let now = Version::get();
         for version in [now - 3600, now + 3600, i32::MAX] {
             let signed = OverlayUtils::get_node_to_sign(
-                &key, &UInt256::with_array(*overlay.data()), 2, version,
+                &key,
+                &UInt256::with_array(*overlay.data()),
+                2,
+                version,
             );
             let node = NodeDescriptor {
                 id: (&key).try_into()?,
