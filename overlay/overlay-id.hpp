@@ -85,8 +85,8 @@ class OverlayNode {
   }
 
   td::BufferSlice to_sign() const {
-    return create_serialize_tl_object<tos_api::overlay_node_toSign>(
-        adnl_id_short().tl(), overlay_.tl(), static_cast<td::int32>(flags_), version_);
+    return create_serialize_tl_object<tos_api::overlay_node_toSign>(adnl_id_short().tl(), overlay_.tl(),
+                                                                    static_cast<td::int32>(flags_), version_);
   }
   void update_adnl_id(adnl::AdnlNodeIdFull node_id) {
     source_ = node_id;
@@ -119,8 +119,8 @@ class OverlayNode {
     return res;
   };
   tl_object_ptr<tos_api::overlay_node> tl() const {
-    return create_tl_object<tos_api::overlay_node>(adnl_id_full().tl(), overlay_.tl(),
-        static_cast<td::int32>(flags_), version_, signature_.clone_as_buffer_slice(), certificate()->tl());
+    return create_tl_object<tos_api::overlay_node>(adnl_id_full().tl(), overlay_.tl(), static_cast<td::int32>(flags_),
+                                                   version_, signature_.clone_as_buffer_slice(), certificate()->tl());
   }
   OverlayNode clone() const {
     auto res = OverlayNode{source_, overlay_, flags_, version_, signature_.clone()};
