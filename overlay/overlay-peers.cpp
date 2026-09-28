@@ -384,7 +384,7 @@ void OverlayImpl::receive_random_peers(adnl::AdnlNodeIdShort src, td::Result<td:
 }
 
 void OverlayImpl::send_random_peers_cont(adnl::AdnlNodeIdShort src, OverlayNode node,
-                                            td::Promise<td::BufferSlice> promise) {
+                                         td::Promise<td::BufferSlice> promise) {
   std::vector<tl_object_ptr<tos_api::overlay_node>> vec;
   if (announce_self_) {
     if (overlay_type_ == OverlayType::Public || is_persistent_node(local_id_) || !node.certificate()->empty()) {
