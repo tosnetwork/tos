@@ -149,28 +149,11 @@ class RepairOverlay : public OverlayImpl {
     CHECK(!submit(0, 0, 1000, false));
     CHECK(b.repair_diagnostics_for_test().pending_parts == 0);  // Invalid first announcement cannot seed trust.
 
-    // Authentication is per missing FEC part, not merely per broadcast. A
-    // valid IHAVE for part 0 must not let a forged first IHAVE for part 1 seed
-    // repair state without a source-signature check.
-    CHECK(submit_fec(100, 0, 0, true));
-    auto cross_part_diag = b.repair_diagnostics_for_test();
-    auto checks_after_part0 = cross_part_diag.immediate_checks;
-    CHECK(!submit_fec(100, 1, 1, false));
-    cross_part_diag = b.repair_diagnostics_for_test();
-    CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 1);
-    CHECK(submit_fec(100, 2, 1, true));
-    cross_part_diag = b.repair_diagnostics_for_test();
-    CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 2);
-    auto checks_after_cross_part = cross_part_diag.immediate_checks;
-    b.flush_repairs_for_test(this);
-    CHECK(b.repair_diagnostics_for_test().pending_parts == 0);
-    state->requests.clear();
-
     CHECK(submit(1, 1, 1000, true));
     CHECK(submit(1, 2, 2000, false));  // Canonical forged signature is deferred, never used for a query.
     CHECK(submit(1, 3, 3000, true));
     auto diag = b.repair_diagnostics_for_test();
-    CHECK(diag.immediate_checks == checks_after_cross_part + 1 && diag.deferred_checks == 0 && diag.targets == 3);
+    CHECK(diag.immediate_checks == 2 && diag.deferred_checks == 0 && diag.targets == 3);
     CHECK(diag.retained_auth_bytes == 2 * (36 + 84 + 64));
     CHECK(!submit(1, 4, 3000, true, 65));  // Noncanonical signatures cannot bypass eager validation.
     b.flush_repairs_for_test(this);
@@ -184,6 +167,22 @@ class RepairOverlay : public OverlayImpl {
     set_privacy_rules(OverlayPrivacyRules{Overlays::max_fec_broadcast_size(),
                                           CertificateFlags::AllowFec,
                                           {{key.compute_short_id(), Overlays::max_fec_broadcast_size()}}});
+
+    // Authentication is per missing FEC part, not merely per broadcast. A
+    // valid IHAVE for part 0 must not let a forged first IHAVE for part 1 seed
+    // repair state without a source-signature check.
+    CHECK(submit_fec(100, 0, 0, true));
+    auto cross_part_diag = b.repair_diagnostics_for_test();
+    auto checks_after_part0 = cross_part_diag.immediate_checks;
+    CHECK(!submit_fec(100, 1, 1, false));
+    cross_part_diag = b.repair_diagnostics_for_test();
+    CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 1);
+    CHECK(submit_fec(100, 2, 1, true));
+    cross_part_diag = b.repair_diagnostics_for_test();
+    CHECK(cross_part_diag.immediate_checks == checks_after_part0 + 2);
+    b.flush_repairs_for_test(this);
+    CHECK(b.repair_diagnostics_for_test().pending_parts == 0);
+
     // Configurable target count is clamped even when the caller requests an enormous cap.
     for (int i = 7; i < 20; ++i)
       CHECK(submit(3, i, 1000, true));
@@ -234,11 +233,14 @@ static void run_repair_fixture(bool benchmark) {
   });
   plumtree_sim::pump_scheduler(scheduler, 64);
   ASSERT_TRUE(state->checked);
-  ASSERT_EQ(state->requests.size(), benchmark ? 0u : 2u);
+  ASSERT_EQ(state->requests.size(), benchmark ? 0u : 4u);
   if (!benchmark) {
     ASSERT_EQ(state->requests[0].second, 1000u + 4096u);
     ASSERT_EQ(state->requests[1].second, 3000u + 4096u);
     ASSERT_TRUE(state->requests[0].first != state->requests[1].first);
+    ASSERT_EQ(state->requests[2].second, 1000u + 4096u);
+    ASSERT_EQ(state->requests[3].second, 1000u + 4096u);
+    ASSERT_TRUE(state->requests[2].first != state->requests[3].first);
   }
   scheduler.run_in_context([&] {
     overlay.reset();
