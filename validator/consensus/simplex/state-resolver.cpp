@@ -188,14 +188,34 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   }
 
   void tear_down() override {
+    closing_ = true;
     genesis_promise_.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
-    for (auto& [_, s] : state_cache_) {
-      for (auto& p : s.promises) {
+    // Failing a waiter resumes its coroutine right here, and that coroutine may try to
+    // register itself again on an entry whose waiter list is being walked. Take every list
+    // out before failing anything, and repeat until a pass finds nothing new, so no waiter
+    // registered during the cascade is left behind holding this actor and its bus.
+    while (true) {
+      std::vector<td::Promise<ResolvedState>> state_promises;
+      for (auto& [_, s] : state_cache_) {
+        for (auto& p : s.promises) {
+          state_promises.push_back(std::move(p));
+        }
+        s.promises.clear();
+      }
+      std::vector<td::Promise<td::Unit>> waiters;
+      for (auto& [_, s] : finalized_blocks_) {
+        for (auto& p : s.waiters) {
+          waiters.push_back(std::move(p));
+        }
+        s.waiters.clear();
+      }
+      if (state_promises.empty() && waiters.empty()) {
+        break;
+      }
+      for (auto& p : state_promises) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
-    }
-    for (auto& [_, s] : finalized_blocks_) {
-      for (auto& p : s.waiters) {
+      for (auto& p : waiters) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
     }
@@ -255,6 +275,10 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   td::Promise<StartEvent> genesis_promise_;
   td::actor::SharedFuture<StartEvent> genesis_;
 
+  // Set in tear_down: from then on no waiter is registered and no attempt started, so a
+  // coroutine resumed during teardown cannot park itself where nothing will ever wake it.
+  bool closing_ = false;
+
   std::map<ParentId, CachedState> state_cache_;
   CompletedLru<ParentId> state_cache_lru_{
       cache_limit_from_env("TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES", DEFAULT_STATE_CACHE_MAX_ENTRIES)};
@@ -265,6 +289,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   std::optional<td::uint32> latest_finalized_slot_;
 
   td::actor::Task<ResolvedState> resolve_state(ParentId id, std::optional<CandidateId> requesting_candidate) {
+    if (closing_) {
+      co_return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
+    }
     if (!state_cache_.contains(id) && !state_inflight_.try_admit()) {
       ++state_admission_rejections_;
       co_return td::Status::Error(
@@ -335,6 +362,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       // ancestor chain in parallel can combine a pre-finalization manager
       // anchor with newer candidates. Wait for the authoritative finalization
       // instead; this is especially important during cold-start catch-up.
+      if (closing_) {
+        co_return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
+      }
       auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
       it->second.waiters.push_back(std::move(promise));
       // Wrapped: the attempt may have refused, and a refusal is something to report from
@@ -635,6 +665,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   td::actor::Task<> finalize_blocks(CandidateId id, std::optional<FinalCertRef> final_cert,
                                     std::optional<CandidateRef> final_candidate) {
+    if (closing_) {
+      co_return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
+    }
     ++finalizations_started_;
     SCOPE_EXIT {
       ++finalizations_settled_;
@@ -663,6 +696,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         case Finalization::InFlight: {
           // Someone else owns the attempt; wait for its verdict rather than starting a
           // second conversion of the same certificate.
+          if (closing_) {
+            co_return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
+          }
           auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
           it->second.waiters.push_back(std::move(promise));
           co_return co_await std::move(task);
@@ -673,6 +709,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
           co_return td::Status::Error(ErrorCode::protoviolation, PSTRING() << "Simplex state-resolver: slot " << id.slot
                                                                            << " is permanently stalled");
       }
+    }
+    if (closing_) {
+      co_return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
     }
     // Every attempt is admitted, including a retry of one that failed transiently: an entry
     // left behind by a failed attempt no longer holds an admission slot, and retries that
