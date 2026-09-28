@@ -77,7 +77,9 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       timeout_heap_.erase(&state);
     }
     if (status.is_error()) {
-      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " due to " << status.error();
+      auto prefix = state.diagnostic_prefix();
+      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " local_id=" << local_id << " peer_id=" << peer_id
+                << " head=" << td::format::as_hex_dump<0>(td::Slice(prefix)) << " due to " << status.error();
       fail_stream(state, status.clone());
       return status;
     }
@@ -189,6 +191,19 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
 
     size_t buffered_bytes() const {
       return builder_.size();
+    }
+
+    // Retain only the outer TL constructor. QuicSender is generic, so a
+    // larger raw prefix could expose application payloads in INFO logs.
+    std::string diagnostic_prefix() const {
+      std::string prefix;
+      constexpr std::size_t constructor_size = sizeof(td::int32);
+      builder_.for_each([&](td::Slice part) {
+        if (prefix.size() < constructor_size) {
+          prefix.append(part.data(), std::min(part.size(), constructor_size - prefix.size()));
+        }
+      });
+      return prefix;
     }
 
     void set_options(StreamOptions options) {

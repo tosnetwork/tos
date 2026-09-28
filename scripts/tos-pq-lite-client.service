@@ -1,0 +1,23 @@
+[Unit]
+Description=TOS standalone local lite-client (queries observers)
+After=network.target tos-pq-observer@5.service tos-pq-observer@6.service
+Wants=tos-pq-observer@5.service tos-pq-observer@6.service
+ConditionPathExists=/data/configs/observers-lite.json
+[Service]
+User=tos
+Group=tos
+UMask=0077
+WorkingDirectory=/data/lite-client
+ExecStart=/usr/bin/python3 /usr/local/libexec/tos/run-local-lite-client.py
+Restart=on-failure
+RestartSec=10
+KillMode=control-group
+TimeoutStopSec=10
+CPUQuota=100%
+MemoryMax=512M
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
+PrivateTmp=true
+[Install]
+WantedBy=multi-user.target

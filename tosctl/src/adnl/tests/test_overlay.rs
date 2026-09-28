@@ -44,8 +44,8 @@ use tl_api::{
     tos::{
         overlay::{
             broadcast::Broadcast as BroadcastOrd, membercertificate::MemberCertificate,
-            node::Node as NodeV1, nodev2::NodeV2, Certificate as OverlayCertificate,
-            Node as NodeV1Boxed,
+            node::Node as NodeDescriptor, Certificate as OverlayCertificate,
+            Node as NodeDescriptorBoxed,
         },
         rpc::{overlay::Ping as OverlayPing, tos_node::GetCapabilities},
         tos_node::capabilities::Capabilities,
@@ -125,7 +125,7 @@ fn init_overlay_compatibility_test(
     local_ip_template: &str,
     min_peers: Option<usize>,
     #[cfg(feature = "dump")] dump_path: Option<&str>,
-) -> (TestContext, Vec<(IpAddress, NodeV1)>, OverlayNodesSearchContext) {
+) -> (TestContext, Vec<(IpAddress, NodeDescriptor)>, OverlayNodesSearchContext) {
     let mut ctx_test = init_overlay_simple_compatibility_test(
         local_ip_template,
         #[cfg(feature = "dump")]
@@ -296,7 +296,7 @@ fn test_random_peers(ctx_test: &TestContext) {
         assert!(!overlay_peers.is_empty());
         for node in overlay_peers {
             println!("{:?}", node);
-            let OverlayNodeInfo::V1(node) = node else { panic!("Unexpected V2 node info") };
+            let OverlayNodeInfo(node) = node;
             let key: Arc<dyn KeyOption> = (&node.id).try_into().unwrap();
             let mut ctx_search =
                 AddressSearchContext::with_params(key.id(), DhtSearchPolicy::FastSearch(5))
@@ -365,10 +365,8 @@ fn test_overlay_broadcast_receive(ctx_test: &TestContext) {
                 if is_completed() {
                     break;
                 }
-                let OverlayNodeInfo::V1(node_v1) = &node else {
-                    panic!("Unexpected V2 overlay node info")
-                };
-                let key: Arc<dyn KeyOption> = (&node_v1.id).try_into().unwrap();
+                let OverlayNodeInfo(node_descriptor) = &node;
+                let key: Arc<dyn KeyOption> = (&node_descriptor.id).try_into().unwrap();
                 let key_id = key.id();
                 if !known_nodes.contains(key_id) {
                     let mut ctx_search =
@@ -843,7 +841,7 @@ fn test_broadcast(
         for j in 0..min(min_neighbours, n - 1) {
             let j = (j + i + 1) % n;
             assert!(j != i);
-            let signed_node = nodes[j].overlay.get_signed_node(overlay_id, false).unwrap();
+            let signed_node = nodes[j].overlay.get_signed_node(overlay_id).unwrap();
             let ip = IpAddress::from_versioned_string(nodes[j].ip.as_str(), None).unwrap();
             let dst =
                 nodes[i].overlay.add_public_peer(&ip, &signed_node, overlay_id).unwrap().unwrap();
@@ -912,7 +910,7 @@ fn test_overlay_ping() {
             fail!("Bad saved peer {}", peer)
         }
         let node = deserialize_boxed(&base64_decode(data[0])?)?
-            .downcast::<NodeV1Boxed>()
+            .downcast::<NodeDescriptorBoxed>()
             .map_err(|_| error!("Bad node in saved peer {}", peer))?;
         let ip = IpAddress::from_versioned_string(data[1], None)?;
         test_peer(overlay, overlay_id, &ip, node).await
@@ -922,13 +920,11 @@ fn test_overlay_ping() {
         overlay: &Arc<OverlayNode>,
         overlay_id: &Arc<OverlayShortId>,
         ip: &IpAddress,
-        node: NodeV1Boxed,
+        node: NodeDescriptorBoxed,
     ) -> Result<Arc<KeyId>> {
-        if let Some(peer) = overlay.add_public_peer(
-            ip,
-            &OverlayNodeInfo::<_, NodeV2>::V1(node.only()),
-            &overlay_id,
-        )? {
+        if let Some(peer) =
+            overlay.add_public_peer(ip, &OverlayNodeInfo(node.only()), &overlay_id)?
+        {
             if overlay.wait_for_peers(overlay_id).await?.is_some() {
                 return Ok(peer);
             }
@@ -973,9 +969,7 @@ fn test_overlay_ping() {
             println!("received {} overlay peers:", overlay_peers.len());
             for node in overlay_peers {
                 println!("{:?}", node);
-                let OverlayNodeInfo::V1(node) = node else {
-                    panic!("Unexpected V2 overlay node info")
-                };
+                let OverlayNodeInfo(node) = node;
                 let key: Arc<dyn KeyOption> = (&node.id).try_into().unwrap();
                 let mut ctx_search =
                     AddressSearchContext::with_params(key.id(), DhtSearchPolicy::FastSearch(5))
@@ -1509,7 +1503,7 @@ async fn test_overlay_semiprivate() -> Result<()> {
         for pi2 in peers.iter() {
             if pi.id != pi2.id {
                 println!("Adding peer {} -> {}", pi.id, pi2.id);
-                let node = pi2.overlay.as_ref().unwrap().get_signed_node(&overlay_id, true)?;
+                let node = pi2.overlay.as_ref().unwrap().get_signed_node(&overlay_id)?;
                 let ip = IpAddress::from_versioned_string(pi2.ip, None).unwrap();
                 overlay.add_public_peer(&ip, &node, &overlay_id)?;
             }
@@ -1561,7 +1555,7 @@ async fn test_overlay_semiprivate() -> Result<()> {
     println!("New slave node {} with id {}", SLAVE4, pi.id);
     let root = peers[2].clone();
     create_slave(cfg, &root_ids, &zero_state_file_hash, &overlay_id, &root, &mut pi).await?;
-    let node = pi.overlay.as_ref().unwrap().get_signed_node(&overlay_id, true)?;
+    let node = pi.overlay.as_ref().unwrap().get_signed_node(&overlay_id)?;
     for pi1 in peers.iter() {
         let overlay = pi1.overlay.as_ref().unwrap();
         println!("Adding peer {} to {}", pi.id, pi1.id);
@@ -1569,7 +1563,7 @@ async fn test_overlay_semiprivate() -> Result<()> {
         overlay.add_public_peer(&ip, &node, &overlay_id)?;
         println!("Adding peer {} to {}", pi1.id, pi.id);
         let overlay = pi.overlay.as_ref().unwrap();
-        let node1 = pi1.overlay.as_ref().unwrap().get_signed_node(&overlay_id, true)?;
+        let node1 = pi1.overlay.as_ref().unwrap().get_signed_node(&overlay_id)?;
         let ip = IpAddress::from_versioned_string(pi1.ip, None).unwrap();
         overlay.add_public_peer(&ip, &node1, &overlay_id)?;
     }

@@ -229,12 +229,9 @@ dht.query node:dht.node = True;
 
 ---types---
 
-overlay.node.toSign id:adnl.id.short overlay:int256 version:int = overlay.node.ToSign;
-overlay.node.toSignEx id:adnl.id.short overlay:int256 flags:int version:int = overlay.node.ToSign;
-overlay.node id:PublicKey overlay:int256 version:int signature:bytes = overlay.Node;
-overlay.nodeV2 id:PublicKey overlay:int256 flags:int version:int signature:bytes certificate:overlay.MemberCertificate = overlay.NodeV2;
+overlay.node.toSign id:adnl.id.short overlay:int256 flags:int version:int = overlay.node.ToSign;
+overlay.node id:PublicKey overlay:int256 flags:int version:int signature:bytes certificate:overlay.MemberCertificate = overlay.Node;
 overlay.nodes nodes:(vector overlay.node) = overlay.Nodes;
-overlay.nodesV2 nodes:(vector overlay.nodeV2) = overlay.NodesV2;
 
 overlay.pong = overlay.Pong;
 
@@ -279,7 +276,6 @@ overlay.broadcastTwostepFec.toSign id:int256 seqno:int part:bytes = overlay.broa
 ---functions---
 
 overlay.getRandomPeers peers:overlay.nodes = overlay.Nodes;
-overlay.getRandomPeersV2 peers:overlay.nodesV2 = overlay.NodesV2;
 overlay.ping = overlay.Pong;
 
 overlay.query overlay:int256 = True;
@@ -290,7 +286,6 @@ overlay.repairPlumtreePart broadcast_id:int256 timestamp:double part_index:int t
 
 ---types---
 
-overlay.db.nodesV2 nodes:overlay.nodesV2 = overlay.db.Nodes;
 overlay.db.nodes nodes:overlay.nodes = overlay.db.Nodes;
 overlay.db.key.nodes local_id:int256 overlay:int256 = overlay.db.Key;
 

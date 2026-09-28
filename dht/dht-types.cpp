@@ -21,6 +21,8 @@
 
 #include "auto/tl/tos_api.hpp"
 #include "keys/encryptor.h"
+#include "overlay/overlay-member-flags.h"
+#include "overlay/overlay-node-version.h"
 #include "td/utils/Random.h"
 #include "td/utils/overloaded.h"
 
@@ -294,17 +296,31 @@ td::Status DhtUpdateRuleOverlayNodes::check_value(const DhtValue &value) {
     return td::Status::Error(ErrorCode::protoviolation, "bad overlay nodes value");
   }
   auto L = F.move_as_ok();
+  auto now = static_cast<td::int64>(td::Clocks::system());
+  bool has_fresh_node = false;
   for (auto &node : L->nodes_) {
+    // Freshness is per signed node, not a property of the whole merged DHT
+    // value. A naturally aged member must not make fresh siblings unusable.
+    has_fresh_node = has_fresh_node || overlay::overlay_node_version_is_fresh(node->version_, now);
+    if (!overlay::OverlayMemberFlags::valid(static_cast<td::uint32>(node->flags_)) || !node->certificate_ ||
+        node->certificate_->get_id() != tos_api::overlay_emptyMemberCertificate::ID) {
+      return td::Status::Error(ErrorCode::protoviolation, "invalid public overlay node policy");
+    }
     TRY_RESULT(pub, adnl::AdnlNodeIdFull::create(node->id_));
     auto sig = std::move(node->signature_);
-    auto obj =
-        create_tl_object<tos_api::overlay_node_toSign>(pub.compute_short_id().tl(), node->overlay_, node->version_);
+    auto obj = create_tl_object<tos_api::overlay_node_toSign>(pub.compute_short_id().tl(), node->overlay_, node->flags_,
+                                                              node->version_);
     if (node->overlay_ != value.key().key().public_key_hash().bits256_value()) {
       return td::Status::Error(ErrorCode::protoviolation, "bad overlay id");
     }
     auto B = serialize_tl_object(obj, true);
     TRY_RESULT(E, pub.pubkey().create_encryptor());
     TRY_STATUS(E->check_signature(B.as_slice(), sig.as_slice()));
+  }
+  // Empty values remain valid merge accumulators, but check_is_acceptable()
+  // never exposes them as usable discovery records.
+  if (!L->nodes_.empty() && !has_fresh_node) {
+    return td::Status::Error(ErrorCode::protoviolation, "overlay nodes value has no fresh records");
   }
   return td::Status::OK();
 }
@@ -317,9 +333,9 @@ td::Status DhtUpdateRuleOverlayNodes::update_value(DhtValue &value, DhtValue &&n
 
   std::vector<tl_object_ptr<tos_api::overlay_node>> res;
   std::map<adnl::AdnlNodeIdShort, size_t> S;
-  auto now = td::Clocks::system();
+  auto now = static_cast<td::int64>(td::Clocks::system());
   for (auto &n : N->nodes_) {
-    if (n->version_ < now - 600) {
+    if (!overlay::overlay_node_version_is_fresh(n->version_, now)) {
       continue;
     }
     TRY_RESULT(pub, adnl::AdnlNodeIdFull::create(n->id_));
@@ -336,7 +352,7 @@ td::Status DhtUpdateRuleOverlayNodes::update_value(DhtValue &value, DhtValue &&n
     }
   }
   for (auto &n : L->nodes_) {
-    if (n->version_ < now - 600) {
+    if (!overlay::overlay_node_version_is_fresh(n->version_, now)) {
       continue;
     }
     TRY_RESULT(pub, adnl::AdnlNodeIdFull::create(n->id_));
@@ -377,9 +393,9 @@ td::Status DhtUpdateRuleOverlayNodes::update_value(DhtValue &value, DhtValue &&n
   CHECK(nodes.size() <= DhtValue::max_value_size());
 
   value.set(std::move(nodes), std::max(value.ttl(), new_value.ttl()), td::BufferSlice{});
-  value.check().ensure();
-
-  return td::Status::OK();
+  // A timestamp can age out during the merge; report it instead of treating
+  // external, time-dependent validity as a process-fatal invariant.
+  return value.check();
 }
 
 bool DhtUpdateRuleOverlayNodes::check_is_acceptable(const tos::dht::DhtValue &value) {
@@ -388,12 +404,9 @@ bool DhtUpdateRuleOverlayNodes::check_is_acceptable(const tos::dht::DhtValue &va
     return false;
   }
   auto L = F.move_as_ok();
-  auto now = td::Clocks::system();
+  auto now = static_cast<td::int64>(td::Clocks::system());
   for (auto &node : L->nodes_) {
-    // node->version_ is a peer-supplied int32; comparing as `version_ > now - 600`
-    // instead of `version_ + 600 > now` avoids signed-integer-overflow UB for a
-    // version_ near INT32_MAX (the subtraction happens in double, not int32).
-    if (node->version_ > now - 600) {
+    if (overlay::overlay_node_version_is_fresh(node->version_, now)) {
       return true;
     }
   }

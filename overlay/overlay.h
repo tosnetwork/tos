@@ -33,6 +33,10 @@ namespace overlay {
 
 class Overlay : public td::actor::Actor {
  public:
+  virtual void collect_metrics(td::Promise<td::Unit> done) {
+    done.set_value(td::Unit());
+  }
+
   using BroadcastHash = td::Bits256;
   using BroadcastDataHash = td::Bits256;
   using BroadcastPartHash = td::Bits256;
@@ -75,7 +79,6 @@ class Overlay : public td::actor::Actor {
   virtual void add_certificate(PublicKeyHash key, std::shared_ptr<Certificate>) = 0;
   virtual void set_privacy_rules(OverlayPrivacyRules rules) = 0;
   virtual void receive_nodes_from_db(tl_object_ptr<tos_api::overlay_nodes> nodes) = 0;
-  virtual void receive_nodes_from_db_v2(tl_object_ptr<tos_api::overlay_nodesV2> nodes) = 0;
   virtual void get_stats(td::Promise<tl_object_ptr<tos_api::engine_validator_overlayStats>> promise) = 0;
   virtual void update_throughput_out_ctr(adnl::AdnlNodeIdShort peer_id, td::uint64 msg_size, bool is_query,
                                          bool is_response) = 0;

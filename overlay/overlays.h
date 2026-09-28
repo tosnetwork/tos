@@ -26,6 +26,9 @@
 #include "adnl/adnl-sender-ex.h"
 #include "auto/tl/tos_api.h"
 #include "dht/dht.h"
+#include "metrics/metrics-collectors.h"
+#include "metrics/tl-traffic-bucket.h"
+#include "overlay/overlay-member-flags.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
 #include "td/utils/RateLimiterWindow.h"
@@ -93,10 +96,6 @@ class OverlayIdFull {
 
 struct CertificateFlags {
   enum Values : td::uint32 { AllowFec = 1, Trusted = 2 };
-};
-
-struct OverlayMemberFlags {
-  enum Values : td::uint32 { DoNotReceiveBroadcasts = 1 };
 };
 
 enum BroadcastCheckResult { Forbidden = 1, NeedCheck = 2, Allowed = 3 };
@@ -360,7 +359,7 @@ struct OverlayManagerBufferLimits {
   td::uint64 max_data_size = 0;
 };
 
-class Overlays : public td::actor::Actor {
+class Overlays : public td::actor::Actor, public metrics::AsyncCollector {
  public:
   class Callback {
    public:
@@ -495,6 +494,12 @@ class Overlays : public td::actor::Actor {
   virtual void get_stats(td::Promise<tl_object_ptr<tos_api::engine_validator_overlaysStats>> promise) = 0;
 
   virtual void forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay, adnl::AdnlNodeIdShort peer_id) = 0;
+  void collect(metrics::MetricsPromise promise) override {
+    promise.set_value({});
+  }
+  virtual void absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) {
+    done.set_value(td::Unit());
+  }
 };
 
 }  // namespace overlay

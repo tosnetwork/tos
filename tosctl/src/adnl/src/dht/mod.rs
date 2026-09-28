@@ -52,8 +52,8 @@ use tl_api::{
             ValueResult as DhtValueResult,
         },
         overlay::{
-            node::Node as OverlayNodeV1, nodes::Nodes as OverlayNodesV1,
-            nodev2::NodeV2 as OverlayNodeV2, Nodes as OverlayNodesV1Boxed,
+            node::Node as OverlayNodeDescriptor, nodes::Nodes as OverlayNodesDescriptor,
+            Nodes as OverlayNodesDescriptorBoxed,
         },
         pub_::publickey::Overlay,
         rpc::dht::{
@@ -63,6 +63,9 @@ use tl_api::{
     },
     AnyBoxedSerialize, IntoBoxed, Signing, TLObject,
 };
+
+mod overlay_nodes;
+use overlay_nodes::{merge_overlay_nodes, MAX_OVERLAY_NODES_BYTES};
 
 pub const TARGET: &str = "dht";
 
@@ -219,7 +222,7 @@ impl AddressSearchContext {
 }
 
 pub struct OverlayNodeResolveContext {
-    node: OverlayNodeInfo<OverlayNodeV1, OverlayNodeV2>,
+    node: OverlayNodeInfo<OverlayNodeDescriptor>,
     key: Arc<dyn KeyOption>,
     search: AddressSearchContext,
 }
@@ -229,7 +232,7 @@ impl OverlayNodeResolveContext {
         self.key.id()
     }
 
-    pub fn node(&self) -> &OverlayNodeInfo<OverlayNodeV1, OverlayNodeV2> {
+    pub fn node(&self) -> &OverlayNodeInfo<OverlayNodeDescriptor> {
         &self.node
     }
 
@@ -255,7 +258,7 @@ impl OverlayNodesResolveContext {
 
     pub fn add_node(
         &mut self,
-        node: OverlayNodeInfo<OverlayNodeV1, OverlayNodeV2>,
+        node: OverlayNodeInfo<OverlayNodeDescriptor>,
         key: Arc<dyn KeyOption>,
         store: bool,
     ) -> Result<bool> {
@@ -488,7 +491,7 @@ impl DhtNode {
     pub async fn find_overlay_nodes(
         self: &Arc<Self>,
         ctx_search: &mut OverlayNodesSearchContext,
-    ) -> Result<Vec<(IpAddress, OverlayNodeInfo<OverlayNodeV1, OverlayNodeV2>)>> {
+    ) -> Result<Vec<(IpAddress, OverlayNodeInfo<OverlayNodeDescriptor>)>> {
         let mut ret = Vec::new();
         log::debug!(
             target: TARGET,
@@ -505,7 +508,7 @@ impl DhtNode {
                 let mut nodes_lists = self
                     .find_value(
                         &ctx_search.key_id,
-                        |object| object.is::<OverlayNodesV1Boxed>(),
+                        |object| object.is::<OverlayNodesDescriptorBoxed>(),
                         &ctx_search.resolve.policy,
                         true,
                         &mut ctx_search.iter,
@@ -516,11 +519,11 @@ impl DhtNode {
                     break;
                 }
                 while let Some((_, nodes_list)) = nodes_lists.pop() {
-                    if let Ok(nodes_list) = nodes_list.downcast::<OverlayNodesV1Boxed>() {
+                    if let Ok(nodes_list) = nodes_list.downcast::<OverlayNodesDescriptorBoxed>() {
                         for node in nodes_list.only().nodes {
                             let key: Arc<dyn KeyOption> = (&node.id).try_into()?;
-                            let node_v1 = OverlayNodeInfo::V1(node);
-                            ctx_search.resolve.add_node(node_v1, key, false)?;
+                            let node_descriptor = OverlayNodeInfo(node);
+                            ctx_search.resolve.add_node(node_descriptor, key, false)?;
                         }
                     } else {
                         fail!("INTERNAL ERROR: overlay nodes list type mismatch in search")
@@ -728,13 +731,20 @@ impl DhtNode {
     pub async fn store_overlay_node(
         self: &Arc<Self>,
         overlay_id: &OverlayId,
-        node_v1: &OverlayNodeV1,
+        node_descriptor: &OverlayNodeDescriptor,
     ) -> Result<bool> {
-        log::debug!(target: TARGET, "Storing overlay node {:?}", node_v1);
+        log::debug!(target: TARGET, "Storing overlay node {:?}", node_descriptor);
         let overlay_id = Overlay { name: overlay_id.to_vec().into() };
         let overlay_short_id = OverlayShortId::from_data(hash(overlay_id.clone())?);
-        OverlayUtils::verify_node(&overlay_short_id, node_v1)?;
-        let nodes = OverlayNodesV1 { nodes: vec![node_v1.clone()].into() }.into_boxed();
+        if !matches!(
+            node_descriptor.certificate,
+            tl_api::tos::overlay::MemberCertificate::Overlay_EmptyMemberCertificate
+        ) {
+            fail!("Member certificate in public overlay DHT value")
+        }
+        OverlayUtils::verify_node(&overlay_short_id, node_descriptor)?;
+        let nodes =
+            OverlayNodesDescriptor { nodes: vec![node_descriptor.clone()].into() }.into_boxed();
         let key = Self::dht_key_from_key_id(&overlay_short_id, "nodes");
         let value = DhtValue {
             key: DhtKeyDescription {
@@ -751,14 +761,14 @@ impl DhtNode {
         self.store_value(
             key,
             value,
-            |object| object.is::<OverlayNodesV1Boxed>(),
+            |object| object.is::<OverlayNodesDescriptorBoxed>(),
             true,
             |mut objects| {
                 while let Some((_, object)) = objects.pop() {
-                    if let Ok(nodes_list) = object.downcast::<OverlayNodesV1Boxed>() {
+                    if let Ok(nodes_list) = object.downcast::<OverlayNodesDescriptorBoxed>() {
                         for found_node in nodes_list.only().nodes {
-                            if &found_node == node_v1 {
-                                log::debug!(target: TARGET, "Checked stored node {:?}", node_v1);
+                            if &found_node == node_descriptor {
+                                log::debug!(target: TARGET, "Checked stored node {:?}", node_descriptor);
                                 return Ok(true);
                             }
                         }
@@ -854,9 +864,9 @@ impl DhtNode {
         Ok(Arc::new(ret))
     }
 
-    fn deserialize_overlay_nodes(value: &[u8]) -> Result<Vec<OverlayNodeV1>> {
+    fn deserialize_overlay_nodes(value: &[u8]) -> Result<Vec<OverlayNodeDescriptor>> {
         let nodes = deserialize_boxed(value)?
-            .downcast::<OverlayNodesV1Boxed>()
+            .downcast::<OverlayNodesDescriptorBoxed>()
             .map_err(|object| error!("Wrong OverlayNodes: {:?}", object))?;
         Ok(nodes.only().nodes)
     }
@@ -1130,6 +1140,9 @@ impl DhtNode {
         value: DhtValue,
     ) -> Result<bool> {
         log::trace!(target: TARGET, "Process Store Overlay Nodes {value:?}");
+        if value.value.len() > MAX_OVERLAY_NODES_BYTES {
+            fail!("Overlay nodes DHT value exceeds {} bytes", MAX_OVERLAY_NODES_BYTES)
+        }
         if !value.signature.is_empty() {
             fail!("Wrong value signature for OverlayNodes")
         }
@@ -1146,6 +1159,12 @@ impl DhtNode {
         let mut nodes_list = Self::deserialize_overlay_nodes(&value.value)?;
         let mut nodes = Vec::new();
         while let Some(node) = nodes_list.pop() {
+            if !matches!(
+                node.certificate,
+                tl_api::tos::overlay::MemberCertificate::Overlay_EmptyMemberCertificate
+            ) {
+                fail!("Member certificate in public overlay DHT value")
+            }
             if let Err(e) = OverlayUtils::verify_node(&overlay_short_id, &node) {
                 log::warn!(target: TARGET, "Bad overlay node {node:?}: {e}")
             } else {
@@ -1156,47 +1175,15 @@ impl DhtNode {
             fail!("Empty overlay nodes list")
         }
         add_counted_object_to_map_with_update(&network.storage, dht_key_id, |old_value| {
-            let old_value = if let Some(old_value) = old_value {
-                if old_value.object.ttl < Version::get() {
-                    None
-                } else if old_value.object.ttl > value.ttl {
-                    return Ok(None);
-                } else {
-                    Some(&old_value.object.value)
-                }
-            } else {
-                None
-            };
-            let mut old_nodes = if let Some(old_value) = old_value {
-                Self::deserialize_overlay_nodes(old_value)?
-            } else {
-                Vec::new()
-            };
-            for node in nodes.iter() {
-                let mut found = false;
-                for old_node in old_nodes.iter_mut() {
-                    if node.id == old_node.id {
-                        if node.version > old_node.version {
-                            *old_node = node.clone()
-                        } else {
-                            return Ok(None);
-                        }
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    old_nodes.push(node.clone())
-                }
-            }
-            let nodes = OverlayNodesV1 { nodes: old_nodes.into() }.into_boxed();
-            let mut ret = ValueObject {
-                object: value.clone(),
-                counter: self.allocated.values.clone().into(),
-            };
+            let object = merge_overlay_nodes(
+                old_value.map(|old| &old.object),
+                &value,
+                &nodes,
+                Version::get(),
+            )?;
+            let ret = ValueObject { object, counter: self.allocated.values.clone().into() };
             #[cfg(feature = "telemetry")]
             self.telemetry.values.update(self.allocated.values.load(Ordering::Relaxed));
-            ret.object.value = serialize_boxed(&nodes)?.into();
             log::trace!(target: TARGET, "Store Overlay Nodes result {:?}", ret.object);
             Ok(Some(ret))
         })

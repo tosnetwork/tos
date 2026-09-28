@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Manage the four persistent local PQ validators independently.
+# Manage local PQ validators, observers and the standalone lite-client.
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-UNITS=(tos-pq-dht tos-pq-validator@1 tos-pq-validator@2 tos-pq-validator@3 tos-pq-validator@4)
+UNITS=(tos-pq-dht tos-pq-validator@1 tos-pq-validator@2 tos-pq-validator@3 tos-pq-validator@4 tos-pq-observer@5 tos-pq-observer@6 tos-pq-lite-client)
 case "${1:-status}" in
     install) sudo systemctl daemon-reload; sudo systemctl enable "${UNITS[@]}" ;;
     start) sudo systemctl start "${UNITS[@]}" ;;
@@ -24,11 +24,11 @@ POOL
     deploy-pool) cd "$REPO"; sudo "$(command -v uv)" run python scripts/local_pq_testnet.py deploy ;;
     logs)
         node="${2:-1}"
-        [[ "$node" =~ ^[1-4]$ ]] || { echo 'Node must be 1..4'; exit 2; }
+        [[ "$node" =~ ^[1-6]$ ]] || { echo 'Node must be 1..6'; exit 2; }
         sudo tail -n 50 -F "/data/testnet/node$node/log" ;;
     uninstall)
         sudo systemctl disable --now "${UNITS[@]}"
-        sudo rm -f /etc/systemd/system/tos-pq-dht.service /etc/systemd/system/tos-pq-validator@.service
+        sudo rm -f /etc/systemd/system/tos-pq-dht.service /etc/systemd/system/tos-pq-validator@.service /etc/systemd/system/tos-pq-observer@.service /etc/systemd/system/tos-pq-lite-client.service
         sudo systemctl daemon-reload ;;
-    *) echo "Usage: $0 {install|start|stop|restart|status|check|deploy-pool|logs [1..4]|uninstall}"; exit 2 ;;
+    *) echo "Usage: $0 {install|start|stop|restart|status|check|deploy-pool|logs [1..6]|uninstall}"; exit 2 ;;
 esac

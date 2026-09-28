@@ -229,7 +229,6 @@ class OverlayImpl : public Overlay {
   void send_broadcast_plumtree(PublicKeyHash send_as, td::uint32 flags, td::Bits256 broadcast_id,
                                td::BufferSlice data) override;
   void receive_nodes_from_db(tl_object_ptr<tos_api::overlay_nodes> nodes) override;
-  void receive_nodes_from_db_v2(tl_object_ptr<tos_api::overlay_nodesV2> nodes) override;
 
   void get_self_node(td::Promise<OverlayNode> promise);
   td::actor::Task<OverlayNode> get_self_node_coro();
@@ -237,14 +236,13 @@ class OverlayImpl : public Overlay {
 
   void alarm() override;
   void start_up() override;
+  void tear_down() override;
+  void collect_metrics(td::Promise<td::Unit> done) override;
 
   void on_ping_result(adnl::AdnlNodeIdShort peer, bool success, double store_ping_time = -1.0);
   void receive_random_peers(adnl::AdnlNodeIdShort src, td::Result<td::BufferSlice> R, double elapsed);
-  void receive_random_peers_v2(adnl::AdnlNodeIdShort src, td::Result<td::BufferSlice> R, double elapsed);
   void send_random_peers(adnl::AdnlNodeIdShort dst, td::Promise<td::BufferSlice> promise);
-  void send_random_peers_v2(adnl::AdnlNodeIdShort dst, td::Promise<td::BufferSlice> promise);
   void send_random_peers_cont(adnl::AdnlNodeIdShort dst, OverlayNode node, td::Promise<td::BufferSlice> promise);
-  void send_random_peers_v2_cont(adnl::AdnlNodeIdShort dst, OverlayNode node, td::Promise<td::BufferSlice> promise);
   void ping_random_peers();
   void receive_pong(adnl::AdnlNodeIdShort peer, double elapsed);
   void get_overlay_random_peers(td::uint32 max_peers, td::Promise<std::vector<adnl::AdnlNodeIdShort>> promise) override;
@@ -314,6 +312,7 @@ class OverlayImpl : public Overlay {
   std::vector<adnl::AdnlNodeIdShort> get_neighbours(td::uint32 max_size = 0) const;
   std::vector<adnl::AdnlNodeIdShort> get_plumtree_neighbours(td::uint32 max_size = 0) const;
   bool peer_receives_broadcasts(adnl::AdnlNodeIdShort peer_id);
+  bool peer_receives_plumtree_broadcasts(adnl::AdnlNodeIdShort peer_id);
   void set_plumtree_eager_mtu_peers(std::vector<adnl::AdnlNodeIdShort> peers);
   td::actor::ActorId<OverlayManager> overlay_manager() const {
     return manager_;
@@ -408,6 +407,8 @@ class OverlayImpl : public Overlay {
 
  private:
   friend class OverlayImplPeerCleanupTest;
+  friend class OverlayImplPlumtreePolicyTest;
+  friend class OverlayImplPlumtreeRepairTest;
   friend class OverlayImplBroadcastCapacityTest;
 
   template <class T>
@@ -416,8 +417,6 @@ class OverlayImpl : public Overlay {
   }
 
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getRandomPeers &query,
-                     td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getRandomPeersV2 &query,
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_ping &query, td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getBroadcast &query,
@@ -465,7 +464,6 @@ class OverlayImpl : public Overlay {
   void add_peer(OverlayNode node, bool verified, bool checked_signature = false);
   void add_peers(std::vector<OverlayNode> nodes, bool verified, bool checked_signature = false);
   void add_peers(const tl_object_ptr<tos_api::overlay_nodes> &nodes, bool verified, bool checked_signature = false);
-  void add_peers(const tl_object_ptr<tos_api::overlay_nodesV2> &nodes, bool verified, bool checked_signature = false);
   void process_pending_peers();
   td::actor::Task<> process_pending_peer(OverlayNode node);
   void del_some_peers();
@@ -510,6 +508,11 @@ class OverlayImpl : public Overlay {
   td::Timestamp private_ping_peers_at_ = td::Timestamp::now();
 
   std::unique_ptr<Overlays::Callback> callback_;
+  // Delivered application content; the manager accumulates actor-owned deltas.
+  metrics::TlTrafficBucket delivered_;
+  metrics::TlTrafficBucket drain_metrics() {
+    return std::exchange(delivered_, {});
+  }
 
   BroadcastsSimple broadcasts_simple_;
   BroadcastsFec broadcasts_fec_;

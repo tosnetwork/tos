@@ -1563,6 +1563,7 @@ void ValidatorEngine::got_state(td::Ref<tos::validator::MasterchainState> state)
   validator_set_ = state_->get_total_validator_set(0);
   validator_set_next_ = state_->get_total_validator_set(1);
   validator_set_prev_ = state_->get_total_validator_set(-1);
+  update_local_pq_validator_adnl_ids();
 }
 
 td::Status ValidatorEngine::load_global_config() {
@@ -2331,6 +2332,8 @@ void ValidatorEngine::start_overlays() {
     };
     overlay_manager_ = tos::overlay::Overlays::create(db_root_, keyring_.get(), adnl_.get(),
                                                       dht_nodes_[default_dht_node_].get(), buffer_limits);
+    td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::overlay::Overlays>,
+                            overlay_manager_.get());
   }
   started_overlays();
 }
@@ -2417,6 +2420,7 @@ void ValidatorEngine::start_validator() {
 
 void ValidatorEngine::finish_start_validator() {
   local_validator_adnl_ids_.clear();
+  local_pq_validator_adnl_ids_.clear();
   for (auto &v : config_.validators) {
     td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::add_permanent_key, v.first,
                             [](td::Result<>) {});
@@ -2444,6 +2448,7 @@ void ValidatorEngine::finish_start_validator() {
     }
   }
 
+  update_local_pq_validator_adnl_ids();
   started_validator();
 }
 
@@ -3553,6 +3558,37 @@ tos::PublicKeyHash ValidatorEngine::find_local_validator_for_cert_issuing() {
   }
   return tos::validator::select_validator_transport_signer(
       tos::validator::canonical_validator_transport_roots(std::move(roots)), local_validator_adnl_ids_);
+}
+
+void ValidatorEngine::update_local_pq_validator_adnl_ids() {
+  std::set<tos::adnl::AdnlNodeIdShort> next;
+  if (config_.pq_consensus && pq_consensus_signer_) {
+    td::Bits256 held;
+    const auto &key_id = pq_consensus_signer_->consensus_key().key_id;
+    held.as_slice().copy_from(td::Slice(key_id.data(), key_id.size()));
+    std::set<tos::PublicKeyHash> configured;
+    for (const auto &[id, category] : config_.adnl_ids) {
+      configured.insert(id);
+    }
+    for (const auto &set : {validator_set_, validator_set_next_, validator_set_prev_}) {
+      if (set.not_null()) {
+        auto ids = tos::validator::local_pq_validator_adnl_ids(set->export_vector(), config_.pq_consensus->validator_id,
+                                                               tos::ConsensusKeyId{held}, configured);
+        next.insert(ids.begin(), ids.end());
+      }
+    }
+  }
+  for (const auto &id : local_pq_validator_adnl_ids_) {
+    if (!next.contains(id)) {
+      del_local_validator_adnl_id(id);
+    }
+  }
+  for (const auto &id : next) {
+    if (!local_pq_validator_adnl_ids_.contains(id)) {
+      add_local_validator_adnl_id(id);
+    }
+  }
+  local_pq_validator_adnl_ids_ = std::move(next);
 }
 
 void ValidatorEngine::add_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort id) {

@@ -39,11 +39,12 @@
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
-#include "td/utils/port/Clocks.h"
 #include "td/utils/memory-tracker.h"
+#include "td/utils/port/Clocks.h"
 #include "td/utils/tl_helpers.h"
 #include "tl-utils/common-utils.hpp"
 
+#include "broadcast-plumtree-stats.hpp"
 #include "broadcast-plumtree.hpp"
 #include "overlay.hpp"
 
@@ -133,6 +134,22 @@ struct PlumtreeSimpleBroadcastState : td::ListNode {
   PlumtreePartState part;
 };
 
+struct PlumtreeRepairTarget {
+  adnl::AdnlNodeIdShort peer;
+  PublicKeyHash source;
+  std::shared_ptr<Certificate> certificate;
+  PublicKey source_key;
+  td::BufferSlice to_sign;
+  td::BufferSlice signature;
+  td::uint32 data_size = 0;
+  bool signature_verified = false;
+
+  std::size_t retained_bytes() const {
+    return (source_key.empty() ? 0 : source_key.serialized_size()) + to_sign.size() + signature.size() +
+           (certificate ? serialize_tl_object(certificate->tl(), true).size() : 0);
+  }
+};
+
 struct PlumtreeMissingPart : td::ListNode {
   explicit PlumtreeMissingPart(MissingPartKey key) : key(std::move(key)) {
   }
@@ -142,9 +159,7 @@ struct PlumtreeMissingPart : td::ListNode {
   }
 
   MissingPartKey key;
-  // Maximum verified IHAVE byte size, used as repair query MTU cap.
-  td::uint32 data_size = 0;
-  std::vector<adnl::AdnlNodeIdShort> repair_targets;
+  std::vector<PlumtreeRepairTarget> repair_targets;
   std::size_t sent_repair_targets = 0;
   td::Timestamp repair_at = td::Timestamp::never();
 };
@@ -168,147 +183,6 @@ struct PlumtreeFecBroadcastRef {
 };
 
 enum class PlumtreePayloadOrigin { Push, RepairResponse };
-
-constexpr std::size_t STATS_STORE_LIMIT = 100;
-constexpr std::size_t STATS_LATENCY_BUCKETS = 100;
-constexpr td::uint32 STATS_LATENCY_BUCKET_MS = 10;
-// Fractions of the stats epoch
-constexpr double STATS_SNAPSHOT_DELAY = 1.0 / 12;  // 5 minutes
-constexpr double STATS_SEND_JITTER = 1.0 / 12;     // 5 minutes
-
-td::int32 stats_to_int32(td::uint64 value) {
-  auto max = static_cast<td::uint64>(std::numeric_limits<td::int32>::max());
-  return value > max ? std::numeric_limits<td::int32>::max() : static_cast<td::int32>(value);
-}
-
-struct PlumtreeStats {
-  void note_delivered_broadcast() {
-    ++delivered_bcsts;
-  }
-
-  void note_fec_parts_collected(td::uint32 parts, td::uint32 parts_limit) {
-    if (parts_limit == 0) {
-      return;
-    }
-    auto bucket_count = static_cast<std::size_t>(parts_limit) + 1;
-    if (fec_parts_buckets.size() != bucket_count) {
-      fec_parts_buckets.assign(bucket_count, 0);
-    }
-    auto bucket = std::min<td::uint32>(parts, parts_limit);
-    ++fec_parts_buckets[bucket];
-  }
-
-  void note_useful_delivery(double timestamp) {
-    auto duration_ms = (td::Clocks::system() - timestamp) * 1000.0;
-    if (!std::isfinite(duration_ms)) {
-      return;
-    }
-    if (duration_ms < 0.0) {
-      duration_ms = 0.0;
-    }
-    auto max = static_cast<double>(std::numeric_limits<td::uint32>::max());
-    auto value =
-        duration_ms > max ? std::numeric_limits<td::uint32>::max() : static_cast<td::uint32>(duration_ms + 0.5);
-    ++useful_count;
-    useful_sum_ms += value;
-    useful_max_ms_value = std::max(useful_max_ms_value, value);
-    auto bucket = std::min<std::size_t>(value / STATS_LATENCY_BUCKET_MS, useful_buckets.size() - 1);
-    ++useful_buckets[bucket];
-  }
-
-  std::tuple<td::int32, td::int32, td::int32, td::int32, td::int32> snapshot_and_reset(td::uint32 parts_limit) {
-    auto result = std::make_tuple(stats_to_int32(delivered_bcsts), parts_in_p99_bcsts(), useful_avg_ms(),
-                                  useful_max_ms(), useful_p99_ms());
-    delivered_bcsts = 0;
-    reset_fec_parts(parts_limit);
-    reset_useful();
-    return result;
-  }
-
- private:
-  td::uint64 delivered_bcsts = 0;
-  std::vector<td::uint64> fec_parts_buckets;
-  td::uint64 useful_count = 0;
-  td::uint64 useful_sum_ms = 0;
-  td::uint32 useful_max_ms_value = 0;
-  std::array<td::uint64, STATS_LATENCY_BUCKETS> useful_buckets{};
-
-  td::int32 parts_in_p99_bcsts() const {
-    td::uint64 total = 0;
-    for (auto count : fec_parts_buckets) {
-      total += count;
-    }
-    if (total == 0) {
-      return 0;
-    }
-    // Lower-tail cutoff: 99% of delivered FEC broadcasts collected at least this many parts.
-    auto target = total / 100 + 1;
-    td::uint64 seen = 0;
-    for (std::size_t i = 0; i < fec_parts_buckets.size(); ++i) {
-      seen += fec_parts_buckets[i];
-      if (seen >= target) {
-        return stats_to_int32(i);
-      }
-    }
-    return stats_to_int32(fec_parts_buckets.size() - 1);
-  }
-
-  void reset_fec_parts(td::uint32 parts_limit) {
-    if (parts_limit == 0) {
-      fec_parts_buckets.clear();
-      return;
-    }
-    auto bucket_count = static_cast<std::size_t>(parts_limit) + 1;
-    if (fec_parts_buckets.size() != bucket_count) {
-      fec_parts_buckets.assign(bucket_count, 0);
-      return;
-    }
-    std::fill(fec_parts_buckets.begin(), fec_parts_buckets.end(), 0);
-  }
-
-  td::int32 useful_avg_ms() const {
-    return useful_count == 0 ? 0 : stats_to_int32(useful_sum_ms / useful_count);
-  }
-
-  td::int32 useful_max_ms() const {
-    return stats_to_int32(useful_max_ms_value);
-  }
-
-  td::int32 useful_p99_ms() const {
-    if (useful_count == 0) {
-      return 0;
-    }
-    auto target = useful_count - useful_count / 100;
-    td::uint64 seen = 0;
-    for (std::size_t i = 0; i < useful_buckets.size(); ++i) {
-      seen += useful_buckets[i];
-      if (seen >= target) {
-        return stats_to_int32((i + 1) * STATS_LATENCY_BUCKET_MS);
-      }
-    }
-    return stats_to_int32(useful_buckets.size() * STATS_LATENCY_BUCKET_MS);
-  }
-
-  void reset_useful() {
-    useful_count = 0;
-    useful_sum_ms = 0;
-    useful_max_ms_value = 0;
-    useful_buckets.fill(0);
-  }
-};
-
-struct PlumtreeStatsEpochState {
-  td::int64 epoch = -1;
-  td::uint32 rotating_slot = 0;
-  td::Timestamp snapshot_at = td::Timestamp::never();
-  td::Timestamp send_at = td::Timestamp::never();
-  td::Timestamp next_epoch_at = td::Timestamp::never();
-  bool snapshot_done = false;
-  bool send_done = false;
-  bool skipped = false;
-  // Keyed by reporting node id.
-  std::map<td::Bits256, tl_object_ptr<tos_api::overlay_plumtreeStatsRecord>> store;
-};
 
 std::vector<td::int64> eager_prefixes(const PlumtreeSlot &slot) {
   std::vector<td::int64> result;
@@ -443,11 +317,15 @@ class BroadcastsPlumtree::Impl {
   void add_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   void remove_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   bool has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const;
+  PlumtreeRepairDiagnostics repair_diagnostics_for_test() const;
+  void flush_repairs_for_test(OverlayImpl *overlay);
 
  private:
   td::actor::ActorId<adnl::AdnlSenderInterface> sender_;
   PlumtreeFecOptions options_;
   bool is_original_sender_ = false;
+  td::uint64 immediate_signature_checks_ = 0;
+  td::uint64 deferred_signature_checks_ = 0;
   td::uint32 local_eager_limit_ = 0;
 
   std::vector<PlumtreeSlot> slots_;
@@ -504,7 +382,7 @@ class BroadcastsPlumtree::Impl {
                                         td::Bits256 data_hash, td::BufferSlice signature, td::BufferSlice data);
   td::Result<PlumtreeDecodedBroadcast> decode_fec_part(OverlayImpl *overlay, PlumtreeFecBroadcastState &broadcast,
                                                        td::uint32 part_index);
-  PlumtreeMissingPart *get_or_create_missing_part(const MissingPartKey &key, td::uint32 data_size);
+  PlumtreeMissingPart *get_or_create_missing_part(const MissingPartKey &key);
   PlumtreeMissingPart *oldest_missing_part();
   void erase_missing_part(const MissingPartKey &key);
 
@@ -572,6 +450,12 @@ void BroadcastsPlumtree::Impl::maybe_log_memory_diagnostics() {
   for (const auto &[_, broadcast] : simple_broadcasts_) {
     payload_bytes += broadcast->data.size();
     payload_bytes += broadcast->part.signature.size();
+  }
+
+  for (const auto &[_, missing] : missing_parts_) {
+    for (const auto &target : missing->repair_targets) {
+      payload_bytes += target.retained_bytes();
+    }
   }
 
   size_t eager_peers = 0;
@@ -857,6 +741,28 @@ void BroadcastsPlumtree::Impl::remove_peer_state_for_test(adnl::AdnlNodeIdShort 
   remove_peer_state(peer);
 }
 
+PlumtreeRepairDiagnostics BroadcastsPlumtree::Impl::repair_diagnostics_for_test() const {
+  PlumtreeRepairDiagnostics result;
+  result.pending_parts = missing_parts_.size();
+  result.immediate_checks = immediate_signature_checks_;
+  result.deferred_checks = deferred_signature_checks_;
+  for (const auto &[_, part] : missing_parts_) {
+    result.targets += part->repair_targets.size();
+    for (const auto &target : part->repair_targets) {
+      result.retained_auth_bytes += target.retained_bytes();
+    }
+  }
+  return result;
+}
+
+void BroadcastsPlumtree::Impl::flush_repairs_for_test(OverlayImpl *overlay) {
+  while (auto *missing = oldest_missing_part()) {
+    auto key = missing->key;
+    send_repair_requests(overlay, key, *missing);
+    erase_missing_part(key);
+  }
+}
+
 bool BroadcastsPlumtree::Impl::has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const {
   if (eager_peer_refcnt_.contains(peer) || eager_peer_activity_.contains(peer)) {
     return true;
@@ -1000,16 +906,13 @@ td::Result<PlumtreeDecodedBroadcast> BroadcastsPlumtree::Impl::decode_fec_part(O
   return add_decoder_part_and_decode(overlay, broadcast, part_index, part_data_it->second);
 }
 
-PlumtreeMissingPart *BroadcastsPlumtree::Impl::get_or_create_missing_part(const MissingPartKey &key,
-                                                                          td::uint32 data_size) {
+PlumtreeMissingPart *BroadcastsPlumtree::Impl::get_or_create_missing_part(const MissingPartKey &key) {
   auto it = missing_parts_.find(key);
   if (it != missing_parts_.end()) {
-    it->second->data_size = std::max(it->second->data_size, data_size);
     return it->second.get();
   }
 
   auto missing = std::make_unique<PlumtreeMissingPart>(key);
-  missing->data_size = data_size;
   auto *result = missing.get();
   missing_parts_queue_.put(result);
   missing_parts_.emplace(key, std::move(missing));
@@ -1046,11 +949,26 @@ bool BroadcastsPlumtree::Impl::send_control(OverlayImpl *overlay, const adnl::Ad
 void BroadcastsPlumtree::Impl::send_repair_requests(OverlayImpl *overlay, const MissingPartKey &key,
                                                     PlumtreeMissingPart &missing) {
   const auto &[broadcast_id, part_index, tree_index] = key;
-  if (missing.data_size == 0) {
-    return;
-  }
   while (missing.sent_repair_targets < missing.repair_targets.size()) {
-    const auto &dst = missing.repair_targets[missing.sent_repair_targets++];
+    auto &target = missing.repair_targets[missing.sent_repair_targets++];
+    const auto &dst = target.peer;
+    // Membership and source permissions may expire or change after the IHAVE.
+    bool authorized = overlay->check_src_peer(dst, nullptr) &&
+                      overlay->check_source_eligible(target.source, target.certificate.get(), target.data_size, true,
+                                                     false, dst) == BroadcastCheckResult::Allowed;
+    if (authorized && !target.signature_verified) {
+      ++deferred_signature_checks_;
+      target.signature_verified =
+          overlay->check_signature_from_peer(target.source_key, target.to_sign, target.signature, dst).is_ok();
+    }
+    // Never retain authentication material after attempting this target.
+    target.source_key = PublicKey{};
+    target.to_sign = td::BufferSlice{};
+    target.signature = td::BufferSlice{};
+    target.certificate.reset();
+    if (!authorized || !target.signature_verified) {
+      continue;
+    }
     if (active_repair_queries_ >= MAX_ACTIVE_REPAIR_QUERIES) {
       VLOG(PLUMTREE_WARNING) << overlay << ": dropping Plumtree repair query due to active query cap: active="
                              << active_repair_queries_ << " limit=" << MAX_ACTIVE_REPAIR_QUERIES << " dst=" << dst
@@ -1070,7 +988,7 @@ void BroadcastsPlumtree::Impl::send_repair_requests(OverlayImpl *overlay, const 
     td::actor::send_closure(overlay->overlay_manager(), &Overlays::send_query_via, dst, overlay->local_id(),
                             overlay->overlay_id(), "plumtree repair", std::move(promise),
                             td::Timestamp::in(PLUMTREE_PENDING_FEEDBACK_TTL), std::move(query),
-                            static_cast<td::uint64>(missing.data_size) + PLUMTREE_PAYLOAD_MTU_OVERHEAD, sender_);
+                            static_cast<td::uint64>(target.data_size) + PLUMTREE_PAYLOAD_MTU_OVERHEAD, sender_);
   }
 }
 
@@ -1081,7 +999,7 @@ td::Result<td::BufferSlice> BroadcastsPlumtree::Impl::prepare_fec_payload_for_pe
   if (sender_.empty() || dst.is_zero() || dst == overlay->local_id()) {
     return td::Status::Error(ErrorCode::notready, "invalid Plumtree FEC payload destination");
   }
-  if (!overlay->peer_receives_broadcasts(dst)) {
+  if (!overlay->peer_receives_plumtree_broadcasts(dst)) {
     return td::Status::Error(ErrorCode::notready, "peer does not receive Plumtree broadcasts");
   }
   auto *s = slot(part.tree_index);
@@ -1112,7 +1030,7 @@ td::Result<td::BufferSlice> BroadcastsPlumtree::Impl::prepare_simple_payload_for
   if (sender_.empty() || dst.is_zero() || dst == overlay->local_id()) {
     return td::Status::Error(ErrorCode::notready, "invalid Plumtree simple payload destination");
   }
-  if (!overlay->peer_receives_broadcasts(dst)) {
+  if (!overlay->peer_receives_plumtree_broadcasts(dst)) {
     return td::Status::Error(ErrorCode::notready, "peer does not receive Plumtree broadcasts");
   }
   auto *s = slot(part.tree_index);
@@ -1167,7 +1085,7 @@ void BroadcastsPlumtree::Impl::send_ihave_to(OverlayImpl *overlay, PlumtreePartS
       part.advertised_to.contains(dst)) {
     return;
   }
-  if (!overlay->peer_receives_broadcasts(dst)) {
+  if (!overlay->peer_receives_plumtree_broadcasts(dst)) {
     return;
   }
   auto *s = slot(part.tree_index);
@@ -1652,6 +1570,8 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_fec_payload(
     co_return td::Status::Error(ErrorCode::notready, "duplicate Plumtree part");
   }
 
+  plumtree_stats_.note_part_received(tree_index == PLUMTREE_SIMPLE_TREE_INDEX,
+                                     origin == PlumtreePayloadOrigin::RepairResponse);
   auto *part = add_fec_part_state(*broadcast, part_index, tree_index, timestamp, std::move(source_key), source_hash,
                                   cert, part_size, part_hash, std::move(msg->signature_), msg->data_.clone());
   erase_missing_part(payload_key);
@@ -1663,7 +1583,7 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_fec_payload(
   auto useful_part = broadcast->decoder_parts.size() < options_.k_;
   auto decoded = CO_TRY(decode_fec_part(overlay, *broadcast, part_index));
   if (useful_part) {
-    plumtree_stats_.note_useful_delivery(timestamp);
+    plumtree_stats_.note_useful_delivery(timestamp, tree_index == PLUMTREE_SIMPLE_TREE_INDEX);
   }
   if (!decoded.data.empty()) {
     plumtree_stats_.note_delivered_broadcast();
@@ -1772,6 +1692,8 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_simple_payload(
   }
 
   CO_TRY(limiter.try_register_broadcast(data_size));
+  plumtree_stats_.note_part_received(tree_index == PLUMTREE_SIMPLE_TREE_INDEX,
+                                     origin == PlumtreePayloadOrigin::RepairResponse);
 
   auto state = std::make_unique<PlumtreeSimpleBroadcastState>();
   state->broadcast_id = broadcast_id;
@@ -1800,7 +1722,7 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_simple_payload(
   send_useful(overlay, from, state_ptr->part, broadcast_id);
   forward_payload(overlay, broadcast_id, state_ptr->part, from);
   plumtree_stats_.note_delivered_broadcast();
-  plumtree_stats_.note_useful_delivery(timestamp);
+  plumtree_stats_.note_useful_delivery(timestamp, tree_index == PLUMTREE_SIMPLE_TREE_INDEX);
   overlay->register_delivered_broadcast(state_ptr->broadcast_id);
   co_await check_and_deliver(overlay, state_ptr->part.source, check, state_ptr->data.clone())
       .trace("check Plumtree simple broadcast");
@@ -1854,14 +1776,19 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_ihave(OverlayImpl *overlay, 
   auto existing_missing = missing_parts_.find(key);
   if (existing_missing != missing_parts_.end()) {
     auto &missing = *existing_missing->second;
-    if (std::find(missing.repair_targets.begin(), missing.repair_targets.end(), from) != missing.repair_targets.end() ||
-        missing.repair_targets.size() >= options_.max_repair_targets_) {
+    if (std::any_of(missing.repair_targets.begin(), missing.repair_targets.end(),
+                    [&](const auto &target) { return target.peer == from; }) ||
+        missing.repair_targets.size() >=
+            std::min<std::size_t>(options_.max_repair_targets_, PLUMTREE_MAX_REPAIR_TARGETS)) {
       co_return td::Unit{};
     }
   }
 
   PublicKey source_key(msg->src_);
   auto source_hash = source_key.compute_short_id();
+  if (serialize_tl_object(msg->certificate_, true).size() > PLUMTREE_MAX_REPAIR_CERTIFICATE_BYTES) {
+    co_return td::Status::Error(ErrorCode::protoviolation, "too large Plumtree repair certificate");
+  }
   auto cert = CO_TRY(Certificate::create(msg->certificate_));
   if (overlay->check_source_eligible(source_hash, cert.get(), data_size, /* is_fec = */ true,
                                      /* is_any_sender = */ false, from) != BroadcastCheckResult::Allowed) {
@@ -1876,17 +1803,39 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_ihave(OverlayImpl *overlay, 
     to_sign = make_fec_payload_to_sign(control.broadcast_id, msg->payload_timestamp_, part_index, tree_index, data_size,
                                        msg->data_hash_);
   }
-  CO_TRY(overlay->check_signature_from_peer(source_key, to_sign, msg->signature_, from));
+  // Every missing part needs at least one authenticated advertisement.
+  // Authentication of another part in the same FEC broadcast is not sufficient:
+  // otherwise forged cross-part IHAVEs could occupy this part's repair targets
+  // without possessing a valid source signature.
+  bool has_authenticated_target =
+      existing_missing != missing_parts_.end() &&
+      std::any_of(existing_missing->second->repair_targets.begin(), existing_missing->second->repair_targets.end(),
+                  [](const auto &target) { return target.signature_verified; });
+  // Only redundant candidates for an already authenticated missing part may
+  // retain the current fixed-size network signature for lazy verification.
+  bool defer_signature =
+      has_authenticated_target && source_key.is_ed25519() && msg->signature_.size() == 64 && to_sign.size() <= 88;
+  if (!defer_signature) {
+    ++immediate_signature_checks_;
+    CO_TRY(overlay->check_signature_from_peer(source_key, to_sign, msg->signature_, from));
+  }
 
-  auto *missing = get_or_create_missing_part(key, data_size);
+  auto *missing = get_or_create_missing_part(key);
   if (!missing->repair_at) {
     missing->repair_at = td::Timestamp::in(options_.repair_timeout_ms_ / 1000.0);
     overlay->relax_plumtree_alarm(missing->repair_at);
   }
-  if (std::find(missing->repair_targets.begin(), missing->repair_targets.end(), from) ==
-          missing->repair_targets.end() &&
-      missing->repair_targets.size() < options_.max_repair_targets_) {
-    missing->repair_targets.push_back(from);
+  if (missing->repair_targets.size() <
+      std::min<std::size_t>(options_.max_repair_targets_, PLUMTREE_MAX_REPAIR_TARGETS)) {
+    missing->repair_targets.push_back(
+        PlumtreeRepairTarget{.peer = from,
+                             .source = source_hash,
+                             .certificate = std::move(cert),
+                             .source_key = defer_signature ? std::move(source_key) : PublicKey{},
+                             .to_sign = defer_signature ? std::move(to_sign) : td::BufferSlice{},
+                             .signature = defer_signature ? std::move(msg->signature_) : td::BufferSlice{},
+                             .data_size = data_size,
+                             .signature_verified = !defer_signature});
   }
   if (local_eager_limit_ == 0 || s->eager.empty()) {
     send_repair_requests(overlay, key, *missing);
@@ -2044,8 +1993,8 @@ void BroadcastsPlumtree::Impl::stats_sync_epoch() {
   stats_epoch_.epoch = epoch;
   stats_epoch_.rotating_slot = 1 + static_cast<td::uint32>(epoch % static_cast<td::int64>(options_.tree_slots_ - 1));
   double epoch_start = static_cast<double>(epoch) * options_.stats_epoch_duration_ - now;
-  double snapshot_delay = options_.stats_epoch_duration_ * STATS_SNAPSHOT_DELAY;
-  double send_jitter = td::Random::fast(0, 1000) * 1e-3 * options_.stats_epoch_duration_ * STATS_SEND_JITTER;
+  double snapshot_delay = options_.stats_epoch_duration_ * PLUMTREE_STATS_SNAPSHOT_DELAY;
+  double send_jitter = td::Random::fast(0, 1000) * 1e-3 * options_.stats_epoch_duration_ * PLUMTREE_STATS_SEND_JITTER;
   stats_epoch_.snapshot_at = td::Timestamp::in(epoch_start + snapshot_delay);
   stats_epoch_.send_at = td::Timestamp::in(epoch_start + snapshot_delay + send_jitter);
   stats_epoch_.next_epoch_at = td::Timestamp::in(static_cast<double>(epoch + 1) * options_.stats_epoch_duration_ - now);
@@ -2136,7 +2085,7 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_stats_push(OverlayImpl *over
   if (static_cast<td::uint32>(record->parts_in_p99_bcsts_) > options_.parts_) {
     co_return td::Unit{};
   }
-  if (stats_epoch_.store.size() >= STATS_STORE_LIMIT) {
+  if (stats_epoch_.store.size() >= PLUMTREE_STATS_STORE_LIMIT) {
     co_return td::Unit{};
   }
   auto src = record->src_;
@@ -2197,7 +2146,8 @@ void BroadcastsPlumtree::Impl::gc(OverlayImpl *overlay) {
                           << " tree_parts=" << bcast->tree_parts.size()
                           << " payload_parts=" << bcast->parts_by_index.size()
                           << " decoder_parts=" << bcast->decoder_parts.size();
-    } else if (!is_original_sender_) {
+    }
+    if (!is_original_sender_) {
       plumtree_stats_.note_fec_parts_collected(static_cast<td::uint32>(bcast->parts_by_index.size()), options_.parts_);
     }
     CHECK(broadcasts_.erase(broadcast_id));
@@ -2331,6 +2281,14 @@ void BroadcastsPlumtree::remove_peer_state_for_test(adnl::AdnlNodeIdShort peer) 
 
 bool BroadcastsPlumtree::has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const {
   return impl_->has_peer_state_for_test(peer);
+}
+
+PlumtreeRepairDiagnostics BroadcastsPlumtree::repair_diagnostics_for_test() const {
+  return impl_->repair_diagnostics_for_test();
+}
+
+void BroadcastsPlumtree::flush_repairs_for_test(OverlayImpl *overlay) {
+  impl_->flush_repairs_for_test(overlay);
 }
 
 }  // namespace overlay

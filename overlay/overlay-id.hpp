@@ -46,13 +46,12 @@ class OverlayNode {
     version_ = static_cast<td::int32>(td::Clocks::system());
   }
   static td::Result<OverlayNode> create(const tl_object_ptr<tos_api::overlay_node> &node) {
+    if (!node || !node->certificate_ || !OverlayMemberFlags::valid(static_cast<td::uint32>(node->flags_))) {
+      return td::Status::Error(ErrorCode::protoviolation, "invalid overlay node flags or certificate");
+    }
     TRY_RESULT(source, adnl::AdnlNodeIdFull::create(node->id_));
-    return OverlayNode{source, OverlayIdShort{node->overlay_}, 0, node->version_, node->signature_.as_slice()};
-  }
-  static td::Result<OverlayNode> create(const tl_object_ptr<tos_api::overlay_nodeV2> &node) {
-    TRY_RESULT(source, adnl::AdnlNodeIdFull::create(node->id_));
-    auto res = OverlayNode{source, OverlayIdShort{node->overlay_}, (td::uint32)node->flags_, node->version_,
-                           node->signature_.as_slice()};
+    auto res = OverlayNode{source, OverlayIdShort{node->overlay_}, static_cast<td::uint32>(node->flags_),
+                           node->version_, node->signature_.as_slice()};
     res.update_certificate(OverlayMemberCertificate(node->certificate_.get()));
     return res;
   }
@@ -86,17 +85,8 @@ class OverlayNode {
   }
 
   td::BufferSlice to_sign() const {
-    if (flags_ == 0) {
-      auto obj = create_tl_object<tos_api::overlay_node_toSign>(nullptr, overlay_.tl(), version_);
-      source_.visit(td::overloaded([&](const adnl::AdnlNodeIdShort &id) { obj->id_ = id.tl(); },
-                                   [&](const adnl::AdnlNodeIdFull &id) { obj->id_ = id.compute_short_id().tl(); }));
-      return serialize_tl_object(obj, true);
-    } else {
-      auto obj = create_tl_object<tos_api::overlay_node_toSignEx>(nullptr, overlay_.tl(), flags_, version_);
-      source_.visit(td::overloaded([&](const adnl::AdnlNodeIdShort &id) { obj->id_ = id.tl(); },
-                                   [&](const adnl::AdnlNodeIdFull &id) { obj->id_ = id.compute_short_id().tl(); }));
-      return serialize_tl_object(obj, true);
-    }
+    return create_serialize_tl_object<tos_api::overlay_node_toSign>(adnl_id_short().tl(), overlay_.tl(),
+                                                                    static_cast<td::int32>(flags_), version_);
   }
   void update_adnl_id(adnl::AdnlNodeIdFull node_id) {
     source_ = node_id;
@@ -129,24 +119,8 @@ class OverlayNode {
     return res;
   };
   tl_object_ptr<tos_api::overlay_node> tl() const {
-    auto obj =
-        create_tl_object<tos_api::overlay_node>(nullptr, overlay_.tl(), version_, signature_.clone_as_buffer_slice());
-    source_.visit(td::overloaded([&](const adnl::AdnlNodeIdShort &id) { UNREACHABLE(); },
-                                 [&](const adnl::AdnlNodeIdFull &id) { obj->id_ = id.tl(); }));
-    return obj;
-  }
-  tl_object_ptr<tos_api::overlay_nodeV2> tl_v2() const {
-    tl_object_ptr<tos_api::overlay_MemberCertificate> cert;
-    if (cert_ && !cert_->empty()) {
-      cert = cert_->tl();
-    } else {
-      cert = create_tl_object<tos_api::overlay_emptyMemberCertificate>();
-    }
-    auto obj = create_tl_object<tos_api::overlay_nodeV2>(nullptr, overlay_.tl(), flags_, version_,
-                                                         signature_.clone_as_buffer_slice(), std::move(cert));
-    source_.visit(td::overloaded([&](const adnl::AdnlNodeIdShort &id) { UNREACHABLE(); },
-                                 [&](const adnl::AdnlNodeIdFull &id) { obj->id_ = id.tl(); }));
-    return obj;
+    return create_tl_object<tos_api::overlay_node>(adnl_id_full().tl(), overlay_.tl(), static_cast<td::int32>(flags_),
+                                                   version_, signature_.clone_as_buffer_slice(), certificate()->tl());
   }
   OverlayNode clone() const {
     auto res = OverlayNode{source_, overlay_, flags_, version_, signature_.clone()};
@@ -193,7 +167,7 @@ class OverlayNode {
  private:
   td::Variant<adnl::AdnlNodeIdFull, adnl::AdnlNodeIdShort> source_;
   OverlayIdShort overlay_;
-  td::uint32 flags_;
+  td::uint32 flags_{0};
   td::int32 version_;
   td::unique_ptr<OverlayMemberCertificate> cert_;
   td::SharedSlice signature_;

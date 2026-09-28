@@ -1,5 +1,6 @@
 set(OVERLAY_SOURCE
   broadcast-fec.cpp
+  broadcast-plumtree-stats.cpp
   broadcast-plumtree.cpp
   broadcast-simple.cpp
   broadcast-twostep.cpp
@@ -8,6 +9,7 @@ set(OVERLAY_SOURCE
   overlay-peers.cpp
 
   broadcast-fec.hpp
+  broadcast-plumtree-stats.hpp
   broadcast-plumtree.hpp
   broadcast-simple.hpp
   broadcast-twostep.hpp
@@ -24,5 +26,5 @@ target_include_directories(overlay PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
   ${OPENSSL_INCLUDE_DIR}
 )
-target_link_libraries(overlay PRIVATE tdutils tdactor adnl tl_api dht fec)
+target_link_libraries(overlay PRIVATE tdutils tdactor adnl tl_api dht fec metrics-core)
 

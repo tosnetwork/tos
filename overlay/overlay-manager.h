@@ -122,6 +122,9 @@ class OverlayManager : public Overlays {
 
   void forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay, adnl::AdnlNodeIdShort peer_id) override;
 
+  void collect(metrics::MetricsPromise promise) override;
+  void absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) override;
+
   struct PrintId {};
 
   PrintId print_id() const {
@@ -134,6 +137,10 @@ class OverlayManager : public Overlays {
     OverlayMemberCertificate member_certificate;
   };
   std::map<adnl::AdnlNodeIdShort, std::map<OverlayIdShort, OverlayDescription>> overlays_;
+
+  metrics::TlTrafficBucket broadcasts_in_;
+  metrics::TlTrafficBucket broadcasts_out_;
+  td::actor::Task<metrics::MetricSet> collect_coro();
 
   struct BufferedRequest {
     adnl::AdnlNodeIdShort src;
