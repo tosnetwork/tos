@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare and verify a persistent four-validator local PQ network.
+"""Prepare and verify a persistent local PQ network with four validators and two observers.
 
 Only prepare generates keys. Deploy sends a local faucet transaction; check
 is read-only. The pool uses the development verifying key, never a release key.
@@ -7,6 +7,9 @@ is read-only. The pool uses the development verifying key, never a release key.
 
 import argparse
 import asyncio
+import base64
+import copy
+import hashlib
 import json
 import os
 import re
@@ -17,6 +20,164 @@ import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+
+VALIDATOR_COUNT = 4
+OBSERVER_COUNT = 2
+
+
+def topology(data):
+    """Plan only: no key generation, native tool, RPC or service invocation."""
+    nodes = []
+    for idx in range(1, VALIDATOR_COUNT + OBSERVER_COUNT + 1):
+        role = "validator" if idx <= VALIDATOR_COUNT else "observer"
+        nodes.append(
+            {
+                "idx": idx,
+                "role": role,
+                "directory": str(data / "testnet" / f"node{idx}"),
+                "validator_port": 2002 + (idx - 1) * 3,
+                "liteserver_port": 2003 + (idx - 1) * 3,
+                "console_port": 2004 + (idx - 1) * 3,
+                "json_rpc_port": 8010 + idx,
+                "service": f"tos-pq-{role}@{idx}.service",
+                "consensus_member": role == "validator",
+            }
+        )
+    return {
+        "status": "PREPARATION_ONLY_NOT_DEPLOYED",
+        "mode": "pq",
+        "dht_port": 2001,
+        "validators": VALIDATOR_COUNT,
+        "observers": OBSERVER_COUNT,
+        "nodes": nodes,
+        "lite_client": {
+            "service": "tos-pq-lite-client.service",
+            "consensus_member": False,
+            "directory": str(data / "lite-client"),
+            "config": str(data / "configs" / "observers-lite.json"),
+            "upstream_node_ids": [5, 6],
+            "listen_ports": [],
+        },
+        "requires_before_start": [
+            "reviewed binaries installed",
+            "observer identities and configs generated",
+            "one common Genesis",
+            "resource and port checks",
+        ],
+    }
+
+
+def write_plan(data):
+    destination = data / "preparation"
+    destination.mkdir(parents=True, exist_ok=True)
+    write_json(destination / "topology.json", topology(data))
+    for name in (
+        "tos-pq-observer@.service",
+        "tos-pq-lite-client.service",
+        "run-local-lite-client.py",
+    ):
+        shutil.copyfile(REPO / "scripts" / name, destination / name)
+    print(f"Preparation only; no network started: {destination}")
+
+
+def prepare_observers(data):
+    """Extend retained Genesis/configuration offline; never start native tools."""
+    from nacl.signing import SigningKey
+
+    manifest = json.loads((data / "testnet-ports.json").read_text())
+    if len(manifest["nodes"]) != VALIDATOR_COUNT:
+        raise RuntimeError("observer preparation needs the retained four-validator topology")
+    for idx in (5, 6):
+        if (data / "testnet" / f"node{idx}").exists():
+            raise RuntimeError("observer directory already exists")
+    template = json.loads((data / "testnet/node1/config.json").read_text())
+    global_config = json.loads((data / "tos-global.json").read_text())
+    observer_lite = []
+    for row in topology(data)["nodes"][VALIDATOR_COUNT:]:
+        directory = Path(row["directory"])
+        directory.mkdir(mode=0o700)
+        keyring = directory / "keyring"
+        keyring.mkdir(mode=0o700)
+
+        def new_key():
+            key = SigningKey.generate()
+            public = b"\xc6\xb4\x13\x48" + bytes(key.verify_key)
+            digest = hashlib.sha256(public).digest()
+            path = keyring / digest.hex().upper()
+            with path.open("xb") as output:
+                output.write(b"\x17\x23\x68\x49" + bytes(key))
+            path.chmod(0o600)
+            return base64.b64encode(digest).decode(), public
+
+        fullnode_id, _ = new_key()
+        lite_id, lite_public = new_key()
+        console_id, console_public = new_key()
+        client = SigningKey.generate()
+        client_public = b"\xc6\xb4\x13\x48" + bytes(client.verify_key)
+        client_id = base64.b64encode(hashlib.sha256(client_public).digest()).decode()
+        private = directory / "console-client.key"
+        private.write_bytes(b"\x17\x23\x68\x49" + bytes(client))
+        private.chmod(0o600)
+        config = copy.deepcopy(template)
+        config["out_port"] = 0
+        config["addrs"] = [
+            {
+                "@type": "engine.addr",
+                "ip": 2130706433,
+                "port": row["validator_port"],
+                "categories": [0],
+                "priority_categories": [],
+            }
+        ]
+        config["adnl"] = [{"@type": "engine.adnl", "id": fullnode_id, "category": 0}]
+        config["dht"] = [{"@type": "engine.dht", "id": fullnode_id}]
+        config["fullnode"] = fullnode_id
+        config["validators"] = []
+        config["collators"] = []
+        config["fullnodeslaves"] = []
+        config["fullnodemasters"] = []
+        config["gc"] = {"@type": "engine.gc", "ids": []}
+        config.get("extraconfig", {}).pop("pq_consensus", None)
+        config["liteservers"] = [
+            {"@type": "engine.liteServer", "id": lite_id, "port": row["liteserver_port"]}
+        ]
+        config["control"] = [
+            {
+                "@type": "engine.controlInterface",
+                "id": console_id,
+                "port": row["console_port"],
+                "allowed": [{"@type": "engine.controlProcess", "id": client_id, "permissions": 15}],
+            }
+        ]
+        lite = {
+            "ip": 2130706433,
+            "port": row["liteserver_port"],
+            "id": {"@type": "pub.ed25519", "key": base64.b64encode(lite_public[4:]).decode()},
+        }
+        observer_lite.append(lite)
+        write_json(directory / "config.json", config)
+        write_json(directory / "lite-client.json", {"liteservers": [lite]})
+        (directory / "console-server.pub").write_bytes(console_public)
+        shutil.copytree(data / "testnet/node1/static", directory / "static")
+        shutil.copyfile(directory / "config.json", data / "configs" / f"node-{row['idx']}.json")
+        shutil.copyfile(
+            directory / "lite-client.json", data / "configs" / f"node-{row['idx']}-lite.json"
+        )
+        manifest["nodes"].append({**row, "fullnode_id": fullnode_id})
+    for row in manifest["nodes"][:VALIDATOR_COUNT]:
+        row["role"] = "validator"
+    global_config["liteservers"].extend(observer_lite)
+    write_json(data / "configs/observers-lite.json", {"liteservers": observer_lite})
+    write_json(data / "tos-global.json", global_config)
+    write_json(data / "configs/global.json", global_config)
+    write_json(data / "testnet-ports.json", manifest)
+    network = json.loads((data / "network.json").read_text())
+    network.update(observers=OBSERVER_COUNT, status="PREPARED_STOPPED_CHAIN_DATA_RESET")
+    write_json(data / "network.json", network)
+    (data / "lite-client").mkdir(mode=0o700)
+    write_plan(data)
+    print("Prepared two observer identities/configs; no validator membership or Genesis changed")
 
 
 def write_json(path, value, mode=0o644):
@@ -71,6 +232,12 @@ async def prepare(args):
             node.make_initial_pq_validator(os.urandom(32), os.urandom(32))
             node.announce_to(dht)
             nodes.append(node)
+        for _ in range(OBSERVER_COUNT):
+            node = network.create_full_node()
+            # No validator configuration or PQ consensus seed for observers.
+            node._local_config.validators = []
+            node.announce_to(dht)
+            nodes.append(node)
         zs = network._get_or_generate_zerostate()
         ports = []
         for i, node in enumerate(nodes, 1):
@@ -86,13 +253,20 @@ async def prepare(args):
             ports.append(
                 {
                     "idx": i,
+                    "role": "validator" if i <= VALIDATOR_COUNT else "observer",
                     "directory": str(node._directory),
                     "validator_port": node._addr.port,
                     "liteserver_port": node._liteserver_addr.port,
                     "console_port": node._engine_console_addr.port,
                     "json_rpc_port": 8010 + i,
-                    "validator_id": node.pq_initial_validator.validator_id.hex(),
-                    "pq_key_id": node.pq_initial_validator.key_id.hex(),
+                    **(
+                        {
+                            "validator_id": node.pq_initial_validator.validator_id.hex(),
+                            "pq_key_id": node.pq_initial_validator.key_id.hex(),
+                        }
+                        if i <= VALIDATOR_COUNT
+                        else {}
+                    ),
                 }
             )
         (dht._directory / "config.json").write_text(dht._local_config.to_json())
@@ -113,7 +287,8 @@ async def prepare(args):
             data / "network.json",
             {
                 "mode": "pq",
-                "validators": 4,
+                "validators": VALIDATOR_COUNT,
+                "observers": OBSERVER_COUNT,
                 "global_id": 3,
                 "global_version": 18,
                 "genesis_wallet_address": zs.main_wallet_address.to_str(is_user_friendly=False),
@@ -132,8 +307,16 @@ async def prepare(args):
             (export / f"node-{i}-lite.json").chmod(0o644)
         shutil.copyfile(data / "tos-global.json", export / "global.json")
         (export / "global.json").chmod(0o644)
+        observer_lite = {
+            "liteservers": [
+                json.loads(n.liteserver_config.to_json())["liteservers"][0]
+                for n in nodes[VALIDATOR_COUNT:]
+            ]
+        }
+        write_json(export / "observers-lite.json", observer_lite)
+        (data / "lite-client").mkdir(mode=0o700)
         export.chmod(0o755)
-    print("Prepared four PQ validator configurations")
+    print("Prepared four PQ validators, two observers and a standalone lite-client config")
 
 
 async def wait_network(args):
@@ -144,8 +327,10 @@ async def wait_network(args):
     from x02_config34_proof import decode_validator_set
 
     ports = json.loads((args.data / "testnet-ports.json").read_text())["nodes"]
-    if len(ports) != 4:
-        raise RuntimeError("expected exactly four validators")
+    validator_ports = [n for n in ports if n.get("role", "validator") == "validator"]
+    observer_ports = [n for n in ports if n.get("role") == "observer"]
+    if len(validator_ports) != VALIDATOR_COUNT or len(observer_ports) not in (0, OBSERVER_COUNT):
+        raise RuntimeError("expected four validators and either zero or two observers")
     deadline = time.monotonic() + args.timeout
     error = None
     while time.monotonic() < deadline:
@@ -171,7 +356,7 @@ async def wait_network(args):
             )
             ids = [block_id(h["id"]) for h in headers]
             if len(set(ids)) != 1:
-                raise RuntimeError("four validators disagree on the full block ID")
+                raise RuntimeError("local nodes disagree on the full block ID")
             version, validators = await asyncio.gather(
                 *[
                     asyncio.to_thread(
@@ -185,11 +370,12 @@ async def wait_network(args):
                 raise RuntimeError("live ConfigParam8 version must be 18")
             validator_cell = Cell.one_from_boc(base64.b64decode(validators["config"]["bytes"]))
             decoded = decode_validator_set(validator_cell)
-            validate_pq_set(decoded, ports)
+            validate_pq_set(decoded, validator_ports)
             return {
                 "height": height,
                 "block_id": headers[0]["id"],
-                "nodes": 4,
+                "nodes": len(ports),
+                "observers": len(observer_ports),
                 "global_version": 18,
                 "pq_validators": decoded,
             }
@@ -318,12 +504,18 @@ async def deploy(args):
 
 async def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "deploy", "check"])
+    parser.add_argument(
+        "command", choices=["plan", "prepare-observers", "prepare", "deploy", "check"]
+    )
     parser.add_argument("--data", type=Path, default=Path("/data"))
     parser.add_argument("--build", type=Path, default=REPO / "build")
     parser.add_argument("--timeout", type=float, default=240)
     args = parser.parse_args()
-    if args.command == "prepare":
+    if args.command == "plan":
+        write_plan(args.data)
+    elif args.command == "prepare-observers":
+        prepare_observers(args.data)
+    elif args.command == "prepare":
         await prepare(args)
     elif args.command == "deploy":
         await deploy(args)
@@ -332,7 +524,7 @@ async def main():
         await asyncio.sleep(3)
         end = await wait_network(args)
         if end["height"] <= start["height"]:
-            raise RuntimeError("four-node network is not advancing")
+            raise RuntimeError("local network is not advancing")
         pool = json.loads((args.data / "shielded-pool/pool.json").read_text())
         end["pool"] = {"address": pool["address"], "get_methods": await pool_methods(args, pool)}
         print(json.dumps(end, indent=2))

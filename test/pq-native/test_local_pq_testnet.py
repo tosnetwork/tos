@@ -90,3 +90,104 @@ def test_actual_pool_state_required(monkeypatch, reserve, backed, passes):
     else:
         with pytest.raises(RuntimeError, match="pool state differs"):
             asyncio.run(local.pool_methods(args, pool))
+
+
+def test_planned_roles_and_disjoint_ports(tmp_path):
+    plan = local.topology(tmp_path)
+    assert [n["role"] for n in plan["nodes"]] == ["validator"] * 4 + ["observer"] * 2
+    assert [n["idx"] for n in plan["nodes"] if n["consensus_member"]] == [1, 2, 3, 4]
+    ports = [plan["dht_port"]]
+    for node in plan["nodes"]:
+        ports.extend(
+            node[name]
+            for name in ("validator_port", "liteserver_port", "console_port", "json_rpc_port")
+        )
+    assert len(ports) == len(set(ports))
+    assert plan["lite_client"]["listen_ports"] == []
+    assert plan["lite_client"]["upstream_node_ids"] == [5, 6]
+
+
+def test_plan_does_not_invoke_native_or_network(tmp_path, monkeypatch):
+    def refused(*args, **kwargs):
+        raise AssertionError("plan must not execute a binary or query a node")
+
+    monkeypatch.setattr(local.subprocess, "run", refused)
+    monkeypatch.setattr(local, "rpc", refused)
+    local.write_plan(tmp_path)
+    assert not (tmp_path / "testnet").exists()
+    assert (tmp_path / "preparation/topology.json").is_file()
+
+
+def retained_network(tmp_path):
+    import json
+
+    (tmp_path / "testnet/node1/static").mkdir(parents=True)
+    (tmp_path / "testnet/node1/static/genesis").write_bytes(b"same Genesis")
+    (tmp_path / "configs").mkdir()
+    template = {
+        "@type": "engine.validator.config",
+        "validators": [{"id": "old"}],
+        "fullnode": "old",
+        "adnl": [],
+        "dht": [],
+        "liteservers": [],
+        "control": [],
+        "extraconfig": {"pq_consensus": {"consensus_key_file": "old-seed"}},
+    }
+    (tmp_path / "testnet/node1/config.json").write_text(json.dumps(template))
+    (tmp_path / "tos-global.json").write_text(
+        json.dumps({"liteservers": [], "validator": {"zero_state": "unchanged"}})
+    )
+    (tmp_path / "testnet-ports.json").write_text(
+        json.dumps({"nodes": [{"idx": i} for i in range(1, 5)]})
+    )
+    (tmp_path / "network.json").write_text(
+        json.dumps({"validators": 4, "zerostate_root": "unchanged"})
+    )
+
+
+def test_offline_observers_have_no_consensus_credentials(tmp_path, monkeypatch):
+    import base64
+    import hashlib
+    import json
+
+    from nacl.signing import SigningKey
+
+    retained_network(tmp_path)
+
+    def refused(*args, **kwargs):
+        raise AssertionError("observer preparation must not run native tools")
+
+    monkeypatch.setattr(local.subprocess, "run", refused)
+    monkeypatch.setattr(local, "rpc", refused)
+    local.prepare_observers(tmp_path)
+    fullnode_ids = []
+    for idx in (5, 6):
+        root = tmp_path / "testnet" / f"node{idx}"
+        config = json.loads((root / "config.json").read_text())
+        assert config["validators"] == []
+        assert "pq_consensus" not in config["extraconfig"]
+        assert not (root / "pq-consensus.seed").exists()
+        assert (root / "static/genesis").read_bytes() == b"same Genesis"
+        fullnode_ids.append(config["fullnode"])
+        key_id = base64.b64decode(config["fullnode"])
+        path = root / "keyring" / key_id.hex().upper()
+        key = SigningKey(path.read_bytes()[4:])
+        assert hashlib.sha256(b"\xc6\xb4\x13\x48" + bytes(key.verify_key)).digest() == key_id
+        assert path.stat().st_mode & 0o777 == 0o600
+    assert len(set(fullnode_ids)) == 2
+    global_config = json.loads((tmp_path / "tos-global.json").read_text())
+    assert global_config["validator"]["zero_state"] == "unchanged"
+    assert [
+        server["port"]
+        for server in json.loads((tmp_path / "configs/observers-lite.json").read_text())[
+            "liteservers"
+        ]
+    ] == [2015, 2018]
+
+
+def test_existing_observer_is_not_overwritten(tmp_path):
+    retained_network(tmp_path)
+    (tmp_path / "testnet/node5").mkdir()
+    with pytest.raises(RuntimeError, match="already exists"):
+        local.prepare_observers(tmp_path)
