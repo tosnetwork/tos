@@ -188,14 +188,34 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   }
 
   void tear_down() override {
+    closing_ = true;
     genesis_promise_.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
-    for (auto& [_, s] : state_cache_) {
-      for (auto& p : s.promises) {
+    // Failing a waiter resumes its coroutine right here, and that coroutine may try to
+    // register itself again on an entry whose waiter list is being walked. Take every list
+    // out before failing anything, and repeat until a pass finds nothing new, so no waiter
+    // registered during the cascade is left behind holding this actor and its bus.
+    while (true) {
+      std::vector<td::Promise<ResolvedState>> state_promises;
+      for (auto& [_, s] : state_cache_) {
+        for (auto& p : s.promises) {
+          state_promises.push_back(std::move(p));
+        }
+        s.promises.clear();
+      }
+      std::vector<td::Promise<td::Unit>> waiters;
+      for (auto& [_, s] : finalized_blocks_) {
+        for (auto& p : s.waiters) {
+          waiters.push_back(std::move(p));
+        }
+        s.waiters.clear();
+      }
+      if (state_promises.empty() && waiters.empty()) {
+        break;
+      }
+      for (auto& p : state_promises) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
-    }
-    for (auto& [_, s] : finalized_blocks_) {
-      for (auto& p : s.waiters) {
+      for (auto& p : waiters) {
         p.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
       }
     }
@@ -236,10 +256,14 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                           .finalizations_stalled_permanently = finalizations_stalled_permanently_,
                                           .slot_attempts = 0};
     for (const auto& [id, state] : finalized_blocks_) {
+      result.inflight_waiters += state.waiters.size();
       if (id.slot != query->slot) {
         continue;
       }
       result.slot_attempts = std::max(result.slot_attempts, state.attempts);
+    }
+    for (const auto& [_, state] : state_cache_) {
+      result.state_waiters += state.promises.size();
     }
     co_return result;
   }
@@ -255,6 +279,16 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   td::Promise<StartEvent> genesis_promise_;
   td::actor::SharedFuture<StartEvent> genesis_;
 
+  // Set in tear_down: from then on no waiter is registered and no attempt started, so a
+  // coroutine resumed during teardown cannot park itself where nothing will ever wake it.
+  // Every await that can resume after teardown re-checks it, because the guard that ran
+  // before the suspension says nothing about the world the coroutine wakes up in.
+  bool closing_ = false;
+
+  static td::Status closing_error() {
+    return td::Status::Error(ErrorCode::cancelled, "Simplex state-resolver: closing");
+  }
+
   std::map<ParentId, CachedState> state_cache_;
   CompletedLru<ParentId> state_cache_lru_{
       cache_limit_from_env("TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES", DEFAULT_STATE_CACHE_MAX_ENTRIES)};
@@ -265,6 +299,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   std::optional<td::uint32> latest_finalized_slot_;
 
   td::actor::Task<ResolvedState> resolve_state(ParentId id, std::optional<CandidateId> requesting_candidate) {
+    if (closing_) {
+      co_return closing_error();
+    }
     if (!state_cache_.contains(id) && !state_inflight_.try_admit()) {
       ++state_admission_rejections_;
       co_return td::Status::Error(
@@ -317,6 +354,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   // still change it. Answering "not finalized yet" for a terminal refusal, or waiting on
   // one, is how a latch meant to suppress retries became a permanent hang.
   td::actor::Task<Finalization> finalization_of(CandidateId id, bool skip_db_for_newer_slot = false) {
+    if (closing_) {
+      co_return closing_error();
+    }
     auto it = finalized_blocks_.find(id);
     if (it != finalized_blocks_.end()) {
       switch (it->second.state) {
@@ -338,8 +378,17 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
       it->second.waiters.push_back(std::move(promise));
       // Wrapped: the attempt may have refused, and a refusal is something to report from
-      // the state below rather than to throw out of a question about state.
-      auto ignored = co_await std::move(task).wrap();
+      // the state below rather than to throw out of a question about state. A
+      // cancellation is different: it is how teardown wakes this waiter, and the caller
+      // must not read it as "not finalized yet" and go on to start new work. The guard
+      // above ran before this coroutine suspended, so it has to be re-checked here.
+      auto waited = co_await std::move(task).wrap();
+      if (closing_) {
+        co_return closing_error();
+      }
+      if (waited.is_error() && waited.error().code() == ErrorCode::cancelled) {
+        co_return waited.move_as_error();
+      }
       auto completed = finalized_blocks_.find(id);
       if (completed == finalized_blocks_.end()) {
         co_return Finalization::Idle;
@@ -362,6 +411,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
     auto key = create_serialize_tl_object<tl::db_key_finalizedBlock>(id.to_tl());
     auto value = co_await owning_bus()->db->get_latest(std::move(key));
+    if (closing_) {
+      co_return closing_error();
+    }
     if (!value.has_value()) {
       ++finalized_db_misses_;
       co_return Finalization::Idle;
@@ -410,6 +462,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       // Resolve the exact candidate or fail closed; a missing ancestor must
       // never silently omit a full state transition.
       auto resolved_candidate = co_await owning_bus().publish<ResolveCandidate>(*id).wrap();
+      if (closing_) {
+        co_return closing_error();
+      }
       if (resolved_candidate.is_error()) {
         co_return td::Status::Error(resolved_candidate.error().code(),
                                     PSTRING() << "Simplex state-resolver: cannot resolve exact ancestor " << *id << ": "
@@ -445,6 +500,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
       if (!reconstruct_from_candidate_data && (co_await finalization_of(*id, true)) == Finalization::Finalized) {
         auto genesis = co_await genesis_.get();
+        if (closing_) {
+          co_return closing_error();
+        }
         auto manager_state =
             co_await ChainState::from_manager(owning_bus()->manager, owning_bus()->shard, {candidate->block_id()},
                                               genesis->state->min_mc_block_id(), requesting_candidate)
@@ -475,6 +533,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
     if (!state.has_value()) {
       auto genesis = co_await genesis_.get();
+      if (closing_) {
+        co_return closing_error();
+      }
       std::vector<BlockIdExt> base_blocks;
       if (!candidates_to_apply.empty()) {
         // The oldest full candidate carries the exact predecessor block IDs
@@ -635,6 +696,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   td::actor::Task<> finalize_blocks(CandidateId id, std::optional<FinalCertRef> final_cert,
                                     std::optional<CandidateRef> final_candidate) {
+    if (closing_) {
+      co_return closing_error();
+    }
     ++finalizations_started_;
     SCOPE_EXIT {
       ++finalizations_settled_;
@@ -663,6 +727,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         case Finalization::InFlight: {
           // Someone else owns the attempt; wait for its verdict rather than starting a
           // second conversion of the same certificate.
+          if (closing_) {
+            co_return closing_error();
+          }
           auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
           it->second.waiters.push_back(std::move(promise));
           co_return co_await std::move(task);
@@ -673,6 +740,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
           co_return td::Status::Error(ErrorCode::protoviolation, PSTRING() << "Simplex state-resolver: slot " << id.slot
                                                                            << " is permanently stalled");
       }
+    }
+    if (closing_) {
+      co_return closing_error();
     }
     // Every attempt is admitted, including a retry of one that failed transiently: an entry
     // left behind by a failed attempt no longer holds an admission slot, and retries that
@@ -828,6 +898,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     }
 
     auto [candidate, notar_cert] = co_await owning_bus().publish<ResolveCandidate>(id);
+    if (closing_) {
+      co_return closing_error();
+    }
     if (final_cert && !final_candidate) {
       CHECK((*final_cert)->vote.id == id);
       final_candidate = candidate;
@@ -846,6 +919,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       if (sig_set.is_error()) {
         co_return sig_set.move_as_error();
       }
+      if (closing_) {
+        co_return closing_error();
+      }
       co_await owning_bus().publish<FinalizeBlock>(candidate, sig_set.move_as_ok());
     } else {
       if (auto parent = candidate->parent_id) {
@@ -853,6 +929,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       }
     }
 
+    if (closing_) {
+      co_return closing_error();
+    }
     auto key = create_serialize_tl_object<tl::db_key_finalizedBlock>(id.to_tl());
     co_await bus.db->set(std::move(key), td::BufferSlice());
     co_return td::Unit{};

@@ -81,6 +81,9 @@ class ActorExecutor {
   void send_immediate(F &&f, uint64 link_token) {
     CHECK(can_send_immediate());
     if (is_closed()) {
+      // A continuation handed to an already closed actor is neither run nor
+      // destroyed here; record it so a retained coroutine frame can be traced.
+      LOG(WARNING) << "MEMORY_DIAGNOSTICS dropped-immediate actor=" << actor_info_.get_name();
       return;
     }
     actor_execute_context_.set_link_token(link_token);

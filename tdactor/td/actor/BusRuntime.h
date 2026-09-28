@@ -329,6 +329,19 @@ class BusHandle {
     return *node_;
   }
 
+  // Diagnostics only. The weak pointer observes the bus after this handle is
+  // released; the node lists the actors spawned on it so a stop that never
+  // completes can name which of them (or which of their suspended coroutine
+  // frames, through the actor's strong reference) is still holding the bus.
+  std::weak_ptr<B> weak_for_diagnostics() const {
+    return bus_;
+  }
+  // Weak on purpose: the node owns the bus object, so a strong reference here
+  // would itself keep the bus alive and defeat the stop it is meant to observe.
+  std::weak_ptr<const BusTreeNode> node_for_diagnostics() const {
+    return node_;
+  }
+
  private:
   template <BusType Other>
   friend class BusHandle;

@@ -151,6 +151,12 @@ struct QueryFinalizationState {
     size_t finalizations_stalled_permanently = 0;
     // Conversion attempts made for the queried slot.
     size_t slot_attempts = 0;
+    // Callers parked on this resolver at the time of the query: coroutines waiting for an
+    // in-flight finalization to deliver a verdict, and callers waiting for a state
+    // resolution someone else started. A stop must fail every one of them; a count that
+    // survives teardown is a coroutine that will never run again and holds the actor.
+    size_t inflight_waiters = 0;
+    size_t state_waiters = 0;
   };
 
   using ReturnType = Result;
