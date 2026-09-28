@@ -453,9 +453,7 @@ void OverlayImpl::alarm() {
 
   if (overlay_type_ != OverlayType::FixedMemberList) {
     if (has_valid_membership_certificate()) {
-      auto send_random_peers_query = [&](const adnl::AdnlNodeIdShort &peer) {
-        send_random_peers(peer, {});
-      };
+      auto send_random_peers_query = [&](const adnl::AdnlNodeIdShort &peer) { send_random_peers(peer, {}); };
       auto neighbour_id = adnl::AdnlNodeIdShort::zero();
       if (auto neighbour = get_random_neighbour_peer()) {
         neighbour_id = neighbour->get_id();
