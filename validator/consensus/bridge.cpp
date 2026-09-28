@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <atomic>
 #include <cerrno>
 #include <mutex>
 
@@ -55,21 +56,23 @@ std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
 
 namespace {
 
-// Wait for the consensus bus to stop. Every 10 s without completion, report the
-// remaining bus handle count and the spawned actors whose objects are still
-// alive, so a session that never releases can be attributed.
-td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waiter,
-                                                  std::weak_ptr<simplex::Bus> weak_bus,
-                                                  std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
-                                                  std::string name) {
-  for (int waited = 0; !waiter.await_ready() && waited < 120; waited += 10) {
+// Report, every 10 s, a consensus bus that has not stopped yet: the remaining
+// references to the bus and the spawned actors whose objects are still alive.
+// It runs beside the real wait and never delays it; it ends as soon as the
+// stop completes. The reference count includes the one the bus tree node
+// itself holds, so a bus kept alive by a single surviving actor shows two.
+td::actor::Task<> report_bus_stop_pending(std::shared_ptr<std::atomic<bool>> stopped,
+                                          std::weak_ptr<simplex::Bus> weak_bus,
+                                          std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
+                                          std::string name) {
+  for (int waited = 10; waited <= 120; waited += 10) {
     co_await td::actor::coro_sleep(td::Timestamp::in(10.0));
-    if (waiter.await_ready()) {
-      break;
+    if (stopped->load(std::memory_order_acquire)) {
+      co_return td::Unit{};
     }
     td::StringBuilder sb;
-    sb << "MEMORY_DIAGNOSTICS bus-stop-pending group=" << name << " waited_s=" << (waited + 10)
-       << " bus_handles=" << weak_bus.use_count() << " live_actors=";
+    sb << "MEMORY_DIAGNOSTICS bus-stop-pending group=" << name << " waited_s=" << waited
+       << " bus_refs=" << weak_bus.use_count() << " live_actors=";
     bool first = true;
     if (auto node = weak_node.lock()) {
       for (const auto& owned : node->owned_actors) {
@@ -86,7 +89,18 @@ td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waite
     }
     LOG(WARNING) << sb.as_cslice();
   }
+  co_return td::Unit{};
+}
+
+// Wait for the consensus bus to stop, with the pending-stop report running
+// alongside. The wait itself is the plain await it always was.
+td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waiter, std::weak_ptr<simplex::Bus> weak_bus,
+                                                  std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
+                                                  std::string name) {
+  auto stopped = std::make_shared<std::atomic<bool>>(false);
+  report_bus_stop_pending(stopped, std::move(weak_bus), std::move(weak_node), std::move(name)).start().detach();
   co_await std::move(waiter);
+  stopped->store(true, std::memory_order_release);
   co_return td::Unit{};
 }
 
