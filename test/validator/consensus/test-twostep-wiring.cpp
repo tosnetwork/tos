@@ -483,18 +483,20 @@ class Fixture {
       ++required[id];
     for (const auto& id : entries(true))
       ++required[id];
-    wait_for([&] {
-      std::map<ValidatorSessionId, size_t> observed;
-      size_t expected_overlays = 0;
-      for (const auto& bus : buses) {
-        ++observed[bus->session_id];
-        expected_overlays +=
-            (bus->is_validator() || bus->config.observers_in_private_overlay()) + bus->config.enable_block_sync();
-      }
-      return overlays.size() == expected_overlays &&
-             std::all_of(required.begin(), required.end(),
-                         [&](const auto& row) { return observed[row.first] >= row.second; });
-    }, "registered sessions or their overlays did not start");
+    wait_for(
+        [&] {
+          std::map<ValidatorSessionId, size_t> observed;
+          size_t expected_overlays = 0;
+          for (const auto& bus : buses) {
+            ++observed[bus->session_id];
+            expected_overlays +=
+                (bus->is_validator() || bus->config.observers_in_private_overlay()) + bus->config.enable_block_sync();
+          }
+          return overlays.size() == expected_overlays &&
+                 std::all_of(required.begin(), required.end(),
+                             [&](const auto& row) { return observed[row.first] >= row.second; });
+        },
+        "registered sessions or their overlays did not start");
   }
   std::vector<ValidatorSessionId> entries(bool future = false) {
     std::optional<std::vector<ValidatorSessionId>> result;
@@ -707,9 +709,8 @@ TEST(TwostepWiring, TotalSetSwitchRecreatesActiveAndObservers) {
   f.advance(outgoing);
   const auto tentative = f.entries(true);
   ASSERT_EQ(tentative.size(), 1u);
-  auto prepared = std::find_if(f.buses.begin(), f.buses.end(), [&](const auto& bus) {
-    return bus->is_validator() && bus->session_id == tentative[0];
-  });
+  auto prepared = std::find_if(f.buses.begin(), f.buses.end(),
+                               [&](const auto& bus) { return bus->is_validator() && bus->session_id == tentative[0]; });
   ASSERT_TRUE(prepared != f.buses.end());
   ASSERT_TRUE((*prepared)->all_current_validators == f.current.ids());
   auto incoming = f.initial();
@@ -722,9 +723,9 @@ TEST(TwostepWiring, TotalSetSwitchRecreatesActiveAndObservers) {
     auto snapshot = outgoing;
     snapshot.new_ids = new_ids;
     auto options = block::validator_session_options_hash(StateConfig(snapshot).get_consensus_config());
-    return block::derive_validator_session_identity(
-               3, options, hash("protocol-2"), ShardIdFull{masterchainId},
-               incoming.committee->get_catchain_seqno(), incoming.committee->export_vector(), 0, key, new_ids)
+    return block::derive_validator_session_identity(3, options, hash("protocol-2"), ShardIdFull{masterchainId},
+                                                    incoming.committee->get_catchain_seqno(),
+                                                    incoming.committee->export_vector(), 0, key, new_ids)
         .session_id;
   };
   ASSERT_TRUE(tentative[0] == identity(0, true));

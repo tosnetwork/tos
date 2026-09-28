@@ -6,9 +6,9 @@
 #include "td/utils/tests.h"
 
 namespace {
-td::Bits256 bits(unsigned char value) {
+td::Bits256 bits(int value) {
   auto result = td::Bits256::zero();
-  result.as_slice().fill(value);
+  result.as_slice().fill(static_cast<char>(value));
   return result;
 }
 td::Ref<block::ValidatorSet> validators(int label, bool shared_address = false) {

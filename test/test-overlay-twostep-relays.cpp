@@ -151,7 +151,7 @@ class Fixture {
       for (size_t i = 0; i < online_; ++i) {
         td::actor::send_closure(keyring_, &keyring::Keyring::add_key, keys_[i], true, [](td::Result<>) {});
         td::actor::send_closure(adnl_, &adnl::Adnl::add_id, adnl::AdnlNodeIdFull{keys_[i].compute_public_key()},
-                                address, 0);
+                                address, td::uint8{0});
       }
       manager_ = td::actor::create_actor<OverlayManager>("relay overlays", directory_, keyring_.get(), adnl_.get(),
                                                          td::actor::ActorId<dht::Dht>{});
