@@ -3,6 +3,7 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 UNITS=(tos-pq-dht tos-pq-validator@1 tos-pq-validator@2 tos-pq-validator@3 tos-pq-validator@4 tos-pq-observer@5 tos-pq-observer@6 tos-pq-lite-client)
+[[ ! -f /data/configs/node-7.json ]] || UNITS+=(tos-pq-validator@7 tos-pq-elections)
 case "${1:-status}" in
     install) sudo systemctl daemon-reload; sudo systemctl enable "${UNITS[@]}" ;;
     start) sudo systemctl start "${UNITS[@]}" ;;

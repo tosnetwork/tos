@@ -223,13 +223,41 @@ async def prepare(args):
         network.config.global_version = 18
         network.config.deployment_fee_schedule = True
         network.config.shard_validators = 4
-        # This is a persistent local rehearsal, not an election lifecycle test.
-        network.config.bootstrap_validator_set_valid_for = 30 * 86400
+        rotating = args.rotate
+        controllers = {}
+        if rotating:
+            from tostester.pq_election_fixture import (
+                compile_controller_code,
+                make_controller_fixture,
+            )
+            from tostester.pq_initial_validator import deterministic_pq_initial_validator_seed
+
+            election_dir = data / "elections"
+            election_dir.mkdir(mode=0o700)
+            code = compile_controller_code(network.install, election_dir / "controller")
+            network.config.validator_economics_profile = True
+            network.config.validator_election_stage_a_profile = True
+            network.config.validator_election_stage_a_elected_for = 600
+            network.config.validator_election_stage_a_start_before = 300
+            network.config.validator_election_experiment_faucet_balance_nanotos = (
+                1_000_000_000 * 10**9
+            )
+            network.config.validator_controller_code_hash = code.hash
+            for idx in (1, 2, 3, 4, 7):
+                controllers[idx] = make_controller_fixture(
+                    network.install, election_dir / "keys", code, idx
+                )
+        network.config.bootstrap_validator_set_valid_for = 600 if rotating else 30 * 86400
         dht = network.create_dht_node()
         nodes = []
-        for _ in range(4):
+        for idx in range(1, 5):
             node = network.create_full_node()
-            node.make_initial_pq_validator(os.urandom(32), os.urandom(32))
+            if rotating:
+                node.make_initial_pq_validator(
+                    controllers[idx].address.hash_part, deterministic_pq_initial_validator_seed(idx)
+                )
+            else:
+                node.make_initial_pq_validator(os.urandom(32), os.urandom(32))
             node.announce_to(dht)
             nodes.append(node)
         for _ in range(OBSERVER_COUNT):
@@ -238,6 +266,49 @@ async def prepare(args):
             node._local_config.validators = []
             node.announce_to(dht)
             nodes.append(node)
+        if rotating:
+            candidate = network.create_full_node()
+            candidate.make_noninitial_pq_validator(
+                controllers[7].address.hash_part, deterministic_pq_initial_validator_seed(7)
+            )
+            candidate.announce_to(dht)
+            nodes.append(candidate)
+            for idx, controller in controllers.items():
+                node = nodes[idx - 1]
+                write_json(
+                    election_dir / f"candidate-{idx}.json",
+                    {
+                        "node": idx,
+                        "controller": controller.address.to_str(is_user_friendly=False),
+                        "state_init_b64": base64.b64encode(
+                            controller.state_init.serialize().to_boc()
+                        ).decode(),
+                        "witness_b64": base64.b64encode(controller.birth_witness.to_boc()).decode(),
+                        "key_id": controller.consensus.key_id.hex(),
+                        "public_key": controller.consensus.public_key.hex(),
+                        "adnl_id": node.validator_key.id.hex(),
+                    },
+                )
+                write_json(
+                    election_dir / f"console-{idx}.private.json",
+                    tos_api.EngineConsoleClient_config(
+                        address=node._engine_console_addr.address,
+                        server_public_key=node._engine_console_server_key.public_key,
+                        client_private_key=node._engine_console_client_key.private_key,
+                    ).to_dict(),
+                    mode=0o600,
+                )
+            write_json(
+                election_dir / "plan.json",
+                {
+                    "elected_for": 600,
+                    "start_before": 300,
+                    "end_before": 60,
+                    "stake_held_for": 180,
+                    "rosters": [[1, 2, 3, 7], [1, 2, 3, 4]],
+                    "scope": "local-development-only",
+                },
+            )
         zs = network._get_or_generate_zerostate()
         ports = []
         for i, node in enumerate(nodes, 1):
@@ -253,7 +324,11 @@ async def prepare(args):
             ports.append(
                 {
                     "idx": i,
-                    "role": "validator" if i <= VALIDATOR_COUNT else "observer",
+                    "role": "validator"
+                    if i <= VALIDATOR_COUNT
+                    else "candidate"
+                    if i == 7
+                    else "observer",
                     "directory": str(node._directory),
                     "validator_port": node._addr.port,
                     "liteserver_port": node._liteserver_addr.port,
@@ -264,7 +339,7 @@ async def prepare(args):
                             "validator_id": node.pq_initial_validator.validator_id.hex(),
                             "pq_key_id": node.pq_initial_validator.key_id.hex(),
                         }
-                        if i <= VALIDATOR_COUNT
+                        if node.pq_initial_validator is not None
                         else {}
                     ),
                 }
@@ -294,7 +369,10 @@ async def prepare(args):
                 "genesis_wallet_address": zs.main_wallet_address.to_str(is_user_friendly=False),
                 "zerostate_root": zs.masterchain.root_hash.hex(),
                 "zerostate_file": zs.masterchain.file_hash.hex(),
-                "genesis_validator_set_expires_unix": int(time.time()) + 30 * 86400,
+                "genesis_validator_set_expires_unix": int(time.time())
+                + (600 if rotating else 30 * 86400),
+                "election_period_seconds": 600 if rotating else None,
+                "candidates": 1 if rotating else 0,
                 "scope": "local-development",
             },
         )
@@ -310,7 +388,7 @@ async def prepare(args):
         observer_lite = {
             "liteservers": [
                 json.loads(n.liteserver_config.to_json())["liteservers"][0]
-                for n in nodes[VALIDATOR_COUNT:]
+                for n in nodes[VALIDATOR_COUNT : VALIDATOR_COUNT + OBSERVER_COUNT]
             ]
         }
         write_json(export / "observers-lite.json", observer_lite)
@@ -370,7 +448,20 @@ async def wait_network(args):
                 raise RuntimeError("live ConfigParam8 version must be 18")
             validator_cell = Cell.one_from_boc(base64.b64decode(validators["config"]["bytes"]))
             decoded = decode_validator_set(validator_cell)
-            validate_pq_set(decoded, validator_ports)
+            if any(n.get("role") == "candidate" for n in ports):
+                by_id = {n["idx"]: n for n in ports}
+                allowed = [(1, 2, 3, 4), (1, 2, 3, 7)]
+                errors = []
+                for roster in allowed:
+                    try:
+                        validate_pq_set(decoded, [by_id[i] for i in roster])
+                        break
+                    except RuntimeError as exc:
+                        errors.append(str(exc))
+                else:
+                    raise RuntimeError("current elected PQ set differs from both rotation rosters")
+            else:
+                validate_pq_set(decoded, validator_ports)
             return {
                 "height": height,
                 "block_id": headers[0]["id"],
@@ -510,6 +601,11 @@ async def main():
     parser.add_argument("--data", type=Path, default=Path("/data"))
     parser.add_argument("--build", type=Path, default=REPO / "build")
     parser.add_argument("--timeout", type=float, default=240)
+    parser.add_argument(
+        "--rotate",
+        action="store_true",
+        help="Development-only 600-second elections with candidate node 7",
+    )
     args = parser.parse_args()
     if args.command == "plan":
         write_plan(args.data)

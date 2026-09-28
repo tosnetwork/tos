@@ -244,6 +244,7 @@ void BroadcastsTwostep::signed_simple(OverlayImpl *overlay, BroadcastTwostepData
       data.flags, data.date, V.second.tl(), overlay->local_id().bits256_value(),
       cert ? cert->tl() : Certificate::empty_tl(), std::move(data.data), std::move(data.extra), std::move(V.first));
   for (auto &dst : data.dsts) {
+    VLOG(TWOSTEP_INFO) << "twostep FIRST_HOP sender broadcast_id=" << data.broadcast_id.to_hex() << " to=" << dst;
     td::actor::send_closure(overlay->overlay_manager(), &Overlays::send_message_via, dst, overlay->local_id(),
                             overlay->overlay_id(), broadcast.clone(), sender_);
   }

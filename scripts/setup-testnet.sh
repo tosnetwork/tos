@@ -6,19 +6,21 @@ BUILD="$REPO/build"
 CLEAN=0
 DO_BUILD=0
 PLAN_ONLY=0
+ROTATE=0
 for arg in "$@"; do
     case "$arg" in
         --clean) CLEAN=1 ;;
         --build) DO_BUILD=1 ;;
         --plan-only) PLAN_ONLY=1 ;;
-        *) echo "Usage: sudo $0 [--build] [--clean] [--plan-only]"; exit 2 ;;
+        --rotate) ROTATE=1 ;;
+        *) echo "Usage: sudo $0 [--build] [--clean] [--plan-only] [--rotate]"; exit 2 ;;
     esac
 done
 [[ $EUID -eq 0 ]] || { echo 'Run with sudo'; exit 1; }
 exec 9>/run/lock/tos-pq-setup.lock
 flock -n 9 || { echo 'Another setup is running'; exit 1; }
 if [[ $PLAN_ONLY == 1 ]]; then
-    [[ $CLEAN == 0 && $DO_BUILD == 0 ]] || { echo '--plan-only cannot build or clean'; exit 2; }
+    [[ $CLEAN == 0 && $DO_BUILD == 0 && $ROTATE == 0 ]] || { echo '--plan-only cannot build, clean, or enable rotation'; exit 2; }
     exec python3 "$REPO/scripts/local_pq_testnet.py" plan
 fi
 CALLER="${SUDO_USER:-root}"
@@ -70,14 +72,14 @@ TOS_ROOT="$REPO" "$POOL_GENERATOR" "$REPO" "$STAGING/pool"
 if [[ -d /data ]] && [[ -n "$(find /data -mindepth 1 -maxdepth 1 -print -quit)" ]] && [[ $CLEAN != 1 ]]; then
     echo '/data contains an existing network. Use --clean to replace all of its data.'; exit 1
 fi
-for unit in tos-pq-lite-client tos-pq-observer@5 tos-pq-observer@6 tos-dht tos-pq-dht; do systemctl disable --now "$unit" 2>/dev/null || true; done
+for unit in tos-pq-elections tos-pq-lite-client tos-pq-observer@5 tos-pq-observer@6 tos-dht tos-pq-dht; do systemctl disable --now "$unit" 2>/dev/null || true; done
 for i in $(seq 1 20); do
     for prefix in tos-validator tos-pq-validator; do
         systemctl stop "$prefix@$i" 2>/dev/null || true
         systemctl disable "$prefix@$i" 2>/dev/null || true
     done
 done
-for unit in tos-pq-lite-client tos-pq-observer@{5,6} tos-dht tos-pq-dht tos-validator@{1,2,3,4} tos-pq-validator@{1,2,3,4}; do
+for unit in tos-pq-lite-client tos-pq-observer@{5,6} tos-dht tos-pq-dht tos-validator@{1,2,3,4} tos-pq-validator@{1,2,3,4,7}; do
     pid=$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)
     [[ -z "$pid" || "$pid" == 0 ]] || { echo "Refusing to reset data: $unit still owns PID $pid"; exit 1; }
 done
@@ -103,7 +105,9 @@ cp -a crypto/fift/lib/. /usr/local/share/tos/fift/lib/
 cp -a crypto/smartcont/. /usr/local/share/tos/smartcont/
 cp -a "$BUILD/crypto/smartcont/auto" /usr/local/share/tos/smartcont/
 cp -a "$STAGING/pool" /data/shielded-pool
-"$UV" run python scripts/local_pq_testnet.py prepare
+PREPARE_ARGS=()
+[[ $ROTATE == 0 ]] || PREPARE_ARGS+=(--rotate)
+"$UV" run python scripts/local_pq_testnet.py prepare "${PREPARE_ARGS[@]}"
 chown -R tos:tos /data
 chmod 0755 /data/shielded-pool /data/configs
 chmod 0644 /data/shielded-pool/* /data/configs/*
@@ -128,16 +132,40 @@ busy=os.cpu_count()*(1-(d[3]+d[4])/max(1,sum(d)))
 m=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
 total=int(m['MemTotal'].split()[0]); available=int(m['MemAvailable'].split()[0])
 print(f'Network admission: CPU used {busy:.1f}/{os.cpu_count()}, memory available {available/1024**2:.1f} GiB')
-if busy+27 > os.cpu_count()*2/3 or total-available+26*1024**2 > total*2/3:
+if busy+32 > os.cpu_count()*2/3 or total-available+31*1024**2 > total*2/3:
     raise SystemExit('Network resource budget unavailable')
-for port in [*range(2001,2020), *range(8011,8017)]:
+for port in [*range(2001,2023), *range(8011,8018)]:
     for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
         with socket.socket(socket.AF_INET, kind) as s:
             s.bind(('127.0.0.1',port))
 CHECK
 systemctl enable --now tos-pq-dht tos-pq-validator@{1,2,3,4} tos-pq-observer@{5,6}
+if [[ $ROTATE == 1 ]]; then
+    systemctl enable --now tos-pq-validator@7
+    cat > /etc/systemd/system/tos-pq-elections.service <<UNIT
+[Unit]
+Description=TOS development ten-minute PQ elections
+After=tos-pq-validator@1.service tos-pq-validator@7.service
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=$REPO
+Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
+ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-elections.py
+Restart=no
+CPUQuota=100%
+MemoryMax=1G
+KillMode=control-group
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+fi
 "$UV" run python scripts/local_pq_testnet.py deploy
 chown -R tos:tos /data/shielded-pool
 systemctl enable --now tos-pq-lite-client
+[[ $ROTATE == 0 ]] || systemctl enable --now tos-pq-elections
 printf '\nFour PQ validators, two observers, lite-client and the local development pool are running.\n'
 "$REPO/scripts/testnet-ctl.sh" status
