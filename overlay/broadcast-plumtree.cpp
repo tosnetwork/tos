@@ -39,8 +39,8 @@
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "td/utils/common.h"
-#include "td/utils/port/Clocks.h"
 #include "td/utils/memory-tracker.h"
+#include "td/utils/port/Clocks.h"
 #include "td/utils/tl_helpers.h"
 #include "tl-utils/common-utils.hpp"
 
@@ -954,8 +954,8 @@ void BroadcastsPlumtree::Impl::send_repair_requests(OverlayImpl *overlay, const 
     const auto &dst = target.peer;
     // Membership and source permissions may expire or change after the IHAVE.
     bool authorized = overlay->check_src_peer(dst, nullptr) &&
-                      overlay->check_source_eligible(target.source, target.certificate.get(), target.data_size,
-                                                      true, false, dst) == BroadcastCheckResult::Allowed;
+                      overlay->check_source_eligible(target.source, target.certificate.get(), target.data_size, true,
+                                                     false, dst) == BroadcastCheckResult::Allowed;
     if (authorized && !target.signature_verified) {
       ++deferred_signature_checks_;
       target.signature_verified =
@@ -1778,7 +1778,8 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_ihave(OverlayImpl *overlay, 
     auto &missing = *existing_missing->second;
     if (std::any_of(missing.repair_targets.begin(), missing.repair_targets.end(),
                     [&](const auto &target) { return target.peer == from; }) ||
-        missing.repair_targets.size() >= std::min<std::size_t>(options_.max_repair_targets_, PLUMTREE_MAX_REPAIR_TARGETS)) {
+        missing.repair_targets.size() >=
+            std::min<std::size_t>(options_.max_repair_targets_, PLUMTREE_MAX_REPAIR_TARGETS)) {
       co_return td::Unit{};
     }
   }
@@ -1812,8 +1813,8 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_ihave(OverlayImpl *overlay, 
                   [](const auto &target) { return target.signature_verified; });
   // Only redundant candidates for an already authenticated missing part may
   // retain the current fixed-size network signature for lazy verification.
-  bool defer_signature = has_authenticated_target && source_key.is_ed25519() && msg->signature_.size() == 64 &&
-                         to_sign.size() <= 88;
+  bool defer_signature =
+      has_authenticated_target && source_key.is_ed25519() && msg->signature_.size() == 64 && to_sign.size() <= 88;
   if (!defer_signature) {
     ++immediate_signature_checks_;
     CO_TRY(overlay->check_signature_from_peer(source_key, to_sign, msg->signature_, from));
@@ -1826,15 +1827,15 @@ td::actor::Task<> BroadcastsPlumtree::Impl::process_ihave(OverlayImpl *overlay, 
   }
   if (missing->repair_targets.size() <
       std::min<std::size_t>(options_.max_repair_targets_, PLUMTREE_MAX_REPAIR_TARGETS)) {
-    missing->repair_targets.push_back(PlumtreeRepairTarget{
-        .peer = from,
-        .source = source_hash,
-        .certificate = std::move(cert),
-        .source_key = defer_signature ? std::move(source_key) : PublicKey{},
-        .to_sign = defer_signature ? std::move(to_sign) : td::BufferSlice{},
-        .signature = defer_signature ? std::move(msg->signature_) : td::BufferSlice{},
-        .data_size = data_size,
-        .signature_verified = !defer_signature});
+    missing->repair_targets.push_back(
+        PlumtreeRepairTarget{.peer = from,
+                             .source = source_hash,
+                             .certificate = std::move(cert),
+                             .source_key = defer_signature ? std::move(source_key) : PublicKey{},
+                             .to_sign = defer_signature ? std::move(to_sign) : td::BufferSlice{},
+                             .signature = defer_signature ? std::move(msg->signature_) : td::BufferSlice{},
+                             .data_size = data_size,
+                             .signature_verified = !defer_signature});
   }
   if (local_eager_limit_ == 0 || s->eager.empty()) {
     send_repair_requests(overlay, key, *missing);
