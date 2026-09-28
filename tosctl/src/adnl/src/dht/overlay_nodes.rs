@@ -51,7 +51,8 @@ pub(super) fn merge_overlay_nodes(
         result.ttl = result.ttl.max(old.ttl);
     }
     loop {
-        let bytes = serialize_boxed(&OverlayNodesDescriptor { nodes: merged.clone() }.into_boxed())?;
+        let bytes =
+            serialize_boxed(&OverlayNodesDescriptor { nodes: merged.clone() }.into_boxed())?;
         if bytes.len() <= MAX_OVERLAY_NODES_BYTES {
             result.value = bytes.into();
             return Ok(result);
@@ -92,7 +93,11 @@ mod tests {
         Ok(DhtValue {
             key: KeyDescription {
                 id: tl_api::tos::pub_::publickey::Overlay { name: vec![9; 32].into() }.into_boxed(),
-                key: Key { id: UInt256::with_array([9; 32]), idx: 0, name: b"nodes".to_vec().into() },
+                key: Key {
+                    id: UInt256::with_array([9; 32]),
+                    idx: 0,
+                    name: b"nodes".to_vec().into(),
+                },
                 update_rule: UpdateRule::Dht_UpdateRule_OverlayNodes,
                 signature: Default::default(),
             },
