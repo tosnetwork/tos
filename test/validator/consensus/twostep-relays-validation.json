@@ -1,0 +1,815 @@
+{
+  "base_commit": "2483ea590b736f018a0fac8daf190510e0cef506",
+  "implementation_commit": "e4bf266bf6b1b7b9a7bf80c0e727afb94c9bd531",
+  "memo_commit": "78b40fd436a34bfbe18e5aafbb649c10890e13df",
+  "work_order_sha256": "fec835d7dc5d94a3ba52ece5a04c744d5c7c8f283291fe7074e39f58e22ec5f3",
+  "build": {
+    "compiler": "Clang 21.1.8",
+    "configuration": "Release",
+    "USE_QUIC": true,
+    "command": [
+      "cmake",
+      "--build",
+      "build",
+      "--target",
+      "create-state",
+      "plumtree-graph-sim",
+      "test-certificate-conformance",
+      "test-config-transition",
+      "test-consensus",
+      "test-consensus-config-admission",
+      "test-consensus-db-path",
+      "test-consensus-key-file",
+      "test-consensus-verify",
+      "test-current-validator-adnl-ids",
+      "test-merkle-prospective-notar",
+      "test-node-consensus-membership",
+      "test-overlay-broadcast-capacity",
+      "test-overlay-content-metrics",
+      "test-overlay-peer-cleanup",
+      "test-overlay-plumtree-policy",
+      "test-overlay-plumtree-repair",
+      "test-overlay-plumtree-stats",
+      "test-overlay-twostep-relays",
+      "test-pq-block-signature-conformance",
+      "test-pq-block-signature-no-legacy",
+      "test-pq-block-signature-vectors",
+      "test-pq-broadcast-semantics",
+      "test-pq-bytes",
+      "test-pq-carrier-capacity",
+      "test-pq-consensus",
+      "test-pq-lite-forward-proof",
+      "test-pq-signature-persistence",
+      "test-pq-signature-tl-vectors",
+      "test-pq-signer",
+      "test-pq-vote-body",
+      "test-simplex-carrier-bound",
+      "test-twostep-wiring",
+      "test-validator-auth-policy",
+      "test-validator-cleanup",
+      "test-validator-cleanup-integration",
+      "test-validator-cleanup-statedb",
+      "test-validator-cleanup-worker",
+      "test-validator-options",
+      "test-validator-transport-authority",
+      "tos-pq-consensus-key",
+      "validator-session-derivation-vectors-gen",
+      "test-c04-real-state-proof",
+      "test-n5-manager-db-fixture",
+      "test-notarize-after-transient-resolve",
+      "-j8"
+    ],
+    "exit": 0,
+    "admission": {
+      "cpu_used": 5.119732301578992,
+      "cores": 192,
+      "memory_used_gib": 12.210968017578125,
+      "memory_total_gib": 125.47024917602539,
+      "additional_cpu": 8,
+      "additional_memory_gib": 16
+    }
+  },
+  "regressions": {
+    "command": [
+      "ctest",
+      "--test-dir",
+      "build",
+      "--output-on-failure",
+      "-j4",
+      "--output-junit",
+      "build/twostep-validation-20260928/regressions.xml",
+      "-R",
+      "^(plumtree\\-graph\\-sim\\-smoke|plumtree\\-graph\\-sim\\-simple\\-smoke|plumtree\\-graph\\-sim\\-loss|plumtree\\-graph\\-sim\\-simple\\-loss|plumtree\\-graph\\-sim\\-partition\\-recovery|plumtree\\-graph\\-sim\\-selective\\-forwarding|plumtree\\-graph\\-sim\\-rotating\\-outage|plumtree\\-graph\\-sim\\-simple\\-selective\\-forwarding|plumtree\\-graph\\-sim\\-simple\\-rotating\\-outage|plumtree\\-graph\\-sim\\-fec\\-stress|plumtree\\-graph\\-sim\\-simple\\-stress|test\\-overlay\\-plumtree\\-stats|test\\-overlay\\-content\\-metrics|test\\-overlay\\-peer\\-cleanup|test\\-overlay\\-plumtree\\-policy|test\\-overlay\\-twostep\\-relays|test\\-current\\-validator\\-adnl\\-ids|test\\-overlay\\-plumtree\\-repair|test\\-overlay\\-broadcast\\-capacity|test\\-pq\\-signature\\-persistence|test\\-validator\\-transport\\-authority|test\\-pq\\-lite\\-forward\\-proof|test\\-config\\-transition|test\\-consensus\\-db\\-path|test\\-validator\\-cleanup|test\\-validator\\-cleanup\\-statedb|test\\-validator\\-cleanup\\-worker|test\\-validator\\-cleanup\\-integration|test\\-node\\-consensus\\-membership|test\\-validator\\-options|test\\-consensus\\-config\\-admission|validator\\-session\\-assembly\\-source|consensus\\-key\\-tool|pq\\-consensus|consensus\\-key\\-file|pq\\-signer|pq\\-bytes|pq\\-vote\\-body|validator\\-session\\-derivation|validator\\-session\\-param30|validator\\-session\\-global\\-id|validator\\-session\\-local\\-override|validator\\-session\\-governing\\-snapshot|validator\\-session\\-session\\-path|validator\\-session\\-constructor\\-selection|validator\\-session\\-manager\\-assembly|validator\\-session\\-state\\-global\\-id|simplex\\-carrier\\-bound|pq\\-node\\-finality\\-carrier\\-capacity|pq\\-lite\\-forward\\-proof\\-carrier\\-capacity|pq\\-broadcast\\-semantic\\-roundtrip|pq\\-signature\\-tl\\-vectors|pq\\-block\\-signature\\-vectors|pq\\-block\\-signature\\-conformance|pq\\-finality\\-boundary\\-source|pq\\-block\\-signature\\-no\\-legacy|test\\-validator\\-auth\\-policy|test\\-twostep\\-wiring|consensus\\-verify|simplex\\-preimages|test\\-consensus\\-simplex2\\-candidate\\-relay\\-eviction|test\\-consensus\\-simplex2\\-state\\-resolver\\-cache\\-unit|test\\-consensus\\-simplex2\\-state\\-resolver\\-inflight\\-admission\\-unit|test\\-consensus\\-simplex2\\-merkle\\-exact\\-parent\\-height\\-control|test\\-consensus\\-simplex2\\-candidate\\-resolver\\-retention\\-unit|test\\-consensus\\-simplex2\\-candidate\\-resolver\\-interleaving\\-unit|test\\-consensus\\-simplex2\\-db\\-finalized\\-slot\\-dedup\\-unit|test\\-consensus\\-validator\\-manager\\-resource\\-policy\\-unit|test\\-consensus\\-simplex2\\-pq\\-state\\-resolver\\-catch\\-up|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-single|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-multi|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-21|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-100|test\\-consensus\\-simplex2\\-pq\\-finality\\-retry|test\\-consensus\\-simplex2\\-pq\\-finality\\-transient\\-recovery|test\\-consensus\\-simplex2\\-pq\\-finality\\-backpressure|test\\-consensus\\-simplex2\\-pq\\-finality\\-permanent|test\\-consensus\\-simplex2\\-pq\\-malicious\\-observer|test\\-consensus\\-simplex2\\-pq\\-relay\\-loop|test\\-consensus\\-simplex2\\-pq\\-adaptive\\-byzantine|test\\-consensus\\-simplex2\\-pq\\-manager\\-ingress\\-adversarial|test\\-consensus\\-simplex2\\-pq\\-byzantine\\-relay|test\\-consensus\\-simplex2\\-pq\\-query\\-abuse|test\\-consensus\\-simplex2\\-pq\\-loss|test\\-consensus\\-simplex2\\-pq\\-restart|test\\-consensus\\-simplex2\\-pq\\-partition|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-exact\\-ancestor|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-bounded\\-refusal|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-control|test\\-consensus\\-simplex2\\-merkle\\-peer\\-notar\\-leader\\-path|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-gate\\-control|simplex\\-exact\\-ancestor\\-source\\-guard|consensus\\-no\\-fallback|test\\-consensus\\-simplex2\\-vote\\-journal|test\\-consensus\\-simplex2\\-pq\\-empty\\-chain\\-restart|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-anchor|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-anchor\\-zerostate\\-control|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-origin|test\\-consensus\\-simplex2\\-pq\\-restart\\-permanent\\-origin|test\\-consensus\\-simplex2\\-codec\\-boundary|test\\-consensus\\-simplex2\\-genesis\\-config|test\\-c04\\-real\\-state\\-proof|test\\-n5\\-accept\\-block|test\\-n5\\-joined\\-finalcert|test\\-n5\\-cut1\\-finalcert\\-recovery|test\\-n5\\-cut2\\-signatures\\-recovery|test\\-n5\\-cut3\\-proof\\-recovery|test\\-n5\\-cut4\\-finalized\\-replay|test\\-n5\\-cut5\\-full\\-root\\-rebuild|test\\-n5\\-cut6\\-check\\-proof|test\\-n5\\-cold\\-continuation|test\\-n5\\-manager\\-db\\-fixture|c05\\-notarize\\-control|c05\\-notarize\\-genesis\\-notready|c05\\-notarize\\-genesis\\-timeout|c05\\-notarize\\-ancestor\\-notready|c05\\-notarize\\-permanent|c05\\-notarize\\-cancelled|c05\\-notarize\\-skip\\-before\\-recovery|c05\\-notarize\\-conflict\\-during\\-retry|c05\\-notarize\\-conflicting\\-cert\\-during\\-retry|c05\\-notarize\\-exhausted\\-notready|c05\\-notarize\\-simultaneous\\-recovery|c05\\-notarize\\-simultaneous\\-overbudget)$"
+    ],
+    "exit": 0,
+    "registered_cases": 124,
+    "passed": 124,
+    "failed": 0,
+    "skipped": 0,
+    "real_seconds": 77.03,
+    "selected_names": [
+      "plumtree-graph-sim-smoke",
+      "plumtree-graph-sim-simple-smoke",
+      "plumtree-graph-sim-loss",
+      "plumtree-graph-sim-simple-loss",
+      "plumtree-graph-sim-partition-recovery",
+      "plumtree-graph-sim-selective-forwarding",
+      "plumtree-graph-sim-rotating-outage",
+      "plumtree-graph-sim-simple-selective-forwarding",
+      "plumtree-graph-sim-simple-rotating-outage",
+      "plumtree-graph-sim-fec-stress",
+      "plumtree-graph-sim-simple-stress",
+      "test-overlay-plumtree-stats",
+      "test-overlay-content-metrics",
+      "test-overlay-peer-cleanup",
+      "test-overlay-plumtree-policy",
+      "test-overlay-twostep-relays",
+      "test-current-validator-adnl-ids",
+      "test-overlay-plumtree-repair",
+      "test-overlay-broadcast-capacity",
+      "test-pq-signature-persistence",
+      "test-validator-transport-authority",
+      "test-pq-lite-forward-proof",
+      "test-config-transition",
+      "test-consensus-db-path",
+      "test-validator-cleanup",
+      "test-validator-cleanup-statedb",
+      "test-validator-cleanup-worker",
+      "test-validator-cleanup-integration",
+      "test-node-consensus-membership",
+      "test-validator-options",
+      "test-consensus-config-admission",
+      "validator-session-assembly-source",
+      "consensus-key-tool",
+      "pq-consensus",
+      "consensus-key-file",
+      "pq-signer",
+      "pq-bytes",
+      "pq-vote-body",
+      "validator-session-derivation",
+      "validator-session-param30",
+      "validator-session-global-id",
+      "validator-session-local-override",
+      "validator-session-governing-snapshot",
+      "validator-session-session-path",
+      "validator-session-constructor-selection",
+      "validator-session-manager-assembly",
+      "validator-session-state-global-id",
+      "simplex-carrier-bound",
+      "pq-node-finality-carrier-capacity",
+      "pq-lite-forward-proof-carrier-capacity",
+      "pq-broadcast-semantic-roundtrip",
+      "pq-signature-tl-vectors",
+      "pq-block-signature-vectors",
+      "pq-block-signature-conformance",
+      "pq-finality-boundary-source",
+      "pq-block-signature-no-legacy",
+      "test-validator-auth-policy",
+      "test-twostep-wiring",
+      "consensus-verify",
+      "simplex-preimages",
+      "test-consensus-simplex2-candidate-relay-eviction",
+      "test-consensus-simplex2-state-resolver-cache-unit",
+      "test-consensus-simplex2-state-resolver-inflight-admission-unit",
+      "test-consensus-simplex2-merkle-exact-parent-height-control",
+      "test-consensus-simplex2-candidate-resolver-retention-unit",
+      "test-consensus-simplex2-candidate-resolver-interleaving-unit",
+      "test-consensus-simplex2-db-finalized-slot-dedup-unit",
+      "test-consensus-validator-manager-resource-policy-unit",
+      "test-consensus-simplex2-pq-state-resolver-catch-up",
+      "test-consensus-simplex2-pq-finality-e2e-single",
+      "test-consensus-simplex2-pq-finality-e2e-multi",
+      "test-consensus-simplex2-pq-finality-e2e-21",
+      "test-consensus-simplex2-pq-finality-e2e-100",
+      "test-consensus-simplex2-pq-finality-retry",
+      "test-consensus-simplex2-pq-finality-transient-recovery",
+      "test-consensus-simplex2-pq-finality-backpressure",
+      "test-consensus-simplex2-pq-finality-permanent",
+      "test-consensus-simplex2-pq-malicious-observer",
+      "test-consensus-simplex2-pq-relay-loop",
+      "test-consensus-simplex2-pq-adaptive-byzantine",
+      "test-consensus-simplex2-pq-manager-ingress-adversarial",
+      "test-consensus-simplex2-pq-byzantine-relay",
+      "test-consensus-simplex2-pq-query-abuse",
+      "test-consensus-simplex2-pq-loss",
+      "test-consensus-simplex2-pq-restart",
+      "test-consensus-simplex2-pq-partition",
+      "test-consensus-simplex2-merkle-prospective-notar-exact-ancestor",
+      "test-consensus-simplex2-merkle-prospective-notar-bounded-refusal",
+      "test-consensus-simplex2-merkle-prospective-notar-control",
+      "test-consensus-simplex2-merkle-peer-notar-leader-path",
+      "test-consensus-simplex2-merkle-prospective-notar-gate-control",
+      "simplex-exact-ancestor-source-guard",
+      "consensus-no-fallback",
+      "test-consensus-simplex2-vote-journal",
+      "test-consensus-simplex2-pq-empty-chain-restart",
+      "test-consensus-simplex2-pq-restart-transient-anchor",
+      "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
+      "test-consensus-simplex2-pq-restart-transient-origin",
+      "test-consensus-simplex2-pq-restart-permanent-origin",
+      "test-consensus-simplex2-codec-boundary",
+      "test-consensus-simplex2-genesis-config",
+      "test-c04-real-state-proof",
+      "test-n5-accept-block",
+      "test-n5-joined-finalcert",
+      "test-n5-cut1-finalcert-recovery",
+      "test-n5-cut2-signatures-recovery",
+      "test-n5-cut3-proof-recovery",
+      "test-n5-cut4-finalized-replay",
+      "test-n5-cut5-full-root-rebuild",
+      "test-n5-cut6-check-proof",
+      "test-n5-cold-continuation",
+      "test-n5-manager-db-fixture",
+      "c05-notarize-control",
+      "c05-notarize-genesis-notready",
+      "c05-notarize-genesis-timeout",
+      "c05-notarize-ancestor-notready",
+      "c05-notarize-permanent",
+      "c05-notarize-cancelled",
+      "c05-notarize-skip-before-recovery",
+      "c05-notarize-conflict-during-retry",
+      "c05-notarize-conflicting-cert-during-retry",
+      "c05-notarize-exhausted-notready",
+      "c05-notarize-simultaneous-recovery",
+      "c05-notarize-simultaneous-overbudget"
+    ],
+    "existing_disabled_cases": [
+      "test-consensus-simplex2-loss",
+      "test-consensus-simplex2-restart",
+      "test-consensus-simplex2-partition",
+      "test-consensus-simplex2-malicious-observer",
+      "test-consensus-simplex2-relay-loop",
+      "test-consensus-simplex2-adaptive-byzantine",
+      "test-consensus-simplex2-manager-ingress-adversarial",
+      "test-consensus-simplex2-query-abuse"
+    ],
+    "excluded_integration": [
+      "n6-live-finality-overlay"
+    ],
+    "admission": {
+      "cpu_used": 3.1051752921535822,
+      "cores": 192,
+      "memory_used_gib": 12.44717025756836,
+      "memory_total_gib": 125.47024917602539,
+      "additional_cpu": 16,
+      "additional_memory_gib": 16
+    },
+    "full_output_sha256": "89ce2226ff02d9a900e9dac8ab60c91af4c35332a76af088acbf9608f370c6a4",
+    "junit_sha256": "aa7ba376cb0994efda70149aff605461cb52d4979503ca27d5fe52080ee61e6f"
+  },
+  "mutations": [
+    {
+      "name": "sender-persistent",
+      "file": "overlay/broadcast-twostep.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test-overlay-twostep-relays",
+            "--filter",
+            "CurrentRelaysAndObserverDelivery"
+          ],
+          "exit": 1,
+          "intended_failure": "first_.size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:27.617532222][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (8 != 6)"
+          ]
+        },
+        {
+          "command": [
+            "build/test-overlay-twostep-relays",
+            "--filter",
+            "SimpleRelayCountFallback"
+          ],
+          "exit": 1,
+          "intended_failure": "first_.size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:28.470019407][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (6 != 3)"
+          ]
+        },
+        {
+          "command": [
+            "build/test-overlay-twostep-relays",
+            "--filter",
+            "OfflineNonCurrentRelays"
+          ],
+          "exit": 1,
+          "intended_failure": "first_.size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:29.384222408][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (20 != 6)"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 3.7441497659906418,
+        "cores": 192,
+        "memory_used_gib": 12.044837951660156,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-overlay-twostep-relays",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-offset--1",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test-current-validator-adnl-ids",
+            "--filter",
+            ""
+          ],
+          "exit": 1,
+          "intended_failure": "Expectation failed",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:36.346631989][test-current-validator-adnl-ids.cpp:35]\tExpectation failed: calls == std::vector<int>{0}!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 3.4473067915690905,
+        "cores": 192,
+        "memory_used_gib": 12.16021728515625,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-offset-1",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test-current-validator-adnl-ids",
+            "--filter",
+            ""
+          ],
+          "exit": 1,
+          "intended_failure": "Expectation failed",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:41.540183113][test-current-validator-adnl-ids.cpp:35]\tExpectation failed: calls == std::vector<int>{0}!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 2.8507423808283505,
+        "cores": 192,
+        "memory_used_gib": 12.314224243164062,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-union",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test-current-validator-adnl-ids",
+            "--filter",
+            ""
+          ],
+          "exit": 1,
+          "intended_failure": "Expectation failed",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:46.985966374][test-current-validator-adnl-ids.cpp:35]\tExpectation failed: calls == std::vector<int>{0}!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 1.195640892579135,
+        "cores": 192,
+        "memory_used_gib": 12.370849609375,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "predicate-nonpermanent",
+      "file": "overlay/overlay-peers.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test-overlay-twostep-relays",
+            "--filter",
+            "KnownNonPermanentPeer"
+          ],
+          "exit": 1,
+          "intended_failure": "!is_twostep_intermediate_node",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:43:59.371611368][test-overlay-twostep-relays.cpp:38][!relay overlay]\tCheck `!is_twostep_intermediate_node(non_permanent_id_)` failed"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 3.8918918918918948,
+        "cores": 192,
+        "memory_used_gib": 12.447628021240234,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-overlay-twostep-relays",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "factory-drop-active",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "!params_.all_current_validators.empty()",
+          "matched": [
+            "[ 0][t 1][2026-09-28 08:44:23.238033510][bridge.cpp:399][!valgroup(-1,8000000000000000).1]\tCheck `!params_.all_current_validators.empty()` failed"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 2.6992970580577946,
+        "cores": 192,
+        "memory_used_gib": 12.392601013183594,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "factory-drop-observer",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "!params_.all_current_validators.empty()",
+          "matched": [
+            "[ 0][t 1][2026-09-28 08:44:46.280904491][bridge.cpp:399][!valgroup(-1,8000000000000000).observer.1]\tCheck `!params_.all_current_validators.empty()` failed"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 4.185829223981308,
+        "cores": 192,
+        "memory_used_gib": 12.191261291503906,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "bus-drop",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "!bus.all_current_validators.empty()",
+          "matched": [
+            "[ 0][t 1][2026-09-28 08:45:09.679443489][private-overlay.cpp:99][!valgroup(-1,8000000000000000).1.PrivateOverlay]\tCheck `!bus.all_current_validators.empty()` failed"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 5.604378420641133,
+        "cores": 192,
+        "memory_used_gib": 12.084609985351562,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "manager-union",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "bus->all_current_validators == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:45:57.094773328][test-twostep-wiring.cpp:637]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 0.9477786438035949,
+        "cores": 192,
+        "memory_used_gib": 12.032894134521484,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "bridge-union",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "bus->all_current_validators == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:46:21.086902431][test-twostep-wiring.cpp:637]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 6.461779285155231,
+        "cores": 192,
+        "memory_used_gib": 12.00119400024414,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "private-option-drop",
+      "file": "validator/consensus/private-overlay.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ProtocolTwoCandidateThroughManagerObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "first_hops == remote",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:46:43.081171971][test-twostep-wiring.cpp:588]\tExpectation failed: first_hops == remote!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 3.7960457856399543,
+        "cores": 192,
+        "memory_used_gib": 12.138870239257812,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "blocksync-option-drop",
+      "file": "validator/consensus/block-sync-overlay.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ProtocolOneBlockSyncCandidateThroughManagerObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "row.relays == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:47:01.070468499][test-twostep-wiring.cpp:745]\tExpectation failed: row.relays == f.current.ids()!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 4.201094034904926,
+        "cores": 192,
+        "memory_used_gib": 12.155040740966797,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "epoch-prerequisite-bypass",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "EpochRefusalAndRecovery"
+          ],
+          "exit": 1,
+          "intended_failure": "f.entries().empty()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:47:49.793463811][test-twostep-wiring.cpp:655]\tExpectation failed: f.entries().empty()!"
+          ]
+        },
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "LegacyIdsRefusedEvenForExistingAndTentativeGroups"
+          ],
+          "exit": 1,
+          "intended_failure": "f.entries().empty()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 08:47:50.856706407][test-twostep-wiring.cpp:786]\tExpectation failed: f.entries().empty()!"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 5.158059467918626,
+        "cores": 192,
+        "memory_used_gib": 12.20779800415039,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "observer-empty-check-drop",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ObserverCreationFailureIsNotStarted"
+          ],
+          "exit": 1,
+          "intended_failure": "!empty()",
+          "matched": [
+            "[ 0][t 1][2026-09-28 08:48:39.399381246][ActorOwn.h:81][!relay manager]\tCheck `!empty()` failed"
+          ]
+        }
+      ],
+      "admission": {
+        "cpu_used": 1.197505197505187,
+        "cores": 192,
+        "memory_used_gib": 12.14019775390625,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    }
+  ],
+  "mutation_count": 14,
+  "mutation_executions": 17,
+  "focused_native_cases": 19,
+  "runtime_excerpt": [
+    "first hops=20 K=9 online=7",
+    "first hops=6 K=2 online=7",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: snapshot-at-creation requires new_catchain_ids=true]",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: current total validator set is missing or empty]",
+    "rotation old tentative=cqhzOMvzzTFz2ufFuItsh6iyW7uvSsXkf4so2hbkWD4= new active=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ=",
+    "candidate first hops=1 observers=2",
+    "candidate first hops=6 observers=6",
+    "candidate first hops=6 observers=6",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot is empty]",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot is empty]",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot contains a non-member]",
+    "refusing consensus bridge: [Error : 0 : two-step relays: current snapshot contains a non-member]",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: current total validator set is missing or empty]",
+    "refusing validator and observer groups: [Error : 0 : two-step relays: snapshot-at-creation requires new_catchain_ids=true]"
+  ]
+}
