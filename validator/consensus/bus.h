@@ -239,7 +239,7 @@ class Bus : public td::actor::Bus {
   std::optional<PeerValidator> local_id;
   adnl::AdnlNodeIdShort local_adnl_id;
   std::vector<adnl::AdnlNodeIdShort> all_validators;
-  std::set<adnl::AdnlNodeIdShort> all_current_validators;
+  std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators;
 
   NewConsensusConfig config;
 

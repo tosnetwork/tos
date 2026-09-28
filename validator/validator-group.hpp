@@ -33,8 +33,8 @@ namespace validator {
 class ValidatorManager;
 
 namespace consensus {
-td::Status validate_twostep_relay_snapshot(const std::vector<adnl::AdnlNodeIdShort>& members,
-                                           const std::set<adnl::AdnlNodeIdShort>& current);
+std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
+    const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current);
 }
 
 class IValidatorGroup : public td::actor::Actor {
@@ -45,19 +45,21 @@ class IValidatorGroup : public td::actor::Actor {
       td::Ref<block::ValidatorSet> validator_set, BlockSeqno last_key_block_seqno, NewConsensusConfig config,
       td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
       td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-      std::vector<adnl::AdnlNodeIdShort> all_validators, std::set<adnl::AdnlNodeIdShort> all_current_validators,
-      std::string db_root, td::actor::ActorId<ValidatorManager> validator_manager,
-      td::actor::ActorId<CollationManager> collation_manager, bool create_session, bool allow_unsafe_self_blocks_resync,
-      td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard);
+      std::vector<adnl::AdnlNodeIdShort> all_validators,
+      std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+      td::actor::ActorId<ValidatorManager> validator_manager, td::actor::ActorId<CollationManager> collation_manager,
+      bool create_session, bool allow_unsafe_self_blocks_resync, td::Ref<ValidatorManagerOptions> opts,
+      bool monitoring_shard);
 
   static td::actor::ActorOwn<IValidatorGroup> create_bridge_observer(
       td::Slice name, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id, ValidatorSessionId session_id,
       td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config,
       td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
       td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-      std::vector<adnl::AdnlNodeIdShort> all_validators, std::set<adnl::AdnlNodeIdShort> all_current_validators,
-      std::string db_root, td::actor::ActorId<ValidatorManager> validator_manager,
-      td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard);
+      std::vector<adnl::AdnlNodeIdShort> all_validators,
+      std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+      td::actor::ActorId<ValidatorManager> validator_manager, td::Ref<ValidatorManagerOptions> opts,
+      bool monitoring_shard);
 
   virtual void start(std::vector<BlockIdExt> prev, BlockIdExt min_masterchain_block_id) = 0;
   virtual void create_session() = 0;

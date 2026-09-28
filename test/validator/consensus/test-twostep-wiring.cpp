@@ -108,7 +108,6 @@ struct Snapshot {
   td::Ref<block::ValidatorSet> previous, current, next, committee, future;
   bool new_ids = true;
   unsigned protocol = 2;
-  bool fail_observer_creation = false;
 };
 class StateConfig : public ConfigHolder {
  public:
@@ -152,8 +151,6 @@ class State : public MasterchainStateQ {
       : MasterchainStateQ(id, vm::CellBuilder{}.finalize_novm()), snapshot_(std::move(snapshot)) {
   }
   td::Ref<block::ValidatorSet> get_total_validator_set(int offset) const override {
-    if (offset == 0 && snapshot_.fail_observer_creation && ++current_calls_ == 3)
-      return {};
     return offset < 0 ? snapshot_.previous : offset > 0 ? snapshot_.next : snapshot_.current;
   }
   td::Ref<block::ValidatorSet> get_validator_set(ShardIdFull) const override {
@@ -195,7 +192,6 @@ class State : public MasterchainStateQ {
 
  private:
   Snapshot snapshot_;
-  mutable int current_calls_ = 0;
 };
 std::recursive_mutex observation_mutex;
 struct ReceivedCandidate {
@@ -203,6 +199,7 @@ struct ReceivedCandidate {
   consensus::CandidateId id;
   PublicKeyHash source;
   ValidatorSessionId session;
+  overlay::OverlayIdShort overlay;
 };
 class CandidateCapture : public overlay::Overlays::Callback {
  public:
@@ -226,7 +223,7 @@ class CandidateCapture : public overlay::Overlays::Callback {
       if (bus->local_adnl_id == local_) {
         auto candidate = consensus::Candidate::deserialize(data.as_slice(), *bus, std::nullopt, metadata->slot_);
         if (candidate.is_ok()) {
-          received_.push_back({local_, candidate.ok()->id, src, bus->session_id});
+          received_.push_back({local_, candidate.ok()->id, src, bus->session_id, id});
           found = true;
           break;
         }
@@ -258,6 +255,7 @@ struct Observation {
   std::set<adnl::AdnlNodeIdShort> relays;
   std::set<PublicKeyHash> authorized;
   std::string name;
+  overlay::OverlayIdShort overlay;
 };
 class ObservedOverlays : public overlay::OverlayManager {
  public:
@@ -271,7 +269,7 @@ class ObservedOverlays : public overlay::OverlayManager {
                                  overlay::OverlayPrivacyRules rules, std::string scope,
                                  overlay::OverlayOptions options) override {
     std::lock_guard lock(observation_mutex);
-    Observation row{local, members, options.twostep_intermediate_nodes_, {}, options.name_};
+    Observation row{local, members, options.twostep_intermediate_nodes_, {}, options.name_, id.compute_short_id()};
     for (const auto& key : rules.get_authorized_keys())
       row.authorized.insert(key);
     observations_.push_back(std::move(row));
@@ -338,8 +336,11 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   }
   void tentative(td::Promise<std::vector<ValidatorSessionId>> promise) {
     std::vector<ValidatorSessionId> result;
-    for (const auto& entry : next_validator_groups_)
+    for (const auto& entry : next_validator_groups_) {
+      CHECK(!entry.second.actor.empty());
+      CHECK(!entry.second.started);
       result.push_back(entry.first);
+    }
     promise.set_value(std::move(result));
   }
   void wait_block_state_short(BlockIdExt, td::uint32, td::Timestamp, bool,
@@ -352,9 +353,8 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   void wait_block_data_short(BlockIdExt, td::uint32, td::Timestamp, td::Promise<td::Ref<BlockData>> promise) override {
     held_data_requests_.push_back(std::move(promise));
   }
-  void preflight(td::Promise<std::string> promise) {
-    auto result = get_current_validator_adnl_ids();
-    promise.set_value(result.is_error() ? result.error().message().str() : "ok");
+  void preflight(td::Promise<std::optional<std::set<adnl::AdnlNodeIdShort>>> promise) {
+    promise.set_value(get_twostep_relay_snapshot());
   }
   void finish() {
     for (auto& [id, entry] : validator_groups_)
@@ -436,7 +436,12 @@ class Fixture {
     pump();
   }
   ~Fixture() {
-    scheduler_.run_in_context([&] { td::actor::send_closure(manager_, &TwostepManagerProbe::finish); });
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::finish);
+      for (auto& actor : direct_groups_)
+        td::actor::send_closure(actor, &IValidatorGroup::destroy);
+      direct_groups_.clear();
+    });
     pump();
     scheduler_.run_in_context([&] {
       std::lock_guard lock(observation_mutex);
@@ -459,7 +464,7 @@ class Fixture {
     td::rmrf(root_).ensure();
   }
   Snapshot initial(unsigned protocol = 2) const {
-    return {old.set(1), current.set(1), next.set(2), current.set(1, 2), next.set(2), true, protocol, false};
+    return {old.set(1), current.set(1), next.set(2), current.set(1, 2), next.set(2), true, protocol};
   }
   void hold(Epoch& epoch, size_t i) {
     scheduler_.run_in_context(
@@ -515,40 +520,65 @@ class Fixture {
     wait_for([&] { return done.load(); }, "manager inspection did not complete");
     return *result;
   }
-  std::string preflight() {
-    std::optional<std::string> answer;
+  std::optional<std::set<adnl::AdnlNodeIdShort>> preflight() {
+    std::optional<std::set<adnl::AdnlNodeIdShort>> answer;
     std::atomic<bool> done = false;
     scheduler_.run_in_context([&] {
-      td::actor::send_closure(manager_, &TwostepManagerProbe::preflight,
-                              td::PromiseCreator::lambda([&](td::Result<std::string> value) {
-                                answer = value.move_as_ok();
-                                done = true;
-                              }));
+      td::actor::send_closure(
+          manager_, &TwostepManagerProbe::preflight,
+          td::PromiseCreator::lambda([&](td::Result<std::optional<std::set<adnl::AdnlNodeIdShort>>> value) {
+            answer = value.move_as_ok();
+            done = true;
+          }));
     });
     wait_for([&] { return done.load(); }, "manager preflight did not complete");
-    return *answer;
+    return answer;
   }
-  void refuse_factories(std::set<adnl::AdnlNodeIdShort> relays) {
+  std::set<adnl::AdnlNodeIdShort> all_members() const {
+    auto result = current.ids();
+    for (const auto* epoch : {&old, &next}) {
+      auto ids = epoch->ids();
+      result.insert(ids.begin(), ids.end());
+    }
+    return result;
+  }
+  void fallback_factory(std::set<adnl::AdnlNodeIdShort> relays, bool observer) {
+    const auto members = all_members();
+    static std::atomic<unsigned> factory_sequence = 0;
     scheduler_.run_in_context([&] {
-      auto members = current.ids();
       std::vector<adnl::AdnlNodeIdShort> broad(members.begin(), members.end());
       auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
-      auto active = IValidatorGroup::create_bridge(
-          "refused active", ShardIdFull{masterchainId}, current.members[0].validator_id, current.custody[0],
-          ValidatorSessionId{}, current.set(1, 2), 0, NewConsensusConfig{}, keys_.get(), adnl_.get(), sender_.get(),
-          overlays_.get(), broad, relays, root_, manager_.get(), {}, true, false, options, false);
-      auto observer = IValidatorGroup::create_bridge_observer(
-          "refused observer", ShardIdFull{masterchainId}, adnl::AdnlNodeIdShort{old.members[0].addr},
-          ValidatorSessionId{}, current.set(1, 2), NewConsensusConfig{}, keys_.get(), adnl_.get(), sender_.get(),
-          overlays_.get(), broad, relays, root_, manager_.get(), options, false);
-      ASSERT_TRUE(active.empty());
-      ASSERT_TRUE(observer.empty());
+      NewConsensusConfig config;
+      config.protocol_version = 2;
+      // Each direct call owns a different overlay, even on the same local id.
+      const auto session = hash(PSTRING() << "factory-" << observer << "-" << ++factory_sequence);
+      auto actor =
+          observer
+              ? IValidatorGroup::create_bridge_observer(
+                    "fallback observer", ShardIdFull{masterchainId}, adnl::AdnlNodeIdShort{old.members[0].addr},
+                    session, current.set(1, 2), config, keys_.get(), adnl_.get(), sender_.get(), overlays_.get(), broad,
+                    relays, root_, manager_.get(), options, false)
+              : IValidatorGroup::create_bridge(
+                    "fallback active", ShardIdFull{masterchainId}, current.members[0].validator_id, current.custody[0],
+                    session, current.set(1, 2), 0, config, keys_.get(), adnl_.get(), sender_.get(), overlays_.get(),
+                    broad, relays, root_, manager_.get(), {}, true, false, options, false);
+      ASSERT_TRUE(!actor.empty());
+      direct_groups_.push_back(std::move(actor));
     });
-    pump();
-    ASSERT_TRUE(buses.empty());
-    ASSERT_TRUE(overlays.empty());
+    // Wait for the actual overlay: removing normalization for an empty set must
+    // reach its invariant CHECK, rather than being masked by a test assertion.
+    wait_for([&] { return buses.size() == 1 && overlays.size() == 1; }, "factory overlay did not start");
+    ASSERT_TRUE(!buses.back()->all_current_validators);
+    ASSERT_TRUE(overlays.back().relays.empty());
+    ASSERT_TRUE(buses.back()->is_validator() != observer);
+    if (!observer) {
+      broadcast(members, 0);
+    } else {
+      ASSERT_TRUE(!buses.back()->local_id);
+      ASSERT_TRUE(first_hops.empty());
+    }
   }
-  void broadcast(const std::set<adnl::AdnlNodeIdShort>& expected, size_t observer_count,
+  void broadcast(const std::set<adnl::AdnlNodeIdShort>& expected, std::optional<size_t> observer_count,
                  const Epoch* origin_epoch = nullptr) {
     if (!origin_epoch)
       origin_epoch = &current;
@@ -557,7 +587,22 @@ class Fixture {
     });
     CHECK(it != buses.rend());
     const auto bus = *it;
-    const BlockIdExt block{masterchainId, shardIdAll, 1, hash("candidate-root"), hash("candidate-file")};
+    auto observation = std::find_if(overlays.rbegin(), overlays.rend(), [&](const auto& row) {
+      return row.local == bus->local_adnl_id &&
+             (row.name.find("blocksync") != std::string::npos) == bus->config.enable_block_sync();
+    });
+    CHECK(observation != overlays.rend());
+    const auto case_overlay = observation->overlay;
+    {
+      std::lock_guard lock(observation_mutex);
+      first_hops.clear();
+      received.clear();
+      observed_received_.clear();
+    }
+    LOG(INFO) << "trace case=" << ++broadcast_sequence_ << " overlay=" << case_overlay
+              << " session=" << bus->session_id;
+    const BlockIdExt block{masterchainId, shardIdAll, 1, hash(PSTRING() << "candidate-root-" << broadcast_sequence_),
+                           hash("candidate-file")};
     const CandidateId parent{0, hash("parent")};
     auto id = CandidateHashData::create_empty(block, parent).build_id_with(0);
     auto sign_data = create_serialize_tl_object<tos_api::consensus_dataToSign>(bus->session_id,
@@ -575,7 +620,8 @@ class Fixture {
         for (auto& event : events) {
           if (event.kind == SimEventKind::Message) {
             td::Slice body = event.data.as_slice();
-            if (fetch_tl_prefix<tos_api::overlay_message>(body, true).is_ok()) {
+            auto prefix = fetch_tl_prefix<tos_api::overlay_message>(body, true);
+            if (prefix.is_ok() && prefix.ok()->overlay_ == case_overlay.bits256_value()) {
               auto frame = fetch_tl_object<tos_api::overlay_Broadcast>(body, true);
               if (frame.is_ok() && event.src == origin &&
                   (frame.ok()->get_id() == tos_api::overlay_broadcastTwostepFec::ID ||
@@ -595,16 +641,25 @@ class Fixture {
     }
     auto remote = expected;
     remote.erase(origin);
+    LOG(INFO) << "trace first hops actual=" << first_hops.size() << " expected=" << remote.size()
+              << " overlay=" << case_overlay;
+    for (const auto& destination : first_hops)
+      LOG(INFO) << "trace first-hop destination=" << destination << " overlay=" << case_overlay;
     ASSERT_TRUE(first_hops == remote);
     std::set<adnl::AdnlNodeIdShort> observers;
     for (const auto& row : received) {
+      if (row.overlay != case_overlay)
+        continue;
+      LOG(INFO) << "trace delivery local=" << row.local << " session=" << row.session << " overlay=" << row.overlay
+                << " candidate=" << row.id;
       ASSERT_TRUE(row.id == id);
       ASSERT_TRUE(row.source == origin.pubkey_hash());
       for (const auto& b : buses)
         if (b->local_adnl_id == row.local && b->session_id == row.session && !b->is_validator())
           observers.insert(row.local);
     }
-    ASSERT_EQ(observers.size(), observer_count);
+    if (observer_count)
+      ASSERT_EQ(observers.size(), *observer_count);
     LOG(INFO) << "candidate first hops=" << first_hops.size() << " observers=" << observers.size();
   }
   void pump() {
@@ -630,6 +685,8 @@ class Fixture {
     }
     LOG_CHECK(ready()) << failure;
   }
+  unsigned broadcast_sequence_ = 0;
+  std::vector<td::actor::ActorOwn<IValidatorGroup>> direct_groups_;
   std::vector<BusHandle> observed_buses_;
   std::vector<Observation> observed_overlays_;
   std::vector<ReceivedCandidate> observed_received_;
@@ -655,6 +712,12 @@ TEST(TwostepWiring, ManagerActiveObserverAndOptions) {
   ASSERT_EQ(f.buses.size(), 2u);
   ASSERT_EQ(f.overlays.size(), 2u);
   for (const auto& bus : f.buses) {
+    auto row = std::find_if(f.overlays.begin(), f.overlays.end(),
+                            [&](const auto& overlay) { return overlay.local == bus->local_adnl_id; });
+    CHECK(row != f.overlays.end());
+    LOG(INFO) << "wiring local=" << bus->local_adnl_id << " active=" << bus->is_validator()
+              << " snapshot_present=" << bus->all_current_validators.has_value()
+              << " captured_relay_count=" << row->relays.size();
     ASSERT_TRUE(bus->all_current_validators == f.current.ids());
     ASSERT_EQ(bus->all_validators.size(), 11u);
   }
@@ -665,33 +728,62 @@ TEST(TwostepWiring, ManagerActiveObserverAndOptions) {
   }
   ASSERT_TRUE(f.buses[0]->is_validator() != f.buses[1]->is_validator());
 }
-TEST(TwostepWiring, EpochRefusalAndRecovery) {
+namespace {
+void check_manager_fallback(int condition) {
   Fixture f;
+  ASSERT_TRUE(!f.preflight());
   f.hold(f.current, 0);
   f.hold(f.old, 0);
   f.hold(f.next, 0);
-  auto bad = f.initial();
-  bad.new_ids = false;
-  f.advance(bad);
+  auto snapshot = f.initial();
+  if (condition == 0)
+    snapshot.new_ids = false;
+  else if (condition == 1)
+    snapshot.current = {};
+  else
+    snapshot.current = td::make_ref<block::ValidatorSet>(1, ShardIdFull{masterchainId}, std::vector<ValidatorDescr>{});
+  f.advance(snapshot);
+  ASSERT_EQ(f.entries().size(), 3u);
+  ASSERT_EQ(f.entries(true).size(), 1u);
+  ASSERT_TRUE(!f.preflight());
+  for (const auto& bus : f.buses)
+    ASSERT_TRUE(!bus->all_current_validators);
+  for (const auto& row : f.overlays)
+    ASSERT_TRUE(row.relays.empty());
+  auto active = std::find_if(f.overlays.begin(), f.overlays.end(), [&](const auto& row) {
+    return row.local == adnl::AdnlNodeIdShort{f.current.members[0].addr};
+  });
+  CHECK(active != f.overlays.end());
+  f.broadcast({active->members.begin(), active->members.end()}, std::nullopt);
+  const auto begin = f.buses.size();
+  f.advance(f.initial(), 2, true);
+  ASSERT_EQ(f.entries().size(), 3u);
+  ASSERT_TRUE(f.preflight() == f.current.ids());
+  ASSERT_TRUE(f.buses.size() > begin);
+  for (size_t i = begin; i < f.buses.size(); ++i)
+    ASSERT_TRUE(f.buses[i]->all_current_validators == f.current.ids());
+  f.broadcast(f.current.ids(), std::nullopt);
+}
+}  // namespace
+TEST(TwostepWiring, FalsePrerequisiteFallbackAndRecovery) {
+  check_manager_fallback(0);
+}
+TEST(TwostepWiring, MissingCurrentFallbackAndRecovery) {
+  check_manager_fallback(1);
+}
+TEST(TwostepWiring, EmptyCurrentFallbackAndRecovery) {
+  check_manager_fallback(2);
+}
+TEST(TwostepWiring, ObserverCeilingFailureIsNotStarted) {
+  Fixture f;
+  f.hold(f.old, 0);
+  Epoch oversized{4, 22};
+  auto snapshot = f.initial();
+  snapshot.committee = oversized.set(1);
+  f.advance(snapshot);
   ASSERT_TRUE(f.entries().empty());
   ASSERT_TRUE(f.entries(true).empty());
   ASSERT_TRUE(f.buses.empty());
-  auto missing = f.initial();
-  missing.current = {};
-  f.advance(missing, 2);
-  ASSERT_TRUE(f.entries().empty());
-  ASSERT_TRUE(f.buses.empty());
-  f.advance(f.initial(), 3, true);
-  ASSERT_EQ(f.entries().size(), 3u);
-  ASSERT_TRUE(!f.buses.empty());
-}
-TEST(TwostepWiring, ObserverCreationFailureIsNotStarted) {
-  Fixture f;
-  f.hold(f.old, 0);
-  auto bad = f.initial();
-  bad.fail_observer_creation = true;
-  f.advance(bad);
-  ASSERT_TRUE(f.entries().empty());
   ASSERT_TRUE(f.overlays.empty());
   f.advance(f.initial(), 2, true);
   ASSERT_EQ(f.entries().size(), 1u);
@@ -799,45 +891,97 @@ TEST(TwostepWiring, ProtocolOneBlockSyncCandidateThroughManagerObservers) {
   ASSERT_EQ(sync, 7u);
   f.broadcast(f.current.ids(), 6);
 }
-TEST(TwostepWiring, CheckedFactoriesRefuseEmptyAndOutsideMembership) {
-  Fixture f;
-  ASSERT_EQ(f.preflight(), "two-step relays: no masterchain state");
-  f.refuse_factories({});
-  auto outside = f.current.ids();
-  outside.insert(adnl::AdnlNodeIdShort{f.old.members[0].addr});
-  f.refuse_factories(outside);
-  f.hold(f.current, 0);
-  auto empty = f.initial();
-  empty.current = td::make_ref<block::ValidatorSet>(1, ShardIdFull{masterchainId}, std::vector<ValidatorDescr>{});
-  f.advance(empty);
-  ASSERT_TRUE(f.entries().empty());
-  ASSERT_TRUE(f.buses.empty());
-  f.advance(f.initial(), 2, true);
-  ASSERT_TRUE(!f.entries().empty());
+TEST(TwostepWiring, EmptyFactorySnapshotFallsBack) {
+  for (bool observer : {false, true}) {
+    Fixture f;
+    f.fallback_factory({}, observer);
+  }
 }
-TEST(TwostepWiring, LegacyIdsRefusedEvenForExistingAndTentativeGroups) {
+TEST(TwostepWiring, OutsideFactorySnapshotFallsBack) {
+  for (bool observer : {false, true}) {
+    Fixture f;
+    auto outside = f.current.ids();
+    auto fresh = adnl::AdnlNodeIdShort{hash("outside-all-epochs")};
+    ASSERT_TRUE(!f.all_members().contains(fresh));
+    outside.insert(fresh);
+    f.fallback_factory(std::move(outside), observer);
+  }
+}
+TEST(TwostepWiring, FlagFlipWhileRunningKeepsGroups) {
   Fixture f;
   f.hold(f.current, 0);
   f.hold(f.next, 0);
   f.hold(f.old, 0);
   f.advance(f.initial());
-  ASSERT_TRUE(!f.entries().empty());
-  ASSERT_TRUE(!f.entries(true).empty());
-  const auto options = block::validator_session_options_hash(StateConfig(f.initial()).get_consensus_config());
-  auto legacy0 = block::derive_validator_session_identity(3, options, hash("protocol-2"), ShardIdFull{masterchainId}, 2,
-                                                          f.next.members, 0, 0, false)
-                     .session_id;
-  auto legacy1 = block::derive_validator_session_identity(3, options, hash("protocol-2"), ShardIdFull{masterchainId}, 2,
-                                                          f.next.members, 0, 2, false)
-                     .session_id;
-  ASSERT_TRUE(legacy0 == legacy1);
-  const auto count = f.buses.size();
-  auto bad = f.initial();
-  bad.new_ids = false;
-  f.advance(bad, 2, true);
-  ASSERT_TRUE(f.entries().empty());
-  ASSERT_TRUE(f.entries(true).empty());
-  ASSERT_EQ(f.buses.size(), count);
+  const auto active_before = f.entries();
+  const auto tentative_before = f.entries(true);
+  ASSERT_EQ(active_before.size(), 3u);
+  ASSERT_EQ(tentative_before.size(), 1u);
+  const auto begin = f.buses.size();
+  auto legacy = f.initial();
+  legacy.new_ids = false;
+  f.advance(legacy, 2, false);
+  const auto active = f.entries();
+  ASSERT_EQ(active.size(), 3u);
+  for (const auto& id : active)
+    ASSERT_TRUE(std::find(active_before.begin(), active_before.end(), id) == active_before.end());
+  for (size_t i = begin; i < f.buses.size(); ++i)
+    ASSERT_TRUE(!f.buses[i]->all_current_validators);
+  const auto tentative = f.entries(true);
+  ASSERT_TRUE(std::find(tentative.begin(), tentative.end(), tentative_before[0]) != tentative.end());
+  // The older true-prerequisite prebuild remains safe under its different id.
+  ASSERT_TRUE(tentative.size() > tentative_before.size());
+  f.broadcast(f.all_members(), std::nullopt);
+  const auto recovery = f.buses.size();
   f.advance(f.initial(), 3, true);
-  ASSERT_TRUE(!f.entries().empty());
+  ASSERT_EQ(f.entries().size(), 3u);
+  ASSERT_TRUE(f.buses.size() > recovery);
+  for (size_t i = recovery; i < f.buses.size(); ++i)
+    ASSERT_TRUE(f.buses[i]->all_current_validators == f.current.ids());
+  f.broadcast(f.current.ids(), std::nullopt);
+}
+TEST(TwostepWiring, LegacyTotalSetSwitchReusesBroadTentative) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.hold(f.old, 0);
+  f.hold(f.next, 0);
+  f.hold(f.next, 1);
+  auto outgoing = f.initial();
+  outgoing.new_ids = false;
+  outgoing.future = f.next.set(2, 1);
+  f.advance(outgoing);
+  const auto tentative = f.entries(true);
+  ASSERT_EQ(tentative.size(), 1u);
+  auto prepared = std::find_if(f.buses.begin(), f.buses.end(),
+                               [&](const auto& bus) { return bus->is_validator() && bus->session_id == tentative[0]; });
+  CHECK(prepared != f.buses.end());
+  const auto prepared_bus = *prepared;
+  // Defer the snapshot assertion until after the broadcast: ignoring the
+  // prerequisite must be caught as outgoing-only first hops after promotion.
+  auto incoming = outgoing;
+  incoming.previous = outgoing.current;
+  incoming.current = outgoing.next;
+  incoming.next = {};
+  incoming.committee = outgoing.future;
+  incoming.future = {};
+  auto identity = [&](BlockSeqno key) {
+    return block::derive_validator_session_identity(
+               3, block::validator_session_options_hash(StateConfig(outgoing).get_consensus_config()),
+               hash("protocol-2"), ShardIdFull{masterchainId}, incoming.committee->get_catchain_seqno(),
+               incoming.committee->export_vector(), 0, key, false)
+        .session_id;
+  };
+  ASSERT_TRUE(tentative[0] == identity(0));
+  ASSERT_TRUE(identity(0) == identity(2));
+  const auto count = f.buses.size();
+  f.advance(incoming, 2, true);
+  ASSERT_EQ(f.entries().size(), 3u);
+  for (const auto& id : f.entries())
+    ASSERT_TRUE(id == tentative[0]);
+  ASSERT_EQ(f.buses.size(), count + 2);  // reused active, two fresh observers
+  f.broadcast(f.all_members(), std::nullopt, &f.next);
+  ASSERT_TRUE(!prepared_bus->all_current_validators);
+  for (const auto& bus : f.buses)
+    ASSERT_TRUE(!bus->all_current_validators);
+  LOG(INFO) << "legacy rotation reused tentative=" << tentative[0] << " with broad first hops";
 }

@@ -906,9 +906,9 @@ std::shared_ptr<sx::Bus> n5_joined_bus(td::Ref<block::ValidatorSet> set, Validat
         .weight = descriptor.weight,
     });
     bus->all_validators.push_back(adnl_id);
-    bus->all_current_validators.insert(adnl_id);
     CHECK(tos::checked_add_validator_weight(bus->total_weight, descriptor.weight));
   }
+  bus->all_current_validators = std::set<adnl::AdnlNodeIdShort>{bus->all_validators.begin(), bus->all_validators.end()};
   bus->local_id = bus->validator_set.front();
   bus->local_adnl_id = bus->local_id->adnl_id;
   bus->db = consensus::open_rocksdb_consensus_db(journal_path);

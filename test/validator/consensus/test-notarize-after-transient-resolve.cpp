@@ -574,10 +574,12 @@ class Driver : public td::actor::Actor {
     bus->shard = SHARD;
     bus->manager = manager_.get();
     bus->validator_set = validators;
+    std::set<adnl::AdnlNodeIdShort> current_relays;
     for (const auto& validator : validators) {
       bus->all_validators.push_back(validator.adnl_id);
-      bus->all_current_validators.insert(validator.adnl_id);
+      current_relays.insert(validator.adnl_id);
     }
+    bus->all_current_validators = std::move(current_relays);
     bus->total_weight = total_weight;
     bus->config = NewConsensusConfig{
         .max_block_size = 1 << 20,
