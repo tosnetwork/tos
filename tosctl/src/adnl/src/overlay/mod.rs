@@ -55,19 +55,15 @@ use tl_api::{
             message::{Message as OverlayMessage, MessageWithExtra as OverlayMessageWithExtra},
             messageextra::MessageExtra,
             node::{
-                tosign::{ToSign as NodeToSign, ToSignEx as NodeToSignEx},
-                Node as NodeV1, ToSign as NodeToSignBoxed,
+                tosign::ToSign as NodeToSign, Node as NodeDescriptor, ToSign as NodeToSignBoxed,
             },
-            nodes::Nodes as NodesV1,
-            nodesv2::NodesV2,
-            nodev2::NodeV2,
+            nodes::Nodes as NodesDescriptor,
             Broadcast, MemberCertificate as MemberCertificateBoxed, Message as OverlayMessageBoxed,
-            Nodes as NodesV1Boxed, NodesV2 as NodesV2Boxed, Pong,
+            Nodes as NodesDescriptorBoxed, Pong,
         },
         pub_::publickey::Overlay as OverlayKey,
         rpc::overlay::{
-            GetRandomPeers, GetRandomPeersV2, Ping, Query as OverlayQuery,
-            QueryWithExtra as OverlayQueryWithExtra,
+            GetRandomPeers, Ping, Query as OverlayQuery, QueryWithExtra as OverlayQueryWithExtra,
         },
         tos_node::{
             customoverlayid::CustomOverlayId, fastsyncoverlayid::FastSyncOverlayId,
@@ -96,31 +92,6 @@ pub use broadcast::{BroadcastRecvInfo, BroadcastSendInfo};
 const TARGET: &str = "overlay";
 const TARGET_BROADCAST: &str = "overlay_broadcast";
 
-/*
-pub fn build_overlay_node_info(
-    overlay: &Arc<OverlayShortId>,
-    version: i32,
-    key: &str,
-    signature: &str
-) -> Result<Node<NodeV1, NodeV2Boxed>> {
-    let key = base64_decode(key)?;
-    if key.len() != 32 {
-        fail!("Bad public key length")
-    }
-    let key: [u8; 32] = key.as_slice().try_into()?;
-    let signature = base64_decode(signature)?;
-    let node = NodeV1 {
-        id: Ed25519 {
-            key: UInt256::with_array(key)
-        }.into_boxed(),
-        overlay: UInt256::with_array(*overlay.data()),
-        version,
-        signature: signature.into(),
-    };
-    Ok(Node::V1(node))
-}
-*/
-
 pub enum CatchainData {
     Catchain(CatchainFork),
     ValidatorSession(ValidatorSessionBlockUpdate),
@@ -129,41 +100,23 @@ pub enum CatchainData {
 pub type OverlayId = [u8; 32];
 
 #[derive(Debug)]
-pub enum OverlayNodeInfo<N1: Borrow<NodeV1>, N2: Borrow<NodeV2>> {
-    V1(N1),
-    V2(N2),
-}
+pub struct OverlayNodeInfo<N: Borrow<NodeDescriptor>>(pub N);
 
-impl<N1: Borrow<NodeV1>, N2: Borrow<NodeV2>> OverlayNodeInfo<N1, N2> {
+impl<N: Borrow<NodeDescriptor>> OverlayNodeInfo<N> {
     pub fn id(&self) -> &PublicKey {
-        match self {
-            OverlayNodeInfo::V1(node) => &node.borrow().id,
-            OverlayNodeInfo::V2(node) => &node.borrow().id,
-        }
+        &self.0.borrow().id
     }
     pub fn version(&self) -> i32 {
-        match self {
-            OverlayNodeInfo::V1(node) => node.borrow().version,
-            OverlayNodeInfo::V2(node) => node.borrow().version,
-        }
+        self.0.borrow().version
     }
     pub fn signature(&self) -> &[u8] {
-        match self {
-            OverlayNodeInfo::V1(node) => &node.borrow().signature,
-            OverlayNodeInfo::V2(node) => &node.borrow().signature,
-        }
+        &self.0.borrow().signature
     }
-    pub fn to_owned(&self) -> OverlayNodeInfo<NodeV1, NodeV2> {
-        match self {
-            OverlayNodeInfo::V1(node) => OverlayNodeInfo::V1(node.borrow().clone()),
-            OverlayNodeInfo::V2(node) => OverlayNodeInfo::V2(node.borrow().clone()),
-        }
+    pub fn to_owned(&self) -> OverlayNodeInfo<NodeDescriptor> {
+        OverlayNodeInfo(self.0.borrow().clone())
     }
     pub fn key(&self) -> Result<Arc<dyn KeyOption>> {
-        match self {
-            OverlayNodeInfo::V1(node) => node.borrow().get_key(),
-            OverlayNodeInfo::V2(node) => node.borrow().get_key(),
-        }
+        self.0.borrow().get_key()
     }
 }
 
@@ -251,6 +204,9 @@ impl OverlayUtils {
         overlay_id: &Arc<OverlayShortId>,
         node: &T,
     ) -> Result<()> {
+        if (node.flags() as u32) & !3 != 0 {
+            fail!("Unknown overlay receive flags")
+        }
         let key: Arc<dyn KeyOption> = node.get_key()?;
         if node.overlay().as_slice() != overlay_id.data() {
             fail!(
@@ -279,11 +235,7 @@ impl OverlayUtils {
         version: i32,
     ) -> NodeToSignBoxed {
         let id = AdnlShortId { id: UInt256::with_array(*key.id().data()) };
-        if flags != 0 {
-            NodeToSignEx { flags, id, overlay: overlay_id.clone(), version }.into_boxed()
-        } else {
-            NodeToSign { id, overlay: overlay_id.clone(), version }.into_boxed()
-        }
+        NodeToSign { flags, id, overlay: overlay_id.clone(), version }.into_boxed()
     }
 }
 
@@ -297,25 +249,7 @@ pub(crate) trait NodeData {
     fn version(&self) -> i32;
 }
 
-impl NodeData for NodeV1 {
-    fn flags(&self) -> i32 {
-        0
-    }
-    fn get_key(&self) -> Result<Arc<dyn KeyOption>> {
-        (&self.id).try_into()
-    }
-    fn overlay(&self) -> &UInt256 {
-        &self.overlay
-    }
-    fn signature(&self) -> &[u8] {
-        &self.signature
-    }
-    fn version(&self) -> i32 {
-        self.version
-    }
-}
-
-impl NodeData for NodeV2 {
+impl NodeData for NodeDescriptor {
     fn flags(&self) -> i32 {
         self.flags
     }
@@ -335,15 +269,9 @@ impl NodeData for NodeV2 {
 
 declare_counted!(
     struct NodeObject {
-        v1: Option<Arc<NodeV1>>,
-        v2: Option<Arc<NodeV2>>,
+        node: Arc<NodeDescriptor>,
     }
 );
-
-enum Nodes {
-    V1(NodesV1),
-    V2(NodesV2),
-}
 
 struct SlaveInfo {
     node_id: Arc<KeyId>,
@@ -499,7 +427,7 @@ declare_counted!(
         query_prefix: Vec<u8>,
         // random_peers: AddressCache
         received_catchain: Option<Arc<CatchainReceiver>>,
-        received_peers: Arc<AsyncReceiver<Vec<OverlayNodeInfo<NodeV1, NodeV2>>>>,
+        received_peers: Arc<AsyncReceiver<Vec<OverlayNodeInfo<NodeDescriptor>>>>,
         received_rawbytes: Arc<AsyncReceiver<BroadcastRecvInfo>>,
         #[cfg(feature = "telemetry")]
         messages_recv: AtomicU64,
@@ -634,7 +562,8 @@ impl Overlay {
                 // Bcasts are sent without a certificate, hoping the target already knows
                 // the sender's one.
                 if let Some(guard) = self.nodes.get(peer) {
-                    if let Some(node) = &guard.val().v2 {
+                    {
+                        let node = &guard.val().node;
                         let MemberCertificateBoxed::Overlay_MemberCertificate(cert) =
                             &node.certificate
                         else {
@@ -752,14 +681,13 @@ impl Overlay {
         &self,
         dst: &Arc<KeyId>,
         default_key: &Arc<dyn KeyOption>,
-        v2: bool,
         timeout_ms: Option<u64>,
     ) -> Result<()> {
         log::trace!(target: TARGET, "Get random peers from {dst}");
-        let query: TaggedTlObject = match self.prepare_random_peers(default_key, v2)? {
-            Nodes::V1(peers) => GetRandomPeers { peers }.into_tl_object().into(),
-            Nodes::V2(peers) => GetRandomPeersV2 { peers }.into_tl_object().into(),
-        };
+        let query: TaggedTlObject =
+            GetRandomPeers { peers: self.prepare_random_peers(default_key)? }
+                .into_tl_object()
+                .into();
         let peers = self
             .prepare_to_send(
                 dst,
@@ -774,19 +702,11 @@ impl Overlay {
             .await?;
         if let Some(answer) = answer {
             log::trace!(target: TARGET, "Got random peers from {dst}");
-            let ret = if v2 {
-                self.process_random_peers(
-                    default_key,
-                    Query::parse::<_, NodesV2Boxed>(answer, &query.object)?.only().nodes,
-                    |node| OverlayNodeInfo::V2(node),
-                )?
-            } else {
-                self.process_random_peers(
-                    default_key,
-                    Query::parse::<_, NodesV1Boxed>(answer, &query.object)?.only().nodes,
-                    |node| OverlayNodeInfo::V1(node),
-                )?
-            };
+            let ret = self.process_random_peers(
+                default_key,
+                Query::parse::<_, NodesDescriptorBoxed>(answer, &query.object)?.only().nodes,
+                OverlayNodeInfo,
+            )?;
             self.received_peers.push(ret);
         } else {
             log::warn!(target: TARGET, "No random peers from {dst}");
@@ -797,37 +717,26 @@ impl Overlay {
     fn get_signed_node(
         &self,
         default_key: &Arc<dyn KeyOption>,
-        v2: bool,
-    ) -> Result<OverlayNodeInfo<NodeV1, NodeV2>> {
+    ) -> Result<OverlayNodeInfo<NodeDescriptor>> {
         let key = self.overlay_key().unwrap_or(default_key);
         let overlay_id = UInt256::with_array(*self.overlay_id.data());
-        let flags = 0;
+        // This client implements ordinary broadcasts, not Plumtree payload reception.
+        let flags = 2;
         let version = Version::get();
         let local_node = OverlayUtils::get_node_to_sign(key, &overlay_id, flags, version);
-        let node = if v2 {
-            let node = NodeV2 {
-                id: key.try_into()?,
-                certificate: self
-                    .overlay_type
-                    .certificate()
-                    .map(|cert| cert.clone().into_boxed())
-                    .unwrap_or_default(),
-                flags,
-                overlay: overlay_id,
-                signature: key.sign(&serialize_boxed(&local_node)?)?.into(),
-                version,
-            };
-            OverlayNodeInfo::V2(node)
-        } else {
-            let node = NodeV1 {
-                id: key.try_into()?,
-                overlay: overlay_id,
-                signature: key.sign(&serialize_boxed(&local_node)?)?.into(),
-                version,
-            };
-            OverlayNodeInfo::V1(node)
+        let node = NodeDescriptor {
+            id: key.try_into()?,
+            certificate: self
+                .overlay_type
+                .certificate()
+                .map(|cert| cert.clone().into_boxed())
+                .unwrap_or_default(),
+            flags,
+            overlay: overlay_id,
+            signature: key.sign(&serialize_boxed(&local_node)?)?.into(),
+            version,
         };
-        Ok(node)
+        Ok(OverlayNodeInfo(node))
     }
 
     fn overlay_key(&self) -> Option<&Arc<dyn KeyOption>> {
@@ -866,36 +775,19 @@ impl Overlay {
         Ok(())
     }
 
-    fn prepare_random_peers(&self, default_key: &Arc<dyn KeyOption>, v2: bool) -> Result<Nodes> {
-        let local_node = self.get_signed_node(default_key, v2)?;
+    fn prepare_random_peers(&self, default_key: &Arc<dyn KeyOption>) -> Result<NodesDescriptor> {
+        let OverlayNodeInfo(local_node) = self.get_signed_node(default_key)?;
         let nodes = AddressCache::with_limit(Self::MAX_RANDOM_PEERS);
         self.neighbours.random_set(&nodes, Self::MAX_RANDOM_PEERS)?;
         let (mut iter, mut current) = nodes.first();
-        let ret = match local_node {
-            OverlayNodeInfo::V1(node) => {
-                let mut ret = vec![node];
-                while let Some(node) = current {
-                    match self.nodes.get(&node).map(|node| node.val().v1.clone()) {
-                        Some(Some(node)) => ret.push(node.as_ref().clone()),
-                        _ => (),
-                    }
-                    current = nodes.next(&mut iter)
-                }
-                Nodes::V1(NodesV1 { nodes: ret })
+        let mut ret = vec![local_node];
+        while let Some(node) = current {
+            if let Some(node) = self.nodes.get(&node) {
+                ret.push(node.val().node.as_ref().clone());
             }
-            OverlayNodeInfo::V2(node) => {
-                let mut ret = vec![node];
-                while let Some(node) = current {
-                    match self.nodes.get(&node).map(|node| node.val().v2.clone()) {
-                        Some(Some(node)) => ret.push(node.as_ref().clone()),
-                        _ => (),
-                    }
-                    current = nodes.next(&mut iter)
-                }
-                Nodes::V2(NodesV2 { nodes: ret })
-            }
-        };
-        Ok(ret)
+            current = nodes.next(&mut iter);
+        }
+        Ok(NodesDescriptor { nodes: ret })
     }
 
     async fn prepare_to_send(
@@ -915,8 +807,8 @@ impl Overlay {
         &self,
         default_key: &Arc<dyn KeyOption>,
         mut peers: Vec<T>,
-        convert: impl Fn(T) -> OverlayNodeInfo<NodeV1, NodeV2>,
-    ) -> Result<Vec<OverlayNodeInfo<NodeV1, NodeV2>>> {
+        convert: impl Fn(T) -> OverlayNodeInfo<NodeDescriptor>,
+    ) -> Result<Vec<OverlayNodeInfo<NodeDescriptor>>> {
         let self_id = self.overlay_key().unwrap_or(default_key).id();
         let mut ret = Vec::new();
         log::trace!(target: TARGET, "-------- Got random peers:");
@@ -1468,41 +1360,28 @@ impl OverlayNode {
     }
 
     /// Add public overlay peer
-    pub fn add_public_peer<N1: Borrow<NodeV1>, N2: Borrow<NodeV2>>(
+    pub fn add_public_peer<N: Borrow<NodeDescriptor>>(
         &self,
         peer_ip_address: &IpAddress,
-        peer: &OverlayNodeInfo<N1, N2>,
+        peer: &OverlayNodeInfo<N>,
         overlay_id: &Arc<OverlayShortId>,
     ) -> Result<Option<Arc<KeyId>>> {
         let overlay = self.get_overlay(overlay_id, "Trying add peer to unknown public overlay")?;
         if overlay.overlay_type.is_private() {
             fail!("Trying to add public peer to private overlay {overlay_id}")
         }
-        let (key, verify) = match peer {
-            OverlayNodeInfo::V1(peer) => {
-                if overlay.overlay_type.has_certified_members() {
-                    fail!(
-                        "Trying to add peer without certificate \
-                        to semiprivate overlay {overlay_id}"
-                    )
-                } else {
-                    let peer = peer.borrow();
-                    (peer.get_key()?, OverlayUtils::verify_node(overlay_id, peer))
-                }
-            }
-            OverlayNodeInfo::V2(peer) => {
-                let peer = peer.borrow();
-                let key = peer.get_key()?;
-                if overlay.overlay_type.has_certified_members() {
-                    let cert = match &peer.certificate {
-                        MemberCertificateBoxed::Overlay_MemberCertificate(cert) => Some(cert),
-                        _ => None,
-                    };
-                    overlay.check_peer(key.id(), cert)?;
-                }
-                (key, OverlayUtils::verify_node(overlay_id, peer))
-            }
+        let descriptor = peer.0.borrow();
+        let key = descriptor.get_key()?;
+        let cert = match &descriptor.certificate {
+            MemberCertificateBoxed::Overlay_MemberCertificate(cert) => Some(cert),
+            _ => None,
         };
+        if overlay.overlay_type.has_certified_members() {
+            overlay.check_peer(key.id(), cert)?;
+        } else if cert.is_some() {
+            fail!("Member certificate in public overlay")
+        }
+        let verify = OverlayUtils::verify_node(overlay_id, descriptor);
         if let Err(e) = verify {
             log::warn!(target: TARGET, "Error when verifying overlay peer {}: {e}", key.id());
             return Ok(None);
@@ -1519,31 +1398,13 @@ impl OverlayNode {
         }
         add_counted_object_to_map_with_update(&overlay.nodes, ret.clone(), |old_node| {
             if let Some(old_node) = old_node {
-                let (old_version, new_version) = match peer {
-                    OverlayNodeInfo::V1(peer) => {
-                        (old_node.v1.as_ref().map(|node| node.version), peer.borrow().version)
-                    }
-                    OverlayNodeInfo::V2(peer) => {
-                        (old_node.v2.as_ref().map(|node| node.version), peer.borrow().version)
-                    }
-                };
-                if let Some(old_version) = old_version {
-                    if old_version >= new_version {
-                        return Ok(None);
-                    }
+                if old_node.node.version >= descriptor.version {
+                    return Ok(None);
                 }
             }
-            let ret = match peer {
-                OverlayNodeInfo::V1(peer) => NodeObject {
-                    v1: Some(Arc::new(peer.borrow().clone())),
-                    v2: old_node.map(|node| node.v2.clone()).flatten(),
-                    counter: self.allocated.peers.clone().into(),
-                },
-                OverlayNodeInfo::V2(peer) => NodeObject {
-                    v1: old_node.map(|node| node.v1.clone()).flatten(),
-                    v2: Some(Arc::new(peer.borrow().clone())),
-                    counter: self.allocated.peers.clone().into(),
-                },
+            let ret = NodeObject {
+                node: Arc::new(descriptor.clone()),
+                counter: self.allocated.peers.clone().into(),
             };
             #[cfg(feature = "telemetry")]
             self.telemetry.peers.update(self.allocated.peers.load(Ordering::Relaxed));
@@ -1721,13 +1582,9 @@ impl OverlayNode {
     pub fn get_signed_node(
         &self,
         overlay_id: &Arc<OverlayShortId>,
-        v2: bool,
-    ) -> Result<OverlayNodeInfo<NodeV1, NodeV2>> {
-        let overlay = self.get_overlay(
-            overlay_id,
-            format!("Signing local {} node for unknown overlay", Self::version_str(v2)).as_str(),
-        )?;
-        overlay.get_signed_node(&self.node_key, v2)
+    ) -> Result<OverlayNodeInfo<NodeDescriptor>> {
+        let overlay = self.get_overlay(overlay_id, "Signing local node for unknown overlay")?;
+        overlay.get_signed_node(&self.node_key)
     }
 
     /// Check whether peer is known
@@ -1952,7 +1809,7 @@ impl OverlayNode {
     pub async fn wait_for_peers(
         &self,
         overlay_id: &Arc<OverlayShortId>,
-    ) -> Result<Option<Vec<OverlayNodeInfo<NodeV1, NodeV2>>>> {
+    ) -> Result<Option<Vec<OverlayNodeInfo<NodeDescriptor>>>> {
         self.get_overlay(overlay_id, "Waiting for peers in unknown overlay")?
             .received_peers
             .pop()
@@ -2112,11 +1969,9 @@ impl OverlayNode {
                         let (ping_res, peers_res) = if overlay.overlay_type.is_private() {
                             (ping_task.await, None)
                         } else {
-                            let v2 = overlay.overlay_type.has_certified_members();
                             let peers_task = overlay.get_random_peers(
                                 &peer,
                                 &default_key,
-                                v2,
                                 Some(Self::TIMEOUT_GC_MS),
                             );
                             let (ping_res, peers_res) = tokio::join!(ping_task, peers_task);
@@ -2304,24 +2159,14 @@ impl OverlayNode {
         &self,
         overlay: &Overlay,
         peers: Vec<T>,
-        convert: impl Fn(T) -> OverlayNodeInfo<NodeV1, NodeV2>,
-        v2: bool,
-    ) -> Result<Option<Nodes>> {
-        log::trace!(target: TARGET, "Got random peers {} request", Self::version_str(v2));
+        convert: impl Fn(T) -> OverlayNodeInfo<NodeDescriptor>,
+    ) -> Result<Option<NodesDescriptor>> {
         let peers = overlay.process_random_peers(&self.node_key, peers, convert)?;
         overlay.received_peers.push(peers);
         if (overlay.flags & Overlay::FLAG_OVERLAY_OTHER_WORKCHAIN) != 0 {
             Ok(None)
         } else {
-            Ok(Some(overlay.prepare_random_peers(&self.node_key, v2)?))
-        }
-    }
-
-    fn version_str(v2: bool) -> &'static str {
-        if v2 {
-            "V2"
-        } else {
-            "V1"
+            Ok(Some(overlay.prepare_random_peers(&self.node_key)?))
         }
     }
 }
@@ -2538,35 +2383,14 @@ impl Subscriber for OverlayNode {
                 return match self.process_get_random_peers(
                     &overlay,
                     query.peers.nodes,
-                    |node| OverlayNodeInfo::V1(node),
-                    false,
+                    OverlayNodeInfo,
                 )? {
-                    Some(Nodes::V1(answer)) => QueryResult::consume(
+                    Some(answer) => QueryResult::consume(
                         answer,
                         #[cfg(feature = "telemetry")]
                         None,
                     ),
                     None => Ok(QueryResult::Consumed(QueryAnswer::Ready(None))),
-                    _ => fail!("Unexpected V2 answer in V1 query"),
-                };
-            }
-            Err(object) => object,
-        };
-        let object = match object.downcast::<GetRandomPeersV2>() {
-            Ok(query) => {
-                return match self.process_get_random_peers(
-                    &overlay,
-                    query.peers.nodes,
-                    |node| OverlayNodeInfo::V2(node),
-                    true,
-                )? {
-                    Some(Nodes::V2(answer)) => QueryResult::consume(
-                        answer,
-                        #[cfg(feature = "telemetry")]
-                        None,
-                    ),
-                    None => Ok(QueryResult::Consumed(QueryAnswer::Ready(None))),
-                    _ => fail!("Unexpected V1 answer in V2 query"),
                 };
             }
             Err(object) => object,
@@ -2597,5 +2421,56 @@ impl Subscriber for OverlayNode {
             Err(msg) => fail!("Unsupported query {msg} in overlay {overlay_id}"),
             r => r,
         }
+    }
+}
+
+#[cfg(test)]
+mod receive_policy_tests {
+    use super::*;
+    use chain_block::Ed25519KeyOption;
+
+    #[test]
+    fn signed_overlay_receive_policy_roundtrip() -> Result<()> {
+        let key = Ed25519KeyOption::generate()?;
+        let overlay = OverlayShortId::from_data([7; 32]);
+        for flags in [0, 1, 2, 3] {
+            let sign = OverlayUtils::get_node_to_sign(
+                &key,
+                &UInt256::with_array(*overlay.data()),
+                flags,
+                100,
+            );
+            let mut node = NodeDescriptor {
+                id: (&key).try_into()?,
+                overlay: UInt256::with_array(*overlay.data()),
+                flags,
+                version: 100,
+                signature: key.sign(&serialize_boxed(&sign)?)?.into(),
+                certificate: Default::default(),
+            };
+            OverlayUtils::verify_node(&overlay, &node)?;
+            let bytes = serialize_boxed(&node.clone().into_boxed())?;
+            let parsed = deserialize_boxed(&bytes)?
+                .downcast::<tl_api::tos::overlay::Node>()
+                .map_err(|_| error!("wrong node type"))?
+                .only();
+            assert_eq!(parsed, node);
+            OverlayUtils::verify_node(&overlay, &parsed)?;
+            node.flags ^= 2;
+            assert!(OverlayUtils::verify_node(&overlay, &node).is_err());
+        }
+        let flags = 4;
+        let sign =
+            OverlayUtils::get_node_to_sign(&key, &UInt256::with_array(*overlay.data()), flags, 100);
+        let node = NodeDescriptor {
+            id: (&key).try_into()?,
+            overlay: UInt256::with_array(*overlay.data()),
+            flags,
+            version: 100,
+            signature: key.sign(&serialize_boxed(&sign)?)?.into(),
+            certificate: Default::default(),
+        };
+        assert!(OverlayUtils::verify_node(&overlay, &node).is_err());
+        Ok(())
     }
 }

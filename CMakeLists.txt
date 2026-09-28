@@ -708,6 +708,9 @@ add_executable(test-overlay-peer-cleanup test/test-td-main.cpp test/test-overlay
 target_link_libraries(test-overlay-peer-cleanup PRIVATE overlay tdutils tdactor adnl tl_api dht fec)
 add_executable(test-overlay-broadcast-capacity test/test-td-main.cpp test/test-overlay-broadcast-capacity.cpp)
 target_link_libraries(test-overlay-broadcast-capacity PRIVATE overlay tdutils tdactor adnl tl_api dht fec)
+add_executable(test-overlay-plumtree-policy test/test-td-main.cpp test/test-overlay-plumtree-policy.cpp
+  test/plumtree/transport.cpp test/plumtree/scheduler.cpp)
+target_link_libraries(test-overlay-plumtree-policy PRIVATE overlay tdutils tdactor adnl adnltest tl_api dht fec)
 add_executable(plumtree-graph-sim
   test/plumtree/plumtree-graph-sim.cpp
   test/plumtree/graph.cpp
@@ -1258,6 +1261,7 @@ tos_test(test-rldp2-connection-cap)
 tos_test(test-rldp2-query-eviction)
 tos_test(test-rldp-http-proxy-routing)
 tos_test(test-overlay-peer-cleanup)
+tos_test(test-overlay-plumtree-policy)
 tos_test(test-overlay-broadcast-capacity)
 tos_test(test-download-state-budget)
 tos_test(test-pq-network-parser-resource)

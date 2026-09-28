@@ -26,6 +26,7 @@
 #include "adnl/adnl-sender-ex.h"
 #include "auto/tl/tos_api.h"
 #include "dht/dht.h"
+#include "overlay/overlay-member-flags.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
 #include "td/utils/RateLimiterWindow.h"
@@ -93,10 +94,6 @@ class OverlayIdFull {
 
 struct CertificateFlags {
   enum Values : td::uint32 { AllowFec = 1, Trusted = 2 };
-};
-
-struct OverlayMemberFlags {
-  enum Values : td::uint32 { DoNotReceiveBroadcasts = 1 };
 };
 
 enum BroadcastCheckResult { Forbidden = 1, NeedCheck = 2, Allowed = 3 };

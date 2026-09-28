@@ -25,6 +25,7 @@
 #include "td/utils/overloaded.h"
 
 #include "dht-types.h"
+#include "overlay/overlay-member-flags.h"
 
 namespace tos {
 
@@ -295,10 +296,14 @@ td::Status DhtUpdateRuleOverlayNodes::check_value(const DhtValue &value) {
   }
   auto L = F.move_as_ok();
   for (auto &node : L->nodes_) {
+    if (!overlay::OverlayMemberFlags::valid(static_cast<td::uint32>(node->flags_)) || !node->certificate_ ||
+        node->certificate_->get_id() != tos_api::overlay_emptyMemberCertificate::ID) {
+      return td::Status::Error(ErrorCode::protoviolation, "invalid public overlay node policy");
+    }
     TRY_RESULT(pub, adnl::AdnlNodeIdFull::create(node->id_));
     auto sig = std::move(node->signature_);
     auto obj =
-        create_tl_object<tos_api::overlay_node_toSign>(pub.compute_short_id().tl(), node->overlay_, node->version_);
+        create_tl_object<tos_api::overlay_node_toSign>(pub.compute_short_id().tl(), node->overlay_, node->flags_, node->version_);
     if (node->overlay_ != value.key().key().public_key_hash().bits256_value()) {
       return td::Status::Error(ErrorCode::protoviolation, "bad overlay id");
     }

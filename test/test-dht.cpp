@@ -341,13 +341,12 @@ int main() {
       auto pub = pk.compute_public_key();
 
       auto date = static_cast<td::int32>(td::Clocks::system() - 10);
-      //overlay.node.toSign id:adnl.id.short overlay:int256 version:int = overlay.node.ToSign;
-      //overlay.node id:PublicKey overlay:int256 version:int signature:bytes = overlay.Node;
       auto to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
-          tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), date);
+          tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 0, date);
       auto n = tos::create_tl_object<tos::tos_api::overlay_node>(
-          pub.tl(), overlay_short_id.tl(), date,
-          pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok());
+          pub.tl(), overlay_short_id.tl(), 0, date,
+          pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok(),
+          tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>());
       obj->nodes_.push_back(std::move(n));
       dht_value =
           tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
@@ -364,13 +363,12 @@ int main() {
     auto pub = pk.compute_public_key();
 
     auto date = static_cast<td::int32>(td::Clocks::system() - 10);
-    //overlay.node.toSign id:adnl.id.short overlay:int256 version:int = overlay.node.ToSign;
-    //overlay.node id:PublicKey overlay:int256 version:int signature:bytes = overlay.Node;
     auto to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
-        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl() ^ td::Bits256::ones(), date);
+        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl() ^ td::Bits256::ones(), 0, date);
     auto n = tos::create_tl_object<tos::tos_api::overlay_node>(
-        pub.tl(), overlay_short_id.tl() ^ td::Bits256::ones(), date,
-        pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok());
+        pub.tl(), overlay_short_id.tl() ^ td::Bits256::ones(), 0, date,
+        pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok(),
+        tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>());
     obj->nodes_.push_back(std::move(n));
     dht_value =
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
@@ -378,10 +376,11 @@ int main() {
 
     obj->nodes_.clear();
     to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
-        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), date);
+        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 0, date);
     n = tos::create_tl_object<tos::tos_api::overlay_node>(
-        pub.tl(), overlay_short_id.tl(), date,
-        pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok());
+        pub.tl(), overlay_short_id.tl(), 0, date,
+        pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok(),
+        tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>());
     obj->nodes_.push_back(std::move(n));
     dht_value =
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
@@ -390,7 +389,9 @@ int main() {
     obj->nodes_.clear();
     //to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
     //    tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), key_short_id.tl(), date);
-    n = tos::create_tl_object<tos::tos_api::overlay_node>(pub.tl(), overlay_short_id.tl(), date, td::BufferSlice{64});
+    n = tos::create_tl_object<tos::tos_api::overlay_node>(
+        pub.tl(), overlay_short_id.tl(), 0, date, td::BufferSlice{64},
+        tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>());
     obj->nodes_.push_back(std::move(n));
     dht_value =
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
@@ -398,14 +399,28 @@ int main() {
 
     obj->nodes_.clear();
     to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
-        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), date);
+        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 0, date);
     n = tos::create_tl_object<tos::tos_api::overlay_node>(
-        pub.tl(), overlay_short_id.tl(), date,
-        pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok());
+        pub.tl(), overlay_short_id.tl(), 0, date,
+        pk.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok(),
+        tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>());
     obj->nodes_.push_back(std::move(n));
     dht_value =
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
     dht_value.check().ensure();
+
+    obj->nodes_[0]->flags_ = 2;
+    auto policy_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
+        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 2, date);
+    obj->nodes_[0]->signature_ = pk.create_decryptor().move_as_ok()->sign(policy_sign.as_slice()).move_as_ok();
+    dht_value =
+        tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
+    dht_value.check().ensure();
+    obj->nodes_[0]->flags_ = 0;
+    auto tampered_policy =
+        tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
+    tampered_policy.check().ensure_error();
+    obj->nodes_[0]->flags_ = 2;
 
     auto dht_value2 =
         tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(obj, true), ttl, td::BufferSlice()};
@@ -421,10 +436,11 @@ int main() {
       td::Random::secure_bytes(x.as_slice());
       auto pk2 = tos::PrivateKey{tos::privkeys::Ed25519{x.clone()}};
       auto to_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
-          tos::adnl::AdnlNodeIdShort{pk2.compute_short_id()}.tl(), overlay_short_id.tl(), date);
+          tos::adnl::AdnlNodeIdShort{pk2.compute_short_id()}.tl(), overlay_short_id.tl(), 0, date);
       n = tos::create_tl_object<tos::tos_api::overlay_node>(
-          pk2.compute_public_key().tl(), overlay_short_id.tl(), date,
-          pk2.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok());
+          pk2.compute_public_key().tl(), overlay_short_id.tl(), 0, date,
+          pk2.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok(),
+          tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>());
       obj->nodes_.push_back(std::move(n));
     }
     dht_value2 =

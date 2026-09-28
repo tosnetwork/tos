@@ -172,22 +172,20 @@ void OverlayManager::register_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdS
   }
   auto P =
       td::PromiseCreator::lambda([id = overlays_[local_id][overlay_id].overlay.get()](td::Result<DbType::GetResult> R) {
-        R.ensure();
-        auto value = R.move_as_ok();
-        if (value.status == td::KeyValue::GetStatus::Ok) {
-          auto F = fetch_tl_object<tos_api::overlay_db_Nodes>(std::move(value.value), true);
-          F.ensure();
-          tos_api::downcast_call(
-              *F.move_as_ok(), td::overloaded(
-                                   [&](tos_api::overlay_db_nodes &V) {
-                                     auto nodes = std::move(V.nodes_);
-                                     td::actor::send_closure(id, &Overlay::receive_nodes_from_db, std::move(nodes));
-                                   },
-                                   [&](tos_api::overlay_db_nodesV2 &V) {
-                                     auto nodes = std::move(V.nodes_);
-                                     td::actor::send_closure(id, &Overlay::receive_nodes_from_db_v2, std::move(nodes));
-                                   }));
+        if (R.is_error()) {
+          VLOG(OVERLAY_WARNING) << "Cannot read overlay discovery cache: " << R.move_as_error();
+          return;
         }
+        auto value = R.move_as_ok();
+        if (value.status != td::KeyValue::GetStatus::Ok) {
+          return;
+        }
+        auto decoded = fetch_tl_object<tos_api::overlay_db_nodes>(std::move(value.value), true);
+        if (decoded.is_error()) {
+          VLOG(OVERLAY_WARNING) << "Discarding invalid overlay discovery cache: " << decoded.move_as_error();
+          return;
+        }
+        td::actor::send_closure(id, &Overlay::receive_nodes_from_db, std::move(decoded.move_as_ok()->nodes_));
       });
   auto key = create_hash_tl_object<tos_api::overlay_db_key_nodes>(local_id.bits256_value(), overlay_id.bits256_value());
   db_.get(key, std::move(P));

@@ -77,7 +77,10 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       timeout_heap_.erase(&state);
     }
     if (status.is_error()) {
-      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " due to " << status.error();
+      auto prefix = state.diagnostic_prefix();
+      LOG(INFO) << "close stream cid=" << cid << " sid=" << sid << " local_id=" << local_id
+                << " peer_id=" << peer_id << " head=" << td::format::as_hex_dump<0>(td::Slice(prefix))
+                << " due to " << status.error();
       fail_stream(state, status.clone());
       return status;
     }
@@ -189,6 +192,17 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
 
     size_t buffered_bytes() const {
       return builder_.size();
+    }
+
+    // Only retain the protocol header in diagnostics, never a complete payload.
+    std::string diagnostic_prefix() const {
+      std::string prefix;
+      builder_.for_each([&](td::Slice part) {
+        if (prefix.size() < 64) {
+          prefix.append(part.data(), std::min(part.size(), 64 - prefix.size()));
+        }
+      });
+      return prefix;
     }
 
     void set_options(StreamOptions options) {

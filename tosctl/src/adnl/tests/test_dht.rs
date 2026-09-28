@@ -253,16 +253,8 @@ fn dht_session() {
         overlay1.add_local_workchain_overlay(params).unwrap();
         let params = OverlayParams::with_id_only(&overlay_short_id);
         overlay2.add_local_workchain_overlay(params).unwrap();
-        let OverlayNodeInfo::V1(node1) =
-            overlay1.get_signed_node(&overlay_short_id, false).unwrap()
-        else {
-            panic!("Unexpected V2 overlay node info")
-        };
-        let OverlayNodeInfo::V1(node2) =
-            overlay2.get_signed_node(&overlay_short_id, false).unwrap()
-        else {
-            panic!("Unexpected V2 overlay node info")
-        };
+        let OverlayNodeInfo(node1) = overlay1.get_signed_node(&overlay_short_id).unwrap();
+        let OverlayNodeInfo(node2) = overlay2.get_signed_node(&overlay_short_id).unwrap();
         assert!(dht1.store_overlay_node(&overlay_id, &node2).await.unwrap());
         assert!(dht2.store_overlay_node(&overlay_id, &node1).await.unwrap());
         adnl1.stop().await;
@@ -278,11 +270,7 @@ fn dht_store_testnet() {
             ctx.overlay.calc_overlay_id(-1, 0x8000000000000000u64 as i64).unwrap();
         let params = OverlayParams::with_id_only(&ctx.overlay_id);
         ctx.overlay.add_local_workchain_overlay(params).unwrap();
-        let OverlayNodeInfo::V1(node) =
-            ctx.overlay.get_signed_node(&ctx.overlay_id, false).unwrap()
-        else {
-            panic!("Unexpected V2 overlay node info")
-        };
+        let OverlayNodeInfo(node) = ctx.overlay.get_signed_node(&ctx.overlay_id).unwrap();
         let key = ctx.dht.key();
         assert!(run_test(|| ctx.dht.store_ip_address(&key)).await);
         assert!(run_test(|| ctx.dht.store_overlay_node(&overlay_long_id, &node)).await);

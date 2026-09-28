@@ -138,6 +138,12 @@ OverlayImpl::OverlayImpl(td::actor::ActorId<keyring::Keyring> keyring, td::actor
     VLOG(OVERLAY_WARNING) << "Plumtree broadcast sender is not set";
     opts_.enable_plumtree_broadcast_ = false;
   }
+  if (overlay_type_ == OverlayType::Public) {
+    opts_.local_overlay_member_flags_ = OverlayMemberFlags::public_flags(
+        opts_.local_overlay_member_flags_, opts_.enable_plumtree_broadcast_, opts_.is_original_sender_);
+    CHECK(OverlayMemberFlags::valid(opts_.local_overlay_member_flags_));
+    peer_list_.local_member_flags_ = opts_.local_overlay_member_flags_;
+  }
   if (opts_.send_twostep_broadcast_ && opts_.twostep_broadcast_sender_.empty()) {
     VLOG(OVERLAY_WARNING) << "Twostep broadcast sender is not set";
     opts_.send_twostep_broadcast_ = false;
@@ -162,19 +168,6 @@ void OverlayImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getR
                         << " in getRandomPeers query";
     add_peers(query.peers_, /* verified = */ false);
     send_random_peers(src, std::move(promise));
-  } else {
-    VLOG(OVERLAY_WARNING) << this << ": DROPPING getRandomPeers query from " << src << " in private overlay";
-    promise.set_error(td::Status::Error(ErrorCode::protoviolation, "overlay is private"));
-  }
-}
-
-void OverlayImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getRandomPeersV2 &query,
-                                td::Promise<td::BufferSlice> promise) {
-  if (overlay_type_ != OverlayType::FixedMemberList) {
-    VLOG(OVERLAY_DEBUG) << this << ": received " << query.peers_->nodes_.size() << " nodes from " << src
-                        << " in getRandomPeers query";
-    add_peers(query.peers_, /* verified = */ false);
-    send_random_peers_v2(src, std::move(promise));
   } else {
     VLOG(OVERLAY_WARNING) << this << ": DROPPING getRandomPeers query from " << src << " in private overlay";
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "overlay is private"));
@@ -321,7 +314,7 @@ td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_f
   if (!opts_.enable_plumtree_broadcast_) {
     co_return td::Status::Error("Plumtree broadcasts are not enabled");
   }
-  if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
+  if (peer_list_.local_member_flags_ & OverlayMemberFlags::plumtree_deny_mask()) {
     co_return td::Unit{};
   }
   co_await broadcasts_plumtree_.process_fec_payload(this, message_from, std::move(bcast));
@@ -333,7 +326,7 @@ td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_f
   if (!opts_.enable_plumtree_broadcast_) {
     co_return td::Status::Error("Plumtree broadcasts are not enabled");
   }
-  if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
+  if (peer_list_.local_member_flags_ & OverlayMemberFlags::plumtree_deny_mask()) {
     co_return td::Unit{};
   }
   co_await broadcasts_plumtree_.process_simple_payload(this, message_from, std::move(bcast));
@@ -345,7 +338,7 @@ td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_f
   if (!opts_.enable_plumtree_broadcast_) {
     co_return td::Status::Error("Plumtree broadcasts are not enabled");
   }
-  if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
+  if (peer_list_.local_member_flags_ & OverlayMemberFlags::plumtree_deny_mask()) {
     co_return td::Unit{};
   }
   co_await broadcasts_plumtree_.process_ihave(this, message_from, std::move(msg));
@@ -461,11 +454,7 @@ void OverlayImpl::alarm() {
   if (overlay_type_ != OverlayType::FixedMemberList) {
     if (has_valid_membership_certificate()) {
       auto send_random_peers_query = [&](const adnl::AdnlNodeIdShort &peer) {
-        if (overlay_type_ == OverlayType::Public) {
-          send_random_peers(peer, {});
-        } else {
-          send_random_peers_v2(peer, {});
-        }
+        send_random_peers(peer, {});
       };
       auto neighbour_id = adnl::AdnlNodeIdShort::zero();
       if (auto neighbour = get_random_neighbour_peer()) {
@@ -572,7 +561,7 @@ void OverlayImpl::set_plumtree_eager_mtu_peers(std::vector<adnl::AdnlNodeIdShort
     plumtree_eager_mtu_guard_ = {};
     return;
   }
-  if (peer_list_.local_member_flags_ & OverlayMemberFlags::DoNotReceiveBroadcasts) {
+  if (peer_list_.local_member_flags_ & OverlayMemberFlags::plumtree_deny_mask()) {
     plumtree_eager_mtu_guard_ = {};
     return;
   }
@@ -919,7 +908,8 @@ void OverlayImpl::receive_plumtree_repair_response(adnl::AdnlNodeIdShort from, t
                                                    td::uint32 expected_part_index, td::uint32 expected_tree_index,
                                                    td::Result<td::BufferSlice> R) {
   broadcasts_plumtree_.repair_query_finished();
-  if (R.is_error()) {
+  if (!opts_.enable_plumtree_broadcast_ ||
+      (peer_list_.local_member_flags_ & OverlayMemberFlags::plumtree_deny_mask()) || R.is_error()) {
     return;
   }
   [](OverlayImpl *self, adnl::AdnlNodeIdShort from, td::Bits256 expected_broadcast_id, td::uint32 expected_part_index,
