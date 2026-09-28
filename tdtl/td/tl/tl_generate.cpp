@@ -387,15 +387,15 @@ void write_class(tl_outputer &out, const tl_type *t, const std::set<std::string>
 
       out.append(w.gen_fetch_switch_end());
       out.append(w.gen_fetch_function_end(false, -1, empty_vars, -1));
-
-      out.append(w.gen_nameof_function_begin(class_name));
-      for (std::size_t j = 0; j < t->constructors_num; j++) {
-        if (w.is_combinator_supported(t->constructors[j])) {
-          out.append(w.gen_nameof_case(t->constructors[j]));
-        }
-      }
-      out.append(w.gen_nameof_function_end(class_name));
     }
+
+    out.append(w.gen_nameof_function_begin(class_name));
+    for (std::size_t j = 0; j < t->constructors_num; j++) {
+      if (w.is_combinator_supported(t->constructors[j])) {
+        out.append(w.gen_nameof_case(t->constructors[j]));
+      }
+    }
+    out.append(w.gen_nameof_function_end(class_name));
 
     std::vector<std::string> storers = w.get_storers();
     for (std::size_t i = 0; i < storers.size(); i++) {
@@ -776,11 +776,7 @@ void write_tl(const tl_config &config, tl_outputer &out, const TL_writer &w) {
       out.append(w.gen_fetch_function_end(false, -1, empty_vars, -1));
     }
 
-    for (std::size_t j = 0; j < parsers.size(); j++) {
-      if (w.get_parser_mode(-1) == TL_writer::Client) {
-        continue;
-      }
-
+    if (w.get_parser_mode(-1) != TL_writer::Client) {
       out.append(w.gen_nameof_function_begin(w.gen_base_function_class_name()));
       for (std::size_t function = 0; function < functions_n; function++) {
         tl_combinator *t = config.get_function_by_num(function);
