@@ -22,6 +22,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-n5-manager-db-fixture",
     "test-consensus",
     "test-notarize-after-transient-resolve",
+    "test-state-resolver-teardown",
 }
 
 RESTART_ORIGIN_TESTS = (

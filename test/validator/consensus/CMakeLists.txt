@@ -116,6 +116,28 @@ foreach(mode control genesis-notready genesis-timeout ancestor-notready permanen
     add_test(NAME c05-notarize-${mode} COMMAND test-notarize-after-transient-resolve ${mode})
 endforeach()
 
+# A group that stops while a finalization is in flight and callers wait on it must release
+# the resolver, its waiters and the bus.
+add_executable(test-state-resolver-teardown test-state-resolver-teardown.cpp)
+target_link_libraries(test-state-resolver-teardown PRIVATE
+    validator
+    tos_validator
+    smc-envelope
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+add_test(NAME c10-state-resolver-teardown COMMAND test-state-resolver-teardown)
+
 add_executable(test-validator-manager-resource-policy test-validator-manager-resource-policy.cpp)
 target_link_libraries(test-validator-manager-resource-policy PRIVATE
     adnl

@@ -67,7 +67,7 @@ jobs:
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             test-n5-manager-db-fixture test-consensus \
-            test-notarize-after-transient-resolve
+            test-notarize-after-transient-resolve test-state-resolver-teardown
           ccache --show-stats
 
       # A virtualized key-block proof must retain every PQ finality context
@@ -127,6 +127,13 @@ jobs:
       # must never be retried into an unsafe late vote.
       - name: Check Simplex parent-state retry voting
         run: ctest --test-dir build --output-on-failure -R '^c05-notarize-'
+
+      # C10: a group that stops while a finalization is in flight and other
+      # callers wait on it must cancel them, make no further manager request,
+      # and let the bus destruct. The original teardown crashed or stranded
+      # a waiter here; the test is built and run in the same fixed tree.
+      - name: Check Simplex state-resolver teardown
+        run: ctest --test-dir build --output-on-failure -R '^c10-state-resolver-teardown$'
 
       # C03's restart-origin failure only appeared when an anchor read first
       # failed and the exact predecessor was then needed. Keep both positive
