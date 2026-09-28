@@ -297,10 +297,11 @@ td::Status DhtUpdateRuleOverlayNodes::check_value(const DhtValue &value) {
   }
   auto L = F.move_as_ok();
   auto now = static_cast<td::int64>(td::Clocks::system());
+  bool has_fresh_node = false;
   for (auto &node : L->nodes_) {
-    if (!overlay::overlay_node_version_is_fresh(node->version_, now)) {
-      return td::Status::Error(ErrorCode::protoviolation, "overlay node version is outside freshness window");
-    }
+    // Freshness is per signed node, not a property of the whole merged DHT
+    // value. A naturally aged member must not make fresh siblings unusable.
+    has_fresh_node = has_fresh_node || overlay::overlay_node_version_is_fresh(node->version_, now);
     if (!overlay::OverlayMemberFlags::valid(static_cast<td::uint32>(node->flags_)) || !node->certificate_ ||
         node->certificate_->get_id() != tos_api::overlay_emptyMemberCertificate::ID) {
       return td::Status::Error(ErrorCode::protoviolation, "invalid public overlay node policy");
@@ -315,6 +316,9 @@ td::Status DhtUpdateRuleOverlayNodes::check_value(const DhtValue &value) {
     auto B = serialize_tl_object(obj, true);
     TRY_RESULT(E, pub.pubkey().create_encryptor());
     TRY_STATUS(E->check_signature(B.as_slice(), sig.as_slice()));
+  }
+  if (!has_fresh_node) {
+    return td::Status::Error(ErrorCode::protoviolation, "overlay nodes value has no fresh records");
   }
   return td::Status::OK();
 }

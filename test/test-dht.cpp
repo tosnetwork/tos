@@ -453,6 +453,26 @@ int main() {
       invalid.check().ensure_error();
       CHECK(!invalid.check_is_acceptable());
     }
+
+    // Merged discovery values can legitimately contain a naturally aged node
+    // beside a fresh one. The stale sibling must not make the fresh record
+    // unreadable; update_value() will drop stale members on the next merge.
+    auto mixed_freshness = signed_value(current_time, 2);
+    auto mixed_nodes =
+        tos::fetch_tl_object<tos::tos_api::overlay_nodes>(mixed_freshness.value().clone_as_buffer_slice(), true)
+            .move_as_ok();
+    auto stale_version = current_time - 601;
+    auto stale_sign = tos::create_serialize_tl_object<tos::tos_api::overlay_node_toSign>(
+        tos::adnl::AdnlNodeIdShort{pub.compute_short_id()}.tl(), overlay_short_id.tl(), 0, stale_version);
+    mixed_nodes->nodes_.push_back(tos::create_tl_object<tos::tos_api::overlay_node>(
+        pub.tl(), overlay_short_id.tl(), 0, stale_version,
+        pk.create_decryptor().move_as_ok()->sign(stale_sign.as_slice()).move_as_ok(),
+        tos::create_tl_object<tos::tos_api::overlay_emptyMemberCertificate>()));
+    mixed_freshness = tos::dht::DhtValue{dht_key_description.clone(), tos::serialize_tl_object(mixed_nodes, true), ttl,
+                                         td::BufferSlice()};
+    mixed_freshness.check().ensure();
+    CHECK(mixed_freshness.check_is_acceptable());
+
     // An already cached future description must not pin the old receive policy.
     auto poisoned_cache = signed_value(std::numeric_limits<td::int32>::max(), 0);
     poisoned_cache.update(std::move(fresh_value)).ensure();
