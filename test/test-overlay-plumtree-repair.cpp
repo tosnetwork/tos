@@ -119,7 +119,7 @@ class RepairOverlay : public OverlayImpl {
           auto task = b.process_ihave(this, peers[peer], std::move(message)).start_immediate();
           CHECK(task.await_ready());
           CHECK(task.await_resume().is_ok());
-          cpu_ms += 1000.0 * (std::clock() - start) / CLOCKS_PER_SEC;
+          cpu_ms += 1000.0 * static_cast<double>(std::clock() - start) / static_cast<double>(CLOCKS_PER_SEC);
         }
       }
       auto diag = b.repair_diagnostics_for_test();
