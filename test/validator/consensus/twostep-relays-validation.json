@@ -1,4 +1,9 @@
 {
+  "superseded_by": {
+    "ruling": "R7",
+    "evidence": "twostep-relays-r7-validation-20260928.md",
+    "historical_only": true
+  },
   "base_commit": "2483ea590b736f018a0fac8daf190510e0cef506",
   "implementation_commit": "e4bf266bf6b1b7b9a7bf80c0e727afb94c9bd531",
   "memo_commit": "78b40fd436a34bfbe18e5aafbb649c10890e13df",

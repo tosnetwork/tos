@@ -1,3 +1,5 @@
+> **Superseded by owner ruling R7.** This is historical evidence for the withdrawn refusal policy. See [twostep-relays-r7-validation-20260928.md](twostep-relays-r7-validation-20260928.md) for current behavior and new tests.
+
 # PR #120: independent review follow-up — 2026-09-28
 
 **Status: test corrections committed; revised native build, runtime tests and mutation checks are pending. Not a merge approval.**
