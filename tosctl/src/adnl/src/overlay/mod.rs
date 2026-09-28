@@ -13,7 +13,7 @@ use crate::{common::add_unbound_object_to_map, telemetry::Metric};
 use crate::{
     common::{
         add_counted_object_to_map, add_counted_object_to_map_with_update,
-        add_unbound_object_to_map_with_update, hash, hash_boxed, AdnlPeers, AsyncReceiver,
+        hash, hash_boxed, AdnlPeers, AsyncReceiver,
         CountedObject, Counter, Query, QueryAnswer, QueryResult, Subscriber, TaggedByteSlice,
         TaggedTlObject, Version,
     },
@@ -51,7 +51,6 @@ use tl_api::{
         overlay::{
             broadcast::BroadcastFec,
             membercertificate::MemberCertificate,
-            membercertificateid::MemberCertificateId,
             message::{Message as OverlayMessage, MessageWithExtra as OverlayMessageWithExtra},
             messageextra::MessageExtra,
             node::{
@@ -79,6 +78,9 @@ use tl_api::{
 };
 #[cfg(feature = "telemetry")]
 use tl_api::{BoxedSerialize, Constructor};
+
+mod member_certificate;
+use member_certificate::{validate_member_certificate, RootMembers};
 
 mod broadcast;
 use broadcast::{
@@ -199,6 +201,13 @@ impl OverlayUtils {
         Ok(OverlayShortId::from_data(hash(overlay_key)?))
     }
 
+    pub(crate) fn node_version_is_fresh(version: i32, now: i32) -> bool {
+        // Match the C++ overlay admission window without signed overflow.
+        let version = i64::from(version);
+        let now = i64::from(now);
+        version >= now - 600 && version <= now + 60
+    }
+
     /// Verify node info
     pub(crate) fn verify_node<T: NodeData>(
         overlay_id: &Arc<OverlayShortId>,
@@ -206,6 +215,9 @@ impl OverlayUtils {
     ) -> Result<()> {
         if (node.flags() as u32) & !3 != 0 {
             fail!("Unknown overlay receive flags")
+        }
+        if !Self::node_version_is_fresh(node.version(), Version::get()) {
+            fail!("Expired or future overlay node description")
         }
         let key: Arc<dyn KeyOption> = node.get_key()?;
         if node.overlay().as_slice() != overlay_id.data() {
@@ -273,11 +285,6 @@ declare_counted!(
     }
 );
 
-struct SlaveInfo {
-    node_id: Arc<KeyId>,
-    expire_at: u32, // utime in seconds
-}
-
 enum OverlayType {
     Public,
     // Overlay with fixed members set
@@ -288,8 +295,8 @@ enum OverlayType {
     // Overlay with externally certified members
     CertifiedMembers {
         key: Option<Arc<dyn KeyOption>>,
-        // KeyId -> (Slot -> SlaveInfo)
-        root_members: HashMap<Arc<KeyId>, lockfree::map::Map<u32, SlaveInfo>>,
+        // KeyId -> (Slot -> authenticated certificate)
+        root_members: RootMembers,
         max_slaves: usize,
         // Prefix to use in broadcasts instead of Overlay::message_prefix
         bcast_prefix: Vec<u8>,
@@ -556,43 +563,39 @@ impl Overlay {
                 Ok(())
             }
             OverlayType::CertifiedMembers { root_members, .. } => {
+                // A supplied renewal must be checked, not replaced by an older
+                // cached certificate. Cache fallback is only for certificate-less traffic.
+                if let Some(cert) = certificate {
+                    return self.validate_certificate(peer, cert);
+                }
                 if root_members.contains_key(peer) {
                     return Ok(());
                 }
-                // Bcasts are sent without a certificate, hoping the target already knows
-                // the sender's one.
                 if let Some(guard) = self.nodes.get(peer) {
-                    {
-                        let node = &guard.val().node;
-                        let MemberCertificateBoxed::Overlay_MemberCertificate(cert) =
-                            &node.certificate
-                        else {
-                            fail!(
-                                "Empty certificate for known peer {peer} in overlay {}",
-                                self.overlay_id
-                            )
-                        };
-                        return self.validate_certificate(peer, cert).map_err(|e| {
-                            error!(
-                                "Certificate validation for known peer {peer} in overlay {}: {e}",
-                                self.overlay_id
-                            )
-                        });
-                    }
+                    let MemberCertificateBoxed::Overlay_MemberCertificate(cert) =
+                        &guard.val().node.certificate
+                    else {
+                        fail!("Empty certificate for known peer {peer} in overlay {}", self.overlay_id)
+                    };
+                    return self.validate_certificate(peer, cert);
                 }
-                let Some(certificate) = certificate else {
-                    fail!(
-                        "Cannot validate {peer} with empty certificate in the overlay {}",
-                        self.overlay_id
-                    )
-                };
-                self.validate_certificate(peer, certificate).map_err(|e| {
-                    error!(
-                        "Certificate validation for new peer {peer} in overlay {}: {e}",
-                        self.overlay_id
-                    )
-                })
+                fail!("Cannot validate {peer} with empty certificate in the overlay {}", self.overlay_id)
             }
+        }
+    }
+
+    fn check_node_certificate(&self, peer: &Arc<KeyId>, certificate: &MemberCertificateBoxed) -> Result<()> {
+        // A descriptor replaces cached state, so its OWN certificate must pass.
+        // It must never borrow validity from a different cached descriptor.
+        match (&self.overlay_type, certificate) {
+            (OverlayType::Public, MemberCertificateBoxed::Overlay_EmptyMemberCertificate) => Ok(()),
+            (OverlayType::Public, _) => fail!("Member certificate in public overlay"),
+            (OverlayType::CertifiedMembers { .. }, MemberCertificateBoxed::Overlay_MemberCertificate(cert)) => {
+                self.validate_certificate(peer, cert)
+            }
+            (OverlayType::CertifiedMembers { root_members, .. }, MemberCertificateBoxed::Overlay_EmptyMemberCertificate)
+                if root_members.contains_key(peer) => Ok(()),
+            _ => fail!("Missing or invalid member certificate in overlay node description"),
         }
     }
 
@@ -916,7 +919,7 @@ impl Overlay {
             }
         } else {
             self.known_peers.random_set(&self.neighbours, n)
-            // self.random_peers.random_set(&self.neighbours, Some(&self.bad_peers), n)
+            // self.random_peers.random_set(&self.random_peers, Some(&self.bad_peers), n)
         }
     }
 
@@ -926,77 +929,10 @@ impl Overlay {
     // }
 
     fn validate_certificate(&self, peer: &Arc<KeyId>, cert: &MemberCertificate) -> Result<()> {
-        let utime = UnixTime::now() as u32;
-
-        let (max_slaves, root_members) =
-            if let OverlayType::CertifiedMembers { max_slaves, root_members, .. } =
-                &self.overlay_type
-            {
-                (*max_slaves, root_members)
-            } else {
-                fail!("Overlay type is not certificated members")
-            };
-
-        // 1) Expire check
-        // "3" is a magic gap from cpp implementation
-        if (cert.expire_at as u32) < utime - 3 {
-            fail!("Certificate is expired, expire_at: {}, current time: {}", cert.expire_at, utime);
-        }
-
-        // 2) Slot (each root member has fixed number of slots)
-        if cert.slot < 0 || cert.slot as usize >= max_slaves {
-            fail!("Certificate has invalid slot: {}", cert.slot);
-        }
-
-        // 3) Issuer
-        let issuer: Arc<dyn KeyOption> = (&cert.issued_by).try_into()?;
-        let Some(slaves_info) = root_members.get(issuer.id()) else {
-            fail!("Certificate is issued by unknown member: {}", cert.issued_by);
+        let OverlayType::CertifiedMembers { max_slaves, root_members, .. } = &self.overlay_type else {
+            fail!("Overlay type is not certificated members")
         };
-
-        // If previously used slot
-        if let Some(guard) = slaves_info.get(&(cert.slot as u32)) {
-            let slave_info = guard.val();
-
-            // 4) Check for newer certificate at the same slot
-            if (cert.expire_at as u32) < slave_info.expire_at {
-                fail!("Certificate rejected, because we know of newer one at the same slot");
-            }
-
-            // 5) Check sender adnl id
-            if (cert.expire_at as u32) == slave_info.expire_at {
-                // In cpp code "if (node < el.node)", it is strange, because
-                // it is not clear why node with bigger id can replace
-                // node with smaller id, but node with smaller id can not.
-                // I think it should be "!="
-                if UInt256::from_slice(peer.data()) < UInt256::from_slice(slave_info.node_id.data())
-                {
-                    fail!("Certificate rejected, because we know another one at the same slot");
-                }
-
-                // 6) Check peer. Same peer means that certificate was already checked
-                //    (slave_info is saved only after successfull check)
-                if *peer == slave_info.node_id {
-                    return Ok(());
-                }
-            }
-        }
-
-        // 6) Verify signature
-        let data_to_sign = MemberCertificateId {
-            node: AdnlShortId { id: UInt256::with_array(peer.data().clone()) },
-            flags: cert.flags,
-            slot: cert.slot,
-            expire_at: cert.expire_at,
-        }
-        .into_boxed();
-        issuer.verify(&serialize_boxed(&data_to_sign)?, &cert.signature)?;
-
-        // 7) Create/update slot info
-        add_unbound_object_to_map_with_update(slaves_info, cert.slot as u32, |_| {
-            Ok(Some(SlaveInfo { node_id: peer.clone(), expire_at: cert.expire_at as u32 }))
-        })?;
-        Ok(())
+        validate_member_certificate(root_members, *max_slaves, peer, cert, UnixTime::now() as u32)
     }
 
     #[cfg(feature = "telemetry")]
@@ -1167,7 +1103,7 @@ impl Overlay {
                 stats
             } else {
                 fail!(
-                    "INTERNAL ERROR: cannot add overlay statistics for {}:{dst}:{tag}",
+                    "INTERNAL ERROR: cannot add overlay statistics for {}:{dst}",
                     self.overlay_id
                 );
             }
@@ -1264,7 +1200,9 @@ impl OverlayNode {
             peers: adnl.add_metric("Alloc OVRL peers"),
             recv_transfers: adnl.add_metric("Alloc OVRL recv transfers"),
             send_transfers: adnl.add_metric("Alloc OVRL send transfers"),
+            #[cfg(feature = "telemetry")]
             stats_peer: adnl.add_metric("Alloc OVRL peer stats"),
+            #[cfg(feature = "telemetry")]
             stats_transfer: adnl.add_metric("Alloc OVRL transfer stats"),
         };
         let allocated = OverlayAlloc {
@@ -1372,20 +1310,13 @@ impl OverlayNode {
         }
         let descriptor = peer.0.borrow();
         let key = descriptor.get_key()?;
-        let cert = match &descriptor.certificate {
-            MemberCertificateBoxed::Overlay_MemberCertificate(cert) => Some(cert),
-            _ => None,
-        };
-        if overlay.overlay_type.has_certified_members() {
-            overlay.check_peer(key.id(), cert)?;
-        } else if cert.is_some() {
-            fail!("Member certificate in public overlay")
-        }
-        let verify = OverlayUtils::verify_node(overlay_id, descriptor);
-        if let Err(e) = verify {
+        // Authenticate the descriptor before certificate validation can mutate
+        // the root slot cache. Never validate a replacement against cached credentials.
+        if let Err(e) = OverlayUtils::verify_node(overlay_id, descriptor) {
             log::warn!(target: TARGET, "Error when verifying overlay peer {}: {e}", key.id());
             return Ok(None);
         }
+        overlay.check_node_certificate(key.id(), &descriptor.certificate)?;
         let Some(ret) = self.adnl.add_peer(self.node_key.id(), peer_ip_address, None, &key)? else {
             return Ok(None);
         };
@@ -1568,7 +1499,7 @@ impl OverlayNode {
         n: u32,
     ) -> Result<()> {
         let overlay =
-            self.get_overlay(overlay_id, "Getting cached random peers from unknown overlay")?;
+            self.get_overlay(overlay_id, "Getting cached random peers in unknown overlay")?;
         overlay.known_peers.random_set(dst, n)
     }
 
@@ -2433,18 +2364,19 @@ mod receive_policy_tests {
     fn signed_overlay_receive_policy_roundtrip() -> Result<()> {
         let key = Ed25519KeyOption::generate()?;
         let overlay = OverlayShortId::from_data([7; 32]);
+        let version = Version::get();
         for flags in [0, 1, 2, 3] {
             let sign = OverlayUtils::get_node_to_sign(
                 &key,
                 &UInt256::with_array(*overlay.data()),
                 flags,
-                100,
+                version,
             );
             let mut node = NodeDescriptor {
                 id: (&key).try_into()?,
                 overlay: UInt256::with_array(*overlay.data()),
                 flags,
-                version: 100,
+                version,
                 signature: key.sign(&serialize_boxed(&sign)?)?.into(),
                 certificate: Default::default(),
             };
@@ -2460,17 +2392,53 @@ mod receive_policy_tests {
             assert!(OverlayUtils::verify_node(&overlay, &node).is_err());
         }
         let flags = 4;
-        let sign =
-            OverlayUtils::get_node_to_sign(&key, &UInt256::with_array(*overlay.data()), flags, 100);
+        let sign = OverlayUtils::get_node_to_sign(
+            &key, &UInt256::with_array(*overlay.data()), flags, version,
+        );
         let node = NodeDescriptor {
             id: (&key).try_into()?,
             overlay: UInt256::with_array(*overlay.data()),
             flags,
-            version: 100,
+            version,
             signature: key.sign(&serialize_boxed(&sign)?)?.into(),
             certificate: Default::default(),
         };
         assert!(OverlayUtils::verify_node(&overlay, &node).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn descriptor_time_window_is_overflow_safe() {
+        let now = 1_800_000_000;
+        for version in [now - 600, now, now + 60] {
+            assert!(OverlayUtils::node_version_is_fresh(version, now));
+        }
+        for version in [i32::MIN, -1, now - 601, now + 61, i32::MAX] {
+            assert!(!OverlayUtils::node_version_is_fresh(version, now));
+        }
+        assert!(OverlayUtils::node_version_is_fresh(i32::MAX, i32::MAX));
+        assert!(OverlayUtils::node_version_is_fresh(i32::MIN, i32::MIN));
+    }
+
+    #[test]
+    fn valid_signature_does_not_make_stale_or_future_policy_fresh() -> Result<()> {
+        let key = Ed25519KeyOption::generate()?;
+        let overlay = OverlayShortId::from_data([9; 32]);
+        let now = Version::get();
+        for version in [now - 3600, now + 3600, i32::MAX] {
+            let signed = OverlayUtils::get_node_to_sign(
+                &key, &UInt256::with_array(*overlay.data()), 2, version,
+            );
+            let node = NodeDescriptor {
+                id: (&key).try_into()?,
+                overlay: UInt256::with_array(*overlay.data()),
+                flags: 2,
+                version,
+                signature: key.sign(&serialize_boxed(&signed)?)?.into(),
+                certificate: Default::default(),
+            };
+            assert!(OverlayUtils::verify_node(&overlay, &node).is_err());
+        }
         Ok(())
     }
 }

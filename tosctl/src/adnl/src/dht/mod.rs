@@ -64,6 +64,9 @@ use tl_api::{
     AnyBoxedSerialize, IntoBoxed, Signing, TLObject,
 };
 
+mod overlay_nodes;
+use overlay_nodes::{merge_overlay_nodes, MAX_OVERLAY_NODES_BYTES};
+
 pub const TARGET: &str = "dht";
 
 pub struct DhtIterator {
@@ -1136,6 +1139,9 @@ impl DhtNode {
         value: DhtValue,
     ) -> Result<bool> {
         log::trace!(target: TARGET, "Process Store Overlay Nodes {value:?}");
+        if value.value.len() > MAX_OVERLAY_NODES_BYTES {
+            fail!("Overlay nodes DHT value exceeds {} bytes", MAX_OVERLAY_NODES_BYTES)
+        }
         if !value.signature.is_empty() {
             fail!("Wrong value signature for OverlayNodes")
         }
@@ -1168,47 +1174,15 @@ impl DhtNode {
             fail!("Empty overlay nodes list")
         }
         add_counted_object_to_map_with_update(&network.storage, dht_key_id, |old_value| {
-            let old_value = if let Some(old_value) = old_value {
-                if old_value.object.ttl < Version::get() {
-                    None
-                } else if old_value.object.ttl > value.ttl {
-                    return Ok(None);
-                } else {
-                    Some(&old_value.object.value)
-                }
-            } else {
-                None
-            };
-            let mut old_nodes = if let Some(old_value) = old_value {
-                Self::deserialize_overlay_nodes(old_value)?
-            } else {
-                Vec::new()
-            };
-            for node in nodes.iter() {
-                let mut found = false;
-                for old_node in old_nodes.iter_mut() {
-                    if node.id == old_node.id {
-                        if node.version > old_node.version {
-                            *old_node = node.clone()
-                        } else {
-                            return Ok(None);
-                        }
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    old_nodes.push(node.clone())
-                }
-            }
-            let nodes = OverlayNodesDescriptor { nodes: old_nodes.into() }.into_boxed();
-            let mut ret = ValueObject {
-                object: value.clone(),
+            let object = merge_overlay_nodes(
+                old_value.map(|old| &old.object), &value, &nodes, Version::get(),
+            )?;
+            let ret = ValueObject {
+                object,
                 counter: self.allocated.values.clone().into(),
             };
             #[cfg(feature = "telemetry")]
             self.telemetry.values.update(self.allocated.values.load(Ordering::Relaxed));
-            ret.object.value = serialize_boxed(&nodes)?.into();
             log::trace!(target: TARGET, "Store Overlay Nodes result {:?}", ret.object);
             Ok(Some(ret))
         })
