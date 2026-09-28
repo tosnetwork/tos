@@ -12,6 +12,18 @@ namespace tos::overlay {
 struct RepairTestState {
   std::vector<std::pair<adnl::AdnlNodeIdShort, td::uint64>> requests;
   bool checked = false;
+  std::size_t deliveries = 0;
+};
+class RepairDeliveryCallback : public Overlays::Callback {
+ public:
+  explicit RepairDeliveryCallback(std::shared_ptr<RepairTestState> state) : state_(std::move(state)) {
+  }
+  void receive_broadcast(PublicKeyHash, OverlayIdShort, td::BufferSlice) override {
+    ++state_->deliveries;
+  }
+
+ private:
+  std::shared_ptr<RepairTestState> state_;
 };
 class RepairManager : public OverlayManager {
  public:
@@ -67,14 +79,20 @@ class RepairOverlay : public OverlayImpl {
       return task.await_resume().is_ok();
     };
     if (benchmark) {
+      std::vector<tl_object_ptr<tos_api::overlay_broadcastPlumtreeSimple>> payloads;
       double cpu_ms = 0;
       for (int id = 0; id < 500; ++id) {
         auto broadcast_id = td::sha256_bits256(td::Slice(std::to_string(id)));
-        auto hash = td::sha256_bits256("part");
+        td::BufferSlice data(1000);
+        data.as_slice().fill('a');
+        auto hash = td::sha256_bits256(data.as_slice());
         auto timestamp = td::Clocks::system();
         auto to_sign = create_serialize_tl_object<tos_api::overlay_broadcastPlumtreeSimple_toSign>(
             broadcast_id, timestamp, 0, 1000, hash);
         auto signature = key.create_decryptor().move_as_ok()->sign(to_sign.as_slice()).move_as_ok();
+        payloads.push_back(create_tl_object<tos_api::overlay_broadcastPlumtreeSimple>(
+            0, timestamp, key.compute_public_key().tl(), Certificate::empty_tl(), broadcast_id, 0, std::move(data),
+            signature.clone()));
         for (int peer = 1; peer <= 5; ++peer) {
           auto message = create_tl_object<tos_api::overlay_broadcastPlumtreeIHave>(
               broadcast_id, timestamp, 0, 0, key.compute_public_key().tl(), Certificate::empty_tl(), timestamp, 1000,
@@ -87,13 +105,26 @@ class RepairOverlay : public OverlayImpl {
         }
       }
       auto diag = b.repair_diagnostics_for_test();
+      auto retained_before_delivery = diag.retained_auth_bytes;
+      // Actual signed eager payloads arrive before the repair timer. Redundant
+      // candidates are erased by the production delivery path, not by a test reset.
+      for (auto &payload : payloads) {
+        auto task = b.process_simple_payload(this, peers.back(), std::move(payload)).start_immediate();
+        CHECK(task.await_ready());
+        CHECK(task.await_resume().is_ok());
+      }
+      auto after_delivery = b.repair_diagnostics_for_test();
+      CHECK(state->deliveries == 500);
+      CHECK(after_delivery.pending_parts == 0 && after_delivery.retained_auth_bytes == 0);
       std::printf(
-          "IHAVE workload: messages=2500 immediate_checks=%llu deferred_checks=%llu cpu_ms=%.3f retained_bytes=%zu\n",
-          static_cast<unsigned long long>(diag.immediate_checks), static_cast<unsigned long long>(diag.deferred_checks),
-          cpu_ms, diag.retained_auth_bytes);
+          "IHAVE workload: messages=2500 deliveries=%zu immediate_checks=%llu deferred_checks=%llu cpu_ms=%.3f "
+          "retained_before_delivery=%zu retained_after_delivery=%zu\n",
+          state->deliveries, static_cast<unsigned long long>(diag.immediate_checks),
+          static_cast<unsigned long long>(diag.deferred_checks), cpu_ms, retained_before_delivery,
+          after_delivery.retained_auth_bytes);
       std::fflush(stdout);
       CHECK(diag.immediate_checks == 500 && diag.deferred_checks == 0);
-      CHECK(diag.retained_auth_bytes == 500 * 4 * (36 + 84 + 64));
+      CHECK(retained_before_delivery == 500 * 4 * (36 + 84 + 64));
       state->checked = true;
       return;
     }
@@ -162,7 +193,7 @@ static void run_repair_fixture(bool benchmark) {
         "repair overlay", td::actor::ActorId<keyring::Keyring>{}, td::actor::ActorId<adnl::Adnl>{}, manager.get(),
         td::actor::ActorId<dht::Dht>{}, local, OverlayIdFull{std::move(full)}, OverlayType::Public,
         std::vector<adnl::AdnlNodeIdShort>{}, std::vector<PublicKeyHash>{}, OverlayMemberCertificate{},
-        std::unique_ptr<Overlays::Callback>{}, rules, "repair-test", opts);
+        std::make_unique<RepairDeliveryCallback>(state), rules, "repair-test", opts);
     td::actor::send_closure(overlay, &RepairOverlay::run_checks, std::move(key), state, benchmark);
   });
   plumtree_sim::pump_scheduler(scheduler, 64);
