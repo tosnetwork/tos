@@ -406,6 +406,7 @@ class OverlayImpl : public Overlay {
  private:
   friend class OverlayImplPeerCleanupTest;
   friend class OverlayImplPlumtreePolicyTest;
+  friend class OverlayImplPlumtreeRepairTest;
   friend class OverlayImplBroadcastCapacityTest;
 
   template <class T>

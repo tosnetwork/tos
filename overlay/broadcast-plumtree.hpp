@@ -45,6 +45,19 @@ class OverlayImpl;
 // constructing an overlay actor graph.
 td::Status check_plumtree_payload_size(std::size_t size, std::size_t maximum = Overlays::max_fec_broadcast_size());
 
+// Retained authorization is bounded independently of configurable repair targets.
+constexpr std::size_t PLUMTREE_MAX_REPAIR_TARGETS = 16;
+constexpr std::size_t PLUMTREE_MAX_REPAIR_CERTIFICATE_BYTES = 256;
+constexpr std::size_t PLUMTREE_MAX_REPAIR_AUTH_BYTES = 36 + 88 + 64 + PLUMTREE_MAX_REPAIR_CERTIFICATE_BYTES;
+
+struct PlumtreeRepairDiagnostics {
+  std::size_t pending_parts = 0;
+  std::size_t targets = 0;
+  std::size_t retained_auth_bytes = 0;
+  td::uint64 immediate_checks = 0;
+  td::uint64 deferred_checks = 0;
+};
+
 struct PlumtreeOutboundFecPayload {
   td::Bits256 broadcast_id;
   td::uint32 flags = 0;
@@ -115,6 +128,8 @@ class BroadcastsPlumtree {
   void add_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   void remove_peer_state_for_test(adnl::AdnlNodeIdShort peer);
   bool has_peer_state_for_test(adnl::AdnlNodeIdShort peer) const;
+  PlumtreeRepairDiagnostics repair_diagnostics_for_test() const;
+  void flush_repairs_for_test(OverlayImpl *overlay);
 
  private:
   class Impl;
