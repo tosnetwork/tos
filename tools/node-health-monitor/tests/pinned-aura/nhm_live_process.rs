@@ -6,6 +6,7 @@ use aura::{
     mcp::McpManager,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -14,6 +15,20 @@ use std::{
     process::{Child, Command, Stdio},
     time::Duration,
 };
+
+fn sha256_file(path: &Path) -> String {
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = file.read(&mut buffer).unwrap();
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    hex::encode(digest.finalize())
+}
 
 struct OwnedProcess(Child);
 impl Drop for OwnedProcess {
@@ -41,14 +56,51 @@ fn live_grant(path: &Path, start: &str, end: &str, nodes: &[&str]) -> Value {
 #[tokio::test]
 async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
     let db = std::env::var("NHM_C09_LIVE_M_EVIDENCE_DB").expect("explicit C09 live M DB");
+    let manifest_path = std::env::var("NHM_C09_DEPLOYMENT_MANIFEST").expect("live manifest");
+    let expected_manifest =
+        std::env::var("NHM_C09_EXPECTED_MANIFEST_SHA256").expect("manifest digest");
+    let manager_pid = std::env::var("NHM_C09_MANAGER_PID").expect("running M PID");
+    assert_eq!(sha256_file(Path::new(&manifest_path)), expected_manifest);
+    let manifest: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+    assert_eq!(
+        manifest["component_source_commits"]["health-state"],
+        "aa583894420af2665c95768a3e5248f41f61c18e"
+    );
+    let manager_exe = format!("/proc/{manager_pid}/exe");
+    let manager_sha = sha256_file(Path::new(&manager_exe));
+    assert_eq!(manifest["binary_sha256"]["health-state"], manager_sha);
+    let manager_fd = format!("/proc/{manager_pid}/fd");
+    assert!(
+        std::fs::read_dir(manager_fd).unwrap().any(|entry| {
+            entry
+                .ok()
+                .and_then(|entry| std::fs::read_link(entry.path()).ok())
+                .is_some_and(|path| path == Path::new(&db))
+        }),
+        "running M does not own the queried evidence database"
+    );
+    println!("C09_RUNTIME_BINDING pid={manager_pid} health_state_sha256={manager_sha} manifest_sha256={expected_manifest}");
     let service_bin = std::env::var("NHM_OBSERVABILITY_BIN").expect("pinned NHM service");
     let adapter_bin = std::env::var("NHM_AURA_STDIO_BIN").expect("pinned adapter");
     let directory = std::env::temp_dir().join(format!("nhm-c09-aura-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&directory).unwrap();
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
     let nodes = ["validator1", "validator2", "validator3", "validator4", "observer5", "observer6"];
+    assert_eq!(
+        manifest["nodes"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        nodes.into_iter().collect(),
+    );
     let inventory = directory.join("inventory.json");
-    std::fs::write(&inventory, json!({"network_id":"b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004","nodes":nodes,"scopes":["node"]}).to_string()).unwrap();
+    std::fs::write(
+        &inventory,
+        json!({"network_id":manifest["network_id"],"nodes":nodes,"scopes":["node"]}).to_string(),
+    )
+    .unwrap();
     for (name, value) in [("operator", 'o'), ("ingest", 'i'), ("service", 'a')] {
         let path = directory.join(name);
         std::fs::write(&path, value.to_string().repeat(32)).unwrap();
