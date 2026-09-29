@@ -17,6 +17,7 @@ pub mod health_state;
 pub mod rules;
 pub mod wire;
 
+pub mod consensus_v2;
 pub mod native;
 
 pub mod edge_snapshot;

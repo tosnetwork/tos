@@ -138,6 +138,7 @@ pub fn decode_records(
         .into_iter()
         .map(|source| match source {
             EdgeSource::Native(v) => evidence(v, "consensus"),
+            EdgeSource::NativeV2(v) => evidence(v, "consensus"),
             EdgeSource::Process(v) => evidence(v, "process"),
             EdgeSource::Cgroup(v) => evidence(v, "host"),
         })

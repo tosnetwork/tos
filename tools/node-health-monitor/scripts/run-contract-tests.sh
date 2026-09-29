@@ -18,6 +18,9 @@ NHM_CONTRACT_OUTPUT_DIR="$runtime_outputs" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:
 NHM_CONTRACT_OUTPUT_DIR="$runtime_outputs" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-16}" \
   cargo test --manifest-path "$root/Cargo.toml" --locked -p tos-health-services \
     --test native_typed typed_sampler_and_edge_read_only_cache -- --exact
+NHM_CONTRACT_OUTPUT_DIR="$runtime_outputs" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-16}" \
+  cargo test --manifest-path "$root/Cargo.toml" --locked -p tos-health-services \
+    --test native_typed v2_edge_route_and_collector_keep_incomplete_consensus_typed -- --exact
 "$python" "$root/scripts/check-contracts.py" --runtime-output-dir "$runtime_outputs"
 "$root/scripts/check-production-refusal.sh"
 CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-16}" \

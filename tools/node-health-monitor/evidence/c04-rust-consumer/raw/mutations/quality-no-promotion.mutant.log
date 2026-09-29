@@ -1,0 +1,27 @@
+$ cargo test --locked -p tos-health-core --test native_v2_contract overall_quality_may_degrade_but_cannot_promote_incomplete_components -- --exact
+source_sha256=0d06b7349d7b5b6ed10a611fdd8661690509be7cbd894741114924743e64e07e
+timeout_seconds=120
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.32s
+     Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-4dbc563f937d6516)
+
+running 1 test
+test overall_quality_may_degrade_but_cannot_promote_incomplete_components ... FAILED
+
+failures:
+
+---- overall_quality_may_degrade_but_cannot_promote_incomplete_components stdout ----
+
+thread 'overall_quality_may_degrade_but_cannot_promote_incomplete_components' (940401) panicked at crates/health-core/tests/native_v2_contract.rs:144:5:
+assertion failed: validate(&value).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    overall_quality_may_degrade_but_cannot_promote_incomplete_components
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-core --test native_v2_contract`
+
+EXIT=101

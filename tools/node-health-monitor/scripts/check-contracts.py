@@ -70,7 +70,21 @@ def main():
  assert not safely_check_rule_manifest(faulty)
  for p in files:
   s=json.loads(p.read_text());Draft202012Validator.check_schema(s);closed(s)
+ consensus_contract=json.loads((ROOT/'contracts/consensus-v2.schema.json').read_text())
+ consensus_inline={k:v for k,v in consensus_contract.items() if k not in {'$id','$schema'}}
+ source_contract=json.loads((ROOT/'contracts/source-envelope.schema.json').read_text())
+ edge_contract=json.loads((ROOT/'contracts/edge-snapshot.schema.json').read_text())
+ assert source_contract['$defs']['consensus_v2']==edge_contract['$defs']['consensus_v2']==consensus_inline
+ assert source_contract['$defs']['native_core_v2']==edge_contract['$defs']['native_core_v2']
  native=json.loads((ROOT/'crates/health-core/tests/fixtures/native-core.json').read_text())
+ consensus_v2=json.loads((ROOT/'crates/health-core/tests/fixtures/consensus-v2.synthetic.json').read_text())
+ validator('consensus-v2.schema.json').validate(consensus_v2)
+ bad=copy.deepcopy(consensus_v2);bad['sessions']['started']='18446744073709551616'
+ assert not validator('consensus-v2.schema.json').is_valid(bad)
+ bad=copy.deepcopy(consensus_v2);bad['actions'][1]['replay']['signed_record']['phases']['signed']='1'
+ assert not validator('consensus-v2.schema.json').is_valid(bad)
+ bad=copy.deepcopy(consensus_v2);bad['actions'].reverse()
+ assert not validator('consensus-v2.schema.json').is_valid(bad)
  process=json.loads((ROOT/'crates/health-core/tests/fixtures/process-source.json').read_text())
  cgroup=json.loads((ROOT/'crates/health-core/tests/fixtures/host-cgroup.json').read_text())
  validator('source-envelope.schema.json').validate(native)
@@ -127,9 +141,19 @@ def main():
   for name in ['edge-heartbeat','edge-capabilities','edge-snapshot']:
    value=json.loads((args.runtime_output_dir/(name+'.json')).read_text())
    validator(name+'.schema.json').validate(value)
+  v2=json.loads((args.runtime_output_dir/'edge-snapshot-v2.json').read_text())
+  validator('edge-snapshot.schema.json').validate(v2)
+  assert any(source.get('source_version')=='native-core-v2' for source in v2['sources'])
+  assert all(source.get('source_version')!='native-core-v1' for source in v2['sources'] if source['source_id']=='native_core')
+  assert not validator('edge-snapshot.schema.json').is_valid(dict(v2, unexpected=True))
+  bad=copy.deepcopy(v2)
+  for source in bad['sources']:
+   if source['source_id']=='native_core': source['source_id']='other_source'
+  assert not validator('edge-snapshot.schema.json').is_valid(bad)
   assert len((args.runtime_output_dir/'edge-heartbeat.json').read_bytes())<=4096
   assert len((args.runtime_output_dir/'edge-capabilities.json').read_bytes())<=32768
   assert len((args.runtime_output_dir/'edge-snapshot.json').read_bytes())<=262144
+  assert len((args.runtime_output_dir/'edge-snapshot-v2.json').read_bytes())<=262144
  catalog=json.loads((ROOT/'contracts/source-manifest.json').read_text())
  assert catalog['c00_contract_inventory_complete'] is True
  assert catalog['c01_source_publisher_inventory_complete'] is True

@@ -7,7 +7,7 @@ use std::{
 };
 use tos_health_core::{
     edge_snapshot::EdgeSnapshot,
-    native::{canonical_hash, NativeEnvelope},
+    native::{canonical_hash, NativeEnvelope, NativeEnvelopeV2, NativeRecord},
 };
 use tos_health_services::{
     edge::{r4_snapshot, sample_process, EdgeState},
@@ -19,6 +19,20 @@ fn fixture() -> NativeEnvelope {
             .unwrap();
     value.source_age_ms = Some(0);
     value
+}
+fn fixture_v2() -> NativeEnvelopeV2 {
+    let mut value: serde_json::Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
+            .unwrap();
+    value["source_version"] = "native-core-v2".into();
+    value["coverage"]["sampling_policy"] = "native-core-v2-concurrent-bounded".into();
+    value["payload"]["consensus"] = serde_json::from_str(include_str!(
+        "../../health-core/tests/fixtures/consensus-v2.synthetic.json"
+    ))
+    .unwrap();
+    value["quality"]["instrumentation_complete"] = false.into();
+    value["content_hash"] = canonical_hash(&value["payload"]).unwrap().into();
+    serde_json::from_value(value).unwrap()
 }
 #[test]
 fn scheduler_skips_a_tick_missed_by_a_slow_source() {
@@ -276,4 +290,70 @@ async fn r4_collector_preserves_source_identity_and_immutable_payload() {
     )
     .is_err());
     task.abort();
+}
+
+#[tokio::test]
+async fn v2_edge_route_and_collector_keep_incomplete_consensus_typed() {
+    use tos_health_services::collector::decode_records;
+    use tower::ServiceExt;
+    let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    let pid = std::fs::read_link("/proc/self").unwrap().to_str().unwrap().parse().unwrap();
+    let process = sample_process("v1", pid, 1).unwrap();
+    let mut value = fixture_v2();
+    value.process_epoch = process.process_epoch.clone();
+    value.source_epoch = process.process_epoch.clone();
+    *state.cache.lock().unwrap() = Some(process);
+    state.native.lock().unwrap().network = Some("a".repeat(64));
+    assert!(state
+        .native
+        .lock()
+        .unwrap()
+        .publish_record(NativeRecord::V2(value), BODY.into(), 0)
+        .unwrap());
+    let response = tos_health_services::edge::router(state.clone())
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/v1/edge/snapshot")
+                .header("authorization", format!("Bearer {}", "e".repeat(32)))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let bytes = axum::body::to_bytes(response.into_body(), 262_144).await.unwrap();
+    if let Ok(directory) = std::env::var("NHM_CONTRACT_OUTPUT_DIR") {
+        std::fs::write(std::path::Path::new(&directory).join("edge-snapshot-v2.json"), &bytes)
+            .unwrap();
+    }
+    let snapshot: EdgeSnapshot = serde_json::from_slice(&bytes).unwrap();
+    snapshot.validate("v1", &"a".repeat(64)).unwrap();
+    assert!(snapshot.native().is_none());
+    let native = snapshot.native_v2().unwrap();
+    assert!(!native.quality.instrumentation_complete);
+    assert!(native.payload.consensus.as_ref().unwrap().sessions.stopped.is_none());
+    let archived = decode_records(&bytes, "v1", Some(&"a".repeat(64))).unwrap();
+    let record = archived.iter().find(|v| v.source_id == "native_core").unwrap();
+    assert_eq!(record.payload["source"]["source_version"], "native-core-v2");
+    assert_eq!(
+        record.payload["source"]["payload"]["consensus"]["sessions"]["stopped"],
+        serde_json::Value::Null
+    );
+    let frame = tos_health_services::manager_poll::native_frame_v2(native.clone(), 0).unwrap();
+    assert!(!frame.complete);
+    assert_eq!(frame.facts.len(), 1); // existing PQ only; no invented C04 rule fact
+}
+
+#[test]
+fn v2_cache_epoch_switch_retires_old_pair_without_counter_merge() {
+    let mut cache = NativeCache::default();
+    let original = fixture_v2();
+    assert!(cache.publish_record(NativeRecord::V2(original.clone()), BODY.into(), 0).unwrap());
+    let mut next = original.clone();
+    next.process_epoch = "1".repeat(32);
+    next.source_epoch = next.process_epoch.clone();
+    assert!(cache.publish_record(NativeRecord::V2(next), BODY.into(), 0).unwrap());
+    assert_eq!(cache.read_record().unwrap().process_epoch(), "1".repeat(32));
+    assert!(cache.publish_record(NativeRecord::V2(original), BODY.into(), 0).is_err());
+    assert_eq!(cache.read_record().unwrap().process_epoch(), "1".repeat(32));
 }

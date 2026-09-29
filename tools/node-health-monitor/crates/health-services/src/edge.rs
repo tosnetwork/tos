@@ -765,12 +765,15 @@ pub fn r4_snapshot(state: &EdgeState) -> Result<Value, String> {
     }
     let cache = state.native.lock().map_err(|_| "native cache unavailable")?;
     let network = cache.network.clone().ok_or("native network not configured")?;
-    let native = cache.read_typed().ok_or("required native sample unavailable")?;
+    let native = cache.read_record().ok_or("required native sample unavailable")?;
     let process_epoch = process_epoch.as_deref().ok_or("required process epoch unavailable")?;
-    if native.process_epoch != process_epoch {
+    if native.process_epoch() != process_epoch {
         return Err("native process epoch mismatch".into());
     }
-    sources.push(EdgeSource::Native(native));
+    sources.push(match native {
+        tos_health_core::native::NativeRecord::V1(v) => EdgeSource::Native(v),
+        tos_health_core::native::NativeRecord::V2(v) => EdgeSource::NativeV2(v),
+    });
     drop(cache);
     let cgroup_required =
         state.cgroup_config.lock().map_err(|_| "cgroup config unavailable")?.is_some();

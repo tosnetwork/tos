@@ -1,6 +1,6 @@
 //! Closed initial edge snapshot subset. Unsupported anchors cannot be fabricated.
 use crate::{
-    native::{canonical_hash, required_nullable, NativeEnvelope, SourceEnvelope},
+    native::{canonical_hash, required_nullable, NativeEnvelope, NativeEnvelopeV2, SourceEnvelope},
     wire::U64,
 };
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,7 @@ pub type CgroupEnvelope = SourceEnvelope<CgroupPayload>;
 #[serde(untagged)]
 pub enum EdgeSource {
     Native(NativeEnvelope),
+    NativeV2(NativeEnvelopeV2),
     Process(ProcessEnvelope),
     Cgroup(CgroupEnvelope),
 }
@@ -168,6 +169,12 @@ impl EdgeSnapshot {
             _ => None,
         })
     }
+    pub fn native_v2(&self) -> Option<&NativeEnvelopeV2> {
+        self.sources.iter().find_map(|source| match source {
+            EdgeSource::NativeV2(value) => Some(value),
+            _ => None,
+        })
+    }
     pub fn validate(&self, node: &str, network: &str) -> Result<(), String> {
         if self.schema_version != 1
             || self.status != "partial"
@@ -181,6 +188,13 @@ impl EdgeSnapshot {
         for source in &self.sources {
             let (id, epoch) = match source {
                 EdgeSource::Native(value) => {
+                    value.validate()?;
+                    if value.node_id != node || value.payload.network_id != network {
+                        return Err("native inventory mismatch".into());
+                    }
+                    (value.source_id.as_str(), value.process_epoch.as_str())
+                }
+                EdgeSource::NativeV2(value) => {
                     value.validate()?;
                     if value.node_id != node || value.payload.network_id != network {
                         return Err("native inventory mismatch".into());

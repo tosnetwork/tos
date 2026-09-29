@@ -8,7 +8,7 @@ use std::{
 };
 use tos_health_core::{
     freshness::Freshness,
-    native::{immutable_metrics, NativeEnvelope},
+    native::{immutable_metrics, parse_native, NativeEnvelope, NativeRecord},
 };
 #[derive(Debug)]
 pub struct NativeCache {
@@ -16,7 +16,7 @@ pub struct NativeCache {
     freshness: Freshness,
     body: Option<String>,
     started: Instant,
-    typed: Option<(NativeEnvelope, Instant)>,
+    typed: Option<(NativeRecord, Instant)>,
 }
 impl Default for NativeCache {
     fn default() -> Self {
@@ -75,17 +75,24 @@ impl NativeCache {
         Ok(accepted)
     }
     pub fn read_typed(&self) -> Option<NativeEnvelope> {
+        match self.read_record()? {
+            NativeRecord::V1(v) => Some(v),
+            NativeRecord::V2(_) => None,
+        }
+    }
+    pub fn read_record(&self) -> Option<NativeRecord> {
         if !self.freshness.usable(self.now(), 30_000) {
             return None;
         }
         let (value, accepted) = self.typed.as_ref()?;
         let mut value = value.clone();
-        value.source_age_ms = value
-            .source_age_ms?
+        let age = value
+            .source_age_ms()?
             .checked_add(accepted.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
-        if value.source_age_ms.is_none_or(|age| age > 30_000) {
+        if age.is_none_or(|age| age > 30_000) {
             return None;
         }
+        value.set_source_age_ms(age);
         Some(value)
     }
     pub fn publish_typed(
@@ -94,14 +101,22 @@ impl NativeCache {
         body: String,
         duration: u64,
     ) -> Result<bool, String> {
+        self.publish_record(NativeRecord::V1(value), body, duration)
+    }
+    pub fn publish_record(
+        &mut self,
+        value: NativeRecord,
+        body: String,
+        duration: u64,
+    ) -> Result<bool, String> {
         value.paired(
-            &value.node_id,
-            &value.payload.network_id,
-            &value.generation.0.to_string(),
-            &value.process_epoch,
+            value.node_id(),
+            value.network_id(),
+            &value.generation().0.to_string(),
+            value.process_epoch(),
             &body,
         )?;
-        let age = value.source_age_ms.ok_or("missing source age")?;
+        let age = value.source_age_ms().ok_or("missing source age")?;
         let adjusted_age = age.checked_add(duration).ok_or("age overflow")?;
         if adjusted_age > 30_000 {
             return Err("native pair stale".into());
@@ -109,9 +124,12 @@ impl NativeCache {
         let accepted = self
             .freshness
             .observe(
-                &value.process_epoch,
-                &value.source_epoch,
-                value.generation.0,
+                value.process_epoch(),
+                match &value {
+                    NativeRecord::V1(v) => &v.source_epoch,
+                    NativeRecord::V2(v) => &v.source_epoch,
+                },
+                value.generation().0,
                 &value.immutable_hash()?,
                 self.now(),
                 age,
@@ -120,9 +138,10 @@ impl NativeCache {
             .map_err(str::to_owned)?;
         if accepted {
             let mut value = value;
-            value.source_age_ms = Some(adjusted_age);
-            value.received_at =
-                Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+            value.set_source_age_ms(Some(adjusted_age));
+            value.set_received_at(Some(
+                chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            ));
             self.typed = Some((value, Instant::now()));
             self.body = Some(body);
         }
@@ -221,8 +240,7 @@ impl NativeSampler {
                 .await
                 .map_err(|e| e.to_string())?;
             let bytes = crate::bounded_body(response, 262_144).await?;
-            let value: NativeEnvelope =
-                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            let value = parse_native(&bytes)?;
             value.paired(
                 &self.state.node,
                 network,
@@ -245,7 +263,7 @@ impl NativeSampler {
                 .native
                 .lock()
                 .map_err(|_| "native cache unavailable")?
-                .publish_typed(value, body, started.elapsed().as_millis() as u64);
+                .publish_record(value, body, started.elapsed().as_millis() as u64);
         }
         let scalar = |suffix: &str| -> Result<&str, String> {
             let mut found = None;

@@ -126,6 +126,40 @@ pub fn native_frame(
         facts,
     })
 }
+pub fn native_frame_v2(
+    value: tos_health_core::native::NativeEnvelopeV2,
+    duration: u64,
+) -> Result<FactFrame, String> {
+    value.validate()?;
+    // C04 rule adapters remain gated until scoped inventory and runtime gates
+    // are accepted. Preserve the already-implemented PQ fact without deriving
+    // a fake node-wide duty denominator from action request counts.
+    let facts = value
+        .payload
+        .pq_sign
+        .as_ref()
+        .map(|pq| vec![Fact { id: FactId::PqSigningFailures, value: pq.failed }])
+        .unwrap_or_default();
+    Ok(FactFrame {
+        schema_version: 1,
+        network_id: value.payload.network_id,
+        node_id: value.node_id,
+        scope_id: value.scope_id,
+        source_id: value.source_id,
+        process_epoch: value.process_epoch,
+        source_epoch: value.source_epoch,
+        generation: value.generation,
+        source_age_ms: U64(value.source_age_ms.ok_or("missing source age")?),
+        request_duration_ms: U64(duration),
+        observed_at: value.observed_at.ok_or("missing observation time")?,
+        clock_valid: true,
+        complete: value.quality.instrumentation_complete
+            && value.quality.producer_dropped.0 == 0
+            && value.quality.relay_dropped.0 == 0
+            && value.quality.parse_errors.0 == 0,
+        facts,
+    })
+}
 
 /// Scheduled native facts use the edge cache; a missing source never becomes a zero counter.
 pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
@@ -167,13 +201,15 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         if snapshot.validate(&config.node_id, &config.network_id).is_err() {
             continue;
         }
-        let Some(native) = snapshot.native() else {
+        let elapsed = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+        let frame = if let Some(native) = snapshot.native_v2() {
+            native_frame_v2(native.clone(), elapsed)
+        } else if let Some(native) = snapshot.native() {
+            native_frame(native.clone(), elapsed)
+        } else {
             continue;
         };
-        let Ok(frame) = native_frame(
-            native.clone(),
-            started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
-        ) else {
+        let Ok(frame) = frame else {
             continue;
         };
         if let Ok(response) =

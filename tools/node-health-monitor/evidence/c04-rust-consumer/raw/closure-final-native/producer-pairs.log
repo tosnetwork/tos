@@ -1,0 +1,24 @@
+$ bash scripts/run-c04-cross-language.sh /home/tomi/tos-node-health-c04/tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2 evidence/c04-rust-consumer/raw/closure-final-native/actual-route /home/tomi/nhm-c04-build/test/validator/consensus/test-health-actions
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running tests/native_v2_producer_pair.rs (target/debug/deps/native_v2_producer_pair-311fba3765bfb24b)
+
+running 1 test
+test actual_cpp_publisher_pairs_and_negatives ... FAILED
+
+failures:
+
+---- actual_cpp_publisher_pairs_and_negatives stdout ----
+
+thread 'actual_cpp_publisher_pairs_and_negatives' (1003784) panicked at crates/health-services/tests/native_v2_producer_pair.rs:103:14:
+called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    actual_cpp_publisher_pairs_and_negatives
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+error: test failed, to rerun pass `-p tos-health-services --test native_v2_producer_pair`
+
+EXIT=101
