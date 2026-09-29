@@ -27,6 +27,7 @@ f9910002e3c65aa7182f2e4d1283bfcb9439976a3f8ca37b632779e4d4685240  tools/node-hea
 ab0abe1a1d759a0b0ccf9c88ed6665e57250c63c32e7b71fe003269ca26547aa  tools/node-health-monitor/scripts/check-witness-current.py
 ba36f8b4745179873e0e942443b3e0ec8126b83889120d87a94175476f2933d8  tools/node-health-monitor/IMPLEMENTATION-STATUS.md
 2087fe92dc96ba1a27d6634597fe340ac16d6ae97a95b2e6d16a97207936e2bd  tools/node-health-monitor/evidence/c05-external-witness/CURRENT-BUDGET-CHECKPOINT.md
+eb9a35c9083744be0b2d2f9ffbb767db0a66860fa6564573b0c50f1bc91f681d  tools/node-health-monitor/evidence/c05-external-witness/RUNTIME-SUPERVISION-RECEIPT.md
 324a63723c6123c55cc0dbb9fd93a6e30b0f358ac72a6d61313471f55334098f  tools/node-health-monitor/evidence/c05-external-witness/current-age-mutant.patch
 3b14870df78b71153329c84fef878de4b05fcb2106c64390a285cc00777f81dc  tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-full-entry.log
 9bc4c1503057689474155d6262a69e03ff2fceadd1135cfbd33e17a716e32809  tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-restored-tests.log

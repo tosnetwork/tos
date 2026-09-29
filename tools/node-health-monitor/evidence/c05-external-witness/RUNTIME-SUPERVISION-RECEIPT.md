@@ -93,3 +93,23 @@ Current changed Rust source/test hashes at this receipt:
 | `crates/health-services/src/witness.rs` | `69144a32079810b8775fc651efbf6fa80eff6a43ac938505a03685057a0f69dd` |
 | `crates/health-services/tests/witness_cache.rs` | `515e54488f0d7c9af57af3cc631e27048350b2f3798004cd935e4fee2ab806f0` |
 | `crates/health-services/tests/witness_poll.rs` | `2727241cc1bd84f463eaca9053188bd2d1f5d476bc24421a96cb74e84c5d7b63` |
+
+## Subsequent independent sensitivity ruling
+
+The provisional label above records the evidence available when this receipt
+was first written. Later, the supervisor and Starbridge independently
+reconstructed the unique one-line patch in memory against restored source
+`82c5122ae991cf5af23c393c86b819f5c3ca63b55bd1fa96ca93908160d3be3a`
+and patch
+`903a5217f98d4c318afaab0bf62377f84bc59072e6cfe12d9c23343e37042fa0`,
+obtaining mutant source
+`0b5893a4d153f4051a567f1150d1ab159a1e76e7673db6d747cc1df8cfa68f97`.
+That reconstructed file is a **derived artifact**, not an original compiler
+input snapshot. Together with the already retained compiled assertion exit
+101, restored 2/2 exit 0, and independent stable 2/2 helper execution, the
+supervisor closed this *helper-level changed-property sensitivity* without a
+rerun. The narrow ruling does not prove an actual health-watchdog process exit,
+independent receiver timeout, or production notification delivery.
+Independent reconstruction receipts:
+`/home/tomi/nhm-supervision/c05-starbridge/lane-supervision-patch-reconstruction.json`
+and `/home/tomi/nhm-supervision/c05-lane-supervision/receipt.json`.

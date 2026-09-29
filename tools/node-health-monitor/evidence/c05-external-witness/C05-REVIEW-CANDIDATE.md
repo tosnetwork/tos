@@ -23,10 +23,10 @@ private test mTLS identities. No deterministic proof verifier exists, and
 | Changed-property sensitivity | `current-age-mutant.patch` and baseline/compiled-red/restored logs in the budget checkpoint | One current-age mutant here; earlier C05 child-lifetime and O-lane mutants remain in their original receipts |
 
 The final source/contract/test/log inventory for this candidate is
-`C05-HASHES.sha256` (38 independently recomputable entries; run
+`C05-HASHES.sha256` (39 independently recomputable entries; run
 `sha256sum -c tools/node-health-monitor/evidence/c05-external-witness/C05-HASHES.sha256`
 from the repository root). Its SHA-256 is
-`3872f614b9d12b712aec8d97cfc22a53da882f8d1ba214c8b99f0140f12f1577`.
+`fc1ff1df61a1d131aa776ffeda1294695b3b41815ddf597f393babb8188c0fe5`.
 Earlier slice logs and their failure lineage are indexed by `CHECKPOINT.md`,
 `RUNTIME-SUPERVISION-RECEIPT.md`, `CURRENT-M-SLICE-RECEIPT.md` and
 `TRANSIT-CHECKPOINT-RECEIPT.md`. `CURRENT-BUDGET-CHECKPOINT.md` binds the
