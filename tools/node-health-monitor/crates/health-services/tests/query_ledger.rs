@@ -62,6 +62,87 @@ fn evidence(sequence: u64) -> Evidence {
     }
 }
 
+fn event(sequence: u64) -> Evidence {
+    let at = 1_700_000_000_000 + sequence as i64 * 1000;
+    let mut row = evidence(sequence);
+    row.source_id = "collector".into();
+    row.observed_at_ms = at;
+    row.received_at_ms = at;
+    row.quality.observed_at_ms = Some(at);
+    row.quality.last_success_at_ms = Some(at);
+    row.quality.coverage = Coverage::Complete;
+    row.payload = serde_json::json!({
+        "kind":"warning",
+        "event":{"kind":"warning","stage":null,"reason":"synthetic","correlation_id":null,"excerpt":"synthetic"},
+        "source_version":"synthetic-ledger-test-v1",
+        "evidence_kind":"event",
+        "contract_quality":{"instrumentation_complete":true,"producer_dropped":"0","relay_dropped":"0","parse_errors":"0","shed_reason":null},
+        "contract_coverage":{"status":"complete","missing_fields":[],"gaps":[],"sampling_policy":"isolated synthetic ledger test"},
+        "contract_payload":{"kind":"diagnostic_fixture","record_type":1,"payload":"0102"}
+    });
+    row
+}
+
+#[test]
+fn event_cursor_survives_ledger_restart_without_later_rows() {
+    let (file, directory) = temporary();
+    let token = [0x67; 32];
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    let mut store = EvidenceStore::new(80_000);
+    for sequence in 1..=3 {
+        ledger.insert_evidence(&mut store, event(sequence)).unwrap();
+    }
+    let mut grant = Grant::new(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+        "aura".into(),
+        "a".repeat(64),
+        &token,
+        BTreeSet::from(["v1".into()]),
+        BTreeSet::from(["node".into()]),
+        1_700_000_000_000,
+        1_700_000_060_000,
+        100,
+        store.watermark(),
+    )
+    .unwrap();
+    ledger.create(&grant, 100).unwrap();
+    ledger.insert_evidence(&mut store, event(4)).unwrap();
+    let mut query = serde_json::json!({"run_id":grant.run_id,"node_ids":["v1"],"scope_id":"node","start":"2023-11-14T22:13:20Z","end":"2023-11-14T22:14:20Z","sources":["collector"],"kinds":["warning"],"correlation_id":"","contains":"","limit":1,"cursor":""});
+    let metrics = BTreeSet::new();
+    let first = QueryService { store: &store, metrics: &metrics }.call(
+        &mut grant,
+        "aura",
+        &token,
+        101,
+        TOOLS[3],
+        query.clone(),
+    );
+    assert_eq!(first["status"], "ok", "{first}");
+    let cursor = first["pagination"]["next_cursor"].as_str().unwrap().to_owned();
+    let bytes = serde_json::to_vec(&first).unwrap().len();
+    ledger
+        .advance(&grant, 101, Attempt { tool: TOOLS[3], result_code: "ok", returned_bytes: bytes })
+        .unwrap();
+    drop(ledger);
+    let ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    let restored_store = ledger.load_evidence(80_000).unwrap();
+    let mut restored_grant = ledger.load_active(&grant.run_id, 102).unwrap().unwrap();
+    query["cursor"] = serde_json::json!(cursor);
+    let second = QueryService { store: &restored_store, metrics: &metrics }.call(
+        &mut restored_grant,
+        "aura",
+        &token,
+        102,
+        TOOLS[3],
+        query,
+    );
+    assert_eq!(second["status"], "ok", "{second}");
+    assert_eq!(second["data"]["events"][0]["source_record_id"], "record-2");
+    assert_eq!(second["pagination"]["truncated"], true);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn active_watermark_prevents_eviction_across_restart_until_revoked() {
     let (file, directory) = temporary();

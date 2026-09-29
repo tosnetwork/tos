@@ -655,6 +655,7 @@ pub fn success(
     ids: &[String],
     store: &EvidenceStore,
     metrics: &std::collections::BTreeSet<String>,
+    pagination: PaginationDto,
 ) -> Result<Value, &'static str> {
     let selected = records(store, ids)?;
     let dto_evidence: Vec<_> = selected.iter().map(evidence).collect::<Result<_, _>>()?;
@@ -1028,7 +1029,7 @@ pub fn success(
         evidence: dto_evidence,
         missing_evidence,
         coverage: response_coverage,
-        pagination: PaginationDto { next_cursor: None, truncated: false, scan_complete: true },
+        pagination,
         error,
         budget: response_budget,
     };

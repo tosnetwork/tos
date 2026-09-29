@@ -6,9 +6,9 @@ Baseline: `35ba59c111dd74518e6e661bcd1984598d493907` (C05 scoped acceptance). C0
 | --- | --- | --- |
 | Six cache-only tools | `health-core/query.rs` and typed `query_output.rs`; actual HTTP router tests | Preserve source/scope/window/W behavior; test MCP and HTTP parity and error semantics |
 | 256-bit grant token | Random token and SHA-256 digest in `Grant`; 200-second in-process TTL | Durable grant/call/byte/delivered-ID ledger with conservative restart handling; broker-only control socket; service credential remains separate |
-| Evidence and watermark | Baseline 8 MiB bounded in-memory `EvidenceStore`; read-only QueryService | Initial SQLite WAL/FULL write-through and exact store-sequence restoration now implemented for the optional query process; fixed-W HTTP restart control passes. Grant-pinned retention, stable pagination and production M integration remain open. |
+| Evidence and watermark | Baseline 8 MiB bounded in-memory `EvidenceStore`; read-only QueryService | SQLite WAL/FULL write-through and exact store-sequence restoration in the optional query process; active grants pin W rows against eviction. The M main `EvidenceDb` is still separate: no live M-to-query evidence adapter or production source claim. |
 | Per-run limits | 16 calls, 16 KiB input, 32 KiB response, 128 KiB returned bytes in HTTP service | Atomic durable accounting including MCP structured/text duplicate bytes, two child requests, 5-second tool deadline and 180-second run deadline |
-| Pagination | Query code has cursor validation over in-memory W | Restart/cross-run/scope/token/expiry/late-record controls against durable W and stable sort key |
+| Pagination | Event/change queries now sort by `(store_seq,evidence_id)` and return bounded pages with a standard HMAC-SHA256 cursor bound to principal/run/tool/filters/window/W/key/expiry | Core event/change pages and actual HTTP event pages, fixed-W late-row exclusion, RFC 4231 HMAC, tamper/filter/cross-run/principal/tool/expiry/lexeme negatives, and durable ledger restart continuation pass in isolated tests. Change-history HTTP pagination and intended mutation sensitivity remain to be reviewed; not a C08 acceptance. |
 | MCP | Artifact/version inventory only (`rmcp` 3.5.0, protocol 2025-06-18); no endpoint | Actual pinned SDK integration, exactly six tools through existing QueryService, protocol/host/origin/session/error/cancel tests |
 | C07 fixed package | `Broker` queue/cooldown skeleton; no package or model wiring | Immutable bounded package at M watermark, delivered-ID validation, English diagnosis schema and conservative evidence/basis checks |
 | AURA/provider | Pinned commit `1000f119d38f4c4656ced0ae883c90f6f7610890`, disabled | Inspect exact source/config and isolate tools/egress; owner model/private endpoint choice pending, so no external API or actual provider-pass claim |
@@ -36,9 +36,9 @@ insert that would evict a row at or before its fixed W is refused before the
 SQLite commit and before the in-memory candidate replaces the current store.
 The restart/revoke test confirms the original page remains visible across
 reopen and eviction resumes only after revoke. This is a fail-closed 8 MiB
-cache policy, not an increase in retention or a complete stable-cursor
-implementation; event/change pagination and M's main EvidenceDb import remain
-open C08 items.
+cache policy, not an increase in retention. The later cursor slice adds
+event/change pagination in the isolated query service, while M's main
+EvidenceDb import, MCP and whole-run accounting remain open C08 items.
 The focused 16 HTTP + 3 ledger test raw log is
 `/home/tomi/nhm-c07c08-build/edge-epoch-proof/query-pinning.log`
 (SHA-256 `e4a25bc34af84c4e6655e9c3d38493b209fa617e1e112f93f5b4ed334a494157`);

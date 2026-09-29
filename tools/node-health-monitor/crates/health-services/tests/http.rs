@@ -643,6 +643,84 @@ async fn all_six_success_handlers_emit_runtime_dtos() {
     }
 }
 
+#[tokio::test]
+async fn event_pages_use_fixed_watermark_and_reject_changed_filter_at_router() {
+    let state = state();
+    let run = "00000000-0000-4000-8000-000000000001";
+    let token = [7u8; 32];
+    let start =
+        chrono::DateTime::parse_from_rfc3339("2026-09-29T00:00:00Z").unwrap().timestamp_millis();
+    {
+        let mut data = state.data.lock().unwrap();
+        for sequence in 1..=3 {
+            data.store
+                .insert(record(
+                    start + (4 - sequence) * 1_000,
+                    sequence as u64,
+                    "collector",
+                    contract(
+                        json!({"kind":"warning","event":{"kind":"warning","stage":null,"reason":"synthetic","correlation_id":null,"excerpt":"synthetic"},"contract_payload":{"kind":"diagnostic_fixture","record_type":1,"payload":"0102"}}),
+                        "event",
+                    ),
+                ))
+                .unwrap();
+        }
+        let grant = Grant::new(
+            run.into(),
+            "aura".into(),
+            "a".repeat(64),
+            &token,
+            set(&["v1"]),
+            set(&["node"]),
+            start,
+            start + 60_000,
+            tos_health_services::query_ledger::boot_millis().unwrap(),
+            data.store.watermark(),
+        )
+        .unwrap();
+        data.grants.insert(run.into(), grant);
+        data.store
+            .insert(record(
+                start + 4_000,
+                4,
+                "collector",
+                contract(
+                    json!({"kind":"warning","event":{"kind":"warning","stage":null,"reason":"synthetic","correlation_id":null,"excerpt":"later"},"contract_payload":{"kind":"diagnostic_fixture","record_type":1,"payload":"0102"}}),
+                    "event",
+                ),
+            ))
+            .unwrap();
+    }
+    let app = query_router(state);
+    let mut input = json!({"run_id":run,"node_ids":["v1"],"scope_id":"node","start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z","sources":["collector"],"kinds":["warning"],"correlation_id":"","contains":"","limit":1,"cursor":""});
+    let mut actual = vec![];
+    for page in 0..3 {
+        let mut req = request("/v1/query/event-window", 'a', input.clone());
+        req.headers_mut()
+            .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        let _: ToolEnvelope = serde_json::from_value(body.clone()).unwrap();
+        actual.push(body["data"]["events"][0]["source_record_id"].as_str().unwrap().to_owned());
+        assert_eq!(body["pagination"]["truncated"], page < 2);
+        let next = body["pagination"]["next_cursor"].as_str();
+        if page == 0 {
+            let mut changed = input.clone();
+            changed["contains"] = json!("other");
+            changed["cursor"] = json!(next.unwrap());
+            let mut req = request("/v1/query/event-window", 'a', changed);
+            req.headers_mut()
+                .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+            assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::CONFLICT);
+        }
+        if let Some(next) = next {
+            input["cursor"] = json!(next);
+        }
+    }
+    assert_eq!(actual, ["record-1", "record-2", "record-3"]);
+}
+
 async fn metric_response(records: Vec<Evidence>) -> (StatusCode, Value) {
     metric_response_for(records, &["rss_bytes"]).await
 }

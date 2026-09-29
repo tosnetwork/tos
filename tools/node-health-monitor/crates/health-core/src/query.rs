@@ -1,4 +1,4 @@
-use crate::evidence::EvidenceStore;
+use crate::{evidence::EvidenceStore, query_output::PaginationDto};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -263,6 +263,171 @@ fn parse<T: serde::de::DeserializeOwned>(input: &Value) -> Result<T, &'static st
     serde_json::from_value(input.clone()).map_err(|_| "INVALID_ARGUMENT")
 }
 
+fn complete_page() -> PaginationDto {
+    PaginationDto { next_cursor: None, truncated: false, scan_complete: true }
+}
+
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    // Production passes Grant::token_hash (32 bytes); the vector uses 20.
+    assert!(key.len() <= 64);
+    let mut inner_pad = [0x36u8; 64];
+    let mut outer_pad = [0x5cu8; 64];
+    for (index, byte) in key.iter().enumerate() {
+        inner_pad[index] ^= byte;
+        outer_pad[index] ^= byte;
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(message);
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner.finalize());
+    outer.finalize().into()
+}
+
+fn cursor_tag(
+    grant: &Grant,
+    tool: &str,
+    input: &Value,
+    expiry: u64,
+    seq: u64,
+    id: &str,
+) -> Result<String, &'static str> {
+    let mut filters = input.clone();
+    filters.as_object_mut().ok_or("INVALID_ARGUMENT")?.insert("cursor".into(), json!(""));
+    let message = serde_json::to_vec(&json!([
+        "nhm-c08-cursor-v1",
+        grant.principal,
+        grant.run_id,
+        tool,
+        filters,
+        grant.network_id,
+        grant.nodes,
+        grant.scopes,
+        grant.window_start_ms,
+        grant.window_end_ms,
+        grant.change_start_ms,
+        grant.watermark,
+        expiry,
+        seq,
+        id,
+    ]))
+    .map_err(|_| "INVALID_ARGUMENT")?;
+    // HMAC-SHA256 with the durable token hash as a private cursor key. The
+    // token itself is never placed in a response, log, cursor or model input.
+    Ok(format!("{:x}", Sha256Display(hmac_sha256(&grant.token_hash, &message))))
+}
+
+struct Sha256Display([u8; 32]);
+impl std::fmt::LowerHex for Sha256Display {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+fn read_cursor(
+    grant: &Grant,
+    tool: &str,
+    input: &Value,
+    now: u64,
+    cursor: &str,
+) -> Result<Option<(u64, String)>, &'static str> {
+    if cursor.is_empty() {
+        return Ok(None);
+    }
+    let parts: Vec<_> = cursor.split('.').collect();
+    if parts.len() != 5
+        || parts[0] != "c1"
+        || parts[3].len() != 64
+        || !parts[3].bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || parts[4].len() != 64
+        || !parts[4].bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("CURSOR_MISMATCH");
+    }
+    let expiry = parts[1].parse::<u64>().map_err(|_| "CURSOR_MISMATCH")?;
+    let seq = parts[2].parse::<u64>().map_err(|_| "CURSOR_MISMATCH")?;
+    if seq == 0
+        || parts[1] != expiry.to_string()
+        || parts[2] != seq.to_string()
+        || seq > grant.watermark
+        || expiry > grant.expires_monotonic_ms
+    {
+        return Err("CURSOR_MISMATCH");
+    }
+    let expected = cursor_tag(grant, tool, input, expiry, seq, parts[3])?;
+    if expected.as_bytes().iter().zip(parts[4].as_bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        != 0
+    {
+        return Err("CURSOR_MISMATCH");
+    }
+    if now >= expiry {
+        return Err("CURSOR_EXPIRED");
+    }
+    Ok(Some((seq, parts[3].into())))
+}
+
+fn next_cursor(
+    grant: &Grant,
+    tool: &str,
+    input: &Value,
+    now: u64,
+    seq: u64,
+    id: &str,
+) -> Result<String, &'static str> {
+    const CURSOR_TTL_MS: u64 = 600_000;
+    let expiry =
+        now.checked_add(CURSOR_TTL_MS).ok_or("CURSOR_MISMATCH")?.min(grant.expires_monotonic_ms);
+    let tag = cursor_tag(grant, tool, input, expiry, seq, id)?;
+    Ok(format!("c1.{expiry}.{seq}.{id}.{tag}"))
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::{hmac_sha256, next_cursor, read_cursor, Grant, Sha256Display, TOOLS};
+    use serde_json::json;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn hmac_sha256_matches_rfc_4231_case_one() {
+        let tag = hmac_sha256(&[0x0b; 20], b"Hi There");
+        assert_eq!(
+            format!("{tag:x}", tag = Sha256Display(tag)),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+    }
+
+    #[test]
+    fn cursor_expiry_and_noncanonical_integer_lexemes_refuse() {
+        let grant = Grant::new(
+            "00000000-0000-4000-8000-000000000001".into(),
+            "aura".into(),
+            "a".repeat(64),
+            &[7; 32],
+            BTreeSet::from(["v1".into()]),
+            BTreeSet::from(["node".into()]),
+            0,
+            60_000,
+            0,
+            1,
+        )
+        .unwrap();
+        let input = json!({"run_id":grant.run_id,"cursor":""});
+        let cursor = next_cursor(&grant, TOOLS[3], &input, 1, 1, &"b".repeat(64)).unwrap();
+        assert_eq!(read_cursor(&grant, TOOLS[3], &input, 200_000, &cursor), Err("CURSOR_EXPIRED"));
+        let noncanonical = cursor.replacen(".200000.1.", ".0200000.1.", 1);
+        assert_eq!(read_cursor(&grant, TOOLS[3], &input, 2, &noncanonical), Err("CURSOR_MISMATCH"));
+        let noncanonical_seq = cursor.replacen(".1.", ".+1.", 1);
+        assert_eq!(
+            read_cursor(&grant, TOOLS[3], &input, 2, &noncanonical_seq),
+            Err("CURSOR_MISMATCH")
+        );
+    }
+}
+
 /// Reads only an already populated store. This type cannot construct an upstream
 /// client and has no callback for cache misses or background refresh.
 pub struct QueryService<'a> {
@@ -284,7 +449,7 @@ impl QueryService<'_> {
         let calls_before = grant.calls;
         let result = self.execute(grant, principal, token, now, tool, input);
         let (mut response, delivered) = match result {
-            Ok((_legacy_data, ids)) => {
+            Ok((_legacy_data, ids, pagination)) => {
                 let response = match crate::query_output::success(
                     tool,
                     &saved_input,
@@ -294,6 +459,7 @@ impl QueryService<'_> {
                     &ids,
                     self.store,
                     self.metrics,
+                    pagination,
                 ) {
                     Ok(response) => response,
                     Err(code) => crate::query_output::error(code, grant, now, generated_ms),
@@ -331,7 +497,7 @@ impl QueryService<'_> {
         now: u64,
         tool: &str,
         input: Value,
-    ) -> Result<(Value, Vec<String>), &'static str> {
+    ) -> Result<(Value, Vec<String>, PaginationDto), &'static str> {
         grant.authenticate(principal, token, now)?;
         if grant.calls >= 16 {
             return Err("RUN_BUDGET_EXHAUSTED");
@@ -356,6 +522,7 @@ impl QueryService<'_> {
                 Ok((
                     json!({"cache_only":true,"node_ids":grant.nodes,"scope_ids":grant.scopes,"metric_ids":self.metrics,"tools":TOOLS,"live_fallback":false}),
                     vec![],
+                    complete_page(),
                 ))
             }
             "tos_get_node_snapshot" => {
@@ -407,7 +574,7 @@ impl QueryService<'_> {
                     values.insert(component, json!(entry));
                     ids.push(entry.evidence_id.clone());
                 }
-                Ok((json!(values), ids))
+                Ok((json!(values), ids, complete_page()))
             }
             "tos_get_metric_window" => {
                 let q: MetricRequest = parse(&input)?;
@@ -462,6 +629,7 @@ impl QueryService<'_> {
                 Ok((
                     json!({"series":series,"aggregation":"raw","requested_step_seconds":q.step_seconds}),
                     ids,
+                    complete_page(),
                 ))
             }
             "tos_get_event_window" | "tos_get_change_history" => {
@@ -557,11 +725,8 @@ impl QueryService<'_> {
                 if !(1..=100).contains(&limit) || cursor.len() > 2048 {
                     return Err("INVALID_ARGUMENT");
                 }
-                if !cursor.is_empty() {
-                    return Err("CURSOR_MISMATCH");
-                }
+                let after = read_cursor(grant, tool, &input, now, &cursor)?;
                 let mut rows = vec![];
-                let mut ids = vec![];
                 let mut scanned = 0usize;
                 for e in visible() {
                     scanned = scanned.saturating_add(
@@ -596,20 +761,31 @@ impl QueryService<'_> {
                     if !contains.is_empty() && !e.record.payload.to_string().contains(&contains) {
                         continue;
                     }
-                    if rows.len() >= limit as usize {
-                        return Err("SERIES_LIMIT");
-                    }
-                    rows.push(json!(e));
-                    ids.push(e.evidence_id.clone());
+                    rows.push(e);
                 }
-                rows.sort_by_key(|e| {
-                    (
-                        e["record"]["observed_at_ms"].as_i64(),
-                        e["record"]["node_id"].as_str().map(str::to_owned),
-                        e["record"]["source_record_id"].as_str().map(str::to_owned),
-                    )
+                rows.sort_by(|a, b| {
+                    (a.watermark, &a.evidence_id).cmp(&(b.watermark, &b.evidence_id))
                 });
-                Ok((json!(rows), ids))
+                if let Some((seq, id)) = &after {
+                    if !rows.iter().any(|row| row.watermark == *seq && row.evidence_id == *id) {
+                        return Err("EVIDENCE_EXPIRED");
+                    }
+                    rows.retain(|row| (row.watermark, &row.evidence_id) > (*seq, id));
+                }
+                let truncated = rows.len() > limit as usize;
+                rows.truncate(limit as usize);
+                let next = if truncated {
+                    let last = rows.last().ok_or("CURSOR_MISMATCH")?;
+                    Some(next_cursor(grant, tool, &input, now, last.watermark, &last.evidence_id)?)
+                } else {
+                    None
+                };
+                let ids: Vec<_> = rows.iter().map(|row| row.evidence_id.clone()).collect();
+                Ok((
+                    json!(rows),
+                    ids,
+                    PaginationDto { next_cursor: next, truncated, scan_complete: !truncated },
+                ))
             }
             "tos_get_block_evidence" => {
                 let q: BlockRequest = parse(&input)?;
@@ -639,7 +815,7 @@ impl QueryService<'_> {
                     return Err("SERIES_LIMIT");
                 }
                 let ids = rows.iter().map(|e| e.evidence_id.clone()).collect();
-                Ok((json!(rows), ids))
+                Ok((json!(rows), ids, complete_page()))
             }
             _ => Err("INVALID_ARGUMENT"),
         }

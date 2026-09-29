@@ -345,6 +345,115 @@ fn cache_miss_does_not_create_evidence() {
     assert_eq!(code(&q.call(&mut g, "aura", &[7; 32], 1, TOOLS[1], input)), "CACHE_MISS");
     assert_eq!(s.watermark(), 0);
 }
+
+#[test]
+fn event_cursor_is_stable_at_grant_watermark_and_bound_to_filters() {
+    let mut store = EvidenceStore::new(80_000);
+    for at in [3000, 1000, 2000] {
+        let mut row = evidence(at);
+        row.payload["evidence_kind"] = json!("event");
+        row.payload["kind"] = json!("warning");
+        row.payload["event"] = json!({"kind":"warning","stage":null,"reason":"synthetic","correlation_id":null,"excerpt":"synthetic"});
+        row.payload["contract_payload"] =
+            json!({"kind":"diagnostic_fixture","record_type":1,"payload":"0102"});
+        store.insert(row).expect("event fixture");
+    }
+    let mut grant = grant(&store);
+    let mut later = evidence(4000);
+    later.payload["evidence_kind"] = json!("event");
+    later.payload["kind"] = json!("warning");
+    later.payload["event"] = json!({"kind":"warning","stage":null,"reason":"synthetic","correlation_id":null,"excerpt":"late"});
+    later.payload["contract_payload"] =
+        json!({"kind":"diagnostic_fixture","record_type":1,"payload":"0102"});
+    store.insert(later).expect("later than W");
+    let metrics = BTreeSet::new();
+    let service = QueryService { store: &store, metrics: &metrics };
+    let mut request = json!({"run_id":grant.run_id,"node_ids":["v1"],"scope_id":"node","start":"1970-01-01T00:00:00Z","end":"1970-01-01T00:01:00Z","sources":["collector"],"kinds":["warning"],"correlation_id":"","contains":"","limit":1,"cursor":""});
+    let mut returned = Vec::new();
+    for page in 0..3 {
+        let reply = service.call(&mut grant, "aura", &[7; 32], 1 + page, TOOLS[3], request.clone());
+        assert_eq!(reply["status"], "ok", "{reply}");
+        assert_eq!(reply["data"]["events"].as_array().unwrap().len(), 1);
+        returned.push(reply["evidence"][0]["source_record_id"].as_str().unwrap().to_owned());
+        let next = reply["pagination"]["next_cursor"].as_str();
+        assert_eq!(reply["pagination"]["truncated"], page < 2);
+        assert_eq!(reply["pagination"]["scan_complete"], page == 2);
+        if page == 0 {
+            let mut changed = request.clone();
+            changed["contains"] = json!("different");
+            changed["cursor"] = json!(next.unwrap());
+            assert_eq!(
+                code(&service.call(&mut grant, "aura", &[7; 32], 1, TOOLS[3], changed)),
+                "CURSOR_MISMATCH"
+            );
+            let mut tampered = request.clone();
+            let mut cursor = next.unwrap().to_owned();
+            let replacement = if cursor.ends_with('0') { "1" } else { "0" };
+            cursor.replace_range(cursor.len() - 1.., replacement);
+            tampered["cursor"] = json!(cursor);
+            assert_eq!(
+                code(&service.call(&mut grant, "aura", &[7; 32], 1, TOOLS[3], tampered)),
+                "CURSOR_MISMATCH"
+            );
+            let mut other_run = grant.clone();
+            other_run.run_id = "00000000-0000-4000-8000-000000000002".into();
+            let mut replay = request.clone();
+            replay["run_id"] = json!(other_run.run_id);
+            replay["cursor"] = json!(next.unwrap());
+            assert_eq!(
+                code(&service.call(&mut other_run, "aura", &[7; 32], 1, TOOLS[3], replay)),
+                "CURSOR_MISMATCH"
+            );
+            let mut other_principal = grant.clone();
+            other_principal.principal = "other".into();
+            let mut replay = request.clone();
+            replay["cursor"] = json!(next.unwrap());
+            assert_eq!(
+                code(&service.call(&mut other_principal, "other", &[7; 32], 1, TOOLS[3], replay)),
+                "CURSOR_MISMATCH"
+            );
+            let change = json!({"run_id":grant.run_id,"node_ids":["v1"],"start":"1970-01-01T00:00:00Z","end":"1970-01-01T00:01:00Z","kinds":["config"],"limit":1,"cursor":next.unwrap()});
+            assert_eq!(
+                code(&service.call(&mut grant, "aura", &[7; 32], 1, TOOLS[4], change)),
+                "CURSOR_MISMATCH"
+            );
+        }
+        if let Some(next) = next {
+            request["cursor"] = json!(next);
+        }
+    }
+    assert_eq!(returned, ["sample-3000", "sample-1000", "sample-2000"]);
+    assert!(!returned.contains(&"sample-4000".to_owned()));
+}
+
+#[test]
+fn change_history_uses_the_same_stable_cursor_without_time_sorting() {
+    let mut store = EvidenceStore::new(80_000);
+    for (at, id) in [(3000, "first"), (1000, "second")] {
+        let mut row = evidence(at);
+        row.source_id = "operator_change".into();
+        row.source_record_id = id.into();
+        row.payload["evidence_kind"] = json!("change");
+        row.payload["kind"] = json!("config");
+        row.payload["change"] = json!({"kind":"config","completed":null,"actor_alias":"operator","before":{"mode":"old"},"after":{"mode":"new"},"reason":"synthetic","trusted_origin":true});
+        row.payload["contract_payload"] =
+            json!({"kind":"diagnostic_fixture","record_type":1,"payload":"0102"});
+        store.insert(row).unwrap();
+    }
+    let mut grant = grant(&store);
+    let metrics = BTreeSet::new();
+    let service = QueryService { store: &store, metrics: &metrics };
+    let mut request = json!({"run_id":grant.run_id,"node_ids":["v1"],"start":"1970-01-01T00:00:00Z","end":"1970-01-01T00:01:00Z","kinds":["config"],"limit":1,"cursor":""});
+    let first = service.call(&mut grant, "aura", &[7; 32], 1, TOOLS[4], request.clone());
+    assert_eq!(first["status"], "ok", "{first}");
+    assert_eq!(first["data"]["changes"][0]["change_id"], "first");
+    assert_eq!(first["pagination"]["truncated"], true);
+    request["cursor"] = first["pagination"]["next_cursor"].clone();
+    let second = service.call(&mut grant, "aura", &[7; 32], 2, TOOLS[4], request);
+    assert_eq!(second["status"], "ok", "{second}");
+    assert_eq!(second["data"]["changes"][0]["change_id"], "second");
+    assert_eq!(second["pagination"]["scan_complete"], true);
+}
 #[test]
 fn utc_requires_z_and_real_calendar() {
     assert!(utc_ms("2026-09-29T00:00:00Z").is_ok());
