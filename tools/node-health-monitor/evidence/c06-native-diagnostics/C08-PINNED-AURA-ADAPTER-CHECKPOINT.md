@@ -26,12 +26,17 @@ block/proof conclusions missing. This is a synthetic contract test, not a
 production memory-pressure threshold, live-node diagnosis or model output.
 No model was invoked and no business node was sampled or started by this test.
 
-The direct NHM test separately exercised 2025-06-18 initialize, all six
+The direct NHM tests separately exercised 2025-03-26 and 2025-06-18 initialize, all six
 typed tool envelopes, exact tool list, rejection of a world-readable
 credential file, no token in tool results/stdout, and second-connection
 single-use-grant replay refusal. The pinned AURA run exercised its native
-2025-03-26 initialize path. The protocol mismatch was observed red first,
-then fixed by explicit two-version support; no other version is admitted.
+2025-03-26 initialize path. The 20:00 diagnostic run failed with zero tools;
+that log did not capture enough transport detail to prove one root cause.
+The subsequent adapter admits exactly 2025-03-26 and 2025-06-18, selecting
+the request header from the client's initialize version rather than fixing it
+to 2025-06-18. A direct no-secret trace against the actual NHM service records
+2025-03-26, HTTP 200 and JSON; the pinned AURA run separately proves six
+discoverable/callable tools on the same adapter code.
 Source inspection confirms rmcp 0.12.0's `JsonRpcMessageCodec` frames stdio
 with newline-delimited JSON, and the actual AURA calls crossed the adapter's
 one persistent Unix HTTP/1 connection after initialize. NHM rmcp 3.5 sets
@@ -52,11 +57,11 @@ sequencing.
 | `crates/health-services/Cargo.toml` | `e5da6f079b5f0d4a7f8d0142fdff9d8e9aa6e40db65247e35ecb6bfaace47124` |
 | `crates/health-services/src/bin/tos-observability.rs` | `548e1fad19abb1a0b6a10753ecbba17093853f6e7bcde10bee842cc43a7187eb` |
 | `crates/health-services/src/mcp_bridge.rs` | `b17c1291797fa1ac6b5c4af3aff751010fad08b22f954ad6c85be0b3e784ae87` |
-| `crates/health-services/src/bin/tos-nhm-aura-stdio.rs` | `51a57791140a6782217dbf8887f324cd399a9a165ffbe2e123b48add95345558` |
-| `crates/health-services/tests/aura_stdio.rs` | `4ff5589e4c6f0afea79283ac5748e1774a7f98d38061c530b438b4abfd95a0ce` |
+| `crates/health-services/src/bin/tos-nhm-aura-stdio.rs` | `3b05317e5147793eb0d11572cfc94bad25a079a9fe4da4eb205d9fbec7ff6f91` |
+| `crates/health-services/tests/aura_stdio.rs` | `140edc4383d08482a64b0d30d4538fe2caa628f1a48d87d56154cdb9cdcbd083` |
 | `tests/pinned-aura/nhm_stdio.rs` | `083c3fbd9c4e019922d75e968edae72fc6961cb6cb617cdb5583aecfc76cd6bb` |
 | `/home/tomi/nhm-c08-build/debug/tos-observability` | `babb171de3feb9c075276903224a730a79884794bced3ac3914f2fe33cb8389a` |
-| `/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio` | `3eec9bb861eef89afc66503b0fc76e68717327e2187fb01d2fa7496a0f046396` |
+| `/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio` | `039f8c2c147ca3a6b22751242e1f448b65ff78b9aab45d4354e67cae9e65007d` |
 | `/home/tomi/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `9a6582bf17e2fa5dec5defe87a785dad3f4a432746a64a5ad9110b3d14a5ffa0` |
 
 ## Raw commands, results and lineage
@@ -72,7 +77,7 @@ local build workaround, not a changed dependency or production fix.
 | Raw log | SHA-256 | Result |
 | --- | --- | --- |
 | `aura-pinned-build-red.log` | `82ebd8c9137e0462e55efd6e3cd6af6a15b4139c1c4e2cbe2ddb80999a84ec64` | exit 101, original `sentencepiece-sys` compile red |
-| `aura-pinned-six-tools-first.log` | `82b0b44ffe0281ce1b3145aea7764546519e39c1f8db9fb0fe337cb19c6a04bd` | red, AURA 2025-03-26 protocol refused by first adapter |
+| `aura-pinned-six-tools-first.log` | `82b0b44ffe0281ce1b3145aea7764546519e39c1f8db9fb0fe337cb19c6a04bd` | red, first adapter did not establish pinned AURA discovery; the log alone does not prove its exact cause |
 | `aura-pinned-six-tools-v2.log` | `adfd9ef898333839e49e728a4b1485e4cfe58cb505b6933f84b487b5300473ea` | red, overly strict harness asserted an envelope `tool` field absent from the actual contract |
 | `aura-pinned-six-tools-final.log` | `9f5a8a21af80d82d0e5e09c6403e6b0e75ea171f5472e1cdd5127668d5a0419a` | exit 0, real AURA client six calls (4 ok/2 source-unavailable error) |
 | `aura-pinned-deterministic-first.log` | `7220ef7cb0d49114e76d7213f17cc33289bec75b29a8979fcab98e229a3ebfae` | exit 0, successor six calls plus synthetic warning/unknown control and observed normal child reap |
@@ -95,6 +100,19 @@ local build workaround, not a changed dependency or production fix.
 | `aura-handoff-workspace-final2.log` | `dc8c3bc33f3d355656b2f7beae9699d099ccabeae9b1d995287e8cf80a4bc632` | exit 0, final workspace 228 passed/one conditional native-pair ignored |
 | `aura-handoff-clippy-final2.log` | `f9789979982dacabff635f0fc86f1f6042316598ce18376a99ab0a3294109865` | exit 0, final strict NHM workspace clippy |
 | `aura-handoff-fmt-final2.log` | `ff81bfd5da0628a8f6da790825c4e85ab584c859d1cdff2a5e308c7c960e3fd0` | exit 0, final NHM workspace fmt check |
+| `aura-pinned-six-tools-diagnostic.log` | `ce0f65fbb3f6c77545c87e3b7fcc7432c957107fe9bd99ab40d843e6d0e252ef` | historical 20:00 exit 101, pinned AURA built but MCP connection failed, zero tools; no adapter stderr captured |
+| `aura-version-diagnostic-targeted.log` | `f97e5135e8bad066372525bbc000eb27c87b680e17b20a58dd8000efe54e9190` | exit 0, initial no-secret refusal exit-code control |
+| `aura-version-diagnostic-pinned.log` | `b49287b506224197a08445fd541f25ee0781e47a0000af92526069b8a4749371` | exit 0, pinned AURA six calls after trace-only adapter change |
+| `aura-version-fmt.log` | `ee5e9a8c5f18022584f5662b8425af29603510b01cd0799531716c61877a2f08` | exit 1, test-only formatting difference, corrected |
+| `aura-version-init-trace-restored.log` | `2f18c4642d69cbbbe3dc853fd6985db341aba5ddab65b7f934e936e7702afc4b` | exit 0, preceding actual NHM handshake trace `version=2025-03-26 status=200 content_type=json`, refusal exit 1/generic stderr, direct six-tool suite 3/3 |
+| `aura-version-pinned-restored.log` | `d088b83c17af77eb4f3ad004324ffb60d1b7377a27bc4dcb0a3e91208c44b582` | exit 0, actual pinned AURA client discovered/called all six tools |
+| `aura-version-clippy.log` | `bf751f8522f4a3a3a30ef5018a39e1466fe79cd062a3d31ddd711523f60d7d59` | exit 0, strict NHM workspace clippy |
+| `aura-version-fmt-restored.log` | `a680844b397004dc5aa1508a2e416a774dfdcaa1b9bc0af269c4d17adbf642a1` | exit 0, restored NHM workspace format check |
+| `aura-version-init-trace-final.log` | `5f8683afeacb44ee0334e19c9251315e6926f16c55d782c855519b2a567ac12d` | exit 0, added success exit-code witness before test formatting |
+| `aura-version-fmt-final.log` | `f942553b1ddd079bf5812e4e4238143d7ab7eeae4ad710e2db768cad3690c02a` | exit 1, second test-only formatting difference, corrected |
+| `aura-version-init-trace-final2.log` | `7d0357157ad44742b3a3592477b5f0bddab38a90ac46561106f946a80c6a9091` | exit 0, final actual NHM init 2025-03-26/HTTP 200/JSON, adapter exit 0 and refusal exit 1, three direct tests pass |
+| `aura-version-fmt-final2.log` | `9e870942de7818e13392307b68ec646498638600aba71c1d98df225d67bb88b5` | exit 0, final NHM workspace format check |
+| `aura-version-clippy-final2.log` | `5476c12f07b0f6fcaeae9bef52441ba75e5b1ebdde1ab3e7eedd561d5d3fa891` | exit 0, final strict NHM workspace clippy |
 | `aura-adapter-workspace-final.log` | `a7144706c97611ec932daf1dfda89f94b0435729bc66796a3c9db97010831c03` | exit 0, `cargo test --locked --workspace --features mcp`, 226 passed across 39 results, one native-pair test ignored without its indexed C++ fixture |
 | `aura-adapter-clippy.log` | `22c927047b0fb5e5fdcaeb7c99d53863bdd263fad8243f0137921400c60b08a0` | exit 101, new test's redundant async wrapper only |
 | `aura-adapter-clippy-restored.log` | `b9be4ccb6414ecc00258ea65b24c7dbff5564f46f0f8fc32bf365bdb27d75264` | exit 0, `cargo clippy --locked --workspace --all-targets --features mcp -- -D warnings` |
@@ -119,6 +137,13 @@ responses cannot forward a queued next call or emit partial stdout. rmcp 3.5
 requires `Accept` to name both JSON and SSE even with `json_response=true`;
 the adapter advertises both but explicitly rejects a non-JSON result. The
 actual pinned AURA initialize/list/six calls pass under this exact rule.
+For explicit traceability, `NHM_AURA_TRACE_PROTOCOL=1` emits only the
+allowlisted protocol version, numeric HTTP status and a content-type class;
+it never emits credentials, paths or response bodies. The direct trace runs
+against the actual NHM service. Pinned AURA's `McpManager` intentionally
+redirects child stderr to null, so its own successful six-tool test cannot be
+misrepresented as a captured child-stderr trace. The 20:00 red remains a
+historical failure, not a current compatibility result.
 
 A production broker still needs a supervised child/process-user boundary,
 credential cleanup for its own failure before launch, guaranteed model-child

@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, Lines},
     process::{ChildStdin, ChildStdout, Command},
 };
 use tos_health_core::{query::TOOLS, query_output::ToolEnvelope};
@@ -307,6 +307,9 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
         .unwrap();
     assert!(!refused.status.success(), "world-readable credential file was admitted");
     assert!(refused.stdout.is_empty(), "credential refusal reached model-visible stdout");
+    assert_eq!(refused.status.code(), Some(1));
+    assert_eq!(refused.stderr, b"NHM AURA stdio transport refused\n");
+    eprintln!("NHM_AURA_REFUSAL exit=1 stderr=generic_only");
     assert!(!credential.exists(), "refused credential handoff remained on disk");
     let target = directory.join("target-credential.json");
     std::fs::write(
@@ -377,23 +380,25 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
     let mut adapter = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
         .arg(&mcp)
         .arg(&credential)
+        .env("NHM_AURA_TRACE_PROTOCOL", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
     let mut stdin = adapter.stdin.take().unwrap();
     let mut output = BufReader::new(adapter.stdout.take().unwrap()).lines();
+    let mut stderr = adapter.stderr.take().unwrap();
     let initialized = rpc(
         &mut stdin,
         &mut output,
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-            "protocolVersion":"2025-06-18","capabilities":{},
+            "protocolVersion":"2025-03-26","capabilities":{},
             "clientInfo":{"name":"isolated-aura-transport-check","version":"1"}}}),
     )
     .await;
-    assert_eq!(initialized["result"]["protocolVersion"], "2025-06-18");
+    assert_eq!(initialized["result"]["protocolVersion"], "2025-03-26");
     assert!(!credential.exists(), "connected adapter retained credential handoff");
     stdin
         .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
@@ -437,11 +442,14 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
         assert!(!result.to_string().contains(grant["run_token"].as_str().unwrap()));
     }
     drop(stdin);
-    assert!(tokio::time::timeout(Duration::from_secs(5), adapter.wait())
-        .await
-        .unwrap()
-        .unwrap()
-        .success());
+    let adapter_status =
+        tokio::time::timeout(Duration::from_secs(5), adapter.wait()).await.unwrap().unwrap();
+    assert_eq!(adapter_status.code(), Some(0));
+    eprintln!("NHM_AURA_EXIT exit=0");
+    let mut diagnostic = Vec::new();
+    stderr.read_to_end(&mut diagnostic).await.unwrap();
+    assert_eq!(diagnostic, b"NHM_AURA_INIT version=2025-03-26 status=200 content_type=json\n");
+    eprintln!("{}", String::from_utf8(diagnostic).unwrap().trim_end());
     std::fs::write(
         &credential,
         json!({"run_id":run,"run_token":grant["run_token"],

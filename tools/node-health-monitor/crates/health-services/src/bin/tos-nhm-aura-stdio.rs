@@ -245,6 +245,25 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                     builder.body(Full::new(Bytes::copy_from_slice(&line))).map_err(|_| ())?;
                 tokio::time::timeout(Duration::from_secs(5), async {
                     let response = sender.send_request(request).await.map_err(|_| ())?;
+                    if rpc_request["method"] == "initialize"
+                        && std::env::var_os("NHM_AURA_TRACE_PROTOCOL").is_some()
+                    {
+                        let content_type = match response
+                            .headers()
+                            .get("content-type")
+                            .and_then(|value| value.to_str().ok())
+                        {
+                            Some(value) if value.eq_ignore_ascii_case("application/json") => "json",
+                            Some(value) if value.eq_ignore_ascii_case("text/event-stream") => "sse",
+                            Some(_) => "other",
+                            None => "missing",
+                        };
+                        // Diagnostic categories only: no tokens, paths, IDs, or body bytes.
+                        eprintln!(
+                            "NHM_AURA_INIT version={version} status={} content_type={content_type}",
+                            response.status().as_u16()
+                        );
+                    }
                     if !response.status().is_success() {
                         return Err(());
                     }
