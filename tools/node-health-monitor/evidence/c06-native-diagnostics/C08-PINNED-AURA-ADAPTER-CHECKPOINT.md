@@ -49,6 +49,11 @@ asynchronous kill/wait. A Linux `/proc` witness found exactly one adapter
 child while AURA's manager lived and observed its PID disappear after manager
 drop. This is normal-drop evidence only, not broker cancel/revoke/replacement
 sequencing.
+The successor pinned test separately calls AURA's real
+`McpManager::cancel_and_close_all` while it still owns the adapter, witnesses
+that adapter PID disappear before dropping the manager, and records
+`cancelled_inflight=0`. This proves idle connection-cancel/reap, not
+active-tool cancellation, grant revocation or safe replacement inference.
 
 ## Exact final source and binary hashes (SHA-256)
 
@@ -59,10 +64,10 @@ sequencing.
 | `crates/health-services/src/mcp_bridge.rs` | `b17c1291797fa1ac6b5c4af3aff751010fad08b22f954ad6c85be0b3e784ae87` |
 | `crates/health-services/src/bin/tos-nhm-aura-stdio.rs` | `3b05317e5147793eb0d11572cfc94bad25a079a9fe4da4eb205d9fbec7ff6f91` |
 | `crates/health-services/tests/aura_stdio.rs` | `140edc4383d08482a64b0d30d4538fe2caa628f1a48d87d56154cdb9cdcbd083` |
-| `tests/pinned-aura/nhm_stdio.rs` | `083c3fbd9c4e019922d75e968edae72fc6961cb6cb617cdb5583aecfc76cd6bb` |
+| `tests/pinned-aura/nhm_stdio.rs` | `cf4958462b7a6ae34da33495b7c2b27148d9c0dab8bf7a59617158ece9299aae` |
 | `/home/tomi/nhm-c08-build/debug/tos-observability` | `babb171de3feb9c075276903224a730a79884794bced3ac3914f2fe33cb8389a` |
 | `/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio` | `039f8c2c147ca3a6b22751242e1f448b65ff78b9aab45d4354e67cae9e65007d` |
-| `/home/tomi/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `9a6582bf17e2fa5dec5defe87a785dad3f4a432746a64a5ad9110b3d14a5ffa0` |
+| `/home/tomi/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `481e0948e62d04721e0987fa6f2225ad441ff91ef8c4ba0fe043509225d9559f` |
 
 ## Raw commands, results and lineage
 
@@ -113,6 +118,10 @@ local build workaround, not a changed dependency or production fix.
 | `aura-version-init-trace-final2.log` | `7d0357157ad44742b3a3592477b5f0bddab38a90ac46561106f946a80c6a9091` | exit 0, final actual NHM init 2025-03-26/HTTP 200/JSON, adapter exit 0 and refusal exit 1, three direct tests pass |
 | `aura-version-fmt-final2.log` | `9e870942de7818e13392307b68ec646498638600aba71c1d98df225d67bb88b5` | exit 0, final NHM workspace format check |
 | `aura-version-clippy-final2.log` | `5476c12f07b0f6fcaeae9bef52441ba75e5b1ebdde1ab3e7eedd561d5d3fa891` | exit 0, final strict NHM workspace clippy |
+| `aura-pinned-cancel-first.log` | `ede1b38d089efdde9e6330119e5b272e8c284b2e232654bb3f87633293a32296` | exit 0, first actual AURA idle cancel-and-close child-reap witness before formatting |
+| `aura-pinned-cancel-clippy.log` | `5b76cb34925c1c2a1d9827861e5d38e5dc2bab9d2ebf9527006f59bd8b037dc5` | exit 0, pinned AURA strict test clippy |
+| `aura-pinned-cancel-restored.log` | `cd9406c8703ba1954be1c92a2192afe0fd01c60befebfa7760ce67906300879a` | exit 0, final actual pinned AURA six calls (four `ok`, two missing-source `error`), consumed handoff, idle cancellation and child reap before manager drop |
+| `aura-pinned-cancel-clippy-restored.log` | `bc1f0fb13d047eb2d4f387b4ed9aeaf2f3ef79f9ddebff13c83a2665d8ae78ae` | exit 0, strict pinned AURA test clippy on restored source |
 | `aura-adapter-workspace-final.log` | `a7144706c97611ec932daf1dfda89f94b0435729bc66796a3c9db97010831c03` | exit 0, `cargo test --locked --workspace --features mcp`, 226 passed across 39 results, one native-pair test ignored without its indexed C++ fixture |
 | `aura-adapter-clippy.log` | `22c927047b0fb5e5fdcaeb7c99d53863bdd263fad8243f0137921400c60b08a0` | exit 101, new test's redundant async wrapper only |
 | `aura-adapter-clippy-restored.log` | `b9be4ccb6414ecc00258ea65b24c7dbff5564f46f0f8fc32bf365bdb27d75264` | exit 0, `cargo clippy --locked --workspace --all-targets --features mcp -- -D warnings` |
@@ -149,6 +158,9 @@ A production broker still needs a supervised child/process-user boundary,
 credential cleanup for its own failure before launch, guaranteed model-child
 termination/reaping and grant revocation. The adapter's connection-task wait
 does not prove remote handler work has ended or broker replacement sequencing.
+The pinned cancellation witness had no in-flight tool and does not upgrade
+that open gate; the direct slow-body test proves a separate five-second
+transport deadline only.
 The owner has authorized read-only local-node evidence and this development
 credential profile, so neither is a waiting-for-approval gate. The isolated
 test still used synthetic records; no C09 live-source projection or model

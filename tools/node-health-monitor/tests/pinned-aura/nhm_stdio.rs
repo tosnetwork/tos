@@ -5,7 +5,7 @@ use aura::{
     config::{McpConfig, McpServerConfig},
     mcp::McpManager,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -290,7 +290,12 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
     assert_eq!(missing_control["status"], "insufficient_evidence");
     assert!(missing_control["findings"].as_array().unwrap().is_empty());
     println!("AURA_NHM_DETERMINISTIC_FIXTURE analysis=1 unknown_control=insufficient_evidence");
-    drop(manager);
+    // Use AURA's actual cancellation/close API while it still owns the
+    // adapter. No tool is in flight here; the separate slow-body control
+    // exercises adapter cancellation of an in-flight transport request.
+    let cancelled =
+        manager.cancel_and_close_all("nhm-fixture-request", "isolated test cancellation").await;
+    assert_eq!(cancelled, 0, "an unexpected tool remained in flight");
     #[cfg(target_os = "linux")]
     {
         for _ in 0..100 {
@@ -301,9 +306,11 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
         }
         assert!(
             !std::path::Path::new(&format!("/proc/{adapter_pid}")).exists(),
-            "AURA/rmcp dropped its client but adapter child was not reaped"
+            "AURA cancellation did not reap the adapter child"
         );
     }
+    println!("AURA_NHM_CANCEL cancelled_inflight=0 child_reaped=1");
+    drop(manager);
     drop(_service);
     std::fs::remove_dir_all(directory).unwrap();
 }
