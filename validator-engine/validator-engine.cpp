@@ -5849,6 +5849,10 @@ void ValidatorEngine::run() {
   load_config(std::move(P));
 }
 
+void ValidatorEngine::set_health_native_v2() {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_native_v2);
+}
+
 void ValidatorEngine::set_health_node_id(std::string value) {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_node, std::move(value));
 }
@@ -6531,6 +6535,10 @@ int main(int argc, char *argv[]) {
     if (!tos::health::node_alias(arg.str())) return td::Status::Error("invalid health node alias");
     acts.push_back([&x, value = arg.str()] { td::actor::send_closure(x, &ValidatorEngine::set_health_node_id, value); });
     return td::Status::OK();
+  });
+  p.add_option('\0', "health-native-core-v2", "select the bounded C04 typed native snapshot (requires health-core-metrics)", [&]() {
+    tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
+    acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v2); });
   });
   p.add_option('\0', "health-core-metrics",
                "enable bounded consensus PQ operation metrics (requires performance acceptance)",

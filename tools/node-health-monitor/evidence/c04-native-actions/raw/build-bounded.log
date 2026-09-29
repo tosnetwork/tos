@@ -1,0 +1,171 @@
+[0/1] Re-running CMake...
+-- Use openssl: /home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a
+Add rocksdb
+-- CMAKE_BUILD_TYPE is set to Release
+-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
+-- Enabling RTTI in all builds
+-- ROCKSDB_PLUGINS: 
+-- ROCKSDB PLUGINS TO BUILD 
+-- JNI library is disabled
+Add abseil-cpp
+Add crc32c
+Add ngtcp2 with custom OpenSSL from /home/tomi/nhm-c04-build/third-party/openssl
+-- Found OpenSSL: /home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found suitable version "3.5.5", minimum required is "1.1.1")  
+-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
+-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
+-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version "1.0.9")
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:31 (message):
+  libngtcp2_crypto_quictls library is disabled due to lack of good quictls
+
+
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
+  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL
+
+
+-- summary of build options:
+
+    Package version: 1.22.0
+    Library version: 24:0:8
+    Install prefix:  /usr
+    Target system:   Linux
+    Compiler:
+      Build type:     Release
+      C compiler:     /usr/bin/clang-21
+      CFLAGS:         -O3  
+      C++ compiler:   /usr/bin/clang++-21
+      CXXFLAGS:       -O3  
+      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations
+      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type
+    Library:
+      Shared:         ON
+      Static:         ON
+    Test:
+      Build Test:     OFF
+    Libs:
+      OpenSSL:        TRUE (LIBS='/home/tomi/nhm-c04-build/third-party/openssl/lib/libssl.a;/home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a;dl')
+      Libev:          FALSE (LIBS='')
+      Libnghttp3:     FALSE (LIBS='')
+      GnuTLS:         FALSE (LIBS='')
+      BoringSSL:      FALSE (LIBS='')
+      Picotls:        FALSE (LIBS='')
+      wolfSSL:        FALSE (LIBS='')
+      Jemalloc:        (LIBS='')
+      Libbrotlienc:   FALSE (LIBS='')
+      Libbrotlidec:   FALSE (LIBS='')
+
+Add tl-parser
+Add tos
+-- Use Secp256k1: /home/tomi/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a
+-- Building libbacktrace from: /home/tomi/tos-node-health-c04/third-party/libbacktrace
+-- Using preconfigured zlib: /home/tomi/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Using ccache
+-- Using zlib /home/tomi/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Found ZLIB: /home/tomi/nhm-c04-build/third-party/zlib/include /home/tomi/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Using libbacktrace for enhanced stack traces
+-- Found LZ4 /home/tomi/nhm-c04-build/third-party/lz4/lib/liblz4.a /home/tomi/tos-node-health-c04/third-party/lz4/lib
+-- Checking for module 'benchmark'
+--   No package 'benchmark' found
+-- Google Benchmark not found via pkg-config - gbench-coro target disabled
+-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
+-- Using Sodium /home/tomi/nhm-c04-build/third-party/sodium/lib/libsodium.a
+-- Found OpenSSL: /home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found version "3.5.5") found components: Crypto 
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/tomi/nhm-c04-build
+[1/150] Checking the git repository for changes...
+[2/96] Building CXX object metrics/CMakeFiles/metrics-core.dir/metrics-types.cpp.o
+[3/96] Building CXX object metrics/CMakeFiles/metrics-core.dir/tl-traffic-bucket.cpp.o
+[4/96] Building CXX object CMakeFiles/test-health-core-registry.dir/test/test-health-core-registry.cpp.o
+[5/96] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
+[6/96] Linking CXX static library metrics/libmetrics-core.a
+[7/96] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o
+[8/96] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-simple.cpp.o
+[9/96] Building CXX object http/CMakeFiles/toshttp.dir/http-inbound-connection.cpp.o
+[10/96] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[11/96] Building CXX object http/CMakeFiles/toshttp.dir/http-server.cpp.o
+[12/96] Linking CXX static library http/libtoshttp.a
+[13/96] Linking CXX static library metrics/libmetrics.a
+[14/96] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-fec.cpp.o
+[15/96] Linking CXX executable test-health-core-registry
+[16/96] Linking CXX executable test-health-native-snapshot
+[17/96] Building CXX object overlay/CMakeFiles/overlay.dir/overlay-manager.cpp.o
+[18/96] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node.cpp.o
+[19/96] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDbV2.cpp.o
+[20/96] Linking CXX static library crypto/libtos_db.a
+[21/96] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-twostep.cpp.o
+[22/96] Building CXX object overlay/CMakeFiles/overlay.dir/overlay-peers.cpp.o
+[23/96] Building CXX object validator/CMakeFiles/validator-db.dir/db/archiver.cpp.o
+[24/96] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-plumtree.cpp.o
+[25/96] Building CXX object overlay/CMakeFiles/overlay.dir/overlay.cpp.o
+[26/96] Linking CXX static library overlay/liboverlay.a
+[27/96] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-slice.cpp.o
+[28/96] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-manager.cpp.o
+[29/96] Building CXX object validator/CMakeFiles/validator-db.dir/db/statedb.cpp.o
+[30/96] Building CXX object validator/CMakeFiles/validator-common.dir/block-handle.cpp.o
+[31/96] Building CXX object validator/CMakeFiles/validator-db.dir/db/celldb.cpp.o
+[32/96] Building CXX object validator/CMakeFiles/validator-db.dir/db/rootdb.cpp.o
+[33/96] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/download-state.cpp.o
+[34/96] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state-merge.cpp.o
+[35/96] Building CXX object validator/CMakeFiles/validator-common.dir/manager-init.cpp.o
+[36/96] Building CXX object validator/CMakeFiles/validator-common.dir/apply-block.cpp.o
+[37/96] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state.cpp.o
+[38/96] Building CXX object validator/CMakeFiles/validator-common.dir/queue-size-counter.cpp.o
+[39/96] Building CXX object validator/CMakeFiles/validator-common.dir/shard-client.cpp.o
+[40/96] Building CXX object validator/CMakeFiles/validator-common.dir/validator-options.cpp.o
+[41/96] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node-session.cpp.o
+[42/96] Building CXX object validator/CMakeFiles/validator.dir/collation-manager.cpp.o
+[43/96] Building CXX object validator/CMakeFiles/validator.dir/get-next-key-blocks.cpp.o
+[44/96] Building CXX object validator/CMakeFiles/validator.dir/downloaders/wait-block-data.cpp.o
+[45/96] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice.cpp.o
+[46/96] Building CXX object validator/CMakeFiles/validator.dir/token-manager.cpp.o
+[47/96] Building CXX object validator/CMakeFiles/validator.dir/validator-telemetry.cpp.o
+[48/96] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice-local.cpp.o
+[49/96] Building CXX object validator/CMakeFiles/validator.dir/validate-broadcast.cpp.o
+[50/96] Building CXX object validator/CMakeFiles/validator.dir/state-serializer.cpp.o
+[51/96] Building CXX object validator/CMakeFiles/validator.dir/storage-stat-cache.cpp.o
+[52/96] Building CXX object validator/CMakeFiles/validator.dir/shard-block-verifier.cpp.o
+[53/96] Building CXX object validator/CMakeFiles/validator.dir/shard-block-retainer.cpp.o
+[54/96] Building CXX object validator/CMakeFiles/validator.dir/impl/applied-ext-message-cleanup.cpp.o
+[55/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[56/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[57/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[58/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[59/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[60/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[61/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[62/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[63/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[64/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[65/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[66/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[67/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[68/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[69/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[70/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/chain-state.cpp.o
+[71/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[72/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[73/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[74/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[75/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[76/96] Building CXX object validator/CMakeFiles/validator.dir/manager.cpp.o
+[77/96] Building CXX object validator/CMakeFiles/validator.dir/consensus/utils.cpp.o
+[78/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/check-proof.cpp.o
+[79/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[80/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/accept-block.cpp.o
+[81/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[82/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o
+[83/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[84/96] Building CXX object test/validator/consensus/CMakeFiles/test-health-ledger.dir/test-health-ledger.cpp.o
+[85/96] Linking CXX executable test/validator/consensus/test-health-ledger
+[86/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
+[87/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[88/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
+[89/96] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
+[90/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[91/96] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[92/96] Linking CXX static library validator/impl/libtos_validator.a
+[93/96] Linking CXX static library validator/libvalidator.a
+[94/96] Linking CXX executable test/validator/consensus/test-health-actions
+[95/96] Building CXX object test/validator/consensus/CMakeFiles/test-consensus.dir/test-consensus.cpp.o
+[96/96] Linking CXX executable test/validator/consensus/test-consensus

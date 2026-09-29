@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <type_traits>
 
 #include "td/actor/ActorId.h"
@@ -22,21 +23,31 @@ class Collector {
 
 using MetricsPromise = td::Promise<MetricSet>;
 
+struct CollectionBudget {
+  bool bounded = false;
+  double deadline = 0;
+  std::size_t max_resident_bytes = std::numeric_limits<std::size_t>::max();
+  std::size_t max_families = 256;
+  bool expired() const { return bounded && td::Timestamp::now().at() >= deadline; }
+};
+
 // Also implies inheritance from `td::actor::Actor`.
 // However, we cannot inherit actor class right here,
 // because this inheritance should be virtual (but it is not virtual in other places).
 class AsyncCollector {
  public:
   virtual void collect(MetricsPromise P) = 0;
+  virtual void collect_with_budget(MetricsPromise P, CollectionBudget budget) { collect(std::move(P)); }
   virtual ~AsyncCollector() = default;
 };
 
-using AsyncCollectorClosure = std::function<void(MetricsPromise)>;
+using AsyncCollectorClosure = std::function<void(MetricsPromise, CollectionBudget)>;
 
 class CollectorWrapper : public AsyncCollector {
  public:
   CollectorWrapper() = default;
   void collect(MetricsPromise P) final;
+  void collect_with_budget(MetricsPromise P, CollectionBudget budget) final;
 
   template <typename A>
   void add_collector(std::string source_id, td::actor::ActorId<A> collector);
@@ -50,7 +61,7 @@ class CollectorWrapper : public AsyncCollector {
     std::uint64_t failures = 0;
     bool last_result_ok = false;
   };
-  td::actor::Task<MetricSet> collect_coro();
+  td::actor::Task<MetricSet> collect_coro(CollectionBudget budget);
 
   bool collection_inflight_ = false;
   bool registration_overflow_ = false;
@@ -108,6 +119,7 @@ class MultiCollector : public td::actor::Actor, public AsyncCollector {
 
   explicit MultiCollector(std::string prefix);
   void collect(MetricsPromise P) override;
+  void collect_with_budget(MetricsPromise P, CollectionBudget budget) override;
 
   void add_sync_collector(std::shared_ptr<Collector> collector);
 
@@ -119,7 +131,7 @@ class MultiCollector : public td::actor::Actor, public AsyncCollector {
  private:
   bool collection_inflight_ = false;
   bool registration_overflow_ = false;
-  void collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result);
+  void collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result, CollectionBudget budget);
   std::string prefix_;
   std::vector<std::shared_ptr<Collector>> sync_collectors_ = {};
   std::unique_ptr<CollectorWrapper> async_collector_ = std::make_unique<CollectorWrapper>();
@@ -209,9 +221,9 @@ void CollectorWrapper::add_collector(std::string source_id, td::actor::ActorId<A
     return;
   }
   source_collectors_.push_back(
-      {.source_id = std::move(source_id), .collect = [collector](MetricsPromise P) mutable {
-         td::actor::send_lambda(collector, [P = std::move(P), &collector = collector.get_actor_unsafe()]() mutable {
-           collector.collect(std::move(P));
+      {.source_id = std::move(source_id), .collect = [collector](MetricsPromise P, CollectionBudget budget) mutable {
+         td::actor::send_lambda(collector, [P = std::move(P), budget, &collector = collector.get_actor_unsafe()]() mutable {
+           collector.collect_with_budget(std::move(P), budget);
          });
        }});
 }

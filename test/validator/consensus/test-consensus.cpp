@@ -16,6 +16,7 @@
 #include "block/validator-set.h"
 #include "consensus/candidate-relay-policy.h"
 #include "consensus/simplex/bus.h"
+#include "metrics/consensus-work.h"
 #include "consensus/simplex/candidate-retention.h"
 #include "consensus/simplex/completed-lru.h"
 #include "consensus/simplex/finalized-slot-dedup.h"
@@ -109,6 +110,7 @@ double NET_LOSS = 0.0;
 size_t N_NODES = 8;
 size_t N_DOUBLE_NODES = 0;
 
+bool C04_HEALTH_TEST = false;
 double DURATION = 60.0;
 td::uint32 TARGET_RATE_MS = 1000;
 td::uint32 SLOTS_PER_LEADER_WINDOW = 4;
@@ -2675,6 +2677,27 @@ class TestConsensus : public td::actor::Actor {
                      << inst.last_accepted_block;
       }
     }
+    if (C04_HEALTH_TEST) {
+      using namespace tos::health;
+      auto phase = [&](Action action, Phase phase) { return consensus_stats.phase(action, Origin::Live, phase).load(); };
+      CHECK(phase(Action::Proposal, Phase::CandidatePublished) > 0);
+      CHECK(phase(Action::Proposal, Phase::Signed) >= phase(Action::Proposal, Phase::CandidatePublished));
+      CHECK(phase(Action::Notarize, Phase::BroadcastEnqueued) > 0);
+      CHECK(phase(Action::Finalize, Phase::BroadcastEnqueued) > 0);
+      CHECK(consensus_stats.leader_windows_observed > 0 && consensus_stats.leader_windows_started > 0);
+      CHECK(work_stats.results[static_cast<unsigned>(Work::IntentStorage)][0] > 0);
+      CHECK(work_stats.results[static_cast<unsigned>(Work::SignedStorage)][0] > 0);
+      CHECK(work_stats.results[static_cast<unsigned>(Work::ResolveState)][0] > 0);
+      for (std::size_t action = 0; action < action_count; ++action) {
+        CHECK(consensus_stats.pending[action][0] == 0);
+        std::uint64_t terminals = 0;
+        for (const auto &value : consensus_stats.outcomes[action]) terminals += value.load();
+        CHECK(terminals == consensus_stats.phases[action][0][static_cast<unsigned>(Phase::Requested)]);
+      }
+      for (const auto &pending : work_stats.pending) CHECK(pending == 0);
+      CHECK(consensus_stats.sessions_active == 0 && consensus_stats.sessions_stopping == 0);
+      LOG(WARNING) << "C04_NATIVE_PIPELINE_PASS: actual proposal/votes/DB/resolver plus drained quiescent conservation";
+    }
     if (last_accepted_block_.seqno() < MIN_FINALIZED_BLOCKS) {
       co_return td::Status::Error(PSTRING() << "finalized only " << last_accepted_block_.seqno()
                                             << " blocks, expected at least " << MIN_FINALIZED_BLOCKS);
@@ -3866,6 +3889,11 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "finalization-backpressure-test",
                "require finalization backlog throttling, recovery, and one accepted block after recovery",
                [&]() { FINALIZATION_BACKPRESSURE_TEST = true; });
+  p.add_option('\0', "c04-health-test", "check actual native proposal, vote, storage and resolver observations", [&]() {
+    C04_HEALTH_TEST = true;
+    tos::health::enabled.store(true);
+    tos::health::consensus_enabled.store(true);
+  });
   p.add_option('\0', "pq-finality-e2e-test",
                "require an agreed post-quantum finality certificate on every node, and nothing past it",
                [&]() { PQ_FINALITY_E2E_TEST = true; });

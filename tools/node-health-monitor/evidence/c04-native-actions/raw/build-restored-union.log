@@ -1,0 +1,13 @@
+[1/67] Building CXX object test/validator/consensus/CMakeFiles/test-health-ledger.dir/test-health-ledger.cpp.o
+[2/67] Building CXX object test/validator/consensus/CMakeFiles/test-consensus.dir/test-consensus.cpp.o
+[3/67] Linking CXX executable test/validator/consensus/test-health-ledger
+[4/67] Checking the git repository for changes...
+[5/13] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[6/13] Building CXX object test/validator/consensus/CMakeFiles/test-health-c04-publisher.dir/__/__/test-health-c04-publisher.cpp.o
+[7/13] Linking CXX static library metrics/libmetrics.a
+[8/13] Linking CXX executable test-health-core-registry
+[9/13] Linking CXX executable test/validator/consensus/test-consensus
+[10/13] Linking CXX executable test/validator/consensus/test-health-c04-publisher
+[11/13] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
+[12/13] Linking CXX executable test-health-native-snapshot
+[13/13] Building CXX object validator-engine/CMakeFiles/validator-engine.dir/validator-engine.cpp.o

@@ -14,6 +14,7 @@
 #include "td/utils/memory-tracker.h"
 
 #include "bus.h"
+#include "metrics/consensus-work.h"
 #include "completed-lru.h"
 
 namespace tos::validator::consensus::simplex {
@@ -189,6 +190,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   void tear_down() override {
     closing_ = true;
+    if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+      tos::health::consensus_stats.add(tos::health::consensus_stats.resolver_stopped);
     genesis_promise_.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
     // Failing a waiter resumes its coroutine right here, and that coroutine may try to
     // register itself again on an entry whose waiter list is being walked. Take every list
@@ -315,6 +318,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     }
     auto [task, promise] = td::actor::StartedTask<ResolvedState>::make_bridge();
     entry.promises.push_back(std::move(promise));
+    tos::health::WorkObservation waiter(tos::health::Work::ResolveState);
     if (!entry.started) {
       entry.started = true;
       SCOPE_EXIT {
@@ -333,7 +337,11 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
         state_cache_.erase(id);
       }
     }
-    co_return co_await std::move(task);
+    auto outcome = co_await std::move(task).wrap();
+    waiter.finish(outcome.is_ok() ? tos::health::WorkResult::Success
+                                : outcome.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                                : tos::health::WorkResult::Failure);
+    co_return outcome;
   }
 
   void touch_state_cache(const ParentId& id) {
@@ -377,12 +385,16 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       // instead; this is especially important during cold-start catch-up.
       auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
       it->second.waiters.push_back(std::move(promise));
+      tos::health::WorkObservation waiter(tos::health::Work::FinalizationWait);
       // Wrapped: the attempt may have refused, and a refusal is something to report from
       // the state below rather than to throw out of a question about state. A
       // cancellation is different: it is how teardown wakes this waiter, and the caller
       // must not read it as "not finalized yet" and go on to start new work. The guard
       // above ran before this coroutine suspended, so it has to be re-checked here.
       auto waited = co_await std::move(task).wrap();
+      waiter.finish(waited.is_ok() ? tos::health::WorkResult::Success
+                                  : waited.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                                 : tos::health::WorkResult::Failure);
       if (closing_) {
         co_return closing_error();
       }
@@ -732,7 +744,12 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
           }
           auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
           it->second.waiters.push_back(std::move(promise));
-          co_return co_await std::move(task);
+          tos::health::WorkObservation waiter(tos::health::Work::FinalizationWait);
+          auto outcome = co_await std::move(task).wrap();
+          waiter.finish(outcome.is_ok() ? tos::health::WorkResult::Success
+                                      : outcome.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                                     : tos::health::WorkResult::Failure);
+          co_return outcome;
         }
         case Finalization::Idle:
           break;

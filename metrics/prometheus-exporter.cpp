@@ -45,6 +45,12 @@ void PrometheusExporter::set_health_node(std::string value) {
   if (!core_publisher_.set_node(std::move(value)))
     LOG(ERROR) << "Invalid or changed health node alias";
 }
+void PrometheusExporter::set_health_native_v2() {
+  native_v2_ = true;
+  health::consensus_enabled.store(true, std::memory_order_relaxed);
+  if (!health::register_consensus_metrics(health::core_registry))
+    health::consensus_stats.global_incomplete(health::IncompleteReason::ObservationGap);
+}
 void PrometheusExporter::set_health_network(std::string value) {
   if (!core_publisher_.set_network(std::move(value)))
     LOG(ERROR) << "Invalid or changed health network identity";
@@ -105,11 +111,19 @@ void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<
     alarm_timestamp() = td::Timestamp::in(2.0);
     collections_total_->add(1);
     last_collection_timestamp_->set(td::Timestamp::now().at_unix());
-    td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::collect,
+    metrics::CollectionBudget budget;
+    if (native_v2_) {
+      budget.bounded = true;
+      budget.deadline = admission_.started() + 2.0;
+      budget.max_resident_bytes = health::remaining_core_publication_bytes({health::consensus_core_resident_bytes(),
+          snapshot_.capacity(), 1, core_snapshot_ ? core_snapshot_->prefix.capacity() : 0,
+          core_snapshot_ ? core_snapshot_->suffix.capacity() : 0, 2, 320 * 1024});
+    }
+    td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::collect_with_budget,
                             td::make_promise([self = actor_id(this)](td::Result<metrics::MetricSet> result) mutable {
                               td::actor::send_closure(self, &PrometheusExporter::collection_completed,
                                                       std::move(result));
-                            }));
+                            }), budget);
     return;
   }
   ++skipped_;
@@ -152,6 +166,7 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
   set.families.push_back(
       metrics::MetricFamily::make_scalar(prefix_ + "_exporter_snapshot_completed_timestamp_seconds", "gauge", wall));
   const bool pq_enabled = health::enabled.load(std::memory_order_relaxed);
+  auto consensus = native_v2_ ? health::capture_consensus(core_publisher_.network()) : std::nullopt;
   health::OperationSnapshot sign, verify;
   if (pq_enabled) {
     auto operations =
@@ -200,7 +215,7 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
     }
     set.families.push_back(std::move(operations));
     set.families.push_back(std::move(duration));
-    set = std::move(set).join(health::core_registry.collect());
+    set = std::move(set).join(health::core_registry.collect(native_v2_));
   }
   set.families.push_back(metrics::MetricFamily::make_scalar(
       prefix_ + "_exporter_snapshot_collection_inflight", "gauge", 0,
@@ -211,11 +226,31 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
   set.families.push_back(metrics::MetricFamily::make_scalar(
       prefix_ + "_exporter_snapshot_collection_failures_total", "counter", static_cast<double>(failures_),
       "Cumulative failed collections observed before this successful snapshot publication."));
-  auto rendered = std::move(set).render();
-  rendered += "# EOF\n";
+  std::string rendered;
+  if (native_v2_) {
+    // Every capacity is deducted separately, so hostile or overflowing size
+    // terms refuse rather than wrap before the remaining-budget subtraction.
+    const auto remaining = health::remaining_core_publication_bytes({health::consensus_core_resident_bytes(),
+        snapshot_.capacity(), 1, core_snapshot_ ? core_snapshot_->prefix.capacity() : 0,
+        core_snapshot_ ? core_snapshot_->suffix.capacity() : 0, 2, set.resident_bytes(),
+        consensus ? consensus->json.capacity() : 0, 1, 320 * 1024, 1});
+    auto bounded = remaining == 0 ? std::nullopt : std::move(set).render_bounded(std::min<std::size_t>(1048576, remaining));
+    if (!bounded) {
+      admission_.finish(td::Timestamp::now().at(), false, 0);
+      ++failures_;
+      health::consensus_stats.global_incomplete(health::IncompleteReason::ObservationGap);
+      record_publisher_prepare();
+      alarm();
+      return;
+    }
+    rendered = std::move(*bounded);
+  } else {
+    rendered = std::move(set).render();
+    rendered += "# EOF\n";
+  }
   std::optional<health::NativeCoreSnapshot> typed;
   if (core_publisher_.configured()) {
-    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered, pq_enabled, sign, verify);
+    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered, pq_enabled, sign, verify, native_v2_, consensus ? &*consensus : nullptr);
   }
   now = td::Timestamp::now().at();
   if (admission_.finish(now, !core_publisher_.configured() || typed.has_value(), rendered.size())) {

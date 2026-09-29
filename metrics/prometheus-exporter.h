@@ -19,6 +19,7 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   void listen(td::IPAddress addr);
   void set_health_node(std::string value);
   void set_health_network(std::string value);
+  void set_health_native_v2();
 
   explicit PrometheusExporter(std::string prefix);
 
@@ -58,6 +59,7 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   std::optional<health::NativeCoreSnapshot> core_snapshot_;
   std::optional<td::Promise<HttpReturn>> waiter_;
   bool loopback_ = false;
+  bool native_v2_ = false;
 
   metrics::SourceAdmission admission_;
   std::string snapshot_;

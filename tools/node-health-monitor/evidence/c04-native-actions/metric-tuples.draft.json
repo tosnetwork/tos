@@ -1,0 +1,2465 @@
+{
+  "existing_max_series": 107,
+  "new_max_series": 142,
+  "union_max_series": 249,
+  "profile_limit": 256,
+  "tuples": [
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[0][0][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[0][0][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "phase",
+          "candidate_published"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[0][0][static_cast<unsigned>(Phase::CandidatePublished)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[0][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[0][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[0][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[0][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[0][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ]
+      ],
+      "source": "&consensus_stats.pending[0][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ]
+      ],
+      "source": "&action_age_ns[0]",
+      "suffix": "",
+      "scale": 1e-09
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ]
+      ],
+      "source": "&action_complete_value[0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ],
+      "source": "&consensus_stats.failures[0][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ],
+      "source": "&consensus_stats.failures[0][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ],
+      "source": "&consensus_stats.failures[0][5]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "superseded"
+        ]
+      ],
+      "source": "&consensus_stats.failures[0][7]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.failures[0][8]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[1][0][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "intent_committed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[1][0][static_cast<unsigned>(Phase::IntentCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[1][0][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[1][0][static_cast<unsigned>(Phase::SignedCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[1][0][static_cast<unsigned>(Phase::LocalApplied)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "broadcast_enqueued"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[1][0][static_cast<unsigned>(Phase::BroadcastEnqueued)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[1][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[1][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[1][static_cast<unsigned>(Phase::SignedCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "restored_signed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[1][static_cast<unsigned>(Phase::RestoredSigned)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[1][static_cast<unsigned>(Phase::LocalApplied)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[1][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[1][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[1][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[1][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[1][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ]
+      ],
+      "source": "&consensus_stats.pending[1][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ]
+      ],
+      "source": "&action_age_ns[1]",
+      "suffix": "",
+      "scale": 1e-09
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ]
+      ],
+      "source": "&action_complete_value[1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "intent_storage"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "signed_storage"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "duplicate_or_stale"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][5]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "journal_unusable"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][6]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.failures[1][8]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[2][0][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "intent_committed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[2][0][static_cast<unsigned>(Phase::IntentCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[2][0][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[2][0][static_cast<unsigned>(Phase::SignedCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[2][0][static_cast<unsigned>(Phase::LocalApplied)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "broadcast_enqueued"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[2][0][static_cast<unsigned>(Phase::BroadcastEnqueued)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[2][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[2][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[2][static_cast<unsigned>(Phase::SignedCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "restored_signed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[2][static_cast<unsigned>(Phase::RestoredSigned)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[2][static_cast<unsigned>(Phase::LocalApplied)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[2][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[2][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[2][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[2][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[2][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ]
+      ],
+      "source": "&consensus_stats.pending[2][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ]
+      ],
+      "source": "&action_age_ns[2]",
+      "suffix": "",
+      "scale": 1e-09
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ]
+      ],
+      "source": "&action_complete_value[2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "intent_storage"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "signed_storage"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "duplicate_or_stale"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][5]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "journal_unusable"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][6]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.failures[2][8]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[3][0][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "intent_committed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[3][0][static_cast<unsigned>(Phase::IntentCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[3][0][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[3][0][static_cast<unsigned>(Phase::SignedCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[3][0][static_cast<unsigned>(Phase::LocalApplied)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "broadcast_enqueued"
+        ],
+        [
+          "origin",
+          "live"
+        ]
+      ],
+      "source": "&consensus_stats.phases[3][0][static_cast<unsigned>(Phase::BroadcastEnqueued)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "requested"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[3][static_cast<unsigned>(Phase::Requested)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "signed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[3][static_cast<unsigned>(Phase::Signed)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[3][static_cast<unsigned>(Phase::SignedCommitted)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "restored_signed"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[3][static_cast<unsigned>(Phase::RestoredSigned)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ],
+        [
+          "origin",
+          "replay"
+        ]
+      ],
+      "source": "&replay_metric_phases[3][static_cast<unsigned>(Phase::LocalApplied)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[3][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[3][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[3][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[3][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ],
+      "source": "&consensus_stats.outcomes[3][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ]
+      ],
+      "source": "&consensus_stats.pending[3][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ]
+      ],
+      "source": "&action_age_ns[3]",
+      "suffix": "",
+      "scale": 1e-09
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "kind": "gauge",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ]
+      ],
+      "source": "&action_complete_value[3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "intent_storage"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "signed_storage"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "duplicate_or_stale"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][4]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][5]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "journal_unusable"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][6]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ],
+      "source": "&consensus_stats.failures[3][8]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_proposal_retries_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&consensus_stats.phases[0][0][static_cast<unsigned>(Phase::Retry)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_proposal_empty_candidates_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&consensus_stats.phases[0][0][static_cast<unsigned>(Phase::Empty)]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_sessions",
+      "kind": "gauge",
+      "labels": [
+        [
+          "state",
+          "active"
+        ]
+      ],
+      "source": "&consensus_stats.sessions_active",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_sessions",
+      "kind": "gauge",
+      "labels": [
+        [
+          "state",
+          "stopping"
+        ]
+      ],
+      "source": "&consensus_stats.sessions_stopping",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_sessions_started_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&consensus_stats.sessions_started",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_session_stop_started_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&consensus_stats.sessions_stop_started",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_sessions_stopped_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&consensus_stats.sessions_drained",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_leader_windows_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "result",
+          "observed"
+        ]
+      ],
+      "source": "&consensus_stats.leader_windows_observed",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_leader_windows_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "result",
+          "started"
+        ]
+      ],
+      "source": "&consensus_stats.leader_windows_started",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.results[0][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.results[0][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ],
+      "source": "&work_stats.results[0][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "duplicate"
+        ]
+      ],
+      "source": "&work_stats.results[0][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "le",
+          "1"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][0][0]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "le",
+          "+Inf"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][0][1]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][0][1]",
+      "suffix": "count",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][0][2]",
+      "suffix": "sum",
+      "scale": 1e-06
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "le",
+          "1"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][1][0]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "le",
+          "+Inf"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][1][1]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][1][1]",
+      "suffix": "count",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.histogram[0][1][2]",
+      "suffix": "sum",
+      "scale": 1e-06
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.results[1][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.results[1][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ],
+      "source": "&work_stats.results[1][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "duplicate"
+        ]
+      ],
+      "source": "&work_stats.results[1][3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "le",
+          "1"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][0][0]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "le",
+          "+Inf"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][0][1]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][0][1]",
+      "suffix": "count",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][0][2]",
+      "suffix": "sum",
+      "scale": 1e-06
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "le",
+          "1"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][1][0]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "le",
+          "+Inf"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][1][1]",
+      "suffix": "bucket",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][1][1]",
+      "suffix": "count",
+      "scale": 1
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds",
+      "kind": "histogram",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.histogram[1][1][2]",
+      "suffix": "sum",
+      "scale": 1e-06
+    },
+    {
+      "name": "tos_state_resolver_waiters",
+      "kind": "gauge",
+      "labels": [
+        [
+          "kind",
+          "state"
+        ]
+      ],
+      "source": "&work_stats.pending[2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_oldest_waiter_age_seconds",
+      "kind": "gauge",
+      "labels": [
+        [
+          "kind",
+          "state"
+        ]
+      ],
+      "source": "&work_age_ns[2]",
+      "suffix": "",
+      "scale": 1e-09
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "state"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.results[2][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "state"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.results[2][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "state"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ],
+      "source": "&work_stats.results[2][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_waiters",
+      "kind": "gauge",
+      "labels": [
+        [
+          "kind",
+          "finalization"
+        ]
+      ],
+      "source": "&work_stats.pending[3]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_oldest_waiter_age_seconds",
+      "kind": "gauge",
+      "labels": [
+        [
+          "kind",
+          "finalization"
+        ]
+      ],
+      "source": "&work_age_ns[3]",
+      "suffix": "",
+      "scale": 1e-09
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "finalization"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ],
+      "source": "&work_stats.results[3][0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "finalization"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ],
+      "source": "&work_stats.results[3][1]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "kind": "counter",
+      "labels": [
+        [
+          "operation",
+          "finalization"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ],
+      "source": "&work_stats.results[3][2]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_current_slot",
+      "kind": "gauge",
+      "labels": [
+        [
+          "scope",
+          "masterchain"
+        ]
+      ],
+      "source": "&masterchain_slots[0]",
+      "suffix": "",
+      "scale": 1
+    },
+    {
+      "name": "tos_consensus_last_finalized_slot",
+      "kind": "gauge",
+      "labels": [
+        [
+          "scope",
+          "masterchain"
+        ]
+      ],
+      "source": "&masterchain_slots[1]",
+      "suffix": "",
+      "scale": 1
+    }
+  ]
+}

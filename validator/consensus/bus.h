@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "metrics/consensus-health.h"
+
 #include <functional>
 #include <variant>
 
@@ -213,6 +215,7 @@ class Bus : public td::actor::Bus {
   Bus() = default;
   ~Bus() override {
     db = {};
+    health_session.stop();
     stop_promise.set_value(td::Unit());
   }
 
@@ -221,6 +224,8 @@ class Bus : public td::actor::Bus {
   }
 
   ValidatorSessionId session_id;
+
+  mutable tos::health::SessionObservation health_session;
 
   ShardIdFull shard;
   td::actor::ActorId<ManagerFacade> manager;

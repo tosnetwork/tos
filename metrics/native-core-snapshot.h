@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "consensus-snapshot.h"
 #include "td/utils/Random.h"
 #include "td/utils/crypto.h"
 #include "td/utils/misc.h"
@@ -49,11 +50,16 @@ struct NativeCoreSnapshot {
   std::string prefix;
   std::string suffix;
   double sampled_at = 0;
+  std::size_t publication_limit = max_bytes;
   std::optional<std::string> read(double now) const {
     if (!std::isfinite(now) || now < sampled_at || now - sampled_at > 30)
       return std::nullopt;
-    auto result = prefix + std::to_string(static_cast<std::uint64_t>(std::ceil((now - sampled_at) * 1000))) + suffix;
-    if (result.size() > max_bytes)
+    std::string result;
+    result.reserve(publication_limit);
+    result.append(prefix);
+    result.append(std::to_string(static_cast<std::uint64_t>(std::ceil((now - sampled_at) * 1000))));
+    result.append(suffix);
+    if (result.size() > publication_limit)
       return std::nullopt;
     return result;
   }
@@ -80,13 +86,16 @@ class NativeCorePublisher {
   bool configured() const {
     return !node_.empty() && !network_.empty();
   }
+  const std::string &network() const { return network_; }
   const std::string &epoch() const {
     return epoch_;
   }
   std::optional<NativeCoreSnapshot> prepare(std::uint64_t generation, double sampled_at, double wall,
                                             const std::string &openmetrics, bool pq_enabled,
-                                            const OperationSnapshot &sign, const OperationSnapshot &verify) const {
-    if (openmetrics.size() > 2097152 || !configured() || generation == 0 || !std::isfinite(sampled_at) ||
+                                            const OperationSnapshot &sign, const OperationSnapshot &verify, bool v2 = false,
+                                            const ConsensusPublication *consensus = nullptr) const {
+    if ((v2 && consensus != nullptr && consensus->json.size() > 32 * 1024) ||
+        (v2 && openmetrics.size() > 1048576) || openmetrics.size() > 2097152 || !configured() || generation == 0 || !std::isfinite(sampled_at) ||
         !std::isfinite(wall) || wall < 0 || wall > 4102444800.)
       return std::nullopt;
     std::time_t seconds = static_cast<std::time_t>(wall);
@@ -103,22 +112,26 @@ class NativeCorePublisher {
       return std::nullopt;
     const auto g = std::to_string(generation);
     // Keys are canonical lexical order; exact integers remain decimal strings.
-    const auto payload = "{\"bytes\":" + std::to_string(openmetrics.size()) + ",\"generation\":\"" + g +
+    const auto payload = "{\"bytes\":" + std::to_string(openmetrics.size()) +
+                         (v2 ? ",\"consensus\":" + (consensus == nullptr ? std::string("null") : consensus->json) : std::string{}) +
+                         ",\"generation\":\"" + g +
                          "\",\"kind\":\"native_core\",\"network_id\":\"" + network_ + "\",\"openmetrics_hash\":\"" +
                          digest(openmetrics) + "\",\"pq_sign\":" + (pq_enabled ? sign.json() : "null") +
                          ",\"pq_verify\":" + (pq_enabled ? verify.json() : "null") + "}";
-    const bool complete = pq_enabled && sign.complete && verify.complete;
+    const bool complete = pq_enabled && sign.complete && verify.complete &&
+                          (!v2 || (consensus != nullptr && consensus->complete));
     NativeCoreSnapshot result;
     result.sampled_at = sampled_at;
+    result.publication_limit = v2 ? 64 * 1024 : NativeCoreSnapshot::max_bytes;
     result.prefix = "{\"schema_version\":1,\"source_id\":\"native_core\",\"node_id\":\"" + node_ +
                     "\",\"scope_id\":\"node\",\"process_epoch\":\"" + epoch_ + "\",\"source_epoch\":\"" + epoch_ +
-                    "\",\"source_version\":\"native-core-v1\",\"generation\":\"" + g +
+                    "\",\"source_version\":\"" + (v2 ? "native-core-v2" : "native-core-v1") + "\",\"generation\":\"" + g +
                     "\",\"availability\":\"available\",\"observed_at\":\"" + timestamp + "\",\"last_success_at\":\"" +
                     timestamp + "\",\"received_at\":null,\"source_age_ms\":";
     result.suffix = std::string(
                         ",\"clock_quality\":\"valid\",\"coverage\":{\"status\":\"partial\",\"missing_fields\":[\"chain_"
                         "anchors\",\"local_duties\",\"queue_state\",\"storage_state\"],\"gaps\":[],\"sampling_policy\":"
-                        "\"native_generation_approximate_pq\"},\"content_hash\":\"") +
+                        "\"") + (v2 ? "native-core-v2-concurrent-bounded" : "native_generation_approximate_pq") + "\"},\"content_hash\":\"" +
                     digest(payload) + "\",\"payload\":" + payload +
                     ",\"quality\":{\"instrumentation_complete\":" + (complete ? "true" : "false") +
                     ",\"producer_dropped\":\"0\",\"relay_dropped\":\"0\",\"parse_errors\":\"0\",\"shed_reason\":" +

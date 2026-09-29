@@ -1,0 +1,36 @@
+Internal ctest changing into directory: /home/tomi/nhm-c04-build
+Test project /home/tomi/nhm-c04-build
+      Start 212: c04-health-action-finality-suppressed
+      Start 206: c04-health-action-duplicate
+ 1/15 Test #206: c04-health-action-duplicate .............   Passed    0.15 sec
+      Start 209: c04-health-action-skip
+ 2/15 Test #212: c04-health-action-finality-suppressed ...   Passed    0.20 sec
+      Start 200: c04-health-action-success
+ 3/15 Test #209: c04-health-action-skip ..................   Passed    0.15 sec
+      Start 205: c04-health-action-apply-false
+ 4/15 Test #200: c04-health-action-success ...............   Passed    0.14 sec
+      Start 207: c04-health-action-replay-signed
+ 5/15 Test #205: c04-health-action-apply-false ...........   Passed    0.14 sec
+      Start 201: c04-health-action-intent-failure
+ 6/15 Test #207: c04-health-action-replay-signed .........   Passed    0.14 sec
+      Start 204: c04-health-action-signed-failure
+ 7/15 Test #201: c04-health-action-intent-failure ........   Passed    0.13 sec
+      Start 203: c04-health-action-sign-failure
+ 8/15 Test #204: c04-health-action-signed-failure ........   Passed    0.14 sec
+      Start 202: c04-health-action-no-signer
+ 9/15 Test #203: c04-health-action-sign-failure ..........   Passed    0.14 sec
+      Start 208: c04-health-action-replay-intent
+10/15 Test #202: c04-health-action-no-signer .............   Passed    0.14 sec
+      Start 211: c04-health-action-journal-suppressed
+11/15 Test #208: c04-health-action-replay-intent .........   Passed    0.14 sec
+      Start 199: c04-health-ledger
+12/15 Test #199: c04-health-ledger .......................   Passed    0.01 sec
+      Start 210: c04-health-action-finalize
+13/15 Test #211: c04-health-action-journal-suppressed ....   Passed    0.14 sec
+      Start 213: c04-health-action-post-terminal
+14/15 Test #210: c04-health-action-finalize ..............   Passed    0.14 sec
+15/15 Test #213: c04-health-action-post-terminal .........   Passed    0.26 sec
+
+100% tests passed, 0 tests failed out of 15
+
+Total Test time (real) =   1.17 sec

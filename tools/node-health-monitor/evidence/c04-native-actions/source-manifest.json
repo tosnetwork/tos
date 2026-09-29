@@ -1,0 +1,154 @@
+{
+  "baseline_head": "a884b0ca735736fd5a81306c26bdc65a5bd967df",
+  "files": [
+    {
+      "path": "metrics/consensus-health.h",
+      "sha256": "e1b4b5c97943e841c501a05ebe244ae202e113cc86cfad0bf94351537d6ea007"
+    },
+    {
+      "path": "metrics/consensus-metric-bindings.inc",
+      "sha256": "e8cbecd401c2b462b235a11473d65d0591579b0537da8f2943b736cf72255e84"
+    },
+    {
+      "path": "metrics/consensus-metric-catalog.h",
+      "sha256": "8104805525f01926b1ae83c7bea3ea9dba746bc3788b51c53bdba96ed2642b55"
+    },
+    {
+      "path": "metrics/consensus-snapshot.h",
+      "sha256": "0802f3934849c48dde8e75486f8fa6994ea801751446175b729e9b734c846f98"
+    },
+    {
+      "path": "metrics/consensus-work.h",
+      "sha256": "c05bfb7c28a1f5cdac326b5ae82c147d58a84d2703ab46664ab94b4626a1a5f5"
+    },
+    {
+      "path": "metrics/core-registry.h",
+      "sha256": "d56849eb85050f4b3c8b742ba8c21b0225895f5f265096961dcddf0aa969014e"
+    },
+    {
+      "path": "metrics/metrics-collectors.cpp",
+      "sha256": "7da0c08f59a2903785e3ea07e923c9a4d4b5dce6ccb9ee37f75bd17f453190c4"
+    },
+    {
+      "path": "metrics/metrics-collectors.h",
+      "sha256": "7b168b29975749ec6f6bd466cc3556ebe457b17470db1803d6d365e97269bb15"
+    },
+    {
+      "path": "metrics/metrics-types.cpp",
+      "sha256": "4dbe29f3d533a43ceae877a46dc750e30eeba1ce051fb8313759d7259498a868"
+    },
+    {
+      "path": "metrics/metrics-types.h",
+      "sha256": "000d1a0cab8bc244b623dcd0cd767854c5e9dabd97c8d8bacab8bacd535e92ca"
+    },
+    {
+      "path": "metrics/native-core-snapshot.h",
+      "sha256": "83c170f59ea8e4c3cf96dcb9a725261353f46115867dc3f8e1b3d94b7bcffeed"
+    },
+    {
+      "path": "metrics/prometheus-exporter.cpp",
+      "sha256": "21a3300c101a759df2b82d256563561457787ac12793909779d4b3e20531c6ab"
+    },
+    {
+      "path": "metrics/prometheus-exporter.h",
+      "sha256": "ae22b92ac1e1b0bbeb516324d4597afc776ae6ba6523504a8ca778ecf4fffc35"
+    },
+    {
+      "path": "test/test-health-c04-publisher.cpp",
+      "sha256": "92dfc02c82f40155a9850063444044b23725c844c476707dea78327689da6b5e"
+    },
+    {
+      "path": "test/validator/consensus/CMakeLists.txt",
+      "sha256": "7d6252499c6bfa5db626adfabb3ebc64b07f9d9358b3b60046d9636a9213f5c4"
+    },
+    {
+      "path": "test/validator/consensus/test-consensus.cpp",
+      "sha256": "5d19915ce2b2428d7dacbe7010792a254e0206d2d4e9af51d78c03f2bd5420c4"
+    },
+    {
+      "path": "test/validator/consensus/test-health-actions.cpp",
+      "sha256": "b44e9eecc25fefdcf0ebd88af4ea2f53ead6c55be9a78c62804fed531d335eb2"
+    },
+    {
+      "path": "test/validator/consensus/test-health-ledger.cpp",
+      "sha256": "265d6f7bfbddd0ec440640401b32d204712dfa94d25cc489a52fd519547485da"
+    },
+    {
+      "path": "tools/node-health-monitor/tests/c04-metric-union.py",
+      "sha256": "8140d6200376030214537e23dd940b41fb3118d8e90f4f606a04d6954eee7839"
+    },
+    {
+      "path": "tools/node-health-monitor/tests/c04-native-mutations.py",
+      "sha256": "9e633a2b6cf62170906aed90f025fa1a6b9fd854ea6fa11144bea3fab3fadc7b"
+    },
+    {
+      "path": "validator-engine/validator-engine.cpp",
+      "sha256": "8aa0f463cf9eb4d40b23538b03596f07e7744a16efb0aa2c4fd9fb1184d76185"
+    },
+    {
+      "path": "validator-engine/validator-engine.hpp",
+      "sha256": "311402213242eb8c011d94bbd4a736050ad18fd50a9df04790f315cc44c4d34b"
+    },
+    {
+      "path": "validator/consensus/block-producer.cpp",
+      "sha256": "54039a9c546281a59750e60fb52a0d159d8489adc8f1176644527c57a65641d7"
+    },
+    {
+      "path": "validator/consensus/bridge.cpp",
+      "sha256": "bca03c584dec563f4be6a78622b1fd93c4b9b69f5c0ed8603537aa3adffbfd6a"
+    },
+    {
+      "path": "validator/consensus/bus.h",
+      "sha256": "f3b6ca8cbeef81a591c591c47c91f9f3658ac1239736224b13c7bafc77ffd6c6"
+    },
+    {
+      "path": "validator/consensus/simplex/consensus.cpp",
+      "sha256": "c519947b915d98c75d01a3810493785bdebbebd11eac9fc5489c709a82cb6f93"
+    },
+    {
+      "path": "validator/consensus/simplex/db.cpp",
+      "sha256": "5ca8d5fec8792e3f93e7b5f16e88aa0f2f9e7807549c88fbdde7049c420a43fb"
+    },
+    {
+      "path": "validator/consensus/simplex/pool.cpp",
+      "sha256": "fee93a00076abb7565c1b379c2543b884274462549a354c661401df4bdbe8064"
+    },
+    {
+      "path": "validator/consensus/simplex/state-resolver.cpp",
+      "sha256": "dcd50a2ec65f9b0e40431c179934d1d3a752ec6685fe0cf469f8cb8d908f1a74"
+    }
+  ],
+  "publication_anchors": [
+    {
+      "path": "metrics/prometheus-exporter.cpp",
+      "lines": [
+        118,
+        233
+      ],
+      "needle": "remaining_core_publication_bytes",
+      "sha256": "21a3300c101a759df2b82d256563561457787ac12793909779d4b3e20531c6ab"
+    },
+    {
+      "path": "metrics/metrics-collectors.cpp",
+      "lines": [
+        70,
+        209
+      ],
+      "needle": "child_budget.max_families -=",
+      "sha256": "7da0c08f59a2903785e3ea07e923c9a4d4b5dce6ccb9ee37f75bd17f453190c4"
+    }
+  ],
+  "budget_bytes": 4194304,
+  "core_layout_bytes": 491501,
+  "boundary_receipt_total_bytes": 4096249,
+  "openmetrics_body_limit": 1048576,
+  "consensus_json_limit": 32768,
+  "typed_publication_limit": 65536,
+  "quality_gates": {
+    "contract_valid": false,
+    "performance_gate": false,
+    "production_enabled": false,
+    "session_drain_verified": false,
+    "provider_construction_cost_bound": false
+  }
+}

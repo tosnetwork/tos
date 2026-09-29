@@ -644,6 +644,7 @@ class BridgeImpl final : public IValidatorGroup {
   td::actor::Task<> destroy_inner() {
     if (bus_) {
       LOG(INFO) << "Destroying validator group";
+      bus_->health_session.begin_stop();
       bus_.publish<StopRequested>();
       co_await bus_->db->close();
       auto weak_bus = bus_.weak_for_diagnostics();
@@ -693,6 +694,7 @@ class BridgeImpl final : public IValidatorGroup {
   td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
     if (bus_) {
       LOG(INFO) << "Closing validator group for retirement (no delete)";
+      bus_->health_session.begin_stop();
       bus_.publish<StopRequested>();
       co_await bus_->db->close();
       auto weak_bus = bus_.weak_for_diagnostics();

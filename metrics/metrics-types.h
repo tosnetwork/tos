@@ -49,6 +49,9 @@ struct MetricFamily {
 struct MetricSet {
   std::vector<MetricFamily> families;
 
+  [[nodiscard]] std::optional<std::string> render_bounded(std::size_t max_bytes) &&;
+  [[nodiscard]] std::size_t resident_bytes() const;
+
   [[nodiscard]] MetricSet join(MetricSet other) &&;
   [[nodiscard]] std::string render() &&;
   [[nodiscard]] MetricSet wrap(const std::string &prefix) &&;

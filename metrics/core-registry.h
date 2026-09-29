@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <algorithm>
+#include <iterator>
 #include <atomic>
 #include <cstdint>
 #include <limits>
@@ -8,6 +10,7 @@
 #include <string>
 
 #include "metrics-types.h"
+#include "consensus-metric-catalog.h"
 
 namespace tos::health {
 
@@ -65,26 +68,45 @@ class CoreRegistry {
     return {static_cast<std::uint16_t>(index), kind};
   }
 
+  void note_update_failure() noexcept { refuse_update(); }
+
+  enum class UpdateResult : std::uint8_t { Updated, Saturated, Contended };
+  static UpdateResult bounded_add(std::atomic<std::uint64_t> &counter, std::uint64_t amount = 1) noexcept {
+    auto old = counter.load(std::memory_order_relaxed);
+    for (std::size_t attempt = 0; attempt < max_update_attempts; ++attempt) {
+      const bool overflow = amount > std::numeric_limits<std::uint64_t>::max() - old;
+      const auto next = overflow ? std::numeric_limits<std::uint64_t>::max() : old + amount;
+      if (counter.compare_exchange_weak(old, next, std::memory_order_relaxed))
+        return overflow ? UpdateResult::Saturated : UpdateResult::Updated;
+    }
+    return UpdateResult::Contended;
+  }
+
+  // Only the frozen compiled tuple ID can select labels. Sources are static
+  // process atomics, bound at exporter setup, never actor-owned state.
+  bool register_fixed(std::size_t id, std::atomic<std::uint64_t> *source,
+                      const std::atomic<bool> *available = nullptr) {
+    std::lock_guard guard(registration_mutex_);
+    if (id >= consensus_metric_catalog.size() || source == nullptr) { refuse_update(); return false; }
+    auto &slot = fixed_[id];
+    const auto existing = slot.source.load(std::memory_order_acquire);
+    if (existing != nullptr) {
+      if (existing != source || slot.available != available) { refuse_update(); return false; }
+      return true;
+    }
+    slot.available = available;
+    slot.source.store(source, std::memory_order_release);
+    return true;
+  }
+
   bool add(Handle handle, std::uint64_t amount = 1) noexcept {
     auto *slot = checked(handle, Kind::Counter);
     if (!slot) {
       refuse_update();
       return false;
     }
-    auto old = slot->value.load(std::memory_order_relaxed);
-    for (std::size_t attempt = 0; attempt < max_update_attempts; ++attempt) {
-      if (amount > std::numeric_limits<std::uint64_t>::max() - old) {
-        slot->value.store(std::numeric_limits<std::uint64_t>::max(), std::memory_order_relaxed);
-        refuse_update();
-        return false;
-      }
-      if (slot->value.compare_exchange_weak(old, old + amount, std::memory_order_relaxed)) {
-        return true;
-      }
-    }
-    // A business-path update has a fixed progress bound. Losing an update is
-    // explicit in the publisher's quality signal rather than hidden in an
-    // unbounded retry loop.
+    const auto updated = bounded_add(slot->value, amount);
+    if (updated == UpdateResult::Updated) return true;
     refuse_update();
     return false;
   }
@@ -150,7 +172,7 @@ class CoreRegistry {
     return GaugeOwner(this, handle);
   }
 
-  metrics::MetricSet collect() const {
+  metrics::MetricSet collect(bool include_fixed = true) const {
     metrics::MetricSet result;
     for (const auto &slot : slots_) {
       if (!slot.published.load(std::memory_order_acquire)) {
@@ -159,6 +181,24 @@ class CoreRegistry {
       result.families.push_back(
           metrics::MetricFamily::make_scalar(slot.name, slot.kind == Kind::Counter ? "counter" : "gauge",
                                              static_cast<double>(slot.value.load(std::memory_order_relaxed))));
+    }
+    for (std::size_t id = 0; include_fixed && id < fixed_.size(); ++id) {
+      const auto &slot = fixed_[id];
+      const auto source = slot.source.load(std::memory_order_acquire);
+      if (source == nullptr || (slot.available != nullptr && !slot.available->load(std::memory_order_relaxed))) continue;
+      const auto &descriptor = consensus_metric_catalog[id];
+      auto family = std::find_if(result.families.begin(), result.families.end(),
+          [&](const auto &item) { return item.name == descriptor.name; });
+      if (family == result.families.end()) {
+        result.families.push_back({.name = descriptor.name, .type = descriptor.type,
+            .help = "Fixed C04 native observations; concurrent bounded snapshot.", .metrics = {}});
+        family = std::prev(result.families.end());
+      }
+      metrics::LabelSet labels;
+      for (std::size_t label = 0; label < descriptor.label_count; ++label)
+        labels.labels.push_back({descriptor.labels[label][0], descriptor.labels[label][1]});
+      family->metrics.push_back({.suffix = descriptor.suffix, .label_set = std::move(labels),
+          .samples = {{.label_set = {}, .value = static_cast<double>(source->load(std::memory_order_relaxed)) * descriptor.scale}}});
     }
     result.families.push_back(metrics::MetricFamily::make_scalar("tos_health_core_registry_instrumentation_complete",
                                                                  "gauge",
@@ -180,6 +220,12 @@ class CoreRegistry {
   }
 
  private:
+  struct FixedSlot {
+    std::atomic<std::atomic<std::uint64_t> *> source{nullptr};
+    const std::atomic<bool> *available = nullptr;
+  };
+  std::array<FixedSlot, consensus_metric_catalog.size()> fixed_{};
+
   struct Slot {
     std::string name;
     Kind kind = Kind::Counter;

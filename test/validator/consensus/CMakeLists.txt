@@ -1,4 +1,15 @@
 add_executable(test-consensus test-consensus.cpp)
+add_executable(test-health-actions test-health-actions.cpp)
+add_executable(test-health-ledger test-health-ledger.cpp)
+target_include_directories(test-health-ledger PRIVATE ${CMAKE_SOURCE_DIR})
+add_test(NAME c04-health-ledger COMMAND test-health-ledger)
+target_link_libraries(test-health-actions PRIVATE validator tos_validator tos_block adnl overlay dht tl_api
+    tl-utils tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 tdactor tdutils)
+foreach(mode success intent-failure no-signer sign-failure signed-failure apply-false duplicate replay-signed replay-intent
+             skip finalize journal-suppressed finality-suppressed post-terminal lease replay-intent-sign-failure replay-intent-signed-failure)
+  add_test(NAME c04-health-action-${mode} COMMAND test-health-actions ${mode})
+  set_tests_properties(c04-health-action-${mode} PROPERTIES TIMEOUT 30)
+endforeach()
 if(USE_QUIC)
   add_executable(test-twostep-wiring ../../test-td-main.cpp test-twostep-wiring.cpp
       ../../plumtree/transport.cpp ../../plumtree/scheduler.cpp ../../plumtree/util.cpp)
@@ -547,3 +558,16 @@ set_tests_properties(
     test-consensus-simplex2-query-abuse
     PROPERTIES DISABLED TRUE
 )
+
+add_test(NAME c04-native-pipeline COMMAND test-consensus --duration 8 --n-nodes 4 --target-rate-ms 50
+    --net-ping 0.002:0.01 --min-finalized-blocks 3 --pq-finality-e2e-test --c04-health-test)
+set_tests_properties(c04-native-pipeline PROPERTIES TIMEOUT 45)
+
+add_executable(test-health-c04-publisher ../../test-health-c04-publisher.cpp)
+target_include_directories(test-health-c04-publisher PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-health-c04-publisher PRIVATE metrics tdactor tdutils)
+add_test(NAME c04-publisher-unit COMMAND test-health-c04-publisher)
+foreach(mode nested deadline oversize family parent-family v1)
+  add_test(NAME c04-collection-${mode} COMMAND test-health-c04-publisher ${mode})
+  set_tests_properties(c04-collection-${mode} PROPERTIES TIMEOUT 15)
+endforeach()

@@ -1,0 +1,878 @@
+{
+  "baseline": "a884b0ca735736fd5a81306c26bdc65a5bd967df",
+  "build_directory": "/home/tomi/nhm-c04-build",
+  "build_targets": [
+    "test-health-actions",
+    "test-health-ledger",
+    "test-health-c04-publisher",
+    "test-consensus",
+    "test-health-native-snapshot",
+    "test-health-core-registry",
+    "test-health-source-policy",
+    "test-health-collector-completion",
+    "test-health-collector-timestamps"
+  ],
+  "max_build_jobs": 8,
+  "max_ctest_parallelism": 2,
+  "binaries": [
+    {
+      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-health-actions",
+      "sha256": "2f809fe2948141dfb561e44c31a4867b09b93952a324fadf7d2ca8873e07b441",
+      "bytes": 20870056
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-health-ledger",
+      "sha256": "145b977e640ff3f184b835cf8948ee35a6813d7124addbe8d5a5e9b93e90ae77",
+      "bytes": 45344
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-health-c04-publisher",
+      "sha256": "6d9cea9d6ed307bac3fe947ba331a6c793905fca7950f30d8ae95ef7bfd978da",
+      "bytes": 6387520
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus",
+      "sha256": "dc8d53de5bc0b0544129042b554514c567a5b62914b2f4bb8071a225436e0fbf",
+      "bytes": 24548392
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test-health-native-snapshot",
+      "sha256": "4fa88c7927d7b40e1dfde83af80fd4a9b3fb52b901f32a38b93ba4d013d07e2d",
+      "bytes": 6956208
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test-health-core-registry",
+      "sha256": "3db3f2e863f81f0f135e2d06fa05db020f6b6ef2238bce4eeb6e46b3d254d330",
+      "bytes": 198720
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test-health-source-policy",
+      "sha256": "1fba450159054104301faee10545e82f816ba4abcc03158dd7f00bc89fec44e2",
+      "bytes": 5864
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test-health-collector-completion",
+      "sha256": "3a1af03107e400413220410b48c3f507ead162f8c54c45fb0ae9c746d438cfc3",
+      "bytes": 318832
+    },
+    {
+      "path": "/home/tomi/nhm-c04-build/test-health-collector-timestamps",
+      "sha256": "883915f2d85ad98c5e5e8573013a33873770faa89bccaae96e4a7661bf140d05",
+      "bytes": 342448
+    }
+  ],
+  "source_manifest_sha256": "78cd35761b1596d10f21f609638bb741714c635dc8598dc60a7b0f162226d04d",
+  "artifacts": [
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/IMPLEMENTATION-STATUS.md",
+      "sha256": "72561f09e29646d9e00a78bd460b4a575e3ecd629ef3c67511832bb1c83e5255",
+      "bytes": 4999
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/INTERFACE-DRAFT.md",
+      "sha256": "0a4acc474df43d5f60f6e24c121c94b8b0a27979dbdd1b988dae44a5f6f2925c",
+      "bytes": 8583
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/SUPERVISOR-INCREMENTAL-REVIEW.md",
+      "sha256": "148d56b178a4b27af8f1c538ca8f67c3b9b1ed5cea3cc7f4e3770d2d63180c2d",
+      "bytes": 2054
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/action-manifest.json",
+      "sha256": "d949746904d82730cbaf44e626e19d9f8ffb9fc3e8eaa8e8e890ca467f5575a5",
+      "bytes": 2395
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/consensus-canonical.draft.json",
+      "sha256": "950037142424d05ff5231bbcf61ad7b62545e07d4ce30b85e627b943202b9f78",
+      "bytes": 4399
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/consensus-canonical.native.json",
+      "sha256": "521df7e3dee68a3621c570cad9464faa8840bb0833068c54fb94111046beb6db",
+      "bytes": 5507
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/consensus-schema.draft.json",
+      "sha256": "97c06fafcd395d3261a3ed03e0e9f7d603cfc4ba362fe2e2d9681b6d6f92a0e0",
+      "bytes": 51185
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/consensus-schema.frozen.json",
+      "sha256": "d6302be8fd52c0e650561b48a05fb1622fdbc2307b0d01c0c34994dbebccc86c",
+      "bytes": 72121
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/metric-manifest.json",
+      "sha256": "662dee776d77381f1754d6dcc5d77cfb702f8dcf08cbed5a7d99f92f8c8af363",
+      "bytes": 49546
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/metric-tuples.draft.json",
+      "sha256": "1df98fb14934b8589d50cc317596266bb80e12c321b7b6d4c2bccf0180e746b4",
+      "bytes": 49268
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/metric-union.json",
+      "sha256": "c2c7f0206687c2e7b624c1c93a51f9cfbfd928c29511785e4a2814f44080c895",
+      "bytes": 58701
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/persistence-manifest.json",
+      "sha256": "490feadd57c3999e0808b4c329947455a28cf213d50a092f869927619286fc5a",
+      "bytes": 1373
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/actions.log",
+      "sha256": "eb6a5d87d47e39a4a39ab137a806a88c4c0c962fd8fd2746e17f708f29b83937",
+      "bytes": 1720
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-actions.log",
+      "sha256": "5acb4bf61d15ae068b62b8ae5ad2154ee641712ce548339ff2d9a7ac4bca8b84",
+      "bytes": 5499
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-bounded.log",
+      "sha256": "17999c35f464a28efed7ba88ad1a87a4e63688b55c41becf85baad9f84ced073",
+      "bytes": 12640
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-cli-observation-gate.log",
+      "sha256": "d88ecaa1beb8ed98567370e12828d78bba5f0e32b7c9f2c06e4af1178d1f1c18",
+      "bytes": 148
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-collection-budget.log",
+      "sha256": "b7572aad788127a3d83f140ea8b3450584976b1313cedc02952f5ad837283c0d",
+      "bytes": 12446
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-final-gates.log",
+      "sha256": "9fb0010cfcfbf0bcf4738f99b6314232a066edca017f8ac34e161f731504de70",
+      "bytes": 4746
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-ledger.log",
+      "sha256": "29cf74c7d3c3cd79bd2b7513adb3e9a9f7ed63c5698421e9485e62d6259ee00b",
+      "bytes": 6558
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-pairs.log",
+      "sha256": "646724418437cebb4fd7fa7e7476d2a87c760156545175fed8cc6270fc26015f",
+      "bytes": 593
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-pipeline-regressions.log",
+      "sha256": "e4eda41cb89017a180899ea50005549c37e5764e8c135ac99d8633996e3616bf",
+      "bytes": 740
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-producer.log",
+      "sha256": "839ee1f748aaa5ca80666c3112afcba1f2b687db8f10c32ea7633cea2a671631",
+      "bytes": 1902
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-restored-union.log",
+      "sha256": "becf31c37eb12130b3ddd699463babd4a2778e742a18c96bfb3f7168d76da11d",
+      "bytes": 1085
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-retention.log",
+      "sha256": "0152b4ac9ab352f1140b574df64c47c046b5183fb20fc98730c9508a09d27e22",
+      "bytes": 5594
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-retry.log",
+      "sha256": "705a108284df7f31d5d1e1f83e769c7ba9f2cd1f12bce4b6b54a5d2064f151ac",
+      "bytes": 5253
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-v2-retry.log",
+      "sha256": "175ec31419029178429256d1f99d50135549ef26236a1d4a16189d2875cab02f",
+      "bytes": 6536
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-v2.log",
+      "sha256": "e5e8ef1a8f87d6743019d1dd117b4cd4757feb4ce00742ad21ae62fc5fe8d61c",
+      "bytes": 27018
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-work.log",
+      "sha256": "6877624d861312a720cc73537b09d744c5a9a3c9cab8c80854c59ec83c63c5f7",
+      "bytes": 389
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build.log",
+      "sha256": "f0aa3a7068d8489df3264e2a3e7d1abb05f5efbb4a70711599ab9c5e4bbaf28d",
+      "bytes": 196246
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/configure-final.log",
+      "sha256": "0fcd3d2bb4e6e6c4756c176c4ee820930d65db48b97e78905db6c696bc59a590",
+      "bytes": 4212
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/configure.log",
+      "sha256": "4692d08a6a0d13f23696ac0a45f94dc17d3e66948b023e752c7015c83bd58d12",
+      "bytes": 8822
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/consensus-schema-pairs.log",
+      "sha256": "a032a4a3a498c95612dc7151ddf5099b5acfc1a9f9cd85385601db0acc72b111",
+      "bytes": 2221
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/current-native-tests.log",
+      "sha256": "3c78fa39692bfd4f75c409350a82fa73381b6d26b97259550ae571a2001de27b",
+      "bytes": 2457
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/final-gates-tests.log",
+      "sha256": "82dc82d7d69bc3106d4cdbc2b333a51b69841fd1a4418d4fd725bbf27be42c34",
+      "bytes": 14891
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/metric-union.log",
+      "sha256": "e00880a33ba6aa83d2b65135a4186dc863962f97ea1ea2c36ae0d7d8ffdd82ec",
+      "bytes": 83
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutant-run.log",
+      "sha256": "db7e482c528b9de90c3c3c25f4dfdda00a4bbb0743b79d4771a87c724b3ed544",
+      "bytes": 251
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/lease-retirement-build.log",
+      "sha256": "96ba55a38935c590fe47440dac2209fca653b39142b392d1caf1fd91b4a43c6e",
+      "bytes": 2145
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/lease-retirement-green.log",
+      "sha256": "8c6cbd4c965219c0f56e6687df1102e6cdc40832e2a553d3e6e8b9cab82d1f69",
+      "bytes": 107
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/lease-retirement-red.log",
+      "sha256": "ebb889f9a2eb87c59267a31dbeb0ee1e0d2d64f7b26f38693d7279c37289d6ee",
+      "bytes": 83
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/lease-retirement-restore-build.log",
+      "sha256": "99d59398b7f29179aac5f81ba17c04cd3c4429253abcd7c30823e123794b6ed0",
+      "bytes": 2145
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/nested-allowance-build.log",
+      "sha256": "a2e0f83ac8261655030765e231c03d508080ceca4968abd6c8f7238902e73f53",
+      "bytes": 479
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/nested-allowance-green.log",
+      "sha256": "7eff6ce4992a84abe06a1aff84ce944790d2fc00c7fbc33e5cabbaede0303fad",
+      "bytes": 81
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/nested-allowance-red.log",
+      "sha256": "c7804ae0e54ffa7d241be6a19d45b80c5fceebbb89a11a7199f98cd9a6983cf7",
+      "bytes": 75
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/nested-allowance-restore-build.log",
+      "sha256": "8cac3190109ccd0253e96b568c57695c8a576959b306f54d0fac4e4ff866d446",
+      "bytes": 266
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/receipts.json",
+      "sha256": "ec821a9a356d05508bddca63070e685516b40f601eebd064e3b3727fc3a9a85a",
+      "bytes": 2298
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/refusal-stops-starts-build.log",
+      "sha256": "8cac3190109ccd0253e96b568c57695c8a576959b306f54d0fac4e4ff866d446",
+      "bytes": 266
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/refusal-stops-starts-green.log",
+      "sha256": "cb8a107cc740782b43d9bae92d543970fca432b31648a876d4616befb396ef24",
+      "bytes": 73
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/refusal-stops-starts-red.log",
+      "sha256": "fb1e2875516915e3cfd4a17905d0c5aa4034bf840a92b0654e4f1ca3dbc1b192",
+      "bytes": 93
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/refusal-stops-starts-restore-build.log",
+      "sha256": "8cac3190109ccd0253e96b568c57695c8a576959b306f54d0fac4e4ff866d446",
+      "bytes": 266
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/v2-body-refusal-build.log",
+      "sha256": "538527c8f86ba3b44d2ffa7e0c94f9daadd6d0f2dd2b35656bee4127e0744931",
+      "bytes": 397
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/v2-body-refusal-green.log",
+      "sha256": "978a96fa7b8b062be3082b3541f202b301af678cf7fe5ef054a48ead8badceda",
+      "bytes": 171
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/v2-body-refusal-red.log",
+      "sha256": "f76f46f1430e336d739a416b1db606200f3b75983c695d254b34f818b88099f0",
+      "bytes": 46
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/mutants/v2-body-refusal-restore-build.log",
+      "sha256": "538527c8f86ba3b44d2ffa7e0c94f9daadd6d0f2dd2b35656bee4127e0744931",
+      "bytes": 397
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/pipeline-production-trace.log",
+      "sha256": "98837c8eeafdfeb7af2a9c9bd0bdb8eb2848a4da8c172ed592d625b5335ffe0d",
+      "bytes": 26065
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/pipeline-regressions-tests.log",
+      "sha256": "5efc7b8cdd3fc1c84900d69213483810aeeca9f6e00a826b4dbf4ca7f901ec56",
+      "bytes": 648
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-1.json",
+      "sha256": "422a37b6c4521b732421bb946cdb99d58848aa1eaa2be4e9f8ddd6d52d26feaf",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-1.prom",
+      "sha256": "2ad0fad23f504b7c4de9b6c024e4b2fcda9a68a257b5a8cc847b67d19d802d94",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-2.json",
+      "sha256": "89b6805d55472e98e1b8be6854a886a3721e2bd4ae74dbab5f7c0b71f916d4e2",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-2.prom",
+      "sha256": "c77888a2c0502b1f47d5963885ae4bf7fcd902d8f917cf8f4b96122dda4ae1ea",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-3.json",
+      "sha256": "2035859c39aa36bbb9402a17e022a85ddc78c5b6c566897ad5cf0d97b90fb461",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-3.prom",
+      "sha256": "abb259d7fd8bae0c2abe5dd95050edd65f663e90f699da773c1f57bc8fcf2fad",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/duplicate-1.json",
+      "sha256": "c161f17fea161eeca242b4613880ad866cf7474f468f3942185dca2c73c2c3d8",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/duplicate-1.prom",
+      "sha256": "0272928eefa1a65744d0d9300ea9b221a2f717e42cf7716a9f2edb4aaeff43e7",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/duplicate-2.json",
+      "sha256": "e580ee164e1cfd9f016c26ae41dc22e89df23e661babd3f9182579dff32165aa",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/duplicate-2.prom",
+      "sha256": "628e9e263abb73db86cb27397e6a5a562ca47fead53027e8979b24162b1fe2ce",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/duplicate-3.json",
+      "sha256": "a7a81c538591375820a0bbf5bbcc0b072d5fac740392124e65669d32928f3279",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/duplicate-3.prom",
+      "sha256": "32bed49a38b68ee1d9a231cd42a276cebc7a791fc3cc69ae9b930e3e74a34666",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finality-suppressed-1.json",
+      "sha256": "cc993b3ef894a214c7fc586a0f966d42bc749fcaa3a63091957028ac40eac51f",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finality-suppressed-1.prom",
+      "sha256": "a70f98fe2b2718a50cf577900dbfbc89241f44d9c297c6329384f267795cbfd1",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finality-suppressed-2.json",
+      "sha256": "8b0c1c4bdffdc3e03bbd302fd8b870aba406d3621268a1878dfe640cdc0f4bfb",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finality-suppressed-2.prom",
+      "sha256": "777c266721e21b6df349bd04cb52cef996d6d35fb1ef0a33ab058dffcc07a6d3",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finality-suppressed-3.json",
+      "sha256": "f803c6f222ed5a5d3384a3f94e4b334c865f489efd294957b05f6f2c1e00e363",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finality-suppressed-3.prom",
+      "sha256": "273ed039c43ba0c279d3683f5bb118a2e39f9f7c5d3b34a2fc773384d0d755f9",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finalize-1.json",
+      "sha256": "bf4d4872d48c00e96ab9bd3e863619c0e9e5fc20c8d52179860ab6780257a4c1",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finalize-1.prom",
+      "sha256": "edc44be73a42f598f217398fb43d7da92b4684ce68f12786e7a8c716a9df6204",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finalize-2.json",
+      "sha256": "f005879134e5a9e62142f4fdf2919434b9a1c0c78a00b90e56205be0ddd31b29",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finalize-2.prom",
+      "sha256": "2a6285f17bef31f10be7f4af1dfba191c23e41fca8b602298c6bd9ecc389741e",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finalize-3.json",
+      "sha256": "9f7f46e3ec99bd84c5cf64395b513745e6f7331b426cdf2890273cd5632a7150",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/finalize-3.prom",
+      "sha256": "8bb7e1b4c1f8468b07dd1f3b667c4ce0220ea55335d7066898a6e48367807685",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/index.json",
+      "sha256": "fb203e5881eb9cf58e1a7fc79a200d4c692439ca9817cbdb0d0ac77c070f5b55",
+      "bytes": 20789
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/intent-failure-1.json",
+      "sha256": "b4b61ce6f755df30483ae27d6030d91a6c57abbb1ee4846f09e8b0de160f48a3",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/intent-failure-1.prom",
+      "sha256": "4d9d33062fc9d68af57aa59cb6da166be92eef9f9d87fc5ae8c9e3d5fe2ffc65",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/intent-failure-2.json",
+      "sha256": "ddf22d0824bd5dae2234bddf635a494934b0c56a9680a7cacd1a9cbb7a0bb16a",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/intent-failure-2.prom",
+      "sha256": "ee10f6fcfdc6bf41a6952024c9ab8428570484a0f1adb6639e99730891e7ce32",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/intent-failure-3.json",
+      "sha256": "8b8f22d2dd18af01e55a47d76cccaa3379ef882629815851a29f780541f50b5f",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/intent-failure-3.prom",
+      "sha256": "1c9cd586b528c5f9e000147c9c9791691b2c72098cc80fa160f5b103f46543e2",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/journal-suppressed-1.json",
+      "sha256": "b470951b91e6a4b47a8e0f097bdc14bfcd9a959c5410e509642938daa52c0931",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/journal-suppressed-1.prom",
+      "sha256": "c49101c46edd7395ac8cc5921977bd495006e2b46e32a614e496e63d5197fce8",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/journal-suppressed-2.json",
+      "sha256": "4b763e4b198e30a497955779c94177ee261ed192c948a2c73a7c8d38f45feccf",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/journal-suppressed-2.prom",
+      "sha256": "b6010bf299037b2c02a81c89b03ab6a05dc1974209cfbba12063ca3fefa54d57",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/journal-suppressed-3.json",
+      "sha256": "b2ee764b9ab801aa04c01004e9de177a40c412f47d0cd7e74f2eb2f70b7f3416",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/journal-suppressed-3.prom",
+      "sha256": "13d50768c2312a5ea83b47631faaed370c6399c94eb53e2383be5381c4ef7968",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/no-signer-1.json",
+      "sha256": "b05d5b9125c882e8017664be44ce0109bfc3fe1e6b4fb776cc01df53c9abed76",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/no-signer-1.prom",
+      "sha256": "a265bdb2c3c83b87b012b279d6fde971de64eed42f758294ced1767c371459d7",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/no-signer-2.json",
+      "sha256": "949c9b7bd97db93031c5685e53a2f45816b1784d0cf80c3f49836466e347f321",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/no-signer-2.prom",
+      "sha256": "1897525c5736f13c8f78d20596b779eaebe0d8eb6fc02db48b18476175296d03",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/no-signer-3.json",
+      "sha256": "3c51523bb08467a40899e2cc61b79264d1d7a2a95ff8e926455838d4f9b539e7",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/no-signer-3.prom",
+      "sha256": "91bb28517545e9f7653c3e7d4184a1ac531d7748380fad7230c3c85b611f0a91",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/post-terminal-1.json",
+      "sha256": "b7e4bd0dd2d66a7a9a0d12d9fcd784b2c9597fd15c67202638050b1d98ed22ff",
+      "bytes": 6683
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/post-terminal-1.prom",
+      "sha256": "82ee28ab825b85a3cced90532cdfd96573ec5fb54252c9ab0f97c9d4c45130bc",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/post-terminal-2.json",
+      "sha256": "f022e18a4f592c30dd1e043c381bd4ea555c15f146700f9e75553d00ac7b2ea1",
+      "bytes": 6684
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/post-terminal-2.prom",
+      "sha256": "addf0e267a355410324d968bf6753c72f1da72114b03af7e8424157945b8a536",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/post-terminal-3.json",
+      "sha256": "b15476c447dcd816c7055883a7a134dae779297a70dcd4dd57ee9083c2917651",
+      "bytes": 6684
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/post-terminal-3.prom",
+      "sha256": "53fe4df7e1f1604f6824ace8be9c7d080a5ae962fc61a6f88af17b8db071edf1",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/producer.log",
+      "sha256": "ebd825f6866346beb9ac1cbfd74ea53af4aee342a35715391428eadead589e13",
+      "bytes": 185442
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/promtool-extended.log",
+      "sha256": "feea187e378207c299bbe9eee9d17e9d1d64e91a31a630f41ea807d86a8b1e02",
+      "bytes": 83664
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/promtool-syntax.log",
+      "sha256": "85d25298ed780b02c33bb3ffc4973464e09865ab15863871e8b4ebfe82a4708c",
+      "bytes": 142
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/promtool.log",
+      "sha256": "5f9288296308178ab5c6cda612f76afd9a1680b6e5fb1488aeb05768011fc802",
+      "bytes": 169
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-1.json",
+      "sha256": "48a5dd7f1b63541023a87d07fe0669bb14ebbccd6c94f58b2f7b15575750eaa5",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-1.prom",
+      "sha256": "4c0bfc71d3d66e8b0649547e0da614df093412c43a5cf9e9227dcd34371e65c1",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-2.json",
+      "sha256": "ed64e46d924478eae71aad6b9bc14edad526c6c898e4cf21cec5c012ce3333e0",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-2.prom",
+      "sha256": "599f716af5d5a0e1580ebc9da0e4e109106f3450ca2230fdb428164a5813b93a",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-3.json",
+      "sha256": "cca806eca04f621de94921603215497e549451830923a23a13dc492290505816",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-3.prom",
+      "sha256": "f717127bc9599abc39696e1543dfca167402e2dc10a25ce21166472cd500bffb",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-sign-failure-1.json",
+      "sha256": "c5594212dd5c1ec661b493dff0ab250ba4c913136ea3b85cd2f78aa222aa9c0c",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-sign-failure-1.prom",
+      "sha256": "667fac686a8fdb1398744be126026cb2bad52d1a169c08156290d4669842c961",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-sign-failure-2.json",
+      "sha256": "76a820b907437edca604dce2b11546590f999c05bffb26be6109e5ef29f82f82",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-sign-failure-2.prom",
+      "sha256": "818f17d15187a4b1d361006b578228d02dc1de2ddafd4a9c6366dcdf4cc72068",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-sign-failure-3.json",
+      "sha256": "8270e4b0d6ef3f388ce07d95367590fc57d0b15260872f66ac9a7f90940a579a",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-sign-failure-3.prom",
+      "sha256": "408c7593c156f1d443b7a5f91cb5c541f32aa19993747f83cd5cef93e4bbad6a",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-signed-failure-1.json",
+      "sha256": "0d560e7a1f52613a818ff4764b2e2c3f31ffdd3895398956e113427c61b106fe",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-signed-failure-1.prom",
+      "sha256": "9e3d6adc7384d46d3ffbe1a73464000853e4447ea967e5fd9d63cbacfb5ac581",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-signed-failure-2.json",
+      "sha256": "e9d5e872dee083a06f5747f9a443909b8b41e3fee19535ec17e666c61970d4f7",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-signed-failure-2.prom",
+      "sha256": "f2c3f21e5cad6591d839474cd0efd914935a8bae990dabed65a5010ba74d2eef",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-signed-failure-3.json",
+      "sha256": "4088b8adc48bd9120c3dfdc19c7b42d47fec05481029948c91ac994a4c189552",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-intent-signed-failure-3.prom",
+      "sha256": "3b14b859d78ffbe60a13fb7c90d1c4690e1a268fc889ae3fb803cfe88535b8f8",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-signed-1.json",
+      "sha256": "9b4c64fa5d6e6ed7e5b5144827318c4b2c6bc8b41844359b45a7e88aff8b7bca",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-signed-1.prom",
+      "sha256": "2b6f64caa970c47432d167ccfd1d615dd815adc58a5e3ddcd42f942f08b4872c",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-signed-2.json",
+      "sha256": "d238047efb969636e216172d8352842726f5af7347611826d341e460cd07c576",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-signed-2.prom",
+      "sha256": "87975ec4dbbaf95c98be6ec438a963a48131a86b20dc1fb3f0a6f49bd256e333",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-signed-3.json",
+      "sha256": "826f8b2c3971e6e805aca6ce95081c98e9a5eae016e025eb820d7c5bedb73922",
+      "bytes": 6669
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/replay-signed-3.prom",
+      "sha256": "479c6b323cba88316589875b01c33b3060e3fe15d90618f87c744e8f006da94a",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/sign-failure-1.json",
+      "sha256": "0769f69d5ae9b0c0e8095dd78e08c016a872ace25a3e928481d4f67a039b3db3",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/sign-failure-1.prom",
+      "sha256": "3157894784f6d13a8280a103007f8656aeed80330a92ccb9b74e3a16c5f37904",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/sign-failure-2.json",
+      "sha256": "f0dfc4ac2764cac1b1f77a39b5673ecdf8dff90f2d91908f127b8f5895a1a04a",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/sign-failure-2.prom",
+      "sha256": "bb33453489d5076863bf308973065ac8a3d41aab9ac3dd7d5e97a042f7e45b61",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/sign-failure-3.json",
+      "sha256": "2b985ef589214ae423ef21603634404dcc73aeb9eae021d87adf336da8296004",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/sign-failure-3.prom",
+      "sha256": "f06b679c6556aeb578c08dd4533228c003667b5f41a53f653738d84a54fbe960",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/signed-failure-1.json",
+      "sha256": "146ab3ba244781a006716c9c107798a2df99212476d209f3cec27b39d6449263",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/signed-failure-1.prom",
+      "sha256": "7cf731e08922d5d505d2d5e271c625cebb5dbc3241037dc9505fb0ceb8c74b33",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/signed-failure-2.json",
+      "sha256": "5fe6118412c8732cc117645549785055233566e1d997da30e9e0c1e77c984923",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/signed-failure-2.prom",
+      "sha256": "dd5b1e81f996ddd222d7115c0d49a8a32a59002a21e2d673b02b39dcaf77b3ce",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/signed-failure-3.json",
+      "sha256": "0f5b03e5bd1f0584d775b051889bf46823f168132c9a91cd63cd9e6c2ccef038",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/signed-failure-3.prom",
+      "sha256": "76cec968a3fb2e02d24c120d19053fda14785d30a241731d5b2f0fe6521e91d7",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/skip-1.json",
+      "sha256": "3f51e766ad074f0cd96894dea1388a941cbdd0a86048080c20583534832d7f15",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/skip-1.prom",
+      "sha256": "b18f4e3f78a5a4b5b049931fd6be2c179b2f10fb62eb274b301d846a3d6e5311",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/skip-2.json",
+      "sha256": "e7ccdf99b4b1b922dc345b61e3bf846661738dc9dc8d58ae620775f64f716513",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/skip-2.prom",
+      "sha256": "8e30a0c7d6fbe0999a3eda3de94e6fcb9391ed1fff96a64aa04c9be217180838",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/skip-3.json",
+      "sha256": "c3a60e109378078f47e8615a9074d4cf9411b84c473859cba2e17d4906b02383",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/skip-3.prom",
+      "sha256": "931f2d2ac3cfac0bf3953552254de6b03d78522a197720356e976a91a151ccde",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/success-1.json",
+      "sha256": "5eb7c428019a895c7e1e7bdac2418181289f8e4ebc770035abb34c982fe334f8",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/success-1.prom",
+      "sha256": "52dcdcec720fe3818d84f22bfc8dfbbca47a97891a12d78ead72d90bd5962fdb",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/success-2.json",
+      "sha256": "5ce6a965ac9732b4cfd0970443f506a5b07bccc0e89c7d5fc3ab18bfba8ce542",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/success-2.prom",
+      "sha256": "7d96edc5cf9d6162d02f5e50998e2ecb73fd273d14fa031c4e873b781e519f9c",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/success-3.json",
+      "sha256": "e4cb577971b69892c0d5111f3f1d145ef3fda516320a98711a3929c245a90b4f",
+      "bytes": 6647
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/success-3.prom",
+      "sha256": "82b6555025a87598d761b228b781539a01a4ac8b181647bc9ab95004567e6734",
+      "bytes": 13743
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/publisher-memory-receipt.log",
+      "sha256": "978a96fa7b8b062be3082b3541f202b301af678cf7fe5ef054a48ead8badceda",
+      "bytes": 171
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/python-tools.log",
+      "sha256": "9cc5ce7f1229fef9b760a6b9b1e5e35d8353be8586901fac6a4575636f02514c",
+      "bytes": 275
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/restored-union-tests.log",
+      "sha256": "3a6a49ab4fca8232d34a46e69232d92c2cc9ecf73ff8285faabe26a785586a2d",
+      "bytes": 5542
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/retention-tests.log",
+      "sha256": "9c6024906463e09b20075e9d3f3752a501c4d415fa68866eefaeefff3adb90e4",
+      "bytes": 2088
+    },
+    {
+      "path": "tools/node-health-monitor/evidence/c04-native-actions/source-manifest.json",
+      "sha256": "78cd35761b1596d10f21f609638bb741714c635dc8598dc60a7b0f162226d04d",
+      "bytes": 5328
+    }
+  ],
+  "gates": {
+    "native_restored_union": "35/35",
+    "compiled_targeted_mutants": "4/4 red + 4/4 restored green",
+    "actual_pairs": 48,
+    "production_acceptance": false
+  }
+}

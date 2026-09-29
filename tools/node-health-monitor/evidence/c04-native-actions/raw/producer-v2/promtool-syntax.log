@@ -1,0 +1,2 @@
+error: at least one of --extended or linting must be enabled
+Use --extended for cardinality analysis, or remove --lint=none to enable linting

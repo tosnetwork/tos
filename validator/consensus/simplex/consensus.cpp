@@ -132,6 +132,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   template <>
   void handle(BusHandle, std::shared_ptr<const LeaderWindowObserved> event) {
     auto& bus = *owning_bus();
+    if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+      tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_observed);
     td::uint32 new_window = event->start_slot / slots_per_leader_window_;
     current_window_ = new_window;
 
@@ -236,6 +238,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
     owning_bus().publish<OurLeaderWindowStarted>(base, parent.state, start_slot, start_slot + slots_per_leader_window_,
                                                  start_time);
+    if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+      tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_started);
     co_return td::Unit{};
   }
 

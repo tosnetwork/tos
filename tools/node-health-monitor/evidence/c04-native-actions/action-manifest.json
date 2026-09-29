@@ -1,0 +1,89 @@
+{
+  "observations": [
+    {
+      "boundary": "proposal",
+      "source": {
+        "path": "validator/consensus/block-producer.cpp",
+        "lines": [
+          273
+        ],
+        "needle": "CandidatePublished",
+        "sha256": "54039a9c546281a59750e60fb52a0d159d8489adc8f1176644527c57a65641d7"
+      },
+      "tests": [
+        "c04-native-pipeline"
+      ]
+    },
+    {
+      "boundary": "votes-live-and-replay",
+      "source": {
+        "path": "validator/consensus/simplex/pool.cpp",
+        "lines": [
+          862,
+          891,
+          948
+        ],
+        "needle": "ActionObservation",
+        "sha256": "fee93a00076abb7565c1b379c2543b884274462549a354c661401df4bdbe8064"
+      },
+      "tests": [
+        "c04-health-action-success",
+        "c04-health-action-intent-failure",
+        "c04-health-action-signed-failure",
+        "c04-health-action-apply-false",
+        "c04-health-action-replay-signed",
+        "c04-health-action-replay-intent",
+        "c04-health-action-post-terminal"
+      ]
+    },
+    {
+      "boundary": "leader",
+      "source": {
+        "path": "validator/consensus/simplex/consensus.cpp",
+        "lines": [
+          136,
+          242
+        ],
+        "needle": "leader_windows",
+        "sha256": "c519947b915d98c75d01a3810493785bdebbebd11eac9fc5489c709a82cb6f93"
+      },
+      "tests": [
+        "c04-native-pipeline"
+      ]
+    },
+    {
+      "boundary": "resolver",
+      "source": {
+        "path": "validator/consensus/simplex/state-resolver.cpp",
+        "lines": [
+          321,
+          388,
+          747
+        ],
+        "needle": "WorkObservation",
+        "sha256": "dcd50a2ec65f9b0e40431c179934d1d3a752ec6685fe0cf469f8cb8d908f1a74"
+      },
+      "tests": [
+        "c04-native-pipeline"
+      ]
+    },
+    {
+      "boundary": "lifetime-retirement",
+      "source": {
+        "path": "metrics/consensus-health.h",
+        "lines": [
+          154,
+          178
+        ],
+        "needle": "entry.holders == 0",
+        "sha256": "e1b4b5c97943e841c501a05ebe244ae202e113cc86cfad0bf94351537d6ea007"
+      },
+      "tests": [
+        "c04-health-ledger",
+        "c04-health-action-lease"
+      ]
+    }
+  ],
+  "conservation": "at quiescent points only; replay excluded from live outcomes; post-terminal progress marks incomplete",
+  "outcome": "first logical terminal retained; local enqueue is not network delivery"
+}
