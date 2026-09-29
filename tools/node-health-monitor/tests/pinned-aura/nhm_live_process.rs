@@ -11,7 +11,7 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     os::unix::{fs::PermissionsExt, net::UnixStream},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Duration,
 };
@@ -63,16 +63,77 @@ impl Drop for OwnedProcess {
     }
 }
 
-fn live_grant(path: &Path, start: &str, end: &str, nodes: &[&str]) -> Value {
+struct PrivateDirectory(PathBuf);
+impl Drop for PrivateDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn private_token(path: &Path) -> String {
+    let metadata = std::fs::symlink_metadata(path).unwrap();
+    assert!(metadata.file_type().is_file(), "credential is not a regular file");
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600, "credential permissions");
+    let token = String::from_utf8(std::fs::read(path).unwrap()).unwrap();
+    let token = token.trim_end_matches(['\r', '\n']);
+    assert!(token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    token.to_owned()
+}
+
+fn revoke_grant(path: &Path, operator_token: &str, run: &str) -> bool {
+    let Ok(mut stream) = UnixStream::connect(path) else { return false };
+    if stream.set_read_timeout(Some(Duration::from_secs(5))).is_err() {
+        return false;
+    }
+    if stream.set_write_timeout(Some(Duration::from_secs(5))).is_err() {
+        return false;
+    }
+    if write!(
+        stream,
+        "POST /v1/control/grants/{run}/revoke HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {operator_token}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    .and_then(|_| stream.flush())
+    .is_err()
+    {
+        return false;
+    }
+    let mut response = Vec::new();
+    (&mut stream).take(4096).read_to_end(&mut response).is_ok()
+        && response.starts_with(b"HTTP/1.1 200")
+        && response.windows(b"\"revoked\":true".len()).any(|part| part == b"\"revoked\":true")
+}
+
+struct GrantLease<'a> {
+    socket: &'a Path,
+    operator_token: &'a str,
+    run: String,
+    revoked: bool,
+}
+impl GrantLease<'_> {
+    fn revoke(&mut self) {
+        assert!(revoke_grant(self.socket, self.operator_token, &self.run));
+        self.revoked = true;
+    }
+}
+impl Drop for GrantLease<'_> {
+    fn drop(&mut self) {
+        if !self.revoked {
+            let _ = revoke_grant(self.socket, self.operator_token, &self.run);
+        }
+    }
+}
+
+fn live_grant(path: &Path, operator_token: &str, start: &str, end: &str, nodes: &[&str]) -> Value {
     let mut stream = UnixStream::connect(path).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    stream.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
     let body = json!({"node_ids":nodes,"scope_ids":["node"],"start":start,"end":end}).to_string();
     write!(stream,
         "POST /v1/control/grants HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        "o".repeat(32), body.len(), body).unwrap();
+        operator_token, body.len(), body).unwrap();
     stream.flush().unwrap();
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).unwrap();
+    (&mut stream).take(4096).read_to_end(&mut response).unwrap();
     assert!(response.starts_with(b"HTTP/1.1 200"), "live grant refused");
     let split = response.windows(4).position(|part| part == b"\r\n\r\n").unwrap() + 4;
     serde_json::from_slice(&response[split..]).unwrap()
@@ -105,11 +166,11 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
         "running M does not own the queried evidence database"
     );
     println!("C09_RUNTIME_BINDING pid={manager_pid} health_state_sha256={manager_sha} manifest_sha256={expected_manifest}");
-    let service_bin = std::env::var("NHM_OBSERVABILITY_BIN").expect("pinned NHM service");
     let adapter_bin = std::env::var("NHM_AURA_STDIO_BIN").expect("pinned adapter");
     let directory = std::env::temp_dir().join(format!("nhm-c09-aura-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&directory).unwrap();
     std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let _private_directory = PrivateDirectory(directory.clone());
     let nodes = ["validator1", "validator2", "validator3", "validator4", "observer5", "observer6"];
     assert_eq!(
         manifest["nodes"]
@@ -120,46 +181,81 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
             .collect::<std::collections::BTreeSet<_>>(),
         nodes.into_iter().collect(),
     );
-    let inventory = directory.join("inventory.json");
-    std::fs::write(
-        &inventory,
-        json!({"network_id":manifest["network_id"],"nodes":nodes,"scopes":["node"]}).to_string(),
-    )
-    .unwrap();
-    for (name, value) in [("operator", 'o'), ("ingest", 'i'), ("service", 'a')] {
-        let path = directory.join(name);
-        std::fs::write(&path, value.to_string().repeat(32)).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    }
-    let control = directory.join("control.sock");
-    let mcp = directory.join("mcp.sock");
-    let mut service = OwnedProcess(
-        Command::new(service_bin)
-            .arg(&inventory)
-            .arg("127.0.0.1:0")
-            .arg(directory.join("operator"))
-            .arg(directory.join("ingest"))
-            .arg(directory.join("service"))
-            .arg(directory.join("query.sqlite"))
-            .arg(&control)
-            .arg("-")
-            .arg(&db)
-            .arg(&mcp)
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .unwrap(),
-    );
-    // Importing a growing live M evidence DB can take longer than two seconds.
-    // Keep the startup wait bounded and fail immediately if the child exits.
-    for _ in 0..500 {
-        if control.exists() && mcp.exists() {
-            break;
+    let broker_control = std::env::var("NHM_C09_BROKER_CONTROL_SOCKET").ok();
+    let (control, mcp, operator_token, service_token, owned_service) = if let Some(control) =
+        broker_control
+    {
+        let mcp =
+            PathBuf::from(std::env::var("NHM_C09_BROKER_MCP_SOCKET").expect("broker MCP socket"));
+        let control = PathBuf::from(control);
+        let broker_pid = std::env::var("NHM_C09_BROKER_PID").expect("running broker PID");
+        let broker_sha = sha256_file(Path::new(&format!("/proc/{broker_pid}/exe")));
+        assert_eq!(manifest["binary_sha256"]["tos-observability"], broker_sha);
+        let cmdline = std::fs::read(format!("/proc/{broker_pid}/cmdline")).unwrap();
+        for expected in [&control, &mcp, Path::new(&db)] {
+            assert!(
+                cmdline
+                    .split(|byte| *byte == 0)
+                    .any(|argument| argument == expected.as_os_str().as_encoded_bytes()),
+                "broker does not own expected socket or M evidence path"
+            );
         }
-        assert!(service.0.try_wait().unwrap().is_none(), "query service exited before readiness");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(control.exists() && mcp.exists(), "query service refused live M projection");
+        assert!(control.exists() && mcp.exists(), "live broker sockets unavailable");
+        let operator_token = private_token(Path::new(
+            &std::env::var("NHM_C09_BROKER_OPERATOR_TOKEN_FILE")
+                .expect("broker operator token path"),
+        ));
+        let service_token = private_token(Path::new(
+            &std::env::var("NHM_C09_BROKER_SERVICE_TOKEN_FILE").expect("broker service token path"),
+        ));
+        println!("C09_AURA_TARGET live_broker pid={broker_pid} exe_sha256={broker_sha}");
+        (control, mcp, operator_token, service_token, None)
+    } else {
+        let service_bin = std::env::var("NHM_OBSERVABILITY_BIN").expect("pinned NHM service");
+        let inventory = directory.join("inventory.json");
+        std::fs::write(
+            &inventory,
+            json!({"network_id":manifest["network_id"],"nodes":nodes,"scopes":["node"]})
+                .to_string(),
+        )
+        .unwrap();
+        for (name, value) in [("operator", 'o'), ("ingest", 'i'), ("service", 'a')] {
+            let path = directory.join(name);
+            std::fs::write(&path, value.to_string().repeat(32)).unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let control = directory.join("control.sock");
+        let mcp = directory.join("mcp.sock");
+        let mut service = OwnedProcess(
+            Command::new(service_bin)
+                .arg(&inventory)
+                .arg("127.0.0.1:0")
+                .arg(directory.join("operator"))
+                .arg(directory.join("ingest"))
+                .arg(directory.join("service"))
+                .arg(directory.join("query.sqlite"))
+                .arg(&control)
+                .arg("-")
+                .arg(&db)
+                .arg(&mcp)
+                .stdout(Stdio::null())
+                .stderr(Stdio::inherit())
+                .spawn()
+                .unwrap(),
+        );
+        for _ in 0..500 {
+            if control.exists() && mcp.exists() {
+                break;
+            }
+            assert!(
+                service.0.try_wait().unwrap().is_none(),
+                "query service exited before readiness"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(control.exists() && mcp.exists(), "query service refused live M projection");
+        (control, mcp, "o".repeat(32), "a".repeat(32), Some(service))
+    };
     let now = chrono::Utc::now();
     let start =
         (now - chrono::Duration::minutes(4)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
@@ -167,12 +263,18 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
     // A grant deliberately caps node identities at four. Six nodes require
     // two independently authorized runs; the test must not relax that bound.
     for (index, group) in [nodes[..4].as_ref(), nodes[4..].as_ref()].into_iter().enumerate() {
-        let issued = live_grant(&control, &start, &end, group);
-        let run = issued["run_id"].as_str().unwrap();
+        let issued = live_grant(&control, &operator_token, &start, &end, group);
+        let run = issued["run_id"].as_str().unwrap().to_owned();
+        let mut grant_lease = GrantLease {
+            socket: &control,
+            operator_token: &operator_token,
+            run: run.clone(),
+            revoked: false,
+        };
         let credential = directory.join(format!("adapter-credential-{index}.json"));
         std::fs::write(
             &credential,
-            json!({"run_id":run,"run_token":issued["run_token"],"service_token":"a".repeat(32)})
+            json!({"run_id":run,"run_token":issued["run_token"],"service_token":service_token})
                 .to_string(),
         )
         .unwrap();
@@ -303,7 +405,9 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
             manager.cancel_and_close_all("nhm-c09-readonly", "bounded C09 test done").await;
         assert_eq!(cancelled, 0);
         drop(manager);
+        grant_lease.revoke();
+        println!("C09_GRANT_REVOKED group={index}");
     }
-    drop(service);
+    drop(owned_service);
     std::fs::remove_dir_all(directory).unwrap();
 }
