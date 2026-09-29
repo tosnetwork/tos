@@ -34,6 +34,7 @@ COMMON = {
  'consensus':O(kind={'const':'consensus'},network_id=H,scope_id=ALIAS,session_id=H,slot=I(),candidate_id=N(S(160)),phase=S(64)),
  'storage_ack':O(kind={'const':'storage_ack'},operation=S(64),logical_reference=S(160),contract_id=ALIAS,source_epoch=S(128),completion_sequence=U,durability=E('commit_acknowledged','restart_verified_in_test','unknown')),
  'process':O(kind={'const':'process'},pid=I(1),rss_bytes=N(U),anon_bytes=N(U),file_bytes=N(U),swap_bytes=N(U),cpu_user_ticks=N(U),cpu_system_ticks=N(U)),
+ 'host_cgroup':O(kind={'const':'host_cgroup'},memory_current_bytes=U,memory_max_bytes=U,cpu_usage_usec=U,cpu_quota_usec=U,cpu_period_usec=U,oom_events=U),
  'pq_snapshot':O(complete=B,failed=U,succeeded=U),
  'native_core':O(kind={'const':'native_core'},generation=U,network_id=H,openmetrics_hash=H,bytes=I(0,2097152),pq_sign=N(R('pq_snapshot')),pq_verify=N(R('pq_snapshot'))),
  'native':O(kind={'const':'native'},generation=U,openmetrics_hash=H,bytes=I(0,2097152)),
@@ -42,7 +43,7 @@ COMMON = {
  'diagnostic':O(kind={'const':'diagnostic_fixture'},record_type={'const':1},payload={'type':'string','pattern':'^[0-9a-f]{4}$'}),
 }
 COMMON['anchor']={'oneOf':[R('block'),R('consensus'),R('storage_ack')]}
-COMMON['payload']={'oneOf':[R(x) for x in ['process','native','native_core','unavailable','scalar','diagnostic','block','consensus','storage_ack']]}
+COMMON['payload']={'oneOf':[R(x) for x in ['process','host_cgroup','native','native_core','unavailable','scalar','diagnostic','block','consensus','storage_ack']]}
 COMMON['source']=O(schema_version={'const':1},source_id=ALIAS,node_id=ALIAS,scope_id=ALIAS,process_epoch=S(128),source_epoch=S(128),source_version=S(96),generation=U,availability=E('available','disabled','unsupported','unauthorized','error','unknown'),observed_at=N(TIME),last_success_at=N(TIME),received_at=N(TIME),source_age_ms=N(I(0,9007199254740991)),clock_quality=E('valid','uncertain','invalid'),coverage=R('coverage'),content_hash=H,payload=R('payload'),quality=R('quality'))
 COMMON['evidence']=O(evidence_id=S(128),kind=E('observation','derived','event','change'),node_id=ALIAS,source_id=ALIAS,source_version=S(96),source_record_id=S(256),process_epoch=S(128),observed_at=N(TIME),received_at=TIME,clock_quality=E('valid','uncertain','invalid'),scope_id=ALIAS,payload=R('payload'),content_hash=H,quality=R('quality'),redacted={'const':True},parent_evidence_ids=A(S(128),32),derivation_version=N(S(96)))
 COMMON['component']=O(kind=E('process','host','chain','consensus','network','storage','index','gpu','telemetry','deployment'),sources=A(ALIAS,32),value=N(R('payload')),quality=R('quality'))

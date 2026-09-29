@@ -60,11 +60,10 @@ pub async fn run(config: ProbeConfig) -> Result<(), String> {
             Ok(response) if response.status().is_success() => {
                 match crate::bounded_body(response, 4096).await {
                     Ok(bytes) => {
-                        let valid =
-                            serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|v| {
-                                v["schema_version"] == 1
-                                    && v["node_id"].as_str() == Some(&config.node_id)
-                            });
+                        let valid = serde_json::from_slice::<
+                            tos_health_core::edge_snapshot::EdgeHeartbeat,
+                        >(&bytes)
+                        .is_ok_and(|v| v.validate(&config.node_id).is_ok());
                         (1, valid)
                     }
                     Err(_) => (0, false),

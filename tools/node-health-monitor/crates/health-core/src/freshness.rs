@@ -75,4 +75,8 @@ impl Freshness {
                 .and_then(|d| self.age_ms.checked_add(d))
                 .is_some_and(|a| a <= ttl)
     }
+    pub fn age(&self, now: u64) -> Option<u64> {
+        self.generation?;
+        now.checked_sub(self.accepted_ms).and_then(|elapsed| self.age_ms.checked_add(elapsed))
+    }
 }

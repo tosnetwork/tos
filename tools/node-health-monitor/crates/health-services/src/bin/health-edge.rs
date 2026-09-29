@@ -14,6 +14,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = tos_health_services::loopback(&args[3])?;
     let token = tos_health_services::secret(std::path::Path::new(&args[4]))?;
     let state = tos_health_services::edge::EdgeState::new(args[1].clone(), token);
+    match tos_health_services::edge::CgroupConfig::discover(pid) {
+        Ok(cgroup) => state.configure_cgroup(cgroup)?,
+        Err(reason) => state.record_cgroup_discovery_error(&reason)?,
+    }
     let task = tokio::spawn(tos_health_services::edge::sample_loop(state.clone(), pid));
     let native = if let Some(address) = args.get(5) {
         let sampler = tos_health_services::native_cache::NativeSampler::new(

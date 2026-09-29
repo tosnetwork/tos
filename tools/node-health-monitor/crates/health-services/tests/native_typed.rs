@@ -20,12 +20,26 @@ fn fixture() -> NativeEnvelope {
     value.source_age_ms = Some(0);
     value
 }
+#[test]
+fn scheduler_skips_a_tick_missed_by_a_slow_source() {
+    let started = std::time::Instant::now();
+    let scheduled = started + Duration::from_secs(15);
+    let completed = started + Duration::from_millis(31_500);
+    let next = tos_health_services::native_cache::next_due_after_completion(scheduled, completed);
+    assert_eq!(next.duration_since(completed), Duration::from_secs(15));
+    assert!(next > scheduled + Duration::from_secs(15));
+}
 const BODY: &str = include_str!("../../health-core/tests/fixtures/native-core.prom");
 async fn fake(
     mismatch: bool,
 ) -> (NativeSampler, EdgeState, Arc<AtomicUsize>, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     use axum::{routing::get, Json, Router};
-    let value = fixture();
+    let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    let pid = std::fs::read_link("/proc/self").unwrap().to_str().unwrap().parse().unwrap();
+    let process = sample_process("v1", pid, 1).unwrap();
+    let mut value = fixture();
+    value.process_epoch = process.process_epoch.clone();
+    value.source_epoch = process.process_epoch.clone();
     let epoch = value.process_epoch.clone();
     let calls = Arc::new(AtomicUsize::new(0));
     let reads = Arc::new(AtomicUsize::new(0));
@@ -68,9 +82,7 @@ async fn fake(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
-    let pid = std::fs::read_link("/proc/self").unwrap().to_str().unwrap().parse().unwrap();
-    *state.cache.lock().unwrap() = Some(sample_process("v1", pid, 1).unwrap());
+    *state.cache.lock().unwrap() = Some(process);
     let sampler =
         NativeSampler::new(addr, state.clone()).unwrap().with_network("a".repeat(64)).unwrap();
     (sampler, state, calls, reads, task)
@@ -114,6 +126,10 @@ async fn typed_sampler_and_edge_read_only_cache() {
         .unwrap();
     assert_eq!(response.status(), 200);
     let bytes = axum::body::to_bytes(response.into_body(), 262_144).await.unwrap();
+    if let Ok(directory) = std::env::var("NHM_CONTRACT_OUTPUT_DIR") {
+        std::fs::write(std::path::Path::new(&directory).join("edge-snapshot.json"), &bytes)
+            .unwrap();
+    }
     let snapshot: EdgeSnapshot = serde_json::from_slice(&bytes).unwrap();
     assert!(snapshot.native().is_some());
     assert_eq!(snapshot.sources.len(), 2);
@@ -123,6 +139,15 @@ async fn typed_sampler_and_edge_read_only_cache() {
     let mut duplicate = snapshot.clone();
     duplicate.sources.push(snapshot.sources[0].clone());
     assert!(duplicate.validate("v1", &"a".repeat(64)).is_err());
+    let mut mixed = snapshot.clone();
+    let native = mixed.sources.iter_mut().find_map(|source| match source {
+        tos_health_core::edge_snapshot::EdgeSource::Native(value) => Some(value),
+        _ => None,
+    });
+    let native = native.unwrap();
+    native.process_epoch = "0".repeat(32);
+    native.source_epoch = native.process_epoch.clone();
+    assert_eq!(mixed.validate("v1", &"a".repeat(64)).unwrap_err(), "mixed process epochs");
     for _ in 0..1000 {
         let _: EdgeSnapshot = serde_json::from_value(r4_snapshot(&state).unwrap()).unwrap();
     }

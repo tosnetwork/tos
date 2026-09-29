@@ -1,3 +1,4 @@
+use tos_health_core::edge_snapshot::{CgroupEnvelope, EdgeSnapshot, EdgeSource, ProcessEnvelope};
 use tos_health_core::native::{canonical_hash, NativeEnvelope};
 
 fn fixture() -> NativeEnvelope {
@@ -69,4 +70,32 @@ fn immutable_identity_excludes_only_receipt_and_age() {
     assert_eq!(original, value.immutable_hash().expect("hash"));
     value.coverage.missing_fields.push("new_gap".into());
     assert_ne!(original, value.immutable_hash().expect("hash"));
+}
+
+#[test]
+fn edge_wire_requires_bound_process_native_and_cgroup_epochs() {
+    let process: ProcessEnvelope =
+        serde_json::from_str(include_str!("fixtures/process-source.json")).unwrap();
+    let cgroup: CgroupEnvelope =
+        serde_json::from_str(include_str!("fixtures/host-cgroup.json")).unwrap();
+    let snapshot = EdgeSnapshot {
+        schema_version: 1,
+        status: "partial".into(),
+        sources: vec![
+            EdgeSource::Process(process),
+            EdgeSource::Native(fixture()),
+            EdgeSource::Cgroup(cgroup),
+        ],
+        anchors: vec![],
+    };
+    snapshot.validate("v1", &"a".repeat(64)).unwrap();
+    let mut copied_old = snapshot.clone();
+    let native = copied_old.sources.iter_mut().find_map(|source| match source {
+        EdgeSource::Native(value) => Some(value),
+        _ => None,
+    });
+    let native = native.unwrap();
+    native.process_epoch = "0".repeat(32);
+    native.source_epoch = native.process_epoch.clone();
+    assert_eq!(copied_old.validate("v1", &"a".repeat(64)).unwrap_err(), "mixed process epochs");
 }

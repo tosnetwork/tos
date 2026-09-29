@@ -109,6 +109,8 @@ async fn proxy(
     config: Arc<IngressConfig>,
     client: reqwest::Client,
     limits: Arc<Mutex<Limits>>,
+    regular_connections: Arc<tokio::sync::Semaphore>,
+    connection_regular: Arc<Mutex<Option<tokio::sync::OwnedSemaphorePermit>>>,
 ) -> Result<Response<Body>, Infallible> {
     let path = request.uri().path().to_owned();
     if request.uri().query().is_some() || request.headers().contains_key("origin") {
@@ -123,7 +125,24 @@ async fn proxy(
     let Some(max_response) = route(peer.role, request.method(), &path) else {
         return Ok(response(StatusCode::FORBIDDEN));
     };
-    let heartbeat = matches!(peer.role, Role::EdgeWatchdog) || path == "/v1/monitor/heartbeat";
+    let heartbeat = path == "/v1/edge/heartbeat" || path == "/v1/monitor/heartbeat";
+    let regular_connection = if heartbeat {
+        None
+    } else {
+        match regular_connections.try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => return Ok(response(StatusCode::TOO_MANY_REQUESTS)),
+        }
+    };
+    if let Some(permit) = regular_connection {
+        let Ok(mut slot) = connection_regular.lock() else {
+            return Ok(response(StatusCode::SERVICE_UNAVAILABLE));
+        };
+        if slot.is_some() {
+            return Ok(response(StatusCode::TOO_MANY_REQUESTS));
+        }
+        *slot = Some(permit);
+    }
     {
         let Ok(mut budget) = limits.lock() else {
             return Ok(response(StatusCode::SERVICE_UNAVAILABLE));
@@ -252,14 +271,23 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
     let config = Arc::new(config);
     let peers = Arc::new(peers);
     let slots = Arc::new(tokio::sync::Semaphore::new(8));
+    // One of the eight classified request lifetimes is reserved for either
+    // approved heartbeat path. TLS handshakes remain under the total-eight cap.
+    let regular_connections = Arc::new(tokio::sync::Semaphore::new(7));
     loop {
         let (stream, _) = listener.accept().await.map_err(|e| e.to_string())?;
         let Ok(permit) = slots.clone().try_acquire_owned() else {
             drop(stream);
             continue;
         };
-        let (acceptor, peers, config, client, limits) =
-            (acceptor.clone(), peers.clone(), config.clone(), client.clone(), limits.clone());
+        let (acceptor, peers, config, client, limits, regular_connections) = (
+            acceptor.clone(),
+            peers.clone(),
+            config.clone(),
+            client.clone(),
+            limits.clone(),
+            regular_connections.clone(),
+        );
         tokio::spawn(async move {
             let _permit = permit;
             let tls =
@@ -275,8 +303,19 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
             let Some(peer) = peers.get(&digest).cloned() else {
                 return;
             };
+            // keep_alive is disabled, so this connection-owned slot retains a
+            // classified ordinary-request permit through TLS response drain.
+            let connection_regular = Arc::new(Mutex::new(None));
             let service = service_fn(move |request| {
-                proxy(request, peer.clone(), config.clone(), client.clone(), limits.clone())
+                proxy(
+                    request,
+                    peer.clone(),
+                    config.clone(),
+                    client.clone(),
+                    limits.clone(),
+                    regular_connections.clone(),
+                    connection_regular.clone(),
+                )
             });
             let mut http = hyper::server::conn::http1::Builder::new();
             http.keep_alive(false)

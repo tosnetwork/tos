@@ -60,7 +60,7 @@ fn fixture() -> Temp {
             "keyUsage=critical,keyCertSign,cRLSign",
         ],
     );
-    for name in ["server", "client"] {
+    for name in ["server", "client", "watchdog"] {
         openssl(
             &t.0,
             &[
@@ -90,11 +90,17 @@ fn fixture() -> Temp {
         "extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE\n",
     )
     .unwrap();
+    std::fs::write(
+        t.0.join("watchdog.ext"),
+        "extendedKeyUsage=clientAuth\nbasicConstraints=CA:FALSE\n",
+    )
+    .unwrap();
     for (name, csr, days, serial) in [
         ("server", "server", "1", "1"),
         ("client", "client", "1", "2"),
         ("expired", "client", "-1", "3"),
         ("unapproved", "client", "1", "4"),
+        ("watchdog", "watchdog", "1", "5"),
     ] {
         openssl(
             &t.0,
@@ -139,10 +145,44 @@ fn client(dir: &Path, name: Option<&str>) -> reqwest::Client {
         );
     if let Some(name) = name {
         let mut pem = std::fs::read(dir.join(format!("{name}.pem"))).unwrap();
-        pem.extend(std::fs::read(dir.join("client.key")).unwrap());
+        let key = if dir.join(format!("{name}.key")).is_file() { name } else { "client" };
+        pem.extend(std::fs::read(dir.join(format!("{key}.key"))).unwrap());
         builder = builder.identity(reqwest::Identity::from_pem(&pem).unwrap());
     }
     builder.build().unwrap()
+}
+async fn idle_tls(
+    dir: &Path,
+    address: std::net::SocketAddr,
+    name: &str,
+) -> tokio_rustls::client::TlsStream<tokio::net::TcpStream> {
+    use tokio_rustls::rustls::{
+        self,
+        pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, ServerName},
+    };
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in CertificateDer::pem_slice_iter(&std::fs::read(dir.join("ca.pem")).unwrap()) {
+        roots.add(cert.unwrap()).unwrap();
+    }
+    let certs =
+        CertificateDer::pem_slice_iter(&std::fs::read(dir.join(format!("{name}.pem"))).unwrap())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+    let key =
+        PrivateKeyDer::from_pem_slice(&std::fs::read(dir.join(format!("{name}.key"))).unwrap())
+            .unwrap();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(certs, key)
+        .unwrap();
+    let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(1024).unwrap();
+    let stream = socket.connect(address).await.unwrap();
+    connector.connect(ServerName::try_from("localhost".to_owned()).unwrap(), stream).await.unwrap()
 }
 #[tokio::test]
 async fn mtls_acl_rejects_missing_expired_and_unapproved_before_upstream() {
@@ -234,6 +274,178 @@ async fn mtls_acl_rejects_missing_expired_and_unapproved_before_upstream() {
 }
 
 #[tokio::test]
+async fn eight_idle_authenticated_readers_are_bounded_then_release() {
+    let t = fixture();
+    let app = Router::new().route("/v1/edge/heartbeat", get(|| async { "ok" }));
+    let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = up.local_addr().unwrap();
+    let upstream_task = tokio::spawn(async move { axum::serve(up, app).await.unwrap() });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let config = IngressConfig {
+        listen: address,
+        server_name: "localhost".into(),
+        upstream,
+        cert_file: t.0.join("server.pem"),
+        key_file: t.0.join("server.key"),
+        ca_file: t.0.join("ca.pem"),
+        peers: vec![Peer {
+            alias: "reader".into(),
+            certificate_sha256: fingerprint(&t.0, "client"),
+            role: Role::EdgeReader,
+        }],
+    };
+    let server = tokio::spawn(tos_health_services::ingress::serve(config, listener));
+    let mut idle = Vec::new();
+    for _ in 0..8 {
+        idle.push(idle_tls(&t.0, address, "client").await);
+    }
+    let base = format!("https://localhost:{}/v1/edge/heartbeat", address.port());
+    let started = std::time::Instant::now();
+    assert!(client(&t.0, Some("client")).get(&base).send().await.is_err());
+    assert!(started.elapsed() < Duration::from_secs(3), "ninth connection was not rejected");
+
+    // TLS handshakes and HTTP header reads each have their own three-second bound.
+    // These sockets completed TLS, so the header bound releases all eight slots.
+    tokio::time::sleep(Duration::from_millis(3_200)).await;
+    assert_eq!(client(&t.0, Some("client")).get(&base).send().await.unwrap().status(), 200);
+    drop(idle);
+    server.abort();
+    upstream_task.abort();
+}
+
+#[tokio::test]
+async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
+    use axum::middleware;
+    use tokio::io::AsyncWriteExt;
+    let t = fixture();
+    let slow_calls = Arc::new(AtomicUsize::new(0));
+    let count = slow_calls.clone();
+    let edge_state = tos_health_services::edge::EdgeState::new("v1".into(), vec![b'e'; 32]);
+    let large = format!("{}# EOF\n", "x".repeat(2_097_146));
+    assert_eq!(large.len(), 2_097_152);
+    edge_state.native.lock().unwrap().publish("process", 1, large, 0, 0).unwrap();
+    let edge = tos_health_services::edge::router(edge_state).layer(middleware::from_fn(
+        move |request: axum::extract::Request, next: middleware::Next| {
+            let count = count.clone();
+            async move {
+                if request.uri().path() == "/metrics" {
+                    count.fetch_add(1, Ordering::SeqCst);
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = up.local_addr().unwrap();
+    let upstream_task = tokio::spawn(async move { axum::serve(up, edge).await.unwrap() });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let config = IngressConfig {
+        listen: address,
+        server_name: "localhost".into(),
+        upstream,
+        cert_file: t.0.join("server.pem"),
+        key_file: t.0.join("server.key"),
+        ca_file: t.0.join("ca.pem"),
+        peers: vec![
+            Peer {
+                alias: "reader".into(),
+                certificate_sha256: fingerprint(&t.0, "client"),
+                role: Role::EdgeReader,
+            },
+            Peer {
+                alias: "watchdog".into(),
+                certificate_sha256: fingerprint(&t.0, "watchdog"),
+                role: Role::EdgeWatchdog,
+            },
+        ],
+    };
+    let server = tokio::spawn(tos_health_services::ingress::serve(config, listener));
+    let mut pending = Vec::new();
+    for index in 0..7 {
+        let mut stream = idle_tls(&t.0, address, "client").await;
+        stream
+            .write_all(
+                format!(
+                    "GET /metrics HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+                    "e".repeat(32)
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        pending.push(stream);
+        if index != 6 {
+            tokio::time::sleep(Duration::from_millis(1_100)).await;
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while slow_calls.load(Ordering::SeqCst) != 7 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(pending.len(), 7);
+
+    let heartbeat = format!("https://localhost:{}/v1/edge/heartbeat", address.port());
+    let metrics = format!("https://localhost:{}/metrics", address.port());
+    let reader = client(&t.0, Some("client"));
+    assert_eq!(
+        reader
+            .get(&metrics)
+            .header("authorization", format!("Bearer {}", "e".repeat(32)))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        429,
+        "eighth ordinary request bypassed the classified reserve"
+    );
+    assert_eq!(slow_calls.load(Ordering::SeqCst), 7);
+    assert_eq!(
+        reader
+            .get(&heartbeat)
+            .header("authorization", format!("Bearer {}", "e".repeat(32)))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200,
+        "classified EdgeReader heartbeat"
+    );
+
+    // Releasing one draining connection makes an ordinary request reach the
+    // upstream immediately, proving the prior 429 was not the rate bucket.
+    drop(pending.pop());
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let control = reader
+        .get(&metrics)
+        .header("authorization", format!("Bearer {}", "e".repeat(32)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(control.status(), 200);
+    assert_eq!(control.bytes().await.unwrap().len(), 2_097_152);
+    assert_eq!(slow_calls.load(Ordering::SeqCst), 8);
+    assert_eq!(
+        client(&t.0, Some("watchdog"))
+            .get(&heartbeat)
+            .header("authorization", format!("Bearer {}", "e".repeat(32)))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        200,
+        "classified EdgeWatchdog heartbeat"
+    );
+    drop(pending);
+    server.abort();
+    upstream_task.abort();
+}
+
+#[tokio::test]
 async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
     use axum::{routing::post, Json};
     use serde_json::{json, Value};
@@ -244,7 +456,11 @@ async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(4);
     let app = Router::new()
         .route("/v1/edge/heartbeat", get(move || {
-            let flag=flag.clone(); async move {Json(json!({"schema_version":1,"node_id":if flag.load(Ordering::SeqCst){"other"}else{"v1"},"validator_consensus_health":"unknown"}))}
+            let flag=flag.clone(); async move {Json(json!({
+                "schema_version":1,"node_id":if flag.load(Ordering::SeqCst){"other"}else{"v1"},
+                "edge_epoch":"edge-1","state":"available","guard":"guarded","validator_epoch":null,
+                "sources":[{"source_id":"process","age_ms":null,"usable":false}]
+            }))}
         }))
         .route("/v1/manager/facts",post(move |Json(value):Json<Value>| { let tx=tx.clone(); async move {tx.try_send(value).unwrap(); Json(json!({"accepted":true}))} }));
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -335,14 +551,33 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let count = calls.clone();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(4);
+    let native: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
+            .unwrap();
+    let epoch = native["process_epoch"].as_str().unwrap();
+    let process_payload = json!({
+        "kind":"process","pid":4242,"rss_bytes":"1048576","anon_bytes":"524288",
+        "file_bytes":"524288","swap_bytes":"0","cpu_user_ticks":"100","cpu_system_ticks":"50"
+    });
+    let process = json!({
+        "schema_version":1,"source_id":"process","node_id":"v1","scope_id":"node",
+        "process_epoch":epoch,"source_epoch":"edge-test-1","source_version":"proc-v1",
+        "generation":"1","availability":"available","observed_at":"2026-09-29T00:00:00Z",
+        "last_success_at":"2026-09-29T00:00:00Z","received_at":null,"source_age_ms":0,
+        "clock_quality":"valid","coverage":{"status":"partial","missing_fields":["host_pressure"],
+        "gaps":[],"sampling_policy":"fixed_15s"},
+        "content_hash":tos_health_core::native::canonical_hash(&process_payload).unwrap(),
+        "payload":process_payload,"quality":{"instrumentation_complete":false,"producer_dropped":"0",
+        "relay_dropped":"0","parse_errors":"0","shed_reason":null}
+    });
     let app = Router::new()
         .route("/v1/edge/snapshot", get(move || {
-            let flag=flag.clone(); let count=count.clone(); async move {
+            let flag=flag.clone(); let count=count.clone(); let process=process.clone(); async move {
                 count.fetch_add(1, Ordering::SeqCst);
                 let mut value:Value=serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json")).unwrap();
                 value["node_id"]=if flag.load(Ordering::SeqCst){"other"}else{"v1"}.into();
                 value["source_age_ms"]=0.into();
-                Json(json!({"schema_version":1,"status":"partial","sources":[value],"anchors":[]}))
+                Json(json!({"schema_version":1,"status":"partial","sources":[process,value],"anchors":[]}))
             }
         }))
         .route("/v1/manager/facts",post(move |Json(value):Json<Value>| { let tx=tx.clone(); async move {tx.try_send(value).unwrap(); Json(json!({"accepted":true}))} }));

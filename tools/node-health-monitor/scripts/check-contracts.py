@@ -42,10 +42,18 @@ def main():
  for p in files:
   s=json.loads(p.read_text());Draft202012Validator.check_schema(s);closed(s)
  native=json.loads((ROOT/'crates/health-core/tests/fixtures/native-core.json').read_text())
+ process=json.loads((ROOT/'crates/health-core/tests/fixtures/process-source.json').read_text())
+ cgroup=json.loads((ROOT/'crates/health-core/tests/fixtures/host-cgroup.json').read_text())
  validator('source-envelope.schema.json').validate(native)
- validator('edge-snapshot.schema.json').validate(dict(schema_version=1,status='partial',sources=[native],anchors=[]))
+ validator('source-envelope.schema.json').validate(process)
+ validator('source-envelope.schema.json').validate(cgroup)
+ validator('edge-snapshot.schema.json').validate(dict(schema_version=1,status='partial',sources=[process,native,cgroup],anchors=[]))
+ validator('edge-heartbeat.schema.json').validate(dict(schema_version=1,node_id='v1',edge_epoch='edge-fixture-1',state='available',guard='guarded',validator_epoch=native['process_epoch'],sources=[dict(source_id='process',age_ms='0',usable=True),dict(source_id='native_core',age_ms='0',usable=True),dict(source_id='host_cgroup',age_ms='0',usable=True)]))
+ validator('edge-capabilities.schema.json').validate(dict(schema_version=1,node_id='v1',catalog_digest='a'*64,capabilities=[dict(name='basic_edge',value=dict(supported=True,enabled=True,contract_valid=True,performance_gate='not_run')),dict(name='validator_stats',value=dict(supported=False,enabled=False,contract_valid=False,performance_gate='not_run'))],sources=[dict(source_id='process',status='available'),dict(source_id='validator_stats',status='disabled')]))
  assert native['payload']['pq_sign']['succeeded']=='9007199254740993'
  assert native['content_hash']==hashlib.sha256(json.dumps(native['payload'],sort_keys=True,separators=(',',':')).encode()).hexdigest()
+ for source in [process,cgroup]:
+  assert source['content_hash']==hashlib.sha256(json.dumps(source['payload'],sort_keys=True,separators=(',',':')).encode()).hexdigest()
  common=validator('common.schema.json');common.validate('18446744073709551615')
  for bad in ['18446744073709551616','01','１','-1',True,1.0,9007199254740993]:assert not common.is_valid(bad),bad
  run='00000000-0000-4000-8000-000000000001';start='2026-09-29T00:00:00Z';end='2026-09-29T00:01:00Z'
@@ -87,6 +95,12 @@ def main():
   assert len(boundary['coverage']['missing_fields'])==64 and len(boundary['coverage']['gaps'])==32
   assert len(boundary['data']['series'][0]['coverage']['missing_fields'])==64
   assert len(boundary['data']['series'][0]['coverage']['gaps'])==32
+  for name in ['edge-heartbeat','edge-capabilities','edge-snapshot']:
+   value=json.loads((args.runtime_output_dir/(name+'.json')).read_text())
+   validator(name+'.schema.json').validate(value)
+  assert len((args.runtime_output_dir/'edge-heartbeat.json').read_bytes())<=4096
+  assert len((args.runtime_output_dir/'edge-capabilities.json').read_bytes())<=32768
+  assert len((args.runtime_output_dir/'edge-snapshot.json').read_bytes())<=262144
  catalog=json.loads((ROOT/'contracts/source-manifest.json').read_text())
  assert catalog['c00_contract_inventory_complete'] is True
  assert catalog['c01_source_publisher_inventory_complete'] is True

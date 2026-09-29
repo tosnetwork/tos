@@ -126,10 +126,8 @@ async fn edge_reads_are_cached_and_authenticated() {
         )
         .await
         .expect("route");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = json_body(response).await;
-    assert_eq!(body["source_record_id"], "1");
-    assert_eq!(body["quality"]["coverage"], "partial");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(state.native.lock().expect("native lock").read().is_none());
 }
 #[tokio::test]
 async fn edge_rejects_refresh_and_enforces_burst() {
@@ -163,6 +161,98 @@ async fn edge_rejects_refresh_and_enforces_burst() {
         .await
         .expect("route");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+#[tokio::test]
+async fn edge_heartbeat_and_capabilities_emit_bounded_typed_wire() {
+    use tos_health_core::edge_snapshot::{EdgeCapabilities, EdgeHeartbeat};
+    let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    let app = edge_router(state);
+    let heartbeat = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/edge/heartbeat")
+                .header("authorization", format!("Bearer {}", "e".repeat(32)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(heartbeat.into_body(), 4096).await.unwrap();
+    if let Ok(directory) = std::env::var("NHM_CONTRACT_OUTPUT_DIR") {
+        std::fs::write(std::path::Path::new(&directory).join("edge-heartbeat.json"), &bytes)
+            .unwrap();
+    }
+    let heartbeat: EdgeHeartbeat = serde_json::from_slice(&bytes).unwrap();
+    heartbeat.validate("v1").unwrap();
+    assert_eq!(heartbeat.guard, "guarded");
+    assert!(heartbeat.validator_epoch.is_none());
+
+    let capabilities = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/edge/capabilities")
+                .header("authorization", format!("Bearer {}", "e".repeat(32)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(capabilities.into_body(), 32_768).await.unwrap();
+    if let Ok(directory) = std::env::var("NHM_CONTRACT_OUTPUT_DIR") {
+        std::fs::write(std::path::Path::new(&directory).join("edge-capabilities.json"), &bytes)
+            .unwrap();
+    }
+    let capabilities: EdgeCapabilities = serde_json::from_slice(&bytes).unwrap();
+    capabilities.validate("v1").unwrap();
+    let stats = capabilities
+        .capabilities
+        .iter()
+        .find(|capability| capability.name == "validator_stats")
+        .unwrap();
+    assert!(!stats.value.supported && !stats.value.enabled && !stats.value.contract_valid);
+}
+#[tokio::test]
+async fn edge_router_reserves_burst_token_for_approved_heartbeat() {
+    let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    let app = edge_router(state);
+    for _ in 0..3 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/edge/capabilities")
+                    .header("authorization", format!("Bearer {}", "e".repeat(32)))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("route");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let refused = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/edge/capabilities")
+                .header("authorization", format!("Bearer {}", "e".repeat(32)))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("route");
+    assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+    let heartbeat = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/edge/heartbeat")
+                .header("authorization", format!("Bearer {}", "e".repeat(32)))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("route");
+    assert_eq!(heartbeat.status(), StatusCode::OK);
 }
 #[tokio::test]
 async fn service_identities_do_not_cross_roles() {

@@ -40,6 +40,15 @@ impl NativeCache {
             None
         }
     }
+    pub fn age_ms(&self) -> Option<u64> {
+        self.freshness.age(self.now())
+    }
+    pub fn usable(&self) -> bool {
+        self.freshness.usable(self.now(), 30_000)
+    }
+    pub fn configured(&self) -> bool {
+        self.network.is_some()
+    }
     pub fn publish(
         &mut self,
         process: &str,
@@ -127,6 +136,16 @@ pub struct NativeSampler {
     next_due: Instant,
     network: Option<String>,
 }
+const NATIVE_INTERVAL: Duration = Duration::from_secs(15);
+
+#[doc(hidden)]
+pub fn next_due_after_completion(next_due: Instant, completed: Instant) -> Instant {
+    if next_due <= completed {
+        completed + NATIVE_INTERVAL
+    } else {
+        next_due
+    }
+}
 impl NativeSampler {
     pub fn new(address: SocketAddr, state: EdgeState) -> Result<Self, String> {
         if !address.ip().is_loopback() || address.port() == 0 {
@@ -153,7 +172,7 @@ impl NativeSampler {
         if Instant::now() < self.next_due {
             return Err("native collection not due".into());
         }
-        self.next_due = Instant::now() + Duration::from_secs(15);
+        self.next_due = Instant::now() + NATIVE_INTERVAL;
         let epoch = {
             let cache = self.state.cache.lock().map_err(|_| "process cache unavailable")?;
             let sample = cache.as_ref().ok_or("process cache cold")?;
@@ -279,9 +298,70 @@ impl NativeSampler {
         loop {
             tokio::time::sleep_until(tokio::time::Instant::from_std(self.next_due)).await;
             let _ = self.collect().await;
+            self.next_due = next_due_after_completion(self.next_due, Instant::now());
         }
     }
 }
 pub fn cache() -> Arc<Mutex<NativeCache>> {
     Arc::new(Mutex::new(NativeCache::default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{routing::get, Router};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn actual_run_waits_full_interval_after_source_misses_tick() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let done = completed.clone();
+        let app = Router::new().route(
+            "/metrics",
+            get(move || {
+                let seen = seen.clone();
+                let done = done.clone();
+                async move {
+                    seen.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(Duration::from_millis(16_500)).await;
+                    done.fetch_add(1, Ordering::SeqCst);
+                    let timestamp = chrono::Utc::now().timestamp_millis() as f64 / 1000.;
+                    format!(
+                        "# TYPE test_exporter_snapshot_generation gauge\n\
+                         test_exporter_snapshot_generation 1\n\
+                         # TYPE test_exporter_snapshot_completed_timestamp_seconds gauge\n\
+                         test_exporter_snapshot_completed_timestamp_seconds {timestamp}\n\
+                         # EOF\n"
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
+        let pid =
+            std::fs::read_link("/proc/self").unwrap().to_string_lossy().parse::<u32>().unwrap();
+        *state.cache.lock().unwrap() = Some(crate::edge::sample_process("v1", pid, 1).unwrap());
+        let mut sampler = NativeSampler::new(address, state).unwrap();
+        // Test-only override: production remains at three seconds. Twenty
+        // seconds lets an actual synthetic source cross the 15-second tick.
+        sampler.client =
+            reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(20)).build().unwrap();
+        let runner = tokio::spawn(sampler.run());
+        tokio::time::timeout(Duration::from_secs(18), async {
+            while completed.load(Ordering::SeqCst) != 1 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "missed tick caused immediate catch-up");
+        assert_eq!(completed.load(Ordering::SeqCst), 1);
+        runner.abort();
+        server.abort();
+    }
 }

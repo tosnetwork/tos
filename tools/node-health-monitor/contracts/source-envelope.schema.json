@@ -168,6 +168,54 @@
       ],
       "additionalProperties": false
     },
+    "host_cgroup": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "host_cgroup"
+        },
+        "memory_current_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "memory_max_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "cpu_usage_usec": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "cpu_quota_usec": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "cpu_period_usec": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "oom_events": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "kind",
+        "memory_current_bytes",
+        "memory_max_bytes",
+        "cpu_usage_usec",
+        "cpu_quota_usec",
+        "cpu_period_usec",
+        "oom_events"
+      ],
+      "additionalProperties": false
+    },
     "native": {
       "type": "object",
       "properties": {
@@ -257,6 +305,9 @@
       "oneOf": [
         {
           "$ref": "#/$defs/process"
+        },
+        {
+          "$ref": "#/$defs/host_cgroup"
         },
         {
           "$ref": "#/$defs/native"

@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "source_id": "process",
-  "node_id": "fixture-node",
+  "node_id": "v1",
   "scope_id": "node",
-  "process_epoch": "synthetic-boot-1",
-  "source_epoch": "synthetic-process-source-1",
-  "source_version": "sample-process-v1",
+  "process_epoch": "fa86123d3210887c36045ec1ec657bfc",
+  "source_epoch": "edge-fixture-1",
+  "source_version": "proc-v1",
   "generation": "1",
   "availability": "available",
   "observed_at": "2026-09-29T00:00:00Z",
@@ -17,7 +17,7 @@
     "status": "partial",
     "missing_fields": ["host_pressure", "cgroup_effective", "fd_usage", "validator_core"],
     "gaps": [],
-    "sampling_policy": "isolated synthetic process fixture"
+    "sampling_policy": "fixed_15s"
   },
   "content_hash": "f71d2391ab0a9a248246a4b8b8f902efecab11d467084e56972185f13fb2451d",
   "payload": {
