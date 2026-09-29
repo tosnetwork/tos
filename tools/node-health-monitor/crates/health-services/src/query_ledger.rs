@@ -628,6 +628,175 @@ impl QueryLedger {
         self.insert_bound(store, record, Some(origin))
     }
 
+    /// Commit one bounded M page with one in-memory copy and one FULL SQLite
+    /// transaction. The cursor is committed separately, after this returns;
+    /// a crash between the two replays the exact, idempotent parent bindings.
+    pub fn insert_projection_page(
+        &mut self,
+        store: &mut EvidenceStore,
+        page: &[(EvidenceRow, Evidence)],
+    ) -> Result<(), String> {
+        if page.len() > 256 {
+            return Err("M projection page too large".into());
+        }
+        if page.is_empty() {
+            return Ok(());
+        }
+        let previous = store.watermark();
+        let mut candidate = store.clone();
+        let pinned_w = self
+            .load_active_all(boot_millis()?)?
+            .iter()
+            .map(|grant| grant.watermark)
+            .max()
+            .unwrap_or(0);
+        let mut staged: Vec<(EvidenceRow, StoredEvidence)> = Vec::with_capacity(page.len());
+        for (origin, record) in page {
+            let reproduced = crate::manager_query_source::project_process(origin)?
+                .ok_or("M origin has no supported projection")?;
+            if serde_json::to_vec(record).map_err(failure)?
+                != serde_json::to_vec(&reproduced).map_err(failure)?
+            {
+                return Err("projection differs from original M evidence".into());
+            }
+            let before = candidate.watermark();
+            let oldest = candidate.entries().next().map(|entry| entry.watermark);
+            let id = candidate.insert(record.clone()).map_err(str::to_owned)?;
+            if candidate.watermark() == before {
+                let retained = if let Some((prior, _)) =
+                    staged.iter().rev().find(|(_, entry)| entry.evidence_id == id)
+                {
+                    Some(serde_json::to_vec(prior).map_err(failure)?)
+                } else {
+                    self.conn
+                        .query_row(
+                            "SELECT o.body FROM query_origins o JOIN query_projection_origin p ON p.origin_id=o.origin_id WHERE p.query_evidence_id=?1",
+                            [&id],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(failure)?
+                };
+                if retained.as_deref()
+                    != Some(serde_json::to_vec(origin).map_err(failure)?.as_slice())
+                {
+                    return Err("duplicate projection parent missing or changed".into());
+                }
+                continue;
+            }
+            if oldest.is_some_and(|watermark| {
+                watermark <= pinned_w
+                    && candidate.entries().next().is_none_or(|next| next.watermark > watermark)
+            }) {
+                return Err("active grant evidence retention".into());
+            }
+            let entry = candidate.entries().last().ok_or("missing inserted evidence")?;
+            if entry.watermark != candidate.watermark() || entry.evidence_id != id {
+                return Err("evidence insertion mismatch".into());
+            }
+            staged.push((origin.clone(), entry.clone()));
+        }
+        let first_live = candidate
+            .entries()
+            .next()
+            .map(|entry| entry.watermark)
+            .unwrap_or(candidate.watermark());
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let disk_sequence: i64 = tx
+            .query_row("SELECT sequence FROM query_evidence_meta WHERE singleton=1", [], |row| {
+                row.get(0)
+            })
+            .map_err(failure)?;
+        if u64::try_from(disk_sequence).map_err(failure)? > previous {
+            return Err("evidence watermark conflict".into());
+        }
+        tx.execute(
+            "DELETE FROM query_evidence WHERE store_seq<?1",
+            [i64::try_from(first_live).map_err(failure)?],
+        )
+        .map_err(failure)?;
+        tx.execute("DELETE FROM query_projection_origin WHERE query_evidence_id NOT IN (SELECT evidence_id FROM query_evidence)", [])
+            .map_err(failure)?;
+        tx.execute("DELETE FROM query_origins WHERE origin_id NOT IN (SELECT origin_id FROM query_projection_origin)", [])
+            .map_err(failure)?;
+        // Drop evicted rows before adding this page. The transaction still
+        // rolls back as one unit, while the temporary Q index never needs a
+        // second page's worth of retained bodies.
+        for (_, entry) in &staged {
+            if entry.watermark >= first_live {
+                tx.execute(
+                    "INSERT INTO query_evidence(store_seq,evidence_id,body) VALUES(?1,?2,?3)",
+                    params![
+                        i64::try_from(entry.watermark).map_err(failure)?,
+                        entry.evidence_id,
+                        serde_json::to_vec(entry).map_err(failure)?
+                    ],
+                )
+                .map_err(failure)?;
+            }
+        }
+        let (mut count, mut bytes): (i64, i64) = tx
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM query_origins",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(failure)?;
+        for (origin, entry) in &staged {
+            if entry.watermark < first_live {
+                continue;
+            }
+            let parent = serde_json::to_vec(origin).map_err(failure)?;
+            if parent.len() > 34_816 {
+                return Err("M parent too large".into());
+            }
+            let existing: Option<(i64, Vec<u8>)> = tx
+                .query_row(
+                    "SELECT manager_seq,body FROM query_origins WHERE origin_id=?1",
+                    [&origin.evidence_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(failure)?;
+            if let Some((seq, body)) = existing {
+                if u64::try_from(seq).map_err(failure)? != origin.store_seq.0 || body != parent {
+                    return Err("M parent identity conflict".into());
+                }
+            } else {
+                let size = i64::try_from(parent.len()).map_err(failure)?;
+                if count >= 4096 || bytes.checked_add(size).is_none_or(|sum| sum > 8 * 1024 * 1024)
+                {
+                    return Err("M parent retention full".into());
+                }
+                tx.execute(
+                    "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,?2,?3)",
+                    params![
+                        origin.evidence_id,
+                        i64::try_from(origin.store_seq.0).map_err(failure)?,
+                        parent
+                    ],
+                )
+                .map_err(failure)?;
+                count += 1;
+                bytes += size;
+            }
+            tx.execute(
+                "INSERT INTO query_projection_origin(query_evidence_id,origin_id) VALUES(?1,?2)",
+                params![entry.evidence_id, origin.evidence_id],
+            )
+            .map_err(failure)?;
+        }
+        tx.execute(
+            "UPDATE query_evidence_meta SET sequence=?1 WHERE singleton=1",
+            [i64::try_from(candidate.watermark()).map_err(failure)?],
+        )
+        .map_err(failure)?;
+        tx.commit().map_err(failure)?;
+        *store = candidate;
+        Ok(())
+    }
+
     /// Only original rows still backing a resident derived query row matter.
     /// Their full immutable bodies permit exact M revalidation even when no
     /// new observation follows a quarantine or source-file replacement.

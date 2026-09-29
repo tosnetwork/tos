@@ -25,6 +25,61 @@ use tos_health_services::{
 };
 use tower::ServiceExt;
 
+/// Opt-in local cost witness. M is opened read-only; only a disposable Q ledger
+/// is written. It is not a performance acceptance threshold or an AURA call.
+#[test]
+#[ignore = "requires explicit read-only local M path and network"]
+fn live_read_only_projection_cost_witness() {
+    let manager_path = std::path::PathBuf::from(std::env::var("NHM_C09_READONLY_M_DB").unwrap());
+    let network = std::env::var("NHM_C09_NETWORK").unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-c09-projection-cost-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let ledger_path = directory.join("query.sqlite");
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from([
+            "validator1".into(),
+            "validator2".into(),
+            "validator3".into(),
+            "validator4".into(),
+            "observer5".into(),
+            "observer6".into(),
+        ]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let started = std::time::Instant::now();
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap()
+        .with_manager_evidence(manager_path)
+        .unwrap();
+    println!("initial_page_ms={}", started.elapsed().as_millis());
+    let mut pages = 1;
+    while !state.data.lock().unwrap().manager_caught_up && pages < 32 {
+        let started = std::time::Instant::now();
+        let (watermark, count) = import_manager(&state).unwrap();
+        pages += 1;
+        println!(
+            "page={pages} rows={count} global_m_seq={watermark} elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+    }
+    assert!(state.data.lock().unwrap().manager_caught_up);
+    let started = std::time::Instant::now();
+    let (watermark, count) = import_manager(&state).unwrap();
+    println!(
+        "steady_rows={count} global_m_seq={watermark} elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
+    drop(state);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 async fn body(response: axum::response::Response) -> serde_json::Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
@@ -476,6 +531,19 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
         }
         assert!(import_manager(&state).unwrap_err().contains("injected"));
         assert!(state.data.lock().unwrap().manager_conflicted);
+        if mode == "projection_insert" {
+            // The third row failed inside one page transaction. Neither the
+            // first new row nor the in-memory candidate may escape it.
+            assert_eq!(state.data.lock().unwrap().store.watermark(), 1);
+            assert_eq!(
+                QueryLedger::open(&ledger_path)
+                    .unwrap()
+                    .load_evidence(8 * 1024 * 1024)
+                    .unwrap()
+                    .watermark(),
+                1
+            );
+        }
         assert_eq!(
             state
                 .query_ledger

@@ -169,28 +169,27 @@ fn import_manager_into(
         return Err("retained M parent was quarantined".into());
     }
     let count = page.records.len();
-    for (origin, record) in page.records {
+    for (_, record) in &page.records {
         if !state.inventory.nodes.contains(&record.node_id)
             || !state.inventory.scopes.contains(&record.scope_id)
         {
             block_manager_queries(state, data)?;
             return Err("M projection outside inventory".into());
         }
-        let inserted = ledger.lock().map_err(|_| "query ledger unavailable")?.insert_projection(
-            &mut data.store,
-            &origin,
-            record,
-        );
-        if let Err(error) = inserted {
-            if error == "active grant evidence retention" {
-                // Keep the frozen W usable. This is a bounded catch-up pause,
-                // not a source-integrity conflict or a new grant watermark.
-                data.manager_caught_up = false;
-                return Err(error);
-            }
-            block_manager_queries(state, data)?;
+    }
+    let inserted = ledger
+        .lock()
+        .map_err(|_| "query ledger unavailable")?
+        .insert_projection_page(&mut data.store, &page.records);
+    if let Err(error) = inserted {
+        if error == "active grant evidence retention" {
+            // Keep the frozen W usable. This is a bounded catch-up pause,
+            // not a source-integrity conflict or a new grant watermark.
+            data.manager_caught_up = false;
             return Err(error);
         }
+        block_manager_queries(state, data)?;
+        return Err(error);
     }
     let committed = ledger
         .lock()
