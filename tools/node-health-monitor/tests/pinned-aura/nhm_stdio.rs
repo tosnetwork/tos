@@ -15,6 +15,48 @@ use std::{
     time::Duration,
 };
 
+#[cfg(target_os = "linux")]
+fn adapter_pids(credential: &Path) -> Vec<u32> {
+    let marker = credential.as_os_str().as_encoded_bytes();
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_string_lossy().parse::<u32>().ok())
+        .filter(|pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline"))
+                .ok()
+                .is_some_and(|command| command.split(|byte| *byte == 0).any(|arg| arg == marker))
+        })
+        .collect()
+}
+
+fn deterministic_fixture_judgment(event_result: &Value, block_result: &Value) -> Value {
+    let events = event_result["data"]["events"].as_array();
+    let delivered = event_result["evidence"].as_array();
+    let event = events.and_then(|rows| rows.first());
+    let id = event.and_then(|row| row["evidence_id"].as_str());
+    let matched = event_result["status"] == "ok"
+        && event.is_some_and(|row| {
+            row["source_id"] == "collector"
+                && row["kind"] == "warning"
+                && row["reason"] == "synthetic_rss_pressure"
+        })
+        && id.is_some_and(|id| {
+            delivered.is_some_and(|rows| rows.iter().any(|row| row["evidence_id"] == id))
+        });
+    let missing_block = block_result["status"] == "error";
+    if matched {
+        json!({"status":"analysis","summary":"An isolated synthetic collector warning reports memory pressure; this is not a live-node diagnosis.",
+            "findings":[{"claim":"A synthetic collector warning was observed.","basis":"observed","evidence_ids":[id.unwrap()]}],
+            "missing_evidence":if missing_block {vec!["Block evidence is unavailable; no consensus or proof conclusion is made."]} else {vec![]},
+            "recommended_runbooks":["inspect_storage_pressure"]})
+    } else {
+        json!({"status":"insufficient_evidence","summary":"No delivered synthetic warning supports an abnormality claim.",
+            "findings":[],"missing_evidence":["Collector warning evidence is unavailable or unverified."],
+            "recommended_runbooks":[]})
+    }
+}
+
 struct OwnedProcess(Child);
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
@@ -72,7 +114,23 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
                 "anon_bytes":"8589934592","file_bytes":"0","swap_bytes":"0",
                 "cpu_user_ticks":"100","cpu_system_ticks":"50"}}
     });
-    std::fs::write(&cache, format!("{process}\n")).unwrap();
+    let warning = json!({
+        "node_id":"v1","scope_id":"node","source_id":"collector",
+        "source_record_id":"synthetic-warning-1","process_epoch":"process-1",
+        "observed_at_ms":observed+1,"received_at_ms":observed+1,"redacted":true,
+        "quality":{"availability":"available","coverage":"complete",
+            "observed_at_ms":observed+1,"last_success_at_ms":observed+1,
+            "clock_valid":true,"process_epoch":"process-1","source_sequence":"2"},
+        "payload":{"kind":"warning","evidence_kind":"event","source_version":"synthetic-local-v1",
+            "event":{"kind":"warning","stage":null,"reason":"synthetic_rss_pressure",
+                "correlation_id":null,"excerpt":"isolated synthetic collector warning"},
+            "contract_quality":{"instrumentation_complete":true,"producer_dropped":"0",
+                "relay_dropped":"0","parse_errors":"0","shed_reason":null},
+            "contract_coverage":{"status":"complete","missing_fields":[],"gaps":[],
+                "sampling_policy":"isolated synthetic fixture"},
+            "contract_payload":{"kind":"diagnostic_fixture","record_type":1,"payload":"0102"}}
+    });
+    std::fs::write(&cache, format!("{process}\n{warning}\n")).unwrap();
     for (name, value) in [("operator", 'o'), ("ingest", 'i'), ("service", 'a')] {
         let path = directory.join(name);
         std::fs::write(&path, value.to_string().repeat(32)).unwrap();
@@ -161,6 +219,12 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
         manager.server_info
     );
     assert_eq!(manager.stdio_clients.len(), 1);
+    #[cfg(target_os = "linux")]
+    let adapter_pid = {
+        let pids = adapter_pids(&credential);
+        assert_eq!(pids.len(), 1, "AURA did not own exactly one adapter child");
+        pids[0]
+    };
 
     let calls = [
         ("tos_get_capabilities", json!({"run_id":run})),
@@ -185,6 +249,8 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
             json!({"run_id":run,"node_ids":["v1"],"reference_id":"blk_0123456789abcdef","ancestor_depth":0,"max_events":10}),
         ),
     ];
+    let mut event_result = None;
+    let mut block_result = None;
     for (name, arguments) in calls {
         let result = tokio::time::timeout(
             Duration::from_secs(6),
@@ -203,9 +269,40 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
             assert_eq!(envelope["status"], "ok", "AURA did not read the retained process fixture");
             assert!(content.contains("8589934592"), "AURA snapshot lost the fixture's RSS value");
         }
+        if name == "tos_get_event_window" {
+            event_result = Some(envelope.clone());
+        }
+        if name == "tos_get_block_evidence" {
+            block_result = Some(envelope.clone());
+        }
         println!("AURA_NHM_TOOL {name} {}", envelope["status"]);
     }
+    let event_result = event_result.unwrap();
+    let block_result = block_result.unwrap();
+    let diagnosis = deterministic_fixture_judgment(&event_result, &block_result);
+    assert_eq!(diagnosis["status"], "analysis");
+    let warning_id = event_result["data"]["events"][0]["evidence_id"].as_str().unwrap();
+    assert_eq!(diagnosis["findings"][0]["evidence_ids"][0], warning_id);
+    assert!(diagnosis["missing_evidence"][0].as_str().unwrap().contains("Block evidence"));
+    let missing_control =
+        deterministic_fixture_judgment(&json!({"status":"unavailable"}), &block_result);
+    assert_eq!(missing_control["status"], "insufficient_evidence");
+    assert!(missing_control["findings"].as_array().unwrap().is_empty());
+    println!("AURA_NHM_DETERMINISTIC_FIXTURE analysis=1 unknown_control=insufficient_evidence");
     drop(manager);
+    #[cfg(target_os = "linux")]
+    {
+        for _ in 0..100 {
+            if !std::path::Path::new(&format!("/proc/{adapter_pid}")).exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            !std::path::Path::new(&format!("/proc/{adapter_pid}")).exists(),
+            "AURA/rmcp dropped its client but adapter child was not reaped"
+        );
+    }
     drop(_service);
     std::fs::remove_dir_all(directory).unwrap();
 }

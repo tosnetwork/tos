@@ -158,7 +158,10 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                     }
                     if let Some(value) = response.headers().get("mcp-session-id") {
                         let value = value.to_str().map_err(|_| ())?;
-                        if value.len() > 128 || !value.bytes().all(|byte| byte.is_ascii_graphic()) {
+                        if value.is_empty()
+                            || value.len() > 128
+                            || !value.bytes().all(|byte| byte.is_ascii_graphic())
+                        {
                             return Err(());
                         }
                         session = Some(value.to_owned());

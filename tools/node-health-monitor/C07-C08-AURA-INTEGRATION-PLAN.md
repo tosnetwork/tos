@@ -1,6 +1,9 @@
 # C07/C08 pinned AURA integration plan — approval boundary
 
-Status: implementation plan, **not** AURA end-to-end or production acceptance.
+Status: implementation plan. The isolated pinned-client adapter and
+deterministic fixture control were subsequently implemented and are indexed
+in `evidence/c06-native-diagnostics/C08-PINNED-AURA-ADAPTER-CHECKPOINT.md`;
+this is **not** model judgment or production acceptance.
 Source baseline `da8f89877807c985a8ffb18b4307c91912e7d580` is clean and
 pushed. This plan precedes adapter implementation. It supersedes additional
 unrelated cursor/evidence test expansion.
@@ -32,13 +35,18 @@ unrelated cursor/evidence test expansion.
 1. One feature-gated `tos-nhm-aura-stdio` process is spawned by AURA's
    `McpServerConfig::Stdio`. It accepts only bounded UTF-8 JSON-RPC lines on
    stdin and emits only JSON-RPC lines on stdout. It forwards them to
-   `/mcp` over **one** persistent Unix HTTP/1 connection, retaining MCP
-   session headers as required. No shell, arbitrary URL, filesystem tool,
+   `/mcp` over **one** persistent Unix HTTP/1 connection. The actual NHM
+   server sets `legacy_session_mode=false`: its tested 2025-03-26/06-18
+   POST path is stateless and does not issue an `mcp-session-id`. The adapter
+   validates and forwards such a header if a negotiated server supplies one,
+   but does not require or fabricate it. Grant ownership is the Unix
+   connection, not an MCP session ID. No shell, arbitrary URL, filesystem tool,
    alternate MCP server, or TCP fallback is allowed. The existing NHM
    listener remains the only service endpoint and owns all query budgets.
-2. Broker creates a per-run private credential handoff (development profile:
-   a 0600 regular file in a 0700 temporary directory, removed on connection
-   success or failure). Only its pathname is present in AURA stdio config;
+2. Broker creates a per-run private credential handoff (authorized development
+   profile: a 0600 regular file in a 0700 temporary directory). The isolated
+   harness removes its directory after the test; a production broker has not
+   yet proved cleanup on every failure. Only the pathname is present in AURA stdio config;
    never put the raw run token or service credential in `cmd`, `args`,
    AURA-config `env`, JSON-RPC/tool schema/result, or logs. The adapter checks
    file ownership/type/mode, reads it once, opens the fixed Unix path and
@@ -56,8 +64,14 @@ unrelated cursor/evidence test expansion.
 4. On cancellation, timeout, malformed frame, authentication failure or
    unexpected EOF, fail closed: stop forwarding, terminate/reap the AURA
    child and adapter, revoke the grant, and wait for termination before a
-   replacement run. The broker's current `confirm_stopped` is only a state
-   primitive; an actual supervised subprocess is required for this gate.
+   replacement run. The adapter already refuses malformed/oversized input,
+   transport failure and replay without emitting a tool result. Pinned AURA
+   uses `rmcp 0.12.0`'s newline-delimited JSON-RPC stdio transport;
+   `McpManager` owns a `RunningService` holding `TokioChildProcess`, whose
+   drop schedules asynchronous kill/wait. The isolated Linux test observes
+   that adapter PID disappear after normal manager drop. Neither this source
+   behavior nor that test proves broker cancellation, grant revocation or
+   replacement-run sequencing; `confirm_stopped` is only a state primitive.
 
 ## Ordered local verification
 
@@ -86,13 +100,15 @@ unrelated cursor/evidence test expansion.
    this work. Capture the actual source/epoch/grant provenance; do not
    substitute synthetic rows for production observations.
 
-## Inputs/rulings still missing
+## Authorized scope and inputs still missing
 
-- Owner-approved model/provider choice and private endpoint or a specific
-  installed local model; no external model call is authorized now.
-- Exact C09 local node/manager evidence endpoint and read-only credentials,
-  if live-node abnormality rather than isolated fixture judgment is required.
-  Supervisor owns C09 lifecycle; this worker will not start business nodes.
-- Production credential-handoff/sandbox profile and confirmation that the
-  development-only 0600 file profile may be used for the isolated AURA
-  compatibility test. The latter is not a production permission claim.
+- The owner has authorized C06–C09 implementation, isolated 0600/0700
+  credential-file tests and read-only access to local-node evidence. Those
+  activities require no new approval. Supervisor owns C09 lifecycle; this
+  worker will not start, restart or reconfigure business nodes.
+- A specific local model/private provider endpoint and its measurable
+  resource profile remain unspecified; no external model API or production
+  deployment is enabled by that absence. The deterministic local fixture
+  control proceeds without claiming a model response.
+- Production credential handoff, process-user/sandbox profile, broker-owned
+  cancellation/reaping and real provider/egress evidence remain open gates.
