@@ -3,6 +3,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use tos_health_core::{
     edge_snapshot::{ProcessEnvelope, ProcessPayload},
@@ -219,6 +220,72 @@ fn projection_refuses_wrong_origin_hash_and_unknown_source_fields() {
     clock_unknown.record.quality.clock_valid = false;
     let unknown = manager.insert(clock_unknown).unwrap();
     assert!(project_process(&unknown).unwrap_err().contains("unavailable"));
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-separated-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 16 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    let tx = conn.transaction().unwrap();
+    {
+        let mut insert = tx.prepare(
+            "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        ).unwrap();
+        for sequence in 1..=4097 {
+            let mut diagnostic = row("d1");
+            diagnostic.record.source_id = "consensus_diagnostic".into();
+            diagnostic.record.source_record_id = sequence.to_string();
+            diagnostic.record.payload = serde_json::json!({"component":"diagnostic","event":{"kind":"consensus_action_phase"}});
+            let mut canonical = diagnostic.clone();
+            canonical.record.received_at_ms = 0;
+            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap()));
+            let body = serde_json::to_string(&diagnostic).unwrap();
+            assert!(body.len() < 32_768);
+            insert
+                .execute(rusqlite::params![
+                    diagnostic.record.node_id,
+                    diagnostic.record.scope_id,
+                    diagnostic.record.process_epoch,
+                    diagnostic.source_epoch,
+                    diagnostic.record.source_id,
+                    diagnostic.record.source_record_id,
+                    digest,
+                    body,
+                ])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    let process = manager.insert(row("edge-epoch-1")).unwrap();
+    let (watermark, records, quarantined) =
+        tos_health_services::manager_query_source::read_process_projection_state(&path, &network)
+            .unwrap();
+    assert_eq!(watermark, 4098);
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].0.evidence_id, process.evidence_id);
+    assert!(quarantined.is_empty());
+    conn.execute(
+        "INSERT INTO quarantined(node,scope,process_epoch,source_epoch,source) VALUES(?1,?2,?3,?4,?5)",
+        rusqlite::params!["v1", "node", "boot:4242:100", "d1", "consensus_diagnostic"],
+    ).unwrap();
+    let (_, records, quarantined) =
+        tos_health_services::manager_query_source::read_process_projection_state(&path, &network)
+            .unwrap();
+    assert_eq!(records.len(), 1);
+    assert!(quarantined.is_empty());
+    drop(conn);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
 }

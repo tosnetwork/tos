@@ -654,6 +654,14 @@ impl QueryService<'_> {
                     cursor,
                 ) = if tool == "tos_get_event_window" {
                     let q: EventRequest = parse(&input)?;
+                    // C06 diagnostic phases have no trustworthy wall-clock
+                    // observation time. A window over observed time cannot
+                    // select them by receipt time or the stored zero sentinel.
+                    if q.sources.iter().any(|s| s == "consensus_diagnostic")
+                        || q.kinds.iter().any(|k| k == "consensus_action_phase")
+                    {
+                        return Err("CAPABILITY_UNSUPPORTED");
+                    }
                     if !list(
                         &q.sources,
                         1,

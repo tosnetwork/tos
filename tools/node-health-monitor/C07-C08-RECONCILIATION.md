@@ -1,6 +1,6 @@
 # C07/C08 reconciliation (development scope)
 
-Baseline: `35ba59c111dd74518e6e661bcd1984598d493907` (C05 scoped acceptance). C06 belongs to Starbridge's isolated tree; C09 local-node lifecycle belongs to the supervisor. This document records gaps, not acceptance.
+Baseline: `35ba59c111dd74518e6e661bcd1984598d493907` (C05 scoped acceptance). Starbridge's reviewed C06 candidate was cherry-picked into the implementation branch as `900bcb894` and `1f1c634ef`; the combined source still requires exact integrated review. C09 local-node lifecycle belongs to the supervisor. This document records gaps, not acceptance.
 
 | Contract | Existing implementation | C07/C08 closure work |
 | --- | --- | --- |
@@ -17,6 +17,17 @@ Baseline: `35ba59c111dd74518e6e661bcd1984598d493907` (C05 scoped acceptance). C0
 Implementation sequence: (1) durable grant and evidence ledger with crash/restart negatives; (2) broker-only control and shared HTTP/MCP service with exact SDK/protocol; (3) fixed evidence package and offline broker validation/cancellation; (4) isolated AURA and provider tests only after explicit owner choice. Preserve historical scoped C00–C05 claims; neither this plan nor unit tests promote production capabilities.
 
 Checkpoint note: `tos-observability` now requires a private ledger DB and Unix control socket. An optional ninth argument (after a cache JSONL path or `-`) configures M's retained evidence DB. The broker-only grant operation imports eligible archived process observations from one bounded read-only M transaction before fixing the query-package W; no query handler reads M or calls V/O/Prometheus. The process still uses an 8 MiB clone-on-insert candidate to commit SQLite before publishing a cache row; measure or replace this copy before any production cost claim. The old in-memory-only router remains solely for existing isolated tests. This is a process-only development adapter, not C08 acceptance or a complete M evidence/query integration.
+
+C06 integration boundary: the process projection scans only M rows declared as
+`source='process'`, so a full population of diagnostic archives cannot consume
+its 4096-row/8 MiB cap or revoke unrelated process runs. Diagnostic phases are
+persisted by M, but source-reported wall time (when present) has invalid clock
+quality; genuinely unknown time remains `observed_at=null`. The six-tool event
+window is defined over trustworthy observed time, so it
+explicitly returns `CAPABILITY_UNSUPPORTED` for the C06 diagnostic source or
+kind. It does not substitute M receipt time or the compatibility zero sentinel
+for an observation. A separately approved time-basis contract and a retained
+parent adapter would be required for diagnostic event-window success.
 
 Control socket follow-up: admission is now limited to eight connections before
 task spawn; permits last through response transmission and a five-second

@@ -379,6 +379,11 @@ mod tests {
             &[id],
             &store,
             &std::collections::BTreeSet::new(),
+            tos_health_core::query_output::PaginationDto {
+                next_cursor: None,
+                truncated: false,
+                scan_complete: true,
+            },
         )
         .unwrap();
         assert!(
@@ -404,6 +409,11 @@ mod tests {
             &[id],
             &store,
             &std::collections::BTreeSet::new(),
+            tos_health_core::query_output::PaginationDto {
+                next_cursor: None,
+                truncated: false,
+                scan_complete: true,
+            },
         )
         .unwrap();
         assert_eq!(output["evidence"][0]["quality"]["producer_dropped"], "0");

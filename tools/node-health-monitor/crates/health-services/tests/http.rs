@@ -498,12 +498,21 @@ async fn query_rejections_are_not_http_success() {
             json!({"run_id":run,"node_id":"v1","as_of":end,"max_age_seconds":4294967296u64,"components":["process"]}),
             StatusCode::BAD_REQUEST,
         ),
+        (
+            "event-window",
+            json!({"run_id":run,"node_ids":["v1"],"scope_id":"node","start":start,"end":end,"sources":["consensus_diagnostic"],"kinds":["consensus_action_phase"],"correlation_id":"","contains":"","limit":10,"cursor":""}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
     ] {
         let mut req = request(&format!("/v1/query/{path}"), 'a', input);
         req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
         let response = app.clone().oneshot(req).await.unwrap();
         assert_eq!(response.status(), expected);
-        assert_eq!(json_body(response).await["status"], "error");
+        let output = json_body(response).await;
+        assert_eq!(output["status"], "error");
+        if expected == StatusCode::UNPROCESSABLE_ENTITY {
+            assert_eq!(output["error"]["code"], "CAPABILITY_UNSUPPORTED");
+        }
     }
     let mut cross_run = request(
         "/v1/query/capabilities",

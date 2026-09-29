@@ -153,7 +153,7 @@ pub fn read_process_projection_state(path: &Path, network: &str) -> Result<Proje
         .prepare(
             "SELECT store_seq,content_hash,length(CAST(body AS BLOB)),
              CASE WHEN length(CAST(body AS BLOB))<=32768 THEN body ELSE NULL END
-             FROM observations WHERE store_seq<=?1
+             FROM observations WHERE store_seq<=?1 AND source='process'
              AND NOT EXISTS(SELECT 1 FROM quarantined q WHERE q.node=observations.node
              AND q.scope=observations.scope AND q.process_epoch=observations.process_epoch
              AND q.source_epoch=observations.source_epoch AND q.source=observations.source)
@@ -200,7 +200,8 @@ pub fn read_process_projection_state(path: &Path, network: &str) -> Result<Proje
             "SELECT o.content_hash FROM observations o JOIN quarantined q
          ON q.node=o.node AND q.scope=o.scope AND q.process_epoch=o.process_epoch
          AND q.source_epoch=o.source_epoch AND q.source=o.source
-         WHERE o.store_seq<=?1 ORDER BY o.store_seq LIMIT ?2",
+             WHERE o.store_seq<=?1 AND o.source='process'
+             ORDER BY o.store_seq LIMIT ?2",
         )
         .map_err(failure)?;
     let rows = query
