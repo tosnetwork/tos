@@ -33,7 +33,8 @@
             "type": "array",
             "items": {
               "type": "string",
-              "maxLength": 128
+              "maxLength": 128,
+              "minLength": 1
             },
             "maxItems": 8,
             "uniqueItems": true

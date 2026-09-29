@@ -122,6 +122,11 @@ def main():
   assert source['content_hash']==hashlib.sha256(json.dumps(source['payload'],sort_keys=True,separators=(',',':')).encode()).hexdigest()
  common=validator('common.schema.json');common.validate('18446744073709551615')
  for bad in ['18446744073709551616','01','１','-1',True,1.0,9007199254740993]:assert not common.is_valid(bad),bad
+ diagnosis=validator('diagnosis.schema.json')
+ diagnosis_fixture=dict(status='analysis',summary='Possible storage delay',findings=[dict(claim='Storage may be delayed',basis='hypothesis',evidence_ids=['e1'])],missing_evidence=['storage progress'],recommended_runbooks=[])
+ diagnosis.validate(diagnosis_fixture)
+ bad=copy.deepcopy(diagnosis_fixture);bad['findings'][0]['evidence_ids']=['']
+ assert not diagnosis.is_valid(bad),'empty evidence ID passed the published schema'
  run='00000000-0000-4000-8000-000000000001';start='2026-09-29T00:00:00Z';end='2026-09-29T00:01:00Z'
  fixtures={
  'tos_get_capabilities':{},
