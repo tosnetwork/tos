@@ -55,3 +55,56 @@ explicitly only a contract fixture; it is not a native consensus integration tes
   witness proof validation, approved hardware performance measurements or 72h soak.
 - No production deployment, restart, protocol change, durability change or real
   notification was performed. Production readiness remains blocked explicitly.
+
+
+## Independent runtime continuation (2026-09-29)
+
+Starting commit: `1774d2375005d58f88a75437486330ca5fafb8dd`; latest fetched memo
+blob `8d406b3213ca6b9b1f123dcf31ef26f1aa318289` (normative R4 unchanged).
+The earlier component-only limits above describe the previous round; the following
+is the additional runtime boundary, not a complete C00–C09 acceptance.
+
+Changed boundaries and their failing instruments:
+
+| Boundary | Actual execution and sensitivity |
+|---|---|
+| Rule decisions | 8 Rust tests cover declared sources, complete fact catalog, monotonic freshness, counter baseline/epoch, distinct bad samples, pending time and scalar predicates; compiled mutations remove the relevant decisions |
+| Transactional control | Real SQLite tests force the second rule's outbox write to fail; no rule, notification or evaluation sequence commits; inventory revisions are immutable and an existing revision remains restartable at history capacity |
+| Runtime persistence | A test launches the actual `health-state` executable, ingests bad evidence over authenticated HTTP, kills it, restarts it and checks episode/severity/unknown plus persisted outbox; deleting persisted incidents on startup makes this test fail |
+| Live conflict and delivery | Separate DB threads, real HTTP receipt server, mismatched then matching receipt; conflicting source identity changes a live open incident to suspended_unknown with unchanged severity; overlapping conflicts from old and current epochs remain isolated; removing quarantine/history or receipt matching fails assertions |
+| mTLS boundary | Generated private CA/server/client/expired certificates, actual TLS sockets and upstream call count; the same unapproved leaf is first proven usable on an authorized control listener, then denied on the tested ACL; removing fingerprint or role checks fails |
+| Queue age | Monotonic writer/queue residence is added with checked arithmetic before rule admission; duplicate immutable identity is preserved and overflow is rejected; removing residence age fails the test |
+| Probe | Real mTLS edge and ingest routes exercise the scheduled probe; a different node identity produces incomplete/unknown facts, never consensus health; removing node matching fails |
+| Observer | Process and pipeline clocks use independent 45/100-second deadlines; repeated sequence and retired epoch cannot refresh; actual webhook parsing rejects another monitor, resolved alerts and noncanonical sequence |
+| Storage isolation | Symlink and hardlink aliases cannot map the control and evidence owners to one database; persisted network identity prevents reusing either database on another network; removing either check fails |
+
+Run the earlier commands plus:
+
+```sh
+python3 tools/node-health-monitor/tests/runtime-mutations.py
+```
+
+The new runtime mutation runner is included in CI and restores each source in
+`finally`. Initial certificate-ACL and probe-node mutants unexpectedly passed and were not
+accepted as evidence. A fresh non-incremental probe build failed correctly. All
+Rust mutation runners now explicitly disable incremental compilation. The TLS
+fixture also establishes successful authorization of the same leaf before its
+negative ACL check. The final runner requires every mutant to compile and fail
+its named behavioral assertion; build failure never counts as a killed mutation.
+
+Prometheus/Alertmanager examples and `tests/fixtures/rule_test.yml` are provided,
+but real promtool and the full Alertmanager chain remain **not_run**. Release
+binary downloads failed at the network proxy. YAML existence is not PromQL or
+notification-chain acceptance. No human-delivery or production credential test
+was performed. AI/MCP, actual native duty instrumentation, full typed native
+snapshot/source adapters, witness collection, retention/grants/ledger, effective
+host budgets, A–F performance, restore/rotation and 72h soak remain outstanding.
+
+
+Final local result: **84 passing Rust tests**, clean formatter and Clippy,
+20-schema/cross-language contract check, real edge/query process smoke, and
+**56 compiled-and-failed mutations** (49 Rust, 7 C++). The full mutation suites
+ran without incremental compilation; after the final network/quarantine change,
+the three additional boundary/queue mutations and affected receipt/live-quarantine/process-restart
+mutations were rerun, followed by the full 84-test workspace regression. There
+was no production deployment and no real Prometheus/Alertmanager or soak pass.

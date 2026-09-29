@@ -14,7 +14,7 @@ No complete work order or production capability is marked accepted.
 Added strict schemas and contract checks, cross-language diagnostic framing,
 monotonic cache freshness, multisource incident recovery, isolated SQLite
 control/evidence components and optional fixed native collection in health-edge.
-The storage components are not yet connected to the existing HTTP query process.
+The new `health-state` process now owns durable rule/evidence writers and a receipt-checked outbox. The existing HTTP query process still uses its memory store. See [deploy/README.md](deploy/README.md) for the fixed mTLS ingress and development configuration.
 
 ```sh
 python3 tools/node-health-monitor/scripts/check-contracts.py
@@ -25,7 +25,7 @@ python3 tools/node-health-monitor/tests/r4-mutations.py
 Optional local native sampling: append `127.0.0.1:PORT` to the existing
 `health-edge NODE PID LOOPBACK_LISTEN TOKEN_FILE` command. Consumers use the
 edge's authenticated `/metrics` cache. This development interface does not
-supply the required production mTLS ingress or revoke old direct scrape owners.
+revoke old direct scrape owners or prove production admission isolation. A fixed-role mTLS ingress is provided separately.
 
 ## Implemented boundaries
 
@@ -48,7 +48,7 @@ supply the required production mTLS ingress or revoke old direct scrape owners.
   state, bounded broker queue/cancellation, evidence identity/watermark,
   scoped run grants, six cache-query handlers, and diagnosis output validation.
 - Executables: `health-edge`, `health-collector`, `tos-observability`,
-  `health-watchdog`, and `health-contract-check`.
+  `health-watchdog`, `health-state`, `health-ingress`, `health-probe`, and `health-contract-check`.
 - Rust input contracts, behavior/HTTP tests, compiled mutation tests and CI.
 
 ## Run tests
@@ -66,7 +66,7 @@ python3 tools/node-health-monitor/tests/native-mutations.py
 
 The mutation runners first require the named baseline test to pass, edit one
 production guard, compile it, require its named behavioral assertion to fail,
-and restore the original file in `finally`. Run them without other builds
+and restore the original file in `finally`. Rust mutation builds explicitly disable incremental compilation. Run them without other builds
 using the same checkout. A compilation failure is not a killed mutation.
 
 Native actor/signature integration tests use the repository build:
@@ -88,11 +88,14 @@ Each executable prints its exact positional usage on invalid arguments.
 | `health-edge` | Fixed Linux process fields, epoch/PID-reuse check, scheduled cache, authenticated/rate-limited loopback HTTP | Core/admin/getStats adapters, host/cgroup collection and effective resource validation |
 | `health-collector` | Sequential mTLS HTTPS cache poll and bounded ingest, skips missed ticks, deduplicates source identity | Complete inventory scheduler, HA fencing, durable evidence/metrics quality pipeline |
 | `tos-observability` | Typed cache-only HTTP queries, separate operator/ingest/service credentials, 200s scoped grants and immediate revocation | MCP SDK transport, persistent ledger/store, opaque pagination, all aggregation modes, ancestor traversal |
-| `health-watchdog` | Fixed HTTPS heartbeat and independent bounded receiver attempts | Witness chain adapters, rule-chain dead-man source, confirmed delivery receipts |
+| `health-state` | Independent fixed-catalog rules, bounded SQLite writers, persisted state/metrics and receipt-checked outbox | Full source adapters, retention/grants/ledger and deployed notification chain |
+| `health-ingress` | Private-CA mTLS, leaf allowlist, fixed role routes, bounded traffic | Effective host/firewall isolation and fully reserved observer admission |
+| `health-probe` | Fixed 15-second edge management reachability sampling | Consensus facts remain separate and require real native adapters |
+| `health-watchdog` | Separate process and Alertmanager pipeline deadlines, epoch/sequence replay refusal | Actual Prometheus/Alertmanager integration, witness chain, human-delivery receipts |
 | `health-contract-check` | Fail-closed arithmetic and declared acceptance checks | Actual host/network/cgroup/notification verification |
 
 There is **no production enablement claim**. Defaults fail the declaration
-checker. It does not manufacture hardware evidence from booleans. The monitor
+checker. It does not manufacture hardware evidence from booleans. The existing query
 cache is currently memory-only (bounded accounting); optional JSONL import is
 for already-collected fixtures. It does not meet the retention requirements.
 Grant control routes are for a protected monitoring-host control plane and

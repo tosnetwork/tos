@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compile each changed protection and require its named behavior test to fail."""
+import os
 import json
 import pathlib
 import subprocess
@@ -20,7 +21,7 @@ CASES = [
 ]
 
 def run(cargo, name):
-    return subprocess.run([cargo, "test", "--manifest-path", str(ROOT / "Cargo.toml"), "-p", "tos-health-core", "--test", "contracts", name, "--", "--exact"], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    return subprocess.run([cargo, "test", "--manifest-path", str(ROOT / "Cargo.toml"), "-p", "tos-health-core", "--test", "contracts", name, "--", "--exact"], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,env={**os.environ,"CARGO_INCREMENTAL":"0"})
 
 def main():
     cargo = sys.argv[1] if len(sys.argv) > 1 else "cargo"

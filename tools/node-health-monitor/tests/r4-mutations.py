@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Require each modified guard to compile and fail a specific behavioral assertion."""
+import os
 import json,pathlib,subprocess,tempfile
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 CASES=[
@@ -19,7 +20,7 @@ CASES=[
 ('native-period','health-services','native_cache','native_cache.rs','if Instant::now() < self.next_due {','if false {','thousand_cache_reads_never_call_native'),
 ('http-error-status','health-services','http','observability.rs','Some("INVALID_ARGUMENT") => StatusCode::BAD_REQUEST','Some("INVALID_ARGUMENT") => StatusCode::OK','query_rejections_are_not_http_success'),
 ]
-def run(package,test,name):return subprocess.run(['cargo','test','--locked','--manifest-path',str(ROOT/'Cargo.toml'),'-p','tos-'+package,'--test',test,name,'--','--exact'],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+def run(package,test,name):return subprocess.run(['cargo','test','--locked','--manifest-path',str(ROOT/'Cargo.toml'),'-p','tos-'+package,'--test',test,name,'--','--exact'],text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,env={**os.environ,"CARGO_INCREMENTAL":"0"})
 def main():
  results=[]
  for label,package,test,file,old,new,name in CASES:
