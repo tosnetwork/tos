@@ -589,6 +589,35 @@ fn cursor_refuses_missing_or_rewritten_retained_parent_and_invalid_middle_row() 
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn non_anchor_retained_parent_body_change_is_refused_by_sequence_lookup() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-non-anchor-parent-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let first = manager.insert(row("edge-epoch-1")).unwrap();
+    let last = manager.insert(row("edge-epoch-2")).unwrap();
+    let page = read_process_projection_page(&path, &network, None, &[]).unwrap();
+    assert_eq!(page.cursor.anchor.as_ref().unwrap().0, last.store_seq.0);
+    assert_ne!(first.store_seq.0, last.store_seq.0);
+    let retained = vec![first.clone(), last];
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute("UPDATE observations SET body='{}' WHERE store_seq=?1", [first.store_seq.0])
+        .unwrap();
+    assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+        .unwrap_err()
+        .contains("parent changed"));
+    drop(sql);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[tokio::test]
 async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart() {
     for mode in ["projection_insert", "cursor_commit"] {
