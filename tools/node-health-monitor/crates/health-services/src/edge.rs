@@ -21,6 +21,7 @@ pub struct EdgeState {
     pub token: Arc<Vec<u8>>,
     pub node: String,
     pub cache: Arc<Mutex<Option<Evidence>>>,
+    pub native: Arc<Mutex<crate::native_cache::NativeCache>>,
     pub started: Instant,
     pub limiter: Arc<Mutex<(Instant, u32)>>,
 }
@@ -30,6 +31,7 @@ impl EdgeState {
             node,
             token: Arc::new(token),
             cache: Arc::new(Mutex::new(None)),
+            native: crate::native_cache::cache(),
             started: Instant::now(),
             limiter: Arc::new(Mutex::new((Instant::now(), 4))),
         }
@@ -90,8 +92,29 @@ async fn capabilities(
         json!({"schema_version":1,"node_id":state.node,"cache_only":true,"available":["process"],"unsupported":["core_duty","core_persistence","core_queue","getstats_adapter"],"production_gate":"not_passed"}),
     ))
 }
+async fn metrics(
+    State(state): State<EdgeState>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+) -> Result<([(axum::http::header::HeaderName, &'static str); 1], String), StatusCode> {
+    permit(&state, &headers, &uri)?;
+    let body = state
+        .native
+        .lock()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .read()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+        )],
+        body,
+    ))
+}
 pub fn router(state: EdgeState) -> Router {
     Router::new()
+        .route("/metrics", get(metrics))
         .route("/v1/edge/heartbeat", get(heartbeat))
         .route("/v1/edge/snapshot", get(snapshot))
         .route("/v1/edge/capabilities", get(capabilities))
