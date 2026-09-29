@@ -517,6 +517,14 @@ fn diagnosis_hypothesis_and_evidence_ids_obey_publication_contract() {
     assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_ok());
     value["summary"] = json!("界".repeat(2001));
     assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+    value["summary"] = json!("  ");
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+    value["summary"] = json!("A possible storage issue.");
+    value["findings"][0]["claim"] = json!("  ");
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+    value["findings"][0]["claim"] = json!("Storage may be blocked.");
+    value["findings"][0]["evidence_ids"] = json!(["  "]);
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &BTreeSet::from(["  ".into()])).is_err());
 }
 
 #[test]

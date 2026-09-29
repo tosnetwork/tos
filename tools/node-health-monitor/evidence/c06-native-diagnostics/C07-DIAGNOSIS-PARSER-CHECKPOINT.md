@@ -20,3 +20,12 @@ This is syntactic/publication-boundary validation only. It does not prove
 that a cited evidence item semantically entails an observed claim, provide
 an immutable M-watermark package, run AURA, validate a provider protocol or
 terminate a real model child. C07 remains disabled and unaccepted.
+
+Successor note: supervisor commit `e03a4f76f246f5f31409879d11eb0052c2fa5834`
+corrected whitespace-only `missing_evidence`; the following narrow edit also
+rejects whitespace-only summary, claim and evidence ID. Restored core suite
+and strict feature clippy exited 0 after the successor source. Raw logs:
+`/home/tomi/nhm-c08-mcp-evidence/c07-diagnosis-nonblank-core.log` SHA-256
+`4f87a53a37609bad5a87eb51a40c2e00459b98c617a49a79e66e11316fa31f7c`,
+`c07-diagnosis-nonblank-clippy.log` SHA-256
+`c9ef6c943edc2c84b2ac5d5886cfd8e7f17e5a3d15d3ce4a01ac1953858e2049`.

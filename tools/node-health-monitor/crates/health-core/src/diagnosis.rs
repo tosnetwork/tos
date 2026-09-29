@@ -34,7 +34,8 @@ impl Diagnosis {
             return Err("diagnosis too large");
         }
         let value: Self = serde_json::from_slice(bytes).map_err(|_| "invalid diagnosis JSON")?;
-        if value.summary.chars().count() > 2000
+        if value.summary.trim().is_empty()
+            || value.summary.chars().count() > 2000
             || value.findings.len() > 6
             || value.missing_evidence.len() > 16
             || value.missing_evidence.iter().any(|v| v.trim().is_empty() || v.chars().count() > 256)
@@ -59,10 +60,13 @@ impl Diagnosis {
             return Err("unapproved runbook");
         }
         for finding in &value.findings {
-            if finding.claim.is_empty()
+            if finding.claim.trim().is_empty()
                 || finding.claim.chars().count() > 1000
                 || finding.evidence_ids.len() > 8
-                || finding.evidence_ids.iter().any(|id| id.is_empty() || id.chars().count() > 128)
+                || finding
+                    .evidence_ids
+                    .iter()
+                    .any(|id| id.trim().is_empty() || id.chars().count() > 128)
                 || finding.evidence_ids.iter().collect::<BTreeSet<_>>().len()
                     != finding.evidence_ids.len()
             {
