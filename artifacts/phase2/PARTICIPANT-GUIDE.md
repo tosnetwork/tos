@@ -7,20 +7,6 @@ repository before.
 You need about **25 minutes**, most of it waiting, and no prior knowledge of
 the cryptography.
 
-During the current open contribution window, TOS offers **300 TOS for each
-completed contribution that is accepted and verified**. This reward is an
-operational participation incentive, not part of the ceremony's fixed
-cryptographic commitments.
-
-To be reward-eligible, your contribution must extend the latest accepted
-ceremony chain, pass `phase2-verify`, have a valid signed attestation that
-verifies against your registered public key, and be returned with public
-evidence links. A public GitHub Gist under your account is the preferred place
-to publish the attestation and signature.
-
-**Never send your private signing key or secret randomness.** Neither is
-required for verification or reward payment.
-
 > An earlier ceremony was withdrawn and its directory removed;
 > [`README.md`](README.md) says what was wrong with it. If you are holding
 > older instructions from somewhere else, discard them — this directory is
