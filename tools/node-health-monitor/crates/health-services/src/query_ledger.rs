@@ -679,7 +679,8 @@ impl QueryLedger {
             .unwrap_or(0);
         let mut staged: Vec<(EvidenceRow, StoredEvidence)> = Vec::with_capacity(page.len());
         for (origin, record) in page {
-            let reproduced = crate::manager_query_source::project_process(origin)?
+            let reproduced = crate::manager_query_source::project_process(origin)
+                .map_err(|error| format!("M projection integrity: {error}"))?
                 .ok_or("M origin has no supported projection")?;
             if serde_json::to_vec(record).map_err(failure)?
                 != serde_json::to_vec(&reproduced).map_err(failure)?

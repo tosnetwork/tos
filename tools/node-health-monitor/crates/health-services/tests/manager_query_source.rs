@@ -619,7 +619,7 @@ fn non_anchor_retained_parent_body_change_is_refused_by_sequence_lookup() {
 }
 
 #[tokio::test]
-async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart() {
+async fn projection_or_cursor_commit_failure_preserves_fixed_grant_and_replays() {
     for mode in ["projection_insert", "cursor_commit"] {
         let directory = std::env::temp_dir().join(format!(
             "nhm-m-query-failure-{mode}-{}-{}",
@@ -686,7 +686,8 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
             _ => unreachable!(),
         }
         assert!(import_manager(&state).unwrap_err().contains("injected"));
-        assert!(state.data.lock().unwrap().manager_conflicted);
+        assert!(!state.data.lock().unwrap().manager_conflicted);
+        assert!(!state.data.lock().unwrap().manager_caught_up);
         if mode == "projection_insert" {
             // The third row failed inside one page transaction. Neither the
             // first new row nor the in-memory candidate may escape it.
@@ -713,7 +714,7 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
                 .watermark,
             1
         );
-        let refused = query_router(state.clone())
+        let existing = query_router(state.clone())
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -726,10 +727,38 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
             )
             .await
             .unwrap();
-        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
-        drop(state);
+        assert_eq!(existing.status(), StatusCode::OK, "fixed W survives {mode}");
+        let request_new_grant = || {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/control/grants")
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                    .to_string(),
+                ))
+                .unwrap()
+        };
+        assert_eq!(
+            control_router(state.clone()).oneshot(request_new_grant()).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "lagging import must not publish a new fixed W"
+        );
         conn.execute_batch("DROP TRIGGER c09_inject").unwrap();
         drop(conn);
+        assert_eq!(import_manager(&state).unwrap(), (3, 2));
+        assert!(state.data.lock().unwrap().manager_caught_up);
+        assert_eq!(
+            state.data.lock().unwrap().grants[grant["run_id"].as_str().unwrap()].watermark,
+            1
+        );
+        assert_eq!(
+            control_router(state.clone()).oneshot(request_new_grant()).await.unwrap().status(),
+            StatusCode::OK
+        );
+        drop(state);
         let restored =
             ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
                 .unwrap()
@@ -755,10 +784,12 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
             3,
             "committed parents must replay without another query row"
         );
-        assert!(
-            restored.data.lock().unwrap().grants.is_empty(),
-            "revoked grant must not renew across restart"
-        );
+        assert!(restored
+            .data
+            .lock()
+            .unwrap()
+            .grants
+            .contains_key(grant["run_id"].as_str().unwrap()));
         drop(restored);
         drop(manager);
         std::fs::remove_dir_all(directory).unwrap();
@@ -892,7 +923,50 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
             Err(error) => panic!("unexpected migration failure: {error}"),
         }
     }
-    if paused_for_grant {
+    assert!(paused_for_grant, "the fixed W must reach an actual eviction boundary");
+    let paused_cursor = restored
+        .query_ledger
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .manager_cursor()
+        .unwrap()
+        .unwrap()
+        .watermark;
+    let old_at_capacity = query_router(restored.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/query/capabilities")
+                .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                .header("x-tos-run-token", grant["run_token"].as_str().unwrap())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"run_id":grant["run_id"]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(old_at_capacity.status(), StatusCode::OK);
+    assert_eq!(
+        control_router(restored.clone()).oneshot(request()).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        restored
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark,
+        paused_cursor,
+        "bounded refusal cannot advance the M cursor"
+    );
+    {
         let revoked = control_router(restored.clone())
             .oneshot(
                 Request::builder()
