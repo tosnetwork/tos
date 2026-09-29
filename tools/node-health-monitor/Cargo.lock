@@ -1241,6 +1241,8 @@ dependencies = [
  "axum",
  "chrono",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "reqwest",
  "rusqlite",
  "serde",
@@ -1248,6 +1250,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tokio",
+ "tokio-rustls",
  "tos-health-core",
  "tower",
 ]

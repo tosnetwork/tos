@@ -177,3 +177,42 @@ fn future_schema_and_invalid_page_are_rejected() {
     assert!(e.page("v1", "node", 1, 2, 100).is_err());
     assert!(e.page("v1", "node", 1, 0, 101).is_err());
 }
+#[test]
+fn whole_round_rolls_back_when_any_outbox_change_fails() {
+    let t = Temp::new();
+    let mut db = ControlDb::open(&t.0.join("control.db"), 1_048_576, 16, 1).unwrap();
+    let k = key();
+    let other = RuleKey { rule: "queue_stall".into(), ..k.clone() };
+    let updates = vec![
+        ControlUpdate {
+            key: k.clone(),
+            signal: bad(),
+            required: vec!["native".into()],
+            hold: 60_000,
+        },
+        ControlUpdate {
+            key: other.clone(),
+            signal: bad(),
+            required: vec!["native".into()],
+            hold: 60_000,
+        },
+    ];
+    assert!(db.evaluate_round(updates, 0).is_err());
+    assert!(db.state(&k).unwrap().is_none());
+    assert!(db.state(&other).unwrap().is_none());
+    assert!(db.pending().unwrap().is_empty());
+    assert_eq!(db.sequence().unwrap(), 0);
+}
+#[test]
+fn immutable_inventory_revision_is_enforced() {
+    let t = Temp::new();
+    let mut db = ControlDb::open(&t.0.join("control.db"), 1_048_576, 16, 32).unwrap();
+    db.bind_inventory("r1", "one").unwrap();
+    db.bind_inventory("r1", "one").unwrap();
+    for n in 2..=64 {
+        db.bind_inventory(&format!("r{n}"), "one").unwrap();
+    }
+    db.bind_inventory("r1", "one").unwrap();
+    assert!(db.bind_inventory("r65", "one").is_err());
+    assert_eq!(db.bind_inventory("r1", "two").unwrap_err(), "inventory revision conflict");
+}

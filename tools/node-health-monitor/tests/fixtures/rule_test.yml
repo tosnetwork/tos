@@ -1,0 +1,36 @@
+rule_files:
+  - ../../deploy/prometheus/rules.yml
+evaluation_interval: 5s
+tests:
+  - interval: 5s
+    input_series:
+      - series: 'tos_health_incident_active{node="v1",scope="node",rule="storage_ack_failure",severity="critical"}'
+        values: '1 1 1 1 1 1 1 1 1 1 1 1 0'
+      - series: 'tos_health_rule_input_usable{node="v1",scope="node",rule="storage_ack_failure"}'
+        values: '1 1 0 0 _ _ stale _ 1 1 1 1 1'
+      - series: 'tos_health_evaluation_sequence{monitor_epoch="m1"}'
+        values: '1+1x12'
+      - series: 'up{job="health-state"}'
+        values: '1x12'
+    promql_expr_test:
+      - expr: 'tos_health_incident_active == 1'
+        eval_time: 30s
+        exp_samples:
+          - labels: 'tos_health_incident_active{node="v1",scope="node",rule="storage_ack_failure",severity="critical"}'
+            value: 1
+      - expr: 'tos_health_incident_active == 1'
+        eval_time: 60s
+        exp_samples: []
+  - interval: 5s
+    input_series:
+      - series: 'up{job="health-state"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 50s
+        alertname: HealthStateUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: health-state
+              severity: critical
+            exp_annotations:
+              summary: 'Rule authority is unavailable; existing incidents are not cleared.'

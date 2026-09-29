@@ -1,0 +1,28 @@
+route:
+  receiver: incident-transport
+  group_by: [alertname, node, scope, rule]
+  group_wait: 0s
+  group_interval: 15s
+  repeat_interval: 30s
+  routes:
+    - matchers: ['alertname="Watchdog"']
+      receiver: independent-watchdog
+      group_by: [alertname, monitor_id, monitor_epoch]
+      group_wait: 0s
+      group_interval: 15s
+      repeat_interval: 30s
+receivers:
+  - name: incident-transport
+    # This example deliberately has no customer notification destination.
+    # Authoritative recovery delivery uses health-state's authenticated outbox.
+  - name: independent-watchdog
+    webhook_configs:
+      - url: https://watchdog.example.invalid/v1/watchdog/pipeline
+        send_resolved: false
+        http_config:
+          authorization:
+            credentials_file: /etc/tos-health/pipeline.token
+          tls_config:
+            ca_file: /etc/tos-health/ca.pem
+            cert_file: /etc/tos-health/alertmanager.pem
+            key_file: /etc/tos-health/alertmanager.key

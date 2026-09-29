@@ -4,7 +4,7 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tos_health_core::observer::Deadman;
+use tos_health_services::watchdog::WatchdogState;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -15,6 +15,9 @@ struct Config {
     monitor_token_file: PathBuf,
     receiver_token_file: PathBuf,
     observer_id: String,
+    monitor_id: String,
+    pipeline_listen: String,
+    pipeline_token_file: PathBuf,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,8 +57,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let receiver_token =
         String::from_utf8(tos_health_services::secret(&config.receiver_token_file)?)?;
     let started = Instant::now();
-    let mut deadman = Deadman::new(0);
-    let mut epoch = String::new();
+    let state = WatchdogState::new(
+        config.monitor_id.clone(),
+        tos_health_services::secret(&config.pipeline_token_file)?,
+    )?;
+    let listener =
+        tokio::net::TcpListener::bind(tos_health_services::loopback(&config.pipeline_listen)?)
+            .await?;
+    let router = tos_health_services::watchdog::router(state.clone());
+    let _server = tokio::spawn(async move { axum::serve(listener, router).await });
     let mut last_notice = None;
     let mut interval = tokio::time::interval(Duration::from_secs(15));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -71,22 +81,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         && !heartbeat.process_epoch.is_empty()
                         && heartbeat.process_epoch.len() <= 128
                     {
-                        if let Ok(sequence) = heartbeat.sequence.parse::<u64>() {
-                            // Epoch is supplied by the authenticated monitoring source.
-                            if epoch != heartbeat.process_epoch {
-                                epoch = heartbeat.process_epoch;
-                                deadman = Deadman::new(now);
-                            }
-                            deadman.receive(now, sequence);
+                        if let Ok(sequence) = tos_health_core::wire::exact_u64(&heartbeat.sequence)
+                        {
+                            let _ = state.receive_process(&heartbeat.process_epoch, sequence);
                         }
                     }
                 }
             }
         }
-        if deadman.unavailable(now) && last_notice.is_none_or(|at| now.saturating_sub(at) >= 60_000)
+        let (process_unavailable, pipeline_unavailable) = state.unavailable()?;
+        if (process_unavailable || pipeline_unavailable)
+            && last_notice.is_none_or(|at| now.saturating_sub(at) >= 60_000)
         {
             last_notice = Some(now); // bound failures as well as successful sends
-            let alert = json!({"schema_version":1,"alert":"MonitoringUnavailable","observer_id":config.observer_id,"severity":"critical","observed_at":chrono::Utc::now().to_rfc3339(),"scope":"monitor_heartbeat","rule_chain_status":"unknown"});
+            let alert = json!({"schema_version":1,"alert":"MonitoringUnavailable","observer_id":config.observer_id,"severity":"critical","observed_at":chrono::Utc::now().to_rfc3339(),"scope":"monitor","process_unavailable":process_unavailable,"pipeline_unavailable":pipeline_unavailable});
             match client
                 .post(&config.receiver_url)
                 .bearer_auth(&receiver_token)

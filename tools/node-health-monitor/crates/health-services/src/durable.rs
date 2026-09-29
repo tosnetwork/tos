@@ -41,6 +41,21 @@ fn open(path: &Path, max_bytes: u64) -> Result<Connection> {
     conn.pragma_update(None, "user_version", 1).map_err(err)?;
     Ok(conn)
 }
+fn bind_network(conn: &mut Connection, network: &str) -> Result<()> {
+    if !tos_health_core::wire::hash(network) {
+        return Err("invalid database network".into());
+    }
+    let tx = conn.transaction().map_err(err)?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS database_identity(singleton INTEGER PRIMARY KEY CHECK(singleton=1),network TEXT NOT NULL)").map_err(err)?;
+    tx.execute("INSERT OR IGNORE INTO database_identity VALUES(1,?1)", [network]).map_err(err)?;
+    let stored: String = tx
+        .query_row("SELECT network FROM database_identity WHERE singleton=1", [], |r| r.get(0))
+        .map_err(err)?;
+    if stored != network {
+        return Err("database network mismatch".into());
+    }
+    tx.commit().map_err(err)
+}
 fn wal_budget(path: &Path, quota: u64) -> Result<()> {
     let wal = std::ffi::OsString::from(format!("{}-wal", path.display()));
     match std::fs::metadata(wal) {
@@ -69,6 +84,9 @@ pub struct EvidenceDb {
     quota: u64,
 }
 impl EvidenceDb {
+    pub fn bind_network(&mut self, network: &str) -> Result<()> {
+        bind_network(&mut self.conn, network)
+    }
     pub fn open(path: &Path, quota: u64) -> Result<Self> {
         let conn = open(path, quota)?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS observations (
@@ -210,6 +228,12 @@ pub enum Evaluation {
     Unknown,
     Good { samples: BTreeMap<String, Sample> },
 }
+pub struct ControlUpdate {
+    pub key: RuleKey,
+    pub signal: Evaluation,
+    pub required: Vec<String>,
+    pub hold: u64,
+}
 pub struct ControlDb {
     conn: Connection,
     path: std::path::PathBuf,
@@ -218,6 +242,9 @@ pub struct ControlDb {
     max_outbox: u32,
 }
 impl ControlDb {
+    pub fn bind_network(&mut self, network: &str) -> Result<()> {
+        bind_network(&mut self.conn, network)
+    }
     pub fn open(path: &Path, quota: u64, max_incidents: u32, max_outbox: u32) -> Result<Self> {
         if max_incidents == 0 || max_outbox == 0 || max_incidents > 10000 || max_outbox > 10000 {
             return Err("invalid control capacity".into());
@@ -283,59 +310,145 @@ impl ControlDb {
         required: &[String],
         hold: u64,
     ) -> Result<HealthState> {
-        if !key.valid() {
-            return Err("invalid rule key".into());
+        let mut results = self.evaluate_round(
+            vec![ControlUpdate { key: key.clone(), signal, required: required.to_vec(), hold }],
+            now,
+        )?;
+        results.pop().map(|(_, state)| state).ok_or_else(|| "empty evaluation".into())
+    }
+    /// The published sequence advances only when every rule and its outbox changes commit.
+    pub fn evaluate_round(
+        &mut self,
+        updates: Vec<ControlUpdate>,
+        now: u64,
+    ) -> Result<Vec<(RuleKey, HealthState)>> {
+        if updates.is_empty() || updates.len() > 2304 {
+            return Err("invalid evaluation size".into());
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        for update in &updates {
+            if !update.key.valid()
+                || !keys.insert((&update.key.node, &update.key.scope, &update.key.rule))
+            {
+                return Err("invalid or duplicate rule key".into());
+            }
         }
         wal_budget(&self.path, self.quota)?;
         let tx = self.conn.transaction().map_err(err)?;
-        let old: Option<String> = tx
-            .query_row(
-                "SELECT body FROM incidents WHERE node=?1 AND scope=?2 AND rule=?3",
-                params![key.node, key.scope, key.rule],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(err)?;
-        if old.is_none() {
-            let n: u32 =
-                tx.query_row("SELECT count(*) FROM incidents", [], |r| r.get(0)).map_err(err)?;
-            if n >= self.max_incidents {
-                return Err("incident capacity exceeded".into());
-            }
-        }
-        let mut state = match old {
-            Some(b) => serde_json::from_str::<HealthState>(&b).map_err(err)?,
-            None => HealthState::default(),
-        };
-        let before = state.state;
-        match signal {
-            Evaluation::Bad { severity } => state.bad(&severity).map_err(err)?,
-            Evaluation::Unknown => state.unknown(),
-            Evaluation::Good { samples } => {
-                state.good(now, required, samples, hold, 2).map_err(err)?
-            }
-        }
         let sequence: i64 = tx
             .query_row("SELECT sequence FROM evaluation WHERE singleton=1", [], |r| r.get(0))
             .map_err(err)?;
         let sequence = sequence.checked_add(1).ok_or("evaluation sequence exhausted")?;
-        let body = serde_json::to_string(&state).map_err(err)?;
-        if state.state != before {
-            let n: u32 =
-                tx.query_row("SELECT count(*) FROM outbox", [], |r| r.get(0)).map_err(err)?;
-            if n >= self.max_outbox {
-                return Err("outbox capacity exceeded".into());
-            }
-            let id =
-                format!("{}:{}:{}:{}:{}", key.node, key.scope, key.rule, state.episode.0, sequence);
-            tx.execute("INSERT INTO outbox(key,body) VALUES(?1,?2)", params![id, body])
+        let mut results = Vec::new();
+        for update in updates {
+            let ControlUpdate { key, signal, required, hold } = update;
+            let old: Option<String> = tx
+                .query_row(
+                    "SELECT body FROM incidents WHERE node=?1 AND scope=?2 AND rule=?3",
+                    params![key.node, key.scope, key.rule],
+                    |r| r.get(0),
+                )
+                .optional()
                 .map_err(err)?;
+            if old.is_none() {
+                let n: u32 = tx
+                    .query_row("SELECT count(*) FROM incidents", [], |r| r.get(0))
+                    .map_err(err)?;
+                if n >= self.max_incidents {
+                    return Err("incident capacity exceeded".into());
+                }
+            }
+            let mut state = match old {
+                Some(b) => serde_json::from_str::<HealthState>(&b).map_err(err)?,
+                None => HealthState::default(),
+            };
+            let before = state.state;
+            let severity_before = state.severity.clone();
+            match signal {
+                Evaluation::Bad { severity } => state.bad(&severity).map_err(err)?,
+                Evaluation::Unknown => state.unknown(),
+                Evaluation::Good { samples } => {
+                    state.good(now, &required, samples, hold, 2).map_err(err)?
+                }
+            }
+            let body = serde_json::to_string(&state).map_err(err)?;
+            if state.state != before || state.severity != severity_before {
+                let n: u32 =
+                    tx.query_row("SELECT count(*) FROM outbox", [], |r| r.get(0)).map_err(err)?;
+                if n >= self.max_outbox {
+                    return Err("outbox capacity exceeded".into());
+                }
+                let id = format!(
+                    "{}:{}:{}:{}:{}",
+                    key.node, key.scope, key.rule, state.episode.0, sequence
+                );
+                let event = serde_json::to_string(
+                    &serde_json::json!({"schema_version":1,"rule_key":key,"health_state":state}),
+                )
+                .map_err(err)?;
+                tx.execute("INSERT INTO outbox(key,body) VALUES(?1,?2)", params![id, event])
+                    .map_err(err)?;
+            }
+            tx.execute("INSERT INTO incidents VALUES(?1,?2,?3,?4) ON CONFLICT(node,scope,rule) DO UPDATE SET body=excluded.body",params![key.node,key.scope,key.rule,body]).map_err(err)?;
+            results.push((key, state));
         }
-        tx.execute("INSERT INTO incidents VALUES(?1,?2,?3,?4) ON CONFLICT(node,scope,rule) DO UPDATE SET body=excluded.body",params![key.node,key.scope,key.rule,body]).map_err(err)?;
         tx.execute("UPDATE evaluation SET sequence=?1 WHERE singleton=1", [sequence])
             .map_err(err)?;
         tx.commit().map_err(err)?;
-        Ok(state)
+        Ok(results)
+    }
+    pub fn bind_inventory(&mut self, revision: &str, body: &str) -> Result<()> {
+        if revision.is_empty() || revision.len() > 128 || body.len() > 262_144 {
+            return Err("invalid inventory".into());
+        }
+        self.conn.execute_batch("CREATE TABLE IF NOT EXISTS inventory(revision TEXT PRIMARY KEY,body TEXT NOT NULL)").map_err(err)?;
+        let old: Option<String> = self
+            .conn
+            .query_row("SELECT body FROM inventory WHERE revision=?1", [revision], |r| r.get(0))
+            .optional()
+            .map_err(err)?;
+        if let Some(old) = old {
+            if old != body {
+                return Err("inventory revision conflict".into());
+            }
+            return Ok(());
+        }
+        let count: u32 =
+            self.conn.query_row("SELECT count(*) FROM inventory", [], |r| r.get(0)).map_err(err)?;
+        if count >= 64 {
+            return Err("inventory history limit".into());
+        }
+        self.conn
+            .execute("INSERT OR IGNORE INTO inventory VALUES(?1,?2)", params![revision, body])
+            .map_err(err)?;
+        Ok(())
+    }
+    pub fn all_states(&self) -> Result<Vec<(RuleKey, HealthState)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT node,scope,rule,body FROM incidents ORDER BY node,scope,rule LIMIT 10001",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })
+            .map_err(err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (node, scope, rule, body) = row.map_err(err)?;
+            if out.len() >= self.max_incidents as usize {
+                return Err("incident capacity exceeded".into());
+            }
+            out.push((RuleKey { node, scope, rule }, serde_json::from_str(&body).map_err(err)?));
+        }
+        Ok(out)
     }
     pub fn sequence(&self) -> Result<u64> {
         let n: i64 = self
