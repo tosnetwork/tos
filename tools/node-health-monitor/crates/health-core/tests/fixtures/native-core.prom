@@ -3,7 +3,7 @@ tos_fixture_calls 1.000000
 # TYPE tos_exporter_snapshot_generation gauge
 tos_exporter_snapshot_generation 1.000000
 # TYPE tos_exporter_snapshot_completed_timestamp_seconds gauge
-tos_exporter_snapshot_completed_timestamp_seconds 1790658307.591420
+tos_exporter_snapshot_completed_timestamp_seconds 1790661351.623271
 # TYPE tos_health_pq_accounting_complete gauge
 tos_health_pq_accounting_complete{operation="sign"} 1.000000
 # TYPE tos_health_pq_accounting_complete gauge

@@ -265,6 +265,41 @@
         "contract_valid": false,
         "performance_gate": "not_run"
       }
+    },
+    {
+      "source_id": "native_core",
+      "anchor": {
+        "commit": "d27f534d66be28a0753da1ef912df3fb1effba2e",
+        "path": "metrics/native-core-snapshot.h",
+        "symbol": "NativeCorePublisher",
+        "source_sha256": "8149ec2fdf4a441db08cb85e048dae97fa53629f460608be7b7c57ed38edb7bf"
+      },
+      "interface": "GET /health-snapshot (loopback, configured alias and network only)",
+      "grammar": "source-envelope.schema.json native_core payload; exact decimal u64; paired generation and immutable OpenMetrics hash",
+      "semantic_type": "cumulative counter and source metadata",
+      "unit": "operations/bytes/milliseconds",
+      "scope": "node",
+      "absence": "unavailable or explicit null; never zero",
+      "reset": "process/source epoch",
+      "generation": "same valid completion as OpenMetrics",
+      "owner": "health_edge",
+      "cost": "one fixed paired read per 15-second native scrape; endpoint reads cached data; contiguous-work performance not accepted",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/native-core.json",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic collector",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "openmetrics_fixture": "crates/health-core/tests/fixtures/native-core.prom",
+        "production_node": false
+      },
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      }
     }
   ]
 }

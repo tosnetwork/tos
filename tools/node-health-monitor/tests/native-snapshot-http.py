@@ -4,7 +4,7 @@ import argparse,hashlib,http.client,json,socket,subprocess,tempfile,time
 from pathlib import Path
 from jsonschema import Draft202012Validator
 ROOT=Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('binary');p.add_argument('--mode',choices=['fast','slow','disabled','lease']);args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('binary');p.add_argument('--write-fixtures',action='store_true');p.add_argument('--mode',choices=['fast','slow','disabled','lease']);args=p.parse_args()
 subprocess.run([args.binary],check=True)
 def check(mode):
  with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
@@ -45,6 +45,10 @@ def check(mode):
    assert value['payload']['openmetrics_hash']==hashlib.sha256(stable).hexdigest()
    assert value['content_hash']==hashlib.sha256(json.dumps(value['payload'],sort_keys=True,separators=(',',':')).encode()).hexdigest()
    Draft202012Validator(json.loads((ROOT/'contracts/source-envelope.schema.json').read_text())).validate(value)
+   if args.write_fixtures and mode=='fast':
+    fixture=ROOT/'crates/health-core/tests/fixtures'
+    (fixture/'native-core.json').write_bytes(raw)
+    (fixture/'native-core.prom').write_bytes(body)
    initial_age=value.pop('source_age_ms')
    for _ in range(1000):
     status,_,raw=request('/health-snapshot');assert status==200

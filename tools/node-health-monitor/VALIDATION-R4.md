@@ -172,3 +172,14 @@ its actual build flags. The reconstructed full validator executable has not yet
 been relinked at this checkpoint; the earlier pre-cleanup full build is not
 claimed as validation of this recovered source tree. No deployment/performance
 or 72-hour acceptance is implied by the isolated actor fixture.
+
+### Reproducible native source fixture
+
+The frozen JSON/OpenMetrics pair was recaptured from the reconstructed C++ actor
+binary after source restoration. `native-snapshot-http.py --mode fast
+--write-fixtures BUILD/test-health-native-snapshot` regenerates both files only
+after exact generation, hash and schema validation. The native contract, typed
+service and mTLS integration tests pass with the new pair. The source manifest
+pins `NativeCorePublisher` to commit `d27f534d66be28a0753da1ef912df3fb1effba2e`
+and labels the fixture as synthetic actor data, not a production-node capture.
+The manifest remains incomplete and its performance gate remains `not_run`.
