@@ -1,0 +1,85 @@
+# TYPE tos_fixture_calls counter
+tos_fixture_calls 1.000000
+# TYPE tos_exporter_snapshot_generation gauge
+tos_exporter_snapshot_generation 1.000000
+# TYPE tos_exporter_snapshot_completed_timestamp_seconds gauge
+tos_exporter_snapshot_completed_timestamp_seconds 1790658307.591420
+# TYPE tos_health_pq_accounting_complete gauge
+tos_health_pq_accounting_complete{operation="sign"} 1.000000
+# TYPE tos_health_pq_accounting_complete gauge
+tos_health_pq_accounting_complete{operation="verify"} 1.000000
+# HELP tos_pq_operations_total Consensus PQ production operations; approximate concurrent snapshot.
+# TYPE tos_pq_operations_total counter
+tos_pq_operations_total{operation="sign",suite="mldsa44",result="success"} 9007199254740992.000000
+tos_pq_operations_total{operation="sign",suite="mldsa44",result="failure"} 0.000000
+tos_pq_operations_total{operation="verify",suite="mldsa44",result="success"} 0.000000
+tos_pq_operations_total{operation="verify",suite="mldsa44",result="failure"} 0.000000
+# HELP tos_pq_operation_duration_seconds Consensus PQ operation duration.
+# TYPE tos_pq_operation_duration_seconds histogram
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.001000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.002000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.005000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.010000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.020000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.050000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.100000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.200000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.500000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="1.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="2.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="5.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="+Inf"} 0.000000
+tos_pq_operation_duration_seconds_count{operation="sign",suite="mldsa44",result="success"} 0.000000
+tos_pq_operation_duration_seconds_sum{operation="sign",suite="mldsa44",result="success"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.001000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.002000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.005000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.010000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.020000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.050000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.100000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.200000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="0.500000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="1.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="2.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="5.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="failure",le="+Inf"} 0.000000
+tos_pq_operation_duration_seconds_count{operation="sign",suite="mldsa44",result="failure"} 0.000000
+tos_pq_operation_duration_seconds_sum{operation="sign",suite="mldsa44",result="failure"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.001000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.002000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.005000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.010000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.020000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.050000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.100000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.200000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="0.500000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="1.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="2.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="5.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="success",le="+Inf"} 0.000000
+tos_pq_operation_duration_seconds_count{operation="verify",suite="mldsa44",result="success"} 0.000000
+tos_pq_operation_duration_seconds_sum{operation="verify",suite="mldsa44",result="success"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.001000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.002000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.005000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.010000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.020000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.050000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.100000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.200000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="0.500000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="1.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="2.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="5.000000"} 0.000000
+tos_pq_operation_duration_seconds_bucket{operation="verify",suite="mldsa44",result="failure",le="+Inf"} 0.000000
+tos_pq_operation_duration_seconds_count{operation="verify",suite="mldsa44",result="failure"} 0.000000
+tos_pq_operation_duration_seconds_sum{operation="verify",suite="mldsa44",result="failure"} 0.000000
+# TYPE tos_exporter_collection_inflight gauge
+tos_exporter_collection_inflight 0.000000
+# TYPE tos_exporter_collection_skipped_total counter
+tos_exporter_collection_skipped_total 0.000000
+# TYPE tos_exporter_collection_failures_total counter
+tos_exporter_collection_failures_total 0.000000
+# EOF

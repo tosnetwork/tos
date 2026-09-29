@@ -15,3 +15,5 @@ pub mod freshness;
 pub mod health_state;
 pub mod rules;
 pub mod wire;
+
+pub mod native;

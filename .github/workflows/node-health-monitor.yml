@@ -38,6 +38,7 @@ jobs:
           python3 tools/node-health-monitor/tests/mutations.py
           python3 tools/node-health-monitor/tests/r4-mutations.py
           python3 tools/node-health-monitor/tests/runtime-mutations.py
+          python3 tools/node-health-monitor/tests/native-contract-mutations.py
       - name: Compile and remove native protections
         run: python3 tools/node-health-monitor/tests/native-mutations.py
   native:

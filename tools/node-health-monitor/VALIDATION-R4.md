@@ -108,3 +108,30 @@ ran without incremental compilation; after the final network/quarantine change,
 the three additional boundary/queue mutations and affected receipt/live-quarantine/process-restart
 mutations were rerun, followed by the full 84-test workspace regression. There
 was no production deployment and no real Prometheus/Alertmanager or soak pass.
+
+## Native contract recovery checkpoint (2026-09-29)
+
+The scratch source tree was removed by workspace maintenance before the preceding
+native integration work was committed. This checkpoint restores the Rust native
+contract only. Earlier full native build and integration logs do not prove that
+this reconstructed tree contains that integration; native publisher, sampler and
+manager wiring remain separate work.
+
+Boundary-to-test mapping in `health-core/tests/native_contract.rs`:
+
+- Exact decimal counters, header generation, inventory identity and content/body
+  pairing: `exact_pairing_rejects_changed_generation_and_content`.
+- Explicit nullable fields and closed payloads:
+  `required_nullable_and_unknown_fields_are_enforced`.
+- Source age and instrumentation quality:
+  `age_and_quality_cannot_be_fabricated`.
+- Stable content identity, excluding only receipt time and source age:
+  `immutable_identity_excludes_only_receipt_and_age`.
+
+All four tests pass. `tests/native-contract-mutations.py` compiled and killed six
+mutants (generation, content hash, required nullable, source age, quality and
+immutable metadata). Compilation failure is not accepted as a killed mutant.
+The JSON/OpenMetrics fixture was recaptured from the surviving isolated C++ test
+executable; it is not a production-node fixture or proof of the lost C++ source.
+The fixture deliberately carries a PQ counter above the exact floating-point
+integer range. No validator was deployed or restarted.
