@@ -1,0 +1,143 @@
+{
+  "scope": "six actual local Edge snapshot identities; no consensus proof",
+  "accepted": false,
+  "check_passed": true,
+  "schema_sha256": "eb24e2ceb8e9c3528476bc08c226d1b9add2dd802b40e88bc11d9423df2215dc",
+  "rows": [
+    {
+      "node": 1,
+      "http_status": 200,
+      "bytes": 10241,
+      "sha256": "46f0cb260c0ccf0d43f6cf5a33ad7ef9fb3fe56300205a355cfd85f12228dd93",
+      "request_duration_ns": 21900019,
+      "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2526870:30370417",
+      "native_epoch": "f72a52b2f44cc45ff59cd6d8ceeeee0c",
+      "binding": {
+        "checked_at": "2026-09-29T15:51:33.270Z",
+        "exe_identity_sha256": "cdec1cb9e85d1a567c4217c9ea69f0ad626da01d0bb1e853b717f1b3778686a0",
+        "kind": "native_process_binding",
+        "listener_addr": "127.0.0.1:9011",
+        "listener_inode": "7473465",
+        "native_epoch": "f72a52b2f44cc45ff59cd6d8ceeeee0c",
+        "pid": 2526870,
+        "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2526870:30370417",
+        "start_ticks": "30370417"
+      },
+      "passed": true
+    },
+    {
+      "node": 2,
+      "http_status": 200,
+      "bytes": 10248,
+      "sha256": "424cbe8ad2dfff4e3a68a94a1d9a6f7636406410f8b0091a8982b5681a7e8285",
+      "request_duration_ns": 51692440,
+      "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2532131:30371062",
+      "native_epoch": "925210bc59e2f10fd0c0d8169b6d6356",
+      "binding": {
+        "checked_at": "2026-09-29T15:51:33.286Z",
+        "exe_identity_sha256": "cdec1cb9e85d1a567c4217c9ea69f0ad626da01d0bb1e853b717f1b3778686a0",
+        "kind": "native_process_binding",
+        "listener_addr": "127.0.0.1:9012",
+        "listener_inode": "7449013",
+        "native_epoch": "925210bc59e2f10fd0c0d8169b6d6356",
+        "pid": 2532131,
+        "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2532131:30371062",
+        "start_ticks": "30371062"
+      },
+      "passed": true
+    },
+    {
+      "node": 3,
+      "http_status": 200,
+      "bytes": 10252,
+      "sha256": "be6bf9f39fcc17755aa775fd351e5555ac290ab030bda3ecd5c7e4e8eafe6385",
+      "request_duration_ns": 42559179,
+      "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2532399:30372191",
+      "native_epoch": "dec16b53b6b71f367e765c956314fcd7",
+      "binding": {
+        "checked_at": "2026-09-29T15:51:18.304Z",
+        "exe_identity_sha256": "cdec1cb9e85d1a567c4217c9ea69f0ad626da01d0bb1e853b717f1b3778686a0",
+        "kind": "native_process_binding",
+        "listener_addr": "127.0.0.1:9013",
+        "listener_inode": "7536667",
+        "native_epoch": "dec16b53b6b71f367e765c956314fcd7",
+        "pid": 2532399,
+        "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2532399:30372191",
+        "start_ticks": "30372191"
+      },
+      "passed": true
+    },
+    {
+      "node": 4,
+      "http_status": 200,
+      "bytes": 10238,
+      "sha256": "ac7a2ef02e131c9985606147641f9c922ba5e45ce8ba4e54f95c94aa991bfbf0",
+      "request_duration_ns": 51155462,
+      "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2533392:30373223",
+      "native_epoch": "a7f237101935712b3338014fc551cc20",
+      "binding": {
+        "checked_at": "2026-09-29T15:51:33.323Z",
+        "exe_identity_sha256": "cdec1cb9e85d1a567c4217c9ea69f0ad626da01d0bb1e853b717f1b3778686a0",
+        "kind": "native_process_binding",
+        "listener_addr": "127.0.0.1:9014",
+        "listener_inode": "7407510",
+        "native_epoch": "a7f237101935712b3338014fc551cc20",
+        "pid": 2533392,
+        "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2533392:30373223",
+        "start_ticks": "30373223"
+      },
+      "passed": true
+    },
+    {
+      "node": 5,
+      "http_status": 200,
+      "bytes": 8851,
+      "sha256": "e371b440aeb20f573701cb8fcb418e32f66a5be5101b106ea1c8dd04024de7ec",
+      "request_duration_ns": 27690463,
+      "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2541636:30374262",
+      "native_epoch": "a4852c1fa9d7508037790cab41d1e0b5",
+      "binding": {
+        "checked_at": "2026-09-29T15:51:33.330Z",
+        "exe_identity_sha256": "cdec1cb9e85d1a567c4217c9ea69f0ad626da01d0bb1e853b717f1b3778686a0",
+        "kind": "native_process_binding",
+        "listener_addr": "127.0.0.1:9015",
+        "listener_inode": "7389841",
+        "native_epoch": "a4852c1fa9d7508037790cab41d1e0b5",
+        "pid": 2541636,
+        "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2541636:30374262",
+        "start_ticks": "30374262"
+      },
+      "passed": true
+    },
+    {
+      "node": 6,
+      "http_status": 200,
+      "bytes": 8851,
+      "sha256": "5781d722cdfa626a6a77c7ee16c1ad0999f7c79482c23421cab68c05d072ceef",
+      "request_duration_ns": 33803044,
+      "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2547884:30374469",
+      "native_epoch": "6602dacc6cbdcb286cf00e6053b60586",
+      "binding": {
+        "checked_at": "2026-09-29T15:51:33.395Z",
+        "exe_identity_sha256": "cdec1cb9e85d1a567c4217c9ea69f0ad626da01d0bb1e853b717f1b3778686a0",
+        "kind": "native_process_binding",
+        "listener_addr": "127.0.0.1:9016",
+        "listener_inode": "7405252",
+        "native_epoch": "6602dacc6cbdcb286cf00e6053b60586",
+        "pid": 2547884,
+        "process_epoch": "b6a0413d-dea2-4074-95ef-6462ce861899:2547884:30374469",
+        "start_ticks": "30374469"
+      },
+      "passed": true
+    }
+  ],
+  "source_commit": "c8bc0e10c6ff82ea7d765f5b350ab8bcd8f99a00",
+  "binary_sha256": "1fab27ae7920e7ca2dddb8e7d4456bd4555c3486f4202eccc7bbfb3ae8762ddb",
+  "lineage": {
+    "original_six_503": "retained",
+    "mutable_artifact_preflight": "refused before mutation",
+    "first_rerun_six_400": "client Host 127.0.0.1 refused; localhost fixed; raw retained"
+  },
+  "validator_restarted": false,
+  "m_ingest_tested": false
+}
