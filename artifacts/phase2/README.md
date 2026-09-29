@@ -71,28 +71,6 @@ metadata-only history rewrite and unchanged signed artifact payloads.
 empty VPS to a published attestation. It assumes you have never seen this
 repository. Roughly 25 minutes, most of it waiting.
 
-### Participation reward
-
-TOS currently offers **300 TOS for each completed contribution that is accepted
-and verified** during this open contribution window. This is an operational
-participation incentive, not part of the cryptographic protocol and not a
-change to the fixed commitments in [ANNOUNCEMENT.md](ANNOUNCEMENT.md).
-
-A contribution is reward-eligible only after all of the following are true:
-
-1. the contributor is registered with a published public signing key;
-2. the contribution extends the latest accepted ceremony chain;
-3. `phase2-verify` accepts the mathematics for the updated bundle;
-4. the signed attestation verifies against the registered public key;
-5. the contributor publishes the attestation and signature under an identity
-   they control (a public GitHub Gist is the preferred submission format); and
-6. the updated bundle and evidence links are returned and accepted into the
-   public ceremony record.
-
-The reward is **300 TOS per accepted contribution**. Never send a private
-signing key or secret randomness to claim a reward; neither is required and
-either should remain secret.
-
 ## This is the second attempt, and the reasons matter
 
 A first ceremony was run and **withdrawn on 2026-09-22**. Its directory has
