@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, path::PathBuf};
 use tos_health_core::{
     evidence::{Evidence, EvidenceStore},
@@ -95,6 +96,61 @@ fn legacy_mcp_binding_cannot_reset_unknown_spent_budget() {
     db.execute("DELETE FROM query_mcp_bindings", []).unwrap();
     drop(db);
     assert!(QueryLedger::open_for_boot(&file, BOOT_A).is_ok());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn fixed_broker_package_is_single_write_and_integrity_checked_after_restart() {
+    let (file, directory) = temporary();
+    let mut g = grant(&[0x63; 32]);
+    g.manager_watermark = Some(0);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    ledger.create(&g, 100).unwrap();
+    let body = serde_json::json!({"schema_version":1,"source_profile":"development_process_only",
+        "status":"partial","run_id":g.run_id,"network_id":g.network_id,
+        "query_watermark":g.watermark.to_string(),"manager_watermark":"0",
+        "process":[],"missing_process":[]})
+    .to_string()
+    .into_bytes();
+    let digest = ledger.save_package(&g.run_id, &body, 101).unwrap();
+    assert_eq!(ledger.save_package(&g.run_id, &body, 102).unwrap(), digest);
+    assert!(ledger.save_package(&g.run_id, b"changed", 102).is_err());
+    assert!(ledger.save_package(&g.run_id, &[b'x'; 16_385], 102).is_err());
+    drop(ledger);
+    let ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(ledger.load_active_package(&g.run_id, 103).unwrap(), Some((digest, body.clone())));
+    drop(ledger);
+    assert!(QueryLedger::open_for_boot(&file, BOOT_B)
+        .unwrap()
+        .load_active_package(&g.run_id, 103)
+        .unwrap()
+        .is_none());
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute("UPDATE query_packages SET body=X'7b7d' WHERE run_id=?1", [&g.run_id]).unwrap();
+    drop(db);
+    let integrity_error = QueryLedger::open_for_boot(&file, BOOT_A)
+        .unwrap()
+        .load_active_package(&g.run_id, 103)
+        .err()
+        .unwrap();
+    assert!(integrity_error.contains("integrity"), "{integrity_error}");
+    let mut foreign: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    foreign["run_id"] = serde_json::json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    let foreign_bytes = serde_json::to_vec(&foreign).unwrap();
+    let foreign_digest = format!("{:x}", Sha256::digest(&foreign_bytes));
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute(
+        "UPDATE query_packages SET body=?1,package_sha256=?2 WHERE run_id=?3",
+        rusqlite::params![foreign_bytes, foreign_digest, g.run_id],
+    )
+    .unwrap();
+    drop(db);
+    assert!(QueryLedger::open_for_boot(&file, BOOT_A)
+        .unwrap()
+        .load_active_package(&g.run_id, 103)
+        .err()
+        .unwrap()
+        .contains("binding"));
     std::fs::remove_dir_all(directory).unwrap();
 }
 

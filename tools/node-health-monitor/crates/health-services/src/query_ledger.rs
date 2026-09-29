@@ -1,6 +1,7 @@
 //! Durable, fail-closed query grant accounting. No raw run token is stored.
 use crate::durable::EvidenceRow;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use sha2::{Digest, Sha256};
 use std::{
     fs::OpenOptions,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
@@ -51,6 +52,31 @@ fn encoded(grant: &Grant) -> Result<Vec<u8>, String> {
         return Err("grant ledger row too large".into());
     }
     Ok(body)
+}
+
+fn validate_package_binding(body: &[u8], grant: &Grant) -> Result<(), String> {
+    let value: serde_json::Value = serde_json::from_slice(body).map_err(failure)?;
+    let fixed_m = grant.manager_watermark.ok_or("broker package M watermark unavailable")?;
+    if value["schema_version"] != 1
+        || value["source_profile"] != "development_process_only"
+        || value["status"] != "partial"
+        || value["run_id"] != grant.run_id
+        || value["network_id"] != grant.network_id
+        || value["query_watermark"]
+            .as_str()
+            .and_then(|text| tos_health_core::wire::exact_u64(text).ok())
+            != Some(grant.watermark)
+        || value["manager_watermark"]
+            .as_str()
+            .and_then(|text| tos_health_core::wire::exact_u64(text).ok())
+            != Some(fixed_m)
+        || !value["process"].is_array()
+        || !value["missing_process"].is_array()
+        || value.as_object().is_none_or(|fields| fields.len() != 9)
+    {
+        return Err("broker package grant binding mismatch".into());
+    }
+    Ok(())
 }
 
 impl QueryLedger {
@@ -122,6 +148,13 @@ impl QueryLedger {
                 bound_at_ms INTEGER NOT NULL CHECK (bound_at_ms >= 0),
                 call_count INTEGER NOT NULL DEFAULT 0 CHECK (call_count BETWEEN 0 AND 16),
                 wire_bytes INTEGER NOT NULL DEFAULT 0 CHECK (wire_bytes BETWEEN 0 AND 131072)
+            );
+            CREATE TABLE IF NOT EXISTS query_packages (
+                run_id TEXT PRIMARY KEY REFERENCES query_grants(run_id),
+                boot_id TEXT NOT NULL,
+                package_sha256 TEXT NOT NULL,
+                body BLOB NOT NULL CHECK(length(body)<=16384),
+                fixed_at_ms INTEGER NOT NULL CHECK(fixed_at_ms>=0)
             );
             CREATE INDEX IF NOT EXISTS query_grants_live
                 ON query_grants(boot_id,revoked,expires_ms);
@@ -291,6 +324,100 @@ impl QueryLedger {
             params![run_id, self.clock_domain],
             |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u64>(1)?)),
         ).optional().map_err(failure)
+    }
+
+    /// Store a prevalidated, fixed-W broker package once. A later regeneration
+    /// must produce exact same bytes; neither a model nor an MCP client can
+    /// call this internal ledger method through a query route.
+    pub fn save_package(
+        &mut self,
+        run_id: &str,
+        body: &[u8],
+        now_ms: u64,
+    ) -> Result<String, String> {
+        if body.is_empty() || body.len() > 16_384 {
+            return Err("broker package exceeds 16 KiB".into());
+        }
+        let now = i64::try_from(now_ms).map_err(failure)?;
+        let digest = format!("{:x}", Sha256::digest(body));
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let active: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT body FROM query_grants WHERE run_id=?1 AND boot_id=?2 AND revoked=0 AND expires_ms>?3",
+                params![run_id, self.clock_domain, now],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(failure)?;
+        let grant: Grant = serde_json::from_slice(&active.ok_or("broker package grant inactive")?)
+            .map_err(failure)?;
+        validate_package_binding(body, &grant)?;
+        let existing: Option<(String, Vec<u8>)> = tx
+            .query_row(
+                "SELECT package_sha256,body FROM query_packages WHERE run_id=?1 AND boot_id=?2",
+                params![run_id, self.clock_domain],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(failure)?;
+        if let Some((old_digest, old_body)) = existing {
+            if old_digest != digest || old_body != body {
+                return Err("broker package immutable conflict".into());
+            }
+            tx.commit().map_err(failure)?;
+            return Ok(digest);
+        }
+        let used: i64 = tx
+            .query_row("SELECT COALESCE(SUM(length(body)),0) FROM query_packages", [], |row| {
+                row.get(0)
+            })
+            .map_err(failure)?;
+        if used
+            .checked_add(i64::try_from(body.len()).map_err(failure)?)
+            .is_none_or(|total| total > 8 * 1024 * 1024)
+        {
+            return Err("broker package ledger full".into());
+        }
+        tx.execute(
+            "INSERT INTO query_packages(run_id,boot_id,package_sha256,body,fixed_at_ms) VALUES(?1,?2,?3,?4,?5)",
+            params![run_id, self.clock_domain, digest, body, now],
+        )
+        .map_err(failure)?;
+        tx.commit().map_err(failure)?;
+        Ok(digest)
+    }
+
+    pub fn load_active_package(
+        &self,
+        run_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<(String, Vec<u8>)>, String> {
+        let now = i64::try_from(now_ms).map_err(failure)?;
+        let stored: Option<(String, Vec<u8>, Vec<u8>)> = self
+            .conn
+            .query_row(
+                "SELECT p.package_sha256,p.body,g.body FROM query_packages p
+                 JOIN query_grants g ON g.run_id=p.run_id
+                 WHERE p.run_id=?1 AND p.boot_id=?2 AND g.boot_id=?2
+                   AND g.revoked=0 AND g.expires_ms>?3",
+                params![run_id, self.clock_domain, now],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(failure)?;
+        if let Some((digest, bytes, grant_bytes)) = stored {
+            if bytes.is_empty()
+                || bytes.len() > 16_384
+                || digest != format!("{:x}", Sha256::digest(&bytes))
+            {
+                return Err("broker package integrity mismatch".into());
+            }
+            let grant: Grant = serde_json::from_slice(&grant_bytes).map_err(failure)?;
+            validate_package_binding(&bytes, &grant)?;
+            return Ok(Some((digest, bytes)));
+        }
+        Ok(None)
     }
 
     pub fn load_active(&self, run_id: &str, now_ms: u64) -> Result<Option<Grant>, String> {

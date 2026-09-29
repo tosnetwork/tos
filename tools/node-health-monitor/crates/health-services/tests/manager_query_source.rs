@@ -344,6 +344,17 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     assert_eq!(package_json["process"][0]["value"]["rss_bytes"], "4096");
     assert_eq!(package_json["missing_process"].as_array().unwrap().len(), 0);
     assert_eq!(package.sha256, format!("{:x}", Sha256::digest(&package.bytes)));
+    assert_eq!(
+        state
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .load_active_package(run, tos_health_services::query_ledger::boot_millis().unwrap())
+            .unwrap(),
+        Some((package.sha256.clone(), package.bytes.clone()))
+    );
     let request = Request::builder()
         .method("POST")
         .uri("/v1/query/node-snapshot")
@@ -425,6 +436,15 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     assert!(import_manager(&restored).unwrap_err().contains("quarantined"));
     assert!(restored.data.lock().unwrap().manager_conflicted);
     assert!(freeze_process_package(&restored, run).is_err());
+    assert!(restored
+        .query_ledger
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .load_active_package(run, tos_health_services::query_ledger::boot_millis().unwrap())
+        .unwrap()
+        .is_none());
     let refused = Request::builder()
         .method("POST")
         .uri("/v1/query/node-snapshot")

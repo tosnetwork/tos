@@ -2,7 +2,6 @@
 //! This is not a model prompt or an assertion that other source classes exist.
 use crate::{observability::ObservabilityState, query_ledger::boot_millis};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use tos_health_core::{edge_snapshot::ProcessPayload, evidence::StoredEvidence, wire::U64};
 
@@ -97,9 +96,9 @@ fn process_item(entry: &StoredEvidence, manager_watermark: u64) -> Result<Proces
     })
 }
 
-/// Fix a small deterministic development package entirely from the durable
-/// query cache. `load_evidence` revalidates each derived row against its
-/// retained M original; this function never opens M or V/O endpoints.
+/// Fix and durably retain a small deterministic development package entirely
+/// from the query cache. `load_evidence` revalidates every derived row against
+/// its retained M original; this function never opens M or V/O endpoints.
 pub fn freeze_process_package(
     state: &ObservabilityState,
     run_id: &str,
@@ -112,7 +111,7 @@ pub fn freeze_process_package(
         return Err("M-derived source conflicted".into());
     }
     let ledger = state.query_ledger.as_ref().ok_or("durable query ledger unavailable")?;
-    let ledger = ledger.lock().map_err(|_| "query ledger unavailable")?;
+    let mut ledger = ledger.lock().map_err(|_| "query ledger unavailable")?;
     let grant = ledger.load_active(run_id, boot_millis()?)?.ok_or("run grant inactive")?;
     if grant.network_id != state.inventory.network_id {
         return Err("package network mismatch".into());
@@ -169,5 +168,6 @@ pub fn freeze_process_package(
     if bytes.len() > 16_384 {
         return Err("fixed process package exceeds 16 KiB".into());
     }
-    Ok(FrozenPackage { sha256: format!("{:x}", Sha256::digest(&bytes)), bytes })
+    let sha256 = ledger.save_package(run_id, &bytes, boot_millis()?)?;
+    Ok(FrozenPackage { sha256, bytes })
 }
