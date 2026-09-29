@@ -20,7 +20,7 @@ named implementation and evidence exist, never a main merge.
 | C06 — integrated development implementation | ✅ Gated native diagnostic producer and bounded catalog-8 scalar payload, private authenticated native-to-Edge IPC, bounded relay, distinct M diagnostic ingest identity and single-writer durable batch/atomic idempotent ACK were integrated and tested. The catalog-7 fixture remains separate. | Business-node hook rollout and production cost/consumer-drain gates remain open; unknown diagnostic observation times remain null. M-to-Query diagnostic projection is unsupported, not a process fact. |
 | C07 — bounded development package | ✅ Deterministic 16-KiB process-only package from verified retained M parents at fixed grant watermarks, durable private QueryLedger with 8-MiB cap, restart/late-row/conflict/missing/tamper controls and a closed diagnosis parser. No model/provider is enabled. | Actual model token accounting, semantic entailment, approved model/provider configuration, retention cleanup, private egress and resource-isolation acceptance remain open. The test-side deterministic judgment is not AURA model diagnosis. |
 | C08 — gated transport implemented | ✅ Durable grants/cursors and six-tool private Unix MCP, a pinned AURA 0.12 stdio adapter, one-use credential handoff, bounded calls/body/session, child cancellation/reap and disconnect controls were exercised. Six real tool calls through AURA establish transport/error propagation; unavailable fixture tools did not become business successes. | Complete source adapters, production broker authorization/rotation and sustained resource/zero-upstream evidence remain open. External model calls remain disabled; transport success is not model judgment or production acceptance. |
-| C09 — RED/open: local observability running, continuity blocked | ✅ M-only update, six role-split 15-second supervised collectors and an MCP-enabled local query broker archived six distinct live `process` sources without relabelling `edge_probe`. Pinned AURA 0.12 queried the already-running broker under fixed 4+2 grants: six `partial` snapshots contained non-null process values matching original retained M parent payloads; unknown consensus and cross-run denial remained explicit, and grants were revoked. Scoped process-payload closure was reviewed at `44186b022f454449ed58dce30c7fec5c71f24851` (raw SHA-256 prefix `cc4c95c8`). No model API or business-node restart was involved. | No production or 72-hour pass: the current M projection rescans process history from the beginning and rejects more than 4096 rows or 8 MiB, then revokes active grants. This deterministic growing-history limit and observed broker latency require a bounded, restart-safe fix before sustained AURA availability can pass. Raising that cap or timeout is not a fix. Also complete A–F monotonic resource/performance and failure-domain/effective-quota profiles, credential/receiver rotation, rollback/restore and 72-hour soak. A partial process snapshot is not whole-node health or model diagnosis. |
+| C09 — RED/open: local observability running, continuity blocked | ✅ M-only update, six role-split 15-second supervised collectors and an MCP-enabled local query broker archived six distinct live `process` sources without relabelling `edge_probe`. Pinned AURA 0.12 queried the already-running broker under fixed 4+2 grants: six `partial` snapshots contained non-null process values matching original retained M parent payloads; unknown consensus and cross-run denial remained explicit, and grants were revoked. Scoped process-payload closure was reviewed at `44186b022f454449ed58dce30c7fec5c71f24851` (raw SHA-256 prefix `cc4c95c8`). No model API or business-node restart was involved during that collector/query rollout. | No production or 72-hour pass: the deployed `read_process_projection_state` scans oldest-first process history on every import. A live M sample already had 940 process rows / 1,580,107 bytes and was growing; at more than 4096 rows or 8 MiB its cap error reaches `block_manager_queries`, revoking active grants. The isolated incremental candidate is not deployed or a sustained-availability proof. Raising that cap or timeout is not a fix. Also complete A–F monotonic resource/performance and failure-domain/effective-quota profiles, credential/receiver rotation, rollback/restore and 72-hour soak. A partial process snapshot is not whole-node health or model diagnosis. |
 
 ## Evidence mapping
 
@@ -101,18 +101,22 @@ bounded sparse catalog, not a complete core profile.
 C09 has deployed only local observability components: an M-only service update,
 six supervised collectors and an MCP-enabled query broker over private sockets.
 The existing business nodes and Edge processes were not restarted or fault-injected
-for this work. The scoped pinned-AURA receipt proves six partial real process values
+during this collector/query rollout; an earlier C09 Edge replacement is separate.
+The scoped pinned-AURA receipt proves six partial real process values
 and their retained M parents, not whole-node health, AURA model judgment,
 continuous availability, a 72-hour pass or production acceptance. One transient
 collector `invalid edge response` recovered at a later sample; live-broker control
 read latency also varied as its M database grew. Those observations remain open C09
-soak/performance work, not zero-error claims. The M-to-query process import also
-rescans oldest-first history in the **deployed** query binary; its 4096-row/
-8-MiB cap will reject continued growth and revoke grants. An isolated candidate
+soak/performance work, not zero-error claims. The **deployed**
+`read_process_projection_state` scans oldest-first process history on every
+import. One live M sample already had 940 process rows / 1,580,107 bytes and was
+growing; at more than 4096 rows or 8 MiB the cap error causes
+`block_manager_queries` to revoke grants. An isolated candidate
 now uses bounded, restart-safe pages and a durable global M cursor, with source-
 bound tests in `evidence/c09-incremental-projection/REVIEW-RECEIPT.md`; it is not
 deployed or a soak/performance pass. External model/API use is disabled.
-No business-node signing, vote-journal ordering, database durability or protocol condition was changed.
+No business-node signing, vote-journal ordering, business-node database durability
+semantics, or protocol condition was changed; C06 did add durable M diagnostic ingest.
 
 
 Current C00 closure evidence: 97 Rust tests, clippy with warnings denied, six exact native
