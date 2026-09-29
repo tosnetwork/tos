@@ -13,7 +13,7 @@
   "c01_source_publisher_inventory_complete": true,
   "c02_edge_basic_inventory_complete": true,
   "production_adapter_inventory_complete": false,
-  "completeness_note": "C02 closes only basic cache-only edge access plus bounded process/cgroup adapters. All fixtures are isolated synthetic controls, not production host receipts. Readiness/getStats and later adapters remain disabled or unsupported; production deployment and performance are not accepted.",
+  "completeness_note": "C00-C04 have scoped development acceptances only. C05 has a bounded synthetic cache-witness and separate historical/current M path, but no approved production finalized-block source, deterministic proof verifier or live witness rule fact. All fixtures are isolated synthetic controls, not production host receipts. Readiness/getStats and later adapters remain disabled or unsupported; production deployment and performance are not accepted.",
   "sources": [
     {
       "source_id": "native_exporter",
@@ -361,25 +361,34 @@
     {
       "source_id": "witness",
       "anchor": {
-        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
-        "path": "tools/node-health-monitor/crates/health-core/src/observer.rs",
-        "symbol": "pub fn compare",
-        "source_sha256": "23093c6e2641ba17a49a4a2946fe2dfd951a7d5f01a34b4847039027ea46edbe"
+        "commit": "8699a3e554dcacdd0fd0194de4c823b1b34c6e20",
+        "path": "tools/node-health-monitor/crates/health-services/src/witness.rs",
+        "symbol": "pub struct WitnessCache",
+        "source_sha256": "fc0566012d7b9c1856bd1dae6f9b2a6c28d2c2042defa717b955d7dddd8ec7aa"
       },
-      "interface": "development-only bounded O cache protocol and historical M archive implemented; approved production source adapter, restart quarantine restoration and current rule qualification unsupported",
-      "grammar": "closed C05 synthetic plan/source DTO and typed reported anchors; no verified finality proof",
+      "interface": "development-only fixed cache-only HTTPS witness; O retained GET, M separate historical archive and volatile current read; approved production finalized-block adapter and live rule fact unsupported",
+      "grammar": "closed C05 plan/source/cache/current DTOs with source canonical hash plus raw transport digest, original-row age, typed reported anchors; no deterministic verified-finality proof",
       "semantic_type": "external observation",
       "unit": "typed anchor",
       "scope": "masterchain",
-      "absence": "unsupported; never infer network result",
-      "reset": "observer epoch",
-      "generation": "not implemented",
+      "absence": "unavailable or unknown; never infer network result, node fault or verified finality",
+      "reset": "separate observer and source epochs; no duplicate-age renewal",
+      "generation": "positive exact-u64 source generation, ordered for activated current source only",
       "owner": "observer",
-      "cost": "fixed approved endpoints required",
+      "cost": "development profile: at most 32 targets, 16 approved endpoints, three refs/target, four local requests in flight, 15-second no-catch-up rounds, 16-KiB source body and 256-KiB round body; O cache 2-MiB and M volatile current view 1-MiB bounded; no production source or cost gate",
       "capacity": {
-        "max_bytes": 262144
+        "max_bytes": 32768,
+        "source_body_bytes": 16384,
+        "round_body_bytes": 262144,
+        "observer_cache_resident_bytes": 2097152,
+        "manager_current_resident_bytes": 1048576
       },
       "fixture": null,
+      "development_fixtures": {
+        "kind": "synthetic fixed HTTPS cache and loopback mTLS identities; not a live chain or production host receipt",
+        "test_source": "crates/health-services/tests/witness_cache.rs and crates/health-services/tests/ingress.rs",
+        "production_node": false
+      },
       "capability": {
         "supported": false,
         "enabled": false,

@@ -58,9 +58,30 @@ the restored logs above; neither is counted as an intended mutation kill.
 | `crates/health-services/tests/ingress.rs` | `c18260dcde3f9f2b229d8f3aa2fc6b4273bfb8487605a80592b9f876158b0a4b` |
 | `crates/health-services/tests/witness_archive.rs` | `fec15941a07baf848d757032ccf4c926e8a6545cf977b1d5730b16fb905cadd5` |
 
-Remaining C05 review work: bind a final source/log index after this checkpoint,
-complete changed-property compiled mutation evidence for the current gate,
-reconcile manifest/source capability labels, and run the final affected
-workspace/contract entrypoint. Production witness adapter, deterministic
+## Post-checkpoint changed-property sensitivity
+
+The isolated detached worktree `/home/tomi/tos-node-health-c05-mutation`
+started at exact `8699a3e554dcacdd0fd0194de4c823b1b34c6e20`; the main
+implementation tree was not mutated. `current-age-mutant.patch` SHA-256
+`324a63723c6123c55cc0dbb9fd93a6e30b0f358ac72a6d61313471f55334098f`
+removed only the volatile-track forget after a matching history-only
+delivery. Mutant `manager.rs` SHA-256 was
+`94ed0716f07fba7fd91419e60ed2ce9c40cdde188cdcf04944012c37bd0d046b`;
+restored SHA-256 is
+`5dd0e4b0a9c330196e1c15324e9a5a802a8214b3453f0d4ebd4ba8c2cc6166da`.
+The same locked targeted command ran in both worktrees:
+`CARGO_BUILD_JOBS=2 cargo test -p tos-health-services --test witness_archive synthetic_valid_clock_current_route_qualifies_context_without_proof --locked -- --nocapture`.
+Baseline `raw/current-age-baseline.log` SHA-256
+`a95aaba35f16b1d5fd9107b70fd3b0067341a75ed277ccd90e13c8a933d9c039`
+exited 0; compiled mutant `raw/current-age-mutant.log` SHA-256
+`51da408514e4069587fcc1daa2c7ae15394113bb7f0b1015a7ba87735032e0d8`
+exited 101 at the intended assertion (`qualified` versus `unknown`),
+not at compilation; restored isolated-source run
+`raw/current-age-restored.log` SHA-256
+`26b0873f3bfcede5c3232b092f247eddd3ff73ed701088a279272f043254382e`
+exited 0. The detached mutation worktree is clean afterward.
+
+Remaining C05 review work: final source/contract inventory and exact evidence
+index, then supervisor review. Production witness adapter, deterministic
 verified-finality proof, cost gate, and `observer_disagreement` rule input
 remain unsupported/pending.
