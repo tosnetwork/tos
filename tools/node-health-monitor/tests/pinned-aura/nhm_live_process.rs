@@ -30,6 +30,31 @@ fn sha256_file(path: &Path) -> String {
     hex::encode(digest.finalize())
 }
 
+fn m_process_parent(db: &str, parent_id: &str, node: &str) -> Value {
+    // Host-only, read-only lookup by the original M evidence ID. Pinned AURA
+    // does not depend on SQLite, so use the Python standard library here.
+    const LOOKUP: &str = r#"import json, sqlite3, sys
+db, evidence_id, node = sys.argv[1:]
+conn = sqlite3.connect('file:' + db + '?mode=ro', uri=True)
+row = conn.execute('SELECT body FROM observations WHERE content_hash=? AND node=? AND source=? LIMIT 1', (evidence_id, node, 'process')).fetchone()
+if row is None:
+    sys.exit(2)
+record = json.loads(row[0])['record']
+source = record['payload']['source']
+print(json.dumps({'node_id': record['node_id'], 'process_epoch': record['process_epoch'], 'process_payload': source['payload'], 'observed_at_ms': record['observed_at_ms']}))
+"#;
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(LOOKUP)
+        .arg(db)
+        .arg(parent_id)
+        .arg(node)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "missing original M process evidence for {node}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 struct OwnedProcess(Child);
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
@@ -108,7 +133,7 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
     }
     let control = directory.join("control.sock");
     let mcp = directory.join("mcp.sock");
-    let _service = OwnedProcess(
+    let mut service = OwnedProcess(
         Command::new(service_bin)
             .arg(&inventory)
             .arg("127.0.0.1:0")
@@ -125,10 +150,13 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
             .spawn()
             .unwrap(),
     );
-    for _ in 0..100 {
+    // Importing a growing live M evidence DB can take longer than two seconds.
+    // Keep the startup wait bounded and fail immediately if the child exits.
+    for _ in 0..500 {
         if control.exists() && mcp.exists() {
             break;
         }
+        assert!(service.0.try_wait().unwrap().is_none(), "query service exited before readiness");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     assert!(control.exists() && mcp.exists(), "query service refused live M projection");
@@ -191,14 +219,55 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
             let envelope: Value =
                 serde_json::from_str(content).expect("AURA did not return a typed NHM envelope");
             assert_eq!(envelope["run_id"], run);
-            assert_ne!(envelope["status"], "error", "{node}: process projection unavailable");
             assert!(
-                envelope["evidence"].as_array().is_some_and(|rows| !rows.is_empty()),
-                "{node}: AURA received no retained M evidence reference"
+                matches!(envelope["status"].as_str(), Some("ok" | "partial")),
+                "{node}: process projection unavailable: {envelope}"
             );
-            assert!(content.contains(node), "{node}: delivered result lacks node identity");
+            assert_eq!(envelope["data"]["node_id"], *node);
+            let components = envelope["data"]["components"].as_array().unwrap();
+            assert_eq!(components.len(), 1, "{node}: unexpected component count");
+            let component = &components[0];
+            assert_eq!(component["kind"], "process");
+            assert_eq!(component["sources"], json!(["process"]));
+            assert_eq!(component["value"]["kind"], "process");
+            let pid = component["value"]["pid"].as_u64().expect("actual process PID missing");
+            assert!(pid > 0);
+            assert_eq!(pid, manifest["nodes"][*node]["pid"].as_u64().unwrap());
+            let evidence = envelope["evidence"].as_array().unwrap();
+            assert_eq!(evidence.len(), 1, "{node}: expected one retained process evidence");
+            let source = &evidence[0];
+            assert_eq!(source["node_id"], *node);
+            assert_eq!(source["source_id"], "process");
+            assert_eq!(source["kind"], "derived");
+            assert_eq!(source["source_version"], "m-observation-projection-v1");
+            assert_eq!(source["derivation_version"], "m-observation-projection-v1");
+            assert_eq!(source["clock_quality"], "valid");
+            assert_eq!(source["redacted"], true);
+            assert_eq!(source["payload"], component["value"]);
+            assert_eq!(source["process_epoch"], envelope["data"]["process_epoch"]);
+            let parents = source["parent_evidence_ids"].as_array().unwrap();
+            assert_eq!(parents.len(), 1, "{node}: missing original M parent");
+            let parent_id = parents[0].as_str().unwrap();
+            assert_eq!(source["source_record_id"], format!("m-{parent_id}"));
+            let original = m_process_parent(&db, parent_id, node);
+            assert_eq!(original["node_id"], *node);
+            assert_eq!(original["process_payload"], component["value"]);
+            assert_eq!(original["process_epoch"], source["process_epoch"]);
+            let observed = chrono::DateTime::from_timestamp_millis(
+                original["observed_at_ms"].as_i64().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                source["observed_at"],
+                observed.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            );
+            let age_seconds = now.signed_duration_since(observed).num_seconds();
+            assert!((0..=180).contains(&age_seconds), "{node}: process parent age invalid");
             assert!(!content.contains(issued["run_token"].as_str().unwrap()));
-            println!("AURA_C09_REAL_PROCESS {node} {}", envelope["status"]);
+            println!(
+                "AURA_C09_REAL_PROCESS {node} {} pid={pid} parent={parent_id}",
+                envelope["status"]
+            );
         }
         if index == 0 {
             // A live process row says nothing about consensus. Its absence is
@@ -213,6 +282,7 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
             assert_eq!(envelope["status"], "error");
             assert_eq!(envelope["error"]["code"], "CACHE_MISS");
             assert_eq!(envelope["coverage"]["status"], "unknown");
+            assert!(envelope["data"].is_null());
             assert!(envelope["evidence"].as_array().is_some_and(Vec::is_empty));
             println!("AURA_C09_REAL_UNKNOWN consensus=error");
         } else {
@@ -234,6 +304,6 @@ async fn pinned_aura_reads_six_real_m_process_sources_without_model() {
         assert_eq!(cancelled, 0);
         drop(manager);
     }
-    drop(_service);
+    drop(service);
     std::fs::remove_dir_all(directory).unwrap();
 }
