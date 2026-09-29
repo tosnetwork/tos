@@ -561,6 +561,7 @@ class ValidatorEngine : public td::actor::Actor {
   void run();
 
   void export_metrics(td::IPAddress address);
+  void set_health_node_id(std::string value);
   void serve_json_rpc(td::IPAddress address);
   void set_json_rpc_readonly(bool readonly);
   void set_json_rpc_expose_consensus_status(bool expose);

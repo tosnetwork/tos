@@ -79,3 +79,22 @@ from `tools/node-health-monitor` after installing the reviewed, pinned runtime.
 The observer's external notifier is still an HTTP acknowledgement boundary, not a
 verified human-delivery receipt. The real notification chain, runtime version pins,
 rotation, source adapters and 72-hour acceptance remain required.
+
+
+## Initial native PQ source
+
+For an isolated development setup, pass an approved alias with validator-engine
+`--health-node-id NODE`, use a loopback exporter address, and opt in to PQ hooks
+with `--health-core-metrics`. The exporter derives its network identity from the
+configured zero-state root bytes, encoded as lowercase hex. Configure that same
+identity in edge, the native poller and the immutable manager inventory.
+
+The typed endpoint reads the completed native generation without collecting.
+An owner metrics request waits at most two seconds; an overdue child still holds
+the real collection lease and its late result is discarded. No metrics or typed
+request can bypass the fixed minimum refresh interval.
+
+The development native poll/state examples add only PQ signing failure facts.
+Duties, storage, host and witness facts are still absent, and performance/host
+acceptance remains not_run. Do not treat a reachable endpoint or zero observed PQ
+failures as proof of healthy consensus.

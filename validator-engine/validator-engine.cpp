@@ -1619,6 +1619,8 @@ td::Status ValidatorEngine::load_global_config() {
     }
   }
 
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_network,
+                          tos::health::network_identity(zero_state.root_hash.as_slice()));
   validator_options_ = tos::validator::ValidatorManagerOptions::create(zero_state, init_block);
   if (state_ttl_ != 0) {
     validator_options_.write().set_state_ttl(state_ttl_);
@@ -5847,6 +5849,10 @@ void ValidatorEngine::run() {
   load_config(std::move(P));
 }
 
+void ValidatorEngine::set_health_node_id(std::string value) {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_node, std::move(value));
+}
+
 void ValidatorEngine::export_metrics(td::IPAddress address) {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::listen, address);
 }
@@ -6520,6 +6526,11 @@ int main(int argc, char *argv[]) {
   });
   p.add_option('\0', "db-event-fifo", "path to FIFO pipe for publishing DB events", [&](td::Slice s) {
     acts.push_back([&x, s = s.str()]() { td::actor::send_closure(x, &ValidatorEngine::set_db_event_fifo_path, s); });
+  });
+  p.add_checked_option('\0', "health-node-id", "approved node alias for loopback typed health snapshot", [&](td::Slice arg) {
+    if (!tos::health::node_alias(arg.str())) return td::Status::Error("invalid health node alias");
+    acts.push_back([&x, value = arg.str()] { td::actor::send_closure(x, &ValidatorEngine::set_health_node_id, value); });
+    return td::Status::OK();
   });
   p.add_option('\0', "health-core-metrics",
                "enable bounded consensus PQ operation metrics (requires performance acceptance)",

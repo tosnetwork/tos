@@ -149,3 +149,26 @@ all source files were restored before the complete regression was rerun.
 
 This adds only the initial process/native PQ R4 subset. It does not complete all
 R4 capabilities, duties, storage, witness or production acceptance gates.
+
+### Reconstructed C++ publisher checkpoint
+
+The current source rebuilt `test-health-native-snapshot` with Clang 21.1 and
+passed its unit test plus fast, slow, disabled and retained-lease HTTP scenarios.
+The fixture instantiates the production exporter actor and collector boundary.
+It verifies 1,000 cache reads cause no extra collections, a two-second owner
+response deadline, late-result rejection, actual-work lease retention, exact
+u64 pairing, frozen hash and the corrected single-underscore histogram names.
+
+All nine new C++ mutations compiled and failed their named assertions: network
+lowercase, disabled endpoint, histogram name, exact u64, age, immutable alias,
+read-without-collection, owner deadline and lease retention. The first two and
+remaining seven ran in separate batches after a validation process interruption;
+the runner restored sources and rebuilt the final native target. The existing
+49 Rust and seven C++ mutations were also rerun successfully. Together with the
+16 new Rust mutations this is 81 distinct compiled-and-failed mutations.
+
+The changed validator-engine translation unit passed a syntax-only compile with
+its actual build flags. The reconstructed full validator executable has not yet
+been relinked at this checkpoint; the earlier pre-cleanup full build is not
+claimed as validation of this recovered source tree. No deployment/performance
+or 72-hour acceptance is implied by the isolated actor fixture.

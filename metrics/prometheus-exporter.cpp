@@ -30,12 +30,30 @@ void PrometheusExporter::listen(td::IPAddress addr) {
   // Metrics scrapers are few; a modest ceiling keeps a scrape endpoint from
   // being turned into a file-descriptor exhaustion vector.
   http::HttpServer::Limits limits;
-  limits.max_connections = 256;
+  limits.max_connections = 8;
+  const auto ip = addr.get_ip_str().str();
+  loopback_ = ip.starts_with("127.") || ip == "::1";
   http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "HTTP@" << addr, addr, std::move(callback), limits);
   td::actor::send_closure(collector_.get(), &metrics::MultiCollector::add_async_collector<http::HttpServer>,
                           http_.get());
 }
 
+void PrometheusExporter::set_health_node(std::string value) {
+  if (!core_publisher_.set_node(std::move(value)))
+    LOG(ERROR) << "Invalid or changed health node alias";
+}
+void PrometheusExporter::set_health_network(std::string value) {
+  if (!core_publisher_.set_network(std::move(value)))
+    LOG(ERROR) << "Invalid or changed health network identity";
+}
+void PrometheusExporter::alarm() {
+  if (waiter_) {
+    auto promise = std::move(*waiter_);
+    waiter_.reset();
+    respond(std::move(promise), 503, "Service Unavailable", "");
+  }
+  // The actual-work lease remains held until every child completes.
+}
 void PrometheusExporter::start_up() {
   td::actor::send_closure(collector_.get(), &metrics::MultiCollector::add_sync_collector, collectors_);
   td::actor::send_closure(collector_.get(), &metrics::MultiCollector::add_sync_collector, collections_total_);
@@ -43,10 +61,15 @@ void PrometheusExporter::start_up() {
   td::actor::send_closure(collector_.get(), &metrics::MultiCollector::add_sync_collector, last_collection_timestamp_);
 }
 
-void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body) {
+void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body,
+                                 const char *content_type) {
   auto response = http::HttpResponse::create("HTTP/1.1", code, reason, false, false).move_as_ok();
   response->add_header({"Transfer-Encoding", "Chunked"});
-  response->add_header({"Content-Type", "application/openmetrics-text; version=1.0.0; charset=utf-8"});
+  response->add_header({"Content-Type", content_type});
+  if (code == 200) {
+    response->add_header({"X-TOS-Snapshot-Generation", std::to_string(admission_.generation())});
+    response->add_header({"X-TOS-Process-Epoch", core_publisher_.epoch()});
+  }
   response->add_header({"Cache-Control", "no-store"});
   response->complete_parse_header();
   auto payload = response->create_empty_payload().move_as_ok();
@@ -56,6 +79,16 @@ void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, cons
 }
 
 void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<HttpReturn> promise) {
+  if (request->url() == "/health-snapshot") {
+    if (!loopback_ || !core_publisher_.configured())
+      return respond(std::move(promise), 404, "Not Found", "");
+    if (request->method() != "GET")
+      return respond(std::move(promise), 405, "Method Not Allowed", "");
+    auto body = core_snapshot_ ? core_snapshot_->read(td::Timestamp::now().at()) : std::nullopt;
+    if (!body)
+      return respond(std::move(promise), 503, "Service Unavailable", "");
+    return respond(std::move(promise), 200, "OK", std::move(*body), "application/json");
+  }
   if (request->url() != "/metrics") {
     return respond(std::move(promise), 404, "Not Found", "");
   }
@@ -64,6 +97,8 @@ void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<
   }
   const auto now = td::Timestamp::now().at();
   if (admission_.begin(now)) {
+    waiter_.emplace(std::move(promise));
+    alarm_timestamp() = td::Timestamp::in(2.0);
     collections_total_->add(1);
     last_collection_timestamp_->set(td::Timestamp::now().at_unix());
     td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::collect,
@@ -71,10 +106,13 @@ void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<
                               td::actor::send_closure(self, &PrometheusExporter::collection_completed,
                                                       std::move(result));
                             }));
-  } else {
-    ++skipped_;
+    return;
   }
-  // No request waits on a business actor. Cold or stale sources explicitly fail.
+  ++skipped_;
+  respond_metrics(std::move(promise));
+}
+void PrometheusExporter::respond_metrics(td::Promise<HttpReturn> promise) {
+  const auto now = td::Timestamp::now().at();
   if (!admission_.fresh(now)) {
     return respond(std::move(promise), 503, "Service Unavailable", "");
   }
@@ -98,15 +136,19 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
   if (result.is_error() || admission_.expired(now)) {
     admission_.finish(now, false, 0);
     ++failures_;
+    alarm();
     return;
   }
+  const auto sampled_at = now;
   const auto wall = td::Timestamp::now().at_unix();
   auto set = result.move_as_ok();
   set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_snapshot_generation", "gauge",
                                                             static_cast<double>(admission_.generation() + 1)));
   set.families.push_back(
       metrics::MetricFamily::make_scalar(prefix_ + "_exporter_snapshot_completed_timestamp_seconds", "gauge", wall));
-  if (health::enabled.load(std::memory_order_relaxed)) {
+  const bool pq_enabled = health::enabled.load(std::memory_order_relaxed);
+  health::OperationSnapshot sign, verify;
+  if (pq_enabled) {
     auto operations =
         metrics::MetricFamily{.name = prefix_ + "_pq_operations_total",
                               .type = "counter",
@@ -117,10 +159,13 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
                                           .help = "Consensus PQ operation duration.",
                                           .metrics = {}};
     for (auto [operation, stats] : {std::pair{"sign", &health::pq_sign}, std::pair{"verify", &health::pq_verify}}) {
+      auto &typed = stats == &health::pq_sign ? sign : verify;
+      typed.complete = stats->complete.load(std::memory_order_relaxed);
       for (size_t result = 0; result < 2; ++result) {
         auto labels = metrics::LabelSet{
             {{"operation", operation}, {"suite", "mldsa44"}, {"result", result == 0 ? "success" : "failure"}}};
         const auto count = (result == 0 ? stats->completed : stats->failed).load(std::memory_order_relaxed);
+        (result == 0 ? typed.succeeded : typed.failed) = count;
         operations.metrics.push_back(
             {.suffix = "", .label_set = labels, .samples = {{.label_set = {}, .value = static_cast<double>(count)}}});
         std::uint64_t cumulative = 0;
@@ -130,34 +175,45 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
               bucket == 12 ? std::string("+Inf")
                            : std::to_string(static_cast<double>(health::OperationStats::bounds_us[bucket]) / 1000000.0);
           duration.metrics.push_back(
-              {.suffix = "_bucket",
+              {.suffix = "bucket",
                .label_set = labels,
                .samples = {{.label_set = {{{"le", boundary}}}, .value = static_cast<double>(cumulative)}}});
         }
-        duration.metrics.push_back({.suffix = "_count",
+        duration.metrics.push_back({.suffix = "count",
                                     .label_set = labels,
                                     .samples = {{.label_set = {}, .value = static_cast<double>(cumulative)}}});
         duration.metrics.push_back(
-            {.suffix = "_sum",
+            {.suffix = "sum",
              .label_set = labels,
              .samples = {
                  {.label_set = {},
                   .value = static_cast<double>(stats->sum_us[result].load(std::memory_order_relaxed)) / 1000000.0}}});
       }
-      set.families.push_back(
-          std::move(metrics::MetricFamily::make_scalar(prefix_ + "_health_pq_accounting_complete", "gauge",
-                                                       stats->complete.load(std::memory_order_relaxed) ? 1 : 0))
-              .label({{{"operation", operation}}}));
+      set.families.push_back(std::move(metrics::MetricFamily::make_scalar(prefix_ + "_health_pq_accounting_complete",
+                                                                          "gauge", typed.complete ? 1 : 0))
+                                 .label({{{"operation", operation}}}));
     }
     set.families.push_back(std::move(operations));
     set.families.push_back(std::move(duration));
   }
   auto rendered = std::move(set).render();
+  std::optional<health::NativeCoreSnapshot> typed;
+  if (core_publisher_.configured()) {
+    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered + "# EOF\n", pq_enabled,
+                                    sign, verify);
+  }
   now = td::Timestamp::now().at();
-  if (admission_.finish(now, true, rendered.size() + 2048)) {
+  if (admission_.finish(now, !core_publisher_.configured() || typed.has_value(), rendered.size() + 2048)) {
     snapshot_ = std::move(rendered);
+    core_snapshot_ = std::move(typed);
   } else {
     ++failures_;
+  }
+  alarm_timestamp() = td::Timestamp::never();
+  if (waiter_) {
+    auto promise = std::move(*waiter_);
+    waiter_.reset();
+    respond_metrics(std::move(promise));
   }
 }
 

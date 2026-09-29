@@ -5,6 +5,7 @@
 #include "td/actor/coro_task.h"
 
 #include "metrics-collectors.h"
+#include "native-core-snapshot.h"
 #include "source-admission.h"
 
 namespace tos {
@@ -16,6 +17,8 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   void register_collector(td::actor::ActorId<A> collector);
 
   void listen(td::IPAddress addr);
+  void set_health_node(std::string value);
+  void set_health_network(std::string value);
 
   explicit PrometheusExporter(std::string prefix);
 
@@ -46,7 +49,15 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   void on_request(RequestPtr request, PayloadPtr payload, td::Promise<HttpReturn> promise);
 
   void collection_completed(td::Result<metrics::MetricSet> result);
-  static void respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body);
+  void alarm() override;
+  void respond_metrics(td::Promise<HttpReturn> promise);
+  void respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body,
+               const char *content_type = "application/openmetrics-text; version=1.0.0; charset=utf-8");
+
+  health::NativeCorePublisher core_publisher_;
+  std::optional<health::NativeCoreSnapshot> core_snapshot_;
+  std::optional<td::Promise<HttpReturn>> waiter_;
+  bool loopback_ = false;
 
   metrics::SourceAdmission admission_;
   std::string snapshot_;
