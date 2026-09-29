@@ -5,7 +5,7 @@
   "work_order_blob": "f7cd3371c8023bb61409d5e77fd96a3741f0cddd",
   "memo_commit": "cb84e1684b46b2d94e0f9c4654020a96ac71ca66",
   "base_commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
-  "c01_implementation_commit": "be690c9252b962d21017026f5665b61547dccbdd",
+  "c01_implementation_commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
   "complete_manifest": false,
   "c00_contract_inventory_complete": true,
   "c01_source_publisher_inventory_complete": true,
@@ -15,10 +15,10 @@
     {
       "source_id": "native_exporter",
       "anchor": {
-        "commit": "be690c9252b962d21017026f5665b61547dccbdd",
+        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
         "path": "metrics/prometheus-exporter.cpp",
         "symbol": "PrometheusExporter::on_request",
-        "source_sha256": "e5883ca72a93648dd704520d1eb2a0620b3e7cd11c157112febbaaef7d097ce4"
+        "source_sha256": "a4225559870a53215135aee37760beb9699b591d0f6ff720f4bba936050014dc"
       },
       "interface": "GET /metrics",
       "grammar": "OpenMetrics 1.0 exact immutable body including EOF; paired native_core hash/generation",
@@ -114,7 +114,7 @@
     {
       "source_id": "quic",
       "anchor": {
-        "commit": "be690c9252b962d21017026f5665b61547dccbdd",
+        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
         "path": "quic/quic-sender.cpp",
         "symbol": "health_metrics_policy::build_per_path",
         "source_sha256": "0857f803ba99ff46967d07845cfecaeff6d099d76f10555333af76a788cf2199"
@@ -474,7 +474,7 @@
     {
       "source_id": "native_core",
       "anchor": {
-        "commit": "be690c9252b962d21017026f5665b61547dccbdd",
+        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
         "path": "metrics/native-core-snapshot.h",
         "symbol": "NativeCorePublisher",
         "source_sha256": "8149ec2fdf4a441db08cb85e048dae97fa53629f460608be7b7c57ed38edb7bf"
@@ -498,7 +498,7 @@
         "kind": "isolated production exporter actor with synthetic collector",
         "test_source": "test/test-health-native-snapshot.cpp",
         "openmetrics_fixture": "crates/health-core/tests/fixtures/native-core.prom",
-        "implementation_commit": "be690c9252b962d21017026f5665b61547dccbdd",
+        "implementation_commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
         "production_node": false
       },
       "capability": {

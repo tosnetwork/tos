@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];REPO=ROOT.parents[1]
 BASE='86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f'
 MEMO_COMMIT='cb84e1684b46b2d94e0f9c4654020a96ac71ca66'
-C01_IMPL='be690c9252b962d21017026f5665b61547dccbdd'
+C01_IMPL='aa61f57e7bd78c1a1de763339ff090d42eb3889d'
 DESIGN_BLOB='c28a6b2506c98fc728f868081a8192f7d0cd0d0a'
 WORK_ORDER_BLOB='f7cd3371c8023bb61409d5e77fd96a3741f0cddd'
 def write(name,v): (ROOT/'contracts'/name).write_text(json.dumps(v,indent=2)+'\n')

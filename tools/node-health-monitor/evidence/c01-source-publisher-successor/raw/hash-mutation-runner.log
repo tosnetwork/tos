@@ -1,0 +1,4 @@
+COMMAND: .contract-venv/bin/python tests/c01-publisher-mutations.py /home/tomi/tos-node-health-c01-build evidence/c01-source-publisher-successor/raw/hash-mutation --case frozen-body --jobs 16 --build-timeout 180
+frozen-body: compiled mutant killed
+C01 mutation sources restored
+EXIT=0
