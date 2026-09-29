@@ -8,6 +8,7 @@ Scope: six already-running local Edge instances and the local M service only. Th
 - Six local, no-secret collector configuration examples identify the approved Edge endpoints, M route, CA, and role-separated identity/token file **paths**. These are not enabled service units or a deployment.
 - Actual TLS ingress test proves an EdgeReader identity alone cannot archive a process source; the separate ManagerIngest identity archives a typed Edge snapshot, and M's process projection returns that source while `edge_probe` remains absent.
 - An ignored local diagnostic reads Edge1's real snapshot and archives it only into disposable M state. The real snapshot has *distinct* native and process epoch namespaces and the current explicit native-process binding validates them. The same test also passed using a consistent clone of the live M evidence database; that clone was deleted after testing.
+- A second ignored, C09-host-only control reads **all six** running Edge snapshots and archives them into one disposable M database. It asserts six distinct node IDs in the resulting process projection, without touching the live M database or starting any business process.
 
 ## Live failure and cause
 
@@ -21,9 +22,10 @@ The supervisor owns the C09 local observability deployment. A current `health-st
 | --- | --- | --- |
 | `/home/tomi/nhm-c08-mcp-evidence/c09-live-collector-validator1-diagnostic.log` | real M returned 503 | `92a321de1c5bb5ddcaa68d1a4f8b4fed90722894cda766d5d710152a2403e0ba` |
 | `/home/tomi/nhm-c08-mcp-evidence/c09-live-edge-isolated-m-final.log` | real Edge1 to isolated M process projection: 1/1, exit 0 | `218142cd4ee1ea71a0356b1a720261493ef2594bb8fb8c4b84ee53feacf1e671` |
+| `/home/tomi/nhm-c08-mcp-evidence/c09-six-real-edge-isolated-m-distinct.log` | six real Edge snapshots to isolated M, six distinct process nodes, exit 0 | `6724f49fb929d886fe8fc75350f10a90756af57219aaea7e8c82c7789245fd80` |
 | `/home/tomi/nhm-c08-mcp-evidence/c09-split-identity-final-tests.log` | ingress 8, manager 9 (+1 ignored), projection 8; exit 0 | `62c2b67ec09eec7119c11a5d3a45c413a790b945e95dbae924d6243e6c26edb5` |
 | `/home/tomi/nhm-c08-mcp-evidence/c09-split-identity-fmt-clippy.log` | `cargo fmt --all --check` and locked workspace Clippy `-D warnings`, exit 0 | `2983638b6dc55eeadea1759f80885f9755433267679aaf831df4594f8bcd297d` |
 
-Current source SHA-256: `collector.rs` `e94ed101f365ce098bd9e0f651678509c04066b880d8acdba70d10813e0eab56`; `tests/ingress.rs` `9c0528f76b7d77dcbbcf0d071450f318e94eeca8cca0a5f5b77068b5b7570b56`; `tests/manager.rs` `e22395fedc1b7fff945672d04c19b18ad0c68ea379e6ae8ca73ce69e36f076f1`.
+Current source SHA-256: `collector.rs` `e94ed101f365ce098bd9e0f651678509c04066b880d8acdba70d10813e0eab56`; `tests/ingress.rs` `9c0528f76b7d77dcbbcf0d071450f318e94eeca8cca0a5f5b77068b5b7570b56`; `tests/manager.rs` `266175f7c0146be1fe1822b92c1502eed2bf5ae5e3c1ab2f0043de603db790e5`.
 
-Remaining limits: only Edge1 was live-sampled for this checkpoint; no live M `process` row yet, no six-node query projection, no live AURA six-tool or model judgment, no continuous collector supervised unit, and no C09 performance/soak acceptance.
+Remaining limits: all six were live-sampled **read-only** but only into disposable M; no live M `process` row yet, no deployed six-node query projection, no live AURA six-tool or model judgment, no continuous collector supervised unit, and no C09 performance/soak acceptance.

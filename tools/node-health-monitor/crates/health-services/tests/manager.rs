@@ -408,6 +408,71 @@ async fn local_c09_edge_snapshot_is_accepted_by_isolated_manager() {
     eprintln!("C09_LOCAL_DIAGNOSTIC archived_process=1 query_projection=1");
 }
 
+/// Read all six already-running local Edge snapshots, but archive only to
+/// disposable M state. This is deliberately ignored outside the C09 host.
+#[tokio::test]
+#[ignore]
+async fn local_c09_six_edge_snapshots_project_six_process_sources() {
+    let fixture = Fixture::new();
+    let mut config: ManagerConfig = serde_json::from_slice(
+        &std::fs::read(std::env::var("NHM_C09_MANAGER_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    config.control_db = fixture.0.join("control.db");
+    config.evidence_db = fixture.0.join("evidence.db");
+    config.ingest_token_file = fixture.0.join("ingest");
+    config.read_token_file = fixture.0.join("read");
+    config.receiver = None;
+    config.witness_plan_file = None;
+    config.witness_current_token_file = None;
+    config.witness_current_trusted_same_host = false;
+    config.diagnostic = None;
+    let manager = Manager::start(&config).unwrap();
+    let configs = PathBuf::from(std::env::var("NHM_C09_COLLECTOR_CONFIG_DIR").unwrap());
+    for node in ["validator1", "validator2", "validator3", "validator4", "observer5", "observer6"] {
+        let collector: tos_health_services::collector::CollectorConfig =
+            serde_json::from_slice(&std::fs::read(configs.join(format!("{node}.json"))).unwrap())
+                .unwrap();
+        assert_eq!(collector.node_id, node);
+        let client =
+            tos_health_services::client(&collector.ca_file, &collector.identity_file).unwrap();
+        let token =
+            String::from_utf8(tos_health_services::secret(&collector.edge_token_file).unwrap())
+                .unwrap();
+        let reply = client.get(&collector.edge_url).bearer_auth(token).send().await.unwrap();
+        assert_eq!(reply.status(), reqwest::StatusCode::OK, "{node}");
+        let bytes = tos_health_services::bounded_body(reply, 262_144).await.unwrap();
+        let rows = manager.archive_snapshot(&bytes).await.unwrap();
+        assert!(
+            rows.iter().any(|row| {
+                row.evidence.record.source_id == "process" && row.evidence.record.node_id == node
+            }),
+            "{node}"
+        );
+    }
+    let (_, processes) = tos_health_services::manager_query_source::read_process_projection(
+        &config.evidence_db,
+        &config.inventory.network_id,
+    )
+    .unwrap();
+    assert_eq!(processes.len(), 6);
+    assert_eq!(
+        processes
+            .iter()
+            .map(|row| row.1.node_id.as_str())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([
+            "validator1",
+            "validator2",
+            "validator3",
+            "validator4",
+            "observer5",
+            "observer6",
+        ])
+    );
+    eprintln!("C09_LOCAL_DIAGNOSTIC six_real_edge_snapshots=six_process_projections");
+}
+
 #[tokio::test]
 async fn typed_snapshot_archive_commits_exact_refs_without_creating_healthy_facts() {
     use axum::{
