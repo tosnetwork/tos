@@ -4,6 +4,7 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use std::{
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -178,6 +179,9 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
     let mut identity = std::fs::read(t.0.join("client.pem")).unwrap();
     identity.extend(std::fs::read(t.0.join("client.key")).unwrap());
     std::fs::write(t.0.join("identity.pem"), identity).unwrap();
+    let mut ingest_identity = std::fs::read(t.0.join("watchdog.pem")).unwrap();
+    ingest_identity.extend(std::fs::read(t.0.join("watchdog.key")).unwrap());
+    std::fs::write(t.0.join("ingest-identity.pem"), ingest_identity).unwrap();
     let manager_config: ManagerConfig = serde_json::from_value(json!({
         "inventory":{"schema_version":1,"revision":"runtime-test","network_id":network,
             "targets":[{"node":"v1","scope":"masterchain","sources":[{"id":"edge_probe","ttl_ms":"45000","facts":["reachable"]}],
@@ -208,10 +212,9 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
         make_ingress(o_tls_addr, o_up_addr, Role::WitnessReader),
         o_tls,
     ));
-    let m_ingress = tokio::spawn(tos_health_services::ingress::serve(
-        make_ingress(m_tls_addr, m_up_addr, Role::ManagerIngest),
-        m_tls,
-    ));
+    let mut m_config = make_ingress(m_tls_addr, m_up_addr, Role::ManagerIngest);
+    m_config.peers[0].certificate_sha256 = fingerprint(&t.0, "watchdog");
+    let m_ingress = tokio::spawn(tos_health_services::ingress::serve(m_config, m_tls));
     let collector = CollectorConfig {
         node_id: "v1".into(),
         network_id: Some(network),
@@ -219,6 +222,7 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
         ingest_url: format!("https://localhost:{}/v1/manager/snapshot-evidence", m_tls_addr.port()),
         ca_file: t.0.join("ca.pem"),
         identity_file: t.0.join("identity.pem"),
+        ingest_identity_file: Some(t.0.join("ingest-identity.pem")),
         edge_token_file: t.0.join("observer.token"),
         ingest_token_file: t.0.join("ingest.token"),
         witness: Some(WitnessCollectorConfig {
@@ -262,6 +266,7 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
     // current credential must still ACK the historical duplicate while
     // invalidating the matching volatile current view.
     let approved = client(&t.0, Some("client"));
+    let approved_ingest = client(&t.0, Some("watchdog"));
     let cached = approved
         .get(format!("https://localhost:{}/v1/witness/cache/cache_1", o_tls_addr.port()))
         .bearer_auth("o".repeat(32))
@@ -274,7 +279,7 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
     let stamp = tos_health_services::transit::Stamp::capture().unwrap();
     let delivered = stamp
         .add_headers(
-            approved
+            approved_ingest
                 .post(format!(
                     "https://localhost:{}/v1/manager/witness-evidence/cache_1",
                     m_tls_addr.port()
@@ -311,7 +316,7 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
         let stamp = tos_health_services::transit::Stamp::capture().unwrap();
         let mut request = stamp
             .add_headers(
-                approved
+                approved_ingest
                     .post(format!(
                         "https://localhost:{}/v1/manager/witness-evidence/cache_1",
                         m_tls_addr.port()
@@ -329,7 +334,7 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
             reqwest::header::HeaderValue::from_str(&replacement).unwrap(),
         );
         assert_eq!(
-            approved.execute(request).await.unwrap().status(),
+            approved_ingest.execute(request).await.unwrap().status(),
             reqwest::StatusCode::OK,
             "{header} cannot revoke historical ACK"
         );
@@ -350,6 +355,173 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
     m_task.abort();
     o_task.abort();
 }
+
+#[tokio::test]
+async fn split_collector_identities_archive_validated_process_without_probe_relabel() {
+    use axum::Json;
+    use serde_json::{json, Value};
+    use tos_health_services::{
+        collector::CollectorConfig,
+        manager::{Manager, ManagerConfig},
+    };
+
+    let t = fixture();
+    for (name, value) in [
+        ("edge.token", "e".repeat(32)),
+        ("ingest.token", "i".repeat(32)),
+        ("read.token", "r".repeat(32)),
+    ] {
+        std::fs::write(t.0.join(name), value).unwrap();
+        std::fs::set_permissions(t.0.join(name), std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    for (name, cert) in [("reader-identity.pem", "client"), ("ingest-identity.pem", "watchdog")] {
+        let mut identity = std::fs::read(t.0.join(format!("{cert}.pem"))).unwrap();
+        identity.extend(std::fs::read(t.0.join(format!("{cert}.key"))).unwrap());
+        std::fs::write(t.0.join(name), identity).unwrap();
+        std::fs::set_permissions(t.0.join(name), std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let mut native: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
+            .unwrap();
+    let mut process: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/process-source.json"))
+            .unwrap();
+    let process_epoch = "00000000-0000-4000-8000-000000000001:4242:123";
+    process["process_epoch"] = process_epoch.into();
+    let network = "a".repeat(64);
+    let snapshot = json!({"schema_version":1,"status":"partial","sources":[native.take(),process],"anchors":[],
+        "native_process_binding":{"kind":"native_process_binding","process_epoch":process_epoch,
+            "native_epoch":"fa86123d3210887c36045ec1ec657bfc","pid":4242,"start_ticks":"123",
+            "exe_identity_sha256":"d".repeat(64),"listener_inode":"456",
+            "listener_addr":"127.0.0.1:9000","checked_at":"2026-09-29T00:00:00Z"}});
+    let edge_up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let edge_up_addr = edge_up.local_addr().unwrap();
+    let edge_task = tokio::spawn(async move {
+        axum::serve(
+            edge_up,
+            Router::new().route(
+                "/v1/edge/snapshot",
+                get(move || {
+                    let snapshot = snapshot.clone();
+                    async move { Json(snapshot) }
+                }),
+            ),
+        )
+        .await
+        .unwrap();
+    });
+    let manager_config: ManagerConfig = serde_json::from_value(json!({
+        "inventory":{"schema_version":1,"revision":"split-identity-test","network_id":network,
+            "targets":[{"node":"v1","scope":"node","sources":[{"id":"edge_probe","ttl_ms":"45000","facts":["reachable"]}],
+                "rules":[{"id":"target_unreachable","source":"edge_probe","threshold":"0","pending_ms":"0",
+                    "recovery_ms":"60000","minimum_bad_samples":1,"severity":"critical"}]}]},
+        "control_db":t.0.join("control.db"),"evidence_db":t.0.join("evidence.db"),
+        "control_quota_bytes":"1048576","evidence_quota_bytes":"1048576","listen":"127.0.0.1:0",
+        "ingest_token_file":t.0.join("ingest.token"),"read_token_file":t.0.join("read.token"),"receiver":null
+    })).unwrap();
+    let manager = Manager::start(&manager_config).unwrap();
+    let manager_up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let manager_up_addr = manager_up.local_addr().unwrap();
+    let manager_task = tokio::spawn(async move {
+        axum::serve(manager_up, tos_health_services::manager::router(manager)).await.unwrap();
+    });
+    let edge_tls = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let edge_tls_addr = edge_tls.local_addr().unwrap();
+    let manager_tls = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let manager_tls_addr = manager_tls.local_addr().unwrap();
+    let ingress = |listen, upstream, role, cert| IngressConfig {
+        listen,
+        upstream,
+        server_name: "localhost".into(),
+        cert_file: t.0.join("server.pem"),
+        key_file: t.0.join("server.key"),
+        ca_file: t.0.join("ca.pem"),
+        witness_endpoints: vec![],
+        peers: vec![Peer {
+            alias: "collector".into(),
+            certificate_sha256: fingerprint(&t.0, cert),
+            role,
+        }],
+    };
+    let edge_ingress = tokio::spawn(tos_health_services::ingress::serve(
+        ingress(edge_tls_addr, edge_up_addr, Role::EdgeReader, "client"),
+        edge_tls,
+    ));
+    let manager_ingress = tokio::spawn(tos_health_services::ingress::serve(
+        ingress(manager_tls_addr, manager_up_addr, Role::ManagerIngest, "watchdog"),
+        manager_tls,
+    ));
+    let config = CollectorConfig {
+        node_id: "v1".into(),
+        network_id: Some("a".repeat(64)),
+        edge_url: format!("https://localhost:{}/v1/edge/snapshot", edge_tls_addr.port()),
+        ingest_url: format!(
+            "https://localhost:{}/v1/manager/snapshot-evidence",
+            manager_tls_addr.port()
+        ),
+        ca_file: t.0.join("ca.pem"),
+        identity_file: t.0.join("reader-identity.pem"),
+        ingest_identity_file: None,
+        edge_token_file: t.0.join("edge.token"),
+        ingest_token_file: t.0.join("ingest.token"),
+        witness: None,
+    };
+    let denied = tokio::spawn(tos_health_services::collector::run(config));
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    denied.abort();
+    let _ = denied.await;
+    let count = || -> i64 {
+        rusqlite::Connection::open(t.0.join("evidence.db"))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM observations WHERE source='process'", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+    };
+    assert_eq!(count(), 0, "Edge reader certificate was admitted as M writer");
+    let config = CollectorConfig {
+        ingest_identity_file: Some(t.0.join("ingest-identity.pem")),
+        node_id: "v1".into(),
+        network_id: Some("a".repeat(64)),
+        edge_url: format!("https://localhost:{}/v1/edge/snapshot", edge_tls_addr.port()),
+        ingest_url: format!(
+            "https://localhost:{}/v1/manager/snapshot-evidence",
+            manager_tls_addr.port()
+        ),
+        ca_file: t.0.join("ca.pem"),
+        identity_file: t.0.join("reader-identity.pem"),
+        edge_token_file: t.0.join("edge.token"),
+        ingest_token_file: t.0.join("ingest.token"),
+        witness: None,
+    };
+    let accepted = tokio::spawn(tos_health_services::collector::run(config));
+    for _ in 0..100 {
+        if count() == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(count(), 1, "split mTLS collector did not archive process");
+    let (_, projected) = tos_health_services::manager_query_source::read_process_projection(
+        &t.0.join("evidence.db"),
+        &"a".repeat(64),
+    )
+    .unwrap();
+    assert_eq!(projected.len(), 1, "M archive did not preserve a queryable process origin");
+    let edge_probe_count: i64 = rusqlite::Connection::open(t.0.join("evidence.db"))
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM observations WHERE source='edge_probe'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(edge_probe_count, 0, "snapshot was mislabeled as reachability");
+    accepted.abort();
+    edge_ingress.abort();
+    manager_ingress.abort();
+    edge_task.abort();
+    manager_task.abort();
+}
+
 fn openssl(dir: &Path, args: &[&str]) {
     assert!(
         Command::new("openssl")

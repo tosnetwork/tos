@@ -11,6 +11,10 @@ pub struct CollectorConfig {
     pub ingest_url: String,
     pub ca_file: PathBuf,
     pub identity_file: PathBuf,
+    /// Optional distinct mTLS identity for the fixed M ingest routes.
+    /// The Edge/observer identity remains read-only when this is configured.
+    #[serde(default)]
+    pub ingest_identity_file: Option<PathBuf>,
     pub edge_token_file: PathBuf,
     pub ingest_token_file: PathBuf,
     #[serde(default)]
@@ -86,7 +90,11 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
     config.validate_static()?;
     let frozen_witness_plan = config.witness_plan()?;
     if let (Some(witness), Some(plan)) = (&config.witness, frozen_witness_plan) {
-        let client = crate::client(&config.ca_file, &config.identity_file)?;
+        let read_client = crate::client(&config.ca_file, &config.identity_file)?;
+        let ingest_client = crate::client(
+            &config.ca_file,
+            config.ingest_identity_file.as_deref().unwrap_or(&config.identity_file),
+        )?;
         let observer_token = String::from_utf8(crate::secret(&witness.observer_token_file)?)
             .map_err(|e| e.to_string())?;
         let ingest_token = String::from_utf8(crate::secret(&config.ingest_token_file)?)
@@ -102,15 +110,26 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
         let base = witness.observer_base_url.clone();
         let ingest = config.ingest_url.clone();
         tokio::spawn(async move {
-            if let Err(error) =
-                run_witness(client, plan, base, ingest, observer_token, ingest_token, current_token)
-                    .await
+            if let Err(error) = run_witness(
+                WitnessClients { read: read_client, ingest: ingest_client },
+                plan,
+                base,
+                ingest,
+                observer_token,
+                ingest_token,
+                current_token,
+            )
+            .await
             {
                 eprintln!("witness retained collector stopped: {error}");
             }
         });
     }
-    let client = crate::client(&config.ca_file, &config.identity_file)?;
+    let read_client = crate::client(&config.ca_file, &config.identity_file)?;
+    let ingest_client = crate::client(
+        &config.ca_file,
+        config.ingest_identity_file.as_deref().unwrap_or(&config.identity_file),
+    )?;
     let edge_token =
         String::from_utf8(crate::secret(&config.edge_token_file)?).map_err(|e| e.to_string())?;
     let ingest_token =
@@ -120,7 +139,8 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
     let mut last_identity = std::collections::BTreeMap::new();
     loop {
         interval.tick().await;
-        let response = match client.get(&config.edge_url).bearer_auth(&edge_token).send().await {
+        let response = match read_client.get(&config.edge_url).bearer_auth(&edge_token).send().await
+        {
             Ok(r) => r,
             Err(_) => {
                 eprintln!("edge unavailable");
@@ -148,7 +168,7 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
         if identities.iter().all(|(source, id)| last_identity.get(source) == Some(id)) {
             continue;
         }
-        let sent = client
+        let sent = ingest_client
             .post(&config.ingest_url)
             .bearer_auth(&ingest_token)
             .header("content-type", "application/json")
@@ -156,25 +176,40 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
             .send()
             .await;
         let accepted = match sent {
-            Ok(response) => crate::bounded_body(response, 4096)
-                .await
-                .ok()
-                .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
-                .is_some_and(|receipt| {
-                    receipt["accepted"] == true
-                        && receipt["evidence"].as_array().is_some_and(|rows| {
-                            rows.len() == records.len()
-                                && rows.iter().all(|row| {
-                                    row["evidence_id"]
-                                        .as_str()
-                                        .is_some_and(tos_health_core::wire::hash)
-                                        && row["store_seq"].as_str().is_some_and(|seq| {
-                                            tos_health_core::wire::exact_u64(seq).is_ok()
+            Ok(response) => {
+                if !response.status().is_success() {
+                    // Numeric status only; never log peer text or source bodies.
+                    eprintln!("snapshot evidence ingest status={}", response.status().as_u16());
+                    false
+                } else {
+                    crate::bounded_body(response, 4096)
+                        .await
+                        .ok()
+                        .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+                        .is_some_and(|receipt| {
+                            receipt["accepted"] == true
+                                && receipt["evidence"].as_array().is_some_and(|rows| {
+                                    rows.len() == records.len()
+                                        && rows.iter().all(|row| {
+                                            row["evidence_id"]
+                                                .as_str()
+                                                .is_some_and(tos_health_core::wire::hash)
+                                                && row["store_seq"].as_str().is_some_and(|seq| {
+                                                    tos_health_core::wire::exact_u64(seq).is_ok()
+                                                })
                                         })
                                 })
                         })
-                }),
-            Err(_) => false,
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "snapshot evidence ingest transport_error timeout={} connect={}",
+                    error.is_timeout(),
+                    error.is_connect()
+                );
+                false
+            }
         };
         if accepted {
             last_identity.extend(identities);
@@ -185,8 +220,12 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
 }
 
 /// M reads only O's fixed retained routes. This never constructs a target RPC.
+struct WitnessClients {
+    read: reqwest::Client,
+    ingest: reqwest::Client,
+}
 async fn run_witness(
-    client: reqwest::Client,
+    clients: WitnessClients,
     plan: tos_health_core::witness::Plan,
     observer_base_url: String,
     ingest_url: String,
@@ -201,7 +240,8 @@ async fn run_witness(
     loop {
         interval.tick().await;
         poll_witness_once(
-            &client,
+            &clients.read,
+            &clients.ingest,
             &plan,
             &observer_base_url,
             &ingest_url,
@@ -224,7 +264,8 @@ struct WitnessCredentials<'a> {
     current: Option<&'a str>,
 }
 async fn poll_witness_once(
-    client: &reqwest::Client,
+    read_client: &reqwest::Client,
+    ingest_client: &reqwest::Client,
     plan: &tos_health_core::witness::Plan,
     observer_base_url: &str,
     ingest_url: &str,
@@ -236,7 +277,7 @@ async fn poll_witness_once(
         // remote wall time. A failed sample leaves historical archival intact.
         let transit_start = credentials.current.and_then(|_| crate::transit::Stamp::capture());
         let url = format!("{}v1/witness/cache/{}", observer_base_url, endpoint.endpoint_id);
-        let response = match client.get(&url).bearer_auth(credentials.observer).send().await {
+        let response = match read_client.get(&url).bearer_auth(credentials.observer).send().await {
             Ok(response) if response.status().is_success() => response,
             _ => {
                 eprintln!("observer witness cache unavailable endpoint={}", endpoint.endpoint_id);
@@ -274,7 +315,7 @@ async fn poll_witness_once(
         );
         let expected_id =
             crate::witness::archive_evidence_id(&receipt.receipt).map_err(str::to_owned)?;
-        let mut request = client
+        let mut request = ingest_client
             .post(&destination)
             .bearer_auth(credentials.ingest)
             .header("content-type", "application/json");
@@ -502,6 +543,7 @@ mod witness_tests {
         let ingest = format!("https://localhost:{port}/v1/manager/snapshot-evidence");
         poll_witness_once(
             &client,
+            &client,
             &plan,
             &base,
             &ingest,
@@ -514,6 +556,7 @@ mod witness_tests {
         assert!(last_identity.is_empty(), "wrong ACK must not advance collector identity");
         poll_witness_once(
             &client,
+            &client,
             &plan,
             &base,
             &ingest,
@@ -525,6 +568,7 @@ mod witness_tests {
         assert_eq!(posts.load(Ordering::SeqCst), 2);
         assert_eq!(last_identity.len(), 1);
         poll_witness_once(
+            &client,
             &client,
             &plan,
             &base,

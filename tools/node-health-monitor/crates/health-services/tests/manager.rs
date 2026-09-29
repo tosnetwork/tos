@@ -330,6 +330,84 @@ fn synthetic_bound_snapshot() -> Value {
         "listener_addr":"127.0.0.1:9000","checked_at":"2026-09-29T00:00:00Z"}})
 }
 
+/// Explicit local C09 diagnostic, ignored by ordinary suites. It reads the
+/// running Edge through its existing read-only TLS route, then archives only
+/// into this test's disposable M databases; no live M state is changed.
+#[tokio::test]
+#[ignore]
+async fn local_c09_edge_snapshot_is_accepted_by_isolated_manager() {
+    let fixture = Fixture::new();
+    let mut config: ManagerConfig = serde_json::from_slice(
+        &std::fs::read(std::env::var("NHM_C09_MANAGER_CONFIG").unwrap()).unwrap(),
+    )
+    .unwrap();
+    config.control_db = fixture.0.join("control.db");
+    config.evidence_db = std::env::var("NHM_C09_EVIDENCE_CLONE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| fixture.0.join("evidence.db"));
+    config.ingest_token_file = fixture.0.join("ingest");
+    config.read_token_file = fixture.0.join("read");
+    config.receiver = None;
+    config.witness_plan_file = None;
+    config.witness_current_token_file = None;
+    config.witness_current_trusted_same_host = false;
+    config.diagnostic = None;
+    let client = tos_health_services::client(
+        std::path::Path::new(&std::env::var("NHM_C09_CA_FILE").unwrap()),
+        std::path::Path::new(&std::env::var("NHM_C09_READER_IDENTITY_FILE").unwrap()),
+    )
+    .unwrap();
+    let token = String::from_utf8(
+        tos_health_services::secret(std::path::Path::new(
+            &std::env::var("NHM_C09_EDGE_TOKEN_FILE").unwrap(),
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let reply = client
+        .get(std::env::var("NHM_C09_EDGE_SNAPSHOT_URL").unwrap())
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), reqwest::StatusCode::OK);
+    let bytes = tos_health_services::bounded_body(reply, 262_144).await.unwrap();
+    let parsed: tos_health_core::edge_snapshot::EdgeSnapshot =
+        serde_json::from_slice(&bytes).unwrap();
+    eprintln!(
+        "C09_LOCAL_DIAGNOSTIC source_epochs={:?}",
+        parsed
+            .sources
+            .iter()
+            .map(|source| match source {
+                tos_health_core::edge_snapshot::EdgeSource::Native(v) =>
+                    (v.source_id.as_str(), v.process_epoch.as_str()),
+                tos_health_core::edge_snapshot::EdgeSource::NativeV2(v) =>
+                    (v.source_id.as_str(), v.process_epoch.as_str()),
+                tos_health_core::edge_snapshot::EdgeSource::Process(v) =>
+                    (v.source_id.as_str(), v.process_epoch.as_str()),
+                tos_health_core::edge_snapshot::EdgeSource::Cgroup(v) =>
+                    (v.source_id.as_str(), v.process_epoch.as_str()),
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_ne!(
+        parsed.native_process_binding.native_epoch, parsed.native_process_binding.process_epoch,
+        "the local control must exercise distinct native and process epoch namespaces"
+    );
+    parsed.validate("validator1", &config.inventory.network_id).unwrap();
+    let manager = Manager::start(&config).unwrap();
+    let rows = manager.archive_snapshot(&bytes).await.unwrap();
+    assert!(rows.iter().any(|row| row.evidence.record.source_id == "process"));
+    let (_, process) = tos_health_services::manager_query_source::read_process_projection(
+        &config.evidence_db,
+        &config.inventory.network_id,
+    )
+    .unwrap();
+    assert_eq!(process.len(), 1);
+    eprintln!("C09_LOCAL_DIAGNOSTIC archived_process=1 query_projection=1");
+}
+
 #[tokio::test]
 async fn typed_snapshot_archive_commits_exact_refs_without_creating_healthy_facts() {
     use axum::{
