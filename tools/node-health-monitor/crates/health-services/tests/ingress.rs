@@ -451,13 +451,25 @@ async fn split_collector_identities_archive_validated_process_without_probe_rela
         ingress(manager_tls_addr, manager_up_addr, Role::ManagerIngest, "watchdog"),
         manager_tls,
     ));
+    // Test-only TCP relay: a completed TLS exchange is the barrier proving
+    // the denied collector actually attempted its M POST. A fixed sleep can
+    // pass before the collector has even reached this path on a slow CI host.
+    let denied_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let denied_addr = denied_listener.local_addr().unwrap();
+    let (attempt_tx, mut attempt_rx) = tokio::sync::mpsc::channel(1);
+    let denied_relay = tokio::spawn(async move {
+        let (mut client, _) = denied_listener.accept().await.unwrap();
+        let mut upstream = tokio::net::TcpStream::connect(manager_tls_addr).await.unwrap();
+        let exchanged = tokio::io::copy_bidirectional(&mut client, &mut upstream).await.unwrap();
+        attempt_tx.send(exchanged).await.unwrap();
+    });
     let config = CollectorConfig {
         node_id: "v1".into(),
         network_id: Some("a".repeat(64)),
         edge_url: format!("https://localhost:{}/v1/edge/snapshot", edge_tls_addr.port()),
         ingest_url: format!(
             "https://localhost:{}/v1/manager/snapshot-evidence",
-            manager_tls_addr.port()
+            denied_addr.port()
         ),
         ca_file: t.0.join("ca.pem"),
         identity_file: t.0.join("reader-identity.pem"),
@@ -467,7 +479,13 @@ async fn split_collector_identities_archive_validated_process_without_probe_rela
         witness: None,
     };
     let denied = tokio::spawn(tos_health_services::collector::run(config));
-    tokio::time::sleep(Duration::from_millis(700)).await;
+    let (to_ingress, from_ingress) =
+        tokio::time::timeout(Duration::from_secs(5), attempt_rx.recv())
+            .await
+            .expect("denied collector never reached M TLS ingress")
+            .expect("denied M transport ended without a completion witness");
+    assert!(to_ingress > 0 && from_ingress > 0, "denied M TLS exchange was not observed");
+    denied_relay.await.unwrap();
     denied.abort();
     let _ = denied.await;
     let count = || -> i64 {
