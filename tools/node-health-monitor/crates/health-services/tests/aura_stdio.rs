@@ -105,15 +105,21 @@ async fn dead_unix_connection_exits_with_stdin_still_open() {
     let socket = directory.join("mcp.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (disconnect, disconnected) = tokio::sync::oneshot::channel::<()>();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let served = requests.clone();
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        let service = service_fn(|_request: Request<hyper::body::Incoming>| async {
-            Ok::<_, Infallible>(
+        let service = service_fn(move |_request: Request<hyper::body::Incoming>| {
+            let served = served.clone();
+            async move {
+                served.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, Infallible>(
                 Response::builder()
                     .header("content-type", "application/json")
                     .body(axum::body::Body::from(Bytes::from_static(br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"mock","version":"1"}}}"#)))
                     .unwrap(),
-            )
+                )
+            }
         });
         let connection =
             server_http1::Builder::new().serve_connection(TokioIo::new(stream), service);
@@ -156,12 +162,22 @@ async fn dead_unix_connection_exits_with_stdin_still_open() {
     let started = tokio::time::Instant::now();
     disconnect.send(()).unwrap();
     server.await.unwrap();
+    // Even if this write races with the adapter's prompt exit, no second
+    // tools/list frame may cross the dead connection or reach model stdout.
+    if stdin
+        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n")
+        .await
+        .is_ok()
+    {
+        let _ = stdin.flush().await;
+    }
     // The stdin writer is deliberately retained throughout the wait. The
     // adapter must observe its Unix task's death, not wait for stdin EOF.
     let status =
         tokio::time::timeout(Duration::from_secs(3), adapter.wait()).await.unwrap().unwrap();
     assert!(!status.success());
     assert!(started.elapsed() < Duration::from_secs(3));
+    assert_eq!(requests.load(Ordering::SeqCst), 1, "second tool request reached dead server");
     assert!(output.next_line().await.unwrap().is_none(), "dead transport emitted a tool result");
     let mut diagnostic = Vec::new();
     stderr.read_to_end(&mut diagnostic).await.unwrap();
