@@ -16,3 +16,10 @@ Executor evidence correction: on direct inspection, the cited
 contains only `error: could not find Cargo.toml` in the repository root. It
 does **not** establish a compiled assertion failure, so the original red
 claim above is withdrawn pending a separately indexed isolated mutation.
+
+Closure of that evidence gap: the isolated worktree at `474d9a3ee` compiled
+the schema-property mutant and hit the intended `run token exposed by
+"tos_get_capabilities"` assertion with exit 101; baseline and restored tests
+exited 0. The exact patch/source/log hashes are recorded in
+`evidence/c06-native-diagnostics/C08-MCP-TOKEN-MUTATION.json`. This proves
+only the token-visibility guard, not the remaining C08 gates.
