@@ -34,10 +34,10 @@ impl Diagnosis {
             return Err("diagnosis too large");
         }
         let value: Self = serde_json::from_slice(bytes).map_err(|_| "invalid diagnosis JSON")?;
-        if value.summary.len() > 2000
+        if value.summary.chars().count() > 2000
             || value.findings.len() > 6
             || value.missing_evidence.len() > 16
-            || value.missing_evidence.iter().any(|v| v.len() > 256)
+            || value.missing_evidence.iter().any(|v| v.chars().count() > 256)
             || value.recommended_runbooks.len() > 6
         {
             return Err("diagnosis size limit");
@@ -60,8 +60,9 @@ impl Diagnosis {
         }
         for finding in &value.findings {
             if finding.claim.is_empty()
-                || finding.claim.len() > 1000
+                || finding.claim.chars().count() > 1000
                 || finding.evidence_ids.len() > 8
+                || finding.evidence_ids.iter().any(|id| id.is_empty() || id.chars().count() > 128)
                 || finding.evidence_ids.iter().collect::<BTreeSet<_>>().len()
                     != finding.evidence_ids.len()
             {
@@ -72,6 +73,9 @@ impl Diagnosis {
             }
             if finding.evidence_ids.iter().any(|id| !delivered.contains(id)) {
                 return Err("evidence not delivered in run");
+            }
+            if matches!(finding.basis, Basis::Hypothesis) && value.missing_evidence.is_empty() {
+                return Err("hypothesis without missing evidence");
             }
         }
         Ok(value)

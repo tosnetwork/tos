@@ -493,6 +493,30 @@ fn diagnosis_rejects_trailing_instructions_and_unapproved_runbooks() {
 }
 
 #[test]
+fn diagnosis_hypothesis_and_evidence_ids_obey_publication_contract() {
+    use tos_health_core::diagnosis::Diagnosis;
+    let ids = names(&["e1"]);
+    let mut value = json!({"status":"analysis","summary":"A possible storage issue.",
+        "findings":[{"claim":"Storage may be blocked.","basis":"hypothesis","evidence_ids":["e1"]}],
+        "missing_evidence":[],"recommended_runbooks":[]});
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+    value["missing_evidence"] = json!(["storage progress is unavailable"]);
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_ok());
+    value["findings"][0]["evidence_ids"] = json!([""]);
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+    let oversized_id = "x".repeat(129);
+    value["findings"][0]["evidence_ids"] = json!([oversized_id.clone()]);
+    assert!(
+        Diagnosis::parse(value.to_string().as_bytes(), &BTreeSet::from([oversized_id])).is_err()
+    );
+    value["findings"][0]["evidence_ids"] = json!(["e1"]);
+    value["summary"] = json!("界".repeat(2000));
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_ok());
+    value["summary"] = json!("界".repeat(2001));
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+}
+
+#[test]
 fn repeated_relay_receipt_keeps_original_evidence_identity() {
     let mut store = EvidenceStore::new(80_000);
     let record = evidence(1000);
