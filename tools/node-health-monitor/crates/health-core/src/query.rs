@@ -88,6 +88,11 @@ pub struct Grant {
     pub change_start_ms: i64,
     pub expires_monotonic_ms: u64,
     pub watermark: u64,
+    /// The original M observation sequence frozen when a bounded derived
+    /// query package was materialized. `watermark` remains the package's own
+    /// sequence namespace; the two values must never be conflated.
+    #[serde(default)]
+    pub manager_watermark: Option<u64>,
     pub references: BTreeSet<String>,
     token_hash: [u8; 32],
     calls: u32,
@@ -133,6 +138,7 @@ impl Grant {
             change_start_ms: end.checked_sub(86_400_000).ok_or("window overflow")?,
             expires_monotonic_ms: now.checked_add(200_000).ok_or("expiry overflow")?,
             watermark,
+            manager_watermark: None,
             references: BTreeSet::new(),
             token_hash: Sha256::digest(token).into(),
             calls: 0,
@@ -157,6 +163,7 @@ impl Grant {
             && self.change_start_ms == other.change_start_ms
             && self.expires_monotonic_ms == other.expires_monotonic_ms
             && self.watermark == other.watermark
+            && self.manager_watermark == other.manager_watermark
             && self.references == other.references
             && self.token_hash == other.token_hash
     }
@@ -308,6 +315,7 @@ fn cursor_tag(
         grant.window_end_ms,
         grant.change_start_ms,
         grant.watermark,
+        grant.manager_watermark,
         expiry,
         seq,
         id,

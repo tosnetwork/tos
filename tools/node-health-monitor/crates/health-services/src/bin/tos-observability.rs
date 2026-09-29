@@ -4,6 +4,24 @@ use hyper_util::rt::TokioIo;
 use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
 use tower::ServiceExt;
 
+async fn refresh_manager(
+    state: tos_health_services::observability::ObservabilityState,
+) -> Result<(), String> {
+    let mut ticks = tokio::time::interval(Duration::from_secs(15));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Startup performs the first bounded import before either listener opens.
+    ticks.tick().await;
+    loop {
+        ticks.tick().await;
+        let state = state.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = tos_health_services::observability::import_manager(&state);
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+}
+
 async fn serve_control(
     listener: tokio::net::UnixListener,
     app: Router,
@@ -39,22 +57,25 @@ async fn serve_control(
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    if !(8..=9).contains(&args.len()) {
-        return Err("usage: tos-observability INVENTORY_JSON LOOPBACK_LISTEN OPERATOR_TOKEN INGEST_TOKEN SERVICE_TOKEN PRIVATE_QUERY_LEDGER_DB PRIVATE_CONTROL_SOCKET [CACHE_JSONL]".into());
+    if !(8..=10).contains(&args.len()) {
+        return Err("usage: tos-observability INVENTORY_JSON LOOPBACK_LISTEN OPERATOR_TOKEN INGEST_TOKEN SERVICE_TOKEN PRIVATE_QUERY_LEDGER_DB PRIVATE_CONTROL_SOCKET [CACHE_JSONL_OR_DASH] [MANAGER_EVIDENCE_DB]".into());
     }
     let raw = std::fs::read(&args[1])?;
     if raw.len() > 262_144 {
         return Err("inventory too large".into());
     }
     let inventory = serde_json::from_slice(&raw)?;
-    let state = tos_health_services::observability::ObservabilityState::new(
+    let mut state = tos_health_services::observability::ObservabilityState::new(
         inventory,
         tos_health_services::secret(std::path::Path::new(&args[3]))?,
         tos_health_services::secret(std::path::Path::new(&args[4]))?,
         tos_health_services::secret(std::path::Path::new(&args[5]))?,
     )?
     .with_query_ledger(std::path::Path::new(&args[6]))?;
-    if let Some(path) = args.get(8) {
+    if let Some(path) = args.get(9) {
+        state = state.with_manager_evidence(path.into())?;
+    }
+    if let Some(path) = args.get(8).filter(|path| path.as_str() != "-") {
         tos_health_services::observability::import_cache(&state, path.into())?;
     }
     let socket_path = Path::new(&args[7]);
@@ -67,6 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
     let listener = tokio::net::TcpListener::bind(tos_health_services::loopback(&args[2])?).await?;
     let tcp = axum::serve(listener, tos_health_services::observability::router(state.clone()));
+    let refresh = state.manager_evidence_db.as_ref().map(|_| refresh_manager(state.clone()));
     let unix = serve_control(
         control,
         tos_health_services::observability::control_router(state),
@@ -75,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::select! {
         result = tcp => result?,
         result = unix => result?,
+        result = async { match refresh { Some(task) => task.await, None => std::future::pending().await } } => result?,
         _ = tokio::signal::ctrl_c() => {}
     }
     Ok(())

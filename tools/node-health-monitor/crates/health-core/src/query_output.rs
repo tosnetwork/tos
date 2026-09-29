@@ -553,12 +553,34 @@ fn evidence(record: &StoredEvidence) -> Result<EvidenceDto, &'static str> {
         .and_then(Value::as_str)
         .filter(|kind| ["observation", "derived", "event", "change"].contains(kind))
         .ok_or("SCHEMA_MISMATCH")?;
-    // Derived evidence requires actual parent IDs and a derivation version. The
-    // current immutable store has no lineage columns, so fail closed instead of
-    // emitting an invented empty lineage.
-    if kind == "derived" {
-        return Err("CAPABILITY_UNSUPPORTED");
-    }
+    let (parent_evidence_ids, derivation_version) = if kind == "derived" {
+        let parents: Vec<String> = serde_json::from_value(
+            record.record.payload.get("parent_evidence_ids").ok_or("SCHEMA_MISMATCH")?.clone(),
+        )
+        .map_err(|_| "SCHEMA_MISMATCH")?;
+        let version = record
+            .record
+            .payload
+            .get("derivation_version")
+            .and_then(Value::as_str)
+            .ok_or("SCHEMA_MISMATCH")?;
+        if parents.is_empty()
+            || parents.len() > 8
+            || parents.iter().any(|id| !crate::wire::hash(id))
+            || parents.iter().collect::<std::collections::BTreeSet<_>>().len() != parents.len()
+            || version != "m-observation-projection-v1"
+        {
+            return Err("SCHEMA_MISMATCH");
+        }
+        (parents, Some(version.to_owned()))
+    } else {
+        if record.record.payload.get("parent_evidence_ids").is_some()
+            || record.record.payload.get("derivation_version").is_some()
+        {
+            return Err("SCHEMA_MISMATCH");
+        }
+        (vec![], None)
+    };
     let payload_value =
         record.record.payload.get("contract_payload").unwrap_or(&record.record.payload);
     let content_hash = format!(
@@ -581,8 +603,8 @@ fn evidence(record: &StoredEvidence) -> Result<EvidenceDto, &'static str> {
         content_hash,
         quality: quality(record)?,
         redacted: record.record.redacted,
-        parent_evidence_ids: vec![],
-        derivation_version: None,
+        parent_evidence_ids,
+        derivation_version,
     })
 }
 

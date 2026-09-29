@@ -26,6 +26,7 @@ use tos_health_core::{
 pub struct Data {
     pub store: EvidenceStore,
     pub grants: BTreeMap<String, Grant>,
+    pub manager_conflicted: bool,
 }
 #[derive(Clone)]
 pub struct ObservabilityState {
@@ -36,6 +37,7 @@ pub struct ObservabilityState {
     pub service_token: Arc<Vec<u8>>,
     pub metrics: Arc<BTreeSet<String>>,
     pub query_ledger: Option<Arc<Mutex<QueryLedger>>>,
+    pub manager_evidence_db: Option<PathBuf>,
     pub started: Instant,
     pub epoch: String,
 }
@@ -54,6 +56,7 @@ impl ObservabilityState {
             data: Arc::new(Mutex::new(Data {
                 store: EvidenceStore::new(8 * 1024 * 1024),
                 grants: BTreeMap::new(),
+                manager_conflicted: false,
             })),
             inventory: Arc::new(inventory),
             operator_token: Arc::new(operator),
@@ -61,6 +64,7 @@ impl ObservabilityState {
             service_token: Arc::new(service),
             metrics: Arc::new(BTreeSet::new()),
             query_ledger: None,
+            manager_evidence_db: None,
             started: Instant::now(),
             epoch: hex(&random_token()?),
         })
@@ -86,6 +90,86 @@ impl ObservabilityState {
         self.query_ledger = Some(Arc::new(Mutex::new(ledger)));
         Ok(self)
     }
+    pub fn with_manager_evidence(mut self, path: PathBuf) -> Result<Self, String> {
+        if self.query_ledger.is_none() {
+            return Err("M projection requires durable query ledger".into());
+        }
+        crate::manager_query_source::read_process_projection(&path, &self.inventory.network_id)?;
+        self.manager_evidence_db = Some(path);
+        import_manager(&self)?;
+        Ok(self)
+    }
+}
+fn block_manager_queries(state: &ObservabilityState, data: &mut Data) -> Result<(), String> {
+    // Set the in-memory refusal before touching SQLite. A partial I/O failure
+    // must never leave an apparently usable run in this process.
+    data.manager_conflicted = true;
+    let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+    let mut ledger = ledger.lock().map_err(|_| "query ledger unavailable")?;
+    for run in data.grants.keys() {
+        ledger.revoke(run)?;
+    }
+    for grant in data.grants.values_mut() {
+        grant.revoke();
+    }
+    Ok(())
+}
+fn import_manager_into(
+    state: &ObservabilityState,
+    data: &mut Data,
+) -> Result<(u64, usize), String> {
+    let Some(path) = &state.manager_evidence_db else {
+        return Ok((0, 0));
+    };
+    if data.manager_conflicted {
+        return Err("M projection conflict requires operator review".into());
+    }
+    let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+    let source = crate::manager_query_source::read_process_projection_state(
+        path,
+        &state.inventory.network_id,
+    );
+    let (m_watermark, records, quarantined) = match source {
+        Ok(value) => value,
+        Err(error) => {
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
+    };
+    let retained_result = {
+        let guard = ledger.lock().map_err(|_| "query ledger unavailable")?;
+        guard.retained_origin_ids()
+    };
+    let retained = match retained_result {
+        Ok(ids) => ids,
+        Err(error) => {
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
+    };
+    if !retained.is_disjoint(&quarantined) {
+        block_manager_queries(state, data)?;
+        return Err("retained M parent was quarantined".into());
+    }
+    let count = records.len();
+    for (origin, record) in records {
+        if !state.inventory.nodes.contains(&record.node_id)
+            || !state.inventory.scopes.contains(&record.scope_id)
+        {
+            return Err("M projection outside inventory".into());
+        }
+        ledger.lock().map_err(|_| "query ledger unavailable")?.insert_projection(
+            &mut data.store,
+            &origin,
+            record,
+        )?;
+    }
+    Ok((m_watermark, count))
+}
+/// This is a broker-control operation, not a query handler fallback.
+pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String> {
+    let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
+    import_manager_into(state, &mut data)
 }
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers.get("authorization").and_then(|v| v.to_str().ok())
@@ -172,11 +256,16 @@ async fn grant(
         &value[20..]
     );
     let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if data.manager_conflicted {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
     data.grants.retain(|_, g| g.expires_monotonic_ms > state.now());
     if data.grants.len() >= 32 {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
-    let g = Grant::new(
+    let (manager_watermark, _) =
+        import_manager_into(&state, &mut data).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut g = Grant::new(
         run.clone(),
         "aura".into(),
         state.inventory.network_id.clone(),
@@ -189,6 +278,9 @@ async fn grant(
         data.store.watermark(),
     )
     .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if state.manager_evidence_db.is_some() {
+        g.manager_watermark = Some(manager_watermark);
+    }
     if let Some(ledger) = &state.query_ledger {
         ledger
             .lock()
@@ -254,7 +346,10 @@ async fn query(
     let run =
         input.get("run_id").and_then(Value::as_str).ok_or(StatusCode::BAD_REQUEST)?.to_owned();
     let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let Data { store, grants } = &mut *data;
+    if data.manager_conflicted {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let Data { store, grants, .. } = &mut *data;
     let grant = grants.get(&run).ok_or(StatusCode::UNAUTHORIZED)?;
     let name = match tool.as_str() {
         "capabilities" => TOOLS[0],

@@ -1,4 +1,5 @@
 //! Durable, fail-closed query grant accounting. No raw run token is stored.
+use crate::durable::EvidenceRow;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use std::{
     fs::OpenOptions,
@@ -126,6 +127,15 @@ impl QueryLedger {
                 store_seq INTEGER PRIMARY KEY CHECK(store_seq > 0),
                 evidence_id TEXT NOT NULL UNIQUE,
                 body BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS query_origins (
+                origin_id TEXT PRIMARY KEY,
+                manager_seq INTEGER NOT NULL CHECK(manager_seq > 0),
+                body BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS query_projection_origin (
+                query_evidence_id TEXT PRIMARY KEY,
+                origin_id TEXT NOT NULL REFERENCES query_origins(origin_id)
             );",
         )
         .map_err(failure)?;
@@ -207,6 +217,31 @@ impl QueryLedger {
             }
             entries.push(serde_json::from_slice::<StoredEvidence>(&body).map_err(failure)?);
         }
+        for entry in &entries {
+            if entry.record.payload.get("evidence_kind").and_then(serde_json::Value::as_str)
+                == Some("derived")
+            {
+                let binding: Option<(String, i64, Vec<u8>)> = self.conn.query_row(
+                    "SELECT o.origin_id,o.manager_seq,o.body FROM query_origins o JOIN query_projection_origin p ON p.origin_id=o.origin_id WHERE p.query_evidence_id=?1",
+                    [&entry.evidence_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)),
+                ).optional().map_err(failure)?;
+                let (origin_id, manager_seq, body) =
+                    binding.ok_or("derived query evidence has no retained M parent")?;
+                let origin: EvidenceRow = serde_json::from_slice(&body).map_err(failure)?;
+                if origin.evidence_id != origin_id
+                    || i64::try_from(origin.store_seq.0).map_err(failure)? != manager_seq
+                {
+                    return Err("retained M parent index mismatch".into());
+                }
+                let reproduced = crate::manager_query_source::project_process(&origin)?
+                    .ok_or("derived M parent is not process")?;
+                if serde_json::to_vec(&reproduced).map_err(failure)?
+                    != serde_json::to_vec(&entry.record).map_err(failure)?
+                {
+                    return Err("derived query evidence does not match M parent".into());
+                }
+            }
+        }
         EvidenceStore::restore(max_bytes, u64::try_from(sequence).map_err(failure)?, entries)
             .map_err(str::to_owned)
     }
@@ -218,10 +253,67 @@ impl QueryLedger {
         store: &mut EvidenceStore,
         record: Evidence,
     ) -> Result<String, String> {
+        if record.payload.get("evidence_kind").and_then(serde_json::Value::as_str)
+            == Some("derived")
+        {
+            return Err("derived evidence requires retained parent".into());
+        }
+        self.insert_bound(store, record, None)
+    }
+
+    pub fn insert_projection(
+        &mut self,
+        store: &mut EvidenceStore,
+        origin: &EvidenceRow,
+        record: Evidence,
+    ) -> Result<String, String> {
+        let reproduced = crate::manager_query_source::project_process(origin)?
+            .ok_or("M origin has no supported projection")?;
+        if serde_json::to_vec(&record).map_err(failure)?
+            != serde_json::to_vec(&reproduced).map_err(failure)?
+        {
+            return Err("projection differs from original M evidence".into());
+        }
+        self.insert_bound(store, record, Some(origin))
+    }
+
+    /// Only original IDs that still back a resident derived query row matter
+    /// for conflict propagation. The retained-parent cap bounds this scan.
+    pub fn retained_origin_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
+        let mut query =
+            self.conn.prepare("SELECT origin_id FROM query_origins LIMIT 4097").map_err(failure)?;
+        let rows = query.query_map([], |row| row.get::<_, String>(0)).map_err(failure)?;
+        let mut ids = std::collections::BTreeSet::new();
+        for row in rows {
+            if ids.len() >= 4096 {
+                return Err("retained M parent index overflow".into());
+            }
+            ids.insert(row.map_err(failure)?);
+        }
+        Ok(ids)
+    }
+
+    fn insert_bound(
+        &mut self,
+        store: &mut EvidenceStore,
+        record: Evidence,
+        origin: Option<&EvidenceRow>,
+    ) -> Result<String, String> {
         let mut candidate = store.clone();
         let previous = store.watermark();
         let id = candidate.insert(record).map_err(str::to_owned)?;
         if candidate.watermark() == previous {
+            if let Some(origin) = origin {
+                let retained: Option<Vec<u8>> = self.conn.query_row(
+                    "SELECT o.body FROM query_origins o JOIN query_projection_origin p ON p.origin_id=o.origin_id WHERE p.query_evidence_id=?1",
+                    [&id], |row| row.get(0),
+                ).optional().map_err(failure)?;
+                if retained.as_deref()
+                    != Some(serde_json::to_vec(origin).map_err(failure)?.as_slice())
+                {
+                    return Err("duplicate projection parent missing or changed".into());
+                }
+            }
             return Ok(id);
         }
         // A grant pins its fixed W for the complete run. If bounded insertion
@@ -267,6 +359,58 @@ impl QueryLedger {
             [i64::try_from(first_live).map_err(failure)?],
         )
         .map_err(failure)?;
+        tx.execute("DELETE FROM query_projection_origin WHERE query_evidence_id NOT IN (SELECT evidence_id FROM query_evidence)", [])
+            .map_err(failure)?;
+        tx.execute("DELETE FROM query_origins WHERE origin_id NOT IN (SELECT origin_id FROM query_projection_origin)", [])
+            .map_err(failure)?;
+        if let Some(origin) = origin {
+            let parent = serde_json::to_vec(origin).map_err(failure)?;
+            if parent.len() > 34_816 {
+                return Err("M parent too large".into());
+            }
+            let existing: Option<(i64, Vec<u8>)> = tx
+                .query_row(
+                    "SELECT manager_seq,body FROM query_origins WHERE origin_id=?1",
+                    [&origin.evidence_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(failure)?;
+            if let Some((seq, body)) = existing {
+                if u64::try_from(seq).map_err(failure)? != origin.store_seq.0 || body != parent {
+                    return Err("M parent identity conflict".into());
+                }
+            } else {
+                let (count, bytes): (i64, i64) = tx
+                    .query_row(
+                        "SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM query_origins",
+                        [],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(failure)?;
+                if count >= 4096
+                    || bytes
+                        .checked_add(i64::try_from(parent.len()).map_err(failure)?)
+                        .is_none_or(|sum| sum > 8 * 1024 * 1024)
+                {
+                    return Err("M parent retention full".into());
+                }
+                tx.execute(
+                    "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,?2,?3)",
+                    params![
+                        origin.evidence_id,
+                        i64::try_from(origin.store_seq.0).map_err(failure)?,
+                        parent
+                    ],
+                )
+                .map_err(failure)?;
+            }
+            tx.execute(
+                "INSERT INTO query_projection_origin(query_evidence_id,origin_id) VALUES(?1,?2)",
+                params![id, origin.evidence_id],
+            )
+            .map_err(failure)?;
+        }
         tx.execute(
             "UPDATE query_evidence_meta SET sequence=?1 WHERE singleton=1",
             [i64::try_from(candidate.watermark()).map_err(failure)?],

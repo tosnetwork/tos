@@ -4,6 +4,7 @@ use std::{collections::BTreeSet, io::Read, net::SocketAddr, path::Path, time::Du
 use subtle::ConstantTimeEq;
 pub mod collector;
 pub mod edge;
+pub mod manager_query_source;
 pub mod observability;
 pub mod query_ledger;
 pub mod transit;

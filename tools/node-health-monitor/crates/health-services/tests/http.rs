@@ -838,7 +838,18 @@ async fn runtime_output_reflects_unknown_quality_and_rejects_conflicts() {
     derived.payload["evidence_kind"] = json!("derived");
     let (status, body) = metric_response(vec![derived]).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["error"]["code"], "CAPABILITY_UNSUPPORTED");
+    assert_eq!(body["error"]["code"], "SCHEMA_MISMATCH");
+
+    let mut derived = record(start + 1_000, 1, "collector", metric_payload("bytes"));
+    derived.payload["evidence_kind"] = json!("derived");
+    derived.payload["source_version"] = json!("m-observation-projection-v1");
+    derived.payload["parent_evidence_ids"] = json!(["b".repeat(64)]);
+    derived.payload["derivation_version"] = json!("m-observation-projection-v1");
+    let (status, body) = metric_response(vec![derived]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["evidence"][0]["kind"], "derived");
+    assert_eq!(body["evidence"][0]["parent_evidence_ids"], json!(["b".repeat(64)]));
+    assert_eq!(body["evidence"][0]["derivation_version"], "m-observation-projection-v1");
 
     let mut unknown = record(start + 1_000, 1, "collector", metric_payload("bytes"));
     unknown.quality.coverage = Coverage::Unknown;
