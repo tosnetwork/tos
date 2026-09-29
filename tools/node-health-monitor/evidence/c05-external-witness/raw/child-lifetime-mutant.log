@@ -1,0 +1,27 @@
+Script started on 2026-09-29 12:04:18+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.47s
+     Running tests/witness_poll.rs (target/debug/deps/witness_poll-a64ed631cd879ce5)
+
+running 1 test
+test cancelled_round_then_new_round_never_exceeds_four_local_requests ... FAILED
+
+failures:
+
+---- cancelled_round_then_new_round_never_exceeds_four_local_requests stdout ----
+
+thread 'cancelled_round_then_new_round_never_exceeds_four_local_requests' (1185933) panicked at crates/health-services/tests/witness_poll.rs:214:5:
+assertion `left == right` failed
+  left: 0
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    cancelled_round_then_new_round_never_exceeds_four_local_requests
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p tos-health-services --test witness_poll`
+
+Script done on 2026-09-29 12:04:21+00:00 [COMMAND_EXIT_CODE="101"]

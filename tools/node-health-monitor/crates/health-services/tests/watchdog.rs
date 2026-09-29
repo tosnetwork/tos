@@ -26,6 +26,72 @@ fn pipeline_requires_own_firing_new_evaluation() {
 }
 
 #[tokio::test]
+async fn own_observer_heartbeat_and_notice_delivery_are_distinct_from_monitor_fault() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    let state = WatchdogState::new_with_epoch(
+        "monitor1".into(),
+        "observer1".into(),
+        "observer-epoch-1".into(),
+        vec![b'a'; 32],
+    )
+    .unwrap();
+    let read = |path: &str, auth: bool| {
+        let state = state.clone();
+        let path = path.to_owned();
+        async move {
+            let mut builder = Request::builder().uri(path);
+            if auth {
+                builder = builder.header("authorization", format!("Bearer {}", "a".repeat(32)));
+            }
+            let response = tos_health_services::watchdog::router(state)
+                .oneshot(builder.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let value = if body.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::from_slice(&body).unwrap()
+            };
+            (status, value)
+        }
+    };
+    assert_eq!(read("/v1/watchdog/heartbeat", false).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(read("/v1/watchdog/heartbeat?force=true", true).await.0, StatusCode::BAD_REQUEST);
+    let monitor_status = state.unavailable().unwrap();
+    let (_, initial) = read("/v1/watchdog/heartbeat", true).await;
+    assert_eq!(initial["observer_epoch"], "observer-epoch-1");
+    assert_eq!(initial["sequence"], "0");
+    assert_eq!(initial["notification_transport"], "unknown");
+    assert_eq!(state.completed_tick().unwrap(), 1);
+    state.notice_result(false).unwrap();
+    let (_, failed) = read("/v1/watchdog/heartbeat", true).await;
+    assert_eq!(failed["sequence"], "1");
+    assert_eq!(failed["notification_transport"], "delivery_failed");
+    assert_eq!(
+        read("/v1/watchdog/heartbeat", true).await.1["sequence"],
+        "1",
+        "repeated heartbeat reads cannot manufacture a new O tick"
+    );
+    state.notice_result(true).unwrap();
+    assert_eq!(state.completed_tick().unwrap(), 2);
+    let (_, recovered) = read("/v1/watchdog/heartbeat", true).await;
+    assert_eq!(recovered["sequence"], "2");
+    assert_eq!(recovered["notification_transport"], "accepted_by_receiver");
+    assert_eq!(
+        state.unavailable().unwrap(),
+        monitor_status,
+        "O notice acceptance does not mark the monitored M process/pipeline healthy"
+    );
+}
+
+#[tokio::test]
 async fn direct_observer_notice_has_stable_timestamp_key_and_bounded_retry() {
     use axum::{
         http::{HeaderMap, StatusCode},

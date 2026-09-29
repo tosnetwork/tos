@@ -1,4 +1,5 @@
 //! Local monitoring-host storage. Control transactions never share the evidence database.
+use crate::witness::CacheResponse;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -8,6 +9,7 @@ use tos_health_core::{
     health_state::{HealthState, Sample},
     rules::FactFrame,
     wire::U64,
+    witness::Plan,
 };
 
 type Result<T> = std::result::Result<T, String>;
@@ -79,6 +81,14 @@ pub struct EvidenceRow {
     pub evidence_id: String,
     pub evidence: DurableEvidence,
 }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WitnessArchiveRow {
+    pub namespace: String,
+    pub archive_seq: U64,
+    pub evidence_id: String,
+    pub response: CacheResponse,
+}
 pub struct EvidenceDb {
     conn: Connection,
     path: std::path::PathBuf,
@@ -98,7 +108,17 @@ impl EvidenceDb {
             UNIQUE(node,scope,process_epoch,source_epoch,source,source_record));
             CREATE INDEX IF NOT EXISTS observation_scope ON observations(node,scope,store_seq);
             CREATE TABLE IF NOT EXISTS quarantined(node TEXT,scope TEXT,process_epoch TEXT,source_epoch TEXT,source TEXT,
-            PRIMARY KEY(node,scope,process_epoch,source_epoch,source));").map_err(err)?;
+            PRIMARY KEY(node,scope,process_epoch,source_epoch,source));
+            CREATE TABLE IF NOT EXISTS witness_observations (
+            store_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+            observer_epoch TEXT NOT NULL,endpoint TEXT NOT NULL,source_epoch TEXT NOT NULL,
+            generation TEXT NOT NULL,source_hash TEXT NOT NULL,metadata_hash TEXT NOT NULL,
+            evidence_id TEXT NOT NULL,body TEXT NOT NULL,
+            UNIQUE(observer_epoch,endpoint,source_epoch,generation));
+            CREATE INDEX IF NOT EXISTS witness_endpoint_seq ON witness_observations(endpoint,store_seq);
+            CREATE TABLE IF NOT EXISTS witness_quarantined (
+            observer_epoch TEXT NOT NULL,endpoint TEXT NOT NULL,source_epoch TEXT NOT NULL,
+            PRIMARY KEY(observer_epoch,endpoint,source_epoch));").map_err(err)?;
         Ok(Self { conn, path: path.into(), quota })
     }
     pub fn insert(&mut self, value: DurableEvidence) -> Result<EvidenceRow> {
@@ -151,6 +171,111 @@ impl EvidenceDb {
             store_seq: U64(u64::try_from(seq).map_err(err)?),
             evidence_id: digest,
             evidence: value,
+        })
+    }
+    pub fn insert_witness(
+        &mut self,
+        response: CacheResponse,
+        plan: &Plan,
+    ) -> Result<WitnessArchiveRow> {
+        wal_budget(&self.path, self.quota)?;
+        let body = serde_json::to_vec(&response).map_err(err)?;
+        let endpoint = &response.receipt.endpoint_id;
+        let _source = CacheResponse::decode(&body, plan, endpoint).map_err(str::to_owned)?;
+        if body.len() > 32_768 {
+            return Err("witness archive size limit".into());
+        }
+        let receipt = &response.receipt;
+        let immutable_rows: Vec<_> = response
+            .row_ages
+            .iter()
+            .map(|age| {
+                (
+                    &age.target_id,
+                    &age.first_received_at,
+                    age.observer_clock_quality_at_first_receipt,
+                    age.source_age_at_first_receipt_ms,
+                )
+            })
+            .collect();
+        let metadata = serde_json::to_vec(&(
+            &receipt.observer_id,
+            &receipt.observer_epoch,
+            &receipt.plan_revision,
+            &receipt.plan_hash,
+            &receipt.endpoint_id,
+            &receipt.source_epoch,
+            receipt.generation,
+            &receipt.source_hash,
+            receipt.observer_clock_quality,
+            &receipt.first_received_at,
+            receipt.request_duration_ms,
+            immutable_rows,
+        ))
+        .map_err(err)?;
+        let metadata_hash = format!("{:x}", Sha256::digest(&metadata));
+        let evidence_id = crate::witness::archive_evidence_id(receipt).map_err(str::to_owned)?;
+        let body_text = String::from_utf8(body).map_err(err)?;
+        let tx = self.conn.transaction().map_err(err)?;
+        let quarantined: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM witness_quarantined
+            WHERE observer_epoch=?1 AND endpoint=?2 AND source_epoch=?3)",
+                params![receipt.observer_epoch, endpoint, receipt.source_epoch],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        if quarantined {
+            return Err("WITNESS_SOURCE_CONFLICT".into());
+        }
+        let prior: Option<(i64, String, String, String)> = tx
+            .query_row(
+                "SELECT store_seq,source_hash,metadata_hash,body FROM witness_observations
+             WHERE observer_epoch=?1 AND endpoint=?2 AND source_epoch=?3 AND generation=?4",
+                params![
+                    receipt.observer_epoch,
+                    endpoint,
+                    receipt.source_epoch,
+                    receipt.generation.0.to_string()
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        if let Some((seq, hash, prior_metadata, stored)) = prior {
+            if hash != receipt.source_hash || prior_metadata != metadata_hash {
+                tx.execute(
+                    "INSERT OR IGNORE INTO witness_quarantined VALUES(?1,?2,?3)",
+                    params![receipt.observer_epoch, endpoint, receipt.source_epoch],
+                )
+                .map_err(err)?;
+                tx.commit().map_err(err)?;
+                return Err("WITNESS_SOURCE_CONFLICT".into());
+            }
+            return Ok(WitnessArchiveRow {
+                namespace: "witness_archive_v1".into(),
+                archive_seq: U64(u64::try_from(seq).map_err(err)?),
+                evidence_id,
+                response: serde_json::from_str(&stored).map_err(err)?,
+            });
+        }
+        let count: i64 = tx
+            .query_row("SELECT COUNT(*) FROM witness_observations", [], |r| r.get(0))
+            .map_err(err)?;
+        if count >= 4096 {
+            return Err("witness archive capacity".into());
+        }
+        tx.execute("INSERT INTO witness_observations(observer_epoch,endpoint,source_epoch,generation,source_hash,metadata_hash,evidence_id,body)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![receipt.observer_epoch, endpoint, receipt.source_epoch, receipt.generation.0.to_string(),
+                receipt.source_hash, metadata_hash, evidence_id, body_text]).map_err(err)?;
+        let seq = tx.last_insert_rowid();
+        tx.commit().map_err(err)?;
+        Ok(WitnessArchiveRow {
+            namespace: "witness_archive_v1".into(),
+            archive_seq: U64(u64::try_from(seq).map_err(err)?),
+            evidence_id,
+            response,
         })
     }
     pub fn watermark(&self) -> Result<u64> {

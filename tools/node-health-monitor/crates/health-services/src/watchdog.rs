@@ -1,15 +1,18 @@
 //! Independent observer-side dead-man receiver. Delivery replay never refreshes its clock.
 use axum::{
-    extract::State,
+    extract::{OriginalUri, State},
     http::{HeaderMap, StatusCode},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Instant,
 };
 use tos_health_core::{
@@ -22,11 +25,29 @@ pub struct WatchdogState {
     pipeline: Arc<Mutex<EpochDeadman>>,
     token: Arc<Vec<u8>>,
     monitor_id: String,
+    observer_id: String,
+    own_epoch: String,
+    own_sequence: Arc<AtomicU64>,
+    notice_transport: Arc<Mutex<&'static str>>,
     started: Instant,
 }
 impl WatchdogState {
     pub fn new(monitor_id: String, token: Vec<u8>) -> Result<Self, String> {
-        if !crate::alias(&monitor_id) || token.len() < 32 {
+        let epoch = crate::hex(&crate::random_token()?);
+        Self::new_with_epoch(monitor_id.clone(), monitor_id, epoch, token)
+    }
+    pub fn new_with_epoch(
+        monitor_id: String,
+        observer_id: String,
+        own_epoch: String,
+        token: Vec<u8>,
+    ) -> Result<Self, String> {
+        if !crate::alias(&monitor_id)
+            || !crate::alias(&observer_id)
+            || own_epoch.is_empty()
+            || own_epoch.len() > 128
+            || token.len() < 32
+        {
             return Err("invalid watchdog identity".into());
         }
         Ok(Self {
@@ -34,8 +55,23 @@ impl WatchdogState {
             pipeline: Arc::new(Mutex::new(EpochDeadman::new(0, 100_000).map_err(str::to_owned)?)),
             token: Arc::new(token),
             monitor_id,
+            observer_id,
+            own_epoch,
+            own_sequence: Arc::new(AtomicU64::new(0)),
+            notice_transport: Arc::new(Mutex::new("unknown")),
             started: Instant::now(),
         })
+    }
+    pub fn completed_tick(&self) -> Result<u64, String> {
+        self.own_sequence
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |previous| previous.checked_add(1))
+            .map(|previous| previous + 1)
+            .map_err(|_| "observer heartbeat sequence exhausted".into())
+    }
+    pub fn notice_result(&self, accepted: bool) -> Result<(), String> {
+        *self.notice_transport.lock().map_err(|_| "observer notice state unavailable")? =
+            if accepted { "accepted_by_receiver" } else { "delivery_failed" };
+        Ok(())
     }
     pub fn now(&self) -> u64 {
         self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
@@ -141,9 +177,29 @@ async fn receive(
     let n = state.accept_pipeline(&body).map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(Json(json!({"accepted_sequences":U64(n as u64)})))
 }
+async fn own_heartbeat(
+    State(state): State<WatchdogState>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, StatusCode> {
+    if !crate::authorized(headers.get("authorization").and_then(|h| h.to_str().ok()), &state.token)
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if uri.query().is_some() || !body.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let notice = *state.notice_transport.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(json!({"schema_version":1,"observer_id":state.observer_id,
+        "observer_epoch":state.own_epoch,
+        "sequence":U64(state.own_sequence.load(Ordering::Acquire)),
+        "notification_transport":notice})))
+}
 pub fn router(state: WatchdogState) -> Router {
     Router::new()
         .route("/v1/watchdog/pipeline", post(receive))
+        .route("/v1/watchdog/heartbeat", get(own_heartbeat))
         .layer(axum::extract::DefaultBodyLimit::max(262_144))
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(tokio::sync::Semaphore::new(4)),

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "rust": "1.97.1",
   "rust_toolchain_sha256": "279d77167cec5426fa80f457cd066dc74a360fbe4e2816f4f3fa01487a918fdc",
-  "cargo_lock_sha256": "091885b7fb2413d05bbf06af803ea4074659c3e55c2bc3f15e808f2be1b29477",
+  "cargo_lock_sha256": "1c9a143a48f9c437a6b09ab1fb21060c79db0d7ff87b5bfb8dfcaa826956a70a",
   "contract_python": {
     "version": "3.14.4",
     "requirements_lock": "requirements-contracts.lock",

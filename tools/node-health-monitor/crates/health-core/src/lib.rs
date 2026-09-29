@@ -16,6 +16,7 @@ pub mod freshness;
 pub mod health_state;
 pub mod rules;
 pub mod wire;
+pub mod witness;
 
 pub mod consensus_v2;
 pub mod native;

@@ -1,9 +1,10 @@
 //! Independent control/evidence owners; handlers never execute database work.
 use crate::durable::{
     ControlDb, ControlUpdate, DurableEvidence, Evaluation, EvidenceDb, EvidenceRow, RuleKey,
+    WitnessArchiveRow,
 };
 use axum::{
-    extract::{OriginalUri, State},
+    extract::{OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
@@ -37,6 +38,8 @@ pub struct ManagerConfig {
     pub ingest_token_file: PathBuf,
     pub read_token_file: PathBuf,
     pub receiver: Option<ReceiverConfig>,
+    #[serde(default)]
+    pub witness_plan_file: Option<PathBuf>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -58,6 +61,7 @@ pub struct Manager {
     read: Arc<Vec<u8>>,
     pub inventory: Arc<RuleInventory>,
     quarantines: Quarantines,
+    witness_plan: Option<Arc<tos_health_core::witness::Plan>>,
 }
 #[derive(Clone)]
 struct Cached {
@@ -75,6 +79,11 @@ enum ControlCommand {
 }
 enum EvidenceCommand {
     Insert(DurableEvidence, oneshot::Sender<Result<EvidenceRow, String>>),
+    InsertWitness(
+        Box<crate::witness::CacheResponse>,
+        Arc<tos_health_core::witness::Plan>,
+        oneshot::Sender<Result<WitnessArchiveRow, String>>,
+    ),
 }
 fn evidence(frame: &FactFrame) -> Result<DurableEvidence, String> {
     let at = tos_health_core::query::utc_ms(&frame.observed_at).map_err(str::to_owned)?;
@@ -163,6 +172,25 @@ impl Manager {
         )?;
         let mut evidence_db = EvidenceDb::open(&config.evidence_db, config.evidence_quota_bytes.0)?;
         evidence_db.bind_network(&config.inventory.network_id)?;
+        let witness_plan = if let Some(path) = &config.witness_plan_file {
+            let plan = tos_health_core::witness::Plan::read_file(path)?;
+            if plan.network_id != config.inventory.network_id {
+                return Err("witness plan network mismatch".into());
+            }
+            for target in &plan.targets {
+                if !config
+                    .inventory
+                    .targets
+                    .iter()
+                    .any(|item| item.node == target.node_id && item.scope == target.scope_id)
+                {
+                    return Err("witness target outside manager inventory".into());
+                }
+            }
+            Some(Arc::new(plan))
+        } else {
+            None
+        };
         let epoch = crate::hex(&crate::random_token()?);
         let started = Instant::now();
         let engine = RuleEngine::new(config.inventory.clone(), 0).map_err(str::to_owned)?;
@@ -177,9 +205,15 @@ impl Manager {
         std::thread::Builder::new()
             .name("health-evidence-writer".into())
             .spawn(move || {
-                while let Ok(EvidenceCommand::Insert(value, reply)) = erx.recv() {
-                    let result = evidence_db.insert(value);
-                    let _ = reply.send(result);
+                while let Ok(command) = erx.recv() {
+                    match command {
+                        EvidenceCommand::Insert(value, reply) => {
+                            let _ = reply.send(evidence_db.insert(value));
+                        }
+                        EvidenceCommand::InsertWitness(value, plan, reply) => {
+                            let _ = reply.send(evidence_db.insert_witness(*value, &plan));
+                        }
+                    }
                 }
             })
             .map_err(|e| e.to_string())?;
@@ -204,6 +238,7 @@ impl Manager {
             read: Arc::new(read),
             inventory: Arc::new(config.inventory.clone()),
             quarantines,
+            witness_plan,
         })
     }
     pub async fn ingest(&self, frame: FactFrame) -> Result<String, String> {
@@ -304,6 +339,25 @@ impl Manager {
         }
         Ok(committed)
     }
+    /// Separate retained-witness archive; it never enters the health rule
+    /// engine as a verified local fact or creates an upstream request.
+    pub async fn archive_witness(
+        &self,
+        endpoint_id: &str,
+        bytes: &[u8],
+    ) -> Result<WitnessArchiveRow, String> {
+        let plan = self.witness_plan.as_ref().ok_or("witness development plan disabled")?;
+        let (response, _) = crate::witness::CacheResponse::decode(bytes, plan, endpoint_id)
+            .map_err(str::to_owned)?;
+        let (tx, rx) = oneshot::channel();
+        self.evidence
+            .try_send(EvidenceCommand::InsertWitness(Box::new(response), plan.clone(), tx))
+            .map_err(|_| "evidence queue unavailable")?;
+        tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .map_err(|_| "evidence deadline")?
+            .map_err(|_| "evidence writer stopped")?
+    }
     pub fn snapshot(&self) -> Result<Value, String> {
         let c = self.cache.lock().map_err(|_| "cache unavailable")?;
         if c.failure || c.completed.is_none_or(|t| t.elapsed() > Duration::from_secs(15)) {
@@ -390,6 +444,24 @@ async fn archive_snapshot(
         json!({"accepted":true,"evidence":rows.iter().map(|row| json!({"evidence_id":row.evidence_id,"store_seq":row.store_seq})).collect::<Vec<_>>()}),
     ))
 }
+async fn archive_witness(
+    State(state): State<Manager>,
+    Path(endpoint_id): Path<String>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+    bytes: axum::body::Bytes,
+) -> Result<Json<Value>, StatusCode> {
+    permit(&headers, &state.ingest, &uri)?;
+    let row = state.archive_witness(&endpoint_id, &bytes).await.map_err(|error| {
+        if error == "WITNESS_SOURCE_CONFLICT" {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    })?;
+    Ok(Json(json!({"accepted":true,"namespace":row.namespace,
+        "evidence_id":row.evidence_id,"archive_seq":row.archive_seq})))
+}
 async fn snapshot(
     State(state): State<Manager>,
     headers: HeaderMap,
@@ -431,6 +503,10 @@ pub fn router(state: Manager) -> Router {
         .route(
             "/v1/manager/snapshot-evidence",
             post(archive_snapshot).layer(axum::extract::DefaultBodyLimit::max(262_144)),
+        )
+        .route(
+            "/v1/manager/witness-evidence/{endpoint_id}",
+            post(archive_witness).layer(axum::extract::DefaultBodyLimit::max(32_768)),
         )
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(tokio::sync::Semaphore::new(4)),

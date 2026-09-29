@@ -5,6 +5,7 @@ use subtle::ConstantTimeEq;
 pub mod collector;
 pub mod edge;
 pub mod observability;
+pub mod witness;
 
 pub fn secret(path: &Path) -> Result<Vec<u8>, String> {
     use std::os::unix::fs::PermissionsExt;
