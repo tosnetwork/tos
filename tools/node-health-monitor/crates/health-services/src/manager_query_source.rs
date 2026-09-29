@@ -29,8 +29,55 @@ pub struct ProjectionPage {
     pub caught_up: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectionHead {
+    pub global_m_seq: u64,
+    pub device: u64,
+    pub inode: u64,
+}
+
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
+}
+
+/// Low-cost read-only broker witness: M's global observation high-water, not
+/// the count of process rows. It never scans or projects source payloads.
+pub fn read_projection_head(path: &Path, network: &str) -> Result<ProjectionHead, String> {
+    if !tos_health_core::wire::hash(network) {
+        return Err("invalid M network".into());
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(failure)?;
+    if !meta.file_type().is_file() {
+        return Err("M evidence path is not a regular file".into());
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(failure)?;
+    conn.busy_timeout(std::time::Duration::from_millis(100)).map_err(failure)?;
+    conn.execute_batch("PRAGMA query_only=ON; BEGIN TRANSACTION").map_err(failure)?;
+    let bound: String = conn
+        .query_row("SELECT network FROM database_identity WHERE singleton=1", [], |row| row.get(0))
+        .map_err(failure)?;
+    if bound != network {
+        return Err("M evidence network mismatch".into());
+    }
+    let watermark: Option<i64> = conn
+        .query_row("SELECT seq FROM sqlite_sequence WHERE name='observations'", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(failure)?;
+    let end_meta = std::fs::symlink_metadata(path).map_err(failure)?;
+    if end_meta.dev() != meta.dev() || end_meta.ino() != meta.ino() {
+        return Err("M projection database replaced during read".into());
+    }
+    Ok(ProjectionHead {
+        global_m_seq: u64::try_from(watermark.unwrap_or(0)).map_err(failure)?,
+        device: meta.dev(),
+        inode: meta.ino(),
+    })
 }
 
 pub fn project_process(row: &EvidenceRow) -> Result<Option<Evidence>, String> {

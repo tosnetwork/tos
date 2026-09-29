@@ -85,6 +85,80 @@ async fn body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+#[tokio::test]
+async fn private_projection_health_exposes_lag_and_conflict_without_grant_or_import() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-health-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("edge-epoch-1")).unwrap();
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&ledger_path)
+    .unwrap()
+    .with_manager_evidence(manager_path.clone())
+    .unwrap();
+    let probe = |token: &str| {
+        Request::builder()
+            .uri("/v1/control/projection-health")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        control_router(state.clone()).oneshot(probe(&"o".repeat(32))).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        query_router(state.clone()).oneshot(probe(&"a".repeat(32))).await.unwrap().status(),
+        StatusCode::NOT_FOUND,
+        "projection health must not be on the TCP query router"
+    );
+    let initial = control_router(state.clone()).oneshot(probe(&"a".repeat(32))).await.unwrap();
+    assert_eq!(initial.status(), StatusCode::OK);
+    let initial = body(initial).await;
+    assert_eq!(initial["projection_status"], "caught_up");
+    assert_eq!(initial["manager_conflicted"], false);
+    assert_eq!(initial["cursor_global_m_seq"], "1");
+    assert_eq!(initial["source_global_m_seq"], "1");
+    assert_eq!(initial["lag_global_m_seq"], "0");
+    manager.insert(row("edge-epoch-2")).unwrap();
+    let lagged = control_router(state.clone()).oneshot(probe(&"a".repeat(32))).await.unwrap();
+    assert_eq!(lagged.status(), StatusCode::OK);
+    let lagged = body(lagged).await;
+    assert_eq!(lagged["projection_status"], "lagging");
+    assert_eq!(lagged["lag_global_m_seq"], "1");
+    assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), 1);
+    let conn = rusqlite::Connection::open(&manager_path).unwrap();
+    conn.execute("UPDATE observations SET body='{}' WHERE store_seq=1", []).unwrap();
+    assert!(import_manager(&state).unwrap_err().contains("parent changed"));
+    let failed = control_router(state.clone()).oneshot(probe(&"a".repeat(32))).await.unwrap();
+    assert_eq!(failed.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let failed = body(failed).await;
+    assert_eq!(failed["projection_status"], "conflict");
+    assert_eq!(failed["manager_conflicted"], true);
+    drop(state);
+    drop(conn);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn durable_projection_requires_exact_retained_parent_on_insert_and_reopen() {
     let directory = std::env::temp_dir().join(format!(

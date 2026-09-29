@@ -225,6 +225,75 @@ async fn monitor_heartbeat(
 async fn healthz() -> Json<Value> {
     Json(json!({"service":"available","validator_health":"unknown"}))
 }
+/// Authenticated, read-only control-socket witness. This is not a grant and
+/// does not import M, so a failing projection cannot be hidden by the probe.
+async fn projection_health(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    if !authorized(bearer(&headers), &state.service_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let path = state.manager_evidence_db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let (manager_conflicted, caught_up_at_last_import, query_watermark) = {
+        let data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        (data.manager_conflicted, data.manager_caught_up, data.store.watermark())
+    };
+    let cursor = ledger
+        .lock()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .manager_cursor()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let head = crate::manager_query_source::read_projection_head(path, &state.inventory.network_id);
+    let (source_global_m_seq, source_identity_match, lag_global_m_seq) = match (&head, &cursor) {
+        (Ok(head), Some(cursor)) => (
+            Some(head.global_m_seq.to_string()),
+            Some(
+                cursor.network == state.inventory.network_id
+                    && cursor.device == head.device
+                    && cursor.inode == head.inode,
+            ),
+            head.global_m_seq.checked_sub(cursor.watermark).map(|lag| lag.to_string()),
+        ),
+        (Ok(head), None) => (Some(head.global_m_seq.to_string()), None, None),
+        (Err(_), _) => (None, None, None),
+    };
+    let status = if manager_conflicted {
+        "conflict"
+    } else if head.is_err() {
+        "source_unavailable"
+    } else if cursor.is_none() {
+        "uninitialized"
+    } else if source_identity_match != Some(true) || lag_global_m_seq.is_none() {
+        "identity_or_watermark_mismatch"
+    } else if !caught_up_at_last_import || lag_global_m_seq.as_deref() != Some("0") {
+        "lagging"
+    } else {
+        "caught_up"
+    };
+    let code =
+        if matches!(status, "conflict" | "source_unavailable" | "identity_or_watermark_mismatch") {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::OK
+        };
+    Ok((
+        code,
+        Json(json!({
+            "schema_version":1,
+            "projection_status":status,
+            "manager_conflicted":manager_conflicted,
+            "caught_up_at_last_import":caught_up_at_last_import,
+            "query_watermark":query_watermark.to_string(),
+            "cursor_global_m_seq":cursor.map(|value| value.watermark.to_string()),
+            "source_global_m_seq":source_global_m_seq,
+            "lag_global_m_seq":lag_global_m_seq,
+            "source_identity_match":source_identity_match,
+        })),
+    )
+        .into_response())
+}
 async fn ingest(
     State(state): State<ObservabilityState>,
     headers: HeaderMap,
@@ -486,6 +555,7 @@ pub fn router(state: ObservabilityState) -> Router {
 /// listener never exposes it when the durable ledger is configured.
 pub fn control_router(state: ObservabilityState) -> Router {
     Router::new()
+        .route("/v1/control/projection-health", get(projection_health))
         .route("/v1/control/grants", post(grant))
         .route("/v1/control/grants/{run}/revoke", post(revoke))
         .route("/v1/control/grants/{run}/ledger", get(ledger_view))

@@ -129,8 +129,12 @@ now uses bounded, restart-safe pages and a durable global M cursor, with source-
 bound tests in `evidence/c09-incremental-projection/REVIEW-RECEIPT.md`; it is not
 deployed or a soak/performance pass. The initial read-only live M witness exceeded
 the existing 5-second control deadline on two catch-up pages; the batch-write
-successor and independent cursor/scan review are in progress. External model/API
-use is disabled.
+successor passed a bounded local read-only cost sample but has not passed concurrent
+live latency or soak. A further private control-socket projection-health witness
+is implemented and tested as a candidate (`evidence/c09-incremental-projection/PROJECTION-HEALTH-WITNESS.md`),
+but is not deployed or wired into the existing 72-hour sampler. That sampler
+currently measures M process freshness and service activity only, not broker
+grant/query availability. External model/API use is disabled.
 No business-node signing, vote-journal ordering, business-node database durability
 semantics, or protocol condition was changed; C06 did add durable M diagnostic ingest.
 
