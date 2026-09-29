@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 pub struct DiagnosticItem {
     pub sequence: U64,
     pub monotonic_ns: U64,
-    #[serde(deserialize_with="crate::native::required_nullable")]
+    #[serde(deserialize_with = "crate::native::required_nullable")]
     pub observed_at: Option<String>,
     pub record_type: u16,
     pub payload: String,
@@ -38,8 +38,8 @@ impl DiagnosticBatch {
         batch.validate()?;
         Ok(batch)
     }
-    pub fn validate(&self)->Result<(),&'static str> {
-        let batch=self;
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let batch = self;
         if batch.schema_version != 1
             || !crate::wire::alias(&batch.node_id)
             || !crate::wire::alias(&batch.source_id)
@@ -52,8 +52,13 @@ impl DiagnosticBatch {
         {
             return Err("invalid batch metadata");
         }
-        if batch.source_id=="consensus_diagnostic" && (batch.process_epoch.len()!=32
-            || !batch.process_epoch.bytes().all(|b|b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
+        if batch.source_id == "consensus_diagnostic"
+            && (batch.process_epoch.len() != 32
+                || !batch
+                    .process_epoch
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        {
             return Err("invalid diagnostic process epoch");
         }
         let mut total = 0usize;
@@ -72,13 +77,18 @@ impl DiagnosticBatch {
         for r in &batch.records {
             let valid = if batch.source_id == "consensus_diagnostic" {
                 let mut payload = [0u8; 4];
-                if r.payload.len() != 8 { false } else {
+                if r.payload.len() != 8 {
+                    false
+                } else {
                     for (i, byte) in payload.iter_mut().enumerate() {
-                        *byte = u8::from_str_radix(&r.payload[i*2..i*2+2],16).map_err(|_| "invalid payload encoding")?;
+                        *byte = u8::from_str_radix(&r.payload[i * 2..i * 2 + 2], 16)
+                            .map_err(|_| "invalid payload encoding")?;
                     }
-                    crate::wire::diagnostic_payload(8,r.record_type,&payload)
+                    crate::wire::diagnostic_payload(8, r.record_type, &payload)
                 }
-            } else { r.record_type == 1 && r.payload.len() == 4 };
+            } else {
+                r.record_type == 1 && r.payload.len() == 4
+            };
             if !valid {
                 return Err("unsupported diagnostic catalog");
             }
@@ -97,10 +107,16 @@ impl DiagnosticBatch {
         use sha2::{Digest, Sha256};
         self.validate()?;
         let bytes = serde_json::to_vec(&(
-            self.schema_version, &self.node_id, &self.edge_epoch, &self.process_epoch,
-            &self.source_id, &self.records, &self.quality,
-        )).map_err(|_| "batch identity encoding")?;
-        Ok(format!("{:x}",Sha256::digest(bytes)))
+            self.schema_version,
+            &self.node_id,
+            &self.edge_epoch,
+            &self.process_epoch,
+            &self.source_id,
+            &self.records,
+            &self.quality,
+        ))
+        .map_err(|_| "batch identity encoding")?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

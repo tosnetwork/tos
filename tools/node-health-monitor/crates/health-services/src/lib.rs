@@ -135,11 +135,11 @@ pub async fn limit_requests(
     };
     next.run(request).await
 }
-pub mod durable;
 pub mod diagnostic_ingest;
 pub mod diagnostic_ipc;
-pub mod diagnostic_transport;
 pub mod diagnostic_relay;
+pub mod diagnostic_transport;
+pub mod durable;
 
 pub mod ingress;
 pub mod manager;

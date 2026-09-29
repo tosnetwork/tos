@@ -202,7 +202,8 @@ async fn proxy(
     } else {
         Vec::new()
     };
-    let max_input = if matches!(peer.role,Role::PipelineSender|Role::DiagnosticSender) || path == "/v1/manager/snapshot-evidence"
+    let max_input = if matches!(peer.role, Role::PipelineSender | Role::DiagnosticSender)
+        || path == "/v1/manager/snapshot-evidence"
     {
         262144
     } else if witness_post {

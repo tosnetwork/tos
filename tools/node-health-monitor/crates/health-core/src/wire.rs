@@ -123,9 +123,16 @@ impl DiagnosticRecord {
     }
 }
 pub fn diagnostic_payload(catalog: u32, record_type: u16, payload: &[u8]) -> bool {
-    record_type == 1 && match catalog {
-        7 => payload.len() == 2,
-        8 => payload.len() == 4 && payload[0] < 4 && payload[1] < 3 && payload[2] < 22 && payload[3] == 0,
-        _ => false,
-    }
+    record_type == 1
+        && match catalog {
+            7 => payload.len() == 2,
+            8 => {
+                payload.len() == 4
+                    && payload[0] < 4
+                    && payload[1] < 3
+                    && payload[2] < 22
+                    && payload[3] == 0
+            }
+            _ => false,
+        }
 }

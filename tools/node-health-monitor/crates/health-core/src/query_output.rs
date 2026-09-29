@@ -14,11 +14,11 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct QualityDto {
     pub instrumentation_complete: bool,
-    #[serde(deserialize_with="crate::native::required_nullable")]
+    #[serde(deserialize_with = "crate::native::required_nullable")]
     pub producer_dropped: Option<U64>,
-    #[serde(deserialize_with="crate::native::required_nullable")]
+    #[serde(deserialize_with = "crate::native::required_nullable")]
     pub relay_dropped: Option<U64>,
-    #[serde(deserialize_with="crate::native::required_nullable")]
+    #[serde(deserialize_with = "crate::native::required_nullable")]
     pub parse_errors: Option<U64>,
     pub shed_reason: Option<String>,
 }
@@ -501,16 +501,20 @@ fn payload(record: &StoredEvidence) -> Result<PayloadDto, &'static str> {
                 && payload.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         }
         PayloadDto::DiagnosticPhase { record_type, payload, .. } => {
-            if payload.len()!=8 || !payload.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {false} else {
-                let mut decoded=[0u8;4];
-                let mut valid=true;
+            if payload.len() != 8
+                || !payload.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                false
+            } else {
+                let mut decoded = [0u8; 4];
+                let mut valid = true;
                 for (i, byte) in decoded.iter_mut().enumerate() {
-                    match u8::from_str_radix(&payload[i*2..i*2+2],16) {
-                        Ok(value) => *byte=value,
-                        Err(_) => valid=false,
+                    match u8::from_str_radix(&payload[i * 2..i * 2 + 2], 16) {
+                        Ok(value) => *byte = value,
+                        Err(_) => valid = false,
                     }
                 }
-                valid && crate::wire::diagnostic_payload(8,*record_type,&decoded)
+                valid && crate::wire::diagnostic_payload(8, *record_type, &decoded)
             }
         }
         PayloadDto::Block { network_id, scope_id, root_hash, file_hash, point, .. } => {
