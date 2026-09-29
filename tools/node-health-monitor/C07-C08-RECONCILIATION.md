@@ -17,3 +17,16 @@ Baseline: `35ba59c111dd74518e6e661bcd1984598d493907` (C05 scoped acceptance). C0
 Implementation sequence: (1) durable grant and evidence ledger with crash/restart negatives; (2) broker-only control and shared HTTP/MCP service with exact SDK/protocol; (3) fixed evidence package and offline broker validation/cancellation; (4) isolated AURA and provider tests only after explicit owner choice. Preserve historical scoped C00–C05 claims; neither this plan nor unit tests promote production capabilities.
 
 Checkpoint note: `tos-observability` now requires a private ledger DB and Unix control socket. Its query process still uses an 8 MiB clone-on-insert candidate to commit SQLite before publishing a cache row; measure or replace this copy before any production cost claim. The old in-memory-only router remains solely for existing isolated tests. The checkpoint is not a C08 acceptance or evidence that Manager's main EvidenceDb query path is integrated.
+
+Control socket follow-up: admission is now limited to eight connections before
+task spawn; permits last through response transmission and a five-second
+connection deadline bounds idle/header/slow clients. Real Unix-socket tests
+exercise eight idle holders, ninth refusal, expiry/recovery, and an overlapping
+slow request. This is a C08 connection-budget control, not Unix peer identity
+or production broker isolation; deployment must enforce dedicated ownership
+and credentials separately.
+The scoped test's natural-exit-0 raw log is
+`/home/tomi/nhm-c07c08-build/edge-epoch-proof/control-socket.log`
+(SHA-256 `af4f7286500b9721aca7dcf229b9c906f458b83c62e920de2915ef99690d7806`);
+source `tos-observability.rs` SHA-256 is
+`6fd00293b04e2a4ac988d161269dcec9821666b2f1b126cf18f8ee89b1d6d93e`.
