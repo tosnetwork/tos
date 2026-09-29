@@ -459,6 +459,17 @@ fn cursor_refuses_missing_or_rewritten_retained_parent_and_invalid_middle_row() 
         .contains("missing field"));
     drop(conn);
     drop(manager);
+    let replacement = directory.join("replacement.sqlite");
+    let mut other = EvidenceDb::open(&replacement, 4 * 1024 * 1024).unwrap();
+    other.bind_network(&network).unwrap();
+    let copied = other.insert(row("edge-epoch-1")).unwrap();
+    assert_eq!(copied.evidence_id, first.evidence_id);
+    assert_eq!(copied.store_seq.0, first.store_seq.0);
+    drop(other);
+    std::fs::rename(&replacement, &path).unwrap();
+    assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+        .unwrap_err()
+        .contains("database identity changed"));
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -676,7 +687,7 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
             .unwrap()
             .with_query_ledger(&ledger_path)
             .unwrap()
-            .with_manager_evidence(manager_path)
+            .with_manager_evidence(manager_path.clone())
             .unwrap();
     assert!(!restored.data.lock().unwrap().manager_caught_up);
     let denied = control_router(restored.clone()).oneshot(request()).await.unwrap();
@@ -781,6 +792,31 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
     );
     assert!(restored.data.lock().unwrap().manager_caught_up);
     assert!(!restored.data.lock().unwrap().manager_conflicted);
+    // The global cursor is not a count of process rows. Once 4097 historical
+    // parents are consumed, a single new M record must import without a
+    // from-the-beginning scan and a new grant must freeze its exact snapshot W.
+    let value = row("epoch-4098");
+    let mut canonical = value.clone();
+    canonical.record.received_at_ms = 0;
+    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap()));
+    let evidence = &value.record;
+    let conn = rusqlite::Connection::open(&manager_path).unwrap();
+    conn.execute(
+        "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        rusqlite::params![evidence.node_id,evidence.scope_id,evidence.process_epoch,
+            value.source_epoch,evidence.source_id,evidence.source_record_id,digest,
+            serde_json::to_string(&value).unwrap()],
+    )
+    .unwrap();
+    drop(conn);
+    assert_eq!(import_manager(&restored).unwrap(), (4098, 1));
+    assert!(restored.data.lock().unwrap().manager_caught_up);
+    let fresh = control_router(restored.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(fresh.status(), StatusCode::OK);
+    let granted = body(fresh).await;
+    let run = granted["run_id"].as_str().unwrap();
+    assert_eq!(restored.data.lock().unwrap().grants[run].manager_watermark, Some(4098));
     drop(restored);
     std::fs::remove_dir_all(directory).unwrap();
 }
