@@ -75,7 +75,8 @@ pub struct CapabilitiesRequest {
     pub run_id: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Grant {
     pub run_id: String,
     pub principal: String,
@@ -143,7 +144,48 @@ impl Grant {
     pub fn revoke(&mut self) {
         self.revoked = true;
     }
-    pub(crate) fn calls(&self) -> u32 {
+    /// The immutable authorization tuple. A durable ledger must reject an
+    /// update that swaps scope or token while retaining the same run ID.
+    pub fn same_binding(&self, other: &Self) -> bool {
+        self.run_id == other.run_id
+            && self.principal == other.principal
+            && self.network_id == other.network_id
+            && self.nodes == other.nodes
+            && self.scopes == other.scopes
+            && self.window_start_ms == other.window_start_ms
+            && self.window_end_ms == other.window_end_ms
+            && self.change_start_ms == other.change_start_ms
+            && self.expires_monotonic_ms == other.expires_monotonic_ms
+            && self.watermark == other.watermark
+            && self.references == other.references
+            && self.token_hash == other.token_hash
+    }
+    /// Calls, returned bytes and evidence delivery may only advance; a
+    /// revoked grant cannot be resurrected by replaying an older snapshot.
+    pub fn progress_follows(&self, previous: &Self) -> bool {
+        self.same_binding(previous)
+            && self.calls >= previous.calls
+            && self.calls <= 16
+            && self.bytes >= previous.bytes
+            && self.bytes <= 131_072
+            && self.delivered_ids.is_superset(&previous.delivered_ids)
+            && (!previous.revoked || self.revoked)
+    }
+    pub fn returned_bytes(&self) -> usize {
+        self.bytes
+    }
+    /// Charge bytes that will actually be returned, not just successful data.
+    pub fn charge_returned(&mut self, size: usize) -> Result<(), &'static str> {
+        if size > 32_768 || self.bytes.checked_add(size).is_none_or(|n| n > 131_072) {
+            return Err("RUN_BUDGET_EXHAUSTED");
+        }
+        self.bytes += size;
+        Ok(())
+    }
+    pub fn revoked(&self) -> bool {
+        self.revoked
+    }
+    pub fn calls(&self) -> u32 {
         self.calls
     }
     pub(crate) fn remaining_calls(&self) -> u32 {
@@ -152,7 +194,7 @@ impl Grant {
     pub(crate) fn remaining_bytes(&self) -> u32 {
         u32::try_from(131_072usize.saturating_sub(self.bytes)).unwrap_or(0)
     }
-    pub(crate) fn expires_monotonic_ms(&self) -> u64 {
+    pub fn expires_monotonic_ms(&self) -> u64 {
         self.expires_monotonic_ms
     }
     pub fn authenticate(
@@ -239,8 +281,9 @@ impl QueryService<'_> {
     ) -> Value {
         let generated_ms = chrono::Utc::now().timestamp_millis();
         let saved_input = input.clone();
+        let calls_before = grant.calls;
         let result = self.execute(grant, principal, token, now, tool, input);
-        match result {
+        let (mut response, delivered) = match result {
             Ok((_legacy_data, ids)) => {
                 let response = match crate::query_output::success(
                     tool,
@@ -253,33 +296,32 @@ impl QueryService<'_> {
                     self.metrics,
                 ) {
                     Ok(response) => response,
-                    Err(code) => return crate::query_output::error(code, grant, now, generated_ms),
+                    Err(code) => crate::query_output::error(code, grant, now, generated_ms),
                 };
-                let size = match serde_json::to_vec(&response) {
-                    Ok(bytes) => bytes.len(),
-                    Err(_) => {
-                        return crate::query_output::error(
-                            "SERIALIZATION_FAILED",
-                            grant,
-                            now,
-                            generated_ms,
-                        )
-                    }
-                };
-                if size > 32_768 || grant.bytes.saturating_add(size) > 131_072 {
-                    return crate::query_output::error(
-                        "RUN_BUDGET_EXHAUSTED",
-                        grant,
-                        now,
-                        generated_ms,
-                    );
-                }
-                grant.bytes += size;
-                grant.delivered_ids.extend(ids);
-                response
+                (response, ids)
             }
-            Err(code) => crate::query_output::error(code, grant, now, generated_ms),
+            Err(code) => (crate::query_output::error(code, grant, now, generated_ms), vec![]),
+        };
+        let admitted = grant.calls > calls_before;
+        let mut size = if admitted {
+            finalize_remaining_bytes(&mut response, grant.bytes)
+        } else {
+            serde_json::to_vec(&response).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
+        };
+        if size > 32_768 || grant.bytes.checked_add(size).is_none_or(|n| n > 131_072) {
+            response = crate::query_output::error("RUN_BUDGET_EXHAUSTED", grant, now, generated_ms);
+            size = finalize_remaining_bytes(&mut response, grant.bytes);
         }
+        // No valid envelope fits once the run byte budget is exhausted. The
+        // HTTP/MCP adapters must send an empty 429/error, never an unmetered
+        // JSON body. Authentication failures before admission are uncharged.
+        if admitted && grant.charge_returned(size).is_err() {
+            return Value::Null;
+        }
+        if response["error"].is_null() {
+            grant.delivered_ids.extend(delivered);
+        }
+        response
     }
     fn execute(
         &self,
@@ -600,6 +642,57 @@ impl QueryService<'_> {
                 Ok((json!(rows), ids))
             }
             _ => Err("INVALID_ARGUMENT"),
+        }
+    }
+}
+
+/// Decimal width can make an exact post-return number impossible at a power
+/// of ten. Select the greatest conservative value that fits the actual JSON
+/// length; never advertise more bytes than remain after this response.
+fn finalize_remaining_bytes(response: &mut Value, prior: usize) -> usize {
+    let mut low = 0usize;
+    let mut high = 131_072usize.saturating_sub(prior);
+    while low < high {
+        let middle = low + (high - low).div_ceil(2);
+        set_remaining_bytes(response, middle);
+        let size = serde_json::to_vec(response).map(|bytes| bytes.len()).unwrap_or(usize::MAX);
+        if prior
+            .checked_add(size)
+            .and_then(|used| used.checked_add(middle))
+            .is_some_and(|used| used <= 131_072)
+        {
+            low = middle;
+        } else {
+            high = middle - 1;
+        }
+    }
+    set_remaining_bytes(response, low);
+    serde_json::to_vec(response).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
+}
+
+fn set_remaining_bytes(response: &mut Value, remaining: usize) {
+    response["budget"]["remaining_bytes"] = json!(remaining);
+    if response["data"]["remaining_budget"].is_object() {
+        response["data"]["remaining_budget"]["remaining_bytes"] = json!(remaining);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn advertised_remaining_never_exceeds_actual_at_decimal_width_edges() {
+        for prior in 129_800..130_300 {
+            let mut response = json!({"budget":{"remaining_bytes":0},"data":{"remaining_budget":{"remaining_bytes":0}}});
+            let size = finalize_remaining_bytes(&mut response, prior);
+            let actual = 131_072usize.saturating_sub(prior + size);
+            let advertised = response["budget"]["remaining_bytes"].as_u64().unwrap() as usize;
+            assert!(
+                advertised <= actual,
+                "prior={prior}, actual={actual}, advertised={advertised}"
+            );
+            assert_eq!(response["data"]["remaining_budget"]["remaining_bytes"], advertised);
         }
     }
 }

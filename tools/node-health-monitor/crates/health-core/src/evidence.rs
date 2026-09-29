@@ -16,13 +16,14 @@ pub struct Evidence {
     pub payload: serde_json::Value,
     pub redacted: bool,
 }
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StoredEvidence {
     pub evidence_id: String,
     pub watermark: u64,
     pub record: Evidence,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EvidenceStore {
     records: VecDeque<(StoredEvidence, usize)>,
     identities: BTreeMap<(String, String, String, String), String>,
@@ -39,6 +40,32 @@ impl EvidenceStore {
             max_bytes,
             sequence: 0,
         }
+    }
+    pub fn restore(
+        max_bytes: usize,
+        sequence: u64,
+        entries: impl IntoIterator<Item = StoredEvidence>,
+    ) -> Result<Self, &'static str> {
+        let mut store = Self::new(max_bytes);
+        for entry in entries {
+            if entry.watermark == 0
+                || entry.watermark <= store.sequence
+                || entry.watermark > sequence
+            {
+                return Err("invalid restored watermark");
+            }
+            store.sequence = entry.watermark - 1;
+            let count = store.records.len();
+            let id = store.insert(entry.record)?;
+            if id != entry.evidence_id
+                || store.sequence != entry.watermark
+                || store.records.len() != count + 1
+            {
+                return Err("invalid restored evidence");
+            }
+        }
+        store.sequence = sequence;
+        Ok(store)
     }
     pub fn insert(&mut self, record: Evidence) -> Result<String, &'static str> {
         if !record.redacted
@@ -130,6 +157,16 @@ impl EvidenceStore {
     }
     pub fn watermark(&self) -> u64 {
         self.sequence
+    }
+    /// After restart, no new record may enter an earlier run's fixed W even
+    /// when the old evidence cache is unavailable. This is fail-closed, not a
+    /// substitute for durable evidence restoration.
+    pub fn advance_watermark_floor(&mut self, floor: u64) -> Result<(), &'static str> {
+        if !self.records.is_empty() {
+            return Err("watermark floor requires an empty store");
+        }
+        self.sequence = self.sequence.max(floor);
+        Ok(())
     }
     pub fn entries(&self) -> impl Iterator<Item = &StoredEvidence> {
         self.records.iter().map(|(entry, _)| entry)

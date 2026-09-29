@@ -14,7 +14,7 @@ use tos_health_core::{
 };
 use tos_health_services::{
     edge::{router as edge_router, sample_process, EdgeState},
-    observability::{router as query_router, ObservabilityState},
+    observability::{control_router, router as query_router, ObservabilityState},
     Inventory,
 };
 use tower::ServiceExt;
@@ -299,6 +299,104 @@ async fn grant_query_and_revocation_round_trip() {
     assert_eq!(app.oneshot(req).await.expect("route").status(), StatusCode::UNAUTHORIZED);
     assert_eq!(state.data.lock().expect("lock").store.watermark(), 0);
 }
+
+#[tokio::test]
+async fn durable_http_grant_restarts_with_fixed_watermark_and_charged_calls() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-http-ledger-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&tos_health_services::random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let file = directory.join("query.sqlite");
+    let first = state().with_query_ledger(&file).unwrap();
+    let now = chrono::Utc::now();
+    let observed = (now - chrono::Duration::seconds(30)).timestamp_millis();
+    let process_payload = |pid| {
+        contract(
+            json!({"component":"process","contract_payload":{"kind":"process","pid":pid,"rss_bytes":"1048576","anon_bytes":"524288","file_bytes":"524288","swap_bytes":"0","cpu_user_ticks":"100","cpu_system_ticks":"50"}}),
+            "observation",
+        )
+    };
+    let app = query_router(first.clone());
+    assert_eq!(
+        app.clone()
+            .oneshot(request(
+                "/v1/ingest",
+                'i',
+                json!(record(observed, 1, "collector", process_payload(111)))
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let start =
+        (now - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let end = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let issued = json_body(
+        control_router(first.clone())
+            .oneshot(request(
+                "/v1/control/grants",
+                'o',
+                json!({"node_ids":["v1"],"scope_ids":["node"],"start":start,"end":end}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let run = issued["run_id"].as_str().unwrap().to_owned();
+    let token = issued["run_token"].as_str().unwrap().to_owned();
+    let mut req = request("/v1/query/capabilities", 'a', json!({"run_id":run}));
+    req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["budget"]["remaining_calls"], 15);
+    assert_eq!(
+        first.query_ledger.as_ref().unwrap().lock().unwrap().attempt_count(&run).unwrap(),
+        1
+    );
+    drop(first);
+
+    let restored = state().with_query_ledger(&file).unwrap();
+    assert_eq!(restored.data.lock().unwrap().store.watermark(), 1);
+    let late = record(observed + 1_000, 2, "collector", process_payload(222));
+    assert_eq!(
+        query_router(restored.clone())
+            .oneshot(request("/v1/ingest", 'i', json!(late)))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(restored.data.lock().unwrap().store.watermark(), 2);
+    let app = query_router(restored.clone());
+    let mut req = request("/v1/query/capabilities", 'a', json!({"run_id":run}));
+    req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(json_body(response).await["budget"]["remaining_calls"], 14);
+    let mut req = request(
+        "/v1/query/node-snapshot",
+        'a',
+        json!({
+            "run_id":run,"node_id":"v1","as_of":end,"max_age_seconds":60,"components":["process"]
+        }),
+    );
+    req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status();
+    let body = json_body(response).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["evidence"][0]["source_record_id"], "record-1");
+    assert_eq!(
+        restored.query_ledger.as_ref().unwrap().lock().unwrap().attempt_count(&run).unwrap(),
+        3
+    );
+    drop(restored);
+    std::fs::remove_dir_all(directory).unwrap();
+}
 #[tokio::test]
 async fn ingest_checks_bound_identity() {
     let app = query_router(state());
@@ -487,7 +585,7 @@ async fn all_six_success_handlers_emit_runtime_dtos() {
             set(&["node"]),
             start,
             end,
-            0,
+            tos_health_services::query_ledger::boot_millis().unwrap(),
             data.store.watermark(),
         )
         .unwrap();
@@ -572,7 +670,7 @@ async fn metric_response_for(records: Vec<Evidence>, metric_ids: &[&str]) -> (St
             set(&["node"]),
             start,
             start + 60_000,
-            0,
+            tos_health_services::query_ledger::boot_millis().unwrap(),
             data.store.watermark(),
         )
         .unwrap();

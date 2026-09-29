@@ -5,6 +5,7 @@ use subtle::ConstantTimeEq;
 pub mod collector;
 pub mod edge;
 pub mod observability;
+pub mod query_ledger;
 pub mod transit;
 pub mod witness;
 

@@ -1,7 +1,12 @@
-use crate::{authorized, decode_token, hex, random_token, Inventory};
+use crate::{
+    authorized, decode_token, hex,
+    query_ledger::{Attempt, QueryLedger},
+    random_token, Inventory,
+};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -30,6 +35,7 @@ pub struct ObservabilityState {
     pub ingest_token: Arc<Vec<u8>>,
     pub service_token: Arc<Vec<u8>>,
     pub metrics: Arc<BTreeSet<String>>,
+    pub query_ledger: Option<Arc<Mutex<QueryLedger>>>,
     pub started: Instant,
     pub epoch: String,
 }
@@ -54,12 +60,31 @@ impl ObservabilityState {
             ingest_token: Arc::new(ingest),
             service_token: Arc::new(service),
             metrics: Arc::new(BTreeSet::new()),
+            query_ledger: None,
             started: Instant::now(),
             epoch: hex(&random_token()?),
         })
     }
     fn now(&self) -> u64 {
-        self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+        // Match the durable grant ledger's restart-stable clock domain.
+        crate::query_ledger::boot_millis().unwrap_or(u64::MAX)
+    }
+    pub fn with_query_ledger(mut self, path: &std::path::Path) -> Result<Self, String> {
+        let ledger = QueryLedger::open(path)?;
+        let active = ledger.load_active_all(self.now())?;
+        let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
+        let floor = active.iter().map(|g| g.watermark).max().unwrap_or(0);
+        let mut restored = ledger.load_evidence(8 * 1024 * 1024)?;
+        if restored.watermark() < floor && restored.entries().next().is_none() {
+            restored.advance_watermark_floor(floor).map_err(str::to_owned)?;
+        } else if restored.watermark() < floor {
+            return Err("query evidence watermark behind active grants".into());
+        }
+        data.store = restored;
+        data.grants = active.into_iter().map(|g| (g.run_id.clone(), g)).collect();
+        drop(data);
+        self.query_ledger = Some(Arc::new(Mutex::new(ledger)));
+        Ok(self)
     }
 }
 fn bearer(headers: &HeaderMap) -> Option<&str> {
@@ -95,7 +120,15 @@ async fn ingest(
     }
     let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     record.received_at_ms = chrono::Utc::now().timestamp_millis();
-    let id = data.store.insert(record).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+    let id = if let Some(ledger) = &state.query_ledger {
+        ledger
+            .lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .insert_evidence(&mut data.store, record)
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+    } else {
+        data.store.insert(record).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?
+    };
     Ok(Json(json!({"evidence_id":id,"watermark":data.store.watermark().to_string()})))
 }
 #[derive(Deserialize)]
@@ -156,6 +189,13 @@ async fn grant(
         data.store.watermark(),
     )
     .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if let Some(ledger) = &state.query_ledger {
+        ledger
+            .lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .create(&g, state.now())
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    }
     data.grants.insert(run.clone(), g);
     Ok(Json(json!({"run_id":run,"run_token":hex(&token),"expires_in_seconds":200})))
 }
@@ -168,17 +208,41 @@ async fn revoke(
         return Err(StatusCode::UNAUTHORIZED);
     }
     let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if let Some(ledger) = &state.query_ledger {
+        ledger
+            .lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .revoke(&run)
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    }
     if let Some(mut grant) = data.grants.remove(&run) {
         grant.revoke();
     }
     Ok(Json(json!({"revoked":true})))
+}
+async fn ledger_view(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+    Path(run): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(bearer(&headers), &state.operator_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let row = ledger
+        .lock()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .inspect(&run)
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(row))
 }
 async fn query(
     State(state): State<ObservabilityState>,
     headers: HeaderMap,
     Path(tool): Path<String>,
     Json(input): Json<Value>,
-) -> Result<(StatusCode, Json<Value>), StatusCode> {
+) -> Result<Response, StatusCode> {
     if !authorized(bearer(&headers), &state.service_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -187,10 +251,11 @@ async fn query(
         .and_then(|v| v.to_str().ok())
         .and_then(decode_token)
         .ok_or(StatusCode::UNAUTHORIZED)?;
-    let run = input.get("run_id").and_then(Value::as_str).ok_or(StatusCode::BAD_REQUEST)?;
+    let run =
+        input.get("run_id").and_then(Value::as_str).ok_or(StatusCode::BAD_REQUEST)?.to_owned();
     let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let Data { store, grants } = &mut *data;
-    let grant = grants.get_mut(run).ok_or(StatusCode::UNAUTHORIZED)?;
+    let grant = grants.get(&run).ok_or(StatusCode::UNAUTHORIZED)?;
     let name = match tool.as_str() {
         "capabilities" => TOOLS[0],
         "node-snapshot" => TOOLS[1],
@@ -200,14 +265,48 @@ async fn query(
         "block-evidence" => TOOLS[5],
         _ => return Err(StatusCode::NOT_FOUND),
     };
+    let mut next_grant = grant.clone();
+    let prior_calls = grant.calls();
+    let prior_bytes = grant.returned_bytes();
+    let now = state.now();
     let result = QueryService { store, metrics: &state.metrics }.call(
-        grant,
+        &mut next_grant,
         "aura",
         &token,
-        state.now(),
+        now,
         name,
         input,
     );
+    if next_grant.calls() > prior_calls {
+        let commit_now = state.now();
+        if commit_now >= next_grant.expires_monotonic_ms() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        if let Some(ledger) = &state.query_ledger {
+            let code = result["error"]["code"].as_str().unwrap_or(if result.is_null() {
+                "RUN_BUDGET_EXHAUSTED"
+            } else {
+                "ok"
+            });
+            ledger
+                .lock()
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+                .advance(
+                    &next_grant,
+                    commit_now,
+                    Attempt {
+                        tool: name,
+                        result_code: code,
+                        returned_bytes: next_grant.returned_bytes().saturating_sub(prior_bytes),
+                    },
+                )
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        }
+        *grants.get_mut(&run).ok_or(StatusCode::SERVICE_UNAVAILABLE)? = next_grant;
+    }
+    if result.is_null() {
+        return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
+    }
     let status = match result["error"]["code"].as_str() {
         None => StatusCode::OK,
         Some("INVALID_ARGUMENT") => StatusCode::BAD_REQUEST,
@@ -226,16 +325,36 @@ async fn query(
         Some("QUERY_TIMEOUT") => StatusCode::GATEWAY_TIMEOUT,
         Some(_) => StatusCode::SERVICE_UNAVAILABLE,
     };
-    Ok((status, Json(result)))
+    Ok((status, Json(result)).into_response())
 }
 pub fn router(state: ObservabilityState) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/monitor/heartbeat", get(monitor_heartbeat))
         .route("/v1/ingest", post(ingest))
+        .route("/v1/query/{tool}", post(query));
+    // Legacy in-memory test state retains the historical test routes. A
+    // configured durable service cannot expose grant management on TCP.
+    if state.query_ledger.is_none() {
+        router = router
+            .route("/v1/control/grants", post(grant))
+            .route("/v1/control/grants/{run}/revoke", post(revoke));
+    }
+    router
+        .layer(axum::extract::DefaultBodyLimit::max(16_384))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(tokio::sync::Semaphore::new(8)),
+            crate::limit_requests,
+        ))
+        .with_state(state)
+}
+/// Bind this router exclusively to a private Unix-domain socket. The HTTP
+/// listener never exposes it when the durable ledger is configured.
+pub fn control_router(state: ObservabilityState) -> Router {
+    Router::new()
         .route("/v1/control/grants", post(grant))
         .route("/v1/control/grants/{run}/revoke", post(revoke))
-        .route("/v1/query/{tool}", post(query))
+        .route("/v1/control/grants/{run}/ledger", get(ledger_view))
         .layer(axum::extract::DefaultBodyLimit::max(16_384))
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(tokio::sync::Semaphore::new(8)),
@@ -264,7 +383,14 @@ pub fn import_cache(state: &ObservabilityState, path: PathBuf) -> Result<usize, 
         {
             return Err("record outside inventory".into());
         }
-        data.store.insert(record).map_err(str::to_owned)?;
+        if let Some(ledger) = &state.query_ledger {
+            ledger
+                .lock()
+                .map_err(|_| "query ledger unavailable")?
+                .insert_evidence(&mut data.store, record)?;
+        } else {
+            data.store.insert(record).map_err(str::to_owned)?;
+        }
         count += 1;
     }
     Ok(count)
