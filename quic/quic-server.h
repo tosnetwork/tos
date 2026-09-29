@@ -173,6 +173,7 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
   };
 
   void collect_stats(td::Promise<Stats> P);
+  void collect_stats_mode(bool build_per_connection, td::Promise<Stats> P);
 
  protected:
   void start_up() override;

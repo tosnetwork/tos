@@ -979,6 +979,14 @@ add_executable(test-json-rpc-payload-waiter test/test-json-rpc-payload-waiter.cp
 target_include_directories(test-json-rpc-payload-waiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-payload-waiter PRIVATE toshttp tdactor tdutils)
 
+add_executable(test-health-pq-signer test/test-health-pq-signer.cpp)
+target_include_directories(test-health-pq-signer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-pq-signer PRIVATE tos_pq_consensus_signer tos_pq_consensus tos_mldsa44)
+
+add_executable(test-health-collector-completion test/test-health-collector-completion.cpp)
+target_include_directories(test-health-collector-completion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-collector-completion PRIVATE metrics tdactor tdutils)
+
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-metrics-label-bound PRIVATE metrics tdactor tdutils)
@@ -1507,6 +1515,8 @@ tos_test(test-rldp2-connection-limits)
 tos_test(test-promise-loss-contract)
 tos_test(test-json-rpc-handler-guard)
 tos_test(test-metrics-label-bound)
+tos_test(test-health-collector-completion)
+tos_test(test-health-pq-signer)
 tos_test(test-rldp2-inbound-transfer-bound)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)

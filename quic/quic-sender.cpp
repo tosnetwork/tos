@@ -407,9 +407,13 @@ std::vector<metrics::MetricFamily> QuicSender::Stats::dump() const {
 }
 
 td::actor::Task<QuicSender::Stats> QuicSender::collect_stats() {
+  co_return co_await collect_stats_mode(true);
+}
+
+td::actor::Task<QuicSender::Stats> QuicSender::collect_stats_mode(bool build_per_path) {
   Stats stats;
   for (auto &[_, server] : servers_by_port_) {
-    auto serv_stats = co_await td::actor::ask(server, &QuicServer::collect_stats);
+    auto serv_stats = co_await td::actor::ask(server, &QuicServer::collect_stats_mode, build_per_path);
     stats.summary = stats.summary + Stats::Entry{.server_stats = serv_stats.summary};
     stats.inbound_streams += serv_stats.callback_memory.inbound_streams;
     stats.inbound_stream_bytes += serv_stats.callback_memory.inbound_stream_bytes;
@@ -424,8 +428,12 @@ td::actor::Task<QuicSender::Stats> QuicSender::collect_stats() {
 
 // TODO(avevad): remove obsolete Stats and collect metrics directly
 void QuicSender::collect(td::Promise<metrics::MetricSet> P) {
-  td::actor::send_closure(actor_id(this), &QuicSender::collect_stats,
+  td::actor::send_closure(actor_id(this), &QuicSender::collect_stats_mode, false,
                           td::make_promise([P = std::move(P)](td::Result<Stats> R) mutable {
+                            if (R.is_error()) {
+                              P.set_error(R.move_as_error());
+                              return;
+                            }
                             P.set_value(metrics::MetricSet{.families = R.move_as_ok().dump()}.wrap("quic"));
                           }));
 }

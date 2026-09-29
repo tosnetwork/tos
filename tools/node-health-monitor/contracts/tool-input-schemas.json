@@ -1,0 +1,341 @@
+{
+  "tos_get_capabilities": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "required": [
+      "run_id"
+    ]
+  },
+  "tos_get_node_snapshot": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "node_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "as_of": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "max_age_seconds": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 180
+      },
+      "components": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "process",
+            "host",
+            "chain",
+            "consensus",
+            "network",
+            "storage",
+            "index",
+            "gpu",
+            "telemetry",
+            "deployment"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 10,
+        "uniqueItems": true
+      }
+    },
+    "required": [
+      "run_id",
+      "node_id",
+      "as_of",
+      "max_age_seconds",
+      "components"
+    ]
+  },
+  "tos_get_metric_window": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "node_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": true
+      },
+      "metric_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "minItems": 1,
+        "maxItems": 6,
+        "uniqueItems": true
+      },
+      "scope_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "start": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "end": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "step_seconds": {
+        "type": "integer",
+        "enum": [
+          15,
+          30,
+          60,
+          300
+        ]
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "series"
+        ]
+      },
+      "max_points_per_series": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 240
+      }
+    },
+    "required": [
+      "run_id",
+      "node_ids",
+      "metric_ids",
+      "scope_id",
+      "start",
+      "end",
+      "step_seconds",
+      "mode",
+      "max_points_per_series"
+    ]
+  },
+  "tos_get_event_window": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "node_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": true
+      },
+      "scope_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "start": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "end": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "sources": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "journal",
+            "consensus_trace",
+            "rocksdb",
+            "rpc_probe",
+            "collector",
+            "operator_change"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 6,
+        "uniqueItems": true
+      },
+      "kinds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "error",
+            "warning",
+            "consensus_stage",
+            "storage_sample",
+            "lifecycle",
+            "data_gap"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 6,
+        "uniqueItems": true
+      },
+      "correlation_id": {
+        "type": "string",
+        "maxLength": 160
+      },
+      "contains": {
+        "type": "string",
+        "maxLength": 128
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "maxLength": 2048
+      }
+    },
+    "required": [
+      "run_id",
+      "node_ids",
+      "scope_id",
+      "start",
+      "end",
+      "sources",
+      "kinds",
+      "correlation_id",
+      "contains",
+      "limit",
+      "cursor"
+    ]
+  },
+  "tos_get_change_history": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "node_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": true
+      },
+      "start": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "end": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "kinds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "deploy",
+            "restart",
+            "config",
+            "maintenance",
+            "load_test",
+            "resource_limit"
+          ]
+        },
+        "minItems": 1,
+        "maxItems": 6,
+        "uniqueItems": true
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      },
+      "cursor": {
+        "type": "string",
+        "maxLength": 2048
+      }
+    },
+    "required": [
+      "run_id",
+      "node_ids",
+      "start",
+      "end",
+      "kinds",
+      "limit",
+      "cursor"
+    ]
+  },
+  "tos_get_block_evidence": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "node_ids": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "minItems": 1,
+        "maxItems": 4,
+        "uniqueItems": true
+      },
+      "reference_id": {
+        "type": "string",
+        "pattern": "^(blk|cand)_[A-Za-z0-9_-]{16,128}$"
+      },
+      "ancestor_depth": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4
+      },
+      "max_events": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": [
+      "run_id",
+      "node_ids",
+      "reference_id",
+      "ancestor_depth",
+      "max_events"
+    ]
+  }
+}

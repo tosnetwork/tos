@@ -54,6 +54,7 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
   };
 
   td::actor::Task<Stats> collect_stats();
+  td::actor::Task<Stats> collect_stats_mode(bool build_per_path);
   void collect(td::Promise<metrics::MetricSet> P) override;
 
  protected:

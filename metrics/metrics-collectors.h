@@ -42,6 +42,8 @@ class CollectorWrapper : public AsyncCollector {
  private:
   td::actor::Task<MetricSet> collect_coro();
 
+  bool collection_inflight_ = false;
+  bool registration_overflow_ = false;
   std::vector<AsyncCollectorClosure> collector_closures_;
 };
 
@@ -105,6 +107,9 @@ class MultiCollector : public td::actor::Actor, public AsyncCollector {
   static td::actor::ActorOwn<MultiCollector> create(std::string prefix);
 
  private:
+  bool collection_inflight_ = false;
+  bool registration_overflow_ = false;
+  void collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result);
   std::string prefix_;
   std::vector<std::shared_ptr<Collector>> sync_collectors_ = {};
   std::unique_ptr<CollectorWrapper> async_collector_ = std::make_unique<CollectorWrapper>();
@@ -183,6 +188,10 @@ class Labeled : public Instrument<Labeled<LabelType, InstrumentType>> {
 template <typename A>
 void CollectorWrapper::add_collector(td::actor::ActorId<A> collector) {
   CHECK(!collector.empty());
+  if (collector_closures_.size() >= 256) {
+    registration_overflow_ = true;
+    return;
+  }
   collector_closures_.push_back([collector](MetricsPromise P) mutable {
     td::actor::send_lambda(collector, [P = std::move(P), &collector = collector.get_actor_unsafe()]() mutable {
       collector.collect(std::move(P));

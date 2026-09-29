@@ -39,6 +39,7 @@
 #include "dht/dht.hpp"
 #include "keys/keys.hpp"
 #include "memprof/memprof.h"
+#include "metrics/core-health.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
@@ -6520,6 +6521,9 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "db-event-fifo", "path to FIFO pipe for publishing DB events", [&](td::Slice s) {
     acts.push_back([&x, s = s.str()]() { td::actor::send_closure(x, &ValidatorEngine::set_db_event_fifo_path, s); });
   });
+  p.add_option('\0', "health-core-metrics",
+               "enable bounded consensus PQ operation metrics (requires performance acceptance)",
+               []() { tos::health::enabled.store(true, std::memory_order_relaxed); });
   p.add_checked_option('\0', "exporter-address", "address to bind for HTTP metrics exporter", [&](td::Slice arg) {
     td::BufferSlice buff{arg};
     td::IPAddress addr;

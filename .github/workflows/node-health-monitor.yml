@@ -1,0 +1,60 @@
+name: Node health monitor
+on:
+  push:
+    branches: [node-health-monitor]
+  pull_request:
+    paths:
+      - 'tools/node-health-monitor/**'
+      - 'metrics/**'
+      - 'quic/**'
+      - 'crypto/pq/consensus-pq-signer.cpp'
+      - 'validator/consensus/types.cpp'
+      - 'validator-engine/validator-engine.cpp'
+      - 'test/test-health-collector-completion.cpp'
+      - '.github/workflows/node-health-monitor.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust-contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/install-rust-toolchain.sh
+      - run: python3 -m pip install jsonschema
+      - name: Check the generated input contracts
+        run: |
+          python3 tools/node-health-monitor/tests/generate_schemas.py
+          git diff --exit-code -- tools/node-health-monitor/contracts
+      - name: Compile and exercise HTTP and state contracts
+        run: |
+          cargo fmt --manifest-path tools/node-health-monitor/Cargo.toml --all -- --check
+          cargo clippy --manifest-path tools/node-health-monitor/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path tools/node-health-monitor/Cargo.toml --locked
+          cargo build --manifest-path tools/node-health-monitor/Cargo.toml --locked
+          python3 tools/node-health-monitor/tests/process-smoke.py
+          python3 tools/node-health-monitor/tests/mutations.py
+      - name: Compile and remove native protections
+        run: python3 tools/node-health-monitor/tests/native-mutations.py
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+      - name: Build affected native boundaries
+        run: |
+          cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
+          cmake --build build-health --target test-health-collector-completion test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
+      - name: Run native behavior tests
+        run: |
+          build-health/test-health-pq-signer
+          build-health/test-health-collector-completion
+          build-health/test-metrics-label-bound
+          build-health/crypto/pq/test-pq-consensus
+          build-health/crypto/pq/test-pq-mldsa44-wrapper

@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "source_base_commit": "b2c500dc6f26eb1530dac9679385b6f330b3d008",
+  "design_blob": "2d7653022fbcf477eb7396ca7a5e2d1a0698c903",
+  "complete_manifest": false,
+  "anchors": [
+    {
+      "source_id": "native_exporter",
+      "path": "metrics/prometheus-exporter.cpp",
+      "symbol": "PrometheusExporter::on_request",
+      "working_tree_lines": [
+        23,
+        58
+      ],
+      "status": "implemented_partial"
+    },
+    {
+      "source_id": "async_collector_completion",
+      "path": "metrics/metrics-collectors.cpp",
+      "symbol": "CollectorWrapper::collect_coro",
+      "working_tree_lines": [
+        21
+      ],
+      "status": "implemented"
+    },
+    {
+      "source_id": "quic_summary_only",
+      "path": "quic/quic-server.cpp",
+      "symbol": "QuicServer::collect_stats_mode",
+      "working_tree_lines": [
+        454
+      ],
+      "status": "implemented_pending_integration"
+    },
+    {
+      "source_id": "pq_consensus_sign",
+      "path": "crypto/pq/consensus-pq-signer.cpp",
+      "symbol": "ValidatorPQKeyStore::sign_consensus",
+      "working_tree_lines": [
+        60
+      ],
+      "status": "implemented"
+    },
+    {
+      "source_id": "pq_consensus_verify",
+      "path": "validator/consensus/types.cpp",
+      "symbol": "PeerValidator::check_signature",
+      "working_tree_lines": [
+        29
+      ],
+      "status": "implemented"
+    },
+    {
+      "source_id": "vote_intent_persistence",
+      "path": "validator/consensus/simplex/pool.cpp",
+      "symbol": "publish<PersistOwnVoteIntent>",
+      "working_tree_lines": [
+        876
+      ],
+      "status": "anchor_only_not_instrumented"
+    },
+    {
+      "source_id": "signed_vote_persistence",
+      "path": "validator/consensus/simplex/pool.cpp",
+      "symbol": "publish<PersistOwnSignedVote>",
+      "working_tree_lines": [
+        889,
+        919
+      ],
+      "status": "anchor_only_not_instrumented"
+    },
+    {
+      "source_id": "notarize_eligibility",
+      "path": "validator/consensus/simplex/consensus.cpp",
+      "symbol": "try_notarize",
+      "working_tree_lines": [
+        221,
+        242
+      ],
+      "status": "anchor_only_not_instrumented"
+    },
+    {
+      "source_id": "diagnostic_trace",
+      "path": "validator/consensus/trace-collector.cpp",
+      "symbol": "class TraceCollectorImpl",
+      "working_tree_lines": [
+        25
+      ],
+      "status": "not_migrated"
+    },
+    {
+      "source_id": "session_stats_files",
+      "path": "validator/manager.cpp",
+      "symbol": "ValidatorManagerImpl::write_session_stats",
+      "working_tree_lines": [
+        4878
+      ],
+      "status": "not_migrated"
+    }
+  ]
+}

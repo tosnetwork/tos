@@ -5,6 +5,7 @@
 #include "td/actor/coro_task.h"
 
 #include "metrics-collectors.h"
+#include "source-admission.h"
 
 namespace tos {
 class PrometheusExporter final : public td::actor::Actor, public virtual metrics::CollectorWrapper {
@@ -43,6 +44,14 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   void start_up() override;
 
   void on_request(RequestPtr request, PayloadPtr payload, td::Promise<HttpReturn> promise);
+
+  void collection_completed(td::Result<metrics::MetricSet> result);
+  static void respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body);
+
+  metrics::SourceAdmission admission_;
+  std::string snapshot_;
+  std::uint64_t skipped_ = 0;
+  std::uint64_t failures_ = 0;
 
   std::string prefix_;
   td::actor::ActorOwn<http::HttpServer> http_ = {};
