@@ -1,16 +1,17 @@
 //! Development-only, cache-only C07 package from verified M process projections.
 //! This is not a model prompt or an assertion that other source classes exist.
 use crate::{observability::ObservabilityState, query_ledger::boot_millis};
-use serde::Serialize;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
+use tos_health_core::query::Grant;
 use tos_health_core::{edge_snapshot::ProcessPayload, evidence::StoredEvidence, wire::U64};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Package {
     schema_version: u32,
-    source_profile: &'static str,
-    status: &'static str,
+    source_profile: String,
+    status: String,
     run_id: String,
     network_id: String,
     query_watermark: U64,
@@ -19,14 +20,14 @@ struct Package {
     missing_process: Vec<NodeScope>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NodeScope {
     node_id: String,
     scope_id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProcessItem {
     node_id: String,
@@ -43,6 +44,62 @@ struct ProcessItem {
 pub struct FrozenPackage {
     pub bytes: Vec<u8>,
     pub sha256: String,
+}
+
+/// Recheck the complete package after durable restoration, before it can be
+/// presented to a model. The database digest alone does not certify that a
+/// recomputed/tampered body still represents the frozen grant and source set.
+pub(crate) fn validate_package_binding(body: &[u8], grant: &Grant) -> Result<(), String> {
+    let package: Package = serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
+    let fixed_m = grant.manager_watermark.ok_or("broker package M watermark unavailable")?;
+    if package.schema_version != 1
+        || package.source_profile != "development_process_only"
+        || package.status != "partial"
+        || package.run_id != grant.run_id
+        || package.network_id != grant.network_id
+        || package.query_watermark.0 != grant.watermark
+        || package.manager_watermark.0 != fixed_m
+    {
+        return Err("broker package grant binding mismatch".into());
+    }
+    let mut covered = BTreeSet::new();
+    let mut evidence_ids = BTreeSet::new();
+    for item in &package.process {
+        if !grant.nodes.contains(&item.node_id)
+            || !grant.scopes.contains(&item.scope_id)
+            || !covered.insert((&item.node_id, &item.scope_id))
+            || !tos_health_core::wire::hash(&item.evidence_id)
+            || !tos_health_core::wire::hash(&item.parent_evidence_id)
+            || !evidence_ids.insert(&item.evidence_id)
+            || item.query_sequence.0 == 0
+            || item.query_sequence.0 > grant.watermark
+            || item.manager_sequence.0 == 0
+            || item.manager_sequence.0 > fixed_m
+            || item.process_epoch.is_empty()
+            || item.process_epoch.len() > 128
+            || item.value.kind != "process"
+            || item.value.pid == 0
+            || item.observed_at_ms.parse::<i64>().ok().is_none_or(|at| {
+                at < grant.window_start_ms
+                    || at >= grant.window_end_ms
+                    || at.to_string() != item.observed_at_ms
+            })
+        {
+            return Err("broker package process item invalid".into());
+        }
+    }
+    for missing in &package.missing_process {
+        if !grant.nodes.contains(&missing.node_id)
+            || !grant.scopes.contains(&missing.scope_id)
+            || !covered.insert((&missing.node_id, &missing.scope_id))
+        {
+            return Err("broker package missing-process item invalid".into());
+        }
+    }
+    if covered.len() != grant.nodes.len().saturating_mul(grant.scopes.len()) {
+        return Err("broker package source partition incomplete".into());
+    }
+    Ok(())
 }
 
 fn process_item(entry: &StoredEvidence, manager_watermark: u64) -> Result<ProcessItem, String> {
@@ -155,8 +212,8 @@ pub fn freeze_process_package(
     }
     let body = Package {
         schema_version: 1,
-        source_profile: "development_process_only",
-        status: "partial",
+        source_profile: "development_process_only".into(),
+        status: "partial".into(),
         run_id: grant.run_id,
         network_id: grant.network_id,
         query_watermark: U64(grant.watermark),

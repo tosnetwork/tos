@@ -103,15 +103,43 @@ fn legacy_mcp_binding_cannot_reset_unknown_spent_budget() {
 fn fixed_broker_package_is_single_write_and_integrity_checked_after_restart() {
     let (file, directory) = temporary();
     let mut g = grant(&[0x63; 32]);
-    g.manager_watermark = Some(0);
+    g.manager_watermark = Some(3);
     let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
     ledger.create(&g, 100).unwrap();
     let body = serde_json::json!({"schema_version":1,"source_profile":"development_process_only",
         "status":"partial","run_id":g.run_id,"network_id":g.network_id,
-        "query_watermark":g.watermark.to_string(),"manager_watermark":"0",
-        "process":[],"missing_process":[]})
+        "query_watermark":g.watermark.to_string(),"manager_watermark":"3",
+        "process":[],"missing_process":[{"node_id":"v1","scope_id":"node"}]})
     .to_string()
     .into_bytes();
+    let mut missing: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    missing["missing_process"] = serde_json::json!([]);
+    assert!(ledger.save_package(&g.run_id, &serde_json::to_vec(&missing).unwrap(), 101).is_err());
+    let mut foreign_scope: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    foreign_scope["missing_process"][0]["scope_id"] = serde_json::json!("other");
+    assert!(ledger
+        .save_package(&g.run_id, &serde_json::to_vec(&foreign_scope).unwrap(), 101)
+        .is_err());
+    let mut extra: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    extra["unapproved"] = serde_json::json!(true);
+    assert!(ledger.save_package(&g.run_id, &serde_json::to_vec(&extra).unwrap(), 101).is_err());
+    let mut malformed_process: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    malformed_process["missing_process"] = serde_json::json!([]);
+    malformed_process["process"] = serde_json::json!([{
+        "node_id":"v1","scope_id":"node","evidence_id":"a".repeat(64),
+        "parent_evidence_id":"b".repeat(64),"query_sequence":"17",
+        "manager_sequence":"1","observed_at_ms":"+1500","process_epoch":"p",
+        "value":{"kind":"process","pid":9,"rss_bytes":null,"anon_bytes":null,
+            "file_bytes":null,"swap_bytes":null,"cpu_user_ticks":null,"cpu_system_ticks":null}
+    }]);
+    assert!(ledger
+        .save_package(&g.run_id, &serde_json::to_vec(&malformed_process).unwrap(), 101)
+        .is_err());
+    malformed_process["process"][0]["observed_at_ms"] = serde_json::json!("1500");
+    malformed_process["process"][0]["value"]["pid"] = serde_json::json!(0);
+    assert!(ledger
+        .save_package(&g.run_id, &serde_json::to_vec(&malformed_process).unwrap(), 101)
+        .is_err());
     let digest = ledger.save_package(&g.run_id, &body, 101).unwrap();
     assert_eq!(ledger.save_package(&g.run_id, &body, 102).unwrap(), digest);
     assert!(ledger.save_package(&g.run_id, b"changed", 102).is_err());
@@ -151,6 +179,23 @@ fn fixed_broker_package_is_single_write_and_integrity_checked_after_restart() {
         .err()
         .unwrap()
         .contains("binding"));
+    let mut altered_partition: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    altered_partition["missing_process"][0]["scope_id"] = serde_json::json!("other");
+    let altered_bytes = serde_json::to_vec(&altered_partition).unwrap();
+    let altered_digest = format!("{:x}", Sha256::digest(&altered_bytes));
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute(
+        "UPDATE query_packages SET body=?1,package_sha256=?2 WHERE run_id=?3",
+        rusqlite::params![altered_bytes, altered_digest, g.run_id],
+    )
+    .unwrap();
+    drop(db);
+    assert!(QueryLedger::open_for_boot(&file, BOOT_A)
+        .unwrap()
+        .load_active_package(&g.run_id, 103)
+        .err()
+        .unwrap()
+        .contains("missing-process"));
     std::fs::remove_dir_all(directory).unwrap();
 }
 

@@ -55,28 +55,7 @@ fn encoded(grant: &Grant) -> Result<Vec<u8>, String> {
 }
 
 fn validate_package_binding(body: &[u8], grant: &Grant) -> Result<(), String> {
-    let value: serde_json::Value = serde_json::from_slice(body).map_err(failure)?;
-    let fixed_m = grant.manager_watermark.ok_or("broker package M watermark unavailable")?;
-    if value["schema_version"] != 1
-        || value["source_profile"] != "development_process_only"
-        || value["status"] != "partial"
-        || value["run_id"] != grant.run_id
-        || value["network_id"] != grant.network_id
-        || value["query_watermark"]
-            .as_str()
-            .and_then(|text| tos_health_core::wire::exact_u64(text).ok())
-            != Some(grant.watermark)
-        || value["manager_watermark"]
-            .as_str()
-            .and_then(|text| tos_health_core::wire::exact_u64(text).ok())
-            != Some(fixed_m)
-        || !value["process"].is_array()
-        || !value["missing_process"].is_array()
-        || value.as_object().is_none_or(|fields| fields.len() != 9)
-    {
-        return Err("broker package grant binding mismatch".into());
-    }
-    Ok(())
+    crate::fixed_package::validate_package_binding(body, grant)
 }
 
 impl QueryLedger {
