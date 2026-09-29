@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "rust": "1.97.1",
+  "packages": [
+    {
+      "name": "axum",
+      "version": "0.8.9",
+      "checksum": "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
+    },
+    {
+      "name": "libsqlite3-sys",
+      "version": "0.30.1",
+      "checksum": "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+    },
+    {
+      "name": "reqwest",
+      "version": "0.12.28",
+      "checksum": "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
+    },
+    {
+      "name": "rusqlite",
+      "version": "0.32.1",
+      "checksum": "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
+    },
+    {
+      "name": "tokio",
+      "version": "1.53.1",
+      "checksum": "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+    }
+  ],
+  "aura": {
+    "commit": "1000f119d38f4c4656ced0ae883c90f6f7610890",
+    "enabled": false,
+    "integration": "not_run"
+  },
+  "mcp": {
+    "enabled": false,
+    "sdk": null,
+    "reason": "not integrated; must pin before C08"
+  },
+  "prometheus": {
+    "enabled": false,
+    "version": null,
+    "reason": "runtime package and promtool not installed; C03 pending"
+  }
+}

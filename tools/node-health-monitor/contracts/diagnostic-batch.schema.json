@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "edge_epoch": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "process_epoch": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "source_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sequence": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,19})$",
+            "format": "uint64"
+          },
+          "monotonic_ns": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]{0,19})$",
+            "format": "uint64"
+          },
+          "observed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "record_type": {
+            "const": 1
+          },
+          "payload": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{4}$"
+          }
+        },
+        "required": [
+          "sequence",
+          "monotonic_ns",
+          "observed_at",
+          "record_type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 128
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "dropped": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "gaps": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dropped",
+        "gaps"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema_version",
+    "node_id",
+    "edge_epoch",
+    "process_epoch",
+    "source_id",
+    "batch_id",
+    "records",
+    "quality"
+  ],
+  "additionalProperties": false,
+  "$defs": {}
+}

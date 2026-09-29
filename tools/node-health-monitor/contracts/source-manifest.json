@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "design_revision": "R4",
+  "design_blob": "b6ee93b81ad3794eecff3b6c8ed2faf28072120c",
+  "base_commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+  "complete_manifest": false,
+  "sources": [
+    {
+      "source_id": "native_exporter",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "metrics/prometheus-exporter.cpp",
+        "symbol": "PrometheusExporter::on_request",
+        "source_sha256": "cff0be59a2ddc240f6665a14caf133e4f5b36d29e9928d19ec1b17d0f6af2947"
+      },
+      "interface": "GET /metrics",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "mixed",
+      "unit": "per metric",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "bounded fan-out; per-provider contiguous work not accepted",
+      "capacity": {
+        "max_bytes": 2097152
+      },
+      "fixture": null,
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "process",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
+        "symbol": "sample_process",
+        "source_sha256": "a02d946ec0baa6972a8c3d63fc2d312a1adcdff73be9d171de63a325a6280304"
+      },
+      "interface": "fixed proc fields",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "gauge",
+      "unit": "bytes/ticks",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "two stat reads, one status read and boot identity",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "consensus_status",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator-engine/json-rpc-server-blocks.cpp",
+        "symbol": "getNodeConsensusStatus",
+        "source_sha256": "67f451f0a81dbb2c076a262f9ae9b69edd5af1c114098906b0a23d7f9c97d39d"
+      },
+      "interface": "JSON-RPC getNodeConsensusStatus",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "snapshot",
+      "unit": "typed raw",
+      "scope": "masterchain",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "manager actor snapshot; adapter unsupported",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "quic",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "quic/quic-sender.cpp",
+        "symbol": "collect_stats",
+        "source_sha256": "b54ea12bfaebb7df3ee9513beac4ae81047dccec9af9fa5a54e04cd99f468767"
+      },
+      "interface": "native collector summary",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "raw",
+      "unit": "RTT unverified; bytes may decrease",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "connection traversal; performance gate not run",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "vote_intent",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/simplex/pool.cpp",
+        "symbol": "publish<PersistOwnVoteIntent>",
+        "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+      },
+      "interface": "core hook not connected",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "counter",
+      "unit": "operations",
+      "scope": "masterchain",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "anchor only",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "vote_signed_commit",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/simplex/pool.cpp",
+        "symbol": "publish<PersistOwnSignedVote>",
+        "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+      },
+      "interface": "core hook not connected",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "counter",
+      "unit": "operations",
+      "scope": "masterchain",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "anchor only",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "pq_sign",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "crypto/pq/consensus-pq-signer.cpp",
+        "symbol": "ValidatorPQKeyStore::sign_consensus",
+        "source_sha256": "b1114d5f292ab89a0f1ef7cfe7bff12ec577dce2e4ded828f20bded7d8415a58"
+      },
+      "interface": "opt-in native metrics",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "histogram",
+      "unit": "seconds",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "fixed atomic counters and clock",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "pq_verify",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/types.cpp",
+        "symbol": "PeerValidator::check_signature",
+        "source_sha256": "6d5970fdcade5d74697d460c92a465ce2918f16e4f98985657c6d661df71a359"
+      },
+      "interface": "opt-in native metrics",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "histogram",
+      "unit": "seconds",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "fixed atomic counters and clock",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "rocksdb",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "scripts/validator_rss_rocksdb_monitor.sh",
+        "symbol": "rocksdb",
+        "source_sha256": "7ca8ba0559f11ece232bb887511520a631bc36e7d195670df450a60a562e993c"
+      },
+      "interface": "fixed incremental reader not connected",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "raw",
+      "unit": "per field",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "unimplemented",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    }
+  ]
+}

@@ -184,7 +184,7 @@ fn block() -> BlockIdentity {
     BlockIdentity {
         genesis: "a".repeat(64),
         workchain: -1,
-        shard: "-9223372036854775808".into(),
+        shard: "9223372036854775808".into(),
         seqno: 8,
         root_hash: "b".repeat(64),
         file_hash: "c".repeat(64),

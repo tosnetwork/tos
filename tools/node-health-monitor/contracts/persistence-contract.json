@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "contract_id": "simplex_vote_commit_ack",
+  "anchors": [
+    {
+      "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+      "path": "validator/consensus/simplex/db.cpp",
+      "symbol": "PersistOwnVoteIntent",
+      "source_sha256": "9828815f8239e010a0a8461f59b287e8ae33977e4ba3bbdab823caf8f138ff63"
+    },
+    {
+      "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+      "path": "validator/consensus/simplex/db.cpp",
+      "symbol": "PersistOwnSignedVote",
+      "source_sha256": "9828815f8239e010a0a8461f59b287e8ae33977e4ba3bbdab823caf8f138ff63"
+    },
+    {
+      "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+      "path": "validator/consensus/bridge.cpp",
+      "symbol": "KeyValueAsync",
+      "source_sha256": "5d9960f671bdadd2f29f047782406d3670e5bf49ededffb1f94b1b53c362888a"
+    },
+    {
+      "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+      "path": "tddb/td/db/KeyValueAsync.h",
+      "symbol": "commit_transaction()",
+      "source_sha256": "402602806998209a2a2dc732e125230b50a41fa4b3c618e76153bfcecca96a75"
+    },
+    {
+      "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+      "path": "tddb/td/db/RocksDb.cpp",
+      "symbol": "options.sync = true",
+      "source_sha256": "6d5cbe48bb0a5c6f16a3902f0d9830cc0cca1c71a135ccd808c7329ddb1738f3"
+    }
+  ],
+  "ordering": [
+    "intent commit acknowledgement",
+    "sign",
+    "signed bytes commit acknowledgement",
+    "apply/enqueue"
+  ],
+  "durability": "commit_acknowledged",
+  "wal": "not disabled in inspected write options; actual deployment verification pending",
+  "restart_verified_in_test": false,
+  "power_loss_verified": false,
+  "durable_finality_supported": false
+}

@@ -11,10 +11,8 @@ pub struct BlockIdentity {
 }
 impl BlockIdentity {
     pub fn valid(&self) -> bool {
-        [&self.genesis, &self.root_hash, &self.file_hash]
-            .iter()
-            .all(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
-            && self.shard.parse::<i64>().is_ok()
+        [&self.genesis, &self.root_hash, &self.file_hash].iter().all(|v| crate::wire::hash(v))
+            && crate::wire::exact_u64(&self.shard).is_ok()
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

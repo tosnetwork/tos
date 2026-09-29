@@ -2,7 +2,7 @@ from jsonschema import Draft202012Validator
 
 RUN = {"type": "string", "format": "uuid"}
 NODE = {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}
-TIME = {"type": "string", "format": "date-time"}
+TIME = {"type": "string", "format": "date-time", "pattern": "Z$", "maxLength": 40}
 
 def enum(*values):
     return {"type": "string", "enum": list(values)}

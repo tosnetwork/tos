@@ -1,0 +1,273 @@
+{
+  "schema_version": 1,
+  "actions": [
+    {
+      "action": "proposal",
+      "phases": [
+        {
+          "phase": "requested",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/block-producer.cpp",
+            "symbol": "generate_candidates",
+            "source_sha256": "9e993d7c934be02ca6cac74c03cd3b500087663a1ce71a0c1c149d2940330379"
+          }
+        },
+        {
+          "phase": "candidate_published",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/block-producer.cpp",
+            "symbol": "CandidateGenerated",
+            "source_sha256": "9e993d7c934be02ca6cac74c03cd3b500087663a1ce71a0c1c149d2940330379"
+          }
+        }
+      ],
+      "local_population": "logical request keyed by epoch/session/scope/action/slot/candidate; retry dedupe required",
+      "scheduled_population": "leader window",
+      "network_population": "separate observer evidence; unsupported",
+      "protocol_deadline": null,
+      "deadline_reason": "no frozen deadline contract; do not infer from block interval",
+      "early_returns": [
+        "finality_behind",
+        "journal_unusable",
+        "duplicate",
+        "intent_failure",
+        "sign_failure",
+        "signed_commit_failure",
+        "apply_false",
+        "cancelled"
+      ],
+      "replay": "separate origin; never a new live broadcast",
+      "instrumented": false
+    },
+    {
+      "action": "notarize_vote",
+      "phases": [
+        {
+          "phase": "requested",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "cast_our_vote",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "intent_committed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "publish<PersistOwnVoteIntent>",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "signed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "sign_vote",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "signed_committed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "publish<PersistOwnSignedVote>",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "local_applied",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "handle_vote(*bus.local_id",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "broadcast_enqueued",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "OutgoingProtocolMessage::BroadcastToAll",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        }
+      ],
+      "local_population": "logical request keyed by epoch/session/scope/action/slot/candidate; retry dedupe required",
+      "scheduled_population": null,
+      "network_population": "separate observer evidence; unsupported",
+      "protocol_deadline": null,
+      "deadline_reason": "no frozen deadline contract; do not infer from block interval",
+      "early_returns": [
+        "finality_behind",
+        "journal_unusable",
+        "duplicate",
+        "intent_failure",
+        "sign_failure",
+        "signed_commit_failure",
+        "apply_false",
+        "cancelled"
+      ],
+      "replay": "separate origin; never a new live broadcast",
+      "instrumented": false
+    },
+    {
+      "action": "finalize_vote",
+      "phases": [
+        {
+          "phase": "requested",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "cast_our_vote",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "intent_committed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "publish<PersistOwnVoteIntent>",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "signed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "sign_vote",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "signed_committed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "publish<PersistOwnSignedVote>",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "local_applied",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "handle_vote(*bus.local_id",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "broadcast_enqueued",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "OutgoingProtocolMessage::BroadcastToAll",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        }
+      ],
+      "local_population": "logical request keyed by epoch/session/scope/action/slot/candidate; retry dedupe required",
+      "scheduled_population": null,
+      "network_population": "separate observer evidence; unsupported",
+      "protocol_deadline": null,
+      "deadline_reason": "no frozen deadline contract; do not infer from block interval",
+      "early_returns": [
+        "finality_behind",
+        "journal_unusable",
+        "duplicate",
+        "intent_failure",
+        "sign_failure",
+        "signed_commit_failure",
+        "apply_false",
+        "cancelled"
+      ],
+      "replay": "separate origin; never a new live broadcast",
+      "instrumented": false
+    },
+    {
+      "action": "skip_vote",
+      "phases": [
+        {
+          "phase": "requested",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "cast_our_vote",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "intent_committed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "publish<PersistOwnVoteIntent>",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "signed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "sign_vote",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "signed_committed",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "publish<PersistOwnSignedVote>",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "local_applied",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "handle_vote(*bus.local_id",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        },
+        {
+          "phase": "broadcast_enqueued",
+          "anchor": {
+            "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+            "path": "validator/consensus/simplex/pool.cpp",
+            "symbol": "OutgoingProtocolMessage::BroadcastToAll",
+            "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+          }
+        }
+      ],
+      "local_population": "logical request keyed by epoch/session/scope/action/slot/candidate; retry dedupe required",
+      "scheduled_population": null,
+      "network_population": "separate observer evidence; unsupported",
+      "protocol_deadline": null,
+      "deadline_reason": "no frozen deadline contract; do not infer from block interval",
+      "early_returns": [
+        "finality_behind",
+        "journal_unusable",
+        "duplicate",
+        "intent_failure",
+        "sign_failure",
+        "signed_commit_failure",
+        "apply_false",
+        "cancelled"
+      ],
+      "replay": "separate origin; never a new live broadcast",
+      "instrumented": false
+    }
+  ]
+}

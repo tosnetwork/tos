@@ -9,4 +9,8 @@ pub mod observer;
 pub mod query;
 pub mod source;
 
+pub mod contracts;
 pub mod diagnosis;
+pub mod freshness;
+pub mod health_state;
+pub mod wire;

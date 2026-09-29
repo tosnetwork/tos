@@ -1,0 +1,1027 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "network_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "partial",
+        "unavailable",
+        "error"
+      ]
+    },
+    "data": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "series": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "metric_id": {
+                    "type": "string",
+                    "maxLength": 96
+                  },
+                  "node_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  },
+                  "scope_id": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/label"
+                    },
+                    "maxItems": 8
+                  },
+                  "unit": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "semantic_type": {
+                    "type": "string",
+                    "enum": [
+                      "counter",
+                      "gauge",
+                      "histogram",
+                      "raw"
+                    ]
+                  },
+                  "population": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "clock": {
+                    "type": "string",
+                    "enum": [
+                      "valid",
+                      "uncertain",
+                      "invalid"
+                    ]
+                  },
+                  "points": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "at": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "Z$",
+                              "maxLength": 40
+                            },
+                            "value": {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "at",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 240
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "summary": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "first": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "last": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "min": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "max": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "mean": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "delta": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "rate": {
+                            "$ref": "#/$defs/summary_value"
+                          },
+                          "quantile": {
+                            "$ref": "#/$defs/summary_value"
+                          }
+                        },
+                        "required": [
+                          "first",
+                          "last",
+                          "min",
+                          "max",
+                          "mean",
+                          "delta",
+                          "rate",
+                          "quantile"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "samples_count": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$",
+                    "format": "uint64"
+                  },
+                  "expected_samples": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,19})$",
+                        "format": "uint64"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "coverage": {
+                    "$ref": "#/$defs/coverage"
+                  },
+                  "reset_count": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$",
+                    "format": "uint64"
+                  },
+                  "source_evidence_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "maxItems": 4096
+                  }
+                },
+                "required": [
+                  "metric_id",
+                  "node_id",
+                  "scope_id",
+                  "labels",
+                  "unit",
+                  "semantic_type",
+                  "population",
+                  "clock",
+                  "points",
+                  "summary",
+                  "samples_count",
+                  "expected_samples",
+                  "coverage",
+                  "reset_count",
+                  "source_evidence_ids"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "series"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      },
+      "maxItems": 128
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/missing"
+      },
+      "maxItems": 32
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "pagination": {
+      "$ref": "#/$defs/pagination"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "budget": {
+      "$ref": "#/$defs/budget"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "run_id",
+    "network_id",
+    "generated_at",
+    "status",
+    "data",
+    "evidence",
+    "missing_evidence",
+    "coverage",
+    "pagination",
+    "error",
+    "budget"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "block": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "block"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "point": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "kind",
+        "network_id",
+        "scope_id",
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash",
+        "point"
+      ],
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "remaining_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "remaining_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 131072
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "remaining_calls",
+        "remaining_bytes",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "consensus": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "consensus"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "kind",
+        "network_id",
+        "scope_id",
+        "session_id",
+        "slot",
+        "candidate_id",
+        "phase"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ]
+        },
+        "missing_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 96
+          },
+          "maxItems": 64
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "maxItems": 32
+        },
+        "sampling_policy": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "status",
+        "missing_fields",
+        "gaps",
+        "sampling_policy"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "diagnostic_fixture"
+        },
+        "record_type": {
+          "const": 1
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{4}$"
+        }
+      },
+      "required": [
+        "kind",
+        "record_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 300
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "retry_after_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "observation",
+            "derived",
+            "event",
+            "change"
+          ]
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_version": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "source_record_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "process_epoch": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        },
+        "clock_quality": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "uncertain",
+            "invalid"
+          ]
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "quality": {
+          "$ref": "#/$defs/quality"
+        },
+        "redacted": {
+          "const": true
+        },
+        "parent_evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxItems": 32
+        },
+        "derivation_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 96
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "evidence_id",
+        "kind",
+        "node_id",
+        "source_id",
+        "source_version",
+        "source_record_id",
+        "process_epoch",
+        "observed_at",
+        "received_at",
+        "clock_quality",
+        "scope_id",
+        "payload",
+        "content_hash",
+        "quality",
+        "redacted",
+        "parent_evidence_ids",
+        "derivation_version"
+      ],
+      "additionalProperties": false
+    },
+    "label": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 96
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "missing": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "source_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "native": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "openmetrics_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        }
+      },
+      "required": [
+        "kind",
+        "generation",
+        "openmetrics_hash",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "pagination": {
+      "type": "object",
+      "properties": {
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2048
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "scan_complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "next_cursor",
+        "truncated",
+        "scan_complete"
+      ],
+      "additionalProperties": false
+    },
+    "payload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/process"
+        },
+        {
+          "$ref": "#/$defs/native"
+        },
+        {
+          "$ref": "#/$defs/unavailable"
+        },
+        {
+          "$ref": "#/$defs/scalar"
+        },
+        {
+          "$ref": "#/$defs/diagnostic"
+        },
+        {
+          "$ref": "#/$defs/block"
+        },
+        {
+          "$ref": "#/$defs/consensus"
+        },
+        {
+          "$ref": "#/$defs/storage_ack"
+        }
+      ]
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "process"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "rss_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "anon_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "swap_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_user_ticks": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_system_ticks": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "pid",
+        "rss_bytes",
+        "anon_bytes",
+        "file_bytes",
+        "swap_bytes",
+        "cpu_user_ticks",
+        "cpu_system_ticks"
+      ],
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "instrumentation_complete": {
+          "type": "boolean"
+        },
+        "producer_dropped": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "relay_dropped": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "parse_errors": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "shed_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 96
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "instrumentation_complete",
+        "producer_dropped",
+        "relay_dropped",
+        "parse_errors",
+        "shed_reason"
+      ],
+      "additionalProperties": false
+    },
+    "scalar": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "scalar"
+        },
+        "metric_id": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "kind",
+        "metric_id",
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "storage_ack": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "storage_ack"
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "logical_reference": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "contract_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_epoch": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "completion_sequence": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "durability": {
+          "type": "string",
+          "enum": [
+            "commit_acknowledged",
+            "restart_verified_in_test",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "operation",
+        "logical_reference",
+        "contract_id",
+        "source_epoch",
+        "completion_sequence",
+        "durability"
+      ],
+      "additionalProperties": false
+    },
+    "summary_value": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "value",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "unavailable": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "unavailable"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "kind",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "profile": "initial_pq_contract",
+  "scopes": [
+    "node",
+    "masterchain"
+  ],
+  "max_series": 2048,
+  "max_bytes": 4194304,
+  "families": [
+    {
+      "name": "tos_pq_operation_duration_seconds",
+      "semantic_type": "histogram",
+      "label_names": [
+        "operation",
+        "suite",
+        "result"
+      ],
+      "allowed_tuples": [
+        [
+          "sign",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "sign",
+          "mldsa44",
+          "failure"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "failure"
+        ]
+      ],
+      "finite_buckets": [
+        0.001,
+        0.002,
+        0.005,
+        0.01,
+        0.02,
+        0.05,
+        0.1,
+        0.2,
+        0.5,
+        1,
+        2,
+        5
+      ],
+      "bytes_per_tuple": 128
+    },
+    {
+      "name": "tos_pq_operations_total",
+      "semantic_type": "counter",
+      "label_names": [
+        "operation",
+        "suite",
+        "result"
+      ],
+      "allowed_tuples": [
+        [
+          "sign",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "sign",
+          "mldsa44",
+          "failure"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "failure"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_pq_accounting_complete",
+      "semantic_type": "gauge",
+      "label_names": [
+        "operation"
+      ],
+      "allowed_tuples": [
+        [
+          "sign"
+        ],
+        [
+          "verify"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 1
+    }
+  ],
+  "scope_note": "masterchain action metrics not enabled; this catalog is not the full validator-core profile"
+}

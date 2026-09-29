@@ -114,7 +114,8 @@ impl Grant {
             || scopes.len() > 8
             || start >= end
             || end.checked_sub(start).is_none_or(|span| span > 3_600_000)
-            || run_id.len() != 36
+            || !crate::wire::uuid(&run_id)
+            || nodes.iter().chain(scopes.iter()).any(|v| !crate::wire::alias(v))
             || principal.is_empty()
             || network_id.is_empty()
         {
@@ -164,7 +165,7 @@ impl Grant {
 }
 
 pub fn utc_ms(value: &str) -> Result<i64, &'static str> {
-    if !value.ends_with('Z') {
+    if value.len() > 40 || !value.ends_with('Z') {
         return Err("INVALID_ARGUMENT");
     }
     chrono::DateTime::parse_from_rfc3339(value)
@@ -180,7 +181,7 @@ fn list(values: &[String], min: usize, max: usize, allowed: Option<&[&str]>) -> 
         })
 }
 fn nodes(grant: &Grant, values: &[String]) -> Result<(), &'static str> {
-    if !list(values, 1, 4, None) {
+    if !list(values, 1, 4, None) || values.iter().any(|v| !crate::wire::alias(v)) {
         return Err("INVALID_ARGUMENT");
     }
     if values.iter().any(|v| !grant.nodes.contains(v)) {
@@ -473,7 +474,7 @@ impl QueryService<'_> {
                     return Err("OUT_OF_SCOPE");
                 }
                 let (start, end) = window(grant, &start, &end, tool == "tos_get_change_history")?;
-                if !(1..=100).contains(&limit) {
+                if !(1..=100).contains(&limit) || cursor.len() > 2048 {
                     return Err("INVALID_ARGUMENT");
                 }
                 if !cursor.is_empty() {
