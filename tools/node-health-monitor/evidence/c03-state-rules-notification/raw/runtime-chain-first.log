@@ -1,0 +1,34 @@
+{"kind": "start", "monotonic": 281595.817171087, "utc": 1790672478.2434347, "process": "health-state", "pid": 718083}
+{"kind": "start", "monotonic": 281596.824697811, "utc": 1790672479.2509613, "process": "health-watchdog", "pid": 718088}
+{"kind": "start", "monotonic": 281596.825972426, "utc": 1790672479.2522354, "process": "alertmanager", "pid": 718089}
+{"kind": "start", "monotonic": 281596.826808713, "utc": 1790672479.2530715, "process": "prometheus", "pid": 718090}
+{"kind": "baseline_wait", "monotonic": 281597.830183223, "utc": 1790672480.2564473, "seconds": 115}
+{"kind": "stop", "monotonic": 281712.848914206, "utc": 1790672595.2751782, "process": "prometheus", "returncode": 0}
+{"kind": "prometheus_down", "monotonic": 281712.849060783, "utc": 1790672595.275324}
+{"kind": "old_sequence_replay", "monotonic": 281722.854525262, "utc": 1790672605.2807887, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281732.859449974, "utc": 1790672615.2857134, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281742.864595532, "utc": 1790672625.2908592, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281752.869759205, "utc": 1790672635.2960224, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281762.873700239, "utc": 1790672645.2999637, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281772.877802729, "utc": 1790672655.3040664, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281782.8833574, "utc": 1790672665.3096213, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281792.887956381, "utc": 1790672675.31422, "accepted": "0"}
+{"kind": "old_sequence_replay", "monotonic": 281802.892838883, "utc": 1790672685.3191037, "accepted": "0"}
+{"kind": "prometheus_unavailable_delivered", "monotonic": 281806.893577699, "utc": 1790672689.3198416, "key": "8c6e8aa79c78d434fcd9a97f815d43c58b5ddfb67f8b7d896b6e81494d07aff6"}
+{"kind": "start", "monotonic": 281806.89563341, "utc": 1790672689.321897, "process": "prometheus", "pid": 719208}
+{"kind": "stop", "monotonic": 281856.911658977, "utc": 1790672739.3379235, "process": "alertmanager", "returncode": 0}
+{"kind": "alertmanager_down", "monotonic": 281856.911801802, "utc": 1790672739.338065}
+{"kind": "stop", "monotonic": 281981.999924758, "utc": 1790672864.4261901, "process": "health-state", "returncode": -15}
+{"kind": "stop", "monotonic": 281982.031762122, "utc": 1790672864.4580262, "process": "health-watchdog", "returncode": -15}
+{"kind": "stop", "monotonic": 281982.047403037, "utc": 1790672864.4736671, "process": "prometheus", "returncode": 0}
+Traceback (most recent call last):
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 231, in <module>
+    until(lambda: advances()[-1] if advances() and advances()[-1][0]>before_am_restart else None,
+                ^^^^^^
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 210, in main
+    replays=[row for row in events if row['kind']=='old_sequence_replay']
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 106, in until
+    time.sleep(1)
+    ~~~~~~~~~~^^^
+AssertionError: Alertmanager stop did not trip O pipeline

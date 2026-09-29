@@ -1,0 +1,269 @@
+{
+  "events": [
+    {
+      "kind": "start_receipt",
+      "monotonic": 283881.792494105,
+      "utc": 1790674764.2187574,
+      "sha256": "e24f5cfbbb299c1c03130444570f814bdfc86942af6d7be534ed35b3ad9d7ad5"
+    },
+    {
+      "kind": "start",
+      "monotonic": 283881.793443131,
+      "utc": 1790674764.2197058,
+      "process": "health-state",
+      "pid": 867960,
+      "argv": [
+        "/home/tomi/nhm-c03-build/debug/health-state",
+        "/tmp/nhm-c03-runtime-38c33f7n/manager.json"
+      ]
+    },
+    {
+      "kind": "start",
+      "monotonic": 283882.798786427,
+      "utc": 1790674765.2250495,
+      "process": "health-watchdog",
+      "pid": 867965,
+      "argv": [
+        "/home/tomi/nhm-c03-build/debug/health-watchdog",
+        "/tmp/nhm-c03-runtime-38c33f7n/observer.json"
+      ]
+    },
+    {
+      "kind": "start",
+      "monotonic": 283882.799609872,
+      "utc": 1790674765.2258728,
+      "process": "alertmanager",
+      "pid": 867966,
+      "argv": [
+        "/home/tomi/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
+        "--config.file=/tmp/nhm-c03-runtime-38c33f7n/alertmanager.yml",
+        "--storage.path=/tmp/nhm-c03-runtime-38c33f7n/am-data",
+        "--web.listen-address=127.0.0.1:34631",
+        "--cluster.listen-address=127.0.0.1:0"
+      ]
+    },
+    {
+      "kind": "start",
+      "monotonic": 283882.800604487,
+      "utc": 1790674765.2268672,
+      "process": "prometheus",
+      "pid": 867967,
+      "argv": [
+        "/home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
+        "--config.file=/tmp/nhm-c03-runtime-38c33f7n/prometheus.yml",
+        "--storage.tsdb.path=/tmp/nhm-c03-runtime-38c33f7n/prom-data",
+        "--web.listen-address=127.0.0.1:43739",
+        "--rules.alert.resend-delay=15s"
+      ]
+    },
+    {
+      "kind": "baseline_wait",
+      "monotonic": 283883.803128204,
+      "utc": 1790674766.2293916,
+      "seconds": 115
+    },
+    {
+      "kind": "stop",
+      "monotonic": 283998.823113182,
+      "utc": 1790674881.2493777,
+      "process": "prometheus",
+      "returncode": 0
+    },
+    {
+      "kind": "prometheus_down",
+      "monotonic": 283998.823241233,
+      "utc": 1790674881.2495046
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284008.828355098,
+      "utc": 1790674891.2546186,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284018.833438199,
+      "utc": 1790674901.259702,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284028.838855497,
+      "utc": 1790674911.2651196,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284038.843629016,
+      "utc": 1790674921.2698927,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284048.848858961,
+      "utc": 1790674931.2751226,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284058.854450365,
+      "utc": 1790674941.2807145,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284068.859548351,
+      "utc": 1790674951.285812,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284078.864193476,
+      "utc": 1790674961.290457,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284088.869554682,
+      "utc": 1790674971.2958186,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284098.874369614,
+      "utc": 1790674981.3006337,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284108.878995604,
+      "utc": 1790674991.305259,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284118.883710095,
+      "utc": 1790675001.3099737,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 284128.88858022,
+      "utc": 1790675011.3148437,
+      "accepted": "0"
+    },
+    {
+      "kind": "prometheus_unavailable_delivered",
+      "monotonic": 284137.890350688,
+      "utc": 1790675020.3166144,
+      "key": "8f499b03dff0505ba9d1ff2316aea6b9727a26ad126536194be0f6413397a03c"
+    },
+    {
+      "kind": "start",
+      "monotonic": 284137.891859791,
+      "utc": 1790675020.3181233,
+      "process": "prometheus",
+      "pid": 869310,
+      "argv": [
+        "/home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
+        "--config.file=/tmp/nhm-c03-runtime-38c33f7n/prometheus.yml",
+        "--storage.tsdb.path=/tmp/nhm-c03-runtime-38c33f7n/prom-data",
+        "--web.listen-address=127.0.0.1:43739",
+        "--rules.alert.resend-delay=15s"
+      ]
+    },
+    {
+      "kind": "prometheus_pipeline_restored",
+      "monotonic": 284160.90712998,
+      "utc": 1790675043.3333948,
+      "sequence": 55
+    },
+    {
+      "kind": "observer_healthy_tick_after_prometheus",
+      "monotonic": 284167.911409063,
+      "utc": 1790675050.3376732
+    },
+    {
+      "kind": "stop",
+      "monotonic": 284167.927144307,
+      "utc": 1790675050.3534083,
+      "process": "alertmanager",
+      "returncode": 0
+    },
+    {
+      "kind": "alertmanager_down",
+      "monotonic": 284167.927238497,
+      "utc": 1790675050.3535016
+    },
+    {
+      "kind": "alertmanager_unavailable_delivered",
+      "monotonic": 284272.945457239,
+      "utc": 1790675155.3717213,
+      "key": "cab552f3e1aaab7e402aeebd056a331a5bcf87eaa8e2881dc11a4fa4df3877a7"
+    },
+    {
+      "kind": "start",
+      "monotonic": 284272.94799675,
+      "utc": 1790675155.3742607,
+      "process": "alertmanager",
+      "pid": 869807,
+      "argv": [
+        "/home/tomi/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
+        "--config.file=/tmp/nhm-c03-runtime-38c33f7n/alertmanager.yml",
+        "--storage.path=/tmp/nhm-c03-runtime-38c33f7n/am-data",
+        "--web.listen-address=127.0.0.1:34631",
+        "--cluster.listen-address=127.0.0.1:0"
+      ]
+    },
+    {
+      "kind": "alertmanager_pipeline_restored",
+      "monotonic": 284283.95579709,
+      "utc": 1790675166.3820617,
+      "sequence": 79
+    },
+    {
+      "kind": "observer_healthy_tick_after_alertmanager",
+      "monotonic": 284287.957769183,
+      "utc": 1790675170.3840332
+    },
+    {
+      "kind": "stop",
+      "monotonic": 284287.961188059,
+      "utc": 1790675170.387451,
+      "process": "health-state",
+      "returncode": -15
+    },
+    {
+      "kind": "health_state_down",
+      "monotonic": 284287.961215548,
+      "utc": 1790675170.3874784
+    },
+    {
+      "kind": "health_state_unavailable_delivered",
+      "monotonic": 284347.973212052,
+      "utc": 1790675230.399476,
+      "key": "b27489f97f63ec86dfb0d1d50d9dd63984eed11d4647fdbac92287f3e4b2c1b5"
+    },
+    {
+      "kind": "stop",
+      "monotonic": 284348.82426986,
+      "utc": 1790675231.2505336,
+      "process": "health-watchdog",
+      "returncode": -15
+    },
+    {
+      "kind": "stop",
+      "monotonic": 284348.839598922,
+      "utc": 1790675231.2658622,
+      "process": "prometheus",
+      "returncode": 0
+    },
+    {
+      "kind": "stop",
+      "monotonic": 284348.846957674,
+      "utc": 1790675231.2732215,
+      "process": "alertmanager",
+      "returncode": 0
+    }
+  ]
+}

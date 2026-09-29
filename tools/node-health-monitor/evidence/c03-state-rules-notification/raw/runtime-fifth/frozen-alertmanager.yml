@@ -1,0 +1,22 @@
+route:
+  receiver: no-customer-destination
+  group_by: [alertname, node, scope, rule]
+  group_wait: 0s
+  group_interval: 15s
+  repeat_interval: 30s
+  routes:
+  - matchers: ['alertname="Watchdog"']
+    receiver: independent-watchdog
+    group_by: [alertname, monitor_id, monitor_epoch]
+    group_wait: 0s
+    group_interval: 15s
+    repeat_interval: 30s
+receivers:
+- name: no-customer-destination
+- name: independent-watchdog
+  webhook_configs:
+  - url: http://127.0.0.1:38999/v1/watchdog/pipeline
+    send_resolved: false
+    http_config:
+      authorization:
+        credentials_file: /tmp/nhm-c03-runtime-a9k5wkky/pipeline.token

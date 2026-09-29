@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "profile": "c03_deterministic_rule_catalog",
+  "quality_requirement": "available_complete_clock_valid_fresh",
+  "unknown_policy": "retain_episode_severity_and_active_incident",
+  "recovery_policy": "all_required_sources_two_distinct_generations_same_epoch_and_immutable_revision_hold",
+  "timing": {
+    "source_poll_ms": 15000,
+    "evaluation_ms": 5000,
+    "notification_retry_initial_ms": 15000,
+    "notification_retry_max_ms": 60000,
+    "source_ttl_max_ms": 180000,
+    "pending_and_hold_source": "immutable_RuleInventory_revision"
+  },
+  "rules": [
+    {"id":"target_unreachable","fact":"Reachable","predicate":"Zero","source_class":"edge_probe","role":"all","adapter":"implemented","bad":"value=0","good":"value=1","manual_clear":"not_required","deadline_source":"probe_observation"},
+    {"id":"telemetry_unavailable","fact":null,"predicate":"Zero","source_class":"inventory","role":"all","adapter":"implemented","bad":"required_source_unusable_after_pending","good":"all_required_sources_usable","manual_clear":"not_required","deadline_source":"source_ttl"},
+    {"id":"initialization_stalled","fact":"InitializationPendingMs","predicate":"Above","source_class":"native_core","role":"validator","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"local_chain_stalled","fact":"ChainProgressAgeMs","predicate":"Above","source_class":"native_core","role":"all","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"applied_served_gap","fact":"AppliedServedGap","predicate":"Above","source_class":"native_core","role":"all","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"local_action_failure","fact":"ActionFailures","predicate":"Increase","source_class":"native_core","role":"validator","adapter":"pending_C04","bad":"same_epoch_counter_increase","good":"same_epoch_counter_stable","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"local_action_overdue","fact":"ActionOldestMs","predicate":"Above","source_class":"native_core","role":"validator","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"pq_signing_failure","fact":"PqSigningFailures","predicate":"Increase","source_class":"native_core","role":"validator","adapter":"implemented_isolated_native_poll_not_production_accepted","bad":"same_epoch_counter_increase","good":"same_epoch_counter_stable","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"queue_stall","fact":"QueueOldestMs","predicate":"Above","source_class":"native_core","role":"validator","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"session_stop_pending","fact":"SessionStopPendingMs","predicate":"Above","source_class":"native_core","role":"validator","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"storage_ack_failure","fact":"StorageAckFailures","predicate":"Storage","source_class":"native_core","role":"all","adapter":"pending_C04","bad":"storage_unusable_or_same_epoch_counter_increase","good":"storage_usable_and_same_epoch_counter_stable","manual_clear":"additional_storage_verification_pending","deadline_source":"storage_ack"},
+    {"id":"rocksdb_write_stopped","fact":"RocksdbWriteStopped","predicate":"Positive","source_class":"native_core","role":"all","adapter":"pending_C04","bad":"value>0_two_distinct_samples","good":"value=0","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"memory_growth_unexplained","fact":"UnexplainedMemoryBytes","predicate":"Above","source_class":"host_cgroup","role":"all","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"quic_pressure","fact":"QuicBacklogBytes","predicate":"Above","source_class":"native_core","role":"all","adapter":"pending_C04","bad":"value>threshold","good":"value<=threshold","manual_clear":"not_required","deadline_source":"source_observation"},
+    {"id":"observer_disagreement","fact":"ObserverDisagreement","predicate":"Positive","source_class":"witness","role":"all","adapter":"pending_C05","bad":"value>0","good":"value=0","manual_clear":"not_required","deadline_source":"witness_observation"},
+    {"id":"monitoring_unavailable","fact":"MonitorAvailable","predicate":"Zero","source_class":"independent_watchdog","role":"monitor","adapter":"watchdog_direct_notice_only","bad":"value=0","good":"value=1","manual_clear":"not_required","deadline_source":"independent_deadman"},
+    {"id":"diagnostic_coverage_reduced","fact":"DiagnosticDrops","predicate":"Increase","source_class":"diagnostic","role":"all","adapter":"pending_C04","bad":"same_epoch_counter_increase","good":"same_epoch_counter_stable","manual_clear":"not_required","deadline_source":"diagnostic_receipt"},
+    {"id":"ai_unavailable","fact":"AiAvailable","predicate":"Zero","source_class":"ai_optional","role":"optional","adapter":"pending_C08","bad":"value=0","good":"value=1","manual_clear":"not_required","deadline_source":"ai_service"}
+  ]
+}

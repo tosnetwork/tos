@@ -1,0 +1,31 @@
+{"kind": "start", "monotonic": 282503.37253715, "utc": 1790673385.7988005, "process": "health-state", "pid": 776145}
+{"kind": "start", "monotonic": 282504.379742122, "utc": 1790673386.8060062, "process": "health-watchdog", "pid": 776150}
+{"kind": "stop", "monotonic": 282504.384934962, "utc": 1790673386.811198, "process": "health-state", "returncode": -15}
+{"kind": "stop", "monotonic": 282504.384993002, "utc": 1790673386.8112557, "process": "health-watchdog", "returncode": 1}
+Traceback (most recent call last):
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 269, in <module>
+    if __name__=='__main__':main()
+                            ~~~~^^
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 194, in main
+    start('alertmanager',[args.alertmanager,'--config.file='+str(t/'alertmanager.yml'),
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                          '--storage.path='+str(t/'am-data'),'--web.listen-address=127.0.0.1:'+str(am_port),
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                          '--cluster.listen-address=127.0.0.1:0'])
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 136, in start
+    process=subprocess.Popen([str(item) for item in command],stdin=subprocess.DEVNULL,
+                             stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 1039, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                        pass_fds, cwd, env,
+                        ^^^^^^^^^^^^^^^^^^^
+    ...<5 lines>...
+                        gid, gids, uid, umask,
+                        ^^^^^^^^^^^^^^^^^^^^^^
+                        start_new_session, process_group)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tomi/.local/share/uv/python/cpython-3.14.4-linux-x86_64-gnu/lib/python3.14/subprocess.py", line 1990, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: '/home/tomi/nhm-c03-tools/alertmanager/alertmanager'

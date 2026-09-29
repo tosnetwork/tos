@@ -36,9 +36,38 @@ def check_metric_manifest(value):
  assert len(approved)==len(set(approved))<=value['registry_capacity_slots']
  assert set(approved)<=set(names)
  return True
+def check_rule_manifest(value):
+ assert value['schema_version']==1 and value['profile']=='c03_deterministic_rule_catalog'
+ assert value['quality_requirement']=='available_complete_clock_valid_fresh'
+ assert value['unknown_policy']=='retain_episode_severity_and_active_incident'
+ assert value['recovery_policy']=='all_required_sources_two_distinct_generations_same_epoch_and_immutable_revision_hold'
+ assert value['timing']['evaluation_ms']==5000 and value['timing']['source_poll_ms']==15000
+ assert value['timing']['notification_retry_initial_ms']==15000
+ assert value['timing']['notification_retry_max_ms']==60000
+ source=(ROOT/'crates/health-core/src/rules.rs').read_text()
+ implemented={id:(None if fact=='None' else fact[5:-1],predicate)
+  for id,fact,predicate in re.findall(r'"([a-z_]+)"\s*=>\s*\((Some\([A-Za-z]+\)|None),\s*([A-Za-z]+)\)',source)}
+ rules=value['rules'];ids=[r['id'] for r in rules]
+ assert len(ids)==len(set(ids))==18 and set(ids)==set(implemented)
+ required={'id','fact','predicate','source_class','role','adapter','bad','good','manual_clear','deadline_source'}
+ for rule in rules:
+  assert set(rule)==required and (rule['fact'],rule['predicate'])==implemented[rule['id']]
+  assert all(rule[k] for k in ['source_class','role','adapter','bad','good','manual_clear','deadline_source'])
+  if rule['source_class'] in {'witness','ai_optional'}:
+   assert rule['adapter'] in {'pending_C05','pending_C08'}
+  if rule['adapter'].startswith('pending_'):
+   assert rule['adapter'] in {'pending_C04','pending_C05','pending_C08'}
+ return True
+def safely_check_rule_manifest(value):
+ try: return check_rule_manifest(value)
+ except AssertionError: return False
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--runtime-output-dir',type=Path);args=parser.parse_args()
  files=list((ROOT/'contracts').rglob('*.schema.json'))
+ rule_manifest=json.loads((ROOT/'contracts/rule-manifest.json').read_text())
+ assert check_rule_manifest(rule_manifest)
+ faulty=copy.deepcopy(rule_manifest);faulty['rules'][0]['predicate']='Positive'
+ assert not safely_check_rule_manifest(faulty)
  for p in files:
   s=json.loads(p.read_text());Draft202012Validator.check_schema(s);closed(s)
  native=json.loads((ROOT/'crates/health-core/tests/fixtures/native-core.json').read_text())
@@ -138,8 +167,10 @@ def main():
  assert python_lock['requirements_lock_sha256']==hashlib.sha256((ROOT/python_lock['requirements_lock']).read_bytes()).hexdigest()
  assert dependencies['mcp']['enabled'] is False and dependencies['mcp']['runtime_gate']=='C08_not_run'
  assert dependencies['mcp']['version'] and dependencies['mcp']['crate_sha256']
- assert dependencies['prometheus']['enabled'] is False and dependencies['prometheus']['runtime_gate']=='C03_not_run'
+ assert dependencies['prometheus']['enabled'] is False and dependencies['prometheus']['runtime_gate']=='C03_isolated_runtime_passed_production_disabled'
  assert dependencies['prometheus']['version'] and dependencies['prometheus']['artifact_sha256']
+ assert dependencies['alertmanager']['enabled'] is False and dependencies['alertmanager']['runtime_gate']=='C03_isolated_runtime_passed_production_disabled'
+ assert dependencies['alertmanager']['version']=='0.34.1' and dependencies['alertmanager']['artifact_sha256']=='265b9d1e55ef0d5306a436018af6d2b686c2ce051f03d968f7464ecb1372a7e8'
  frozen=(ROOT/'tests/fixtures/diagnostic-v1.hex').read_text().strip()
  wire=struct.pack('<4sHHHHI16sQQQHHI',b'THD1',1,64,66,1,7,b'\x11'*16,9,10,0,2,0,0)+b'\x01\x02';assert wire.hex()==frozen
  with tempfile.TemporaryDirectory() as tmp:

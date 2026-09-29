@@ -1,0 +1,27 @@
+$ cargo test --locked -p tos-health-services --test durable outbox_capacity_failure_cannot_advance_recovery_or_sequence -- --exact
+source_sha256=ae2cc2af0ab765d625e5c1bfcbe377f6d2a1235c94a18ba1c2a6cd1a709bb8fe
+timeout_seconds=180
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.37s
+     Running tests/durable.rs (/home/tomi/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
+
+running 1 test
+test outbox_capacity_failure_cannot_advance_recovery_or_sequence ... FAILED
+
+failures:
+
+---- outbox_capacity_failure_cannot_advance_recovery_or_sequence stdout ----
+
+thread 'outbox_capacity_failure_cannot_advance_recovery_or_sequence' (797213) panicked at crates/health-services/tests/durable.rs:299:62:
+called `Result::unwrap_err()` on an `Ok` value: HealthState { state: Recovering, episode: U64(1), acknowledged: false, severity: "critical", good_since: Some(100000), last_good: {"native": Sample { process_epoch: "p", source_epoch: "s", generation: U64(2) }}, good_count: 1, last_now: Some(100000) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    outbox_capacity_failure_cannot_advance_recovery_or_sequence
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-services --test durable`
+
+EXIT=101

@@ -1,10 +1,9 @@
 use serde::Deserialize;
-use serde_json::json;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use tos_health_services::watchdog::WatchdogState;
+use tos_health_services::watchdog::{send_notice, NoticeTracker, WatchdogState};
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
@@ -66,7 +65,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
     let router = tos_health_services::watchdog::router(state.clone());
     let _server = tokio::spawn(async move { axum::serve(listener, router).await });
-    let mut last_notice = None;
+    let mut notices = NoticeTracker::new(
+        config.observer_id.clone(),
+        tos_health_services::hex(&tos_health_services::random_token()?),
+    )?;
+    let mut last_health = None;
     let mut interval = tokio::time::interval(Duration::from_secs(15));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -90,23 +93,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         let (process_unavailable, pipeline_unavailable) = state.unavailable()?;
-        if (process_unavailable || pipeline_unavailable)
-            && last_notice.is_none_or(|at| now.saturating_sub(at) >= 60_000)
-        {
-            last_notice = Some(now); // bound failures as well as successful sends
-            let alert = json!({"schema_version":1,"alert":"MonitoringUnavailable","observer_id":config.observer_id,"severity":"critical","observed_at":chrono::Utc::now().to_rfc3339(),"scope":"monitor","process_unavailable":process_unavailable,"pipeline_unavailable":pipeline_unavailable});
-            match client
-                .post(&config.receiver_url)
-                .bearer_auth(&receiver_token)
-                .json(&alert)
-                .send()
-                .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    let _ = tos_health_services::bounded_body(response, 4096).await;
-                    eprintln!("watchdog alert accepted by receiver; end-user receipt unverified");
+        let due = notices.due(now, process_unavailable, pipeline_unavailable)?;
+        if last_health != Some((process_unavailable, pipeline_unavailable)) {
+            eprintln!("watchdog status process_unavailable={} pipeline_unavailable={} observed_unix_ms={}",
+                process_unavailable, pipeline_unavailable, chrono::Utc::now().timestamp_millis());
+            last_health = Some((process_unavailable, pipeline_unavailable));
+        }
+        if let Some((key, alert)) = due {
+            match send_notice(&client, &config.receiver_url, &receiver_token, &key, &alert).await {
+                Ok(()) => {
+                    eprintln!("watchdog alert accepted by receiver; end-user receipt unverified")
                 }
-                _ => eprintln!("watchdog alert delivery failed"),
+                Err(error) => {
+                    eprintln!("watchdog alert delivery failed; stable-key retry scheduled: {error}")
+                }
             }
         }
     }

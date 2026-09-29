@@ -1,0 +1,6 @@
+replay-cannot-renew: compiled assertion red
+outbox-full-rolls-back-round: compiled assertion red
+duplicate-keeps-original-time: compiled assertion red
+retry-due-is-persisted: compiled assertion red
+wrong-receipt-retains-outbox: compiled assertion red
+C03 mutation sources restored

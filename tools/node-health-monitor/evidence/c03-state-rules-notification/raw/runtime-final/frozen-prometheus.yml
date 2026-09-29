@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets: ['127.0.0.1:34631']
+rule_files:
+- '/home/tomi/tos-node-health-impl/tools/node-health-monitor/deploy/prometheus/rules.yml'
+scrape_configs:
+- job_name: health-state
+  metrics_path: /metrics
+  authorization:
+    credentials_file: '/tmp/nhm-c03-runtime-38c33f7n/read.token'
+  static_configs:
+  - targets: ['127.0.0.1:47123']

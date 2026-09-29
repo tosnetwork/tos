@@ -6,6 +6,7 @@ use std::{collections::BTreeMap, path::Path, time::Duration};
 use tos_health_core::{
     evidence::{Evidence, EvidenceStore},
     health_state::{HealthState, Sample},
+    rules::FactFrame,
     wire::U64,
 };
 
@@ -251,9 +252,37 @@ impl ControlDb {
         }
         let conn = open(path, quota)?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS incidents(node TEXT,scope TEXT,rule TEXT,body TEXT NOT NULL,PRIMARY KEY(node,scope,rule));
-        CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT NOT NULL UNIQUE,body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT NOT NULL UNIQUE,body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,
+            receiver_alias TEXT NOT NULL DEFAULT '',payload_hash TEXT NOT NULL DEFAULT '',attempts INTEGER NOT NULL DEFAULT 0,next_due_ms INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS source_state(node TEXT NOT NULL,scope TEXT NOT NULL,source TEXT NOT NULL,
+            process_epoch TEXT NOT NULL,source_epoch TEXT NOT NULL,generation TEXT NOT NULL,
+            content_hash TEXT NOT NULL,evidence_id TEXT NOT NULL,store_seq INTEGER NOT NULL,
+            clock_valid INTEGER NOT NULL,complete INTEGER NOT NULL,
+            PRIMARY KEY(node,scope,source));
         CREATE TABLE IF NOT EXISTS evaluation(singleton INTEGER PRIMARY KEY CHECK(singleton=1),sequence INTEGER NOT NULL);
         INSERT OR IGNORE INTO evaluation VALUES(1,0);").map_err(err)?;
+        // C02 databases may carry pending rows. Add metadata without deleting or
+        // acknowledging those rows; first delivery binds their approved alias.
+        let columns = {
+            let mut stmt = conn.prepare("PRAGMA table_info(outbox)").map_err(err)?;
+            let found = stmt
+                .query_map([], |r| r.get::<_, String>(1))
+                .map_err(err)?
+                .collect::<std::result::Result<std::collections::BTreeSet<_>, _>>()
+                .map_err(err)?;
+            found
+        };
+        for (name, definition) in [
+            ("receiver_alias", "TEXT NOT NULL DEFAULT ''"),
+            ("payload_hash", "TEXT NOT NULL DEFAULT ''"),
+            ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+            ("next_due_ms", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            if !columns.contains(name) {
+                conn.execute_batch(&format!("ALTER TABLE outbox ADD COLUMN {name} {definition}"))
+                    .map_err(err)?;
+            }
+        }
         let mut db = Self { conn, path: path.into(), quota, max_incidents, max_outbox };
         db.restore_unknown()?;
         Ok(db)
@@ -301,6 +330,34 @@ impl ControlDb {
             .optional()
             .map_err(err)?;
         body.map(|b| serde_json::from_str(&b).map_err(err)).transpose()
+    }
+    /// References are written only after the evidence writer has committed the
+    /// immutable row. This is a bounded latest-state index, not history.
+    pub fn record_source_ref(&mut self, frame: &FactFrame, row: &EvidenceRow) -> Result<()> {
+        if !tos_health_core::wire::hash(&row.evidence_id)
+            || row.store_seq.0 == 0
+            || row.store_seq.0 > i64::MAX as u64
+            || frame.node_id != row.evidence.record.node_id
+            || frame.scope_id != row.evidence.record.scope_id
+            || frame.source_id != row.evidence.record.source_id
+            || frame.process_epoch != row.evidence.record.process_epoch
+            || frame.source_epoch != row.evidence.source_epoch
+            || frame.generation.0.to_string() != row.evidence.record.source_record_id
+        {
+            return Err("evidence reference mismatch".into());
+        }
+        wal_budget(&self.path, self.quota)?;
+        let tx = self.conn.transaction().map_err(err)?;
+        tx.execute("INSERT INTO source_state(node,scope,source,process_epoch,source_epoch,generation,content_hash,evidence_id,store_seq,clock_valid,complete)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+            ON CONFLICT(node,scope,source) DO UPDATE SET process_epoch=excluded.process_epoch,
+            source_epoch=excluded.source_epoch,generation=excluded.generation,content_hash=excluded.content_hash,
+            evidence_id=excluded.evidence_id,store_seq=excluded.store_seq,
+            clock_valid=excluded.clock_valid,complete=excluded.complete",
+            params![frame.node_id,frame.scope_id,frame.source_id,frame.process_epoch,
+                frame.source_epoch,frame.generation.0.to_string(),frame.digest().map_err(err)?,
+                row.evidence_id,row.store_seq.0 as i64,frame.clock_valid,frame.complete]).map_err(err)?;
+        tx.commit().map_err(err)
     }
     pub fn evaluate(
         &mut self,
@@ -386,8 +443,12 @@ impl ControlDb {
                     &serde_json::json!({"schema_version":1,"rule_key":key,"health_state":state}),
                 )
                 .map_err(err)?;
-                tx.execute("INSERT INTO outbox(key,body) VALUES(?1,?2)", params![id, event])
-                    .map_err(err)?;
+                let hash = format!("{:x}", Sha256::digest(event.as_bytes()));
+                tx.execute(
+                    "INSERT INTO outbox(key,body,payload_hash) VALUES(?1,?2,?3)",
+                    params![id, event, hash],
+                )
+                .map_err(err)?;
             }
             tx.execute("INSERT INTO incidents VALUES(?1,?2,?3,?4) ON CONFLICT(node,scope,rule) DO UPDATE SET body=excluded.body",params![key.node,key.scope,key.rule,body]).map_err(err)?;
             results.push((key, state));
@@ -464,6 +525,50 @@ impl ControlDb {
             .map_err(err)?;
         let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(err)?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(err)
+    }
+    pub fn due(&self, now_ms: i64) -> Result<Vec<(i64, String, String)>> {
+        let mut q = self.conn.prepare(
+            "SELECT id,key,body FROM outbox WHERE delivered=0 AND next_due_ms<=?1 ORDER BY id LIMIT 100",
+        ).map_err(err)?;
+        let rows = q
+            .query_map([now_ms], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err)?;
+        Ok(rows)
+    }
+    /// Bind the approved receiver before transmission and persist bounded
+    /// retry spacing even if the process dies after sending but before receipt.
+    pub fn begin_attempt(&mut self, id: i64, alias: &str, now_ms: i64) -> Result<String> {
+        if !crate::alias(alias) || now_ms < 0 {
+            return Err("invalid receiver attempt".into());
+        }
+        wal_budget(&self.path, self.quota)?;
+        let tx = self.conn.transaction().map_err(err)?;
+        let row: Option<(String, String, String, i64, i64)> = tx.query_row(
+            "SELECT receiver_alias,payload_hash,body,attempts,next_due_ms FROM outbox WHERE id=?1",
+            [id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        ).optional().map_err(err)?;
+        let (bound, mut hash, body, attempts, due) = row.ok_or("outbox row missing")?;
+        if (!bound.is_empty() && bound != alias) || due > now_ms {
+            return Err("receiver alias mismatch or attempt not due".into());
+        }
+        let actual = format!("{:x}", Sha256::digest(body.as_bytes()));
+        if !hash.is_empty() && hash != actual {
+            return Err("outbox payload hash mismatch".into());
+        }
+        hash = actual;
+        let next_attempts = attempts.checked_add(1).ok_or("outbox attempt count exhausted")?;
+        let retry_ms = match next_attempts {
+            1 => 15_000,
+            2 => 30_000,
+            _ => 60_000,
+        };
+        let next_due = now_ms.checked_add(retry_ms).ok_or("outbox retry time exhausted")?;
+        tx.execute("UPDATE outbox SET receiver_alias=?2,payload_hash=?3,attempts=?4,next_due_ms=?5 WHERE id=?1",
+            params![id,alias,hash,next_attempts,next_due]).map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(hash)
     }
     /// Call only after an independently authenticated delivery receipt.
     pub fn delivered(&mut self, id: i64) -> Result<()> {

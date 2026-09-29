@@ -30,6 +30,18 @@ This measures the management endpoint only. A malformed/auth-failed response is
 unknown. Missed timer ticks are skipped; this process never polls native metrics.
 The internal `FactFrame` is a closed fact DTO, not the complete R4 SourceEnvelope.
 
+`health-collector` is a separate archival path. It polls the C02 typed
+`/v1/edge/snapshot` and posts that same validated body to
+`/v1/manager/snapshot-evidence`; M validates the node/network/epochs again,
+then returns references only after each immutable evidence row commits. A
+partially committed request returns no accepted receipt; replay deduplicates
+the committed rows without changing their original receipt time. This path
+does **not** feed the live rule engine or turn unsupported/unknown source
+status into a healthy fact. The current C02 snapshot contract admits only
+available, timestamped partial sources; unavailable sources are absent and
+remain unknown in the rule inventory. Evidence v1 cannot archive a missing
+observation timestamp, so such a source is refused rather than invented.
+
 A configured notification receiver must return JSON with `accepted: true`, the
 same `idempotency_key`, and the same SHA-256 `payload_hash`. Notification keys are network-scoped hashes; the payload includes the node/scope/rule identity. A plain HTTP 2xx is
 insufficient to delete an outbox entry. The production sender requires fixed HTTPS,
@@ -70,12 +82,23 @@ and Alertmanager resolved webhooks do not close incidents. The Watchdog rule
 carries the completed evaluation sequence and monitor epoch through Alertmanager.
 `prometheus/alertmanager.example.yml` repeats that heartbeat every 30 seconds and
 uses a distinct mTLS identity/token. Change the monitor identity consistently.
+The pinned Prometheus binary must run with `--rules.alert.resend-delay=15s`;
+`prometheus/runtime-flags.json` freezes this required argv and the matching
+Alertmanager route intervals for deployment review and the isolated runtime test.
+its one-minute default delayed fresh Watchdog annotations to about 90 seconds
+in the isolated chain despite Alertmanager's 30-second repeat. The 15-second
+resend aligns with the already fixed 15-second group interval; it does not
+change O's independent 45/100-second deadlines.
 The independent observer must reside outside V and M's failure domains.
 
-The Prometheus rules and example Alertmanager configuration have NOT passed a real
-promtool/Alertmanager run in this environment: no binaries are installed and the
-release download failed. Run `promtool test rules tests/fixtures/rule_test.yml`
-from `tools/node-health-monitor` after installing the reviewed, pinned runtime.
+The pinned Prometheus 3.9.1 `promtool check rules` and `promtool test rules`,
+plus Alertmanager 0.34.1 `amtool check-config`, passed in the isolated C03
+worktree; hashes and raw logs are indexed under C03 evidence. These static
+tool checks do not establish the running three-process notification chain.
+The C03 runtime test uses only isolated monitoring binaries, loopback endpoints
+and disposable test identities; it does not start a business node. The rule
+manifest distinguishes implemented reachability/telemetry predicates,
+synthetic-only PQ input, and pending C04/C05/C08 adapters.
 The observer's external notifier is still an HTTP acknowledgement boundary, not a
 verified human-delivery receipt. The real notification chain, runtime version pins,
 rotation, source adapters and 72-hour acceptance remain required.

@@ -1,0 +1,143 @@
+{
+  "events": [
+    {
+      "kind": "start",
+      "monotonic": 282523.451665727,
+      "utc": 1790673405.8779306,
+      "process": "health-state",
+      "pid": 776252
+    },
+    {
+      "kind": "start",
+      "monotonic": 282524.459115869,
+      "utc": 1790673406.8853798,
+      "process": "health-watchdog",
+      "pid": 776257
+    },
+    {
+      "kind": "start",
+      "monotonic": 282524.460620011,
+      "utc": 1790673406.8868833,
+      "process": "alertmanager",
+      "pid": 776258
+    },
+    {
+      "kind": "start",
+      "monotonic": 282524.462368282,
+      "utc": 1790673406.8886316,
+      "process": "prometheus",
+      "pid": 776259
+    },
+    {
+      "kind": "baseline_wait",
+      "monotonic": 282525.465056997,
+      "utc": 1790673407.8913205,
+      "seconds": 115
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282640.484945933,
+      "utc": 1790673522.9112113,
+      "process": "prometheus",
+      "returncode": 0
+    },
+    {
+      "kind": "prometheus_down",
+      "monotonic": 282640.485112944,
+      "utc": 1790673522.9113765
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282650.490873946,
+      "utc": 1790673532.9171374,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282660.495361006,
+      "utc": 1790673542.9216244,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282670.50023378,
+      "utc": 1790673552.9264972,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282680.505825174,
+      "utc": 1790673562.9320898,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282690.511180269,
+      "utc": 1790673572.9374437,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282700.516277333,
+      "utc": 1790673582.942541,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282710.521457214,
+      "utc": 1790673592.9477217,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282720.526271011,
+      "utc": 1790673602.9525344,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282730.53129312,
+      "utc": 1790673612.9575577,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282740.536417439,
+      "utc": 1790673622.9626808,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282750.541967055,
+      "utc": 1790673632.9682314,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282760.546639438,
+      "utc": 1790673642.9729035,
+      "accepted": "0"
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282765.553044072,
+      "utc": 1790673647.9793081,
+      "process": "health-state",
+      "returncode": -15
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282765.556388278,
+      "utc": 1790673647.9826522,
+      "process": "health-watchdog",
+      "returncode": -15
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282765.572109046,
+      "utc": 1790673647.9983728,
+      "process": "alertmanager",
+      "returncode": 0
+    }
+  ]
+}

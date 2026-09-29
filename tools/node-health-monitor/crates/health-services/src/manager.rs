@@ -1,5 +1,7 @@
 //! Independent control/evidence owners; handlers never execute database work.
-use crate::durable::{ControlDb, ControlUpdate, DurableEvidence, Evaluation, EvidenceDb, RuleKey};
+use crate::durable::{
+    ControlDb, ControlUpdate, DurableEvidence, Evaluation, EvidenceDb, EvidenceRow, RuleKey,
+};
 use axum::{
     extract::{OriginalUri, State},
     http::{HeaderMap, StatusCode},
@@ -65,12 +67,14 @@ struct Cached {
     failure: bool,
 }
 enum ControlCommand {
-    Ingest(Box<FactFrame>, Instant, oneshot::Sender<Result<bool, String>>),
+    Ingest(Box<FactFrame>, Box<EvidenceRow>, Instant, oneshot::Sender<Result<bool, String>>),
     Pending(oneshot::Sender<Result<OutboxRows, String>>),
+    Due(i64, oneshot::Sender<Result<OutboxRows, String>>),
+    BeginAttempt(i64, String, i64, oneshot::Sender<Result<String, String>>),
     Delivered(i64, oneshot::Sender<Result<(), String>>),
 }
 enum EvidenceCommand {
-    Insert(DurableEvidence, oneshot::Sender<Result<String, String>>),
+    Insert(DurableEvidence, oneshot::Sender<Result<EvidenceRow, String>>),
 }
 fn evidence(frame: &FactFrame) -> Result<DurableEvidence, String> {
     let at = tos_health_core::query::utc_ms(&frame.observed_at).map_err(str::to_owned)?;
@@ -132,6 +136,16 @@ pub fn with_queue_age(mut frame: FactFrame, residence: Duration) -> Result<FactF
 impl Manager {
     pub fn start(config: &ManagerConfig) -> Result<Self, String> {
         config.inventory.validate().map_err(str::to_owned)?;
+        for target in &config.inventory.targets {
+            for rule in &target.rules {
+                match (rule.id.as_str(), rule.source.as_str()) {
+                    ("target_unreachable", "edge_probe")
+                    | ("telemetry_unavailable", "inventory")
+                    | ("pq_signing_failure", "native_core") => {}
+                    _ => return Err(format!("rule adapter unavailable: {}", rule.id)),
+                }
+            }
+        }
         if same_database(&config.control_db, &config.evidence_db)? {
             return Err("control and evidence must be separate databases".into());
         }
@@ -164,7 +178,7 @@ impl Manager {
             .name("health-evidence-writer".into())
             .spawn(move || {
                 while let Ok(EvidenceCommand::Insert(value, reply)) = erx.recv() {
-                    let result = evidence_db.insert(value).map(|row| row.evidence_id);
+                    let result = evidence_db.insert(value);
                     let _ = reply.send(result);
                 }
             })
@@ -206,8 +220,8 @@ impl Manager {
             .await
             .map_err(|_| "evidence deadline")?
             .map_err(|_| "evidence writer stopped")?;
-        let id = match result {
-            Ok(id) => id,
+        let row = match result {
+            Ok(row) => row,
             Err(error) => {
                 if error == "SOURCE_CONFLICT" {
                     if let Ok(mut q) = self.quarantines.lock() {
@@ -231,13 +245,63 @@ impl Manager {
         };
         let (tx, rx) = oneshot::channel();
         self.control
-            .try_send(ControlCommand::Ingest(Box::new(frame), admitted, tx))
+            .try_send(ControlCommand::Ingest(Box::new(frame), Box::new(row.clone()), admitted, tx))
             .map_err(|_| "control queue unavailable")?;
         tokio::time::timeout(Duration::from_secs(2), rx)
             .await
             .map_err(|_| "control deadline")?
             .map_err(|_| "control stopped")??;
-        Ok(id)
+        Ok(row.evidence_id)
+    }
+    /// Archive a fully validated C02 edge snapshot. This never synthesizes a
+    /// health fact: missing, stale or unsupported sources remain unknown to
+    /// the rule engine. Each returned reference names a committed evidence row.
+    pub async fn archive_snapshot(&self, bytes: &[u8]) -> Result<Vec<EvidenceRow>, String> {
+        use tos_health_core::edge_snapshot::{EdgeSnapshot, EdgeSource};
+        if bytes.len() > 262_144 {
+            return Err("edge body limit".into());
+        }
+        let snapshot: EdgeSnapshot = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        let node = snapshot
+            .sources
+            .iter()
+            .find_map(|source| match source {
+                EdgeSource::Native(value) => Some(value.node_id.as_str()),
+                _ => None,
+            })
+            .ok_or("native source absent")?;
+        if !self
+            .inventory
+            .targets
+            .iter()
+            .any(|target| target.node == node && target.scope == "node")
+        {
+            return Err("node outside inventory".into());
+        }
+        let records =
+            crate::collector::decode_records(bytes, node, Some(&self.inventory.network_id))?;
+        let mut committed = Vec::with_capacity(records.len());
+        for record in records {
+            let epoch = record
+                .payload
+                .get("source")
+                .and_then(|source| source.get("source_epoch"))
+                .and_then(Value::as_str)
+                .ok_or("missing source epoch")?;
+            let (tx, rx) = oneshot::channel();
+            self.evidence
+                .try_send(EvidenceCommand::Insert(
+                    DurableEvidence { source_epoch: epoch.to_owned(), record },
+                    tx,
+                ))
+                .map_err(|_| "evidence queue unavailable")?;
+            let row = tokio::time::timeout(Duration::from_secs(2), rx)
+                .await
+                .map_err(|_| "evidence deadline")?
+                .map_err(|_| "evidence writer stopped")??;
+            committed.push(row);
+        }
+        Ok(committed)
     }
     pub fn snapshot(&self) -> Result<Value, String> {
         let c = self.cache.lock().map_err(|_| "cache unavailable")?;
@@ -256,6 +320,24 @@ impl Manager {
     pub async fn pending(&self) -> Result<Vec<(i64, String, String)>, String> {
         let (tx, rx) = oneshot::channel();
         self.control.try_send(ControlCommand::Pending(tx)).map_err(|_| "control busy")?;
+        tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .map_err(|_| "control deadline")?
+            .map_err(|_| "control stopped")?
+    }
+    pub async fn due(&self, now_ms: i64) -> Result<Vec<(i64, String, String)>, String> {
+        let (tx, rx) = oneshot::channel();
+        self.control.try_send(ControlCommand::Due(now_ms, tx)).map_err(|_| "control busy")?;
+        tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .map_err(|_| "control deadline")?
+            .map_err(|_| "control stopped")?
+    }
+    pub async fn begin_attempt(&self, id: i64, alias: &str, now_ms: i64) -> Result<String, String> {
+        let (tx, rx) = oneshot::channel();
+        self.control
+            .try_send(ControlCommand::BeginAttempt(id, alias.into(), now_ms, tx))
+            .map_err(|_| "control busy")?;
         tokio::time::timeout(Duration::from_secs(2), rx)
             .await
             .map_err(|_| "control deadline")?
@@ -295,6 +377,18 @@ async fn ingest(
     })?;
     Ok(Json(json!({"evidence_id":id,"accepted":true})))
 }
+async fn archive_snapshot(
+    State(state): State<Manager>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+    bytes: axum::body::Bytes,
+) -> Result<Json<Value>, StatusCode> {
+    permit(&headers, &state.ingest, &uri)?;
+    let rows = state.archive_snapshot(&bytes).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(Json(
+        json!({"accepted":true,"evidence":rows.iter().map(|row| json!({"evidence_id":row.evidence_id,"store_seq":row.store_seq})).collect::<Vec<_>>()}),
+    ))
+}
 async fn snapshot(
     State(state): State<Manager>,
     headers: HeaderMap,
@@ -328,12 +422,19 @@ async fn heartbeat(
     ))
 }
 pub fn router(state: Manager) -> Router {
-    let writes = Router::new().route("/v1/manager/facts", post(ingest)).layer(
-        axum::middleware::from_fn_with_state(
+    let writes = Router::new()
+        .route(
+            "/v1/manager/facts",
+            post(ingest).layer(axum::extract::DefaultBodyLimit::max(16_384)),
+        )
+        .route(
+            "/v1/manager/snapshot-evidence",
+            post(archive_snapshot).layer(axum::extract::DefaultBodyLimit::max(262_144)),
+        )
+        .layer(axum::middleware::from_fn_with_state(
             Arc::new(tokio::sync::Semaphore::new(4)),
             crate::limit_requests,
-        ),
-    );
+        ));
     let reads = Router::new()
         .route("/v1/manager/state", get(snapshot))
         .route("/metrics", get(metrics))
@@ -345,7 +446,6 @@ pub fn router(state: Manager) -> Router {
         .merge(writes)
         .merge(reads)
         .route("/v1/monitor/heartbeat", get(heartbeat))
-        .layer(axum::extract::DefaultBodyLimit::max(16_384))
         .with_state(state)
 }
 #[derive(Deserialize)]
@@ -362,9 +462,20 @@ pub async fn deliver_once(
     config: &ReceiverConfig,
     token: &str,
 ) -> Result<usize, String> {
+    deliver_once_at(manager, client, config, token, chrono::Utc::now().timestamp_millis()).await
+}
+/// Explicit clock only for deterministic retry tests; production uses UTC above.
+pub async fn deliver_once_at(
+    manager: &Manager,
+    client: &reqwest::Client,
+    config: &ReceiverConfig,
+    token: &str,
+    now_ms: i64,
+) -> Result<usize, String> {
     use sha2::{Digest, Sha256};
     let mut delivered = 0;
-    for (id, key, body) in manager.pending().await?.into_iter().take(4) {
+    for (id, key, body) in manager.due(now_ms).await?.into_iter().take(4) {
+        let committed_hash = manager.begin_attempt(id, &config.alias, now_ms).await?;
         let key = format!(
             "{:x}",
             Sha256::digest(
@@ -372,6 +483,9 @@ pub async fn deliver_once(
             )
         );
         let hash = format!("{:x}", Sha256::digest(body.as_bytes()));
+        if hash != committed_hash {
+            return Err("outbox payload hash mismatch".into());
+        }
         let incident: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
         let response=client.post(&config.url).bearer_auth(token).header("Idempotency-Key",&key).json(&json!({"schema_version":1,"network_id":manager.inventory.network_id,"receiver_alias":config.alias,"idempotency_key":key,"payload_hash":hash,"incident":incident})).send().await.map_err(|e|e.to_string())?;
         let bytes = crate::bounded_body(response, 4096).await?;
@@ -470,6 +584,7 @@ fn control_loop(
             match evaluated {
                 Ok((states, sequence)) => {
                     let mut metrics=format!("# HELP tos_health_evaluation_sequence Completed persisted rule rounds.\n# TYPE tos_health_evaluation_sequence gauge\ntos_health_evaluation_sequence{{monitor_epoch=\"{epoch}\"}} {sequence}\n");
+                    let (mut active_metrics, mut usable_metrics) = (String::new(), String::new());
                     let mut incidents = Vec::new();
                     for (key, state) in states {
                         let signal = results
@@ -479,9 +594,14 @@ fn control_loop(
                             })
                             .map(|r| r.signal)
                             .unwrap_or(Signal::Unknown);
-                        metrics.push_str(&format!("tos_health_incident_active{{node=\"{}\",scope=\"{}\",rule=\"{}\",severity=\"{}\"}} {}\ntos_health_rule_input_usable{{node=\"{}\",scope=\"{}\",rule=\"{}\"}} {}\n",key.node,key.scope,key.rule,state.severity,u8::from(state.active()),key.node,key.scope,key.rule,u8::from(signal!=Signal::Unknown)));
+                        active_metrics.push_str(&format!("tos_health_incident_active{{node=\"{}\",scope=\"{}\",rule=\"{}\",severity=\"{}\"}} {}\n",key.node,key.scope,key.rule,state.severity,u8::from(state.active())));
+                        usable_metrics.push_str(&format!("tos_health_rule_input_usable{{node=\"{}\",scope=\"{}\",rule=\"{}\"}} {}\n",key.node,key.scope,key.rule,u8::from(signal!=Signal::Unknown)));
                         incidents.push(json!({"key":key,"state":state,"input":signal}));
                     }
+                    metrics.push_str("# HELP tos_health_incident_active Persisted unresolved incident; only the health-state transition closes it.\n# TYPE tos_health_incident_active gauge\n");
+                    metrics.push_str(&active_metrics);
+                    metrics.push_str("# HELP tos_health_rule_input_usable Complete current rule input is usable.\n# TYPE tos_health_rule_input_usable gauge\n");
+                    metrics.push_str(&usable_metrics);
                     metrics.push_str("# EOF\n");
                     let response = json!({"schema_version":1,"monitor_epoch":epoch,"evaluation_sequence":sequence.to_string(),"incidents":incidents});
                     if let Ok(mut c) = output.lock() {
@@ -499,14 +619,35 @@ fn control_loop(
             }
         }
         match rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
-            Ok(ControlCommand::Ingest(frame, admitted, reply)) => {
+            Ok(ControlCommand::Ingest(frame, row, admitted, reply)) => {
                 let now = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-                let result = with_queue_age(*frame, admitted.elapsed())
-                    .and_then(|frame| engine.ingest(frame, now).map_err(str::to_owned));
+                let result = with_queue_age(*frame, admitted.elapsed()).and_then(|frame| {
+                    let accepted = engine.ingest(frame.clone(), now).map_err(str::to_owned)?;
+                    if accepted {
+                        if let Err(error) = db.record_source_ref(&frame, &row) {
+                            engine.quarantine_source(
+                                &frame.node_id,
+                                &frame.scope_id,
+                                &frame.source_id,
+                            );
+                            if let Ok(mut cached) = output.lock() {
+                                cached.failure = true;
+                            }
+                            return Err(error);
+                        }
+                    }
+                    Ok(accepted)
+                });
                 let _ = reply.send(result);
             }
             Ok(ControlCommand::Pending(reply)) => {
                 let _ = reply.send(db.pending());
+            }
+            Ok(ControlCommand::Due(now_ms, reply)) => {
+                let _ = reply.send(db.due(now_ms));
+            }
+            Ok(ControlCommand::BeginAttempt(id, alias, now_ms, reply)) => {
+                let _ = reply.send(db.begin_attempt(id, &alias, now_ms));
             }
             Ok(ControlCommand::Delivered(id, reply)) => {
                 let _ = reply.send(db.delivered(id));

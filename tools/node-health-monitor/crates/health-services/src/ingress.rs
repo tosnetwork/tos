@@ -91,6 +91,7 @@ fn route(role: Role, method: &hyper::Method, path: &str) -> Option<usize> {
     } else if method == hyper::Method::POST {
         match (role, path) {
             (Role::ManagerIngest, "/v1/manager/facts") => Some(4096),
+            (Role::ManagerIngest, "/v1/manager/snapshot-evidence") => Some(4096),
             (Role::PipelineSender, "/v1/watchdog/pipeline") => Some(4096),
             _ => None,
         }
@@ -155,7 +156,12 @@ async fn proxy(
     }
     let method = request.method().clone();
     let authorization = request.headers().get("authorization").cloned();
-    let max_input = if peer.role == Role::PipelineSender { 262144 } else { 16384 };
+    let max_input = if peer.role == Role::PipelineSender || path == "/v1/manager/snapshot-evidence"
+    {
+        262144
+    } else {
+        16384
+    };
     let body = match tokio::time::timeout(
         Duration::from_secs(3),
         axum::body::to_bytes(Body::new(request.into_body()), max_input),

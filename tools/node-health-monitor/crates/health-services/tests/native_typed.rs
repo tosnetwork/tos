@@ -256,5 +256,24 @@ async fn r4_collector_preserves_source_identity_and_immutable_payload() {
             .unwrap();
     let native = records.iter().find(|v| v.source_id == "native_core").unwrap();
     assert_eq!(id, evidence_identity(native).unwrap());
+    for availability in ["unknown", "error", "unsupported"] {
+        let mut unavailable = snapshot.clone();
+        unavailable["sources"][0]["availability"] = availability.into();
+        unavailable["sources"][0]["observed_at"] = serde_json::Value::Null;
+        assert!(decode_records(
+            &serde_json::to_vec(&unavailable).unwrap(),
+            "v1",
+            Some(&"a".repeat(64))
+        )
+        .is_err());
+    }
+    let mut unknown_coverage = snapshot.clone();
+    unknown_coverage["sources"][0]["coverage"]["status"] = "unknown".into();
+    assert!(decode_records(
+        &serde_json::to_vec(&unknown_coverage).unwrap(),
+        "v1",
+        Some(&"a".repeat(64))
+    )
+    .is_err());
     task.abort();
 }

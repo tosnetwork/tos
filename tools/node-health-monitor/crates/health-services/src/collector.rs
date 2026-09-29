@@ -17,13 +17,17 @@ pub struct CollectorConfig {
 impl CollectorConfig {
     pub fn validate(&self) -> Result<(), String> {
         if !crate::alias(&self.node_id)
-            || self.network_id.as_ref().is_some_and(|v| !tos_health_core::wire::hash(v))
+            || self.network_id.as_ref().is_none_or(|v| !tos_health_core::wire::hash(v))
         {
             return Err("invalid node alias".into());
         }
-        for value in [&self.edge_url, &self.ingest_url] {
+        for (value, path) in [
+            (&self.edge_url, "/v1/edge/snapshot"),
+            (&self.ingest_url, "/v1/manager/snapshot-evidence"),
+        ] {
             let url = reqwest::Url::parse(value).map_err(|e| e.to_string())?;
             if url.scheme() != "https"
+                || url.path() != path
                 || !url.username().is_empty()
                 || url.password().is_some()
                 || url.query().is_some()
@@ -68,24 +72,45 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
                 continue;
             }
         };
-        for record in records {
-            let identity = evidence_identity(&record)?;
-            if last_identity.get(&record.source_id) == Some(&identity) {
-                continue;
-            }
-            match client
-                .post(&config.ingest_url)
-                .bearer_auth(&ingest_token)
-                .json(&record)
-                .send()
+        let identities = records
+            .iter()
+            .map(|record| Ok((record.source_id.clone(), evidence_identity(record)?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        if identities.iter().all(|(source, id)| last_identity.get(source) == Some(id)) {
+            continue;
+        }
+        let sent = client
+            .post(&config.ingest_url)
+            .bearer_auth(&ingest_token)
+            .header("content-type", "application/json")
+            .body(bytes)
+            .send()
+            .await;
+        let accepted = match sent {
+            Ok(response) => crate::bounded_body(response, 4096)
                 .await
-            {
-                Ok(response) if response.status().is_success() => {
-                    let _ = crate::bounded_body(response, 4096).await;
-                    last_identity.insert(record.source_id, identity);
-                }
-                _ => eprintln!("ingest unavailable; no backlog retained"),
-            }
+                .ok()
+                .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+                .is_some_and(|receipt| {
+                    receipt["accepted"] == true
+                        && receipt["evidence"].as_array().is_some_and(|rows| {
+                            rows.len() == records.len()
+                                && rows.iter().all(|row| {
+                                    row["evidence_id"]
+                                        .as_str()
+                                        .is_some_and(tos_health_core::wire::hash)
+                                        && row["store_seq"].as_str().is_some_and(|seq| {
+                                            tos_health_core::wire::exact_u64(seq).is_ok()
+                                        })
+                                })
+                        })
+                }),
+            Err(_) => false,
+        };
+        if accepted {
+            last_identity.extend(identities);
+        } else {
+            eprintln!("snapshot evidence ingest unavailable; no backlog retained");
         }
     }
 }
@@ -123,6 +148,18 @@ fn evidence<T: serde::Serialize>(
     component: &str,
 ) -> Result<Evidence, String> {
     use tos_health_core::source::{Availability, Coverage, SourceQuality};
+    // The current EdgeSnapshot contract admits only usable, timestamped
+    // sources. An unavailable source has no historical observation time in
+    // Evidence v1, so refuse it; absence remains unknown in the rule inventory.
+    // Never recast an unavailable or unknown source as an available record.
+    if source.availability != "available" {
+        return Err("unavailable source is not an observation".into());
+    }
+    let coverage = match source.coverage.status.as_str() {
+        "complete" => Coverage::Complete,
+        "partial" => Coverage::Partial,
+        _ => return Err("unknown source coverage".into()),
+    };
     let observed = tos_health_core::query::utc_ms(
         source.observed_at.as_deref().ok_or("missing observation time")?,
     )
@@ -145,7 +182,7 @@ fn evidence<T: serde::Serialize>(
         received_at_ms: chrono::Utc::now().timestamp_millis(),
         quality: SourceQuality {
             availability: Availability::Available,
-            coverage: Coverage::Partial,
+            coverage,
             observed_at_ms: Some(observed),
             last_success_at_ms: Some(success),
             clock_valid: source.clock_quality == "valid",

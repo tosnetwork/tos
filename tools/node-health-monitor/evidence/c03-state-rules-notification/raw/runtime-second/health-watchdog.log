@@ -1,0 +1,7 @@
+watchdog status process_unavailable=false pipeline_unavailable=false observed_unix_ms=1790673052543
+watchdog pipeline advanced epoch=efcd9421f250b347734a38fa0e13d5bb41b6003213ef013112b28e31cb34146f sequence=2 received_unix_ms=1790673063313
+watchdog pipeline advanced epoch=efcd9421f250b347734a38fa0e13d5bb41b6003213ef013112b28e31cb34146f sequence=15 received_unix_ms=1790673153312
+watchdog status process_unavailable=false pipeline_unavailable=true observed_unix_ms=1790673262539
+watchdog alert accepted by receiver; end-user receipt unverified
+watchdog alert accepted by receiver; end-user receipt unverified
+watchdog alert accepted by receiver; end-user receipt unverified

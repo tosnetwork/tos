@@ -7,6 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
     sync::{Arc, Mutex},
     time::Instant,
@@ -75,6 +76,14 @@ impl WatchdogState {
             tos_health_core::query::utc_ms(&alert.starts_at).map_err(str::to_owned)?;
             let sequence =
                 exact_u64(&alert.annotations.evaluation_sequence).map_err(str::to_owned)?;
+            // The monitor process heartbeat is the authority for its current
+            // epoch. A webhook cannot introduce a new epoch on its own.
+            let approved_process = self.process.lock().map_err(|_| "watchdog unavailable")?;
+            if approved_process.epoch() != Some(alert.annotations.monitor_epoch.as_str()) {
+                return Err("unapproved monitor epoch".into());
+            }
+            // Hold the process guard through the pipeline update so a concurrent
+            // process epoch switch cannot authorize an obsolete message.
             if self
                 .pipeline
                 .lock()
@@ -82,6 +91,12 @@ impl WatchdogState {
                 .receive(self.now(), &alert.annotations.monitor_epoch, sequence)
                 .map_err(str::to_owned)?
             {
+                eprintln!(
+                    "watchdog pipeline advanced epoch={} sequence={} received_unix_ms={}",
+                    alert.annotations.monitor_epoch,
+                    sequence,
+                    chrono::Utc::now().timestamp_millis()
+                );
                 accepted += 1;
             }
         }
@@ -135,4 +150,92 @@ pub fn router(state: WatchdogState) -> Router {
             crate::limit_requests,
         ))
         .with_state(state)
+}
+
+/// One stable notification identity and observation time per outage. Retry
+/// attempts are spaced by the watchdog's 15-second tick and capped at 60s.
+pub struct NoticeTracker {
+    observer_id: String,
+    epoch: String,
+    episode: u64,
+    current: Option<Notice>,
+}
+struct Notice {
+    flags: (bool, bool),
+    key: String,
+    payload: Value,
+    next_ms: u64,
+    attempts: u32,
+}
+impl NoticeTracker {
+    pub fn new(observer_id: String, epoch: String) -> Result<Self, String> {
+        if !crate::alias(&observer_id) || epoch.is_empty() || epoch.len() > 128 {
+            return Err("invalid notice identity".into());
+        }
+        Ok(Self { observer_id, epoch, episode: 0, current: None })
+    }
+    pub fn due(
+        &mut self,
+        now_ms: u64,
+        process: bool,
+        pipeline: bool,
+    ) -> Result<Option<(String, Value)>, String> {
+        if !process && !pipeline {
+            self.current = None;
+            return Ok(None);
+        }
+        let flags = (process, pipeline);
+        if self.current.as_ref().is_none_or(|notice| notice.flags != flags) {
+            self.episode = self.episode.checked_add(1).ok_or("notice episodes exhausted")?;
+            let key = format!(
+                "{:x}",
+                Sha256::digest(
+                    format!("watchdog-v1:{}:{}:{}", self.observer_id, self.epoch, self.episode)
+                        .as_bytes()
+                )
+            );
+            let payload = json!({"schema_version":1,"alert":"MonitoringUnavailable",
+                "observer_id":self.observer_id,"severity":"critical","observed_at":chrono::Utc::now().to_rfc3339(),
+                "scope":"monitor","process_unavailable":process,"pipeline_unavailable":pipeline,
+                "idempotency_key":key});
+            self.current = Some(Notice { flags, key, payload, next_ms: now_ms, attempts: 0 });
+        }
+        let notice = self.current.as_mut().ok_or("notice absent")?;
+        if now_ms < notice.next_ms {
+            return Ok(None);
+        }
+        notice.attempts = notice.attempts.saturating_add(1);
+        // First three attempts at 15s, then one stable-key retry per 60s.
+        let delay = if notice.attempts < 3 { 15_000 } else { 60_000 };
+        notice.next_ms = now_ms.checked_add(delay).ok_or("notice deadline exhausted")?;
+        Ok(Some((notice.key.clone(), notice.payload.clone())))
+    }
+}
+/// A receiver success is an acceptance boundary, not an end-user receipt.
+pub async fn send_notice(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+    key: &str,
+    payload: &Value,
+) -> Result<(), String> {
+    if !crate::alias(payload["observer_id"].as_str().ok_or("notice observer absent")?)
+        || !tos_health_core::wire::hash(key)
+        || payload["idempotency_key"] != key
+    {
+        return Err("invalid notice".into());
+    }
+    let body = serde_json::to_vec(payload).map_err(|e| e.to_string())?;
+    let hash = format!("{:x}", Sha256::digest(&body));
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .header("Idempotency-Key", key)
+        .header("X-Content-SHA256", hash)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::bounded_body(response, 4096).await.map(|_| ())
 }

@@ -125,6 +125,34 @@ fn incident_and_outbox_commit_together() {
     assert_eq!(db.state(&k).unwrap().unwrap().state, State::SuspendedUnknown);
 }
 #[test]
+fn legacy_pending_outbox_migrates_without_ack_and_retry_metadata_is_durable() {
+    let t = Temp::new();
+    let path = t.0.join("control.db");
+    let old = rusqlite::Connection::open(&path).unwrap();
+    old.execute_batch("CREATE TABLE outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT NOT NULL UNIQUE,body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0);
+        INSERT INTO outbox(key,body) VALUES('old-key','{\"event\":1}');").unwrap();
+    drop(old);
+    let mut db = ControlDb::open(&path, 1_048_576, 16, 32).unwrap();
+    let row = db.pending().unwrap().pop().unwrap();
+    assert_eq!((row.1.as_str(), row.2.as_str()), ("old-key", "{\"event\":1}"));
+    assert_eq!(db.due(1).unwrap().len(), 1);
+    let hash = db.begin_attempt(row.0, "approved", 1).unwrap();
+    assert_eq!(hash.len(), 64);
+    assert!(db.due(15_000).unwrap().is_empty());
+    assert_eq!(
+        db.begin_attempt(row.0, "other", 15_001).unwrap_err(),
+        "receiver alias mismatch or attempt not due"
+    );
+    drop(db);
+    let mut db = ControlDb::open(&path, 1_048_576, 16, 32).unwrap();
+    assert_eq!(db.pending().unwrap().len(), 1);
+    assert_eq!(db.begin_attempt(row.0, "approved", 15_001).unwrap(), hash);
+    assert!(db.due(45_000).unwrap().is_empty());
+    assert_eq!(db.begin_attempt(row.0, "approved", 45_001).unwrap(), hash);
+    assert!(db.due(105_000).unwrap().is_empty());
+    assert_eq!(db.begin_attempt(row.0, "approved", 105_001).unwrap(), hash);
+}
+#[test]
 fn restart_does_not_resolve_or_continue_old_hold() {
     let t = Temp::new();
     let p = t.0.join("control.db");
@@ -215,4 +243,93 @@ fn immutable_inventory_revision_is_enforced() {
     db.bind_inventory("r1", "one").unwrap();
     assert!(db.bind_inventory("r65", "one").is_err());
     assert_eq!(db.bind_inventory("r1", "two").unwrap_err(), "inventory revision conflict");
+}
+
+#[test]
+fn ordered_episode_timeline_is_persisted_and_outboxed() {
+    let t = Temp::new();
+    let path = t.0.join("control.db");
+    let k = key();
+    let required = vec!["native".into()];
+    let mut db = ControlDb::open(&path, 1_048_576, 16, 32).unwrap();
+    let opened = db.evaluate(&k, bad(), 0, &required, 60_000).unwrap();
+    assert_eq!((opened.state, opened.episode.0), (State::Open, 1));
+    let unknown = db.evaluate(&k, Evaluation::Unknown, 30_000, &required, 60_000).unwrap();
+    assert_eq!(unknown.state, State::SuspendedUnknown);
+    assert_eq!(unknown.severity, "critical");
+    assert_eq!(
+        db.evaluate(&k, good(2), 100_000, &required, 60_000).unwrap().state,
+        State::Recovering
+    );
+    assert_eq!(
+        db.evaluate(&k, good(2), 170_000, &required, 60_000).unwrap().state,
+        State::Recovering
+    );
+    assert_eq!(
+        db.evaluate(&k, good(3), 180_000, &required, 60_000).unwrap().state,
+        State::ClosedRecovered
+    );
+    assert_eq!(db.evaluate(&k, bad(), 185_000, &required, 60_000).unwrap().episode.0, 2);
+    assert_eq!(db.sequence().unwrap(), 6);
+    let outbox = db.pending().unwrap();
+    assert_eq!(outbox.len(), 5); // repeat generation did not emit a transition
+    assert!(outbox.iter().any(|(_, _, body)| body.contains("closed_recovered")));
+    drop(db);
+    let mut restored = ControlDb::open(&path, 1_048_576, 16, 32).unwrap();
+    let incident = restored.state(&k).unwrap().unwrap();
+    assert_eq!((incident.state, incident.episode.0), (State::SuspendedUnknown, 2));
+    assert_eq!(incident.severity, "critical");
+    assert_eq!(restored.pending().unwrap().len(), 5);
+    assert_eq!(restored.sequence().unwrap(), 6);
+    assert_eq!(
+        restored.evaluate(&k, good(4), 1, &required, 60_000).unwrap().state,
+        State::Recovering
+    );
+}
+
+#[test]
+fn outbox_capacity_failure_cannot_advance_recovery_or_sequence() {
+    let t = Temp::new();
+    let k = key();
+    let required = vec!["native".into()];
+    let mut db = ControlDb::open(&t.0.join("control.db"), 1_048_576, 16, 2).unwrap();
+    db.evaluate(&k, bad(), 0, &required, 60_000).unwrap();
+    db.evaluate(&k, Evaluation::Unknown, 30_000, &required, 60_000).unwrap();
+    assert_eq!(
+        db.evaluate(&k, good(2), 100_000, &required, 60_000).unwrap_err(),
+        "outbox capacity exceeded"
+    );
+    assert_eq!(db.state(&k).unwrap().unwrap().state, State::SuspendedUnknown);
+    assert_eq!(db.sequence().unwrap(), 2);
+    assert_eq!(db.pending().unwrap().len(), 2);
+}
+
+#[test]
+fn both_databases_verify_wal_full_and_passive_checkpoint_is_bounded_by_reader() {
+    let t = Temp::new();
+    let evidence_path = t.0.join("evidence.db");
+    let control_path = t.0.join("control.db");
+    let mut evidence = EvidenceDb::open(&evidence_path, 1_048_576).unwrap();
+    let mut control = ControlDb::open(&control_path, 1_048_576, 16, 32).unwrap();
+    for path in [&evidence_path, &control_path] {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        let mode: String =
+            connection.pragma_query_value(None, "journal_mode", |r| r.get(0)).unwrap();
+        let sync: i64 = connection.pragma_query_value(None, "synchronous", |r| r.get(0)).unwrap();
+        assert_eq!(mode, "wal");
+        assert_eq!(sync, 2);
+    }
+    evidence.insert(record(1)).unwrap();
+    let reader = rusqlite::Connection::open(&evidence_path).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let _: i64 = reader.query_row("SELECT count(*) FROM observations", [], |r| r.get(0)).unwrap();
+    evidence.insert(record(2)).unwrap();
+    let started = std::time::Instant::now();
+    let (_busy, log, checkpointed) = evidence.checkpoint().unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    assert!(log >= checkpointed);
+    reader.execute_batch("ROLLBACK").unwrap();
+    control.evaluate(&key(), bad(), 0, &["native".into()], 60_000).unwrap();
+    assert!(control.state(&key()).unwrap().unwrap().active());
+    assert_eq!(control.sequence().unwrap(), 1);
 }

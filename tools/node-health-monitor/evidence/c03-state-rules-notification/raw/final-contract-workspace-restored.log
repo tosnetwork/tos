@@ -1,0 +1,318 @@
+Using Python 3.14.4 environment at: .contract-venv
+Checked 17 packages in 2ms
+PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.78s
+     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+
+running 1 test
+test all_six_success_handlers_emit_runtime_dtos ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+
+running 1 test
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.02s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+
+running 1 test
+test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
+
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
+     Running tests/native_typed.rs (/home/tomi/nhm-c03-build/debug/deps/native_typed-33644b4ccbad0ea2)
+
+running 1 test
+test typed_sampler_and_edge_read_only_cache ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.27s
+
+PASS: 20 closed schemas; six tool input/error fixtures; six actual handler successes; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+PASS: production doctor refused 11 unverified gates (exit nonzero)
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.24s
+     Running unittests src/lib.rs (/home/tomi/nhm-c03-build/debug/deps/tos_health_core-e3e7906239b52817)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contracts.rs (/home/tomi/nhm-c03-build/debug/deps/contracts-0d72820d45401d98)
+
+running 30 tests
+test absence_never_becomes_zero ... ok
+test broker_expires_backlog_and_bounds_queue ... ok
+test cancellation_keeps_model_resource_exclusive ... ok
+test block_comparison_requires_full_identity ... ok
+test diagnosis_cannot_invent_evidence_or_change_severity ... ok
+test duties_deduplicate_retry_and_late_completion ... ok
+test duties_do_not_hide_pending_or_incomplete_population ... ok
+test diagnosis_rejects_trailing_instructions_and_unapproved_runbooks ... ok
+test cache_miss_does_not_create_evidence ... ok
+test freshness_is_original_observation_not_poll_time ... ok
+test guard_requires_continuous_recovery ... ok
+test missing_source_does_not_recover_incident ... ok
+test grants_expire_and_revoke ... ok
+test partial_cannot_prove_complete_duties ... ok
+test not_required_needs_protocol_evidence ... ok
+test recovery_does_not_count_missing_guard_intervals ... ok
+test profile_arithmetic_cannot_overflow_into_validity ... ok
+test repeated_deadman_does_not_keep_monitor_alive ... ok
+test scheduler_rejects_overflow ... ok
+test scheduler_skips_missed_ticks ... ok
+test timeout_does_not_release_actual_work ... ok
+test stale_guard_signals_shed_work ... ok
+test repeated_relay_receipt_keeps_original_evidence_identity ... ok
+test unapproved_profile_cannot_pass_declaration_checks ... ok
+test utc_requires_z_and_real_calendar ... ok
+test query_authentication_and_run_are_independent ... ok
+test unknown_fields_and_force_refresh_are_rejected ... ok
+test failed_calls_consume_budget ... ok
+test snapshot_does_not_return_future_ingestion_or_another_node ... ok
+test evidence_is_immutable_deduplicated_and_bounded ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/native_contract.rs (/home/tomi/nhm-c03-build/debug/deps/native_contract-2a1ebb43d7e70356)
+
+running 5 tests
+test age_and_quality_cannot_be_fabricated ... ok
+test edge_wire_requires_bound_process_native_and_cgroup_epochs ... ok
+test required_nullable_and_unknown_fields_are_enforced ... ok
+test immutable_identity_excludes_only_receipt_and_age ... ok
+test exact_pairing_rejects_changed_generation_and_content ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/r4.rs (/home/tomi/nhm-c03-build/debug/deps/r4-57c4a90f1ed94904)
+
+running 16 tests
+test bad_after_unknown_preserves_episode ... ok
+test block_shard_is_unsigned_and_hashes_are_canonical ... ok
+test freshness_conflict_quarantines_epoch ... ok
+test freshness_regression_and_overflow ... ok
+test freshness_same_generation_does_not_renew ... ok
+test exact_uint64 ... ok
+test ipc_frozen_bytes ... ok
+test ipc_rejects_malformed_header ... ok
+test recovery_requires_distinct_good_and_hold ... ok
+test unknown_epoch_and_restart_reset_recovery ... ok
+test multi_source_recovery_requires_every_source ... ok
+test vote_trace_and_normal_return_are_not_success ... ok
+test vote_order_and_replay_are_preserved ... ok
+test production_placeholders_and_claims_do_not_pass ... ok
+test sparse_histograms_count_all_series ... ok
+test diagnostic_limits_are_independent ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/rules.rs (/home/tomi/nhm-c03-build/debug/deps/rules-d04b6beb8e2458c2)
+
+running 8 tests
+test retired_heartbeat_and_repeats_cannot_extend_deadlines ... ok
+test facts_cannot_escape_catalog_or_network ... ok
+test telemetry_inventory_detects_never_seen_source ... ok
+test cache_duplicates_do_not_renew_rule_quality ... ok
+test bad_hold_and_distinct_samples_are_both_required ... ok
+test counter_rule_needs_baseline_and_does_not_recount ... ok
+test missing_and_conflicting_sources_are_unknown ... ok
+test scalar_rules_use_only_their_frozen_facts ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (/home/tomi/nhm-c03-build/debug/deps/tos_health_services-8f66600d3a426eb2)
+
+running 1 test
+test native_cache::tests::actual_run_waits_full_interval_after_source_misses_tick ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.52s
+
+     Running unittests src/bin/health-collector.rs (/home/tomi/nhm-c03-build/debug/deps/health_collector-811cf019b71eefd0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-contract-check.rs (/home/tomi/nhm-c03-build/debug/deps/health_contract_check-7e987620698921eb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-edge.rs (/home/tomi/nhm-c03-build/debug/deps/health_edge-53f2cc4c01ef82e1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-ingress.rs (/home/tomi/nhm-c03-build/debug/deps/health_ingress-74fd3bb2778ab7b7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-native-poll.rs (/home/tomi/nhm-c03-build/debug/deps/health_native_poll-82f82a49373db057)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-probe.rs (/home/tomi/nhm-c03-build/debug/deps/health_probe-16ab546197797864)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-state.rs (/home/tomi/nhm-c03-build/debug/deps/health_state-b82e889244504734)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-watchdog.rs (/home/tomi/nhm-c03-build/debug/deps/health_watchdog-3c6b528ec30c831e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/tos-observability.rs (/home/tomi/nhm-c03-build/debug/deps/tos_observability-a28cdd66fb8f3dc9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cgroup.rs (/home/tomi/nhm-c03-build/debug/deps/cgroup-eef2a2c7b6265c60)
+
+running 4 tests
+test descendant_quota_symlink_and_zero_are_refused ... ok
+test effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample ... ok
+test unlimited_parent_and_finite_child_resolve_to_child ... ok
+test discovery_keeps_unsupported_and_invalid_profiles_distinct ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/durable.rs (/home/tomi/nhm-c03-build/debug/deps/durable-a35df4fedf309d7c)
+
+running 12 tests
+test whole_round_rolls_back_when_any_outbox_change_fails ... ok
+test future_schema_and_invalid_page_are_rejected ... ok
+test conflict_is_persistent_and_scope_is_identity ... ok
+test incident_and_outbox_commit_together ... ok
+test outbox_capacity_failure_cannot_advance_recovery_or_sequence ... ok
+test immutable_sequence_survives_restart_and_late_arrival ... ok
+test both_databases_verify_wal_full_and_passive_checkpoint_is_bounded_by_reader ... ok
+test ordered_episode_timeline_is_persisted_and_outboxed ... ok
+test legacy_pending_outbox_migrates_without_ack_and_retry_metadata_is_durable ... ok
+test restart_does_not_resolve_or_continue_old_hold ... ok
+test evidence_disk_limit_does_not_consume_control_capacity ... ok
+test immutable_inventory_revision_is_enforced ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/edge_lifecycle.rs (/home/tomi/nhm-c03-build/debug/deps/edge_lifecycle-bf8fffa4b731dd51)
+
+running 1 test
+test edge_exit_does_not_signal_or_restart_configured_source_process ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+
+running 15 tests
+test inventory_and_secret_domains_are_enforced ... ok
+test direct_listener_must_be_local ... ok
+test private_token_validation_and_randomness ... ok
+test edge_router_reserves_burst_token_for_approved_heartbeat ... ok
+test ingest_checks_bound_identity ... ok
+test edge_reads_are_cached_and_authenticated ... ok
+test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
+test edge_rejects_refresh_and_enforces_burst ... ok
+test oversized_requests_fail_before_handler ... ok
+test service_identities_do_not_cross_roles ... ok
+test grant_query_and_revocation_round_trip ... ok
+test query_rejections_are_not_http_success ... ok
+test all_six_success_handlers_emit_runtime_dtos ... ok
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+test runtime_output_reflects_unknown_quality_and_rejects_conflicts ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/ingress.rs (/home/tomi/nhm-c03-build/debug/deps/ingress-1a61bf3f608f4ada)
+
+running 5 tests
+test scheduled_probe_uses_mtls_and_never_claims_consensus_health ... ok
+test mtls_acl_rejects_missing_expired_and_unapproved_before_upstream ... ok
+test scheduled_native_poll_checks_inventory_over_mtls ... ok
+test eight_idle_authenticated_readers_are_bounded_then_release ... ok
+test seven_slow_regular_requests_leave_classified_heartbeat_capacity ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.27s
+
+     Running tests/manager.rs (/home/tomi/nhm-c03-build/debug/deps/manager-11aff9f4a4253ecb)
+
+running 9 tests
+test queued_observation_cannot_be_rejuvenated ... ok
+test pending_c04_c05_rule_inputs_cannot_be_enabled_on_manager ... ok
+test database_aliases_cannot_defeat_isolation ... ok
+test partial_archive_failure_has_no_receipt_and_replay_preserves_committed_record ... ok
+test typed_snapshot_archive_commits_exact_refs_without_creating_healthy_facts ... ok
+test full_evidence_writer_queue_refuses_without_receipt_or_green ... ok
+test source_reference_write_failure_cannot_publish_green ... ok
+test killed_process_reopens_active_incident_as_unknown ... ok
+test conflict_quarantines_live_rule_and_receipt_controls_outbox ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.07s
+
+     Running tests/native_cache.rs (/home/tomi/nhm-c03-build/debug/deps/native_cache-70ced6940d15a20e)
+
+running 6 tests
+test duplicate_native_sample_keeps_original_age ... ok
+test native_conflict_cannot_recover_in_same_epoch ... ok
+test cold_metrics_and_query_rejected_without_sampler ... ok
+test metrics_route_refuses_stale_conflicted_and_restarted_cache ... ok
+test native_bounds_and_loopback_are_enforced ... ok
+test thousand_cache_reads_never_call_native ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/native_typed.rs (/home/tomi/nhm-c03-build/debug/deps/native_typed-33644b4ccbad0ea2)
+
+running 7 tests
+test scheduler_skips_a_tick_missed_by_a_slow_source ... ok
+test native_adapter_does_not_turn_missing_pq_into_zero ... ok
+test mismatched_pair_has_no_retry_and_no_publication ... ok
+test r4_collector_preserves_source_identity_and_immutable_payload ... ok
+test typed_cache_duplicate_age_and_conflict_are_sticky ... ok
+test snapshot_route_refuses_conflicted_and_restarted_typed_cache ... ok
+test typed_sampler_and_edge_read_only_cache ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/watchdog.rs (/home/tomi/nhm-c03-build/debug/deps/watchdog-3a6e5f32ec12bdb4)
+
+running 2 tests
+test pipeline_requires_own_firing_new_evaluation ... ok
+test direct_observer_notice_has_stable_timestamp_key_and_bounded_retry ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests tos_health_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tos_health_services
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

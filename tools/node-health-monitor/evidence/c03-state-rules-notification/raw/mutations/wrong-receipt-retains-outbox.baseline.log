@@ -1,0 +1,14 @@
+$ cargo test --locked -p tos-health-services --test manager conflict_quarantines_live_rule_and_receipt_controls_outbox -- --exact
+source_sha256=01f3023439f7681b24461ce7e3e5d0b85588bb7609418105b3062576c0d28404
+timeout_seconds=180
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.32s
+     Running tests/manager.rs (/home/tomi/nhm-c03-build/debug/deps/manager-d47dab4836d22b29)
+
+running 1 test
+test conflict_quarantines_live_rule_and_receipt_controls_outbox ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 10.07s
+
+
+EXIT=0

@@ -1,0 +1,11 @@
+time=2026-09-29T09:10:52.554Z level=INFO source=app.go:194 msg="Starting Alertmanager" version="(version=0.34.1, branch=HEAD, revision=73c6bfe7393929211294c1954f30d8ed78e4d0ad)"
+time=2026-09-29T09:10:52.554Z level=INFO source=app.go:196 msg="Build context" build_context="(go=go1.26.8, platform=linux/amd64, user=root@68a5f2da6323, date=20260917-07:53:02, tags=netgo)"
+time=2026-09-29T09:10:52.557Z level=INFO source=cluster.go:682 msg="Waiting for gossip to settle..." component=cluster interval=2s
+time=2026-09-29T09:10:52.605Z level=INFO source=tls_config.go:372 msg="Listening on" address=127.0.0.1:42973
+time=2026-09-29T09:10:52.606Z level=INFO source=tls_config.go:375 msg="TLS is disabled." http2=false address=127.0.0.1:42973
+time=2026-09-29T09:10:54.557Z level=INFO source=cluster.go:707 msg="gossip not settled" component=cluster polls=0 before=0 now=1 elapsed=2.000382138s
+time=2026-09-29T09:11:02.559Z level=INFO source=cluster.go:699 msg="gossip settled; proceeding" component=cluster elapsed=10.002311509s
+time=2026-09-29T09:15:27.650Z level=INFO source=lifecycle.go:290 msg="Shutting down gracefully"
+time=2026-09-29T09:15:27.650Z level=ERROR source=nflog.go:450 msg="Creating shutdown snapshot failed" component=nflog err="open /tmp/nhm-c03-runtime-sembag8r/am-data/nflog.75738fd42b5e01c0: no such file or directory"
+time=2026-09-29T09:15:27.650Z level=ERROR source=silence.go:650 msg="Creating shutdown snapshot failed" component=silences err="open /tmp/nhm-c03-runtime-sembag8r/am-data/silences.1591c5a4ec964931: no such file or directory"
+time=2026-09-29T09:15:27.651Z level=INFO source=main.go:201 msg="Received shutdown signal, exiting gracefully..."

@@ -84,6 +84,9 @@ pub struct EpochDeadman {
     timeout_ms: u64,
 }
 impl EpochDeadman {
+    pub fn epoch(&self) -> Option<&str> {
+        self.epoch.as_deref()
+    }
     pub fn new(now: u64, timeout_ms: u64) -> Result<Self, &'static str> {
         if timeout_ms == 0 {
             return Err("invalid deadline");
