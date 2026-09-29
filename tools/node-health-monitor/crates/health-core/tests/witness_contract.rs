@@ -7,9 +7,9 @@ fn plan() -> Value {
         "network_id":"b".repeat(64),"genesis":"c".repeat(64),
         "clock_skew_allowance_ms":5000,
         "endpoints":[{"endpoint_id":"cache_1","fixed_url":"https://cache.example.test/witness",
-            "failure_domain":"zone_a","kind":"approved_cache_only_https"},
+            "failure_domain":"zone_a","kind":"approved_cache_only_https","current_source_epoch":"upstream-1"},
             {"endpoint_id":"cache_2","fixed_url":"https://other.example.test/witness",
-            "failure_domain":"zone_b","kind":"approved_cache_only_https"}],
+            "failure_domain":"zone_b","kind":"approved_cache_only_https","current_source_epoch":"upstream-2"}],
         "targets":[{"target_id":"validator_1","node_id":"validator_1","role":"normal",
             "valid_from":"2026-09-29T00:00:00Z","valid_until":"2026-09-30T00:00:00Z",
             "scope_id":"masterchain","workchain":-1,"shard":"9223372036854775808",
@@ -99,6 +99,12 @@ fn strict_source_refuses_unapproved_target_context_and_extra_fields() {
 
 #[test]
 fn strict_plan_refuses_dynamic_and_unreferenced_endpoints() {
+    let mut bad = plan();
+    bad["endpoints"][0].as_object_mut().unwrap().remove("current_source_epoch");
+    assert!(Plan::decode(&serde_json::to_vec(&bad).unwrap()).is_err());
+    let mut bad = plan();
+    bad["endpoints"][0]["current_source_epoch"] = json!("");
+    assert!(Plan::decode(&serde_json::to_vec(&bad).unwrap()).is_err());
     let mut bad = plan();
     bad["endpoints"][0]["fixed_url"] = json!("https://cache.example.test/witness?target=other");
     assert!(Plan::decode(&serde_json::to_vec(&bad).unwrap()).is_err());

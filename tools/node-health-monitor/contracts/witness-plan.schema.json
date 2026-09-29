@@ -27,9 +27,10 @@
         "endpoint_id": {"$ref": "#/$defs/alias"},
         "fixed_url": {"type": "string", "pattern": "^https://[^@?#]+$", "maxLength": 512},
         "failure_domain": {"$ref": "#/$defs/alias"},
-        "kind": {"const": "approved_cache_only_https"}
+        "kind": {"const": "approved_cache_only_https"},
+        "current_source_epoch": {"$ref": "#/$defs/epoch"}
       },
-      "required": ["endpoint_id", "fixed_url", "failure_domain", "kind"]
+      "required": ["endpoint_id", "fixed_url", "failure_domain", "kind", "current_source_epoch"]
     },
     "target": {
       "type": "object", "additionalProperties": false,

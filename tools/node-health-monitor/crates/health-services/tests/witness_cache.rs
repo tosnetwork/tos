@@ -16,7 +16,7 @@ fn plan() -> Plan {
         "revision":"a".repeat(64),"observer_id":"observer_1","observer_epoch":"observer-1",
         "network_id":"b".repeat(64),"genesis":"c".repeat(64),"clock_skew_allowance_ms":5000,
         "endpoints":[{"endpoint_id":"cache_1","fixed_url":"https://cache.example.test/witness",
-            "failure_domain":"zone_a","kind":"approved_cache_only_https"}],
+            "failure_domain":"zone_a","kind":"approved_cache_only_https","current_source_epoch":"source-1"}],
         "targets":[{"target_id":"validator_1","node_id":"validator_1","role":"normal",
             "valid_from":"2026-09-29T00:00:00Z","valid_until":"2026-09-30T00:00:00Z",
             "scope_id":"masterchain","workchain":-1,"shard":"9223372036854775808",
@@ -220,6 +220,18 @@ fn owned_capacity_not_only_length_is_charged_at_startup() {
     oversized_plan.endpoints.reserve_exact(100_000);
     assert!(WitnessCache::new(oversized_plan, b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec())
         .is_err());
+    for field in ["kind", "current_source_epoch"] {
+        let mut oversized_plan = plan();
+        let endpoint = &mut oversized_plan.endpoints[0];
+        let text =
+            if field == "kind" { &mut endpoint.kind } else { &mut endpoint.current_source_epoch };
+        text.reserve_exact(4 * 1024 * 1024);
+        assert!(
+            WitnessCache::new(oversized_plan, b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec())
+                .is_err(),
+            "owned endpoint {field} capacity must be charged"
+        );
+    }
 }
 
 #[tokio::test]

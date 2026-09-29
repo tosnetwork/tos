@@ -7,8 +7,9 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 use tos_health_core::witness::Plan;
 use tos_health_services::{
+    durable::EvidenceDb,
     manager::{Manager, ManagerConfig},
-    witness::{router as witness_router, WitnessCache},
+    witness::{router as witness_router, CacheResponse, RelativeAge, WitnessCache},
 };
 use tower::ServiceExt;
 
@@ -36,7 +37,7 @@ impl Fixture {
             "revision":"a".repeat(64),"observer_id":"observer_1","observer_epoch":"observer-1",
             "network_id":"a".repeat(64),"genesis":"c".repeat(64),"clock_skew_allowance_ms":5000,
             "endpoints":[{"endpoint_id":"cache_1","fixed_url":"https://cache.example.test/witness",
-                "failure_domain":"zone_a","kind":"approved_cache_only_https"}],
+                "failure_domain":"zone_a","kind":"approved_cache_only_https","current_source_epoch":"source-1"}],
             "targets":[{"target_id":"validator_1","node_id":"v1","role":"normal",
                 "valid_from":"2026-09-29T00:00:00Z","valid_until":"2026-09-30T00:00:00Z",
                 "scope_id":"masterchain","workchain":-1,"shard":"9223372036854775808",
@@ -62,6 +63,194 @@ impl Fixture {
             "receiver":null,"witness_plan_file":self.0.join("plan.json")
         })).unwrap()
     }
+}
+
+#[test]
+fn current_activation_reopen_preserves_guard_and_total_index_is_bounded() {
+    let fixture = Fixture::new();
+    let plan = fixture.plan();
+    let path = fixture.0.join("current-evidence.db");
+    let mut db = EvidenceDb::open(&path, 1_048_576).unwrap();
+    db.activate_witness_current(&plan).unwrap();
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "UPDATE witness_current_activation SET highest_generation='9',source_hash=?1,quarantined=1 WHERE endpoint='cache_1'",
+            ["d".repeat(64)],
+        )
+        .unwrap();
+    drop(connection);
+    let mut reopened = EvidenceDb::open(&path, 1_048_576).unwrap();
+    reopened.activate_witness_current(&plan).unwrap();
+    drop(reopened);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let retained: (String, i64) = connection
+        .query_row(
+            "SELECT highest_generation,quarantined FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(retained, ("9".into(), 1));
+    drop(connection);
+    let mut same_revision_changed: Value = serde_json::to_value(&plan).unwrap();
+    same_revision_changed["endpoints"][0]["current_source_epoch"] = json!("source-2");
+    let same_revision_changed =
+        Plan::decode(&serde_json::to_vec(&same_revision_changed).unwrap()).unwrap();
+    let mut db = EvidenceDb::open(&path, 1_048_576).unwrap();
+    assert_eq!(
+        db.activate_witness_current(&same_revision_changed).unwrap_err(),
+        "witness current activation changed without new revision"
+    );
+    let mut same_revision_new_endpoint: Value = serde_json::to_value(&plan).unwrap();
+    same_revision_new_endpoint["endpoints"][0]["endpoint_id"] = json!("cache_new");
+    same_revision_new_endpoint["targets"][0]["endpoint_ids"] = json!(["cache_new"]);
+    let same_revision_new_endpoint =
+        Plan::decode(&serde_json::to_vec(&same_revision_new_endpoint).unwrap()).unwrap();
+    assert_eq!(
+        db.activate_witness_current(&same_revision_new_endpoint).unwrap_err(),
+        "witness current activation changed without new revision",
+        "a new endpoint ID may not bypass a frozen plan revision"
+    );
+    drop(db);
+    let mut next: Value = serde_json::to_value(&plan).unwrap();
+    next["revision"] = json!("b".repeat(64));
+    next["endpoints"][0]["current_source_epoch"] = json!("source-2");
+    let next = Plan::decode(&serde_json::to_vec(&next).unwrap()).unwrap();
+    let mut db = EvidenceDb::open(&path, 1_048_576).unwrap();
+    db.activate_witness_current(&next).unwrap();
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let reset: (Option<String>, i64, String) = connection
+        .query_row(
+            "SELECT highest_generation,quarantined,source_epoch FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(reset, (None, 0, "source-2".into()));
+    for number in 2..=16 {
+        connection
+            .execute(
+                "INSERT INTO witness_current_activation(endpoint,plan_revision,plan_hash,observer_epoch,source_epoch) VALUES(?1,'retired','retired','old','old')",
+                [format!("retired_{number}")],
+            )
+            .unwrap();
+    }
+    drop(connection);
+    let mut other: Value = serde_json::to_value(&next).unwrap();
+    other["revision"] = json!("c".repeat(64));
+    other["endpoints"][0]["endpoint_id"] = json!("cache_new");
+    other["targets"][0]["endpoint_ids"] = json!(["cache_new"]);
+    let other = Plan::decode(&serde_json::to_vec(&other).unwrap()).unwrap();
+    let mut db = EvidenceDb::open(&path, 1_048_576).unwrap();
+    assert_eq!(
+        db.activate_witness_current(&other).unwrap_err(),
+        "witness current activation index full"
+    );
+    drop(db);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT COUNT(*) FROM witness_current_activation", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 16, "refused activation must roll back its new endpoint");
+}
+
+#[tokio::test]
+async fn current_review_is_separate_from_archive_and_preserves_order_and_conflict() {
+    let fixture = Fixture::new();
+    let plan = fixture.plan();
+    let path = fixture.0.join("current-review.db");
+    let mut db = EvidenceDb::open(&path, 1_048_576).unwrap();
+    db.activate_witness_current(&plan).unwrap();
+    let mut fresh: Value = serde_json::from_slice(&source('d')).unwrap();
+    fresh["rows"][0]["source_age_ms"] = json!("10");
+    let first_wire = cached(plan.clone(), &serde_json::to_vec(&fresh).unwrap()).await;
+    let (first, _) = CacheResponse::decode(&first_wire, &plan, "cache_1").unwrap();
+    let measured = db.review_witness_current(&first, &plan, Some(200)).unwrap();
+    assert_eq!(measured[0].relative_age, RelativeAge::Fresh);
+    assert!(!measured[0].verified_finality);
+    assert!(!measured[0].node_fault_from_witness_alone);
+    let unknown = db.review_witness_current(&first, &plan, None).unwrap();
+    assert_eq!(unknown[0].relative_age, RelativeAge::Unknown);
+    assert_eq!(
+        db.review_witness_current(&first, &plan, Some(200)).unwrap()[0].relative_age,
+        RelativeAge::Unknown,
+        "a later measured duplicate cannot repair a previously unknown transport leg"
+    );
+    let mut higher = fresh.clone();
+    higher["generation"] = json!("2");
+    let higher_wire = cached(plan.clone(), &serde_json::to_vec(&higher).unwrap()).await;
+    let (higher, _) = CacheResponse::decode(&higher_wire, &plan, "cache_1").unwrap();
+    assert_eq!(
+        db.review_witness_current(&higher, &plan, Some(45_000)).unwrap()[0].relative_age,
+        RelativeAge::Stale
+    );
+    assert_eq!(
+        db.review_witness_current(&higher, &plan, Some(200)).unwrap()[0].relative_age,
+        RelativeAge::Stale,
+        "lower elapsed on the same generation cannot renew a stale current row"
+    );
+    assert_eq!(
+        db.review_witness_current(&first, &plan, Some(200)).unwrap_err(),
+        "WITNESS_CURRENT_REGRESSION"
+    );
+    let other_epoch_wire =
+        cached(plan.clone(), &changed_source('d', "3", "source-historical-only")).await;
+    let (other_epoch, _) = CacheResponse::decode(&other_epoch_wire, &plan, "cache_1").unwrap();
+    assert_eq!(
+        db.review_witness_current(&other_epoch, &plan, Some(200)).unwrap_err(),
+        "WITNESS_CURRENT_EPOCH_UNAPPROVED"
+    );
+    let mut conflicting = fresh;
+    conflicting["generation"] = json!("2");
+    conflicting["rows"][0]["anchor"]["root_hash"] = json!("f".repeat(64));
+    let conflicting_wire = cached(plan.clone(), &serde_json::to_vec(&conflicting).unwrap()).await;
+    let (conflicting, _) = CacheResponse::decode(&conflicting_wire, &plan, "cache_1").unwrap();
+    assert_eq!(
+        db.review_witness_current(&conflicting, &plan, Some(200)).unwrap_err(),
+        "WITNESS_CURRENT_CONFLICT"
+    );
+    drop(db);
+    let mut reopened = EvidenceDb::open(&path, 1_048_576).unwrap();
+    reopened.activate_witness_current(&plan).unwrap();
+    assert_eq!(
+        reopened.review_witness_current(&higher, &plan, Some(200)).unwrap_err(),
+        "WITNESS_CURRENT_CONFLICT",
+        "same activation reopening cannot erase current conflict"
+    );
+    let metadata_path = fixture.0.join("current-metadata.db");
+    let mut metadata_db = EvidenceDb::open(&metadata_path, 1_048_576).unwrap();
+    metadata_db.activate_witness_current(&plan).unwrap();
+    metadata_db.review_witness_current(&higher, &plan, Some(200)).unwrap();
+    let mut altered: Value = serde_json::from_slice(&higher_wire).unwrap();
+    altered["row_ages"][0]["observer_clock_quality_at_first_receipt"] = json!("valid");
+    let altered_bytes = serde_json::to_vec(&altered).unwrap();
+    let (altered, _) = CacheResponse::decode(&altered_bytes, &plan, "cache_1").unwrap();
+    assert_eq!(
+        metadata_db.review_witness_current(&altered, &plan, Some(200)).unwrap_err(),
+        "WITNESS_CURRENT_CONFLICT",
+        "same source hash cannot rewrite original O clock or role context"
+    );
+    let floor_path = fixture.0.join("current-age-floor.db");
+    let mut floor_db = EvidenceDb::open(&floor_path, 1_048_576).unwrap();
+    floor_db.activate_witness_current(&plan).unwrap();
+    let mut older_age: Value = serde_json::from_slice(&first_wire).unwrap();
+    older_age["row_ages"][0]["effective_age_ms"] = json!("44990");
+    older_age["row_ages"][0]["fresh_relative_age"] = json!(true);
+    let (older_age, _) =
+        CacheResponse::decode(&serde_json::to_vec(&older_age).unwrap(), &plan, "cache_1").unwrap();
+    assert_eq!(
+        floor_db.review_witness_current(&older_age, &plan, Some(0)).unwrap()[0].relative_age,
+        RelativeAge::Fresh
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    assert_eq!(
+        floor_db.review_witness_current(&first, &plan, Some(0)).unwrap()[0].relative_age,
+        RelativeAge::Stale,
+        "a lower same-generation dynamic age cannot erase the first M age floor"
+    );
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -144,6 +333,15 @@ async fn actual_observer_cache_to_manager_retained_archive_dedups_without_rule_f
         .query_row("SELECT COUNT(*) FROM observations", [], |row| row.get(0))
         .unwrap();
     assert_eq!(ordinary_rows, 0, "witness archive must not mint a rule fact");
+    let current_high: Option<String> = rusqlite::Connection::open(fixture.0.join("evidence.db"))
+        .unwrap()
+        .query_row(
+            "SELECT highest_generation FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(current_high.as_deref(), Some("1"));
     let conflicting = cached(plan, &source('f')).await;
     assert_eq!(post(manager.clone(), conflicting).await.0, StatusCode::CONFLICT);
     let quarantined: i64 = rusqlite::Connection::open(fixture.0.join("evidence.db"))
@@ -151,6 +349,38 @@ async fn actual_observer_cache_to_manager_retained_archive_dedups_without_rule_f
         .query_row("SELECT COUNT(*) FROM witness_quarantined", [], |row| row.get(0))
         .unwrap();
     assert_eq!(quarantined, 1);
+    let current_quarantined: i64 = rusqlite::Connection::open(fixture.0.join("evidence.db"))
+        .unwrap()
+        .query_row(
+            "SELECT quarantined FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        current_quarantined, 1,
+        "actual historical conflict must invalidate the active current lane in the same commit"
+    );
+    let historical_other_epoch =
+        cached(fixture.plan(), &changed_source('d', "1", "source-historical-only")).await;
+    assert_eq!(
+        post(manager, historical_other_epoch).await.0,
+        StatusCode::OK,
+        "current activation epoch cannot narrow valid historical archive admission"
+    );
+    let current_high: Option<String> = rusqlite::Connection::open(fixture.0.join("evidence.db"))
+        .unwrap()
+        .query_row(
+            "SELECT highest_generation FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        current_high.as_deref(),
+        Some("1"),
+        "historical other epoch cannot advance the current activation"
+    );
 }
 
 #[tokio::test]

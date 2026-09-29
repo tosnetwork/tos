@@ -1,0 +1,17 @@
+Script started on 2026-09-29 12:45:01+00:00 [<not executed on terminal>]
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.80s
+     Running tests/witness_contract.rs (target/debug/deps/witness_contract-f0acf7aaec1efb26)
+
+running 6 tests
+test strict_source_preserves_stale_and_unknown_age_without_proof_promotion ... ok
+test unknown_candidate_is_not_a_positive_comparison ... ok
+test comparison_requires_exact_context_and_never_upgrades_reported_finality ... ok
+test plan_and_source_cardinality_and_body_caps_are_literal ... ok
+test strict_plan_refuses_dynamic_and_unreferenced_endpoints ... ok
+test strict_source_refuses_unapproved_target_context_and_extra_fields ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+Script done on 2026-09-29 12:45:04+00:00 [COMMAND_EXIT_CODE="0"]

@@ -191,6 +191,9 @@ impl Manager {
         } else {
             None
         };
+        if let Some(plan) = &witness_plan {
+            evidence_db.activate_witness_current(plan)?;
+        }
         let epoch = crate::hex(&crate::random_token()?);
         let started = Instant::now();
         let engine = RuleEngine::new(config.inventory.clone(), 0).map_err(str::to_owned)?;
@@ -211,7 +214,17 @@ impl Manager {
                             let _ = reply.send(evidence_db.insert(*value));
                         }
                         EvidenceCommand::InsertWitness(value, plan, reply) => {
-                            let _ = reply.send(evidence_db.insert_witness(*value, &plan));
+                            let archived = evidence_db.insert_witness(*value, &plan);
+                            if let Ok(row) = &archived {
+                                // Separate current gate: the historical ACK cannot claim
+                                // current freshness. Collector-to-M transit is not yet
+                                // measured, so every current age stays unknown and no
+                                // rule fact is emitted. A current refusal cannot erase
+                                // a valid historical archive commit.
+                                let _ =
+                                    evidence_db.review_witness_current(&row.response, &plan, None);
+                            }
+                            let _ = reply.send(archived);
                         }
                     }
                 }

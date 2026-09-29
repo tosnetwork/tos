@@ -1,17 +1,33 @@
 # C05 development-only current M interface proposal — review before code
 
-This is a proposed boundary, not an implemented or accepted capability. The
-existing `/witness-evidence/{endpoint}` acknowledgement is historical
+This document records the reviewed boundary and its staged development
+implementation, not an accepted current-rule capability. The existing
+`/witness-evidence/{endpoint}` acknowledgement is historical
 `witness_archive_v1` only. Its database permits late valid generations and
 must not be repurposed as a latest/current view. No production upstream
 adapter or verified-finality input is implied.
 
+Implemented after the proposal: `Endpoint.current_source_epoch` is validated
+in the frozen Plan but is deliberately **not** enforced by historical
+`Source`/`CacheResponse` decoding. `EvidenceDb` persists a globally bounded
+current activation/high-water/quarantine index, with same-revision hash
+rebind refusal, same-activation restart preservation, and separate current
+ordering/age/immutable-metadata review. The actual M historical archive writer
+runs that separate review with `None` for unmeasured transport, so it records
+ordering but emits no fresh current fact or rule input; a matching historical
+conflict quarantines current in the same transaction. Synthetic measured-bound
+direct-helper controls are not a real collector/M transport witness. The
+separate current read surface and complete measured transport/queue/read age
+remain unimplemented, so C05 current-rule qualification is still open.
+
 ## Activation and identity
 
-Add an explicit approved `source_epoch` to each fixed endpoint in the
+Add an explicit `current_source_epoch` to each fixed endpoint in the
 development Plan (one active epoch per endpoint per plan revision). A changed
 epoch requires a new approved plan revision/activation; an observed upstream
-epoch string is not itself authorization. M persists `(plan_hash,
+epoch string is not itself authorization. The field applies only to current
+qualification; the historical `Source`/`CacheResponse` decoder and archive
+continue to accept otherwise valid old epochs. M persists `(plan_hash,
 observer_epoch, endpoint_id, approved_source_epoch, highest_generation,
 source_hash)` in a separate current-state namespace. O and M validate the
 same frozen Plan hash and exact source identity. A repeated generation/hash
@@ -36,7 +52,10 @@ the specific fixed collector and prove the timeout applies to the whole
 request. Overflow of any sum yields unknown, never zero. Remote UTC is not
 subtracted from another host's clock. O's original-row first receipt,
 observer clock quality and source reported age remain immutable across O
-generation republish; M adds elapsed and cannot renew an old row by another
+generation republish; each source publication freezes its own reported age,
+while O preserves the original row first-receipt/clock context and raises a
+conservative age floor for later reports of the same row. M adds elapsed and
+cannot renew an old row by another
 cache GET or duplicate archive delivery.
 
 Expose a separate bounded `current_witness` result only after activation,
@@ -54,8 +73,10 @@ conflict. A lacks any on-demand source call.
 
 Use the existing 16 approved endpoints, 32 targets, at most three refs per
 target, 32 KiB cache-wire body and fixed 15-second collector schedule.
-Current state retains at most one body/qualification set per endpoint plus a
-bounded persisted high-water row; old rows remain in the separately capped
+Current state retains at most one body/qualification set per endpoint; the
+global current endpoint/high-water/retired/quarantine index is at most 16
+entries across revisions, not 16 newly allocated entries per revision. Old
+rows remain in the separately capped
 historical archive. No O/M/A route may initiate an upstream query on read.
 Required actual controls: one valid activated generation; identical duplicate
 does not refresh; lower generation after higher archives but never becomes

@@ -1,15 +1,19 @@
 //! Local monitoring-host storage. Control transactions never share the evidence database.
-use crate::witness::CacheResponse;
+use crate::witness::{CacheResponse, RelativeAge, RowQualification};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    time::{Duration, Instant},
+};
 use tos_health_core::{
     evidence::{Evidence, EvidenceStore},
     health_state::{HealthState, Sample},
     rules::FactFrame,
     wire::U64,
-    witness::Plan,
+    witness::{canonical_plan_hash, Plan},
 };
 
 type Result<T> = std::result::Result<T, String>;
@@ -89,11 +93,53 @@ pub struct WitnessArchiveRow {
     pub evidence_id: String,
     pub response: CacheResponse,
 }
+fn witness_immutable_metadata_hash(response: &CacheResponse) -> Result<String> {
+    let receipt = &response.receipt;
+    let immutable_rows: Vec<_> = response
+        .row_ages
+        .iter()
+        .map(|age| {
+            (
+                &age.target_id,
+                &age.first_received_at,
+                age.observer_clock_quality_at_first_receipt,
+                age.source_age_at_first_receipt_ms,
+            )
+        })
+        .collect();
+    let metadata = serde_json::to_vec(&(
+        &receipt.observer_id,
+        &receipt.observer_epoch,
+        &receipt.plan_revision,
+        &receipt.plan_hash,
+        &receipt.endpoint_id,
+        &receipt.source_epoch,
+        receipt.generation,
+        &receipt.source_hash,
+        receipt.observer_clock_quality,
+        &receipt.first_received_at,
+        receipt.request_duration_ms,
+        immutable_rows,
+    ))
+    .map_err(err)?;
+    Ok(format!("{:x}", Sha256::digest(&metadata)))
+}
 pub struct EvidenceDb {
     conn: Connection,
     path: std::path::PathBuf,
     quota: u64,
+    current_tracks: BTreeMap<String, CurrentTrack>,
 }
+struct CurrentTrack {
+    generation: u64,
+    source_hash: String,
+    first_received: Instant,
+    first_extra_ms: Option<u64>,
+    age_class: BTreeMap<String, RelativeAge>,
+    first_age_floor_ms: BTreeMap<String, Option<u64>>,
+}
+type CurrentActivationRow =
+    (String, String, String, Option<String>, Option<String>, Option<String>, i64);
 impl EvidenceDb {
     pub fn bind_network(&mut self, network: &str) -> Result<()> {
         bind_network(&mut self.conn, network)
@@ -118,8 +164,238 @@ impl EvidenceDb {
             CREATE INDEX IF NOT EXISTS witness_endpoint_seq ON witness_observations(endpoint,store_seq);
             CREATE TABLE IF NOT EXISTS witness_quarantined (
             observer_epoch TEXT NOT NULL,endpoint TEXT NOT NULL,source_epoch TEXT NOT NULL,
-            PRIMARY KEY(observer_epoch,endpoint,source_epoch));").map_err(err)?;
-        Ok(Self { conn, path: path.into(), quota })
+            PRIMARY KEY(observer_epoch,endpoint,source_epoch));
+            CREATE TABLE IF NOT EXISTS witness_current_activation (
+            endpoint TEXT PRIMARY KEY,plan_revision TEXT NOT NULL,plan_hash TEXT NOT NULL,observer_epoch TEXT NOT NULL,
+            source_epoch TEXT NOT NULL,highest_generation TEXT,source_hash TEXT,metadata_hash TEXT,
+            quarantined INTEGER NOT NULL DEFAULT 0);").map_err(err)?;
+        Ok(Self { conn, path: path.into(), quota, current_tracks: BTreeMap::new() })
+    }
+    /// Activate the explicit startup plan's current source epochs. Historical
+    /// witness rows and their independent quarantine are not changed.
+    /// Same-activation reopening preserves high-water and quarantine; a new
+    /// plan revision is the only reset path. Retired entries still consume the
+    /// global 16-entry bound, so repeated revisions cannot grow this index.
+    pub fn activate_witness_current(&mut self, plan: &Plan) -> Result<()> {
+        plan.validate().map_err(str::to_owned)?;
+        wal_budget(&self.path, self.quota)?;
+        let plan_hash = canonical_plan_hash(plan).map_err(str::to_owned)?;
+        let tx = self.conn.transaction().map_err(err)?;
+        let reused_revision: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM witness_current_activation WHERE plan_revision=?1 AND plan_hash<>?2)",
+                params![plan.revision, plan_hash],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        if reused_revision {
+            return Err("witness current activation changed without new revision".into());
+        }
+        let count: i64 = tx
+            .query_row("SELECT COUNT(*) FROM witness_current_activation", [], |row| row.get(0))
+            .map_err(err)?;
+        let mut additions = 0i64;
+        for endpoint in &plan.endpoints {
+            let prior: Option<(String, String, String, String)> = tx
+                .query_row(
+                    "SELECT plan_revision,plan_hash,observer_epoch,source_epoch FROM witness_current_activation WHERE endpoint=?1",
+                    params![endpoint.endpoint_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(err)?;
+            match prior {
+                Some((revision, hash, observer, source))
+                    if revision == plan.revision
+                        && hash == plan_hash
+                        && observer == plan.observer_epoch
+                        && source == endpoint.current_source_epoch => {}
+                Some((revision, _, _, _)) if revision == plan.revision => {
+                    return Err("witness current activation changed without new revision".into());
+                }
+                Some(_) => {
+                    tx.execute(
+                        "UPDATE witness_current_activation SET plan_revision=?2,plan_hash=?3,observer_epoch=?4,source_epoch=?5,
+                         highest_generation=NULL,source_hash=NULL,metadata_hash=NULL,quarantined=0 WHERE endpoint=?1",
+                        params![endpoint.endpoint_id, plan.revision, plan_hash, plan.observer_epoch, endpoint.current_source_epoch],
+                    )
+                    .map_err(err)?;
+                }
+                None => {
+                    additions += 1;
+                    tx.execute(
+                        "INSERT INTO witness_current_activation(endpoint,plan_revision,plan_hash,observer_epoch,source_epoch)
+                         VALUES(?1,?2,?3,?4,?5)",
+                        params![endpoint.endpoint_id, plan.revision, plan_hash, plan.observer_epoch, endpoint.current_source_epoch],
+                    )
+                    .map_err(err)?;
+                }
+            }
+        }
+        if count + additions > 16 {
+            return Err("witness current activation index full".into());
+        }
+        tx.commit().map_err(err)
+    }
+    /// Separate development current-order gate. It is never called by the
+    /// historical archive route, never enters `observations`, and its rows
+    /// cannot feed rules until the caller supplies a complete measured age.
+    pub fn review_witness_current(
+        &mut self,
+        response: &CacheResponse,
+        plan: &Plan,
+        measured_extra_ms: Option<u64>,
+    ) -> Result<Vec<RowQualification>> {
+        wal_budget(&self.path, self.quota)?;
+        let endpoint = &response.receipt.endpoint_id;
+        let body = serde_json::to_vec(response).map_err(err)?;
+        let (validated, source) =
+            CacheResponse::decode(&body, plan, endpoint).map_err(str::to_owned)?;
+        let plan_hash = canonical_plan_hash(plan).map_err(str::to_owned)?;
+        let approved_epoch = plan
+            .endpoints
+            .iter()
+            .find(|candidate| candidate.endpoint_id == *endpoint)
+            .ok_or("unapproved current endpoint")?
+            .current_source_epoch
+            .as_str();
+        if source.source_epoch != approved_epoch {
+            return Err("WITNESS_CURRENT_EPOCH_UNAPPROVED".into());
+        }
+        let metadata_hash = witness_immutable_metadata_hash(&validated)?;
+        let qualify = |extra| -> Result<Vec<RowQualification>> {
+            source
+                .rows
+                .iter()
+                .map(|row| {
+                    crate::witness::qualify_validated_row(
+                        &validated,
+                        &source,
+                        plan,
+                        &row.target_id,
+                        extra,
+                    )
+                    .map_err(str::to_owned)
+                })
+                .collect()
+        };
+        let tx = self.conn.transaction().map_err(err)?;
+        let prior: Option<CurrentActivationRow> = tx
+            .query_row(
+                "SELECT plan_hash,observer_epoch,source_epoch,highest_generation,source_hash,metadata_hash,quarantined
+                 FROM witness_current_activation WHERE endpoint=?1",
+                params![endpoint],
+                |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?))
+                },
+            )
+            .optional()
+            .map_err(err)?;
+        let Some((active_hash, observer, active_source, high, old_hash, old_metadata, quarantined)) =
+            prior
+        else {
+            return Err("WITNESS_CURRENT_NOT_ACTIVATED".into());
+        };
+        if active_hash != plan_hash
+            || observer != validated.receipt.observer_epoch
+            || active_source != source.source_epoch
+        {
+            return Err("WITNESS_CURRENT_NOT_ACTIVATED".into());
+        }
+        if quarantined != 0 {
+            return Err("WITNESS_CURRENT_CONFLICT".into());
+        }
+        if let Some(previous) = high {
+            let previous = tos_health_core::wire::exact_u64(&previous).map_err(str::to_owned)?;
+            if source.generation.0 < previous {
+                return Err("WITNESS_CURRENT_REGRESSION".into());
+            }
+            if source.generation.0 == previous {
+                if old_hash.as_deref() != Some(validated.receipt.source_hash.as_str())
+                    || old_metadata.as_deref() != Some(metadata_hash.as_str())
+                {
+                    tx.execute(
+                        "UPDATE witness_current_activation SET quarantined=1 WHERE endpoint=?1",
+                        params![endpoint],
+                    )
+                    .map_err(err)?;
+                    tx.commit().map_err(err)?;
+                    self.current_tracks.remove(endpoint);
+                    return Err("WITNESS_CURRENT_CONFLICT".into());
+                }
+                let active = self.current_tracks.get(endpoint).filter(|track| {
+                    track.generation == source.generation.0
+                        && track.source_hash == validated.receipt.source_hash
+                });
+                let extra = active.and_then(|track| {
+                    let elapsed: u64 =
+                        track.first_received.elapsed().as_millis().try_into().ok()?;
+                    Some(track.first_extra_ms?.checked_add(elapsed)?.max(measured_extra_ms?))
+                });
+                let mut qualified = qualify(extra)?;
+                if let Some(track) = self.current_tracks.get_mut(endpoint) {
+                    let elapsed: Option<u64> =
+                        track.first_received.elapsed().as_millis().try_into().ok();
+                    for row in &mut qualified {
+                        let original_floor = track
+                            .first_age_floor_ms
+                            .get(&row.target_id)
+                            .copied()
+                            .flatten()
+                            .zip(elapsed)
+                            .and_then(|(age, elapsed)| age.checked_add(elapsed));
+                        match original_floor {
+                            Some(age) if age > tos_health_core::witness::USABLE_AGE_MS => {
+                                row.relative_age = RelativeAge::Stale;
+                            }
+                            None => row.relative_age = RelativeAge::Unknown,
+                            Some(_) => {}
+                        }
+                        match track.age_class.get(&row.target_id) {
+                            Some(RelativeAge::Stale) => row.relative_age = RelativeAge::Stale,
+                            Some(RelativeAge::Unknown) => row.relative_age = RelativeAge::Unknown,
+                            _ => {}
+                        }
+                        track.age_class.insert(row.target_id.clone(), row.relative_age);
+                    }
+                }
+                return Ok(qualified);
+            }
+        }
+        let qualified = qualify(measured_extra_ms)?;
+        tx.execute(
+            "UPDATE witness_current_activation SET highest_generation=?2,source_hash=?3,metadata_hash=?4 WHERE endpoint=?1",
+            params![endpoint, source.generation.0.to_string(), validated.receipt.source_hash, metadata_hash],
+        )
+        .map_err(err)?;
+        tx.commit().map_err(err)?;
+        self.current_tracks.insert(
+            endpoint.clone(),
+            CurrentTrack {
+                generation: source.generation.0,
+                source_hash: validated.receipt.source_hash.clone(),
+                first_received: Instant::now(),
+                first_extra_ms: measured_extra_ms,
+                age_class: qualified
+                    .iter()
+                    .map(|row| (row.target_id.clone(), row.relative_age))
+                    .collect(),
+                first_age_floor_ms: validated
+                    .row_ages
+                    .iter()
+                    .map(|age| {
+                        (
+                            age.target_id.clone(),
+                            age.effective_age_ms
+                                .map(|value| value.0)
+                                .zip(measured_extra_ms)
+                                .and_then(|(age, extra)| age.checked_add(extra)),
+                        )
+                    })
+                    .collect(),
+            },
+        );
+        Ok(qualified)
     }
     pub fn insert(&mut self, value: DurableEvidence) -> Result<EvidenceRow> {
         wal_budget(&self.path, self.quota)?;
@@ -186,34 +462,8 @@ impl EvidenceDb {
             return Err("witness archive size limit".into());
         }
         let receipt = &response.receipt;
-        let immutable_rows: Vec<_> = response
-            .row_ages
-            .iter()
-            .map(|age| {
-                (
-                    &age.target_id,
-                    &age.first_received_at,
-                    age.observer_clock_quality_at_first_receipt,
-                    age.source_age_at_first_receipt_ms,
-                )
-            })
-            .collect();
-        let metadata = serde_json::to_vec(&(
-            &receipt.observer_id,
-            &receipt.observer_epoch,
-            &receipt.plan_revision,
-            &receipt.plan_hash,
-            &receipt.endpoint_id,
-            &receipt.source_epoch,
-            receipt.generation,
-            &receipt.source_hash,
-            receipt.observer_clock_quality,
-            &receipt.first_received_at,
-            receipt.request_duration_ms,
-            immutable_rows,
-        ))
-        .map_err(err)?;
-        let metadata_hash = format!("{:x}", Sha256::digest(&metadata));
+        let current_plan_hash = canonical_plan_hash(plan).map_err(str::to_owned)?;
+        let metadata_hash = witness_immutable_metadata_hash(&response)?;
         let evidence_id = crate::witness::archive_evidence_id(receipt).map_err(str::to_owned)?;
         let body_text = String::from_utf8(body).map_err(err)?;
         let tx = self.conn.transaction().map_err(err)?;
@@ -249,7 +499,17 @@ impl EvidenceDb {
                     params![receipt.observer_epoch, endpoint, receipt.source_epoch],
                 )
                 .map_err(err)?;
+                let current_quarantined = tx
+                    .execute(
+                        "UPDATE witness_current_activation SET quarantined=1
+                         WHERE endpoint=?1 AND plan_hash=?2 AND observer_epoch=?3 AND source_epoch=?4",
+                        params![endpoint, current_plan_hash, receipt.observer_epoch, receipt.source_epoch],
+                    )
+                    .map_err(err)?;
                 tx.commit().map_err(err)?;
+                if current_quarantined != 0 {
+                    self.current_tracks.remove(endpoint);
+                }
                 return Err("WITNESS_SOURCE_CONFLICT".into());
             }
             return Ok(WitnessArchiveRow {

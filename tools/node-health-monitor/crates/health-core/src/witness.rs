@@ -48,6 +48,8 @@ pub struct Endpoint {
     pub fixed_url: String,
     pub failure_domain: String,
     pub kind: String,
+    /// Explicit current-view activation; historical decode does not enforce it.
+    pub current_source_epoch: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,6 +120,7 @@ impl Plan {
             if !alias(&endpoint.endpoint_id)
                 || !alias(&endpoint.failure_domain)
                 || endpoint.kind != "approved_cache_only_https"
+                || !epoch(&endpoint.current_source_epoch)
                 || endpoint.fixed_url.len() > 512
                 || endpoint.fixed_url != parsed.as_str()
                 || endpoint

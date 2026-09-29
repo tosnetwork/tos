@@ -47,13 +47,13 @@ not configured or tested. This checkpoint does not authorize production.
 After this checkpoint, the isolated O subprocess and an in-tick lane-exit
 changed-property test were added; see `RUNTIME-SUPERVISION-RECEIPT.md` for
 exact raw logs and source/binary identities. Historical `witness_archive_v1`
-still has no current-source activation/high-water state or M-side receipt,
-queue, commit, and post-read elapsed accounting. The collector currently
-deduplicates its last archival ACK and does not expose a current qualified
-view to rules or A. No archive ACK, stored body, or O cache read should be
-interpreted as an activated current witness fact. A current view would require
-an explicit plan-bound source-epoch activation and generation ordering, plus
-M-local monotonic age accumulation; merely reading the latest archive row
-would renew stale data or allow an older archived generation to masquerade
-as current. This is the precise remaining C05 development mismatch, not a
-reason to fabricate a production adapter.
+now has a **separate** bounded current-source activation/high-water/quarantine
+state and direct development age/order review; see
+`CURRENT-M-INTERFACE-PROPOSAL.md` and `CURRENT-M-SLICE-RECEIPT.md`. The actual
+archive route invokes that review only with unknown transport age and emits no
+rule fact. M still lacks measured collector-to-M transit, queue, commit and
+post-read elapsed for a usable current view, and the collector exposes only
+its historical ACK to M. No archive ACK, stored body, or O cache read should
+be interpreted as an activated current witness rule fact. This is the precise
+remaining C05 development mismatch, not a reason to fabricate a production
+adapter.

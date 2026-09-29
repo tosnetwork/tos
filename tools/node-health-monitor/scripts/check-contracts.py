@@ -73,13 +73,14 @@ def main():
  witness_plan=dict(schema_version=1,profile='c05_development_cache_only',revision='a'*64,
   observer_id='observer_1',observer_epoch='boot-1',network_id='b'*64,genesis='c'*64,
   clock_skew_allowance_ms=5000,
-  endpoints=[dict(endpoint_id='cache_1',fixed_url='https://cache.example.test/witness',failure_domain='zone_a',kind='approved_cache_only_https')],
+  endpoints=[dict(endpoint_id='cache_1',fixed_url='https://cache.example.test/witness',failure_domain='zone_a',kind='approved_cache_only_https',current_source_epoch='upstream-1')],
   targets=[dict(target_id='validator_1',node_id='validator_1',role='normal',valid_from='2026-09-29T00:00:00Z',valid_until='2026-09-30T00:00:00Z',scope_id='masterchain',workchain=-1,shard='9223372036854775808',endpoint_ids=['cache_1'])])
  witness_source=dict(schema_version=1,endpoint_id='cache_1',source_epoch='upstream-1',generation='7',
   network_id='b'*64,genesis='c'*64,observed_at=None,source_age_ms=None,clock_quality='unknown',coverage='partial',
   rows=[dict(target_id='validator_1',observed_at=None,source_age_ms='46000',anchor=dict(kind='consensus',network_id='b'*64,genesis='c'*64,scope_id='masterchain',workchain=-1,shard='9223372036854775808',session_id='d'*64,slot=9,candidate_id=None,phase='reported_candidate'),network_observation='observed',reported_certificate_membership='not_checked',reported_proof='reported_valid',private_vote_visibility='unavailable',coverage='partial',missing_fields=['private_vote'])])
  plan_schema=validator('witness-plan.schema.json');source_schema=validator('witness-source.schema.json')
  plan_schema.validate(witness_plan);source_schema.validate(witness_source)
+ bad=copy.deepcopy(witness_plan);del bad['endpoints'][0]['current_source_epoch'];assert not plan_schema.is_valid(bad)
  bad=copy.deepcopy(witness_plan);bad['targets'][0]['valid_from']='Z';assert not plan_schema.is_valid(bad)
  bad=copy.deepcopy(witness_source);bad['generation']='0';assert not source_schema.is_valid(bad)
  bad=copy.deepcopy(witness_source);bad['rows'][0]['observed_at']='Z';assert not source_schema.is_valid(bad)

@@ -113,6 +113,8 @@ fn accounted_bytes(plan: &Plan, token: &Vec<u8>, inner: &CacheInner) -> usize {
         charged += endpoint.endpoint_id.capacity()
             + endpoint.fixed_url.capacity()
             + endpoint.failure_domain.capacity()
+            + endpoint.kind.capacity()
+            + endpoint.current_source_epoch.capacity()
             + 128;
     }
     for target in &plan.targets {
@@ -677,7 +679,7 @@ pub fn qualify_row_from_wire(
     let (response, source) = CacheResponse::decode(bytes, plan, endpoint_id)?;
     qualify_validated_row(&response, &source, plan, target_id, extra_elapsed_ms)
 }
-fn qualify_validated_row(
+pub(crate) fn qualify_validated_row(
     response: &CacheResponse,
     source: &Source,
     plan: &Plan,
