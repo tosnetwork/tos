@@ -37,7 +37,7 @@ impl Diagnosis {
         if value.summary.chars().count() > 2000
             || value.findings.len() > 6
             || value.missing_evidence.len() > 16
-            || value.missing_evidence.iter().any(|v| v.chars().count() > 256)
+            || value.missing_evidence.iter().any(|v| v.trim().is_empty() || v.chars().count() > 256)
             || value.recommended_runbooks.len() > 6
         {
             return Err("diagnosis size limit");

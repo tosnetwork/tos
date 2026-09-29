@@ -502,6 +502,9 @@ fn diagnosis_hypothesis_and_evidence_ids_obey_publication_contract() {
     assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
     value["missing_evidence"] = json!(["storage progress is unavailable"]);
     assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_ok());
+    value["missing_evidence"] = json!(["  "]);
+    assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
+    value["missing_evidence"] = json!(["storage progress is unavailable"]);
     value["findings"][0]["evidence_ids"] = json!([""]);
     assert!(Diagnosis::parse(value.to_string().as_bytes(), &ids).is_err());
     let oversized_id = "x".repeat(129);
