@@ -81,13 +81,13 @@ class Capture:
 
     def finish(self, operation: str, start: Point, outcome: str = "ok") -> bool:
         self.attempted += 1
+        end = sample(self.epoch)
         if process_epoch() != self.epoch:
             self.invalid += 1
             raise ValueError("capture process changed")
         if not operation or len(operation) > 96 or not operation.isascii() or outcome not in {"ok", "error", "timeout"}:
             self.invalid += 1
             raise ValueError("invalid operation or outcome")
-        end = sample(self.epoch)
         try:
             delta = duration_ns(start, end)
         except ValueError:
