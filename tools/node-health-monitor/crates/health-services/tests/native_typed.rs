@@ -166,6 +166,32 @@ async fn mismatched_pair_has_no_retry_and_no_publication() {
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     task.abort();
 }
+#[tokio::test]
+async fn snapshot_route_refuses_conflicted_and_restarted_typed_cache() {
+    use tower::ServiceExt;
+    let (mut sampler, state, _, _, task) = fake(false).await;
+    sampler.collect().await.unwrap();
+    let mut conflict = state.native.lock().unwrap().read_typed().unwrap();
+    conflict.coverage.missing_fields.push("same_generation_conflict".into());
+    assert!(state.native.lock().unwrap().publish_typed(conflict, BODY.into(), 0).is_err());
+    let request = || {
+        axum::http::Request::builder()
+            .uri("/v1/edge/snapshot")
+            .header("authorization", format!("Bearer {}", "e".repeat(32)))
+            .body(axum::body::Body::empty())
+            .unwrap()
+    };
+    assert_eq!(
+        tos_health_services::edge::router(state).oneshot(request()).await.unwrap().status(),
+        503
+    );
+    let restarted = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    assert_eq!(
+        tos_health_services::edge::router(restarted).oneshot(request()).await.unwrap().status(),
+        503
+    );
+    task.abort();
+}
 #[test]
 fn native_adapter_does_not_turn_missing_pq_into_zero() {
     let mut value = fixture();

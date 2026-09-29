@@ -27,7 +27,7 @@ implementation and local tests exist, not that the whole stage or deployment pas
   multisource recovery, metric-capacity, vote-order and deployment-refusal tests.
 - `crates/health-services/tests/http.rs`: 13 credential/cache/query HTTP tests,
   including all six non-null success DTOs and per-series/response-wide coverage boundaries.
-- `crates/health-services/tests/native_cache.rs`: 5 cache/schedule/bounds tests,
+- `crates/health-services/tests/native_cache.rs`: 6 cache/schedule/bounds tests,
   including a real loopback fake server and 1,000 router requests.
 - `crates/health-services/tests/durable.rs`: 8 actual SQLite file tests covering
   restart, immutable pages, scope identity/conflict, atomic outbox, whole-round rollback, immutable inventory revision/capacity and quota isolation.

@@ -104,6 +104,7 @@ def main():
  catalog=json.loads((ROOT/'contracts/source-manifest.json').read_text())
  assert catalog['c00_contract_inventory_complete'] is True
  assert catalog['c01_source_publisher_inventory_complete'] is True
+ assert catalog['c02_edge_basic_inventory_complete'] is True
  assert catalog['complete_manifest'] is False and catalog['production_adapter_inventory_complete'] is False
  required_sources={'native_exporter','native_core','process','host_cgroup','readiness','guard','consensus_status','validator_stats','quic','vote_intent','vote_signed_commit','pq_sign','pq_verify','rocksdb','witness','diagnostic_trace'}
  assert required_sources=={source['source_id'] for source in catalog['sources']}

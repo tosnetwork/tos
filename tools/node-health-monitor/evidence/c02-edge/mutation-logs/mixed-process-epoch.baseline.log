@@ -1,0 +1,13 @@
+$ cargo test --locked -p tos-health-core --test native_contract edge_wire_requires_bound_process_native_and_cgroup_epochs -- --exact
+timeout_seconds=120
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.98s
+     Running tests/native_contract.rs (target/debug/deps/native_contract-1a9b295898c8b3f2)
+
+running 1 test
+test edge_wire_requires_bound_process_native_and_cgroup_epochs ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+EXIT=0

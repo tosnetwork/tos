@@ -3,14 +3,17 @@
   "design_revision": "R4",
   "design_blob": "c28a6b2506c98fc728f868081a8192f7d0cd0d0a",
   "work_order_blob": "f7cd3371c8023bb61409d5e77fd96a3741f0cddd",
-  "memo_commit": "cb84e1684b46b2d94e0f9c4654020a96ac71ca66",
+  "memo_commit": "55b1928c2b7466df64220028e105ded6ae4f2ad3",
+  "c02_order_commit": "b9ed82ac091c48ebfd381b18208bb39175510da0",
   "base_commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
   "c01_implementation_commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+  "c02_implementation_commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
   "complete_manifest": false,
   "c00_contract_inventory_complete": true,
   "c01_source_publisher_inventory_complete": true,
+  "c02_edge_basic_inventory_complete": true,
   "production_adapter_inventory_complete": false,
-  "completeness_note": "C01 closes only the bounded native source publisher inventory. Synthetic isolated exporter fixtures are not production fixtures; unavailable C02-C05 adapters remain null/disabled and production performance is not accepted.",
+  "completeness_note": "C02 closes only basic cache-only edge access plus bounded process/cgroup adapters. All fixtures are isolated synthetic controls, not production host receipts. Readiness/getStats and later adapters remain disabled or unsupported; production deployment and performance are not accepted.",
   "sources": [
     {
       "source_id": "native_exporter",
@@ -50,13 +53,13 @@
     {
       "source_id": "process",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
         "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
         "symbol": "sample_process",
-        "source_sha256": "a02d946ec0baa6972a8c3d63fc2d312a1adcdff73be9d171de63a325a6280304"
+        "source_sha256": "a97b158acd9841c6237413abe749120a998c710cb366ec6405a128a56fa66335"
       },
       "interface": "fixed proc fields",
-      "grammar": "strict schema required before adapter enablement",
+      "grammar": "source-envelope.schema.json process payload; fixed configured PID files and process epoch",
       "semantic_type": "gauge",
       "unit": "bytes/ticks",
       "scope": "node",
@@ -64,7 +67,7 @@
       "reset": "process/source epoch",
       "generation": "increments only at valid source completion",
       "owner": "health_edge",
-      "cost": "two stat reads, one status read and boot identity",
+      "cost": "fixed stat/status/boot-id reads; PID generation rechecked; no process or FD scan",
       "capacity": {
         "max_bytes": 262144
       },
@@ -77,8 +80,8 @@
       },
       "fixture_schema": "source-envelope.schema.json",
       "fixture_provenance": {
-        "kind": "synthetic fixed process fields matching sample_process contract",
-        "test_source": "crates/health-services/tests/http.rs",
+        "kind": "isolated synthetic fixed process fields bound to the synthetic native fixture epoch; not a production host receipt",
+        "test_source": "crates/health-core/tests/native_contract.rs",
         "production_node": false
       }
     },
@@ -298,35 +301,6 @@
       }
     },
     {
-      "source_id": "host_cgroup",
-      "anchor": {
-        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
-        "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
-        "symbol": "sample_process",
-        "source_sha256": "c8d174884f9a9004967b769cf95b9c4394cec220122f625024b2bd6a6c5e0476"
-      },
-      "interface": "fixed proc/cgroup fields; full adapter not connected",
-      "grammar": "host/cgroup SourceEnvelope variant not frozen",
-      "semantic_type": "snapshot",
-      "unit": "per field",
-      "scope": "node",
-      "absence": "unsupported; never zero",
-      "reset": "source epoch",
-      "generation": "not implemented",
-      "owner": "health_edge",
-      "cost": "fixed file set required; not accepted",
-      "capacity": {
-        "max_bytes": 262144
-      },
-      "fixture": null,
-      "capability": {
-        "supported": false,
-        "enabled": false,
-        "contract_valid": false,
-        "performance_gate": "not_run"
-      }
-    },
-    {
       "source_id": "readiness",
       "anchor": {
         "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
@@ -468,6 +442,42 @@
         "supported": false,
         "enabled": false,
         "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "host_cgroup",
+      "anchor": {
+        "commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
+        "symbol": "sample_cgroup",
+        "source_sha256": "a97b158acd9841c6237413abe749120a998c710cb366ec6405a128a56fa66335"
+      },
+      "interface": "configured cgroup-v2 fixed files through at most 16 descendant levels",
+      "grammar": "source-envelope.schema.json host_cgroup payload; exact decimal u64; effective finite ancestor minimum",
+      "semantic_type": "snapshot",
+      "unit": "bytes/microseconds/events",
+      "scope": "node",
+      "absence": "unsupported or error; never zero and never an invented unlimited quota",
+      "reset": "process/edge epoch",
+      "generation": "increments only with the paired process sampling tick",
+      "owner": "health_edge",
+      "cost": "bounded ancestor memory.max/cpu.max reads plus fixed leaf memory.current/cpu.stat/memory.events; mount root is unconstrained; no scan",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/host-cgroup.json",
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated synthetic fake-root cgroup hierarchy including current-above-limit pressure; not a production host receipt",
+        "test_source": "crates/health-services/tests/cgroup.rs",
+        "implementation_commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "production_node": false
+      },
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
         "performance_gate": "not_run"
       }
     },

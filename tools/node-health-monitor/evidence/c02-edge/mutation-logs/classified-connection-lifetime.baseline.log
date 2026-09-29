@@ -1,0 +1,13 @@
+$ cargo test --locked -p tos-health-services --test ingress seven_slow_regular_requests_leave_classified_heartbeat_capacity -- --exact
+timeout_seconds=120
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.97s
+     Running tests/ingress.rs (target/debug/deps/ingress-9352a6bea5da2934)
+
+running 1 test
+test seven_slow_regular_requests_leave_classified_heartbeat_capacity ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 7.21s
+
+
+EXIT=0

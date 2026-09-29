@@ -116,3 +116,34 @@ fn native_bounds_and_loopback_are_enforced() {
     )
     .is_err());
 }
+
+#[tokio::test]
+async fn metrics_route_refuses_stale_conflicted_and_restarted_cache() {
+    let stale = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    let body = "value 1\n# EOF\n".to_string();
+    stale.native.lock().unwrap().publish("p", 1, body.clone(), 30_001, 0).unwrap();
+    assert!(!stale.native.lock().unwrap().publish("p", 1, body, 0, 0).unwrap());
+    assert_eq!(
+        router(stale).oneshot(req("/metrics")).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    let conflicted = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    conflicted.native.lock().unwrap().publish("p", 1, "value 1\n# EOF\n".into(), 0, 0).unwrap();
+    assert!(conflicted
+        .native
+        .lock()
+        .unwrap()
+        .publish("p", 1, "value 2\n# EOF\n".into(), 0, 0)
+        .is_err());
+    assert_eq!(
+        router(conflicted).oneshot(req("/metrics")).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+
+    let restarted = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    assert_eq!(
+        router(restarted).oneshot(req("/metrics")).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+}
