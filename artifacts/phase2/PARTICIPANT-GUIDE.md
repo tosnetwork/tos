@@ -7,6 +7,20 @@ repository before.
 You need about **25 minutes**, most of it waiting, and no prior knowledge of
 the cryptography.
 
+During the current open contribution window, TOS offers **300 TOS for each
+completed contribution that is accepted and verified**. This reward is an
+operational participation incentive, not part of the ceremony's fixed
+cryptographic commitments.
+
+To be reward-eligible, your contribution must extend the latest accepted
+ceremony chain, pass `phase2-verify`, have a valid signed attestation that
+verifies against your registered public key, and be returned with public
+evidence links. A public GitHub Gist under your account is the preferred place
+to publish the attestation and signature.
+
+**Never send your private signing key or secret randomness.** Neither is
+required for verification or reward payment.
+
 > An earlier ceremony was withdrawn and its directory removed;
 > [`README.md`](README.md) says what was wrong with it. If you are holding
 > older instructions from somewhere else, discard them — this directory is
@@ -342,11 +356,16 @@ them:
 cat ~/attestation-*.txt
 ```
 
-**Publish the text and the signature somewhere that is visibly yours** — a
-GitHub gist under your account, a comment on the ceremony's issue, your own
-website, a post from an account people know is you. This is the step that
-turns your contribution from an anonymous entry in a file into something a
-stranger can trace to a person who can be asked.
+**Publish the text and the signature somewhere that is visibly yours.**
+For the current open contribution program, a **public GitHub Gist under your
+account is preferred** because it gives reviewers one stable identity-linked
+URL for both the attestation and its signature. A comment on the ceremony's
+issue, your own website, or another public account you control can also provide
+identity evidence unless the operator asks you to mirror it into a Gist for
+submission consistency.
+
+This is the step that turns your contribution from an anonymous entry in a
+file into something a stranger can trace to a person who can be asked.
 
 Then send both files to the operator.
 
