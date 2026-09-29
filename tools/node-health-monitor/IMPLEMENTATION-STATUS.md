@@ -4,10 +4,13 @@ Design: R4, current design blob `c28a6b2506c98fc728f868081a8192f7d0cd0d0a`
 from memo `main@6c0536c042405e857bdced8e327b6f018c816526`.
 Reviewed recovery checkpoint: `628d2967b1bccdab752e9fbe4b66087df68d18b4`.
 The branch includes main commit `b9d8bc433c760f104a81cd1256581a4537923218`.
-C00–C04 have scoped development acceptances. C05–C08 have bounded development
-implementations; C09 has a local observability deployment and a scoped live-data
-receipt, not production or 72-hour acceptance. A checked item means only its
-named implementation and evidence exist, never a main merge.
+Status as of 2026-09-29 23:08 UTC: C00–C05 have scoped development acceptances
+(6 of 10 stages). C06–C08 have bounded development implementations, but not
+stage acceptance (3 stages). C09 is RED/open (1 stage): local observability and
+a scoped live-data receipt exist, but continuous AURA availability, production
+performance, and the 72-hour gate have not passed. A checked item means only
+its named implementation and evidence exist, never a main merge or production
+approval.
 
 | Work order | Delivered and locally tested | Still required before stage completion |
 |---|---|---|
@@ -16,11 +19,21 @@ named implementation and evidence exist, never a main merge.
 | C02 — accepted (basic-only edge) | ✅ Supervisor accepted exact commit `a884b0ca735736fd5a81306c26bdc65a5bd967df`: fixed 15-second sampler, bounded typed cache routes, process/native/cgroup epoch binding, effective cgroup ancestor quotas, eight mTLS connections with classified seven-plus-one heartbeat reserve, actual slow-source/TLS/role and six mutation witnesses | Readiness and validator/getStats stay unsupported; no host deployment/performance acceptance. Preclassification occupancy is bounded by separate TLS/header phases, not an unconditional heartbeat guarantee. |
 | C03 — accepted (basic-only state/rules/notification) | ✅ Supervisor accepted exact commit `2060cc1a1c7a36fe7214789a254cc36017c9f3a0`: WAL/FULL stores, persistent conflict and atomic outbox/timeline, 18-rule catalog, pinned Prometheus/Alertmanager checks and isolated stop/replay/receiver chain with five compiled mutation reds | Acceptance does not certify complete C04/C05 source adapters, production receivers, durable query grants, deployment or performance. |
 | C04 — accepted (integrated development only) | ✅ Supervisor accepted exact commit `88d5d95ad98413e035c4fec04a68c6306b5bb26d`: native v2 actions/persistence accounting and strict consumer, 35/35 native tests, 48 actual publisher pairs, isolated compiled mutations and 132 active Rust tests | No production business node run; stopped remains null, native performance gate false, hardware durable finality/actor drain/queue denominators remain unsupported. |
-| C05 — development candidate delivered | ✅ At `35ba59c111dd74518e6e661bcd1984598d493907`, bounded 32-target/16-endpoint cache witness, strict typed source/anchor and five-dimension qualification, O 15-second poll/cache and own-lane health, M historical archive plus separately qualified current view, same-host BOOTTIME transit, mTLS ingresses, budgets and negative controls were delivered with indexed evidence. | Production witness source/finality proof, actual external receiver, runtime cost and witness rule facts remain unsupported; this candidate does not establish verified finality or production acceptance. |
+| C05 — accepted (scoped development only) | ✅ Supervisor accepted the bounded development protocol/cache/archive/current scope at `35ba59c111dd74518e6e661bcd1984598d493907`: 32-target/16-endpoint cache witness, strict typed source/anchor and five-dimension qualification, O 15-second poll/cache and own-lane health, M historical archive plus separately qualified current view, same-host BOOTTIME transit, mTLS ingresses, budgets and negative controls. | Production witness source/finality proof, actual external receiver, runtime cost and witness rule facts remain unsupported; this acceptance does not establish verified finality or production readiness. |
 | C06 — integrated development implementation | ✅ Gated native diagnostic producer and bounded catalog-8 scalar payload, private authenticated native-to-Edge IPC, bounded relay, distinct M diagnostic ingest identity and single-writer durable batch/atomic idempotent ACK were integrated and tested. The catalog-7 fixture remains separate. | Business-node hook rollout and production cost/consumer-drain gates remain open; unknown diagnostic observation times remain null. M-to-Query diagnostic projection is unsupported, not a process fact. |
 | C07 — bounded development package | ✅ Deterministic 16-KiB process-only package from verified retained M parents at fixed grant watermarks, durable private QueryLedger with 8-MiB cap, restart/late-row/conflict/missing/tamper controls and a closed diagnosis parser. No model/provider is enabled. | Actual model token accounting, semantic entailment, approved model/provider configuration, retention cleanup, private egress and resource-isolation acceptance remain open. The test-side deterministic judgment is not AURA model diagnosis. |
 | C08 — gated transport implemented | ✅ Durable grants/cursors and six-tool private Unix MCP, a pinned AURA 0.12 stdio adapter, one-use credential handoff, bounded calls/body/session, child cancellation/reap and disconnect controls were exercised. Six real tool calls through AURA establish transport/error propagation; unavailable fixture tools did not become business successes. | Complete source adapters, production broker authorization/rotation and sustained resource/zero-upstream evidence remain open. External model calls remain disabled; transport success is not model judgment or production acceptance. |
 | C09 — RED/open: local observability running, continuity blocked | ✅ M-only update, six role-split 15-second supervised collectors and an MCP-enabled local query broker archived six distinct live `process` sources without relabelling `edge_probe`. Pinned AURA 0.12 queried the already-running broker under fixed 4+2 grants: six `partial` snapshots contained non-null process values matching original retained M parent payloads; unknown consensus and cross-run denial remained explicit, and grants were revoked. Scoped process-payload closure was reviewed at `44186b022f454449ed58dce30c7fec5c71f24851` (raw SHA-256 prefix `cc4c95c8`). No model API or business-node restart was involved during that collector/query rollout. | No production or 72-hour pass: the deployed `read_process_projection_state` scans oldest-first process history on every import. A live M sample already had 940 process rows / 1,580,107 bytes and was growing; at more than 4096 rows or 8 MiB its cap error reaches `block_manager_queries`, revoking active grants. The isolated incremental candidate is not deployed or a sustained-availability proof. Raising that cap or timeout is not a fix. Also complete A–F monotonic resource/performance and failure-domain/effective-quota profiles, credential/receiver rotation, rollback/restore and 72-hour soak. A partial process snapshot is not whole-node health or model diagnosis. |
+
+C09 development checkpoint: the committed incremental correctness candidate
+`9a6a79519b84fdfb79eef7f7036a644bd4af12e3` is not deployed. Its first
+read-only live M cost witness measured late catch-up pages at 5.735 and 6.128
+seconds, beyond the unchanged 5-second control connection limit (raw SHA-256
+`307a9e37fcc7903e85d8d179c991fbe5cd9e5e17bc83c6cee37f24386da2b9f1`).
+A one-copy-per-page optimization is under test in uncommitted source; the
+reported faster page times are provisional, not an accepted or deployed result.
+Independent cursor/scan review, concurrent control latency, full regression,
+rollback/restore and the 72-hour gate remain open.
 
 ## Evidence mapping
 
@@ -114,7 +127,10 @@ growing; at more than 4096 rows or 8 MiB the cap error causes
 `block_manager_queries` to revoke grants. An isolated candidate
 now uses bounded, restart-safe pages and a durable global M cursor, with source-
 bound tests in `evidence/c09-incremental-projection/REVIEW-RECEIPT.md`; it is not
-deployed or a soak/performance pass. External model/API use is disabled.
+deployed or a soak/performance pass. The initial read-only live M witness exceeded
+the existing 5-second control deadline on two catch-up pages; the batch-write
+successor and independent cursor/scan review are in progress. External model/API
+use is disabled.
 No business-node signing, vote-journal ordering, business-node database durability
 semantics, or protocol condition was changed; C06 did add durable M diagnostic ingest.
 
