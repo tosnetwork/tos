@@ -2,8 +2,11 @@
 
 Scope: basic-only C02 edge access from accepted C01
 `e460faa8403ae583bba21855abeb0e2ed81090ed`. The semantic implementation
-predecessor is `b736cca8c1b73166d311cf214be2e3432b19046e`; the final artifact successor
-adds only frozen manifests and indexed evidence.
+predecessor is `b736cca8c1b73166d311cf214be2e3432b19046e`. Commit
+`b057287393091be80e5730d30a442d9d559a7af7` also adds targeted HTTP
+refusal tests and the contract-checker update alongside frozen manifests and
+indexed evidence. This review successor adds the still-fresh-process/stale-native
+snapshot refusal assertion and its raw test receipts.
 
 ## Implemented boundary
 
@@ -70,7 +73,10 @@ adds only frozen manifests and indexed evidence.
   or restarting its configured synthetic source process.
 - Actual `/metrics` and `/v1/edge/snapshot` handlers return 503 for cold,
   stale, same-generation-conflicted, and new post-restart cache state; a
-  duplicate same-generation observation does not renew the original age.
+  duplicate same-generation observation does not renew the original age. The
+  successor snapshot test explicitly keeps the process observation fresh while
+  its typed native age crosses 30 seconds; the restored targeted test and full
+  contract entrypoint both exit 0 in the successor raw logs.
 
 ## Historical failures retained as lineage
 

@@ -25,7 +25,7 @@ aa6e5e303287edaf092509b20659bf886d46813bf446a16fbf0451a92eaebd66  tools/node-hea
 5e5fb78dffcc5791e815037cbb7eabb031bba68daf5c4250c1f7d424d2ab501e  tools/node-health-monitor/crates/health-services/tests/http.rs
 3c49d2675724412bbff2c5403c5509ca292d35a58e3aa77fe4ca510d2f3c5633  tools/node-health-monitor/crates/health-services/tests/ingress.rs
 e45e1e5586851f52999ea243131780663d6b555c0a7cda3e62b79847f4d89bac  tools/node-health-monitor/crates/health-services/tests/native_cache.rs
-303d394a088c2b2c075cf1ddbb145c5515792fd5bdee0c24bf6eaeb881f2a965  tools/node-health-monitor/crates/health-services/tests/native_typed.rs
+0b01e6def4cb94576f49aec3361c83308ec133dbc93bb2abcd109b4bee3c50c6  tools/node-health-monitor/crates/health-services/tests/native_typed.rs
 efc2b7483f36275cb2dc956e9bb22cd6d8a35234695118a8f803d07b3409949b  tools/node-health-monitor/scripts/check-contracts.py
 071e97f23e073a9c8fbe9c349208693fde16329550dea2ea0bcb9abeea323133  tools/node-health-monitor/scripts/freeze-manifests.py
 37b2e7224ff37a7a9dbcc9fc98dadbbc2f3bcb41b7e19440ac792a199fa1f992  tools/node-health-monitor/scripts/generate-contracts.py

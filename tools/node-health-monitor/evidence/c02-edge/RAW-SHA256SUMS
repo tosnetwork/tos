@@ -14,3 +14,5 @@ aa00c2bda37466e46a166c7fb09e8585a086e0281c7d16dd2375176ac6d08392  evidence/c02-e
 d27cf0e9fe7b272b2f2add873c410cb292efa90ae60ab0d5b42fbdd24a6b797a  evidence/c02-edge/raw/final-fmt-clippy.log
 dbab49ddad5c8da7e3cf3838b2541fc3a475eaf30ea0eee728420f945139d615  evidence/c02-edge/raw/final-route-refusal.log
 4d13c89d1022b996cfc64e5194732f89257bf3a4ca978aab12b463d4bd20a768  evidence/c02-edge/raw/pre-route-final-contract-workspace.log
+9d675023257241e966421dfe598bc0808c3b51e22cb7304cbab77c183ef90a49  evidence/c02-edge/raw/successor-final-contract-workspace.log
+a727be35ba725baf2ff621349744c9b39a08f5997b8c71d1707fa482f9299338  evidence/c02-edge/raw/successor-stale-snapshot-targeted.log

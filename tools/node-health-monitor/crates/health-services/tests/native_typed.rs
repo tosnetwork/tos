@@ -171,6 +171,19 @@ async fn snapshot_route_refuses_conflicted_and_restarted_typed_cache() {
     use tower::ServiceExt;
     let (mut sampler, state, _, _, task) = fake(false).await;
     sampler.collect().await.unwrap();
+    let mut stale_native = state.native.lock().unwrap().read_typed().unwrap();
+    stale_native.source_age_ms = Some(29_980);
+    let stale = EdgeState::new("v1".into(), vec![b'e'; 32]);
+    *stale.cache.lock().unwrap() = state.cache.lock().unwrap().clone();
+    stale.native.lock().unwrap().network = Some("a".repeat(64));
+    assert!(stale.native.lock().unwrap().publish_typed(stale_native, BODY.into(), 0).unwrap());
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    assert!(stale.cache.lock().unwrap().as_ref().unwrap().quality.usable(
+        chrono::Utc::now().timestamp_millis(),
+        30_000,
+        false
+    ));
+    assert!(stale.native.lock().unwrap().read_typed().is_none());
     let mut conflict = state.native.lock().unwrap().read_typed().unwrap();
     conflict.coverage.missing_fields.push("same_generation_conflict".into());
     assert!(state.native.lock().unwrap().publish_typed(conflict, BODY.into(), 0).is_err());
@@ -181,6 +194,10 @@ async fn snapshot_route_refuses_conflicted_and_restarted_typed_cache() {
             .body(axum::body::Body::empty())
             .unwrap()
     };
+    assert_eq!(
+        tos_health_services::edge::router(stale).oneshot(request()).await.unwrap().status(),
+        503
+    );
     assert_eq!(
         tos_health_services::edge::router(state).oneshot(request()).await.unwrap().status(),
         503
