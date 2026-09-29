@@ -1,5 +1,10 @@
 # C05 development checkpoint — not acceptance
 
+Historical slice only; the later transit/current implementation and its
+limitations are indexed in TRANSIT-CHECKPOINT-RECEIPT.md and
+CURRENT-BUDGET-CHECKPOINT.md. Claims below must not be read as current HEAD
+status.
+
 Baseline `node-health-monitor@88d5d95ad98413e035c4fec04a68c6306b5bb26d`.
 All test inputs are synthetic or isolated loopback TLS. No business node, key,
 live chain source, production deployment or main merge was used.

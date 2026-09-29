@@ -31,9 +31,45 @@ use tos_health_core::{
     wire::U64,
 };
 const MAX_CURRENT_VIEW_BYTES: usize = 1_048_576;
-// Writer decode/qualification and two body-lifetime read permits are reserved
-// before retained admission. Raw Source is archived on disk, not held here.
-const CURRENT_SCRATCH_RESERVE: usize = 8 * 32_768;
+const CURRENT_BODY_MAX: usize = 32_768;
+// The current lane admits one writer and two body-lifetime readers. Reserve
+// each simultaneously owned bounded object before charging retained views:
+// six archive/request/duplicate/serialization bodies, two decoded source
+// representations, two queued read bodies, and one read serialization body.
+// Row structures include decoded Source, CacheResponse, qualification and
+// read DTO vectors plus bounded target strings and allocator headroom.
+// SQLite pages and concurrent history-only requests are separate quotas, not
+// part of this volatile current-view budget.
+const CURRENT_SCRATCH_RESERVE: usize = 6 * CURRENT_BODY_MAX
+    + 2 * tos_health_core::witness::MAX_BODY
+    + 3 * CURRENT_BODY_MAX
+    + tos_health_core::witness::MAX_ROWS
+        * (std::mem::size_of::<tos_health_core::witness::Row>()
+            + std::mem::size_of::<RowAge>()
+            + std::mem::size_of::<RowQualification>()
+            + std::mem::size_of::<CurrentReadRow<'static>>()
+            + 3 * 64
+            + 512)
+    + 32 * 1024;
+const _: () = assert!(CURRENT_SCRATCH_RESERVE < MAX_CURRENT_VIEW_BYTES);
+fn current_admissible(track_bytes: usize, retained_bytes: usize, candidate_bytes: usize) -> bool {
+    CURRENT_SCRATCH_RESERVE
+        .checked_add(track_bytes)
+        .and_then(|total| total.checked_add(retained_bytes))
+        .and_then(|total| total.checked_add(candidate_bytes))
+        .is_some_and(|total| total <= MAX_CURRENT_VIEW_BYTES)
+}
+fn projected_current_entry_bytes(response: &CacheResponse) -> usize {
+    // Before the durable current review mutates its row maps, reserve the
+    // worst per-row ownership in both maps and the public view. IDs are
+    // aliases (<=64 bytes), UTC is <=40 bytes, and rows are capped at 32 by
+    // CacheResponse::decode. A new generation replaces the old entry; we
+    // deliberately charge both until that replacement has completed.
+    let track_row = 2 * (std::mem::size_of::<(String, Option<u64>)>() + 64 + 256);
+    let view_row =
+        std::mem::size_of::<(RowQualification, RowAge, Option<u64>)>() + 3 * 64 + 40 + 256;
+    2048 + response.row_ages.len() * (track_row + view_row)
+}
 
 struct CurrentView {
     endpoint: String,
@@ -92,6 +128,209 @@ mod current_output_tests {
         assert_eq!(buffer.0.capacity(), 32_768);
         assert!(buffer.write_all(b"x").is_err());
         assert_eq!(buffer.0.len(), 32_768);
+    }
+    #[test]
+    fn current_budget_structural_sizes_are_visible() {
+        eprintln!("CurrentView={} RowQualification={} RowAge={} CacheResponse={} Source={} SourceRow={} CurrentReadRow={}",
+            std::mem::size_of::<super::CurrentView>(),
+            std::mem::size_of::<crate::witness::RowQualification>(),
+            std::mem::size_of::<crate::witness::RowAge>(),
+            std::mem::size_of::<crate::witness::CacheResponse>(),
+            std::mem::size_of::<tos_health_core::witness::Source>(),
+            std::mem::size_of::<tos_health_core::witness::Row>(),
+            std::mem::size_of::<super::CurrentReadRow<'static>>());
+        eprintln!(
+            "current_scratch_reserve={} current_retained_room={}",
+            super::CURRENT_SCRATCH_RESERVE,
+            super::MAX_CURRENT_VIEW_BYTES - super::CURRENT_SCRATCH_RESERVE
+        );
+    }
+    #[test]
+    fn current_budget_accepts_exact_cap_and_refuses_overflow() {
+        let room = super::MAX_CURRENT_VIEW_BYTES - super::CURRENT_SCRATCH_RESERVE;
+        assert!(super::current_admissible(room / 2, room - room / 2, 0));
+        assert!(!super::current_admissible(room / 2, room - room / 2, 1));
+        assert!(!super::current_admissible(usize::MAX, 0, 0));
+    }
+    #[test]
+    fn full_row_candidate_is_charged_before_current_mutation() {
+        use crate::witness::{CacheReceipt, CacheResponse, RowAge};
+        use tos_health_core::{wire::U64, witness::ClockQuality};
+        let response = CacheResponse {
+            receipt: CacheReceipt {
+                schema_version: 1,
+                observer_id: "observer_1".into(),
+                observer_epoch: "observer-1".into(),
+                plan_revision: "a".repeat(64),
+                plan_hash: "a".repeat(64),
+                endpoint_id: "cache_1".into(),
+                source_epoch: "source-1".into(),
+                generation: U64(1),
+                source_hash: "a".repeat(64),
+                raw_transport_hash: "a".repeat(64),
+                observer_clock_quality: ClockQuality::Unknown,
+                first_received_at: "2026-09-29T00:00:00Z".into(),
+                request_duration_ms: U64(0),
+                source_json: String::new(),
+            },
+            observer_elapsed_ms: U64(0),
+            row_ages: (0..tos_health_core::witness::MAX_ROWS)
+                .map(|i| RowAge {
+                    target_id: format!("target_{i}"),
+                    first_received_at: "2026-09-29T00:00:00Z".into(),
+                    observer_clock_quality_at_first_receipt: ClockQuality::Unknown,
+                    source_age_at_first_receipt_ms: None,
+                    effective_age_ms: None,
+                    fresh_relative_age: false,
+                })
+                .collect(),
+        };
+        let projected = super::projected_current_entry_bytes(&response);
+        let room = super::MAX_CURRENT_VIEW_BYTES - super::CURRENT_SCRATCH_RESERVE;
+        assert!(projected > 32 * 1024 && projected < room);
+        assert!(super::current_admissible(room - projected, 0, projected));
+        assert!(!super::current_admissible(room - projected + 1, 0, projected));
+    }
+    #[test]
+    fn projected_full_row_entry_covers_decoded_track_and_view() {
+        use crate::witness::{CacheReceipt, CacheResponse, RowAge};
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
+        use tos_health_core::{
+            wire::U64,
+            witness::{ClockQuality, Plan, Source},
+        };
+        let targets = (0..32)
+            .map(|i| {
+                json!({
+                "target_id": format!("{}{:02}", "t".repeat(62), i),
+                    "node_id": format!("node_{i}"), "role": "normal",
+                    "valid_from": "2026-09-29T00:00:00Z",
+                    "valid_until": "2026-09-30T00:00:00Z",
+                    "scope_id": "masterchain", "workchain": -1,
+                    "shard": "9223372036854775808", "endpoint_ids": ["cache_1"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let plan_bytes = serde_json::to_vec(&json!({
+            "schema_version": 1, "profile": "c05_development_cache_only",
+            "revision": "a".repeat(64), "observer_id": "observer_1",
+            "observer_epoch": "o".repeat(128), "network_id": "a".repeat(64),
+            "genesis": "c".repeat(64), "clock_skew_allowance_ms": 5000,
+            "endpoints": [{
+                "endpoint_id": "cache_1",
+                "fixed_url": "https://cache.example.test/witness",
+                "failure_domain": "zone_a", "kind": "approved_cache_only_https",
+                "current_source_epoch": "s".repeat(128)
+            }], "targets": targets
+        }))
+        .unwrap();
+        let plan = Plan::decode(&plan_bytes).unwrap();
+        let rows = plan
+            .targets
+            .iter()
+            .map(|target| {
+                json!({
+                    "target_id": target.target_id, "observed_at": null,
+                    "source_age_ms": null, "anchor": null,
+                    "network_observation": "unavailable",
+                    "reported_certificate_membership": "not_checked",
+                    "reported_proof": "not_checked",
+                    "private_vote_visibility": "unavailable",
+                    "coverage": "partial", "missing_fields": ["private_vote"]
+                })
+            })
+            .collect::<Vec<_>>();
+        let source_json = serde_json::to_string(&json!({
+            "schema_version": 1, "endpoint_id": "cache_1",
+            "source_epoch": "s".repeat(128), "generation": "1",
+            "network_id": "a".repeat(64), "genesis": "c".repeat(64),
+            "observed_at": null, "source_age_ms": null,
+            "clock_quality": "unknown", "coverage": "partial", "rows": rows
+        }))
+        .unwrap();
+        let source = Source::decode(source_json.as_bytes(), &plan, "cache_1").unwrap();
+        let response = CacheResponse {
+            receipt: CacheReceipt {
+                schema_version: 1,
+                observer_id: plan.observer_id.clone(),
+                observer_epoch: plan.observer_epoch.clone(),
+                plan_revision: plan.revision.clone(),
+                plan_hash: tos_health_core::witness::canonical_plan_hash(&plan).unwrap(),
+                endpoint_id: "cache_1".into(),
+                source_epoch: "s".repeat(128),
+                generation: U64(1),
+                source_hash: tos_health_core::witness::canonical_source_hash(&source).unwrap(),
+                raw_transport_hash: crate::hex(&Sha256::digest(source_json.as_bytes())),
+                observer_clock_quality: ClockQuality::Unknown,
+                first_received_at: "2026-09-29T00:00:00.123456789Z".into(),
+                request_duration_ms: U64(0),
+                source_json,
+            },
+            observer_elapsed_ms: U64(0),
+            row_ages: source
+                .rows
+                .iter()
+                .map(|row| RowAge {
+                    target_id: row.target_id.clone(),
+                    first_received_at: "2026-09-29T00:00:00.123456789Z".into(),
+                    observer_clock_quality_at_first_receipt: ClockQuality::Unknown,
+                    source_age_at_first_receipt_ms: None,
+                    effective_age_ms: None,
+                    fresh_relative_age: false,
+                })
+                .collect(),
+        };
+        let path = std::env::temp_dir().join(format!(
+            "nhm-current-budget-{}-{}.db",
+            std::process::id(),
+            crate::hex(&crate::random_token().unwrap())
+        ));
+        let mut db = crate::durable::EvidenceDb::open(&path, 1_048_576).unwrap();
+        db.activate_witness_current(&plan).unwrap();
+        let stamp = crate::transit::Stamp::capture();
+        let qualified =
+            db.review_witness_current_at(&response, &plan, Some(0), stamp.clone()).unwrap();
+        let view = super::CurrentView::new(&response, qualified, stamp, Some(0)).unwrap();
+        let actual = db.witness_current_resident_bytes() + view.endpoint.capacity() + view.charge();
+        let projected = super::projected_current_entry_bytes(&response);
+        eprintln!("full_row_actual={actual} projected={projected}");
+        assert!(actual <= projected, "preflight must dominate actual retained capacities");
+    }
+    #[tokio::test]
+    async fn timed_out_queued_reads_keep_leases_until_command_drain() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(2);
+        let reads = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
+        for _ in 0..2 {
+            assert_eq!(
+                super::read_queued_current(
+                    &tx,
+                    &reads,
+                    "cache_1",
+                    std::time::Duration::from_millis(10)
+                )
+                .await
+                .err()
+                .as_deref(),
+                Some("evidence deadline")
+            );
+        }
+        assert_eq!(reads.available_permits(), 0);
+        assert_eq!(
+            super::read_queued_current(
+                &tx,
+                &reads,
+                "cache_1",
+                std::time::Duration::from_millis(10)
+            )
+            .await
+            .err()
+            .as_deref(),
+            Some("witness current read busy"),
+            "caller timeout must not release a queued writer command's lease"
+        );
+        drop(rx);
+        assert_eq!(reads.available_permits(), 2, "actual queue drain releases both leases");
     }
 }
 impl CurrentView {
@@ -224,6 +463,24 @@ impl CurrentView {
         Ok(bytes.0)
     }
 }
+async fn read_queued_current(
+    evidence: &SyncSender<EvidenceCommand>,
+    reads: &Arc<tokio::sync::Semaphore>,
+    endpoint_id: &str,
+    deadline: Duration,
+) -> Result<(Vec<u8>, Arc<tokio::sync::OwnedSemaphorePermit>), String> {
+    let lease =
+        Arc::new(reads.clone().try_acquire_owned().map_err(|_| "witness current read busy")?);
+    let (tx, rx) = oneshot::channel();
+    evidence
+        .try_send(EvidenceCommand::ReadWitness(endpoint_id.to_owned(), lease.clone(), tx))
+        .map_err(|_| "evidence queue unavailable")?;
+    let bytes = tokio::time::timeout(deadline, rx)
+        .await
+        .map_err(|_| "evidence deadline")?
+        .map_err(|_| "evidence writer stopped")??;
+    Ok((bytes, lease))
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagerConfig {
@@ -266,6 +523,7 @@ pub struct Manager {
     witness_plan: Option<Arc<tos_health_core::witness::Plan>>,
     witness_current_token: Option<Arc<Vec<u8>>>,
     witness_current_reads: Arc<tokio::sync::Semaphore>,
+    witness_current_writes: Arc<tokio::sync::Semaphore>,
 }
 #[derive(Clone)]
 struct Cached {
@@ -287,6 +545,7 @@ enum EvidenceCommand {
         Box<crate::witness::CacheResponse>,
         Arc<tos_health_core::witness::Plan>,
         Option<crate::transit::Stamp>,
+        Option<tokio::sync::OwnedSemaphorePermit>,
         oneshot::Sender<Result<WitnessArchiveRow, String>>,
     ),
     ReadWitness(
@@ -442,7 +701,13 @@ impl Manager {
                         EvidenceCommand::Insert(value, reply) => {
                             let _ = reply.send(evidence_db.insert(*value));
                         }
-                        EvidenceCommand::InsertWitness(value, plan, stamp, reply) => {
+                        EvidenceCommand::InsertWitness(
+                            value,
+                            plan,
+                            stamp,
+                            _current_slot,
+                            reply,
+                        ) => {
                             // Duplicate archive ACKs return the original stored body.
                             // Current qualification must use this incoming validated
                             // body, which is bound to the transit digest.
@@ -450,58 +715,129 @@ impl Manager {
                             let archived = evidence_db.insert_witness(*value, &plan);
                             if archived.is_ok() {
                                 // A current refusal cannot erase a valid historical commit.
-                                let received_at = crate::transit::Stamp::capture();
-                                let elapsed = stamp
-                                    .as_ref()
-                                    .zip(received_at.as_ref())
-                                    .and_then(|(start, end)| start.elapsed_ms_at(end));
-                                match evidence_db.review_witness_current_at(
-                                    &incoming,
-                                    &plan,
-                                    elapsed,
-                                    received_at.clone(),
-                                ) {
-                                    Ok(qualified) => {
-                                        if let Some(candidate) = CurrentView::new(
-                                            &incoming,
-                                            qualified,
-                                            received_at,
-                                            elapsed,
+                                if _current_slot.is_none() {
+                                    // Historical-only delivery cannot advance or allocate the
+                                    // current-order index. It also cannot leave a matching old
+                                    // view qualified without a measured current receipt.
+                                    let receipt = &incoming.receipt;
+                                    if current_views.get(&receipt.endpoint_id).is_some_and(|view| {
+                                        view.observer_epoch == receipt.observer_epoch
+                                            && view.source_epoch == receipt.source_epoch
+                                    }) {
+                                        current_views.remove(&receipt.endpoint_id);
+                                        evidence_db
+                                            .forget_witness_current_track(&receipt.endpoint_id);
+                                    }
+                                } else {
+                                    let retained_bytes = current_views
+                                        .iter()
+                                        .map(|(key, view)| key.capacity() + view.charge())
+                                        .sum::<usize>();
+                                    let same_generation = current_views
+                                        .get(&incoming.receipt.endpoint_id)
+                                        .is_some_and(|view| {
+                                            view.generation == incoming.receipt.generation.0
+                                                && view.source_hash == incoming.receipt.source_hash
+                                        });
+                                    let projected = if same_generation {
+                                        0
+                                    } else {
+                                        projected_current_entry_bytes(&incoming)
+                                    };
+                                    if !current_admissible(
+                                        evidence_db.witness_current_resident_bytes(),
+                                        retained_bytes,
+                                        projected,
+                                    ) {
+                                        let receipt = &incoming.receipt;
+                                        if current_views.get(&receipt.endpoint_id).is_some_and(
+                                            |view| {
+                                                view.observer_epoch == receipt.observer_epoch
+                                                    && view.source_epoch == receipt.source_epoch
+                                            },
                                         ) {
-                                            let endpoint = candidate.endpoint.clone();
-                                            if let Some(existing) = current_views.get_mut(&endpoint)
-                                            {
-                                                if existing.generation == candidate.generation
-                                                    && existing.source_hash == candidate.source_hash
+                                            current_views.remove(&receipt.endpoint_id);
+                                            evidence_db
+                                                .forget_witness_current_track(&receipt.endpoint_id);
+                                        }
+                                        let _ = reply.send(archived);
+                                        continue;
+                                    }
+                                    let received_at = crate::transit::Stamp::capture();
+                                    let elapsed = stamp
+                                        .as_ref()
+                                        .zip(received_at.as_ref())
+                                        .and_then(|(start, end)| start.elapsed_ms_at(end));
+                                    match evidence_db.review_witness_current_at(
+                                        &incoming,
+                                        &plan,
+                                        elapsed,
+                                        received_at.clone(),
+                                    ) {
+                                        Ok(qualified) => {
+                                            if let Some(candidate) = CurrentView::new(
+                                                &incoming,
+                                                qualified,
+                                                received_at,
+                                                elapsed,
+                                            ) {
+                                                let endpoint = candidate.endpoint.clone();
+                                                if let Some(existing) =
+                                                    current_views.get_mut(&endpoint)
                                                 {
-                                                    existing.merge_same_generation(&candidate);
-                                                } else {
-                                                    current_views.remove(&endpoint);
+                                                    if existing.generation == candidate.generation
+                                                        && existing.source_hash
+                                                            == candidate.source_hash
+                                                    {
+                                                        existing.merge_same_generation(&candidate);
+                                                    } else {
+                                                        current_views.remove(&endpoint);
+                                                    }
                                                 }
-                                            }
-                                            if !current_views.contains_key(&endpoint) {
-                                                let charged = CURRENT_SCRATCH_RESERVE
-                                                    + evidence_db.witness_current_resident_bytes()
-                                                    + current_views
+                                                if !current_views.contains_key(&endpoint) {
+                                                    let retained_bytes = current_views
                                                         .iter()
                                                         .map(|(key, view)| {
                                                             key.capacity() + view.charge()
                                                         })
-                                                        .sum::<usize>()
-                                                    + endpoint.capacity()
-                                                    + candidate.charge();
-                                                if charged <= MAX_CURRENT_VIEW_BYTES
-                                                    && current_views.len() < 16
-                                                {
-                                                    current_views.insert(endpoint, candidate);
+                                                        .sum::<usize>();
+                                                    if current_admissible(
+                                                        evidence_db
+                                                            .witness_current_resident_bytes(),
+                                                        retained_bytes,
+                                                        endpoint.capacity() + candidate.charge(),
+                                                    ) && current_views.len() < 16
+                                                    {
+                                                        current_views.insert(endpoint, candidate);
+                                                    }
                                                 }
                                             }
+                                            // Compare actual owned capacities after review as
+                                            // well as the preflight projection. A rejected
+                                            // candidate must not leave a hidden volatile track.
+                                            let retained_bytes = current_views
+                                                .iter()
+                                                .map(|(key, view)| key.capacity() + view.charge())
+                                                .sum::<usize>();
+                                            if !current_views
+                                                .contains_key(&incoming.receipt.endpoint_id)
+                                                || !current_admissible(
+                                                    evidence_db.witness_current_resident_bytes(),
+                                                    retained_bytes,
+                                                    0,
+                                                )
+                                            {
+                                                current_views.remove(&incoming.receipt.endpoint_id);
+                                                evidence_db.forget_witness_current_track(
+                                                    &incoming.receipt.endpoint_id,
+                                                );
+                                            }
                                         }
+                                        Err(error) if error == "WITNESS_CURRENT_CONFLICT" => {
+                                            current_views.remove(&incoming.receipt.endpoint_id);
+                                        }
+                                        Err(_) => {} // An unrelated historical epoch cannot evict current.
                                     }
-                                    Err(error) if error == "WITNESS_CURRENT_CONFLICT" => {
-                                        current_views.remove(&incoming.receipt.endpoint_id);
-                                    }
-                                    Err(_) => {} // An unrelated historical epoch cannot evict current.
                                 }
                             } else if archived
                                 .as_ref()
@@ -553,6 +889,7 @@ impl Manager {
             witness_plan,
             witness_current_token,
             witness_current_reads: Arc::new(tokio::sync::Semaphore::new(2)),
+            witness_current_writes: Arc::new(tokio::sync::Semaphore::new(1)),
         })
     }
     pub async fn ingest(&self, frame: FactFrame) -> Result<String, String> {
@@ -674,21 +1011,13 @@ impl Manager {
         {
             return Err("witness current development lane disabled".into());
         }
-        let lease = Arc::new(
-            self.witness_current_reads
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| "witness current read busy")?,
-        );
-        let (tx, rx) = oneshot::channel();
-        self.evidence
-            .try_send(EvidenceCommand::ReadWitness(endpoint_id.to_owned(), lease.clone(), tx))
-            .map_err(|_| "evidence queue unavailable")?;
-        let bytes = tokio::time::timeout(Duration::from_secs(2), rx)
-            .await
-            .map_err(|_| "evidence deadline")?
-            .map_err(|_| "evidence writer stopped")??;
-        Ok((bytes, lease))
+        read_queued_current(
+            &self.evidence,
+            &self.witness_current_reads,
+            endpoint_id,
+            Duration::from_secs(2),
+        )
+        .await
     }
     async fn archive_witness_with_stamp(
         &self,
@@ -697,11 +1026,23 @@ impl Manager {
         stamp: Option<crate::transit::Stamp>,
     ) -> Result<WitnessArchiveRow, String> {
         let plan = self.witness_plan.as_ref().ok_or("witness development plan disabled")?;
+        // Current qualification is singleflight through writer completion.
+        // Saturation merely drops current timing; historical archive still runs.
+        let current_slot = stamp
+            .as_ref()
+            .and_then(|_| self.witness_current_writes.clone().try_acquire_owned().ok());
+        let stamp = stamp.filter(|_| current_slot.is_some());
         let (response, _) = crate::witness::CacheResponse::decode(bytes, plan, endpoint_id)
             .map_err(str::to_owned)?;
         let (tx, rx) = oneshot::channel();
         self.evidence
-            .try_send(EvidenceCommand::InsertWitness(Box::new(response), plan.clone(), stamp, tx))
+            .try_send(EvidenceCommand::InsertWitness(
+                Box::new(response),
+                plan.clone(),
+                stamp,
+                current_slot,
+                tx,
+            ))
             .map_err(|_| "evidence queue unavailable")?;
         tokio::time::timeout(Duration::from_secs(2), rx)
             .await

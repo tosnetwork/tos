@@ -258,6 +258,93 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
         .unwrap();
     assert_eq!(archived, 1, "historical archive committed separately");
     collector_task.abort();
+    // A second real mTLS O-cache read and M-ingress POST with the wrong
+    // current credential must still ACK the historical duplicate while
+    // invalidating the matching volatile current view.
+    let approved = client(&t.0, Some("client"));
+    let cached = approved
+        .get(format!("https://localhost:{}/v1/witness/cache/cache_1", o_tls_addr.port()))
+        .bearer_auth("o".repeat(32))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cached.status(), reqwest::StatusCode::OK);
+    let body = cached.bytes().await.unwrap();
+    let cached_body = body.clone();
+    let stamp = tos_health_services::transit::Stamp::capture().unwrap();
+    let delivered = stamp
+        .add_headers(
+            approved
+                .post(format!(
+                    "https://localhost:{}/v1/manager/witness-evidence/cache_1",
+                    m_tls_addr.port()
+                ))
+                .bearer_auth("i".repeat(32))
+                .header("content-type", "application/json"),
+            &body,
+            &"x".repeat(32),
+        )
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delivered.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        reader.get(&current_url).bearer_auth(&read_token).send().await.unwrap().status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "wrong current token through TLS cannot retain old current view"
+    );
+    for (header, replacement, expected) in [
+        (
+            "x-nhm-witness-boot-id",
+            "00000000-0000-0000-0000-000000000000".to_owned(),
+            reqwest::StatusCode::OK,
+        ),
+        ("x-nhm-witness-time-ns", "time:[999999]".to_owned(), reqwest::StatusCode::OK),
+        ("x-nhm-witness-start-ns", u64::MAX.to_string(), reqwest::StatusCode::OK),
+        ("x-nhm-witness-body-sha256", "0".repeat(64), reqwest::StatusCode::SERVICE_UNAVAILABLE),
+    ] {
+        // Keep the configured 1/s ingress rate; these are distinct M
+        // deliveries of the same immutable O cache body, not extra O polls.
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        let body = cached_body.clone();
+        let stamp = tos_health_services::transit::Stamp::capture().unwrap();
+        let mut request = stamp
+            .add_headers(
+                approved
+                    .post(format!(
+                        "https://localhost:{}/v1/manager/witness-evidence/cache_1",
+                        m_tls_addr.port()
+                    ))
+                    .bearer_auth("i".repeat(32))
+                    .header("content-type", "application/json"),
+                &body,
+                &"c".repeat(32),
+            )
+            .body(body)
+            .build()
+            .unwrap();
+        request.headers_mut().insert(
+            reqwest::header::HeaderName::from_bytes(header.as_bytes()).unwrap(),
+            reqwest::header::HeaderValue::from_str(&replacement).unwrap(),
+        );
+        assert_eq!(
+            approved.execute(request).await.unwrap().status(),
+            reqwest::StatusCode::OK,
+            "{header} cannot revoke historical ACK"
+        );
+        let current_reply = reader.get(&current_url).bearer_auth(&read_token).send().await.unwrap();
+        assert_eq!(current_reply.status(), expected, "{header} current availability");
+        if expected == reqwest::StatusCode::OK {
+            let value: Value = current_reply.json().await.unwrap();
+            assert_eq!(value["status"], "unknown", "{header} cannot renew current");
+        }
+    }
+    let archived_after: i64 = rusqlite::Connection::open(t.0.join("evidence.db"))
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM witness_observations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(archived_after, 1, "invalid current metadata does not mint historical duplicate");
     o_ingress.abort();
     m_ingress.abort();
     m_task.abort();

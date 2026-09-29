@@ -328,10 +328,10 @@ async fn synthetic_valid_clock_current_route_qualifies_context_without_proof() {
     let body =
         cached_synthetic_valid_clock(plan, &serde_json::to_vec(&source_value).unwrap()).await;
     assert_eq!(
-        post_with_current_stamp(manager.clone(), body, &"c".repeat(32)).await.0,
+        post_with_current_stamp(manager.clone(), body.clone(), &"c".repeat(32)).await.0,
         StatusCode::OK
     );
-    let (status, value) = current(manager).await;
+    let (status, value) = current(manager.clone()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(value["status"], "qualified", "only the synthetic relative/context gate qualifies");
     assert_eq!(value["production_usable"], false);
@@ -342,6 +342,73 @@ async fn synthetic_valid_clock_current_route_qualifies_context_without_proof() {
     assert_eq!(value["rows"][0]["qualification"]["local_action"], "unknown");
     if let Ok(path) = std::env::var("NHM_CURRENT_QUALIFIED_JSON") {
         std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    assert_eq!(post(manager.clone(), body.clone()).await.0, StatusCode::OK);
+    assert_eq!(
+        current(manager.clone()).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "missing current metadata invalidates a matching qualified view"
+    );
+    assert_eq!(
+        post_with_current_stamp(manager.clone(), body, &"c".repeat(32)).await.0,
+        StatusCode::OK
+    );
+    let (status, after) = current(manager).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        after["status"], "unknown",
+        "same-generation replay cannot recreate the forgotten first M age witness"
+    );
+}
+
+#[tokio::test]
+async fn bad_current_clock_or_auth_keeps_historical_ack_but_never_qualifies() {
+    for (key, value, expected) in [
+        ("x-nhm-witness-current-auth", "x".repeat(32), StatusCode::SERVICE_UNAVAILABLE),
+        ("x-nhm-witness-body-sha256", "0".repeat(64), StatusCode::SERVICE_UNAVAILABLE),
+        ("x-nhm-witness-boot-id", "00000000-0000-0000-0000-000000000000".into(), StatusCode::OK),
+        ("x-nhm-witness-time-ns", "time:[999999]".into(), StatusCode::OK),
+        ("x-nhm-witness-start-ns", u64::MAX.to_string(), StatusCode::OK),
+    ] {
+        let fixture = Fixture::new();
+        let plan = fixture.plan();
+        let mut config = fixture.config();
+        config.witness_current_token_file = Some(fixture.0.join("current"));
+        config.witness_current_trusted_same_host = true;
+        let manager = Manager::start(&config).unwrap();
+        let body = cached(plan, &source('d')).await;
+        let stamp = tos_health_services::transit::Stamp::capture().unwrap();
+        let mut signed = stamp
+            .add_headers(reqwest::Client::new().post("http://localhost/"), &body, &"c".repeat(32))
+            .build()
+            .unwrap();
+        signed.headers_mut().insert(key, axum::http::HeaderValue::from_str(&value).unwrap());
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/v1/manager/witness-evidence/cache_1")
+            .header("authorization", format!("Bearer {}", "a".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        for (name, value) in signed.headers() {
+            request.headers_mut().append(name, value.clone());
+        }
+        let response =
+            tos_health_services::manager::router(manager.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{key} cannot revoke historical archive ACK");
+        let (status, current) = current(manager).await;
+        assert_eq!(status, expected, "{key} must not qualify current");
+        if status == StatusCode::OK {
+            assert_eq!(current["status"], "unknown");
+            assert!(current["collector_to_m_ms"].is_null());
+        } else {
+            assert_eq!(current["status"], "unavailable");
+        }
+        let count: i64 = rusqlite::Connection::open(fixture.0.join("evidence.db"))
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM witness_observations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "{key} historical row still committed once");
     }
 }
 async fn post(manager: Manager, bytes: Vec<u8>) -> (StatusCode, Value) {
@@ -533,7 +600,10 @@ async fn actual_observer_cache_to_manager_retained_archive_dedups_without_rule_f
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(current_high.as_deref(), Some("1"));
+    assert_eq!(
+        current_high, None,
+        "history-only ACK must not advance the measured current-order index"
+    );
     let conflicting = cached(plan, &source('f')).await;
     assert_eq!(post(manager.clone(), conflicting).await.0, StatusCode::CONFLICT);
     let quarantined: i64 = rusqlite::Connection::open(fixture.0.join("evidence.db"))
@@ -568,11 +638,7 @@ async fn actual_observer_cache_to_manager_retained_archive_dedups_without_rule_f
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(
-        current_high.as_deref(),
-        Some("1"),
-        "historical other epoch cannot advance the current activation"
-    );
+    assert_eq!(current_high, None, "historical other epoch cannot advance current activation");
     let mut revised: Value = serde_json::to_value(fixture.plan()).unwrap();
     revised["revision"] = json!("b".repeat(64));
     let revised_bytes = serde_json::to_vec(&revised).unwrap();

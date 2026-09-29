@@ -178,6 +178,11 @@ impl EvidenceDb {
             })
             .sum()
     }
+    /// Drop only volatile current-age ownership after a failed local budget
+    /// admission. Persisted history and the activation high-water remain.
+    pub fn forget_witness_current_track(&mut self, endpoint: &str) {
+        self.current_tracks.remove(endpoint);
+    }
     pub fn bind_network(&mut self, network: &str) -> Result<()> {
         bind_network(&mut self.conn, network)
     }
