@@ -26,7 +26,7 @@ namespace http {
 
 HttpServer::HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits)
     : address_(address), callback_(std::move(callback)), limits_(limits) {
-  add_collector(collector_.get());
+  add_collector("http_connections", collector_.get());
 }
 
 void HttpServer::start_up() {

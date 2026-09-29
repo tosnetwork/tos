@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <functional>
 #include <type_traits>
 
@@ -37,14 +39,22 @@ class CollectorWrapper : public AsyncCollector {
   void collect(MetricsPromise P) final;
 
   template <typename A>
-  void add_collector(td::actor::ActorId<A> collector);
+  void add_collector(std::string source_id, td::actor::ActorId<A> collector);
 
  private:
+  struct SourceCollector {
+    std::string source_id;
+    AsyncCollectorClosure collect;
+    double last_completed_at = 0;
+    double last_success_at = 0;
+    std::uint64_t failures = 0;
+    bool last_result_ok = false;
+  };
   td::actor::Task<MetricSet> collect_coro();
 
   bool collection_inflight_ = false;
   bool registration_overflow_ = false;
-  std::vector<AsyncCollectorClosure> collector_closures_;
+  std::vector<SourceCollector> source_collectors_;
 };
 
 // CRTP helper for all instruments (collector objects).
@@ -102,7 +112,7 @@ class MultiCollector : public td::actor::Actor, public AsyncCollector {
   void add_sync_collector(std::shared_ptr<Collector> collector);
 
   template <std::derived_from<AsyncCollector> A>
-  void add_async_collector(td::actor::ActorId<A> collector);
+  void add_async_collector(std::string source_id, td::actor::ActorId<A> collector);
 
   static td::actor::ActorOwn<MultiCollector> create(std::string prefix);
 
@@ -186,17 +196,24 @@ class Labeled : public Instrument<Labeled<LabelType, InstrumentType>> {
 };
 
 template <typename A>
-void CollectorWrapper::add_collector(td::actor::ActorId<A> collector) {
+void CollectorWrapper::add_collector(std::string source_id, td::actor::ActorId<A> collector) {
   CHECK(!collector.empty());
-  if (collector_closures_.size() >= 256) {
+  const bool valid_source = !source_id.empty() && source_id.size() <= 64 && source_id[0] >= 'a' &&
+                            source_id[0] <= 'z' && std::all_of(source_id.begin(), source_id.end(), [](char c) {
+                              return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+                            });
+  if (!valid_source || source_collectors_.size() >= 256 ||
+      std::any_of(source_collectors_.begin(), source_collectors_.end(),
+                  [&](const auto &item) { return item.source_id == source_id; })) {
     registration_overflow_ = true;
     return;
   }
-  collector_closures_.push_back([collector](MetricsPromise P) mutable {
-    td::actor::send_lambda(collector, [P = std::move(P), &collector = collector.get_actor_unsafe()]() mutable {
-      collector.collect(std::move(P));
-    });
-  });
+  source_collectors_.push_back(
+      {.source_id = std::move(source_id), .collect = [collector](MetricsPromise P) mutable {
+         td::actor::send_lambda(collector, [P = std::move(P), &collector = collector.get_actor_unsafe()]() mutable {
+           collector.collect(std::move(P));
+         });
+       }});
 }
 
 template <typename Derived>
@@ -206,8 +223,8 @@ Instrument<Derived>::Ptr Instrument<Derived>::make(Args &&...args) {
 }
 
 template <std::derived_from<AsyncCollector> A>
-void MultiCollector::add_async_collector(td::actor::ActorId<A> collector) {
-  async_collector_->add_collector(std::move(collector));
+void MultiCollector::add_async_collector(std::string source_id, td::actor::ActorId<A> collector) {
+  async_collector_->add_collector(std::move(source_id), std::move(collector));
 }
 
 template <typename ValueType>

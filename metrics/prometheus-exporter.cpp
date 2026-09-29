@@ -1,6 +1,9 @@
+#include <algorithm>
+
 #include "td/actor/coro_utils.h"
 
 #include "core-health.h"
+#include "core-registry.h"
 #include "metrics-types.h"
 #include "prometheus-exporter.h"
 
@@ -11,7 +14,7 @@ td::actor::ActorOwn<PrometheusExporter> PrometheusExporter::create(std::string p
 }
 
 PrometheusExporter::PrometheusExporter(std::string prefix) : prefix_(std::move(prefix)) {
-  add_collector(collector_.get());
+  add_collector("exporter_internal", collector_.get());
 }
 
 PrometheusExporter::HttpCallback::HttpCallback(td::actor::ActorId<PrometheusExporter> exporter)
@@ -35,7 +38,7 @@ void PrometheusExporter::listen(td::IPAddress addr) {
   loopback_ = ip.starts_with("127.") || ip == "::1";
   http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "HTTP@" << addr, addr, std::move(callback), limits);
   td::actor::send_closure(collector_.get(), &metrics::MultiCollector::add_async_collector<http::HttpServer>,
-                          http_.get());
+                          "http_server", http_.get());
 }
 
 void PrometheusExporter::set_health_node(std::string value) {
@@ -69,6 +72,7 @@ void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, cons
   if (code == 200) {
     response->add_header({"X-TOS-Snapshot-Generation", std::to_string(admission_.generation())});
     response->add_header({"X-TOS-Process-Epoch", core_publisher_.epoch()});
+    response->add_header({"X-TOS-Publisher-Prepare-Us", std::to_string(last_publisher_prepare_us_)});
   }
   response->add_header({"Cache-Control", "no-store"});
   response->complete_parse_header();
@@ -116,26 +120,27 @@ void PrometheusExporter::respond_metrics(td::Promise<HttpReturn> promise) {
   if (!admission_.fresh(now)) {
     return respond(std::move(promise), 503, "Service Unavailable", "");
   }
-  auto body = snapshot_;
-  // Live transport state does not refresh the cached generation's source time.
-  auto state = metrics::MetricSet{};
-  state.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_inflight", "gauge",
-                                                              admission_.inflight() ? 1 : 0));
-  state.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_skipped_total", "counter",
-                                                              static_cast<double>(skipped_)));
-  state.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_failures_total",
-                                                              "counter", static_cast<double>(failures_)));
-  body += std::move(state).render();
-  body += "# EOF\n";
-  respond(std::move(promise), 200, "OK", std::move(body));
+  // The entire body is the immutable publication paired to the typed snapshot.
+  // Current request/transport state belongs in headers or a later generation;
+  // mutating the body here would invalidate its content hash.
+  respond(std::move(promise), 200, "OK", snapshot_);
 }
 
 void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> result) {
+  const auto publisher_prepare_started = td::Timestamp::now().at();
+  const auto record_publisher_prepare = [&] {
+    const auto elapsed = std::max(0.0, td::Timestamp::now().at() - publisher_prepare_started);
+    // This clock may report zero at microsecond resolution. It covers the
+    // synchronous collection_completed preparation segment through cache
+    // publication, but excludes upstream collectors and the response body copy.
+    last_publisher_prepare_us_ = static_cast<std::uint64_t>(elapsed * 1000000.0);
+  };
   auto now = td::Timestamp::now().at();
   last_collection_duration_->set(now - admission_.started());
   if (result.is_error() || admission_.expired(now)) {
     admission_.finish(now, false, 0);
     ++failures_;
+    record_publisher_prepare();
     alarm();
     return;
   }
@@ -195,21 +200,30 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
     }
     set.families.push_back(std::move(operations));
     set.families.push_back(std::move(duration));
+    set = std::move(set).join(health::core_registry.collect());
   }
+  set.families.push_back(metrics::MetricFamily::make_scalar(
+      prefix_ + "_exporter_collection_inflight", "gauge", 0,
+      "Actual source work at this completed snapshot; cached bodies are immutable."));
+  set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_skipped_total", "counter",
+                                                            static_cast<double>(skipped_)));
+  set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_failures_total", "counter",
+                                                            static_cast<double>(failures_)));
   auto rendered = std::move(set).render();
+  rendered += "# EOF\n";
   std::optional<health::NativeCoreSnapshot> typed;
   if (core_publisher_.configured()) {
-    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered + "# EOF\n", pq_enabled,
-                                    sign, verify);
+    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered, pq_enabled, sign, verify);
   }
   now = td::Timestamp::now().at();
-  if (admission_.finish(now, !core_publisher_.configured() || typed.has_value(), rendered.size() + 2048)) {
+  if (admission_.finish(now, !core_publisher_.configured() || typed.has_value(), rendered.size())) {
     snapshot_ = std::move(rendered);
     core_snapshot_ = std::move(typed);
   } else {
     ++failures_;
   }
   alarm_timestamp() = td::Timestamp::never();
+  record_publisher_prepare();
   if (waiter_) {
     auto promise = std::move(*waiter_);
     waiter_.reset();

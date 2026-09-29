@@ -10,8 +10,7 @@ on:
       - 'crypto/pq/consensus-pq-signer.cpp'
       - 'validator/consensus/types.cpp'
       - 'validator-engine/validator-engine.cpp'
-      - 'test/test-health-collector-completion.cpp'
-      - 'test/test-health-native-snapshot.cpp'
+      - 'test/test-health-*.cpp'
       - 'validator-engine/validator-engine.hpp'
       - 'CMakeLists.txt'
       - '.github/workflows/node-health-monitor.yml'
@@ -67,13 +66,18 @@ jobs:
       - name: Build affected native boundaries
         run: |
           cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
-          cmake --build build-health --target test-health-native-snapshot test-health-collector-completion test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
+          cmake --build build-health --target test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
       - name: Run native behavior tests
         run: |
           python3 tools/node-health-monitor/tests/native-snapshot-http.py build-health/test-health-native-snapshot
           python3 tools/node-health-monitor/tests/native-snapshot-mutations.py build-health
+          python3 tools/node-health-monitor/tests/c01-publisher-mutations.py build-health tools/node-health-monitor/evidence/ci-c01-mutations
           build-health/test-health-pq-signer
           build-health/test-health-collector-completion
+          build-health/test-health-collector-timestamps
+          build-health/test-health-core-registry
+          build-health/test-health-source-policy
+          build-health/test-health-publisher-bench
           build-health/test-metrics-label-bound
           build-health/crypto/pq/test-pq-consensus
           build-health/crypto/pq/test-pq-mldsa44-wrapper

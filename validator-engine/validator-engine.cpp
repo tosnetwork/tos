@@ -2207,7 +2207,7 @@ void ValidatorEngine::start() {
   load_noncritical_params_overrides();
   read_config_ = true;
   td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::PrometheusExporter>,
-                          exporter_.get());
+                          "exporter", exporter_.get());
   start_adnl();
 }
 
@@ -2318,7 +2318,7 @@ void ValidatorEngine::start_rldp() {
   quic_ = td::actor::create_actor<tos::quic::QuicSender>("QuicSender", peer_table, keyring_.get());
   td::actor::send_closure(quic_.get(), &tos::quic::QuicSender::set_quic_options, quic_options_);
   td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>,
-                          quic_.get());
+                          "quic", quic_.get());
   td::actor::send_closure(rldp2_, &tos::rldp2::Rldp::set_default_mtu, 2048);
   started_rldp();
 }
@@ -2336,7 +2336,7 @@ void ValidatorEngine::start_overlays() {
     overlay_manager_ = tos::overlay::Overlays::create(db_root_, keyring_.get(), adnl_.get(),
                                                       dht_nodes_[default_dht_node_].get(), buffer_limits);
     td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::overlay::Overlays>,
-                            overlay_manager_.get());
+                            "overlay", overlay_manager_.get());
   }
   started_overlays();
 }
@@ -2378,7 +2378,7 @@ void ValidatorEngine::start_validator() {
     td::actor::send_closure(json_rpc_server_, &tos::JsonRpcServer::listen, json_rpc_addr_.value());
     // Register JSON-RPC server as a Prometheus metrics collector
     td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::JsonRpcServer>,
-                            json_rpc_server_.get());
+                            "json_rpc", json_rpc_server_.get());
   }
 
   // The one post-quantum secret this host holds. A key that cannot be loaded, or a

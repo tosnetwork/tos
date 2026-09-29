@@ -35,8 +35,8 @@ class Child final : public td::actor::Actor, public tos::metrics::AsyncCollector
 class Wrapper final : public td::actor::Actor, public tos::metrics::CollectorWrapper {
  public:
   Wrapper(td::actor::ActorId<Child> a, td::actor::ActorId<Child> b) {
-    add_collector(a);
-    add_collector(b);
+    add_collector("failure", a);
+    add_collector("slow", b);
   }
   void request(tos::metrics::MetricsPromise promise) {
     collect(std::move(promise));

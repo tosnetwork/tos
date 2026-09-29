@@ -5,6 +5,7 @@
 #include "td/utils/Heap.h"
 #include "td/utils/as.h"
 
+#include "health-metrics-policy.h"
 #include "quic-sender.h"
 
 namespace tos::quic {
@@ -428,7 +429,7 @@ td::actor::Task<QuicSender::Stats> QuicSender::collect_stats_mode(bool build_per
 
 // TODO(avevad): remove obsolete Stats and collect metrics directly
 void QuicSender::collect(td::Promise<metrics::MetricSet> P) {
-  td::actor::send_closure(actor_id(this), &QuicSender::collect_stats_mode, false,
+  td::actor::send_closure(actor_id(this), &QuicSender::collect_stats_mode, health_metrics_policy::build_per_path,
                           td::make_promise([P = std::move(P)](td::Result<Stats> R) mutable {
                             if (R.is_error()) {
                               P.set_error(R.move_as_error());

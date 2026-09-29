@@ -13,6 +13,8 @@ class SourceAdmission {
  public:
   static constexpr double min_refresh_seconds = 15.0;
   static constexpr double work_budget_seconds = 2.0;
+  static constexpr double http_budget_seconds = 3.0;
+  static constexpr std::size_t max_waiters = 1;
   static constexpr double max_cache_age_seconds = 30.0;
   static constexpr std::size_t max_snapshot_bytes = 2 * 1024 * 1024;
 

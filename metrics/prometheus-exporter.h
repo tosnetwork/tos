@@ -14,7 +14,7 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   static td::actor::ActorOwn<PrometheusExporter> create(std::string prefix = "tos");
 
   template <std::derived_from<metrics::AsyncCollector> A>
-  void register_collector(td::actor::ActorId<A> collector);
+  void register_collector(std::string source_id, td::actor::ActorId<A> collector);
 
   void listen(td::IPAddress addr);
   void set_health_node(std::string value);
@@ -63,6 +63,7 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   std::string snapshot_;
   std::uint64_t skipped_ = 0;
   std::uint64_t failures_ = 0;
+  std::uint64_t last_publisher_prepare_us_ = 0;
 
   std::string prefix_;
   td::actor::ActorOwn<http::HttpServer> http_ = {};
@@ -80,9 +81,10 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
 };
 
 template <std::derived_from<metrics::AsyncCollector> A>
-void PrometheusExporter::register_collector(td::actor::ActorId<A> collector) {
+void PrometheusExporter::register_collector(std::string source_id, td::actor::ActorId<A> collector) {
   collectors_->add(1);
-  td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::add_async_collector<A>, collector);
+  td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::add_async_collector<A>, std::move(source_id),
+                          collector);
 }
 
 }  // namespace tos
