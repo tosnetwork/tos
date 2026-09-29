@@ -112,8 +112,8 @@ impl ObservabilityState {
                     .lock()
                     .is_ok_and(|data| !data.manager_conflicted && !data.manager_caught_up) =>
             {
-                // A capacity or Q-write pause leaves old fixed-W grants
-                // usable. The 15-second owner retries; new grants stay 503.
+                // A bounded-capacity pause leaves old fixed-W grants usable.
+                // The 15-second owner retries; new grants stay 503.
             }
             Err(error) => return Err(error),
         }
@@ -134,30 +134,11 @@ fn block_manager_queries(state: &ObservabilityState, data: &mut Data) -> Result<
     }
     Ok(())
 }
-fn projection_insert_is_integrity_error(error: &str) -> bool {
-    error.starts_with("M projection integrity:")
-        || matches!(
-            error,
-            "M origin has no supported projection"
-                | "projection differs from original M evidence"
-                | "duplicate projection parent missing or changed"
-                | "M parent identity conflict"
-                | "evidence insertion mismatch"
-                | "evidence watermark conflict"
-                | "missing inserted evidence"
-                | "invalid evidence metadata"
-                | "immutable evidence conflict"
-                | "M projection page too large"
-        )
-}
-fn cursor_commit_is_integrity_error(error: &str) -> bool {
-    matches!(
-        error,
-        "invalid M projection cursor advancement"
-            | "M projection cursor changed concurrently"
-            | "M cursor anchor has no retained source row"
-            | "invalid persisted M projection cursor"
-    )
+fn projection_insert_can_pause(error: &str) -> bool {
+    // Only these bounded-capacity refusals prove that already-retained evidence
+    // and its fixed-W grants remain intact. Unknown source or SQLite failures
+    // are not evidence of a recoverable pause.
+    matches!(error, "active grant evidence retention" | "M parent retention full")
 }
 fn import_manager_into(
     state: &ObservabilityState,
@@ -215,12 +196,12 @@ fn import_manager_into(
         .map_err(|_| "query ledger unavailable")?
         .insert_projection_page(&mut data.store, &page.records);
     if let Err(error) = inserted {
-        if projection_insert_is_integrity_error(&error) {
-            block_manager_queries(state, data)?;
-        } else {
-            // Capacity or Q storage availability is not evidence that an
-            // earlier fixed-W source changed. No page/cursor is published.
+        if projection_insert_can_pause(&error) {
+            // The bounded page was refused before publication. Existing grants
+            // retain their fixed W, while new grants wait for catch-up.
             data.manager_caught_up = false;
+        } else {
+            block_manager_queries(state, data)?;
         }
         return Err(error);
     }
@@ -229,13 +210,9 @@ fn import_manager_into(
         .map_err(|_| "query ledger unavailable")?
         .commit_manager_cursor(previous.as_ref(), &page.cursor);
     if let Err(error) = committed {
-        if cursor_commit_is_integrity_error(&error) {
-            block_manager_queries(state, data)?;
-        } else {
-            // The page is already durable; replay at the old cursor is
-            // idempotent. Existing grants still see only their fixed W.
-            data.manager_caught_up = false;
-        }
+        // A failed cursor commit can be an invariant or SQLite integrity
+        // failure. Do not infer recoverability from an unknown error string.
+        block_manager_queries(state, data)?;
         return Err(error);
     }
     data.manager_caught_up = page.caught_up;

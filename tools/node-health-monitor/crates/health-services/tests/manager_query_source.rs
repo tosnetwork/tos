@@ -619,7 +619,7 @@ fn non_anchor_retained_parent_body_change_is_refused_by_sequence_lookup() {
 }
 
 #[tokio::test]
-async fn projection_or_cursor_commit_failure_preserves_fixed_grant_and_replays() {
+async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart() {
     for mode in ["projection_insert", "cursor_commit"] {
         let directory = std::env::temp_dir().join(format!(
             "nhm-m-query-failure-{mode}-{}-{}",
@@ -686,8 +686,7 @@ async fn projection_or_cursor_commit_failure_preserves_fixed_grant_and_replays()
             _ => unreachable!(),
         }
         assert!(import_manager(&state).unwrap_err().contains("injected"));
-        assert!(!state.data.lock().unwrap().manager_conflicted);
-        assert!(!state.data.lock().unwrap().manager_caught_up);
+        assert!(state.data.lock().unwrap().manager_conflicted);
         if mode == "projection_insert" {
             // The third row failed inside one page transaction. Neither the
             // first new row nor the in-memory candidate may escape it.
@@ -714,7 +713,7 @@ async fn projection_or_cursor_commit_failure_preserves_fixed_grant_and_replays()
                 .watermark,
             1
         );
-        let existing = query_router(state.clone())
+        let refused = query_router(state.clone())
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -727,38 +726,10 @@ async fn projection_or_cursor_commit_failure_preserves_fixed_grant_and_replays()
             )
             .await
             .unwrap();
-        assert_eq!(existing.status(), StatusCode::OK, "fixed W survives {mode}");
-        let request_new_grant = || {
-            Request::builder()
-                .method("POST")
-                .uri("/v1/control/grants")
-                .header("authorization", format!("Bearer {}", "o".repeat(32)))
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
-                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
-                    .to_string(),
-                ))
-                .unwrap()
-        };
-        assert_eq!(
-            control_router(state.clone()).oneshot(request_new_grant()).await.unwrap().status(),
-            StatusCode::SERVICE_UNAVAILABLE,
-            "lagging import must not publish a new fixed W"
-        );
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        drop(state);
         conn.execute_batch("DROP TRIGGER c09_inject").unwrap();
         drop(conn);
-        assert_eq!(import_manager(&state).unwrap(), (3, 2));
-        assert!(state.data.lock().unwrap().manager_caught_up);
-        assert_eq!(
-            state.data.lock().unwrap().grants[grant["run_id"].as_str().unwrap()].watermark,
-            1
-        );
-        assert_eq!(
-            control_router(state.clone()).oneshot(request_new_grant()).await.unwrap().status(),
-            StatusCode::OK
-        );
-        drop(state);
         let restored =
             ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
                 .unwrap()
@@ -784,12 +755,10 @@ async fn projection_or_cursor_commit_failure_preserves_fixed_grant_and_replays()
             3,
             "committed parents must replay without another query row"
         );
-        assert!(restored
-            .data
-            .lock()
-            .unwrap()
-            .grants
-            .contains_key(grant["run_id"].as_str().unwrap()));
+        assert!(
+            restored.data.lock().unwrap().grants.is_empty(),
+            "revoked grant must not renew across restart"
+        );
         drop(restored);
         drop(manager);
         std::fs::remove_dir_all(directory).unwrap();

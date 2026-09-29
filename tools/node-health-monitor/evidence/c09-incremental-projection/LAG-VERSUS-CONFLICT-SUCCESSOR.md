@@ -1,5 +1,11 @@
 # C09 fixed-W continuity under bounded projection lag
 
+**Superseded for error classification by `SAFE-LAG-CLASSIFICATION-SUCCESSOR.md`.**
+The trigger-based SQLite faults below use `RAISE(FAIL)`, a constraint failure;
+they do not demonstrate a transient busy/full storage condition. The compiled
+all-revoke mutants below therefore do not justify treating unknown errors as
+recoverable. The bounded active-W capacity result remains a valid control.
+
 Starting HEAD: `85ceebb4f9f3c61d7e2dd7824cf1e266cc2aeb7a`. This is an isolated candidate; no live QueryService, Manager, Edge, collector, business node or model process was changed.
 
 The old importer treated every Q insertion or cursor-commit error as a Manager source conflict and revoked every active run. That was incorrect for a fixed-W evidence eviction boundary, the bounded M parent index, and transient Q SQLite failures. The successor separates explicit projection/source identity violations (still latch conflict and revoke) from capacity or Q-write/cursor-commit availability errors. On the latter it leaves the durable M cursor unchanged, sets `manager_caught_up=false`, refuses new grants, and preserves already-fixed runs. If a page was durably inserted before the cursor commit failed, the old cursor causes an idempotent replay; it does not make later evidence visible under an old run's W. Startup tolerates this lag state but not a latched source conflict.
