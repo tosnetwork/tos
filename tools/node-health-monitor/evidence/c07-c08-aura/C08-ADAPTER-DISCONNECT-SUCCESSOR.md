@@ -19,3 +19,5 @@ Raw receipts (external to the repository, SHA-256):
 Source SHA-256: adapter `75abab57074fab8ed1f8369ae9f1b9652bf7aac8730eef785b810ca9d6eb1ecd`; final test `2466f85f22e2e1de2164af540d7a44ea3a144eaf5e9987090194046e98ead23b` (earlier test SHA `ba2e601225a91bdfede01a3259c4874d7bc848f4347e44b6c604a7a769f72e85` retained with its earlier log).
 
 The pinned AURA fixture control validates transport, not a model diagnosis. Broker-owned revoke/replacement and supervised continuous monitoring remain separate C09 gates.
+
+Priority clarification: before this hardening, an idle Unix backend disconnect while AURA kept stdin open was bounded by the 180-second whole-run deadline; the next attempted call would fail. No observed live AURA query failure was attributed to that idle case. Prompt disconnect handling is a resource/timeliness improvement, not a prerequisite for live M process ingestion or evidence of model diagnosis. Do not expand this test family to delay the live-data path.
