@@ -4,9 +4,10 @@ Design: R4, current design blob `c28a6b2506c98fc728f868081a8192f7d0cd0d0a`
 from memo `main@6c0536c042405e857bdced8e327b6f018c816526`.
 Reviewed recovery checkpoint: `628d2967b1bccdab752e9fbe4b66087df68d18b4`.
 The branch includes main commit `b9d8bc433c760f104a81cd1256581a4537923218`.
-C00–C04 have scoped development acceptances only; C05 is implementing. A checked
-item means its named bounded implementation and tests exist, never production
-deployment or a main merge.
+C00–C04 have scoped development acceptances. C05–C08 have bounded development
+implementations; C09 has a local observability deployment and a scoped live-data
+receipt, not production or 72-hour acceptance. A checked item means only its
+named implementation and evidence exist, never a main merge.
 
 | Work order | Delivered and locally tested | Still required before stage completion |
 |---|---|---|
@@ -15,11 +16,11 @@ deployment or a main merge.
 | C02 — accepted (basic-only edge) | ✅ Supervisor accepted exact commit `a884b0ca735736fd5a81306c26bdc65a5bd967df`: fixed 15-second sampler, bounded typed cache routes, process/native/cgroup epoch binding, effective cgroup ancestor quotas, eight mTLS connections with classified seven-plus-one heartbeat reserve, actual slow-source/TLS/role and six mutation witnesses | Readiness and validator/getStats stay unsupported; no host deployment/performance acceptance. Preclassification occupancy is bounded by separate TLS/header phases, not an unconditional heartbeat guarantee. |
 | C03 — accepted (basic-only state/rules/notification) | ✅ Supervisor accepted exact commit `2060cc1a1c7a36fe7214789a254cc36017c9f3a0`: WAL/FULL stores, persistent conflict and atomic outbox/timeline, 18-rule catalog, pinned Prometheus/Alertmanager checks and isolated stop/replay/receiver chain with five compiled mutation reds | Acceptance does not certify complete C04/C05 source adapters, production receivers, durable query grants, deployment or performance. |
 | C04 — accepted (integrated development only) | ✅ Supervisor accepted exact commit `88d5d95ad98413e035c4fec04a68c6306b5bb26d`: native v2 actions/persistence accounting and strict consumer, 35/35 native tests, 48 actual publisher pairs, isolated compiled mutations and 132 active Rust tests | No production business node run; stopped remains null, native performance gate false, hardware durable finality/actor drain/queue denominators remain unsupported. |
-| C05 — implementing | ✅ Bounded development-only 32-target/16-endpoint cache witness, strict typed source/anchor and five-dimension qualification, O cache/15-second poll and own-lane health, M separate historical archive/current ordering, trusted-same-host BOOTTIME transit, two mTLS ingresses, negative controls and current-view budget checkpoint through `8699a3e554dcacdd0fd0194de4c823b1b34c6e20`; one compiled current-age sensitivity red with restored source | Production witness source/proof/receiver and runtime cost unverified; no witness rule fact or verified finality. Final source/evidence index and supervisor C05 review remain open. |
-| C06 — implementing | ✅ Bounded ring primitive; frozen datagram codec; independent JSON/decoded diagnostic batch limits | Real producer early gate, authenticated nonblocking IPC, edge relay, persistent batch ingest and idempotent ACK; actual slow/dead consumers, disk-full and shutdown integration |
-| C07 — implementing (development-only) | ✅ Deterministic 16-KiB process-only package from verified retained M parent at both fixed grant watermarks, durably single-written in private QueryLedger with 8-MiB table cap; restart/late-row/conflict/missing/tamper controls; closed diagnosis parser rejects blank claims/IDs and unsupported runbooks. No model/provider enabled. | Actual 8192-token accounting, semantic entailment review, approved AURA/model protocol, package retention cleanup, private egress and resource-isolation tests. No production/AI acceptance. |
-| C08 — implementing | ✅ Cache query/grant primitives, durable ledger/stable cursors, opt-in six-tool rmcp transport through actual HTTP handlers, hidden run token, single-use connection binding, 16 calls, 32-KiB serialized response, 128-KiB response-body run cap and 180-second bound session; isolated SDK/Unix/restart tests. | Full AURA child lifecycle/cancellation and two-child accounting, complete source adapters and actual zero-upstream storm evidence; default feature stays off. No stage acceptance. |
-| C09 — not_started | ✅ Development contracts and examples fail production readiness without evidence | Approved host/failure domains, credentials/receiver, effective quotas; A–F raw monotonic performance profiles; rotation/rollback/restore and 72h soak. No runtime deployment acceptance |
+| C05 — development candidate delivered | ✅ At `35ba59c111dd74518e6e661bcd1984598d493907`, bounded 32-target/16-endpoint cache witness, strict typed source/anchor and five-dimension qualification, O 15-second poll/cache and own-lane health, M historical archive plus separately qualified current view, same-host BOOTTIME transit, mTLS ingresses, budgets and negative controls were delivered with indexed evidence. | Production witness source/finality proof, actual external receiver, runtime cost and witness rule facts remain unsupported; this candidate does not establish verified finality or production acceptance. |
+| C06 — integrated development implementation | ✅ Gated native diagnostic producer and bounded catalog-8 scalar payload, private authenticated native-to-Edge IPC, bounded relay, distinct M diagnostic ingest identity and single-writer durable batch/atomic idempotent ACK were integrated and tested. The catalog-7 fixture remains separate. | Business-node hook rollout and production cost/consumer-drain gates remain open; unknown diagnostic observation times remain null. M-to-Query diagnostic projection is unsupported, not a process fact. |
+| C07 — bounded development package | ✅ Deterministic 16-KiB process-only package from verified retained M parents at fixed grant watermarks, durable private QueryLedger with 8-MiB cap, restart/late-row/conflict/missing/tamper controls and a closed diagnosis parser. No model/provider is enabled. | Actual model token accounting, semantic entailment, approved model/provider configuration, retention cleanup, private egress and resource-isolation acceptance remain open. The test-side deterministic judgment is not AURA model diagnosis. |
+| C08 — gated transport implemented | ✅ Durable grants/cursors and six-tool private Unix MCP, a pinned AURA 0.12 stdio adapter, one-use credential handoff, bounded calls/body/session, child cancellation/reap and disconnect controls were exercised. Six real tool calls through AURA establish transport/error propagation; unavailable fixture tools did not become business successes. | Complete source adapters, production broker authorization/rotation and sustained resource/zero-upstream evidence remain open. External model calls remain disabled; transport success is not model judgment or production acceptance. |
+| C09 — local observability running; acceptance gates open | ✅ M-only update, six role-split 15-second supervised collectors and an MCP-enabled local query broker archived six distinct live `process` sources without relabelling `edge_probe`. Pinned AURA 0.12 queried the already-running broker under fixed 4+2 grants: six `partial` snapshots contained non-null process values matching original retained M parent payloads; unknown consensus and cross-run denial remained explicit, and grants were revoked. Scoped process-payload closure was reviewed at `44186b022f454449ed58dce30c7fec5c71f24851` (raw SHA-256 prefix `cc4c95c8`). No model API or business-node restart was involved. | No production or 72-hour pass: prove sustained freshness/availability, investigate observed collector error and growing-DB broker latency, complete A–F monotonic resource/performance and failure-domain/effective-quota profiles, credential/receiver rotation, rollback/restore and 72-hour soak. A partial process snapshot is not whole-node health or model diagnosis. |
 
 ## Evidence mapping
 
@@ -64,12 +65,15 @@ deployment or a main merge.
 
 ## Runtime boundaries
 
-`health-state` now wires SQLite storage into an independent executable with
-bounded writers and cached read endpoints. Its fixed catalog operates on closed
-internal facts; management reachability and native PQ signing failures are connected here.
-The existing `tos-observability` HTTP process still uses its bounded memory store.
-Do not claim that its grants/results survive restart, that the internal FactFrame
-replaces full R4 SourceEnvelope DTOs, or that all native rules receive real facts.
+`health-state` uses SQLite bounded writers and cached read endpoints. Its fixed
+catalog operates on closed internal facts; management reachability and native PQ
+signing failures are connected here. Development C05 witness history/current state
+and C06 diagnostic batches have separate durable paths; neither silently supplies
+verified finality or a process observation. `tos-observability` now has a durable
+private QueryLedger for bounded grants/results/cursors and an opt-in private Unix
+MCP broker. Its verified live query projection is process-only. Do not claim that
+the internal FactFrame replaces all R4 SourceEnvelope DTOs, that all native rules
+receive real facts, or that witness/diagnostic archives are live query adapters.
 Pinned Prometheus/Alertmanager rules and an isolated actual stop/replay/receiver
 chain passed the scoped C03 review at `2060cc1a1c7a36fe7214789a254cc36017c9f3a0`.
 Earlier binary-download and runtime red attempts remain historical evidence,
@@ -87,13 +91,23 @@ OpenMetrics body and headers; source age includes request duration and cache
 residence, and repeated generations cannot renew it. Legacy local age conversion
 assumes both wall clocks refer to the same host and rejects future/stale timestamps.
 
-Only the synthetic catalog 7/type 1 has a frozen diagnostic payload. No existing
-trace is sent through this codec, and it is not a production trace schema.
-Source fixtures that have not been captured remain null with contract_valid=false.
-The PQ metric manifest is an initial sparse catalog, not a complete core profile.
+The original synthetic catalog-7/type-1 diagnostic fixture remains frozen. C06
+adds a gated native catalog-8 producer, private IPC/relay and durable M diagnostic
+batch ingest; it does not certify a deployed business-node trace, a known event
+observation time, or a QueryService diagnostic adapter. Source fixtures not actually
+captured remain null with `contract_valid=false`. The PQ metric manifest is a
+bounded sparse catalog, not a complete core profile.
 
-No production validator was deployed, restarted or fault-injected. No signing,
-vote-journal ordering, database durability or protocol condition was changed.
+C09 has deployed only local observability components: an M-only service update,
+six supervised collectors and an MCP-enabled query broker over private sockets.
+The existing business nodes and Edge processes were not restarted or fault-injected
+for this work. The scoped pinned-AURA receipt proves six partial real process values
+and their retained M parents, not whole-node health, AURA model judgment,
+continuous availability, a 72-hour pass or production acceptance. One transient
+collector `invalid edge response` recovered at a later sample; live-broker control
+read latency also varied as its M database grew. Those observations remain open C09
+soak/performance work, not zero-error claims. External model/API use is disabled.
+No signing, vote-journal ordering, database durability or protocol condition was changed.
 
 
 Current C00 closure evidence: 97 Rust tests, clippy with warnings denied, six exact native
