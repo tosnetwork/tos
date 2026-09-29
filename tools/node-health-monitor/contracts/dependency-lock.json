@@ -1,6 +1,13 @@
 {
   "schema_version": 1,
   "rust": "1.97.1",
+  "rust_toolchain_sha256": "279d77167cec5426fa80f457cd066dc74a360fbe4e2816f4f3fa01487a918fdc",
+  "cargo_lock_sha256": "091885b7fb2413d05bbf06af803ea4074659c3e55c2bc3f15e808f2be1b29477",
+  "contract_python": {
+    "version": "3.14.4",
+    "requirements_lock": "requirements-contracts.lock",
+    "requirements_lock_sha256": "aa9380d03582be497569a051dcab4d183c20a4c422fcd515048497d7e4473e5b"
+  },
   "packages": [
     {
       "name": "axum",
@@ -35,12 +42,21 @@
   },
   "mcp": {
     "enabled": false,
-    "sdk": null,
-    "reason": "not integrated; must pin before C08"
+    "protocol_version": "2025-06-18",
+    "sdk": "rmcp",
+    "version": "3.5.0",
+    "tag_commit": "0cde3c5cf3e6aff0cc852ce6045f107e95991f48",
+    "crate_sha256": "fae7019994ae0fe4ada40b732f798f3ff26f0f04facb1477f1bf37eb4f18a2d3",
+    "runtime_gate": "C08_not_run",
+    "reason": "inventory pin only; no MCP dependency or endpoint is enabled before C08 integration tests"
   },
   "prometheus": {
     "enabled": false,
-    "version": null,
-    "reason": "runtime package and promtool not installed; C03 pending"
+    "version": "3.9.1",
+    "tag_commit": "9ec59baffb547e24f1468a53eb82901e58feabd8",
+    "artifact": "prometheus-3.9.1.linux-amd64.tar.gz",
+    "artifact_sha256": "86a6999dd6aacbd994acde93c77cfa314d4be1c8e7b7c58f444355c77b32c584",
+    "runtime_gate": "C03_not_run",
+    "reason": "inventory pin only; promtool and Alertmanager integration remain a C03 runtime gate"
   }
 }

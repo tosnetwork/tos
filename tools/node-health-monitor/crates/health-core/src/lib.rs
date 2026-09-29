@@ -7,6 +7,7 @@ pub mod guard;
 pub mod incident;
 pub mod observer;
 pub mod query;
+pub mod query_output;
 pub mod source;
 
 pub mod contracts;

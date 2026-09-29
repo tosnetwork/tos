@@ -24,7 +24,14 @@ fn evidence(at: i64) -> Evidence {
         observed_at_ms: at,
         received_at_ms: at,
         quality: quality(at),
-        payload: json!({"component":"process","rss_bytes":"18446744073709551615","kind":"warning"}),
+        payload: json!({
+            "component":"process",
+            "source_version":"synthetic-core-v1",
+            "evidence_kind":"observation",
+            "contract_quality":{"instrumentation_complete":true,"producer_dropped":"0","relay_dropped":"0","parse_errors":"0","shed_reason":null},
+            "contract_coverage":{"status":"complete","missing_fields":[],"gaps":[],"sampling_policy":"synthetic unit fixture"},
+            "contract_payload":{"kind":"process","pid":12,"rss_bytes":"18446744073709551615","anon_bytes":null,"file_bytes":null,"swap_bytes":null,"cpu_user_ticks":null,"cpu_system_ticks":null}
+        }),
         redacted: true,
     }
 }
@@ -35,7 +42,7 @@ fn grant(store: &EvidenceStore) -> Grant {
     Grant::new(
         "00000000-0000-4000-8000-000000000001".into(),
         "aura".into(),
-        "genesis".into(),
+        "a".repeat(64),
         &[7; 32],
         names(&["v1"]),
         names(&["node"]),
@@ -321,8 +328,9 @@ fn snapshot_does_not_return_future_ingestion_or_another_node() {
     let input = json!({"run_id":g.run_id,"node_id":"v1","as_of":"1970-01-01T00:00:03Z","max_age_seconds":10,"components":["process"]});
     let result = q.call(&mut g, "aura", &[7; 32], 1, TOOLS[1], input.clone());
     assert_eq!(result["status"], "ok");
-    assert_eq!(result["data"]["process"]["record"]["observed_at_ms"], 1000);
-    assert_eq!(result["data"]["process"]["record"]["payload"]["rss_bytes"], "18446744073709551615");
+    assert_eq!(result["data"]["components"][0]["kind"], "process");
+    assert_eq!(result["data"]["components"][0]["value"]["rss_bytes"], "18446744073709551615");
+    assert_eq!(result["evidence"][0]["observed_at"], "1970-01-01T00:00:01.000Z");
     let mut denied = input;
     denied["node_id"] = json!("v2");
     assert_eq!(code(&q.call(&mut g, "aura", &[7; 32], 1, TOOLS[1], denied)), "OUT_OF_SCOPE");

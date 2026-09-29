@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "baseline": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+  "branch": "node-health-monitor",
+  "source_sha256": {
+    "crates/health-core/src/query_output.rs": "00e8b7647a3dbe65dfd36d18a86b5063b5fec4a8b5ecc667eb93e5481221a608",
+    "crates/health-services/tests/http.rs": "5c6f56a9f72fe7ce5b3840fa185f0893587a92025cf96593a222fb15ef5007a2",
+    "tests/c00-closure-mutations.py": "abd7ec5e61e0efd1091bc42e14d456d9b93cdb261273b5a6cf14844acafa5d47",
+    "contracts/source-manifest.json": "9f2d94670153992b05cfa2c681475cb12c703c5b76e822d2f064c731f21d305f",
+    "contracts/dependency-lock.json": "5f6ce40082314efbb54ace50d129dd79788d21462a1a8691c5dff6e83587f5aa",
+    "requirements-contracts.lock": "aa9380d03582be497569a051dcab4d183c20a4c422fcd515048497d7e4473e5b"
+  },
+  "raw_log_sha256": {
+    "failed-suite-schema-boundary.log": "561510843de200844902159e734ffa85074e6d94415e01af3497fc516eff7836",
+    "final-fmt-diff.log": "ad1fc9b1a509a9720c99ddeef98fc6af7e06cd08c4e0f041111ddc45be4c5754",
+    "final-clippy.log": "06c3ea646007cd9a6590376350af4da7dcbba6c9a9eec91c104e103a10c8eac5",
+    "final-closure-suite.log": "4149acfe8bf1d20b179690bbffc4397fcf2af0d034c7dedbea3bc8d4ca7f43d6",
+    "mutation-logs/derived-lineage.baseline.log": "250f970c6dc4a2979040793f853aa8e9495422a56fe3249006ec651a0f51d9a1",
+    "mutation-logs/derived-lineage.mutant.log": "2f7f5174ae587be47bb03a423dd5fc641edf55fd7a53b65f21af25db38820f4a",
+    "mutation-logs/metric-metadata.baseline.log": "564b596c72fc802e90d76ad215a1895feccc33173f613a1a8ff1cbab338a5e58",
+    "mutation-logs/metric-metadata.mutant.log": "4d84ac536c86f69d5161d314eedfdb5b8d75b12a113626e65cdad6d42403b97d",
+    "mutation-logs/coverage-gap-union.baseline.log": "323c7b59e85b32bc5180f7fe779bd06f35f8299412f65e7efb7614d03d8fc2ec",
+    "mutation-logs/coverage-gap-union.mutant.log": "01f7ed69890f6d96cf044265ff5a00a0f03efbf3e79af72f801aad4f956b1204",
+    "mutation-logs/payload-unknown-field.baseline.log": "5f2e2cec7f6960bf81a490a03101d8c7087f3788e734b598ec975089f8ba350e",
+    "mutation-logs/payload-unknown-field.mutant.log": "6804870ea37a1f86d8ef04bb7d141e0c404b2285d8952704b39de2a366558dc8",
+    "mutation-logs/payload-content-hash.baseline.log": "d369cc529d893e0da7a48a79a54483b97ee84f4d18c6eea13648721643e4f60c",
+    "mutation-logs/payload-content-hash.mutant.log": "d8f4a5b701219f027ca8b21fe6bc9ed155bf86a5ba47a1c731c8560f67a6b244",
+    "mutation-logs/network-genesis-shape.baseline.log": "cefb7491959c1f10e53a3a94fa7c565f12ad3a291c0521cfb93f9e83e37a4345",
+    "mutation-logs/network-genesis-shape.mutant.log": "82cb47eb4350d4c09d78b5353deed6b4e70902e038ec5e4b4d9037fa274d0730"
+  },
+  "external_independent_log": {
+    "path": "/home/tomi/nhm-supervision/c00-independent-closure.log",
+    "sha256": "02a95a3a8994c1d05db58d6a1fe0b1bd538ccd65e045af7929ab5d52e8b194a7",
+    "exit_code": 0
+  }
+}

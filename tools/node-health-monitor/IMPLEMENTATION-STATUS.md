@@ -1,6 +1,7 @@
 # R4 implementation and acceptance ledger
 
-Design: R4, memo blob `b6ee93b81ad3794eecff3b6c8ed2faf28072120c`.
+Design: R4, current design blob `c28a6b2506c98fc728f868081a8192f7d0cd0d0a`
+from memo `main@6c0536c042405e857bdced8e327b6f018c816526`.
 Reviewed recovery checkpoint: `628d2967b1bccdab752e9fbe4b66087df68d18b4`.
 The branch includes main commit `b9d8bc433c760f104a81cd1256581a4537923218`.
 No C00–C09 stage is accepted. A checked item below means its named bounded
@@ -8,7 +9,7 @@ implementation and local tests exist, not that the whole stage or deployment pas
 
 | Work order | Delivered and locally tested | Still required before stage completion |
 |---|---|---|
-| C00 — implementing | ✅ 20 closed 2020-12 schemas, six-tool positive/negative contract fixtures; exact u64; frozen Python/Rust/C++ IPC vector; source/action/persistence/catalog manifests; sparse histogram series counting; production placeholder refusal; R4 semantic tests | Complete source catalog and actual source fixtures; full wire DTO/handler equivalence; catalog payload variants beyond the approved initial subset; MCP/Prometheus version and artifact pins; review of complete C00 output |
+| C00 — review_ready, not accepted | ✅ 20 closed 2020-12 schemas; concrete DTOs from all six real HTTP success handlers; schema-validated 64/32 aggregation boundary; malformed/overflow/heterogeneity/lineage negatives; exact u64; frozen Python/Rust/C++ IPC vector; complete C00 source-class truth inventory; sparse histogram counting; real 11-gate production-doctor refusal; hash-locked Python environment; disabled MCP/Prometheus artifact pins; six compiled-and-killed closure mutations | Independent supervisor review. Real provider adapters/fixtures stay disabled and move to C01-C05; durable MCP query transport is C08; Prometheus/Alertmanager runtime is C03; production acceptance remains C09. |
 | C01 — implementing | ✅ Existing native actual-work admission, cache, collector completion and PQ counters; new standalone diagnostic wire codec; loopback typed `/health-snapshot` with exact generation, source epoch, frozen hash and PQ counters; bounded owner wait and actual lease retention | Feature-gated source rollout; remaining per-source timestamps; all collector contiguous-work/capacity evidence and full source/core publication tests |
 | C02 — implementing | ✅ Optional fixed loopback native sampler; cached `/metrics`; 1,000 HTTP reads cause no extra native calls; minimum interval; same-generation stale/conflict protection; process sampler; nonempty query rejection; exact header/body generation pairing and initial process/native PQ R4 snapshot; fixed-role private-CA mTLS ingress with leaf ACL and bounded transport; scheduled mTLS management reachability probe | Full R4 SourceEnvelope/edge DTO migration; full heartbeat connection isolation; approved cgroup/host/readiness adapters; getStats remains unsupported |
 | C03 — implementing | ✅ Deterministic multisource recovery contract; SQLite WAL/FULL control/evidence storage components; immutable sequence/watermark; persistent conflict quarantine; atomic incident/outbox; restart-to-unknown; evidence quota failure leaves control usable; independent health-state executable with 18-rule fact catalog, bounded control/evidence writers, whole-round transaction, immutable inventory revisions and database network binding, multiple-epoch live conflict quarantine and receipt-matched durable outbox; separate process/pipeline watchdog deadlines; scheduled native PQ fact adapter and immutable typed evidence relay | Complete real source adapters and collector/query durable integration; persistent grants/ledger; retention and migration/backup; actual Prometheus/Alertmanager/dead-man/independent receipt integration |
@@ -24,7 +25,8 @@ implementation and local tests exist, not that the whole stage or deployment pas
 - `crates/health-core/tests/contracts.rs`: prior 30 deterministic behavior tests.
 - `crates/health-core/tests/r4.rs`: 16 exact-integer, IPC, monotonic freshness,
   multisource recovery, metric-capacity, vote-order and deployment-refusal tests.
-- `crates/health-services/tests/http.rs`: 10 credential/cache/query HTTP tests.
+- `crates/health-services/tests/http.rs`: 13 credential/cache/query HTTP tests,
+  including all six non-null success DTOs and per-series/response-wide coverage boundaries.
 - `crates/health-services/tests/native_cache.rs`: 5 cache/schedule/bounds tests,
   including a real loopback fake server and 1,000 router requests.
 - `crates/health-services/tests/durable.rs`: 8 actual SQLite file tests covering
@@ -45,6 +47,9 @@ implementation and local tests exist, not that the whole stage or deployment pas
   acceptance. Pure clock tests independently establish the 45/100-second deadlines.
 - `tests/runtime-mutations.py`: 24 additional compiled behavioral mutations.
 - The existing 10 Rust and 6 C++ mutations remain in CI.
+- `tests/c00-closure-mutations.py`: 6 targeted mutants. Each baseline passes;
+  each mutant compiles and fails its named HTTP assertion within 120 seconds.
+  Separate raw logs are under `evidence/c00-closure/mutation-logs/`.
 
 ## Runtime boundaries
 
@@ -77,7 +82,7 @@ No production validator was deployed, restarted or fault-injected. No signing,
 vote-journal ordering, database durability or protocol condition was changed.
 
 
-Recovery evidence: 94 Rust tests, clippy with warnings denied, six exact native
+Current C00 closure evidence: 97 Rust tests, clippy with warnings denied, six exact native
 contract mutants and ten typed service mutants. The initial R4 snapshot is a
 closed subset, not a declaration that every source/capabilities handler is migrated.
 See VALIDATION-R4.md for the distinction between pre-cleanup and reconstructed builds.

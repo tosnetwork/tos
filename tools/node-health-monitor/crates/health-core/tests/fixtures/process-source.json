@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "source_id": "process",
+  "node_id": "fixture-node",
+  "scope_id": "node",
+  "process_epoch": "synthetic-boot-1",
+  "source_epoch": "synthetic-process-source-1",
+  "source_version": "sample-process-v1",
+  "generation": "1",
+  "availability": "available",
+  "observed_at": "2026-09-29T00:00:00Z",
+  "last_success_at": "2026-09-29T00:00:00Z",
+  "received_at": "2026-09-29T00:00:00Z",
+  "source_age_ms": 0,
+  "clock_quality": "valid",
+  "coverage": {
+    "status": "partial",
+    "missing_fields": ["host_pressure", "cgroup_effective", "fd_usage", "validator_core"],
+    "gaps": [],
+    "sampling_policy": "isolated synthetic process fixture"
+  },
+  "content_hash": "f71d2391ab0a9a248246a4b8b8f902efecab11d467084e56972185f13fb2451d",
+  "payload": {
+    "kind": "process",
+    "pid": 4242,
+    "rss_bytes": "1048576",
+    "anon_bytes": "524288",
+    "file_bytes": "524288",
+    "swap_bytes": "0",
+    "cpu_user_ticks": "100",
+    "cpu_system_ticks": "50"
+  },
+  "quality": {
+    "instrumentation_complete": false,
+    "producer_dropped": "0",
+    "relay_dropped": "0",
+    "parse_errors": "0",
+    "shed_reason": "synthetic_fixture_not_host_acceptance"
+  }
+}

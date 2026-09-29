@@ -150,6 +150,43 @@ all source files were restored before the complete regression was rerun.
 This adds only the initial process/native PQ R4 subset. It does not complete all
 R4 capabilities, duties, storage, witness or production acceptance gates.
 
+## C00 reconciliation and closure candidate (2026-09-29)
+
+Starting branch commit: `0a3aafda25ad9fa9d93be45156e2df2838646085`.
+Normative memo: `main@6c0536c042405e857bdced8e327b6f018c816526`;
+design blob `c28a6b2506c98fc728f868081a8192f7d0cd0d0a`; work-order blob
+`f7cd3371c8023bb61409d5e77fd96a3741f0cddd`.
+
+This round preserves the existing foundation and closes the concrete C00 gaps.
+All six query routes now construct closed typed outputs from cached records. The
+handlers validate truthful quality, coverage, source version, payload hash,
+redaction, metadata and finite/exact values. Unknown coverage returns unavailable;
+partial coverage returns partial plus missing-evidence summaries. Unsupported
+derived evidence fails because the current store has no lineage columns.
+Heterogeneous metric metadata, labels, units, populations or epochs fails closed.
+Coverage aggregation is stable-deduplicated and refuses per-series or response-wide
+overflow instead of truncating evidence.
+
+The locked closure entry point validates six actual non-null handler outputs and
+a 64-missing-field/32-gap HTTP boundary against the published schemas. It then
+runs the real production doctor, which exits nonzero for exactly 11 unverified
+gates, and the 97-test workspace. Formatter and all-target Clippy with warnings
+denied pass. Six targeted mutations compile and fail their exact assertions;
+baseline and mutant raw logs are preserved separately with finite timeouts.
+
+The source manifest is complete only as a C00 truth inventory. It contains all
+16 required source classes, including explicit unsupported host/cgroup,
+readiness, guard, witness and diagnostic entries. `complete_manifest` and
+`production_adapter_inventory_complete` remain false. Existing isolated exporter
+actor fixtures retain synthetic provenance; no business-node fixture was created.
+MCP/rmcp and Prometheus artifacts are pinned but disabled: runtime gates remain
+C08 and C03 respectively.
+
+No business service was started, deployed or regenerated. No production node,
+key, consensus path or database was touched. This is a review candidate, not a
+self-acceptance of C00. Exact commands, failures, hashes and not-run gates are in
+`evidence/c00-closure/C00-CLOSURE-EVIDENCE.md`.
+
 ### Reconstructed C++ publisher checkpoint
 
 The current source rebuilt `test-health-native-snapshot` with Clang 21.1 and

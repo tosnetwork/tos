@@ -1,9 +1,14 @@
 {
   "schema_version": 1,
   "design_revision": "R4",
-  "design_blob": "b6ee93b81ad3794eecff3b6c8ed2faf28072120c",
+  "design_blob": "c28a6b2506c98fc728f868081a8192f7d0cd0d0a",
+  "work_order_blob": "f7cd3371c8023bb61409d5e77fd96a3741f0cddd",
+  "memo_commit": "6c0536c042405e857bdced8e327b6f018c816526",
   "base_commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
   "complete_manifest": false,
+  "c00_contract_inventory_complete": true,
+  "production_adapter_inventory_complete": false,
+  "completeness_note": "C00 freezes every currently approved source class and its truth state. Native provider subcatalog expansion and real deployment fixtures belong to C01-C05; absent fixtures remain null and contract_valid=false.",
   "sources": [
     {
       "source_id": "native_exporter",
@@ -26,12 +31,18 @@
       "capacity": {
         "max_bytes": 2097152
       },
-      "fixture": null,
+      "fixture": "crates/health-core/tests/fixtures/native-core.prom",
       "capability": {
         "supported": true,
         "enabled": false,
-        "contract_valid": false,
+        "contract_valid": true,
         "performance_gate": "not_run"
+      },
+      "fixture_schema": "openmetrics_text",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic collector",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "production_node": false
       }
     },
     {
@@ -55,12 +66,18 @@
       "capacity": {
         "max_bytes": 262144
       },
-      "fixture": null,
+      "fixture": "crates/health-core/tests/fixtures/process-source.json",
       "capability": {
         "supported": true,
         "enabled": false,
-        "contract_valid": false,
+        "contract_valid": true,
         "performance_gate": "not_run"
+      },
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "synthetic fixed process fields matching sample_process contract",
+        "test_source": "crates/health-services/tests/http.rs",
+        "production_node": false
       }
     },
     {
@@ -200,12 +217,18 @@
       "capacity": {
         "max_bytes": 262144
       },
-      "fixture": null,
+      "fixture": "crates/health-core/tests/fixtures/native-core.json",
       "capability": {
         "supported": true,
         "enabled": false,
-        "contract_valid": false,
+        "contract_valid": true,
         "performance_gate": "not_run"
+      },
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic PQ counters",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "production_node": false
       }
     },
     {
@@ -229,12 +252,18 @@
       "capacity": {
         "max_bytes": 262144
       },
-      "fixture": null,
+      "fixture": "crates/health-core/tests/fixtures/native-core.json",
       "capability": {
         "supported": true,
         "enabled": false,
-        "contract_valid": false,
+        "contract_valid": true,
         "performance_gate": "not_run"
+      },
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic PQ counters",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "production_node": false
       }
     },
     {
@@ -255,6 +284,180 @@
       "generation": "increments only at valid source completion",
       "owner": "health_edge",
       "cost": "unimplemented",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "host_cgroup",
+      "anchor": {
+        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+        "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
+        "symbol": "sample_process",
+        "source_sha256": "c8d174884f9a9004967b769cf95b9c4394cec220122f625024b2bd6a6c5e0476"
+      },
+      "interface": "fixed proc/cgroup fields; full adapter not connected",
+      "grammar": "host/cgroup SourceEnvelope variant not frozen",
+      "semantic_type": "snapshot",
+      "unit": "per field",
+      "scope": "node",
+      "absence": "unsupported; never zero",
+      "reset": "source epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "fixed file set required; not accepted",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "readiness",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator-engine/json-rpc-server-utils.cpp",
+        "symbol": "handle_readyz",
+        "source_sha256": "a5a506cab788e11d733361590c054b24f64172ab4aae707475e795a5388eee6e"
+      },
+      "interface": "GET /healthcheck and GET /readyz adapter not connected",
+      "grammar": "strict readiness payload not frozen",
+      "semantic_type": "snapshot",
+      "unit": "typed raw",
+      "scope": "node",
+      "absence": "unsupported; never healthy by default",
+      "reset": "source epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "sequential RPC lane required",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "guard",
+      "anchor": {
+        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+        "path": "tools/node-health-monitor/crates/health-core/src/guard.rs",
+        "symbol": "pub struct Guard",
+        "source_sha256": "af0d2076e3a8f20711df99a643381e9b28dc2529e9dc437fc5b8c593829b197f"
+      },
+      "interface": "fixed guard signal adapter incomplete",
+      "grammar": "guard state contract exists; full signal SourceEnvelope absent",
+      "semantic_type": "state",
+      "unit": "state",
+      "scope": "node",
+      "absence": "unsupported source; missing signal forces guarded state",
+      "reset": "edge epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "fixed 5 second reads; full adapter not accepted",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "witness",
+      "anchor": {
+        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+        "path": "tools/node-health-monitor/crates/health-core/src/observer.rs",
+        "symbol": "pub fn compare",
+        "source_sha256": "23093c6e2641ba17a49a4a2946fe2dfd951a7d5f01a34b4847039027ea46edbe"
+      },
+      "interface": "observer schedule and witness adapter not implemented",
+      "grammar": "typed block comparison primitive only",
+      "semantic_type": "external observation",
+      "unit": "typed anchor",
+      "scope": "masterchain",
+      "absence": "unsupported; never infer network result",
+      "reset": "observer epoch",
+      "generation": "not implemented",
+      "owner": "observer",
+      "cost": "fixed approved endpoints required",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "diagnostic_trace",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/trace-collector.cpp",
+        "symbol": "TraceCollectorImpl",
+        "source_sha256": "ad1b57c61a6c20a7e8a95a344c03637f0364f1d80950cdbfb67dec29e460b2ac"
+      },
+      "interface": "legacy trace is not connected to diagnostic IPC",
+      "grammar": "only synthetic catalog 7/type 1 is frozen",
+      "semantic_type": "diagnostic",
+      "unit": "records",
+      "scope": "masterchain",
+      "absence": "unsupported; core health remains independent",
+      "reset": "process epoch",
+      "generation": "not implemented",
+      "owner": "native_core",
+      "cost": "producer early gate and bounded IPC not implemented",
+      "capacity": {
+        "max_bytes": 4194304
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "validator_stats",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator-engine/validator-engine.cpp",
+        "symbol": "run_control_query(tos::tos_api::engine_validator_getStats",
+        "source_sha256": "a5bef5b5f82ec81ae0e63d6408c1bbebc73f0384a8c48fffa1800594c7c60f9d"
+      },
+      "interface": "engine.validator.getStats authenticated control protocol",
+      "grammar": "provider allowlist and payload schemas not frozen",
+      "semantic_type": "snapshot",
+      "unit": "typed raw",
+      "scope": "node",
+      "absence": "unsupported and disabled; never zero",
+      "reset": "source epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "default disabled pending source cost gate",
       "capacity": {
         "max_bytes": 262144
       },
@@ -288,6 +491,7 @@
         "max_bytes": 262144
       },
       "fixture": "crates/health-core/tests/fixtures/native-core.json",
+      "fixture_schema": "source-envelope.schema.json",
       "fixture_provenance": {
         "kind": "isolated production exporter actor with synthetic collector",
         "test_source": "test/test-health-native-snapshot.cpp",

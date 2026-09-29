@@ -117,7 +117,7 @@ impl Grant {
             || !crate::wire::uuid(&run_id)
             || nodes.iter().chain(scopes.iter()).any(|v| !crate::wire::alias(v))
             || principal.is_empty()
-            || network_id.is_empty()
+            || !crate::wire::hash(&network_id)
         {
             return Err("invalid grant");
         }
@@ -142,6 +142,18 @@ impl Grant {
     }
     pub fn revoke(&mut self) {
         self.revoked = true;
+    }
+    pub(crate) fn calls(&self) -> u32 {
+        self.calls
+    }
+    pub(crate) fn remaining_calls(&self) -> u32 {
+        16u32.saturating_sub(self.calls)
+    }
+    pub(crate) fn remaining_bytes(&self) -> u32 {
+        u32::try_from(131_072usize.saturating_sub(self.bytes)).unwrap_or(0)
+    }
+    pub(crate) fn expires_monotonic_ms(&self) -> u64 {
+        self.expires_monotonic_ms
     }
     pub fn authenticate(
         &self,
@@ -225,22 +237,48 @@ impl QueryService<'_> {
         tool: &str,
         input: Value,
     ) -> Value {
+        let generated_ms = chrono::Utc::now().timestamp_millis();
+        let saved_input = input.clone();
         let result = self.execute(grant, principal, token, now, tool, input);
         match result {
-            Ok((data, ids)) => {
-                let response = json!({"schema_version":1,"request_id":format!("{}:{}",grant.run_id,grant.calls),"generated_at":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis,true),"run_id":grant.run_id,"network_id":grant.network_id,"status":"ok","data":data,"evidence":ids,"missing_evidence":[],"coverage":{"cache_only":true,"watermark":grant.watermark.to_string()},"pagination":{"next_cursor":null,"truncated":false,"scan_complete":true},"error":null,"budget":{"remaining_calls":16u32.saturating_sub(grant.calls)}});
+            Ok((_legacy_data, ids)) => {
+                let response = match crate::query_output::success(
+                    tool,
+                    &saved_input,
+                    grant,
+                    now,
+                    generated_ms,
+                    &ids,
+                    self.store,
+                    self.metrics,
+                ) {
+                    Ok(response) => response,
+                    Err(code) => return crate::query_output::error(code, grant, now, generated_ms),
+                };
                 let size = match serde_json::to_vec(&response) {
                     Ok(bytes) => bytes.len(),
-                    Err(_) => return error("SERIALIZATION_FAILED", grant),
+                    Err(_) => {
+                        return crate::query_output::error(
+                            "SERIALIZATION_FAILED",
+                            grant,
+                            now,
+                            generated_ms,
+                        )
+                    }
                 };
                 if size > 32_768 || grant.bytes.saturating_add(size) > 131_072 {
-                    return error("RUN_BUDGET_EXHAUSTED", grant);
+                    return crate::query_output::error(
+                        "RUN_BUDGET_EXHAUSTED",
+                        grant,
+                        now,
+                        generated_ms,
+                    );
                 }
                 grant.bytes += size;
                 grant.delivered_ids.extend(ids);
                 response
             }
-            Err(code) => error(code, grant),
+            Err(code) => crate::query_output::error(code, grant, now, generated_ms),
         }
     }
     fn execute(
@@ -564,7 +602,4 @@ impl QueryService<'_> {
             _ => Err("INVALID_ARGUMENT"),
         }
     }
-}
-fn error(code: &str, grant: &Grant) -> Value {
-    json!({"schema_version":1,"request_id":format!("{}:{}",grant.run_id,grant.calls),"run_id":grant.run_id,"network_id":grant.network_id,"generated_at":chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis,true),"status":"error","data":null,"evidence":[],"error":{"code":code,"message":code,"retryable":false,"retry_after_seconds":null},"missing_evidence":[],"coverage":{"cache_only":true},"pagination":{"next_cursor":null,"truncated":false,"scan_complete":false},"budget":{"remaining_calls":16u32.saturating_sub(grant.calls)}})
 }

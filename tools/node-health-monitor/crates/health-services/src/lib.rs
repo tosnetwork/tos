@@ -104,8 +104,8 @@ pub struct Inventory {
 }
 impl Inventory {
     pub fn validate(&self) -> Result<(), String> {
-        if self.network_id.is_empty()
-            || self.network_id.len() > 128
+        if self.network_id.len() != 64
+            || !self.network_id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
             || self.nodes.is_empty()
             || self.nodes.len() > 1024
             || self.scopes.is_empty()

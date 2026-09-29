@@ -1,0 +1,38 @@
+command: cargo test --locked -p tos-health-services --test http all_six_success_handlers_emit_runtime_dtos -- --exact
+timeout_seconds: 120
+exit_code: 101
+
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+warning: unused variable: `payload_value`
+   --> crates/health-core/src/query_output.rs:562:9
+    |
+562 |     let payload_value =
+    |         ^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_payload_value`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+warning: `tos-health-core` (lib) generated 1 warning (run `cargo fix --lib -p tos-health-core` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.48s
+     Running tests/http.rs (target/debug/deps/http-559405db5d53b52c)
+
+running 1 test
+test all_six_success_handlers_emit_runtime_dtos ... FAILED
+
+failures:
+
+---- all_six_success_handlers_emit_runtime_dtos stdout ----
+
+thread 'all_six_success_handlers_emit_runtime_dtos' (466122) panicked at crates/health-services/tests/http.rs:445:13:
+assertion `left == right` failed: node-snapshot
+  left: String("7e030e2d23c5e83ffb8c73d440e409f65857c79a69c1a1de3433b0aaf10999b6")
+ right: "f71d2391ab0a9a248246a4b8b8f902efecab11d467084e56972185f13fb2451d"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    all_six_success_handlers_emit_runtime_dtos
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-services --test http`

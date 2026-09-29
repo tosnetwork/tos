@@ -1,8 +1,12 @@
 {
   "schema_version": 1,
   "source_base_commit": "b2c500dc6f26eb1530dac9679385b6f330b3d008",
-  "design_blob": "2d7653022fbcf477eb7396ca7a5e2d1a0698c903",
+  "design_blob": "c28a6b2506c98fc728f868081a8192f7d0cd0d0a",
+  "work_order_blob": "f7cd3371c8023bb61409d5e77fd96a3741f0cddd",
+  "memo_commit": "6c0536c042405e857bdced8e327b6f018c816526",
   "complete_manifest": false,
+  "c00_anchor_inventory_complete": true,
+  "completion_note": "The approved C00 anchor set is complete. complete_manifest=false refers to future adapter/provider expansion and production fixture capture, not an omitted C00 truth state.",
   "anchors": [
     {
       "source_id": "native_exporter",
