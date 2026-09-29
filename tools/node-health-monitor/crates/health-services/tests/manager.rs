@@ -442,6 +442,20 @@ async fn local_c09_six_edge_snapshots_project_six_process_sources() {
         let reply = client.get(&collector.edge_url).bearer_auth(token).send().await.unwrap();
         assert_eq!(reply.status(), reqwest::StatusCode::OK, "{node}");
         let bytes = tos_health_services::bounded_body(reply, 262_144).await.unwrap();
+        let snapshot: tos_health_core::edge_snapshot::EdgeSnapshot =
+            serde_json::from_slice(&bytes).unwrap();
+        snapshot.validate(node, &config.inventory.network_id).unwrap();
+        let binding = &snapshot.native_process_binding;
+        assert_ne!(binding.native_epoch, binding.process_epoch, "{node}");
+        eprintln!(
+            "C09_BINDING node={node} native_epoch={} process_epoch={} pid={} start_ticks={} exe_sha256={} listener_inode={}",
+            binding.native_epoch,
+            binding.process_epoch,
+            binding.pid,
+            binding.start_ticks.0,
+            binding.exe_identity_sha256,
+            binding.listener_inode.0
+        );
         let rows = manager.archive_snapshot(&bytes).await.unwrap();
         assert!(
             rows.iter().any(|row| {
