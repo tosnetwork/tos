@@ -84,8 +84,8 @@ for name,kind in [
  ('tos_exporter_collectors','gauge'),('tos_exporter_collections_total','counter'),
  ('tos_exporter_last_collection_duration_seconds','gauge'),('tos_exporter_last_collection_timestamp_seconds','gauge'),
  ('tos_exporter_snapshot_generation','gauge'),('tos_exporter_snapshot_completed_timestamp_seconds','gauge'),
- ('tos_exporter_collection_inflight','gauge'),('tos_exporter_collection_skipped_total','counter'),
- ('tos_exporter_collection_failures_total','counter'),
+ ('tos_exporter_snapshot_collection_inflight','gauge'),('tos_exporter_snapshot_collection_skipped_total','counter'),
+ ('tos_exporter_snapshot_collection_failures_total','counter'),
  ('tos_health_core_registry_instrumentation_complete','gauge'),
  ('tos_health_core_registry_dropped_updates_total','counter'),
 ]:

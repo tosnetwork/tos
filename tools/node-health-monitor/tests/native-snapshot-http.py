@@ -73,6 +73,17 @@ def check(mode,padding=None):
    publisher_prepare_us=int(headers['X-TOS-Publisher-Prepare-Us'])
    assert 0<=publisher_prepare_us<2_000_000
    helps,types,samples=parse_openmetrics(body)
+   snapshot_names=(b'tos_exporter_snapshot_collection_inflight',
+                   b'tos_exporter_snapshot_collection_skipped_total',
+                   b'tos_exporter_snapshot_collection_failures_total')
+   old_live_names=(b'tos_exporter_collection_inflight',
+                   b'tos_exporter_collection_skipped_total',
+                   b'tos_exporter_collection_failures_total')
+   for name in snapshot_names:assert name in body
+   for name in old_live_names:assert name not in body
+   assert b'# HELP tos_exporter_snapshot_collection_inflight Source collection inflight state for this completed snapshot at publication; published generations are idle.\n' in body
+   assert b'# HELP tos_exporter_snapshot_collection_skipped_total Cumulative collection starts skipped as observed when this snapshot was published.\n' in body
+   assert b'# HELP tos_exporter_snapshot_collection_failures_total Cumulative failed collections observed before this successful snapshot publication.\n' in body
    if mode!='gateoff':
     assert b'_pq_operation_duration_seconds_bucket{' in body
     assert b'_pq_operation_duration_seconds__bucket' not in body
@@ -123,6 +134,9 @@ def check(mode,padding=None):
     assert collections()==['COLLECT 1','COMPLETE 1','COLLECT 2']
     assert source_work()[-1]=='SOURCE_WORK ACTIVE 1 PEAK 1'
     status,h,cached=request('/metrics');assert status==200 and cached==body
+    for name in snapshot_names:assert name in cached
+    for name in old_live_names:assert name not in cached
+    assert b'tos_exporter_snapshot_collection_inflight 0.000000\n' in cached
     assert h['X-TOS-Snapshot-Generation']=='1' and hashlib.sha256(cached).hexdigest()==value['payload']['openmetrics_hash']
     assert json.loads(request('/health-snapshot')[2])['generation']=='1'
     time.sleep(max(0,second_started+15.05-time.monotonic()))

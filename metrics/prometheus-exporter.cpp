@@ -203,12 +203,14 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
     set = std::move(set).join(health::core_registry.collect());
   }
   set.families.push_back(metrics::MetricFamily::make_scalar(
-      prefix_ + "_exporter_collection_inflight", "gauge", 0,
-      "Actual source work at this completed snapshot; cached bodies are immutable."));
-  set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_skipped_total", "counter",
-                                                            static_cast<double>(skipped_)));
-  set.families.push_back(metrics::MetricFamily::make_scalar(prefix_ + "_exporter_collection_failures_total", "counter",
-                                                            static_cast<double>(failures_)));
+      prefix_ + "_exporter_snapshot_collection_inflight", "gauge", 0,
+      "Source collection inflight state for this completed snapshot at publication; published generations are idle."));
+  set.families.push_back(metrics::MetricFamily::make_scalar(
+      prefix_ + "_exporter_snapshot_collection_skipped_total", "counter", static_cast<double>(skipped_),
+      "Cumulative collection starts skipped as observed when this snapshot was published."));
+  set.families.push_back(metrics::MetricFamily::make_scalar(
+      prefix_ + "_exporter_snapshot_collection_failures_total", "counter", static_cast<double>(failures_),
+      "Cumulative failed collections observed before this successful snapshot publication."));
   auto rendered = std::move(set).render();
   rendered += "# EOF\n";
   std::optional<health::NativeCoreSnapshot> typed;

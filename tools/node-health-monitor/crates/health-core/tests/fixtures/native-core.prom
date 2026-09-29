@@ -1,5 +1,5 @@
 # TYPE tos_exporter_snapshot_completed_timestamp_seconds gauge
-tos_exporter_snapshot_completed_timestamp_seconds 1790667353.781524
+tos_exporter_snapshot_completed_timestamp_seconds 1790668065.667673
 # TYPE tos_health_pq_accounting_complete gauge
 tos_health_pq_accounting_complete{operation="sign"} 1.000000
 # TYPE tos_exporter_snapshot_generation gauge
@@ -18,7 +18,7 @@ tos_health_source_failures_total{source="fixture"} 0.000000
 tos_health_core_registry_instrumentation_complete 1.000000
 # HELP tos_health_source_collection_completed_timestamp_seconds Publisher callback completion time; not underlying observation time.
 # TYPE tos_health_source_collection_completed_timestamp_seconds gauge
-tos_health_source_collection_completed_timestamp_seconds{source="fixture"} 1790667353.781441
+tos_health_source_collection_completed_timestamp_seconds{source="fixture"} 1790668065.667595
 # HELP tos_pq_operation_duration_seconds Consensus PQ operation duration.
 # TYPE tos_pq_operation_duration_seconds histogram
 tos_pq_operation_duration_seconds_bucket{operation="sign",suite="mldsa44",result="success",le="0.001000"} 0.000000
@@ -89,14 +89,16 @@ tos_pq_operations_total{operation="verify",suite="mldsa44",result="success"} 0.0
 tos_pq_operations_total{operation="verify",suite="mldsa44",result="failure"} 0.000000
 # HELP tos_health_source_last_success_timestamp_seconds Publisher callback success time; not underlying observation time.
 # TYPE tos_health_source_last_success_timestamp_seconds gauge
-tos_health_source_last_success_timestamp_seconds{source="fixture"} 1790667353.781441
+tos_health_source_last_success_timestamp_seconds{source="fixture"} 1790668065.667595
 # TYPE tos_fixture_calls counter
 tos_fixture_calls 1.000000
-# HELP tos_exporter_collection_inflight Actual source work at this completed snapshot; cached bodies are immutable.
-# TYPE tos_exporter_collection_inflight gauge
-tos_exporter_collection_inflight 0.000000
-# TYPE tos_exporter_collection_skipped_total counter
-tos_exporter_collection_skipped_total 0.000000
-# TYPE tos_exporter_collection_failures_total counter
-tos_exporter_collection_failures_total 0.000000
+# HELP tos_exporter_snapshot_collection_inflight Source collection inflight state for this completed snapshot at publication; published generations are idle.
+# TYPE tos_exporter_snapshot_collection_inflight gauge
+tos_exporter_snapshot_collection_inflight 0.000000
+# HELP tos_exporter_snapshot_collection_skipped_total Cumulative collection starts skipped as observed when this snapshot was published.
+# TYPE tos_exporter_snapshot_collection_skipped_total counter
+tos_exporter_snapshot_collection_skipped_total 0.000000
+# HELP tos_exporter_snapshot_collection_failures_total Cumulative failed collections observed before this successful snapshot publication.
+# TYPE tos_exporter_snapshot_collection_failures_total counter
+tos_exporter_snapshot_collection_failures_total 0.000000
 # EOF

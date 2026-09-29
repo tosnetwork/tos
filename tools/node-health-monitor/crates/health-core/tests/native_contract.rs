@@ -24,7 +24,10 @@ fn exact_pairing_rejects_changed_generation_and_content() {
     assert!(pair(
         &value,
         "1",
-        &body.replace("exporter_collection_skipped_total 0", "exporter_collection_skipped_total 1")
+        &body.replace(
+            "exporter_snapshot_collection_skipped_total 0",
+            "exporter_snapshot_collection_skipped_total 1"
+        )
     )
     .is_err());
     let mut changed = value.clone();

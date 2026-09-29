@@ -373,7 +373,7 @@
       "bytes_per_tuple": 8
     },
     {
-      "name": "tos_exporter_collection_inflight",
+      "name": "tos_exporter_snapshot_collection_inflight",
       "semantic_type": "gauge",
       "label_names": [],
       "allowed_tuples": [
@@ -383,7 +383,7 @@
       "bytes_per_tuple": 8
     },
     {
-      "name": "tos_exporter_collection_skipped_total",
+      "name": "tos_exporter_snapshot_collection_skipped_total",
       "semantic_type": "counter",
       "label_names": [],
       "allowed_tuples": [
@@ -393,7 +393,7 @@
       "bytes_per_tuple": 8
     },
     {
-      "name": "tos_exporter_collection_failures_total",
+      "name": "tos_exporter_snapshot_collection_failures_total",
       "semantic_type": "counter",
       "label_names": [],
       "allowed_tuples": [
