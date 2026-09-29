@@ -5,6 +5,18 @@ use std::{os::unix::fs::PermissionsExt, path::Path, sync::Arc, time::Duration};
 use tower::ServiceExt;
 
 #[cfg(feature = "mcp")]
+async fn bounded_mcp_body<B>(body: B) -> Result<axum::body::Bytes, ()>
+where
+    B: hyper::body::Body,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+    use http_body_util::{BodyExt, Limited};
+    // The 32-KiB response ceiling applies to the serialized MCP wrapper,
+    // not only the nested HTTP query envelope.
+    Limited::new(body, 32_768).collect().await.map(|body| body.to_bytes()).map_err(|_| ())
+}
+
+#[cfg(feature = "mcp")]
 async fn serve_mcp(
     listener: tokio::net::UnixListener,
     state: tos_health_services::observability::ObservabilityState,
@@ -103,14 +115,12 @@ async fn serve_mcp(
                     // transport wrapper is counted too, and an oversized/failed
                     // response cannot leak a partial uncharged result.
                     let (parts, body) = response.into_parts();
-                    let Ok(collected) = http_body_util::Limited::new(body, 131_072).collect().await
-                    else {
+                    let Ok(bytes) = bounded_mcp_body(body).await else {
                         return Ok(hyper::Response::builder()
                             .status(hyper::StatusCode::PAYLOAD_TOO_LARGE)
                             .body(Full::new(axum::body::Bytes::new()).boxed())
                             .expect("fixed MCP size refusal"));
                     };
-                    let bytes = collected.to_bytes();
                     let now = tos_health_services::query_ledger::boot_millis();
                     let charged = state.query_ledger.as_ref().is_some_and(|ledger| {
                         now.as_ref().is_ok_and(|now| {
@@ -271,6 +281,16 @@ mod tests {
     use super::*;
     use axum::routing::get;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test]
+    async fn serialized_mcp_response_refuses_32769_without_partial_body() {
+        use http_body_util::Full;
+        let at_limit = Full::new(axum::body::Bytes::from(vec![b'x'; 32_768]));
+        assert_eq!(bounded_mcp_body(at_limit).await.unwrap().len(), 32_768);
+        let over_limit = Full::new(axum::body::Bytes::from(vec![b'x'; 32_769]));
+        assert!(bounded_mcp_body(over_limit).await.is_err());
+    }
 
     fn socket() -> (std::path::PathBuf, tokio::net::UnixListener) {
         let nanos =

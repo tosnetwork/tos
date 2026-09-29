@@ -40,3 +40,13 @@ strict feature clippy is `session-deadline-clippy.log` in that directory
 (SHA-256 `dd621e9ff7c9eac161c730aa8a79332dd68698435a7a84d044d9ad39dfa1f5d2`).
 This is a transport-session deadline, not yet proof of whole AURA child
 termination or a complete broker-run deadline.
+
+The later 32-KiB slice applies the per-response limit to the serialized SDK
+body before release. The same bounded-body helper used by the Unix listener
+accepts 32768 bytes and refuses 32769 without a partial body; the actual Unix
+SDK initialize/list/call control remains green. This is a helper boundary
+negative plus a real positive route, not an oversized SDK result fixture.
+Focused feature tests exited 0: `/home/tomi/nhm-c08-mcp-evidence/response32-tests.log`
+(SHA-256 `8d41abf3a94464b886341b9152b217aea50a806fb8b01a2aa08454a9296dc174`).
+Strict feature clippy exited 0: `response32-clippy.log` in that directory
+(SHA-256 `2cc52da353e70f4aedc4feb84c1ff98e5c6181b7b7bfcd263d88af8c530ea5aa`).
