@@ -218,3 +218,44 @@ fn inventory_and_secret_domains_are_enforced() {
     let state = state();
     assert!(!Arc::ptr_eq(&state.operator_token, &state.service_token));
 }
+#[tokio::test]
+async fn query_rejections_are_not_http_success() {
+    let state = state();
+    let app = query_router(state);
+    let now = chrono::Utc::now();
+    let start =
+        (now - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let end = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let grant = json_body(
+        app.clone()
+            .oneshot(request(
+                "/v1/control/grants",
+                'o',
+                json!({"node_ids":["v1"],"scope_ids":["node"],"start":start,"end":end}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let run = grant["run_id"].as_str().unwrap();
+    let token = grant["run_token"].as_str().unwrap();
+    for (path, input, expected) in [
+        ("capabilities", json!({"run_id":run,"force_refresh":true}), StatusCode::BAD_REQUEST),
+        (
+            "node-snapshot",
+            json!({"run_id":run,"node_id":"v1","as_of":end,"max_age_seconds":30,"components":["process"]}),
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            "node-snapshot",
+            json!({"run_id":run,"node_id":"other","as_of":end,"max_age_seconds":30,"components":["process"]}),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let mut req = request(&format!("/v1/query/{path}"), 'a', input);
+        req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), expected);
+        assert_eq!(json_body(response).await["status"], "error");
+    }
+}

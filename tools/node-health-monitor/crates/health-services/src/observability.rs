@@ -178,7 +178,7 @@ async fn query(
     headers: HeaderMap,
     Path(tool): Path<String>,
     Json(input): Json<Value>,
-) -> Result<Json<Value>, StatusCode> {
+) -> Result<(StatusCode, Json<Value>), StatusCode> {
     if !authorized(bearer(&headers), &state.service_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
@@ -208,7 +208,25 @@ async fn query(
         name,
         input,
     );
-    Ok(Json(result))
+    let status = match result["error"]["code"].as_str() {
+        None => StatusCode::OK,
+        Some("INVALID_ARGUMENT") => StatusCode::BAD_REQUEST,
+        Some("UNAUTHENTICATED" | "RUN_TOKEN_EXPIRED") => StatusCode::UNAUTHORIZED,
+        Some("OUT_OF_SCOPE") => StatusCode::FORBIDDEN,
+        Some("UNKNOWN_NODE" | "UNKNOWN_REFERENCE" | "UNKNOWN_METRIC") => StatusCode::NOT_FOUND,
+        Some("CURSOR_MISMATCH" | "SOURCE_CONFLICT") => StatusCode::CONFLICT,
+        Some("CURSOR_EXPIRED" | "EVIDENCE_EXPIRED") => StatusCode::GONE,
+        Some("RESULT_TOO_LARGE") => StatusCode::PAYLOAD_TOO_LARGE,
+        Some("CAPABILITY_UNSUPPORTED" | "CAPABILITY_DISABLED" | "SCHEMA_MISMATCH") => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        Some("SERIES_LIMIT" | "RUN_BUDGET_EXHAUSTED" | "RATE_LIMITED") => {
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        Some("QUERY_TIMEOUT") => StatusCode::GATEWAY_TIMEOUT,
+        Some(_) => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    Ok((status, Json(result)))
 }
 pub fn router(state: ObservabilityState) -> Router {
     Router::new()
