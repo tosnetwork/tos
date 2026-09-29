@@ -97,7 +97,7 @@ impl QueryLedger {
             conn.pragma_query_value(None, "journal_mode", |row| row.get(0)).map_err(failure)?;
         let synchronous: i64 =
             conn.pragma_query_value(None, "synchronous", |row| row.get(0)).map_err(failure)?;
-        if mode.to_ascii_lowercase() != "wal" || synchronous != 2 {
+        if !mode.eq_ignore_ascii_case("wal") || synchronous != 2 {
             return Err("query ledger WAL/FULL unavailable".into());
         }
         conn.execute_batch(

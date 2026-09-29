@@ -423,7 +423,7 @@ fn bounded_read(path: &Path, limit: u64) -> Result<String, String> {
     }
     String::from_utf8(bytes).map_err(|e| e.to_string())
 }
-fn process_epoch_from(proc_root: &Path, pid: u32) -> Result<String, String> {
+pub(crate) fn process_epoch_from(proc_root: &Path, pid: u32) -> Result<String, String> {
     let stat = bounded_read(&proc_root.join(pid.to_string()).join("stat"), 16_384)?;
     let start = stat
         .rsplit_once(')')
@@ -767,9 +767,12 @@ pub fn r4_snapshot(state: &EdgeState) -> Result<Value, String> {
     let network = cache.network.clone().ok_or("native network not configured")?;
     let native = cache.read_record().ok_or("required native sample unavailable")?;
     let process_epoch = process_epoch.as_deref().ok_or("required process epoch unavailable")?;
-    if native.process_epoch() != process_epoch {
-        return Err("native process epoch mismatch".into());
+    let binding = cache.read_binding().ok_or("required native process binding unavailable")?;
+    if binding.process_epoch != process_epoch || binding.native_epoch != native.process_epoch() {
+        return Err("native process binding mismatch".into());
     }
+    // No source I/O on HTTP: the scheduled sampler alone verifies actual PID,
+    // executable and listener ownership before/after its paired native read.
     sources.push(match native {
         tos_health_core::native::NativeRecord::V1(v) => EdgeSource::Native(v),
         tos_health_core::native::NativeRecord::V2(v) => EdgeSource::NativeV2(v),
@@ -787,8 +790,22 @@ pub fn r4_snapshot(state: &EdgeState) -> Result<Value, String> {
         }
         sources.push(EdgeSource::Cgroup(value));
     }
-    let snapshot =
-        EdgeSnapshot { schema_version: 1, status: "partial".into(), sources, anchors: vec![] };
+    if state
+        .cache
+        .lock()
+        .map_err(|_| "process cache unavailable")?
+        .as_ref()
+        .is_none_or(|sample| sample.process_epoch != process_epoch)
+    {
+        return Err("process epoch changed during edge snapshot".into());
+    }
+    let snapshot = EdgeSnapshot {
+        schema_version: 1,
+        status: "partial".into(),
+        sources,
+        anchors: vec![],
+        native_process_binding: binding,
+    };
     snapshot.validate(&state.node, &network)?;
     serde_json::to_value(snapshot).map_err(|e| e.to_string())
 }

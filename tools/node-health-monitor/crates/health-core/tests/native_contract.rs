@@ -74,19 +74,34 @@ fn immutable_identity_excludes_only_receipt_and_age() {
 
 #[test]
 fn edge_wire_requires_bound_process_native_and_cgroup_epochs() {
-    let process: ProcessEnvelope =
+    let mut process: ProcessEnvelope =
         serde_json::from_str(include_str!("fixtures/process-source.json")).unwrap();
-    let cgroup: CgroupEnvelope =
+    let mut cgroup: CgroupEnvelope =
         serde_json::from_str(include_str!("fixtures/host-cgroup.json")).unwrap();
+    let process_epoch = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:4242:123";
+    process.process_epoch = process_epoch.into();
+    cgroup.process_epoch = process_epoch.into();
+    let native = fixture();
     let snapshot = EdgeSnapshot {
         schema_version: 1,
         status: "partial".into(),
         sources: vec![
             EdgeSource::Process(process),
-            EdgeSource::Native(fixture()),
+            EdgeSource::Native(native.clone()),
             EdgeSource::Cgroup(cgroup),
         ],
         anchors: vec![],
+        native_process_binding: tos_health_core::edge_snapshot::NativeProcessBinding {
+            kind: "native_process_binding".into(),
+            process_epoch: process_epoch.into(),
+            native_epoch: native.process_epoch,
+            pid: 4242,
+            start_ticks: tos_health_core::wire::U64(123),
+            exe_identity_sha256: "b".repeat(64),
+            listener_inode: tos_health_core::wire::U64(1),
+            listener_addr: "127.0.0.1:1234".into(),
+            checked_at: "2026-09-29T00:00:00Z".into(),
+        },
     };
     snapshot.validate("v1", &"a".repeat(64)).unwrap();
     let mut copied_old = snapshot.clone();
@@ -97,5 +112,8 @@ fn edge_wire_requires_bound_process_native_and_cgroup_epochs() {
     let native = native.unwrap();
     native.process_epoch = "0".repeat(32);
     native.source_epoch = native.process_epoch.clone();
-    assert_eq!(copied_old.validate("v1", &"a".repeat(64)).unwrap_err(), "mixed process epochs");
+    assert_eq!(
+        copied_old.validate("v1", &"a".repeat(64)).unwrap_err(),
+        "native process binding mismatch"
+    );
 }

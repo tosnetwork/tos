@@ -6,7 +6,7 @@ use tos_health_core::native::{canonical_hash, parse_native, NativeEnvelopeV2, Na
 use tos_health_services::{
     collector::decode_records,
     edge::{r4_snapshot, sample_process, EdgeState},
-    native_cache::NativeCache,
+    native_cache::{verified_binding, NativeCache},
 };
 use tower::ServiceExt;
 
@@ -70,11 +70,18 @@ async fn actual_cpp_publisher_pairs_and_negatives() {
     let (last_record, last_body) = last.unwrap();
     let state = EdgeState::new("v1".into(), vec![b'e'; 32]);
     let pid = std::fs::read_link("/proc/self").unwrap().to_str().unwrap().parse().unwrap();
-    let mut process = sample_process("v1", pid, 1).unwrap();
-    process.process_epoch = last_record.process_epoch().to_owned();
+    let process = sample_process("v1", pid, 1).unwrap();
     *state.cache.lock().unwrap() = Some(process);
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let binding =
+        verified_binding(pid, listener.local_addr().unwrap(), last_record.process_epoch()).unwrap();
     state.native.lock().unwrap().network = Some("a".repeat(64));
-    assert!(state.native.lock().unwrap().publish_record(last_record, last_body, 0).unwrap());
+    assert!(state
+        .native
+        .lock()
+        .unwrap()
+        .publish_record_with_binding(last_record, last_body, 0, Some(binding))
+        .unwrap());
     let snapshot_value = r4_snapshot(&state).unwrap();
     let response = tos_health_services::edge::router(state)
         .oneshot(

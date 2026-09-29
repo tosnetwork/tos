@@ -105,7 +105,15 @@ def main():
  validator('source-envelope.schema.json').validate(native)
  validator('source-envelope.schema.json').validate(process)
  validator('source-envelope.schema.json').validate(cgroup)
- validator('edge-snapshot.schema.json').validate(dict(schema_version=1,status='partial',sources=[process,native,cgroup],anchors=[]))
+ edge_process=copy.deepcopy(process);edge_cgroup=copy.deepcopy(cgroup)
+ edge_epoch='00000000-0000-4000-8000-000000000001:4242:123'
+ edge_process['process_epoch']=edge_epoch;edge_cgroup['process_epoch']=edge_epoch
+ binding=dict(kind='native_process_binding',process_epoch=edge_epoch,native_epoch=native['process_epoch'],pid=4242,start_ticks='123',exe_identity_sha256='d'*64,listener_inode='456',listener_addr='127.0.0.1:9000',checked_at='2026-09-29T00:00:00Z')
+ edge_fixture=dict(schema_version=1,status='partial',sources=[edge_process,native,edge_cgroup],anchors=[],native_process_binding=binding)
+ validator('edge-snapshot.schema.json').validate(edge_fixture)
+ assert not validator('edge-snapshot.schema.json').is_valid(dict(edge_fixture,native_process_binding=None))
+ bad=copy.deepcopy(edge_fixture);bad['native_process_binding']['unverified']=True
+ assert not validator('edge-snapshot.schema.json').is_valid(bad)
  validator('edge-heartbeat.schema.json').validate(dict(schema_version=1,node_id='v1',edge_epoch='edge-fixture-1',state='available',guard='guarded',validator_epoch=native['process_epoch'],sources=[dict(source_id='process',age_ms='0',usable=True),dict(source_id='native_core',age_ms='0',usable=True),dict(source_id='host_cgroup',age_ms='0',usable=True)]))
  validator('edge-capabilities.schema.json').validate(dict(schema_version=1,node_id='v1',catalog_digest='a'*64,capabilities=[dict(name='basic_edge',value=dict(supported=True,enabled=True,contract_valid=True,performance_gate='not_run')),dict(name='validator_stats',value=dict(supported=False,enabled=False,contract_valid=False,performance_gate='not_run'))],sources=[dict(source_id='process',status='available'),dict(source_id='validator_stats',status='disabled')]))
  assert native['payload']['pq_sign']['succeeded']=='9007199254740993'

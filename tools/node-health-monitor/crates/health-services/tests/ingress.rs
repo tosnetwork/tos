@@ -892,7 +892,14 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     let native: Value =
         serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
             .unwrap();
-    let epoch = native["process_epoch"].as_str().unwrap();
+    let native_epoch = native["process_epoch"].as_str().unwrap();
+    let epoch = "00000000-0000-4000-8000-000000000001:4242:123";
+    let binding = json!({
+        "kind":"native_process_binding","process_epoch":epoch,"native_epoch":native_epoch,
+        "pid":4242,"start_ticks":"123","exe_identity_sha256":"d".repeat(64),
+        "listener_inode":"456","listener_addr":"127.0.0.1:9000",
+        "checked_at":"2026-09-29T00:00:00Z"
+    });
     let process_payload = json!({
         "kind":"process","pid":4242,"rss_bytes":"1048576","anon_bytes":"524288",
         "file_bytes":"524288","swap_bytes":"0","cpu_user_ticks":"100","cpu_system_ticks":"50"
@@ -910,12 +917,12 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     });
     let app = Router::new()
         .route("/v1/edge/snapshot", get(move || {
-            let flag=flag.clone(); let count=count.clone(); let process=process.clone(); async move {
+            let flag=flag.clone(); let count=count.clone(); let process=process.clone(); let binding=binding.clone(); async move {
                 count.fetch_add(1, Ordering::SeqCst);
                 let mut value:Value=serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json")).unwrap();
                 value["node_id"]=if flag.load(Ordering::SeqCst){"other"}else{"v1"}.into();
                 value["source_age_ms"]=0.into();
-                Json(json!({"schema_version":1,"status":"partial","sources":[process,value],"anchors":[]}))
+                Json(json!({"schema_version":1,"status":"partial","sources":[process,value],"anchors":[],"native_process_binding":binding}))
             }
         }))
         .route("/v1/manager/facts",post(move |Json(value):Json<Value>| { let tx=tx.clone(); async move {tx.try_send(value).unwrap(); Json(json!({"accepted":true}))} }));

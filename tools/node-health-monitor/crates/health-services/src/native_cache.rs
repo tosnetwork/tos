@@ -2,14 +2,143 @@
 use crate::edge::EdgeState;
 use sha2::{Digest, Sha256};
 use std::{
+    fs,
+    io::Read,
     net::SocketAddr,
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
+    path::Path,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tos_health_core::{
+    edge_snapshot::NativeProcessBinding,
     freshness::Freshness,
     native::{immutable_metrics, parse_native, NativeEnvelope, NativeRecord},
+    wire::U64,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProcessProbe {
+    epoch: String,
+    pid: u32,
+    start_ticks: u64,
+    exe_identity_sha256: String,
+    listener_inode: u64,
+    listener_addr: SocketAddr,
+}
+impl ProcessProbe {
+    fn local_hex(address: SocketAddr) -> String {
+        match address {
+            SocketAddr::V4(addr) => {
+                addr.ip().octets().iter().rev().map(|byte| format!("{byte:02X}")).collect()
+            }
+            SocketAddr::V6(addr) => addr
+                .ip()
+                .octets()
+                .chunks_exact(4)
+                .flat_map(|chunk| chunk.iter().rev())
+                .map(|byte| format!("{byte:02X}"))
+                .collect(),
+        }
+    }
+    pub(crate) fn capture(pid: u32, listener_addr: SocketAddr) -> Result<Self, String> {
+        let started = Instant::now();
+        if pid == 0 || !listener_addr.ip().is_loopback() || listener_addr.port() == 0 {
+            return Err("invalid native process binding target".into());
+        }
+        let proc = Path::new("/proc").join(pid.to_string());
+        let epoch = crate::edge::process_epoch_from(Path::new("/proc"), pid)?;
+        let start_ticks = epoch
+            .rsplit(':')
+            .next()
+            .ok_or("missing process start")?
+            .parse::<u64>()
+            .map_err(|_| "invalid process start")?;
+        let exe_path = proc.join("exe");
+        let exe = fs::read_link(&exe_path).map_err(|e| e.to_string())?;
+        let meta = fs::metadata(&exe_path).map_err(|e| e.to_string())?;
+        let mut identity = exe.as_os_str().as_bytes().to_vec();
+        identity.extend_from_slice(&meta.dev().to_le_bytes());
+        identity.extend_from_slice(&meta.ino().to_le_bytes());
+        let exe_identity_sha256 = format!("{:x}", Sha256::digest(&identity));
+        let tcp = if listener_addr.is_ipv4() { "tcp" } else { "tcp6" };
+        let table = proc.join("net").join(tcp);
+        let mut raw = Vec::new();
+        fs::File::open(&table)
+            .map_err(|e| e.to_string())?
+            .take(4 * 1024 * 1024 + 1)
+            .read_to_end(&mut raw)
+            .map_err(|e| e.to_string())?;
+        if raw.len() > 4 * 1024 * 1024 {
+            return Err("native socket table too large".into());
+        }
+        let raw = String::from_utf8(raw).map_err(|_| "native socket table not UTF-8")?;
+        let expected = format!("{}:{:04X}", Self::local_hex(listener_addr), listener_addr.port());
+        let mut socket_inode = None;
+        for line in raw.lines().skip(1) {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            if fields.len() > 9 && fields[1].eq_ignore_ascii_case(&expected) && fields[3] == "0A" {
+                let inode = fields[9].parse::<u64>().map_err(|_| "invalid native socket inode")?;
+                if inode == 0 || socket_inode.replace(inode).is_some() {
+                    return Err("ambiguous native listener".into());
+                }
+            }
+        }
+        let listener_inode = socket_inode.ok_or("native listener not found")?;
+        let target = format!("socket:[{listener_inode}]");
+        let mut owned = false;
+        let mut inspected = 0usize;
+        for entry in fs::read_dir(proc.join("fd")).map_err(|e| e.to_string())? {
+            inspected += 1;
+            if inspected > 8192 {
+                return Err("native process FD inventory too large".into());
+            }
+            if started.elapsed() > Duration::from_secs(1) {
+                return Err("native identity probe deadline".into());
+            }
+            let entry = entry.map_err(|e| e.to_string())?;
+            if fs::read_link(entry.path()).is_ok_and(|link| link == Path::new(&target)) {
+                owned = true;
+            }
+        }
+        if !owned {
+            return Err("native listener not owned by configured PID".into());
+        }
+        if crate::edge::process_epoch_from(Path::new("/proc"), pid)? != epoch {
+            return Err("process changed during native identity check".into());
+        }
+        if started.elapsed() > Duration::from_secs(1) {
+            return Err("native identity probe deadline".into());
+        }
+        Ok(Self { epoch, pid, start_ticks, exe_identity_sha256, listener_inode, listener_addr })
+    }
+    pub(crate) fn binding(&self, native_epoch: &str) -> NativeProcessBinding {
+        NativeProcessBinding {
+            kind: "native_process_binding".into(),
+            process_epoch: self.epoch.clone(),
+            native_epoch: native_epoch.into(),
+            pid: self.pid,
+            start_ticks: U64(self.start_ticks),
+            exe_identity_sha256: self.exe_identity_sha256.clone(),
+            listener_inode: U64(self.listener_inode),
+            listener_addr: self.listener_addr.to_string(),
+            checked_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        }
+    }
+}
+
+/// Bounded local ownership check for a fixture or native sampler. The sampler
+/// additionally repeats it after the paired HTTP reads before publication.
+pub fn verified_binding(
+    pid: u32,
+    address: SocketAddr,
+    native_epoch: &str,
+) -> Result<NativeProcessBinding, String> {
+    if native_epoch.is_empty() || native_epoch.len() > 128 {
+        return Err("invalid native publisher epoch".into());
+    }
+    Ok(ProcessProbe::capture(pid, address)?.binding(native_epoch))
+}
 #[derive(Debug)]
 pub struct NativeCache {
     pub network: Option<String>,
@@ -17,6 +146,7 @@ pub struct NativeCache {
     body: Option<String>,
     started: Instant,
     typed: Option<(NativeRecord, Instant)>,
+    binding: Option<NativeProcessBinding>,
 }
 impl Default for NativeCache {
     fn default() -> Self {
@@ -26,6 +156,7 @@ impl Default for NativeCache {
             body: None,
             started: Instant::now(),
             typed: None,
+            binding: None,
         }
     }
 }
@@ -71,6 +202,7 @@ impl NativeCache {
         if accepted {
             self.body = Some(body);
             self.typed = None;
+            self.binding = None;
         }
         Ok(accepted)
     }
@@ -95,6 +227,10 @@ impl NativeCache {
         value.set_source_age_ms(age);
         Some(value)
     }
+    pub fn read_binding(&self) -> Option<NativeProcessBinding> {
+        self.read_record()?;
+        self.binding.clone()
+    }
     pub fn publish_typed(
         &mut self,
         value: NativeEnvelope,
@@ -109,6 +245,18 @@ impl NativeCache {
         body: String,
         duration: u64,
     ) -> Result<bool, String> {
+        self.publish_record_with_binding(value, body, duration, None)
+    }
+    pub fn publish_record_with_binding(
+        &mut self,
+        value: NativeRecord,
+        body: String,
+        duration: u64,
+        binding: Option<NativeProcessBinding>,
+    ) -> Result<bool, String> {
+        if binding.as_ref().is_some_and(|b| b.native_epoch != value.process_epoch()) {
+            return Err("native publisher epoch binding mismatch".into());
+        }
         value.paired(
             value.node_id(),
             value.network_id(),
@@ -144,6 +292,7 @@ impl NativeCache {
             ));
             self.typed = Some((value, Instant::now()));
             self.body = Some(body);
+            self.binding = binding;
         }
         Ok(accepted)
     }
@@ -192,13 +341,32 @@ impl NativeSampler {
             return Err("native collection not due".into());
         }
         self.next_due = Instant::now() + NATIVE_INTERVAL;
-        let epoch = {
+        let (epoch, pid) = {
             let cache = self.state.cache.lock().map_err(|_| "process cache unavailable")?;
             let sample = cache.as_ref().ok_or("process cache cold")?;
             if !sample.quality.usable(chrono::Utc::now().timestamp_millis(), 30_000, false) {
                 return Err("process sample stale".into());
             }
-            sample.process_epoch.clone()
+            let pid = if self.network.is_some() {
+                Some(
+                    sample.payload["pid"]
+                        .as_u64()
+                        .and_then(|value| u32::try_from(value).ok())
+                        .ok_or("process PID unavailable")?,
+                )
+            } else {
+                None
+            };
+            (sample.process_epoch.clone(), pid)
+        };
+        let before = if self.network.is_some() {
+            let probe = ProcessProbe::capture(pid.ok_or("process PID unavailable")?, self.address)?;
+            if probe.epoch != epoch {
+                return Err("process identity changed before native collection".into());
+            }
+            Some(probe)
+        } else {
+            None
         };
         let started = Instant::now();
         let mut response = self
@@ -258,12 +426,22 @@ impl NativeSampler {
             if current_epoch.as_deref() != Some(&epoch) {
                 return Err("process epoch changed".into());
             }
+            let after = ProcessProbe::capture(pid.ok_or("process PID unavailable")?, self.address)?;
+            if before.as_ref() != Some(&after) {
+                return Err("native process/listener changed during paired collection".into());
+            }
+            let binding = after.binding(value.process_epoch());
             return self
                 .state
                 .native
                 .lock()
                 .map_err(|_| "native cache unavailable")?
-                .publish_record(value, body, started.elapsed().as_millis() as u64);
+                .publish_record_with_binding(
+                    value,
+                    body,
+                    started.elapsed().as_millis() as u64,
+                    Some(binding),
+                );
         }
         let scalar = |suffix: &str| -> Result<&str, String> {
             let mut found = None;

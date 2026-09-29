@@ -314,6 +314,22 @@ fn queued_observation_cannot_be_rejuvenated() {
     assert!(with_queue_age(overflow, Duration::from_millis(1)).is_err());
 }
 
+fn synthetic_bound_snapshot() -> Value {
+    let native: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
+            .unwrap();
+    let mut process: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/process-source.json"))
+            .unwrap();
+    let process_epoch = "00000000-0000-4000-8000-000000000001:4242:123";
+    process["process_epoch"] = process_epoch.into();
+    json!({"schema_version":1,"status":"partial","sources":[native,process],"anchors":[],
+        "native_process_binding":{"kind":"native_process_binding","process_epoch":process_epoch,
+        "native_epoch":"fa86123d3210887c36045ec1ec657bfc","pid":4242,"start_ticks":"123",
+        "exe_identity_sha256":"d".repeat(64),"listener_inode":"456",
+        "listener_addr":"127.0.0.1:9000","checked_at":"2026-09-29T00:00:00Z"}})
+}
+
 #[tokio::test]
 async fn typed_snapshot_archive_commits_exact_refs_without_creating_healthy_facts() {
     use axum::{
@@ -323,14 +339,7 @@ async fn typed_snapshot_archive_commits_exact_refs_without_creating_healthy_fact
     let fixture = Fixture::new();
     let config = fixture.config();
     let manager = Manager::start(&config).unwrap();
-    let native: Value =
-        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
-            .unwrap();
-    let process: Value =
-        serde_json::from_str(include_str!("../../health-core/tests/fixtures/process-source.json"))
-            .unwrap();
-    let snapshot =
-        json!({"schema_version":1,"status":"partial","sources":[native,process],"anchors":[]});
+    let snapshot = synthetic_bound_snapshot();
     let app = tos_health_services::manager::router(manager.clone());
     let request = |body: &Value| {
         Request::builder()
@@ -423,14 +432,7 @@ async fn partial_archive_failure_has_no_receipt_and_replay_preserves_committed_r
     let fixture = Fixture::new();
     let config = fixture.config();
     let manager = Manager::start(&config).unwrap();
-    let native: Value =
-        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
-            .unwrap();
-    let process: Value =
-        serde_json::from_str(include_str!("../../health-core/tests/fixtures/process-source.json"))
-            .unwrap();
-    let mut snapshot =
-        json!({"schema_version":1,"status":"partial","sources":[native,process],"anchors":[]});
+    let mut snapshot = synthetic_bound_snapshot();
     let records = tos_health_services::collector::decode_records(
         &serde_json::to_vec(&snapshot).unwrap(),
         "v1",

@@ -11,7 +11,7 @@ use tos_health_core::{
 };
 use tos_health_services::{
     edge::{r4_snapshot, sample_process, EdgeState},
-    native_cache::{NativeCache, NativeSampler},
+    native_cache::{verified_binding, NativeCache, NativeSampler},
 };
 fn fixture() -> NativeEnvelope {
     let mut value: NativeEnvelope =
@@ -52,8 +52,8 @@ async fn fake(
     let pid = std::fs::read_link("/proc/self").unwrap().to_str().unwrap().parse().unwrap();
     let process = sample_process("v1", pid, 1).unwrap();
     let mut value = fixture();
-    value.process_epoch = process.process_epoch.clone();
-    value.source_epoch = process.process_epoch.clone();
+    value.process_epoch = "f".repeat(32);
+    value.source_epoch = value.process_epoch.clone();
     let epoch = value.process_epoch.clone();
     let calls = Arc::new(AtomicUsize::new(0));
     let reads = Arc::new(AtomicUsize::new(0));
@@ -148,6 +148,20 @@ async fn typed_sampler_and_edge_read_only_cache() {
     assert!(snapshot.native().is_some());
     assert_eq!(snapshot.sources.len(), 2);
     snapshot.validate("v1", &"a".repeat(64)).unwrap();
+    assert_eq!(snapshot.native_process_binding.native_epoch, "f".repeat(32));
+    assert_ne!(
+        snapshot.native_process_binding.native_epoch,
+        snapshot.native_process_binding.process_epoch
+    );
+    let mut wrong_pid = snapshot.clone();
+    wrong_pid.native_process_binding.pid += 1;
+    assert!(wrong_pid.validate("v1", &"a".repeat(64)).is_err());
+    let mut wrong_listener = snapshot.clone();
+    wrong_listener.native_process_binding.listener_addr = "0.0.0.0:1".into();
+    assert!(wrong_listener.validate("v1", &"a".repeat(64)).is_err());
+    let mut missing_binding: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    missing_binding.as_object_mut().unwrap().remove("native_process_binding");
+    assert!(serde_json::from_value::<EdgeSnapshot>(missing_binding).is_err());
     assert!(snapshot.validate("v2", &"a".repeat(64)).is_err());
     assert!(snapshot.validate("v1", &"b".repeat(64)).is_err());
     let mut duplicate = snapshot.clone();
@@ -161,7 +175,10 @@ async fn typed_sampler_and_edge_read_only_cache() {
     let native = native.unwrap();
     native.process_epoch = "0".repeat(32);
     native.source_epoch = native.process_epoch.clone();
-    assert_eq!(mixed.validate("v1", &"a".repeat(64)).unwrap_err(), "mixed process epochs");
+    assert_eq!(
+        mixed.validate("v1", &"a".repeat(64)).unwrap_err(),
+        "native process binding mismatch"
+    );
     for _ in 0..1000 {
         let _: EdgeSnapshot = serde_json::from_value(r4_snapshot(&state).unwrap()).unwrap();
     }
@@ -169,6 +186,19 @@ async fn typed_sampler_and_edge_read_only_cache() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     task.abort();
+}
+#[test]
+fn native_binding_requires_the_configured_process_owned_listener() {
+    let pid = std::process::id();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let binding = verified_binding(pid, addr, &"e".repeat(32)).unwrap();
+    assert_eq!(binding.pid, pid);
+    assert_eq!(binding.listener_addr, addr.to_string());
+    assert!(verified_binding(0, addr, &"e".repeat(32)).is_err());
+    assert!(verified_binding(1, addr, &"e".repeat(32)).is_err());
+    drop(listener);
+    assert!(verified_binding(pid, addr, &"e".repeat(32)).is_err());
 }
 #[tokio::test]
 async fn mismatched_pair_has_no_retry_and_no_publication() {
@@ -300,15 +330,22 @@ async fn v2_edge_route_and_collector_keep_incomplete_consensus_typed() {
     let pid = std::fs::read_link("/proc/self").unwrap().to_str().unwrap().parse().unwrap();
     let process = sample_process("v1", pid, 1).unwrap();
     let mut value = fixture_v2();
-    value.process_epoch = process.process_epoch.clone();
-    value.source_epoch = process.process_epoch.clone();
+    value.process_epoch = "f".repeat(32);
+    value.source_epoch = value.process_epoch.clone();
     *state.cache.lock().unwrap() = Some(process);
     state.native.lock().unwrap().network = Some("a".repeat(64));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let binding = tos_health_services::native_cache::verified_binding(
+        pid,
+        listener.local_addr().unwrap(),
+        &value.process_epoch,
+    )
+    .unwrap();
     assert!(state
         .native
         .lock()
         .unwrap()
-        .publish_record(NativeRecord::V2(value), BODY.into(), 0)
+        .publish_record_with_binding(NativeRecord::V2(value), BODY.into(), 0, Some(binding))
         .unwrap());
     let response = tos_health_services::edge::router(state.clone())
         .oneshot(

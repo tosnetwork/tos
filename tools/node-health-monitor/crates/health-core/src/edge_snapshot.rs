@@ -45,6 +45,22 @@ pub enum EdgeSource {
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnsupportedAnchor {}
+/// Edge-derived mapping between two independent epoch namespaces. The native
+/// publisher's epoch is preserved in its source envelope; this binding does
+/// not rewrite or claim the publisher observed the proc identity itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeProcessBinding {
+    pub kind: String,
+    pub process_epoch: String,
+    pub native_epoch: String,
+    pub pid: u32,
+    pub start_ticks: U64,
+    pub exe_identity_sha256: String,
+    pub listener_inode: U64,
+    pub listener_addr: String,
+    pub checked_at: String,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EdgeSnapshot {
@@ -52,6 +68,7 @@ pub struct EdgeSnapshot {
     pub status: String,
     pub sources: Vec<EdgeSource>,
     pub anchors: Vec<UnsupportedAnchor>,
+    pub native_process_binding: NativeProcessBinding,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -185,6 +202,8 @@ impl EdgeSnapshot {
         }
         let mut seen = std::collections::BTreeSet::new();
         let mut process_epoch: Option<&str> = None;
+        let mut native_epoch: Option<&str> = None;
+        let mut process_pid: Option<u32> = None;
         for source in &self.sources {
             let (id, epoch) = match source {
                 EdgeSource::Native(value) => {
@@ -192,14 +211,16 @@ impl EdgeSnapshot {
                     if value.node_id != node || value.payload.network_id != network {
                         return Err("native inventory mismatch".into());
                     }
-                    (value.source_id.as_str(), value.process_epoch.as_str())
+                    native_epoch = Some(&value.process_epoch);
+                    (value.source_id.as_str(), None)
                 }
                 EdgeSource::NativeV2(value) => {
                     value.validate()?;
                     if value.node_id != node || value.payload.network_id != network {
                         return Err("native inventory mismatch".into());
                     }
-                    (value.source_id.as_str(), value.process_epoch.as_str())
+                    native_epoch = Some(&value.process_epoch);
+                    (value.source_id.as_str(), None)
                 }
                 EdgeSource::Process(value) => {
                     if value.schema_version != 1
@@ -239,7 +260,8 @@ impl EdgeSnapshot {
                         }
                         crate::query::utc_ms(time).map_err(str::to_owned)?;
                     }
-                    (value.source_id.as_str(), value.process_epoch.as_str())
+                    process_pid = Some(value.payload.pid);
+                    (value.source_id.as_str(), Some(value.process_epoch.as_str()))
                 }
                 EdgeSource::Cgroup(value) => {
                     if value.schema_version != 1
@@ -273,19 +295,43 @@ impl EdgeSnapshot {
                         }
                         crate::query::utc_ms(time).map_err(str::to_owned)?;
                     }
-                    (value.source_id.as_str(), value.process_epoch.as_str())
+                    (value.source_id.as_str(), Some(value.process_epoch.as_str()))
                 }
             };
-            if process_epoch.is_some_and(|expected| expected != epoch) {
-                return Err("mixed process epochs".into());
+            if let Some(epoch) = epoch {
+                if process_epoch.is_some_and(|expected| expected != epoch) {
+                    return Err("mixed process epochs".into());
+                }
+                process_epoch = Some(epoch);
             }
-            process_epoch = Some(epoch);
             if !seen.insert(id) {
                 return Err("duplicate edge source".into());
             }
         }
         if !seen.contains("process") || !seen.contains("native_core") {
             return Err("required edge source missing".into());
+        }
+        let binding = &self.native_process_binding;
+        let epoch_parts: Vec<_> = binding.process_epoch.split(':').collect();
+        if binding.kind != "native_process_binding"
+            || process_epoch != Some(binding.process_epoch.as_str())
+            || native_epoch != Some(binding.native_epoch.as_str())
+            || process_pid != Some(binding.pid)
+            || binding.pid == 0
+            || binding.start_ticks.0 == 0
+            || binding.listener_inode.0 == 0
+            || !binding
+                .listener_addr
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|addr| addr.ip().is_loopback() && addr.port() != 0)
+            || !crate::wire::hash(&binding.exe_identity_sha256)
+            || epoch_parts.len() != 3
+            || epoch_parts[0].len() != 36
+            || epoch_parts[1].parse::<u32>() != Ok(binding.pid)
+            || epoch_parts[2].parse::<u64>() != Ok(binding.start_ticks.0)
+            || crate::query::utc_ms(&binding.checked_at).is_err()
+        {
+            return Err("native process binding mismatch".into());
         }
         Ok(())
     }
