@@ -1,0 +1,54 @@
+{
+  "base_head": "d45b563ae12b86a10ccd402deaf809ece60a3fc3",
+  "cases": [
+    {
+      "baseline_exit": 0,
+      "baseline_log": {
+        "path": "/home/tomi/nhm-c08-scan-evidence/observation-source-filter.baseline.log",
+        "sha256": "6adf05bb9313ffcb8c351a9a08716b7c7bfedaa3f1c79179768f527b34cde0e9"
+      },
+      "intended_error": "M projection scan bound exceeded",
+      "label": "observation-source-filter",
+      "mutant_exit": 101,
+      "mutant_log": {
+        "path": "/home/tomi/nhm-c08-scan-evidence/observation-source-filter.mutant.log",
+        "sha256": "7a71829948628be2483472750a421c427619c2365d35a7ded42ccb85b299893a"
+      },
+      "mutant_source_sha256": "2b821ef3c0e66934ca3083aa1491d98d2593224807bbd1fb1b0d635834b4ee11",
+      "patch_sha256": "3e95adc215a75689817ed47d917eb013bb35f8000cff7f79c5bddf1d941e8357",
+      "replacement_new": "FROM observations WHERE store_seq<=?1",
+      "replacement_old": "FROM observations WHERE store_seq<=?1 AND source='process'",
+      "restored_exit": 0,
+      "restored_log": {
+        "path": "/home/tomi/nhm-c08-scan-evidence/observation-source-filter.restored.log",
+        "sha256": "4a66c28f20990ca2b51cfcf06af26bd7909e047de8f121837acd036209b76664"
+      }
+    },
+    {
+      "baseline_exit": 0,
+      "baseline_log": {
+        "path": "/home/tomi/nhm-c08-scan-evidence/quarantine-source-filter.baseline.log",
+        "sha256": "452d13e0ee115b695102ebb32f65819381a8f91375ea84828c8a2ba043610ace"
+      },
+      "intended_error": "M quarantine scan bound exceeded",
+      "label": "quarantine-source-filter",
+      "mutant_exit": 101,
+      "mutant_log": {
+        "path": "/home/tomi/nhm-c08-scan-evidence/quarantine-source-filter.mutant.log",
+        "sha256": "de49ea1c46abc84ecc42e341a7dfbb82304f250d37f82de88dec401ecb409b04"
+      },
+      "mutant_source_sha256": "46b5675de1f579a7f2503c43d922fea9bcedacc8057bd5f7f2b27eaebdf357e9",
+      "patch_sha256": "b207421d892715ddf25bd769eb7ee8e932d2bf77f0d1cced2dd285a9472d314d",
+      "replacement_new": "WHERE o.store_seq<=?1",
+      "replacement_old": "WHERE o.store_seq<=?1 AND o.source='process'",
+      "restored_exit": 0,
+      "restored_log": {
+        "path": "/home/tomi/nhm-c08-scan-evidence/quarantine-source-filter.restored.log",
+        "sha256": "fb6662866522285f34e33b7468e1914a0571f4623a32b01d12c28a6d0c809c54"
+      }
+    }
+  ],
+  "restored_sha256": "42c2e418311ce32dc99ac10b336fda3f42c774fd00305b1fee57a3072dd48032",
+  "source_path": "crates/health-services/src/manager_query_source.rs",
+  "test": "unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap"
+}
