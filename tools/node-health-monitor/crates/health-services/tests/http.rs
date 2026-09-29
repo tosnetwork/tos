@@ -657,6 +657,7 @@ async fn event_pages_use_fixed_watermark_and_reject_changed_filter_at_router() {
     let state = state();
     let run = "00000000-0000-4000-8000-000000000001";
     let token = [7u8; 32];
+    let other_run = "00000000-0000-4000-8000-000000000004";
     let start =
         chrono::DateTime::parse_from_rfc3339("2026-09-29T00:00:00Z").unwrap().timestamp_millis();
     {
@@ -688,6 +689,20 @@ async fn event_pages_use_fixed_watermark_and_reject_changed_filter_at_router() {
         )
         .unwrap();
         data.grants.insert(run.into(), grant);
+        let other_grant = Grant::new(
+            other_run.into(),
+            "aura".into(),
+            "a".repeat(64),
+            &token,
+            set(&["v1"]),
+            set(&["node"]),
+            start,
+            start + 60_000,
+            tos_health_services::query_ledger::boot_millis().unwrap(),
+            data.store.watermark(),
+        )
+        .unwrap();
+        data.grants.insert(other_run.into(), other_grant);
         data.store
             .insert(record(
                 start + 4_000,
@@ -715,13 +730,48 @@ async fn event_pages_use_fixed_watermark_and_reject_changed_filter_at_router() {
         assert_eq!(body["pagination"]["truncated"], page < 2);
         let next = body["pagination"]["next_cursor"].as_str();
         if page == 0 {
+            let cursor = next.unwrap();
             let mut changed = input.clone();
             changed["contains"] = json!("other");
-            changed["cursor"] = json!(next.unwrap());
+            changed["cursor"] = json!(cursor);
             let mut req = request("/v1/query/event-window", 'a', changed);
             req.headers_mut()
                 .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
-            assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::CONFLICT);
+            let response = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert_eq!(json_body(response).await["error"]["code"], "CURSOR_MISMATCH");
+
+            let mut replay = input.clone();
+            replay["run_id"] = json!(other_run);
+            replay["cursor"] = json!(cursor);
+            let mut req = request("/v1/query/event-window", 'a', replay);
+            req.headers_mut()
+                .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+            let response = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert_eq!(json_body(response).await["error"]["code"], "CURSOR_MISMATCH");
+
+            let mut tampered = input.clone();
+            let mut bytes = cursor.as_bytes().to_vec();
+            let last = bytes.last_mut().unwrap();
+            *last = if *last == b'a' { b'b' } else { b'a' };
+            tampered["cursor"] = json!(String::from_utf8(bytes).unwrap());
+            let mut req = request("/v1/query/event-window", 'a', tampered);
+            req.headers_mut()
+                .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+            let response = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert_eq!(json_body(response).await["error"]["code"], "CURSOR_MISMATCH");
+
+            let wrong_tool = json!({"run_id":run,"node_ids":["v1"],
+                "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z",
+                "kinds":["config"],"limit":1,"cursor":cursor});
+            let mut req = request("/v1/query/change-history", 'a', wrong_tool);
+            req.headers_mut()
+                .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+            let response = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            assert_eq!(json_body(response).await["error"]["code"], "CURSOR_MISMATCH");
         }
         if let Some(next) = next {
             input["cursor"] = json!(next);
