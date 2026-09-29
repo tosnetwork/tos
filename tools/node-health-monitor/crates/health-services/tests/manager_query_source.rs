@@ -15,6 +15,7 @@ use tos_health_core::{
 };
 use tos_health_services::{
     durable::{DurableEvidence, EvidenceDb},
+    fixed_package::freeze_process_package,
     manager_query_source::{project_process, read_process_projection},
     observability::{control_router, import_manager, router as query_router, ObservabilityState},
     query_ledger::QueryLedger,
@@ -333,6 +334,16 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     let granted = body(grant_response).await;
     let run = granted["run_id"].as_str().unwrap();
     let token = granted["run_token"].as_str().unwrap();
+    let package = freeze_process_package(&state, run).unwrap();
+    let package_json: serde_json::Value = serde_json::from_slice(&package.bytes).unwrap();
+    assert_eq!(package_json["status"], "partial");
+    assert_eq!(package_json["source_profile"], "development_process_only");
+    assert_eq!(package_json["query_watermark"], "1");
+    assert_eq!(package_json["manager_watermark"], origin.store_seq.0.to_string());
+    assert_eq!(package_json["process"][0]["parent_evidence_id"], origin.evidence_id);
+    assert_eq!(package_json["process"][0]["value"]["rss_bytes"], "4096");
+    assert_eq!(package_json["missing_process"].as_array().unwrap().len(), 0);
+    assert_eq!(package.sha256, format!("{:x}", Sha256::digest(&package.bytes)));
     let request = Request::builder()
         .method("POST")
         .uri("/v1/query/node-snapshot")
@@ -351,6 +362,28 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     let query_w = state.data.lock().unwrap().store.watermark();
     assert_eq!(query_w, 1);
     assert_eq!(state.data.lock().unwrap().grants[run].manager_watermark, Some(origin.store_seq.0));
+    // An unrelated direct cache row arrives after the grant fixed W. It must
+    // neither enter nor change the already-frozen M-derived package.
+    let mut late_direct = row("late-direct").record;
+    late_direct.source_record_id = "late-direct:1".into();
+    late_direct.payload = serde_json::json!({"kind":"unavailable","reason":"synthetic late row"});
+    {
+        let mut data = state.data.lock().unwrap();
+        state
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .insert_evidence(&mut data.store, late_direct)
+            .unwrap();
+    }
+    assert_eq!(state.data.lock().unwrap().store.watermark(), 2);
+    assert_eq!(freeze_process_package(&state, run).unwrap().sha256, package.sha256);
+    let late_origin = manager.insert(row("edge-epoch-2")).unwrap();
+    assert_eq!(import_manager(&state).unwrap().0, late_origin.store_seq.0);
+    assert_eq!(state.data.lock().unwrap().store.watermark(), 3);
+    assert_eq!(freeze_process_package(&state, run).unwrap().sha256, package.sha256);
     let capabilities = Request::builder()
         .method("POST")
         .uri("/v1/query/capabilities")
@@ -381,6 +414,9 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     let restarted = query_router(restored.clone()).oneshot(request).await.unwrap();
     assert_eq!(restarted.status(), StatusCode::OK);
     assert_eq!(body(restarted).await["evidence"][0]["parent_evidence_ids"][0], origin.evidence_id);
+    let restored_package = freeze_process_package(&restored, run).unwrap();
+    assert_eq!(restored_package.bytes, package.bytes);
+    assert_eq!(restored_package.sha256, package.sha256);
     // The next bounded broker refresh sees M's later source quarantine and
     // durably revokes this fixed-W run. No query handler reads M to decide it.
     let mut conflict = row("edge-epoch-1");
@@ -388,6 +424,7 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     assert_eq!(manager.insert(conflict).unwrap_err(), "SOURCE_CONFLICT");
     assert!(import_manager(&restored).unwrap_err().contains("quarantined"));
     assert!(restored.data.lock().unwrap().manager_conflicted);
+    assert!(freeze_process_package(&restored, run).is_err());
     let refused = Request::builder()
         .method("POST")
         .uri("/v1/query/node-snapshot")
@@ -415,6 +452,75 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
         .as_bool()
         .unwrap());
     drop(restored);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn fixed_package_marks_unmaterialized_process_missing_without_promoting_direct_cache() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-fixed-package-missing-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&ledger_path)
+    .unwrap()
+    .with_manager_evidence(manager_path)
+    .unwrap();
+    {
+        let mut data = state.data.lock().unwrap();
+        state
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .insert_evidence(&mut data.store, row("untrusted-direct").record)
+            .unwrap();
+    }
+    let grant = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/control/grants")
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(grant.status(), StatusCode::OK);
+    let granted = body(grant).await;
+    let frozen = freeze_process_package(&state, granted["run_id"].as_str().unwrap()).unwrap();
+    let package: serde_json::Value = serde_json::from_slice(&frozen.bytes).unwrap();
+    assert_eq!(package["query_watermark"], "1");
+    assert_eq!(package["manager_watermark"], "0");
+    assert_eq!(package["status"], "partial");
+    assert!(package["process"].as_array().unwrap().is_empty());
+    assert_eq!(package["missing_process"][0]["node_id"], "v1");
+    drop(state);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
 }

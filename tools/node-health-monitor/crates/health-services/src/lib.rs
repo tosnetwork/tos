@@ -4,6 +4,7 @@ use std::{collections::BTreeSet, io::Read, net::SocketAddr, path::Path, time::Du
 use subtle::ConstantTimeEq;
 pub mod collector;
 pub mod edge;
+pub mod fixed_package;
 pub mod manager_query_source;
 #[cfg(feature = "mcp")]
 pub mod mcp_bridge;
