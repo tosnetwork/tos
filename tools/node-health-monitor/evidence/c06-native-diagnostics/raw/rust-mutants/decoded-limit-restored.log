@@ -1,0 +1,10 @@
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.80s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 1 test
+test diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.02s
+

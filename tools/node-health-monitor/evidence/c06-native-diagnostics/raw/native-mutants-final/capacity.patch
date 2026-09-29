@@ -1,0 +1,11 @@
+--- diagnostic-producer.h
++++ diagnostic-producer.h
+@@ -39,7 +39,7 @@
+     std::uint64_t sequence = 0;
+     if (!take(next_, sequence)) { stats_.drop(Drop::Sequence); return false; }
+     if (lock_.test_and_set(std::memory_order_acquire)) { stats_.drop(Drop::Contention); return false; }
+-    if (count_ == capacity) {
++    if (false) {
+       lock_.clear(std::memory_order_release); stats_.drop(Drop::Capacity); return false;
+     }
+     if (stats_.enabled.load(std::memory_order_acquire) == 0) {

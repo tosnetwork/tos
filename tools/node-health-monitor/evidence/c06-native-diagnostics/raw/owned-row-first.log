@@ -1,0 +1,22 @@
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.20s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 1 test
+diagnostic row scalar/value owned upper bound 14931
+diagnostic row body capacity 2048 total owned upper bound 17043
+
+thread 'diagnostic_ingest::tests::late_sequence_across_batches_is_not_a_replay_and_edge_restart_is_idempotent' (627236) panicked at crates/health-services/src/diagnostic_ingest.rs:167:42:
+called `Result::unwrap()` on an `Err` value: "DIAGNOSTIC_OWNERSHIP"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_ingest::tests::late_sequence_across_batches_is_not_a_replay_and_edge_restart_is_idempotent ... FAILED
+
+failures:
+
+failures:
+    diagnostic_ingest::tests::late_sequence_across_batches_is_not_a_replay_and_edge_restart_is_idempotent
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-services --lib`

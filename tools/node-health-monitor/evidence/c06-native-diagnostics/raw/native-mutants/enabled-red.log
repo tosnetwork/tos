@@ -1,0 +1,1 @@
+test: /home/tomi/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:25: int main(): Assertion `tos::health::wire_get(packet.bytes.data()+32,8)==i' failed.

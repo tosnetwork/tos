@@ -1,0 +1,1 @@
+test: /home/tomi/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-ipc.cpp:56: int main(int, char**): Assertion `diagnostic_stats.reasons[static_cast<std::size_t>(DiagnosticProducer::Drop::Socket)]>0' failed.

@@ -1,0 +1,11 @@
+--- crates/health-services/src/diagnostic_ipc.rs
++++ crates/health-services/src/diagnostic_ipc.rs
+@@ -140,7 +140,7 @@
+                 if header.cmsg_level == libc::SOL_SOCKET && header.cmsg_type == libc::SCM_RIGHTS {
+                     let descriptors = libc::CMSG_DATA(item).cast::<libc::c_int>();
+                     for i in 0..length / std::mem::size_of::<libc::c_int>() {
+-                        libc::close(std::ptr::read_unaligned(descriptors.add(i)));
++                        let _=std::ptr::read_unaligned(descriptors.add(i));
+                     }
+                     invalid = true;
+                 } else if header.cmsg_level == libc::SOL_SOCKET

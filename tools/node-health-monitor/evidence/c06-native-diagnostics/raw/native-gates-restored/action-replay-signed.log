@@ -1,0 +1,13 @@
+[1;36m[ 3][t 1][2026-09-29 16:16:55.982775573][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.024272730][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7dcfe0000cf0 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.024359066][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7dcfe0000cf0 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.024375666][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7dcfe0000cf0 on c04-isolated bus[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.026669442][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.067556921][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7dcfe805dff0 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.067615916][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7dcfe805dff0 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.067633166][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7dcfe805dff0 on c04-isolated bus[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.069448382][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.110357095][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7dcfe8065b00 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.110416541][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7dcfe8065b00 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.110433337][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7dcfe8065b00 on c04-isolated bus[0m
+C04_ACTION_PASS replay-signed: production branches, trace without consumer, three rotations

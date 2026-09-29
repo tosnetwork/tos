@@ -1,0 +1,10 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.77s
+     Running tests/c06_diagnostics.rs (target/debug/deps/c06_diagnostics-1805dea44836ceb6)
+
+running 2 tests
+test actual_manager_http_refusals_and_conflict_survive_reopen ... ok
+test actual_native_ipc_relay_mtls_manager_transaction_chain ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+

@@ -41,7 +41,7 @@ void unit() {
           "huge allocation term cannot wrap the budget");
   require(remaining_core_publication_bytes({4 * limit - 1, 2}) == 0, "budget addition overflow refuses");
   require(consensus_core_resident_bytes() < 512 * 1024, "actual core/catalog/index layouts below half MiB");
-  const auto room = remaining_core_publication_bytes({consensus_core_resident_bytes(), limit, 1,
+  const auto room = remaining_core_publication_bytes({consensus_core_resident_bytes(), diagnostic_status_response_bytes, limit, 1,
       64 * 1024, resident, 64 * 1024, 320 * 1024, 1});
   require(room >= limit, "derived budget admits worst boundary with actual capacities");
   NativeCorePublisher publisher;
@@ -50,8 +50,8 @@ void unit() {
   require(publisher.prepare(1, 10, 1700000000, *boundary, true, zero, zero, true).has_value(), "v2 boundary accepted");
   require(!publisher.prepare(1, 10, 1700000000, std::string(limit + 1, 'x'), true, zero, zero, true), "v2 oversized refusal");
   require(publisher.prepare(1, 10, 1700000000, std::string(limit + 1, 'x'), true, zero, zero).has_value(), "v1 retains two MiB limit");
-  std::printf("C04_PUBLISHER_MEMORY core=%zu metric_set=%zu old_metrics=%zu new_metrics=%zu old_typed=65536 consensus=65536 scratch=327680 remaining=%zu total=%zu\n",
-      consensus_core_resident_bytes(), resident, limit + 1, boundary->capacity() + 1, room,
+  std::printf("C04_PUBLISHER_MEMORY core=%zu diagnostic_response_reserve=%zu metric_set=%zu old_metrics=%zu new_metrics=%zu old_typed=65536 consensus=65536 scratch=327680 remaining=%zu total=%zu\n",
+      consensus_core_resident_bytes(), diagnostic_status_response_bytes, resident, limit + 1, boundary->capacity() + 1, room,
       4 * limit - room + boundary->capacity() + 1);
 }
 

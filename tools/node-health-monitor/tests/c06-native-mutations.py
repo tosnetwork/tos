@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Compile isolated native mutants, require their intended assertion, restore green."""
-import argparse, hashlib, json, pathlib, subprocess, tempfile
+import argparse, difflib, hashlib, json, pathlib, subprocess, tempfile
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--evidence',required=True,type=pathlib.Path)
@@ -33,10 +33,13 @@ for name,header,before,after,fixture,arguments,needle in cases:
             (args.evidence/(name+'-'+label+'.log')).write_text(result.stdout)
             return result
         build('baseline');baseline=run('baseline');assert baseline.returncode==0,(name,baseline.stdout)
-        mutant=original.replace(before,after);path.write_text(mutant);build('mutant');red=run('red')
+        mutant=original.replace(before,after)
+        patch=''.join(difflib.unified_diff(original.splitlines(keepends=True),mutant.splitlines(keepends=True),fromfile=header,tofile=header))
+        (args.evidence/(name+'.patch')).write_text(patch)
+        path.write_text(mutant);build('mutant');mutant_binary=hashlib.sha256(binary.read_bytes()).hexdigest();red=run('red')
         assert red.returncode!=0 and needle in red.stdout,(name,'missing intended assertion',red.stdout)
         path.write_text(original);build('restored');green=run('green');assert green.returncode==0,(name,green.stdout)
         index.append(dict(name=name,header=header,baseline_sha256=hashlib.sha256(original.encode()).hexdigest(),mutant_sha256=hashlib.sha256(mutant.encode()).hexdigest(),
-            compiled=True,red_exit=red.returncode,intended_assertion=needle,restored_exit=green.returncode))
+            patch_sha256=hashlib.sha256(patch.encode()).hexdigest(),mutant_binary_sha256=mutant_binary,restored_binary_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),compiled=True,red_exit=red.returncode,intended_assertion=needle,restored_exit=green.returncode))
         print(name+': intended compiled assertion killed; restored natural0',flush=True)
 (args.evidence/'index.json').write_text(json.dumps(index,indent=2)+'\n')

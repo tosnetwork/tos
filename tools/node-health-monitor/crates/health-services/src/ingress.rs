@@ -104,6 +104,7 @@ fn route(role: Role, method: &hyper::Method, path: &str, config: &IngressConfig)
             (Role::EdgeReader, "/v1/edge/snapshot") => Some(262144),
             (Role::EdgeReader | Role::ManagerReader, "/metrics") => Some(2097152),
             (Role::ManagerReader, "/v1/manager/state") => Some(2097152),
+            (Role::ManagerReader, "/v1/manager/diagnostics") => Some(4096),
             (Role::ManagerReader, "/v1/monitor/heartbeat") => Some(4096),
             _ => None,
         }

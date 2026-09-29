@@ -1,0 +1,17 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.61s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 9 tests
+test diagnostic_transport::tests::ack_framing_has_independent_bounds ... ok
+test diagnostic_relay::tests::late_sequence_crosses_flush_boundary_and_original_age_is_not_renewed ... ok
+test diagnostic_ipc::tests::restart_needs_an_explicit_epoch_remap_and_drop_preserves_replaced_inode ... ok
+test diagnostic_ingest::tests::conflict_quarantines_without_committing_an_earlier_new_record ... ok
+test diagnostic_ingest::tests::late_sequence_across_batches_is_not_a_replay_and_edge_restart_is_idempotent ... ok
+test diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting ... ok
+test diagnostic_ipc::tests::real_credentials_and_epoch_are_separate_rejection_gates ... ok
+test diagnostic_transport::tests::actual_tcp_writer_obeys_rate_and_counts_all_written_bytes ... ok
+test diagnostic_ingest::tests::actual_mid_transaction_failure_rolls_back_and_never_returns_ack ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.10s
+

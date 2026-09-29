@@ -1,0 +1,66 @@
+[
+  {
+    "name": "credential",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "Received::Rejected(\"credentials\")",
+    "restored_source_sha256": "b933e0c9a75ec7c34586e43404e0d3c5bc84c42c72cd58830329b562e382bab0"
+  },
+  {
+    "name": "epoch",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "Received::Rejected(\"epoch_or_header\")",
+    "restored_source_sha256": "b933e0c9a75ec7c34586e43404e0d3c5bc84c42c72cd58830329b562e382bab0"
+  },
+  {
+    "name": "conflict",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "called `Result::unwrap_err()` on an `Ok` value",
+    "restored_source_sha256": "c6fdfa931d95f09e6c0b5c91a5db652bf42d04a72793848f143723cca5ff75d3"
+  },
+  {
+    "name": "atomic-prefix",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "left: 1\n right: 0",
+    "restored_source_sha256": "c6fdfa931d95f09e6c0b5c91a5db652bf42d04a72793848f143723cca5ff75d3"
+  },
+  {
+    "name": "predecode-reservation",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "called `Option::unwrap()` on a `None` value",
+    "restored_source_sha256": "c6fdfa931d95f09e6c0b5c91a5db652bf42d04a72793848f143723cca5ff75d3"
+  },
+  {
+    "name": "json-limit",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "right: \"JSON body limit\"",
+    "restored_source_sha256": "53318696aec74bdf8a8784f93170cf5308d8a80f08dbaf8f18248b0df9c88e50"
+  },
+  {
+    "name": "decoded-limit",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "right: \"decoded payload limit\"",
+    "restored_source_sha256": "53318696aec74bdf8a8784f93170cf5308d8a80f08dbaf8f18248b0df9c88e50"
+  },
+  {
+    "name": "tcp-rate",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "actual egress bypassed token rate",
+    "restored_source_sha256": "c6194fb3cdcc764e91f59b006c5b45b5e48fff6746a9a1c7e4d60366a0909b58"
+  }
+]

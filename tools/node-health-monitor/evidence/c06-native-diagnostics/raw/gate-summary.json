@@ -1,0 +1,91 @@
+{
+  "base": "35ba59c111dd74518e6e661bcd1984598d493907",
+  "checkpoint": "b3f5c725cd44decc385ed765d713e8c3dfb91ab2",
+  "branch": "nhm/c06-native-diagnostics",
+  "source_stable": true,
+  "rust_workspace": {
+    "natural_exit": 0,
+    "tests_passed": 191,
+    "source_index": "workspace-source-before.json",
+    "subsequent_fixture_only_changes": [
+      "binary SHA logging",
+      "SQL fixture finite cleanup bound30->55 seconds"
+    ]
+  },
+  "final_integration": {
+    "natural_exit": 0,
+    "tests_passed": 3,
+    "source_before": "final-source-before.json",
+    "source_after": "final-source-after.json",
+    "test_seconds": 40.15
+  },
+  "native_union": {
+    "natural_exits": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "index": "native-gates-restored/index.json",
+    "source_check": "native-budget-source-check.log",
+    "binary_index": "native-final-binaries.json",
+    "native_build_stamp": "checkpoint precedes delivery commit; code bound by indexed hashes"
+  },
+  "contracts": {
+    "natural_exit": 0,
+    "closed_schemas": 24
+  },
+  "native_http": {
+    "natural_exit": 0,
+    "modes": 10
+  },
+  "native_mutants": {
+    "count": 6,
+    "index": "native-mutants-final/index.json"
+  },
+  "rust_mutants": {
+    "count": 10,
+    "index": "rust-mutants-final2/index.json"
+  },
+  "excluded": [
+    "production acceptance",
+    "actual validator consensus liveness",
+    "performance",
+    "CI",
+    "72-hour soak"
+  ],
+  "commands": {
+    "rust_workspace": "CARGO_BUILD_JOBS=2 cargo test --manifest-path tools/node-health-monitor/Cargo.toml --workspace -- --nocapture",
+    "final_integration": "CARGO_BUILD_JOBS=2 cargo test --manifest-path tools/node-health-monitor/Cargo.toml -p tos-health-services --test c06_diagnostics -- --nocapture",
+    "contracts": "/home/tomi/nhm-c06-python/bin/python tools/node-health-monitor/scripts/check-contracts.py",
+    "native_http": "/home/tomi/nhm-c06-python/bin/python tools/node-health-monitor/tests/native-snapshot-http.py /home/tomi/nhm-c06-build/test-health-native-snapshot",
+    "native_mutants": "python3 tools/node-health-monitor/tests/c06-native-mutations.py --evidence /home/tomi/nhm-c06-evidence/raw/native-mutants-final",
+    "rust_mutants": "python3 tools/node-health-monitor/tests/c06-rust-mutations.py /home/tomi/nhm-c06-evidence/raw/rust-mutants-final2"
+  }
+}

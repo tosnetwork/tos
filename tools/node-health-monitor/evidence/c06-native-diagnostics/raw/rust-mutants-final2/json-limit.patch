@@ -1,0 +1,11 @@
+--- crates/health-core/src/contracts.rs
++++ crates/health-core/src/contracts.rs
+@@ -31,7 +31,7 @@
+ }
+ impl DiagnosticBatch {
+     pub fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
+-        if bytes.len() > 262_144 {
++        if false && bytes.len() > 262_144 {
+             return Err("JSON body limit");
+         }
+         let batch: Self = serde_json::from_slice(bytes).map_err(|_| "invalid batch JSON")?;

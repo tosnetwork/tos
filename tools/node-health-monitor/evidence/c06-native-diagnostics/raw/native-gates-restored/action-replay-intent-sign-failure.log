@@ -1,0 +1,16 @@
+[1;36m[ 3][t 1][2026-09-29 16:16:56.312725668][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;31m[ 1][t 1][2026-09-29 16:16:56.313023022][pool.cpp:852][!c04-isolated.SimplexPool]	consensus: the post-quantum signer failed to sign a vote; not casting it[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.352484727][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7b7784000b80 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.352555608][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7b7784000b80 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.352571408][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7b7784000b80 on c04-isolated bus[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.353745812][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;31m[ 1][t 1][2026-09-29 16:16:56.353776204][pool.cpp:852][!c04-isolated.SimplexPool]	consensus: the post-quantum signer failed to sign a vote; not casting it[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.394622302][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7b778c0552d0 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.394681113][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7b778c0552d0 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.394697707][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7b778c0552d0 on c04-isolated bus[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.395892614][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;31m[ 1][t 1][2026-09-29 16:16:56.395944819][pool.cpp:852][!c04-isolated.SimplexPool]	consensus: the post-quantum signer failed to sign a vote; not casting it[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.436812092][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7b778c054a20 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.436870538][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7b778c054a20 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.436887503][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7b778c054a20 on c04-isolated bus[0m
+C04_ACTION_PASS replay-intent-sign-failure: production branches, trace without consumer, three rotations

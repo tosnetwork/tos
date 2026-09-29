@@ -1,0 +1,1 @@
+test: /home/tomi/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:20: int main(): Assertion `stats.dropped == 0 && stats.sampled_out == 0 && stats.records == 0' failed.

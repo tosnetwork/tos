@@ -1,0 +1,11 @@
+--- diagnostic-ipc.h
++++ diagnostic-ipc.h
+@@ -95,7 +95,7 @@
+       DiagnosticProducer::Packet packet;
+       for (unsigned i=0; i<64 && producer_.pop(packet); ++i) {
+         if (!ready_ || send(fd_,packet.bytes.data(),packet.size,MSG_DONTWAIT|MSG_NOSIGNAL)!=packet.size) {
+-          diagnostic_stats.drop(DiagnosticProducer::Drop::Socket);
++          (void)0;
+           if (fd_>=0 && errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=ENOBUFS) disconnect();
+         } else diagnostic_stats.add(diagnostic_stats.sent);
+       }

@@ -1,0 +1,48 @@
+{
+  "profile": "c06_local_development_only",
+  "production_gate": "not_run",
+  "native": {
+    "records": 4096,
+    "record_bytes": 512,
+    "payload_bytes_max": 2097152,
+    "resident_bytes_max": 4194304,
+    "core_metric_union": 256,
+    "core_response_reserve_bytes": 32768
+  },
+  "edge": {
+    "queue_bytes_max": 4194304,
+    "batch_records_max": 128,
+    "decoded_payload_bytes_max": 65536,
+    "actual_json_bytes_max": 262144,
+    "encrypted_tcp_write_rate_bytes_per_second": 65536,
+    "encrypted_tcp_write_burst_bytes": 262144,
+    "rate_excludes": [
+      "TCP/IP retransmission",
+      "DNS",
+      "NIC overhead"
+    ],
+    "pending_flights": 1,
+    "age_seconds_max": 30,
+    "attempts_max": 8,
+    "backoff_ms_max": 8000,
+    "transport_seconds_max": 3
+  },
+  "manager": {
+    "owned_batches_upper_bound": 32,
+    "owned_bytes_max": 8388608,
+    "predecode_reservation_bytes": 4194304,
+    "row_bytes_max": 24576,
+    "fixed_scratch_bytes": 135168,
+    "maximum_batch_bytes": 3543040,
+    "ack": "after_transaction_commit",
+    "accepted_through_sequence": "batch_local_maximum; no global highwater rejection"
+  },
+  "unknowns": [
+    "unanchored scalar records",
+    "source wall time does not establish clock validity",
+    "per-record drop counters unknown=null",
+    "sampling policy not attached to individual records",
+    "no actual validator consensus liveness or performance claim",
+    "no production/CI/72h-soak pass"
+  ]
+}

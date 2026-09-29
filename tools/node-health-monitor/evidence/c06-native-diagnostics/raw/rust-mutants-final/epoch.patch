@@ -1,0 +1,11 @@
+--- crates/health-services/src/diagnostic_ipc.rs
++++ crates/health-services/src/diagnostic_ipc.rs
+@@ -190,7 +190,7 @@
+                 Received::Rejected("handshake_send")
+             });
+         }
+-        if size < 64 || bytes[16..32] != self.epoch {
++        if size<64 {
+             return Ok(Received::Rejected("epoch_or_header"));
+         }
+         match DiagnosticRecord::decode(&bytes[..size]) {

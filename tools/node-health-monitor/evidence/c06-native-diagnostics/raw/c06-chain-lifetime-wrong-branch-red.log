@@ -1,0 +1,25 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.58s
+     Running tests/c06_diagnostics.rs (target/debug/deps/c06_diagnostics-1805dea44836ceb6)
+
+running 2 tests
+test actual_manager_http_refusals_and_conflict_survive_reopen ... FAILED
+test actual_native_ipc_relay_mtls_manager_transaction_chain ... ok
+
+failures:
+
+---- actual_manager_http_refusals_and_conflict_survive_reopen stdout ----
+
+thread 'actual_manager_http_refusals_and_conflict_survive_reopen' (1681047) panicked at crates/health-services/tests/c06_diagnostics.rs:111:5:
+assertion `left == right` failed: caller timeout must retain the queued diagnostic lease
+  left: String("0")
+ right: "1"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    actual_manager_http_refusals_and_conflict_survive_reopen
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+error: test failed, to rerun pass `-p tos-health-services --test c06_diagnostics`

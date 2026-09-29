@@ -1,0 +1,131 @@
+   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+warning: struct `Budget` is never constructed
+  --> crates/health-services/tests/../src/diagnostic_ingest.rs:87:12
+   |
+87 | pub struct Budget {
+   |            ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `Lease` is never constructed
+  --> crates/health-services/tests/../src/diagnostic_ingest.rs:91:12
+   |
+91 | pub struct Lease {
+   |            ^^^^^
+
+warning: method `acquire_request` is never used
+   --> crates/health-services/tests/../src/diagnostic_ingest.rs:101:12
+    |
+ 98 | impl Budget {
+    | ----------- method in this implementation
+...
+101 |     pub fn acquire_request(&self) -> Result<Lease,String> {
+    |            ^^^^^^^^^^^^^^^
+
+warning: method `narrow` is never used
+   --> crates/health-services/tests/../src/diagnostic_ingest.rs:108:12
+    |
+107 | impl Lease {
+    | ---------- method in this implementation
+108 |     pub fn narrow(&mut self,body:usize,batch:&DiagnosticBatch)->Result<(),String> {
+    |            ^^^^^^
+
+warning: method `mapping` is never used
+  --> crates/health-services/tests/../src/diagnostic_ipc.rs:65:12
+   |
+42 | impl Receiver {
+   | ------------- method in this implementation
+...
+65 |     pub fn mapping(&self) -> &Mapping { &self.mapping }
+   |            ^^^^^^^
+
+warning: function `read_mapping` is never used
+   --> crates/health-services/tests/../src/diagnostic_ipc.rs:132:8
+    |
+132 | pub fn read_mapping(path: &Path) -> Result<Mapping,String> {
+    |        ^^^^^^^^^^^^
+
+warning: struct `Transport` is never constructed
+  --> crates/health-services/tests/../src/diagnostic_transport.rs:69:12
+   |
+69 | pub struct Transport {host:String,port:u16,authority:String,token:Vec<u8>,tls:Arc<ClientConfig>,pub rate:Arc<Mutex<Rate>>}
+   |            ^^^^^^^^^
+
+warning: function `read` is never used
+  --> crates/health-services/tests/../src/diagnostic_transport.rs:70:4
+   |
+70 | fn read(path:&Path)->Result<Vec<u8>,String> {
+   |    ^^^^
+
+warning: associated items `new`, `post`, and `post_inner` are never used
+  --> crates/health-services/tests/../src/diagnostic_transport.rs:76:12
+   |
+75 | impl Transport {
+   | -------------- associated items in this implementation
+76 |     pub fn new(config:&Destination)->Result<Self,String> {
+   |            ^^^
+...
+94 |     pub async fn post(&self,body:&[u8])->Result<(u16,Vec<u8>),String> {
+   |                  ^^^^
+...
+98 |     async fn post_inner(&self,body:&[u8])->Result<(u16,Vec<u8>),String> {
+   |              ^^^^^^^^^^
+
+warning: associated function `read` is never used
+  --> crates/health-services/tests/../src/diagnostic_relay.rs:13:12
+   |
+12 | impl Config {
+   | ----------- associated function in this implementation
+13 |     pub fn read(path:&Path)->Result<Self,String> {
+   |            ^^^^
+
+warning: fields `received`, `accepted`, and `running` are never read
+  --> crates/health-services/tests/../src/diagnostic_relay.rs:22:9
+   |
+21 | pub struct Stats {
+   |            ----- fields in this struct
+22 |     pub received:AtomicU64,pub rejected:AtomicU64,pub capacity_dropped:AtomicU64,pub expired:AtomicU64,
+   |         ^^^^^^^^
+23 |     pub ack_rejected:AtomicU64,pub accepted:AtomicU64,pub queued_records:AtomicU64,pub queued_bytes:AtomicU64,
+   |                                    ^^^^^^^^
+24 |     pub gaps:AtomicBool,pub running:AtomicBool,pub counter_complete:AtomicBool,
+   |                             ^^^^^^^
+
+warning: method `snapshot` is never used
+  --> crates/health-services/tests/../src/diagnostic_relay.rs:27:12
+   |
+26 | impl Stats {
+   | ---------- method in this implementation
+27 |     pub fn snapshot(&self)->serde_json::Value {
+   |            ^^^^^^^^
+
+warning: fields `attempts` and `next` are never read
+  --> crates/health-services/tests/../src/diagnostic_relay.rs:95:68
+   |
+95 | struct Pending {batch:DiagnosticBatch,bytes:Vec<u8>,oldest:Instant,attempts:u32,next:Instant}
+   |        ------- fields in this struct                               ^^^^^^^^     ^^^^
+
+warning: function `run` is never used
+  --> crates/health-services/tests/../src/diagnostic_relay.rs:96:14
+   |
+96 | pub async fn run(config:Config,stats:Arc<Stats>,mut stop:tokio::sync::watch::Receiver<bool>)->Result<(),String> {
+   |              ^^^
+
+warning: `tos-health-services` (test "c06_new_modules") generated 14 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.75s
+     Running tests/c06_new_modules.rs (target/debug/deps/c06_new_modules-b5aefb87c5465dcb)
+
+running 9 tests
+test diagnostic_transport::tests::ack_framing_has_independent_bounds ... ok
+test diagnostic_ipc::tests::restart_needs_an_explicit_epoch_remap_and_drop_preserves_replaced_inode ... ok
+test diagnostic_relay::tests::late_sequence_crosses_flush_boundary_and_original_age_is_not_renewed ... ok
+test diagnostic_ingest::tests::actual_mid_transaction_failure_rolls_back_and_never_returns_ack ... ok
+test diagnostic_ingest::tests::late_sequence_across_batches_is_not_a_replay_and_edge_restart_is_idempotent ... ok
+test diagnostic_ingest::tests::conflict_quarantines_without_committing_an_earlier_new_record ... ok
+test diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting ... ok
+test diagnostic_ipc::tests::real_credentials_and_epoch_are_separate_rejection_gates ... ok
+test diagnostic_transport::tests::actual_tcp_writer_obeys_rate_and_counts_all_written_bytes ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

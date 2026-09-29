@@ -1,0 +1,22 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.16s
+     Running tests/c06_diagnostics.rs (target/debug/deps/c06_diagnostics-1805dea44836ceb6)
+
+running 1 test
+test actual_manager_death_then_edge_shutdown_preserves_native_core_progress ... FAILED
+
+failures:
+
+---- actual_manager_death_then_edge_shutdown_preserves_native_core_progress stdout ----
+
+thread 'actual_manager_death_then_edge_shutdown_preserves_native_core_progress' (2446651) panicked at crates/health-services/tests/c06_diagnostics.rs:156:130:
+called `Result::unwrap()` on an `Err` value: reqwest::Error { kind: Decode, source: Error("EOF while parsing a value", line: 1, column: 0) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    actual_manager_death_then_edge_shutdown_preserves_native_core_progress
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 2.81s
+
+error: test failed, to rerun pass `-p tos-health-services --test c06_diagnostics`

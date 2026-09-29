@@ -149,13 +149,22 @@ inline constexpr std::array<FixedMetricDescriptor, 149> consensus_metric_catalog
   {"tos_state_resolver_results_total", "counter", "", {{{{"operation", "finalization"}}, {{"result", "cancelled"}}, {{"", ""}}}}, 2, 1},
   {"tos_consensus_current_slot", "gauge", "", {{{{"scope", "masterchain"}}, {{"", ""}}, {{"", ""}}}}, 1, 1},
   {"tos_consensus_last_finalized_slot", "gauge", "", {{{{"scope", "masterchain"}}, {{"", ""}}, {{"", ""}}}}, 1, 1},
-  {"tos_diagnostic_dropped_total", "counter", "", {}, 0, 1},
-  {"tos_diagnostic_sampled_out_total", "counter", "", {}, 0, 1},
-  {"tos_diagnostic_queue_records", "gauge", "", {}, 0, 1},
-  {"tos_diagnostic_queue_bytes", "gauge", "", {}, 0, 1},
-  {"tos_diagnostic_sent_total", "counter", "", {}, 0, 1},
-  {"tos_diagnostic_enabled", "gauge", "", {}, 0, 1},
-  {"tos_diagnostic_counter_complete", "gauge", "", {}, 0, 1},
+  {"tos_diagnostic_dropped_total", "counter", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
+  {"tos_diagnostic_sampled_out_total", "counter", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
+  {"tos_diagnostic_queue_records", "gauge", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
+  {"tos_diagnostic_queue_bytes", "gauge", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
+  {"tos_diagnostic_sent_total", "counter", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
+  {"tos_diagnostic_enabled", "gauge", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
+  {"tos_diagnostic_counter_complete", "gauge", "", {{{{"", ""}}, {{"", ""}}, {{"", ""}}}}, 0, 1},
 }};
 static_assert(consensus_metric_catalog.size() <= 256);
+static_assert([] {
+  for (const auto &descriptor : consensus_metric_catalog) {
+    if (descriptor.name == nullptr || descriptor.type == nullptr || descriptor.suffix == nullptr ||
+        descriptor.label_count > descriptor.labels.size()) return false;
+    for (const auto &label : descriptor.labels)
+      if (label[0] == nullptr || label[1] == nullptr) return false;
+  }
+  return true;
+}(), "Frozen metric catalog requires non-null strings and bounded labels");
 }  // namespace tos::health

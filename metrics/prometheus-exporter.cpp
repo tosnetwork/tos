@@ -147,6 +147,7 @@ void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<
       budget.bounded = true;
       budget.deadline = admission_.started() + 2.0;
       budget.max_resident_bytes = health::remaining_core_publication_bytes({health::consensus_core_resident_bytes(),
+          health::diagnostic_status_response_bytes,
           snapshot_.capacity(), 1, core_snapshot_ ? core_snapshot_->prefix.capacity() : 0,
           core_snapshot_ ? core_snapshot_->suffix.capacity() : 0, 2, 320 * 1024});
     }
@@ -262,6 +263,7 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
     // Every capacity is deducted separately, so hostile or overflowing size
     // terms refuse rather than wrap before the remaining-budget subtraction.
     const auto remaining = health::remaining_core_publication_bytes({health::consensus_core_resident_bytes(),
+          health::diagnostic_status_response_bytes,
         snapshot_.capacity(), 1, core_snapshot_ ? core_snapshot_->prefix.capacity() : 0,
         core_snapshot_ ? core_snapshot_->suffix.capacity() : 0, 2, set.resident_bytes(),
         consensus ? consensus->json.capacity() : 0, 1, 320 * 1024, 1});

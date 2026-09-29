@@ -25,3 +25,6 @@ Prior query missing-coverage and wrong-storage-gate failures are preserved.
 Required remaining gates include final owned-capacity, HTTP refusal, SQLite/WAL
 quota and restart controls, faithful Rust mutations, exact source/build union,
 and independent supervisor review. No production or performance pass is claimed.
+
+Delivery corrections and final evidence are described in [DELIVERY.md](DELIVERY.md).
+The checkpoint reds above describe the earlier state, not the delivered candidate.

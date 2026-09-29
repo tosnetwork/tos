@@ -1,0 +1,22 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+warning: fields `at` and `fraction` are never read
+  --> crates/health-services/src/diagnostic_transport.rs:17:18
+   |
+17 | pub struct Rate {at:Instant,tokens:u64,fraction:u128,pub written:u64}
+   |            ----  ^^                    ^^^^^^^^
+   |            |
+   |            fields in this struct
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `available` is never used
+  --> crates/health-services/src/diagnostic_transport.rs:22:8
+   |
+21 | impl Rate {
+   | --------- method in this implementation
+22 |     fn available(&mut self)->u64 {
+   |        ^^^^^^^^^
+
+warning: `tos-health-services` (lib test) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.93s
+  Executable unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)

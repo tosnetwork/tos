@@ -969,6 +969,9 @@ impl Manager {
             .map_err(|_| "control stopped")??;
         Ok(row.evidence_id)
     }
+    pub fn diagnostic_status(&self)->Value {
+        json!({"schema_version":1,"enabled":self.diagnostic_token.is_some(),"source_id":"consensus_diagnostic","budget":self.diagnostic_budget.status()})
+    }
     /// Archive a fully validated C02 edge snapshot. This never synthesizes a
     /// health fact: missing, stale or unsupported sources remain unknown to
     /// the rule engine. Each returned reference names a committed evidence row.
@@ -1165,13 +1168,17 @@ async fn ingest_diagnostic(State(state):State<Manager>,request:axum::extract::Re
         || batch.content_id().map_err(|_|StatusCode::BAD_REQUEST)?!=batch.batch_id {
         return Err(StatusCode::BAD_REQUEST);
     }
-    lease.narrow(body.capacity(),&batch).map_err(|_|StatusCode::PAYLOAD_TOO_LARGE)?;
+    lease.narrow(body.capacity(),&batch).map_err(|error|if error=="DIAGNOSTIC_BUSY" {StatusCode::TOO_MANY_REQUESTS} else {StatusCode::PAYLOAD_TOO_LARGE})?;
     let (tx,rx)=oneshot::channel();
     state.evidence.try_send(EvidenceCommand::Diagnostic(Box::new(batch),lease,tx)).map_err(|_|StatusCode::TOO_MANY_REQUESTS)?;
     let ack=tokio::time::timeout(Duration::from_secs(2),rx).await.map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?
         .map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?.map_err(|error|if error=="SOURCE_CONFLICT" {StatusCode::CONFLICT}
             else if error=="DIAGNOSTIC_INVALID" {StatusCode::BAD_REQUEST} else {StatusCode::SERVICE_UNAVAILABLE})?;
     Ok(Json(ack))
+}
+async fn diagnostic_status(State(state):State<Manager>,headers:HeaderMap,OriginalUri(uri):OriginalUri)->Result<Json<Value>,StatusCode> {
+    permit(&headers,&state.read,&uri)?;
+    Ok(Json(state.diagnostic_status()))
 }
 async fn archive_snapshot(
     State(state): State<Manager>,
@@ -1279,6 +1286,7 @@ pub fn router(state: Manager) -> Router {
         ));
     let reads = Router::new()
         .route("/v1/manager/state", get(snapshot))
+        .route("/v1/manager/diagnostics",get(diagnostic_status))
         .route("/metrics", get(metrics))
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(tokio::sync::Semaphore::new(2)),
