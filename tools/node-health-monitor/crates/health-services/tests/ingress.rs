@@ -1,4 +1,7 @@
-use axum::{routing::get, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -15,6 +18,250 @@ impl Drop for Temp {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+#[tokio::test]
+async fn fixed_development_witness_routes_keep_peer_and_header_bounds() {
+    use axum::{body::Bytes, http::HeaderMap, Json};
+    use serde_json::json;
+    let t = fixture();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+    let app = Router::new()
+        .route(
+            "/v1/manager/witness-evidence/cache_1",
+            post(move |headers: HeaderMap, body: Bytes| {
+                let tx = tx.clone();
+                async move {
+                    tx.send((headers, body.len())).await.unwrap();
+                    Json(json!({"accepted":true}))
+                }
+            }),
+        )
+        .route("/v1/witness/cache/cache_1", get(|| async { "cached" }));
+    let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = up.local_addr().unwrap();
+    let upstream_task = tokio::spawn(async move { axum::serve(up, app).await.unwrap() });
+    let m_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let m_addr = m_listener.local_addr().unwrap();
+    let o_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let o_addr = o_listener.local_addr().unwrap();
+    let config = IngressConfig {
+        listen: m_addr,
+        witness_endpoints: vec!["cache_1".into()],
+        server_name: "localhost".into(),
+        upstream,
+        cert_file: t.0.join("server.pem"),
+        key_file: t.0.join("server.key"),
+        ca_file: t.0.join("ca.pem"),
+        peers: vec![Peer {
+            alias: "collector".into(),
+            certificate_sha256: fingerprint(&t.0, "client"),
+            role: Role::ManagerIngest,
+        }],
+    };
+    let mut o_config = config.clone();
+    o_config.listen = o_addr;
+    o_config.peers[0].role = Role::WitnessReader;
+    let m_server = tokio::spawn(tos_health_services::ingress::serve(config, m_listener));
+    let o_server = tokio::spawn(tos_health_services::ingress::serve(o_config, o_listener));
+    let approved = client(&t.0, Some("client"));
+    let m_url = format!("https://localhost:{}/v1/manager/witness-evidence/cache_1", m_addr.port());
+    let o_url = format!("https://localhost:{}/v1/witness/cache/cache_1", o_addr.port());
+    let body = vec![b'x'; 32_768];
+    let stamp = tos_health_services::transit::Stamp::capture().unwrap();
+    let response = stamp
+        .add_headers(approved.post(&m_url), &body, &"a".repeat(32))
+        .header("x-unapproved-header", "must-not-forward")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let (forwarded, size) = rx.recv().await.unwrap();
+    assert_eq!(size, 32_768);
+    assert_eq!(forwarded["x-nhm-witness-clock-v1"], "1");
+    assert_eq!(forwarded["x-nhm-witness-current-auth"], "a".repeat(32));
+    assert!(!forwarded.contains_key("x-unapproved-header"));
+    let invalid = stamp
+        .add_headers(approved.post(&m_url), b"historical", &"a".repeat(32))
+        .header("x-nhm-witness-start-ns", "1")
+        .body("historical")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        invalid.status(),
+        reqwest::StatusCode::OK,
+        "bad current metadata must not revoke historical delivery"
+    );
+    let (forwarded, _) = rx.recv().await.unwrap();
+    assert!(
+        !forwarded.contains_key("x-nhm-witness-start-ns"),
+        "duplicate current header must not become a singleton"
+    );
+    assert_eq!(approved.get(&o_url).send().await.unwrap().status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        approved.post(&o_url).send().await.unwrap().status(),
+        reqwest::StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        approved.get(format!("{o_url}?force=1")).send().await.unwrap().status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert!(rx.try_recv().is_err());
+    m_server.abort();
+    o_server.abort();
+    upstream_task.abort();
+}
+
+#[tokio::test]
+async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only() {
+    use serde_json::{json, Value};
+    use tos_health_services::{
+        collector::{CollectorConfig, WitnessCollectorConfig},
+        manager::{Manager, ManagerConfig},
+        witness::WitnessCache,
+    };
+    let t = fixture();
+    let o_up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let o_up_addr = o_up.local_addr().unwrap();
+    let m_up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let m_up_addr = m_up.local_addr().unwrap();
+    let o_tls = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let o_tls_addr = o_tls.local_addr().unwrap();
+    let m_tls = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let m_tls_addr = m_tls.local_addr().unwrap();
+    let network = "a".repeat(64);
+    let genesis = "c".repeat(64);
+    let plan_value = json!({"schema_version":1,"profile":"c05_development_cache_only",
+        "revision":"a".repeat(64),"observer_id":"observer_1","observer_epoch":"observer-1",
+        "network_id":network,"genesis":genesis,"clock_skew_allowance_ms":5000,
+        "endpoints":[{"endpoint_id":"cache_1","fixed_url":format!("https://localhost:{}/source",o_tls_addr.port()),
+            "failure_domain":"zone_a","kind":"approved_cache_only_https","current_source_epoch":"source-1"}],
+        "targets":[{"target_id":"validator_1","node_id":"v1","role":"normal",
+            "valid_from":"2026-09-29T00:00:00Z","valid_until":"2026-09-30T00:00:00Z",
+            "scope_id":"masterchain","workchain":-1,"shard":"9223372036854775808",
+            "endpoint_ids":["cache_1"]}]});
+    let plan_bytes = serde_json::to_vec(&plan_value).unwrap();
+    std::fs::write(t.0.join("plan.json"), &plan_bytes).unwrap();
+    let plan = tos_health_core::witness::Plan::decode(&plan_bytes).unwrap();
+    let observer_token = "o".repeat(32);
+    let cache = WitnessCache::new(plan, observer_token.as_bytes().to_vec()).unwrap();
+    let source = serde_json::to_vec(&json!({"schema_version":1,"endpoint_id":"cache_1",
+        "source_epoch":"source-1","generation":"1","network_id":network,"genesis":genesis,
+        "observed_at":null,"source_age_ms":null,"clock_quality":"unknown","coverage":"partial",
+        "rows":[{"target_id":"validator_1","observed_at":null,"source_age_ms":"46000",
+            "anchor":null,"network_observation":"unavailable","reported_certificate_membership":"not_checked",
+            "reported_proof":"not_checked","private_vote_visibility":"unavailable",
+            "coverage":"partial","missing_fields":["private_vote"]}]})).unwrap();
+    cache.admit("cache_1", &source, 10).unwrap();
+    let o_task = tokio::spawn(async move {
+        axum::serve(o_up, tos_health_services::witness::router(cache)).await.unwrap()
+    });
+    let ingest_token = "i".repeat(32);
+    let read_token = "r".repeat(32);
+    let current_token = "c".repeat(32);
+    for (name, value) in [
+        ("observer.token", observer_token),
+        ("ingest.token", ingest_token.clone()),
+        ("read.token", read_token.clone()),
+        ("current.token", current_token),
+    ] {
+        std::fs::write(t.0.join(name), value).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(t.0.join(name), std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+    }
+    let mut identity = std::fs::read(t.0.join("client.pem")).unwrap();
+    identity.extend(std::fs::read(t.0.join("client.key")).unwrap());
+    std::fs::write(t.0.join("identity.pem"), identity).unwrap();
+    let manager_config: ManagerConfig = serde_json::from_value(json!({
+        "inventory":{"schema_version":1,"revision":"runtime-test","network_id":network,
+            "targets":[{"node":"v1","scope":"masterchain","sources":[{"id":"edge_probe","ttl_ms":"45000","facts":["reachable"]}],
+                "rules":[{"id":"target_unreachable","source":"edge_probe","threshold":"0","pending_ms":"0",
+                    "recovery_ms":"60000","minimum_bad_samples":1,"severity":"critical"}]}]},
+        "control_db":t.0.join("control.db"),"evidence_db":t.0.join("evidence.db"),
+        "control_quota_bytes":"1048576","evidence_quota_bytes":"1048576","listen":"127.0.0.1:0",
+        "ingest_token_file":t.0.join("ingest.token"),"read_token_file":t.0.join("read.token"),
+        "receiver":null,"witness_plan_file":t.0.join("plan.json"),
+        "witness_current_token_file":t.0.join("current.token"),"witness_current_trusted_same_host":true
+    })).unwrap();
+    let manager = Manager::start(&manager_config).unwrap();
+    let m_task = tokio::spawn(async move {
+        axum::serve(m_up, tos_health_services::manager::router(manager)).await.unwrap()
+    });
+    let peer = fingerprint(&t.0, "client");
+    let make_ingress = |listen, upstream, role| IngressConfig {
+        listen,
+        upstream,
+        server_name: "localhost".into(),
+        cert_file: t.0.join("server.pem"),
+        key_file: t.0.join("server.key"),
+        ca_file: t.0.join("ca.pem"),
+        peers: vec![Peer { alias: "collector".into(), certificate_sha256: peer.clone(), role }],
+        witness_endpoints: vec!["cache_1".into()],
+    };
+    let o_ingress = tokio::spawn(tos_health_services::ingress::serve(
+        make_ingress(o_tls_addr, o_up_addr, Role::WitnessReader),
+        o_tls,
+    ));
+    let m_ingress = tokio::spawn(tos_health_services::ingress::serve(
+        make_ingress(m_tls_addr, m_up_addr, Role::ManagerIngest),
+        m_tls,
+    ));
+    let collector = CollectorConfig {
+        node_id: "v1".into(),
+        network_id: Some(network),
+        edge_url: format!("https://localhost:{}/v1/edge/snapshot", o_tls_addr.port()),
+        ingest_url: format!("https://localhost:{}/v1/manager/snapshot-evidence", m_tls_addr.port()),
+        ca_file: t.0.join("ca.pem"),
+        identity_file: t.0.join("identity.pem"),
+        edge_token_file: t.0.join("observer.token"),
+        ingest_token_file: t.0.join("ingest.token"),
+        witness: Some(WitnessCollectorConfig {
+            plan_file: t.0.join("plan.json"),
+            observer_base_url: format!("https://localhost:{}/", o_tls_addr.port()),
+            observer_token_file: t.0.join("observer.token"),
+            current_token_file: Some(t.0.join("current.token")),
+            trusted_same_host: true,
+        }),
+    };
+    let collector_task = tokio::spawn(tos_health_services::collector::run(collector));
+    let reader = reqwest::Client::new();
+    let current_url = format!("http://{m_up_addr}/v1/manager/witness-current/cache_1");
+    let mut observed = None;
+    for _ in 0..60 {
+        if let Ok(reply) = reader.get(&current_url).bearer_auth(&read_token).send().await {
+            if reply.status().is_success() {
+                let value: Value = reply.json().await.unwrap();
+                observed = Some(value);
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let value =
+        observed.expect("actual fixed collector must reach O and M through two mTLS ingresses");
+    assert_eq!(value["status"], "unknown", "synthetic stale/clock-unknown source cannot qualify");
+    assert_eq!(value["production_usable"], false);
+    assert!(
+        value["collector_to_m_ms"].as_str().is_some(),
+        "real collector transit stamp survived ingress"
+    );
+    assert_eq!(value["rows"][0]["qualification"]["verified_finality"], false);
+    let archived: i64 = rusqlite::Connection::open(t.0.join("evidence.db"))
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM witness_observations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(archived, 1, "historical archive committed separately");
+    collector_task.abort();
+    o_ingress.abort();
+    m_ingress.abort();
+    m_task.abort();
+    o_task.abort();
 }
 fn openssl(dir: &Path, args: &[&str]) {
     assert!(
@@ -206,6 +453,7 @@ async fn mtls_acl_rejects_missing_expired_and_unapproved_before_upstream() {
     let address = listener.local_addr().unwrap();
     let config = IngressConfig {
         listen: address,
+        witness_endpoints: vec![],
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -284,6 +532,7 @@ async fn eight_idle_authenticated_readers_are_bounded_then_release() {
     let address = listener.local_addr().unwrap();
     let config = IngressConfig {
         listen: address,
+        witness_endpoints: vec![],
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -343,6 +592,7 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
     let address = listener.local_addr().unwrap();
     let config = IngressConfig {
         listen: address,
+        witness_endpoints: vec![],
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -472,6 +722,7 @@ async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
     let manager_addr = manager_socket.local_addr().unwrap();
     let config = IngressConfig {
         listen: edge_addr,
+        witness_endpoints: vec![],
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -590,6 +841,7 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     let manager_addr = manager_socket.local_addr().unwrap();
     let config = IngressConfig {
         listen: edge_addr,
+        witness_endpoints: vec![],
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),

@@ -1,0 +1,42 @@
+Script started on 2026-09-29 13:44:58+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 8.21s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 4 tests
+test manager::current_output_tests::serialization_buffer_accepts_exact_limit_and_refuses_next_byte ... ok
+test transit::tests::same_host_stamp_is_bound_to_singleton_headers_body_and_monotonic_order ... ok
+test collector::witness_tests::wrong_archive_ack_cannot_suppress_next_real_collector_post ... ok
+test native_cache::tests::actual_run_waits_full_interval_after_source_misses_tick ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.51s
+
+     Running tests/ingress.rs (target/debug/deps/ingress-8da3f80ebc130ca8)
+
+running 7 tests
+test fixed_development_witness_routes_keep_peer_and_header_bounds ... ok
+test scheduled_probe_uses_mtls_and_never_claims_consensus_health ... ok
+test actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only ... ok
+test mtls_acl_rejects_missing_expired_and_unapproved_before_upstream ... ok
+test scheduled_native_poll_checks_inventory_over_mtls ... ok
+test eight_idle_authenticated_readers_are_bounded_then_release ... ok
+test seven_slow_regular_requests_leave_classified_heartbeat_capacity ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.19s
+
+     Running tests/witness_archive.rs (target/debug/deps/witness_archive-fafe8d2194926f95)
+
+running 8 tests
+test synthetic_valid_clock_current_route_qualifies_context_without_proof ... ok
+test current_activation_reopen_preserves_guard_and_total_index_is_bounded ... ok
+test manager_refuses_oversized_or_uninventoried_witness_plan_before_activation ... ok
+test current_read_uses_measured_incoming_body_and_matched_conflict_only ... ok
+test actual_observer_cache_to_manager_retained_archive_dedups_without_rule_fact ... ok
+test witness_archive_quota_refusal_has_no_success_ack_or_partial_row ... ok
+test historical_dedup_and_conflict_quarantine_survive_manager_restart ... ok
+test current_review_is_separate_from_archive_and_preserves_order_and_conflict ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+
+Script done on 2026-09-29 13:45:31+00:00 [COMMAND_EXIT_CODE="0"]

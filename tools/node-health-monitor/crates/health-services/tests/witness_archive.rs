@@ -21,7 +21,9 @@ impl Fixture {
             tos_health_services::hex(&tos_health_services::random_token().unwrap())
         ));
         std::fs::create_dir(&path).unwrap();
-        for (name, value) in [("ingest", "a".repeat(32)), ("read", "b".repeat(32))] {
+        for (name, value) in
+            [("ingest", "a".repeat(32)), ("read", "b".repeat(32)), ("current", "c".repeat(32))]
+        {
             std::fs::write(path.join(name), value).unwrap();
             #[cfg(unix)]
             {
@@ -291,6 +293,57 @@ async fn cached(plan: Plan, raw: &[u8]) -> Vec<u8> {
     assert_eq!(response.status(), StatusCode::OK);
     response.into_body().collect().await.unwrap().to_bytes().to_vec()
 }
+async fn cached_synthetic_valid_clock(plan: Plan, raw: &[u8]) -> Vec<u8> {
+    let cache = WitnessCache::new_synthetic_valid_clock_fixture(
+        plan,
+        b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
+    )
+    .unwrap();
+    cache.admit("cache_1", raw, 10).unwrap();
+    let request = Request::builder()
+        .uri("/v1/witness/cache/cache_1")
+        .header("authorization", "Bearer abcdefghijklmnopqrstuvwxyz0123456789")
+        .body(Body::empty())
+        .unwrap();
+    let response = witness_router(cache).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.into_body().collect().await.unwrap().to_bytes().to_vec()
+}
+
+#[tokio::test]
+async fn synthetic_valid_clock_current_route_qualifies_context_without_proof() {
+    let fixture = Fixture::new();
+    let plan = fixture.plan();
+    let mut config = fixture.config();
+    config.witness_current_token_file = Some(fixture.0.join("current"));
+    config.witness_current_trusted_same_host = true;
+    let manager = Manager::start(&config).unwrap();
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let mut source_value: Value = serde_json::from_slice(&source('d')).unwrap();
+    source_value["observed_at"] = json!(now);
+    source_value["source_age_ms"] = json!("10");
+    source_value["clock_quality"] = json!("valid");
+    source_value["rows"][0]["observed_at"] = json!(now);
+    source_value["rows"][0]["source_age_ms"] = json!("10");
+    let body =
+        cached_synthetic_valid_clock(plan, &serde_json::to_vec(&source_value).unwrap()).await;
+    assert_eq!(
+        post_with_current_stamp(manager.clone(), body, &"c".repeat(32)).await.0,
+        StatusCode::OK
+    );
+    let (status, value) = current(manager).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["status"], "qualified", "only the synthetic relative/context gate qualifies");
+    assert_eq!(value["production_usable"], false);
+    assert_eq!(value["rows"][0]["qualification"]["relative_age"], "fresh");
+    assert_eq!(value["rows"][0]["qualification"]["remote_clock"], "compatible");
+    assert_eq!(value["rows"][0]["qualification"]["reported_proof"], "reported_valid");
+    assert_eq!(value["rows"][0]["qualification"]["verified_finality"], false);
+    assert_eq!(value["rows"][0]["qualification"]["local_action"], "unknown");
+    if let Ok(path) = std::env::var("NHM_CURRENT_QUALIFIED_JSON") {
+        std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+}
 async fn post(manager: Manager, bytes: Vec<u8>) -> (StatusCode, Value) {
     let request = Request::builder()
         .method("POST")
@@ -305,6 +358,145 @@ async fn post(manager: Manager, bytes: Vec<u8>) -> (StatusCode, Value) {
     let value =
         if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
     (status, value)
+}
+
+async fn post_with_current_stamp(
+    manager: Manager,
+    bytes: Vec<u8>,
+    token: &str,
+) -> (StatusCode, Value) {
+    let stamp = tos_health_services::transit::Stamp::capture().unwrap();
+    let signed = stamp
+        .add_headers(reqwest::Client::new().post("http://localhost/"), &bytes, token)
+        .build()
+        .unwrap();
+    let mut request = Request::builder()
+        .method("POST")
+        .uri("/v1/manager/witness-evidence/cache_1")
+        .header("authorization", format!("Bearer {}", "a".repeat(32)))
+        .header("content-type", "application/json")
+        .body(Body::from(bytes))
+        .unwrap();
+    for (key, value) in signed.headers() {
+        request.headers_mut().append(key, value.clone());
+    }
+    let response = tos_health_services::manager::router(manager).oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() })
+}
+async fn current(manager: Manager) -> (StatusCode, Value) {
+    let request = Request::builder()
+        .uri("/v1/manager/witness-current/cache_1")
+        .header("authorization", format!("Bearer {}", "b".repeat(32)))
+        .body(Body::empty())
+        .unwrap();
+    let response = tos_health_services::manager::router(manager).oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() })
+}
+
+#[tokio::test]
+async fn current_read_uses_measured_incoming_body_and_matched_conflict_only() {
+    let fixture = Fixture::new();
+    let plan = fixture.plan();
+    let mut config = fixture.config();
+    config.witness_current_token_file = Some(fixture.0.join("current"));
+    config.witness_current_trusted_same_host = true;
+    let manager = Manager::start(&config).unwrap();
+    assert_eq!(current(manager.clone()).await.0, StatusCode::SERVICE_UNAVAILABLE);
+    let first = cached(plan.clone(), &source('d')).await;
+    assert_eq!(
+        post_with_current_stamp(manager.clone(), first.clone(), &"c".repeat(32)).await.0,
+        StatusCode::OK
+    );
+    let read_request = || {
+        Request::builder()
+            .uri("/v1/manager/witness-current/cache_1")
+            .header("authorization", format!("Bearer {}", "b".repeat(32)))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let held_a = tos_health_services::manager::router(manager.clone())
+        .oneshot(read_request())
+        .await
+        .unwrap();
+    let held_b = tos_health_services::manager::router(manager.clone())
+        .oneshot(read_request())
+        .await
+        .unwrap();
+    assert_eq!(held_a.status(), StatusCode::OK);
+    assert_eq!(held_b.status(), StatusCode::OK);
+    assert_eq!(
+        tos_health_services::manager::router(manager.clone())
+            .oneshot(read_request())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "two undrained bodies retain both read leases"
+    );
+    drop(held_a);
+    assert_eq!(
+        tos_health_services::manager::router(manager.clone())
+            .oneshot(read_request())
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    drop(held_b);
+    let (status, before) = current(manager.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    if let Ok(path) = std::env::var("NHM_CURRENT_ACTUAL_JSON") {
+        std::fs::write(path, serde_json::to_vec(&before).unwrap()).unwrap();
+    }
+    assert_eq!(before["status"], "unknown", "stale/clock-unknown source cannot be qualified");
+    assert_eq!(before["production_usable"], false);
+    assert!(before["collector_to_m_ms"].as_str().is_some());
+    assert_eq!(before["rows"][0]["qualification"]["verified_finality"], false);
+    let first_received = before["rows"][0]["first_received_at"].clone();
+    let mut aged: Value = serde_json::from_slice(&first).unwrap();
+    aged["observer_elapsed_ms"] = json!("1000");
+    aged["row_ages"][0]["effective_age_ms"] = json!("47100");
+    assert_eq!(
+        post_with_current_stamp(
+            manager.clone(),
+            serde_json::to_vec(&aged).unwrap(),
+            &"c".repeat(32)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, after) = current(manager.clone()).await;
+    assert_eq!(
+        after["rows"][0]["first_received_at"], first_received,
+        "historical first receipt must not renew on duplicate"
+    );
+    let age: u64 = after["rows"][0]["effective_age_at_read_ms"].as_str().unwrap().parse().unwrap();
+    assert!(age >= 47_100, "new conservative incoming age cannot be discarded");
+    let unrelated = cached(plan.clone(), &changed_source('e', "2", "source-unrelated")).await;
+    assert_eq!(post(manager.clone(), unrelated).await.0, StatusCode::OK);
+    assert_eq!(
+        current(manager.clone()).await.0,
+        StatusCode::OK,
+        "unrelated historical epoch cannot evict active current"
+    );
+    let conflict = cached(plan, &changed_source('f', "1", "source-1")).await;
+    assert_eq!(post(manager.clone(), conflict).await.0, StatusCode::CONFLICT);
+    assert_eq!(
+        current(manager.clone()).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "matching historical conflict must invalidate current view"
+    );
+    let restarted = Manager::start(&config).unwrap();
+    assert_eq!(
+        current(restarted).await.0,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "current volatile view cannot revive from historical archive on restart"
+    );
 }
 
 #[tokio::test]

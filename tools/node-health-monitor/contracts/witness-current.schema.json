@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tos.invalid/nhm/witness-current.schema.json",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "production_usable", "reason"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "status": {"const": "unavailable"},
+        "production_usable": {"const": false},
+        "reason": {"const": "current_unavailable"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "status", "production_usable", "endpoint_id", "observer_epoch", "source_epoch", "generation", "source_hash", "m_elapsed_ms", "collector_to_m_ms", "rows"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "status": {"enum": ["qualified", "unknown"]},
+        "production_usable": {"const": false},
+        "endpoint_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+        "observer_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "source_epoch": {"type": "string", "minLength": 1, "maxLength": 128},
+        "generation": {"type": "string", "format": "uint64"},
+        "source_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "m_elapsed_ms": {"anyOf": [{"type": "string", "format": "uint64"}, {"type": "null"}]},
+        "collector_to_m_ms": {"anyOf": [{"type": "string", "format": "uint64"}, {"type": "null"}]},
+        "rows": {
+          "type": "array", "maxItems": 32,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["qualification", "first_received_at", "observer_clock_quality_at_first_receipt", "source_age_at_first_receipt_ms", "effective_age_at_read_ms"],
+            "properties": {
+              "first_received_at": {"type": "string", "format": "date-time", "pattern": "Z$", "maxLength": 40},
+              "observer_clock_quality_at_first_receipt": {"enum": ["valid", "unknown"]},
+              "source_age_at_first_receipt_ms": {"anyOf": [{"type": "string", "format": "uint64"}, {"type": "null"}]},
+              "effective_age_at_read_ms": {"anyOf": [{"type": "string", "format": "uint64"}, {"type": "null"}]},
+              "qualification": {
+                "type": "object", "additionalProperties": false,
+                "required": ["target_id", "relative_age", "remote_clock", "role_at_observer_receipt", "reported_network_observation", "reported_certificate_membership", "reported_proof", "private_vote_visibility", "local_action", "local_persistence", "verified_finality", "node_fault_from_witness_alone"],
+                "properties": {
+                  "target_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+                  "relative_age": {"enum": ["fresh", "stale", "unknown"]},
+                  "remote_clock": {"enum": ["compatible", "future", "unknown"]},
+                  "role_at_observer_receipt": {"enum": ["normal", "probe_only", "non_voting", "outside_window", "unknown"]},
+                  "reported_network_observation": {"enum": ["observed", "not_observed_in_window", "unavailable"]},
+                  "reported_certificate_membership": {"enum": ["included", "not_in_this_certificate", "not_checked", "unavailable"]},
+                  "reported_proof": {"enum": ["not_checked", "reported_valid", "unavailable"]},
+                  "private_vote_visibility": {"enum": ["observed", "not_observed_in_window", "unavailable"]},
+                  "local_action": {"const": "unknown"},
+                  "local_persistence": {"const": "unknown"},
+                  "verified_finality": {"const": false},
+                  "node_fault_from_witness_alone": {"const": false}
+                }
+              }
+            }
+          }
+        }
+      },
+      "allOf": [{
+        "if": {"properties": {"status": {"const": "qualified"}}},
+        "then": {"properties": {
+          "m_elapsed_ms": {"type": "string", "format": "uint64"},
+          "collector_to_m_ms": {"type": "string", "format": "uint64"},
+          "rows": {"minItems": 1, "items": {"properties": {
+            "effective_age_at_read_ms": {"type": "string", "format": "uint64"},
+            "qualification": {"properties": {
+              "relative_age": {"const": "fresh"},
+              "remote_clock": {"const": "compatible"},
+              "role_at_observer_receipt": {"enum": ["normal", "probe_only", "non_voting"]}
+            }}
+          }}}
+        }}
+      }]
+    }
+  ]
+}

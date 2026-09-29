@@ -1,0 +1,67 @@
+Script started on 2026-09-29 13:39:47+00:00 [<not executed on terminal>]
+    Checking tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+error: this function has too many arguments (8/7)
+   --> crates/health-services/src/collector.rs:218:1
+    |
+218 | / async fn poll_witness_once(
+219 | |     client: &reqwest::Client,
+220 | |     plan: &tos_health_core::witness::Plan,
+221 | |     observer_base_url: &str,
+...   |
+226 | |     last_identity: &mut std::collections::BTreeMap<String, WitnessIdentity>,
+227 | | ) -> Result<(), String> {
+    | |_______________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#too_many_arguments
+    = note: `-D clippy::too-many-arguments` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::too_many_arguments)]`
+
+error: iterating on a map's keys
+   --> crates/health-services/src/durable.rs:163:23
+    |
+163 |                       + track
+    |  _______________________^
+164 | |                         .age_class
+165 | |                         .iter()
+166 | |                         .map(|(key, _)| {
+167 | |                             std::mem::size_of::<(String, RelativeAge)>() + key.capacity() + 256
+168 | |                         })
+    | |__________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#iter_kv_map
+    = note: `-D clippy::iter-kv-map` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::iter_kv_map)]`
+help: try
+    |
+163 ~                     + track
+164 +                         .age_class.keys().map(|key| {
+165 +                             std::mem::size_of::<(String, RelativeAge)>() + key.capacity() + 256
+166 +                         })
+    |
+
+error: iterating on a map's keys
+   --> crates/health-services/src/durable.rs:170:23
+    |
+170 |                       + track
+    |  _______________________^
+171 | |                         .first_age_floor_ms
+172 | |                         .iter()
+173 | |                         .map(|(key, _)| {
+174 | |                             std::mem::size_of::<(String, Option<u64>)>() + key.capacity() + 256
+175 | |                         })
+    | |__________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#iter_kv_map
+help: try
+    |
+170 ~                     + track
+171 +                         .first_age_floor_ms.keys().map(|key| {
+172 +                             std::mem::size_of::<(String, Option<u64>)>() + key.capacity() + 256
+173 +                         })
+    |
+
+error: could not compile `tos-health-services` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `tos-health-services` (lib test) due to 3 previous errors
+
+Script done on 2026-09-29 13:39:49+00:00 [COMMAND_EXIT_CODE="101"]

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "rust": "1.97.1",
   "rust_toolchain_sha256": "279d77167cec5426fa80f457cd066dc74a360fbe4e2816f4f3fa01487a918fdc",
-  "cargo_lock_sha256": "1c9a143a48f9c437a6b09ab1fb21060c79db0d7ff87b5bfb8dfcaa826956a70a",
+  "cargo_lock_sha256": "50caba7c6ddbb3646f895c9f01c90296e5e78e32049df794ca18695bac03df73",
   "contract_python": {
     "version": "3.14.4",
     "requirements_lock": "requirements-contracts.lock",
@@ -18,6 +18,11 @@
       "name": "libsqlite3-sys",
       "version": "0.30.1",
       "checksum": "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.189",
+      "checksum": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
     },
     {
       "name": "reqwest",

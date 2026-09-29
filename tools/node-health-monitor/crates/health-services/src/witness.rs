@@ -805,7 +805,10 @@ pub fn router(state: WitnessCache) -> Router {
 }
 struct PermitBody {
     inner: Pin<Box<Body>>,
-    _permit: tokio::sync::OwnedSemaphorePermit,
+    _permit: Arc<tokio::sync::OwnedSemaphorePermit>,
+}
+pub(crate) fn hold_permit(body: Body, permit: Arc<tokio::sync::OwnedSemaphorePermit>) -> Body {
+    Body::new(PermitBody { inner: Box::pin(body), _permit: permit })
 }
 impl HttpBody for PermitBody {
     type Data = Bytes;
@@ -823,7 +826,7 @@ impl HttpBody for PermitBody {
         self.inner.size_hint()
     }
 }
-async fn limit_cache_reads(
+pub(crate) async fn limit_cache_reads(
     State(limit): State<Arc<tokio::sync::Semaphore>>,
     request: Request,
     next: Next,
@@ -831,7 +834,5 @@ async fn limit_cache_reads(
     let Ok(permit) = limit.try_acquire_owned() else {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     };
-    next.run(request)
-        .await
-        .map(|body| Body::new(PermitBody { inner: Box::pin(body), _permit: permit }))
+    next.run(request).await.map(|body| hold_permit(body, Arc::new(permit)))
 }

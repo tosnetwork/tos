@@ -22,6 +22,10 @@ pub struct WitnessCollectorConfig {
     pub plan_file: PathBuf,
     pub observer_base_url: String,
     pub observer_token_file: PathBuf,
+    #[serde(default)]
+    pub current_token_file: Option<PathBuf>,
+    #[serde(default)]
+    pub trusted_same_host: bool,
 }
 impl CollectorConfig {
     pub fn validate(&self) -> Result<(), String> {
@@ -50,6 +54,9 @@ impl CollectorConfig {
             }
         }
         if let Some(witness) = &self.witness {
+            if witness.trusted_same_host != witness.current_token_file.is_some() {
+                return Err("current witness requires explicit same-host trust and token".into());
+            }
             let url = reqwest::Url::parse(&witness.observer_base_url).map_err(|e| e.to_string())?;
             if url.scheme() != "https"
                 || url.path() != "/"
@@ -84,11 +91,20 @@ pub async fn run(config: CollectorConfig) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         let ingest_token = String::from_utf8(crate::secret(&config.ingest_token_file)?)
             .map_err(|e| e.to_string())?;
+        let current_token = witness
+            .current_token_file
+            .as_ref()
+            .map(|path| {
+                crate::secret(path)
+                    .and_then(|value| String::from_utf8(value).map_err(|e| e.to_string()))
+            })
+            .transpose()?;
         let base = witness.observer_base_url.clone();
         let ingest = config.ingest_url.clone();
         tokio::spawn(async move {
             if let Err(error) =
-                run_witness(client, plan, base, ingest, observer_token, ingest_token).await
+                run_witness(client, plan, base, ingest, observer_token, ingest_token, current_token)
+                    .await
             {
                 eprintln!("witness retained collector stopped: {error}");
             }
@@ -176,6 +192,7 @@ async fn run_witness(
     ingest_url: String,
     observer_token: String,
     ingest_token: String,
+    current_token: Option<String>,
 ) -> Result<(), String> {
     plan.validate().map_err(str::to_owned)?;
     let mut interval = tokio::time::interval(Duration::from_secs(15));
@@ -188,8 +205,11 @@ async fn run_witness(
             &plan,
             &observer_base_url,
             &ingest_url,
-            &observer_token,
-            &ingest_token,
+            WitnessCredentials {
+                observer: &observer_token,
+                ingest: &ingest_token,
+                current: current_token.as_deref(),
+            },
             &mut last_identity,
         )
         .await?;
@@ -197,18 +217,26 @@ async fn run_witness(
 }
 
 type WitnessIdentity = (String, String, u64, String);
+#[derive(Clone, Copy)]
+struct WitnessCredentials<'a> {
+    observer: &'a str,
+    ingest: &'a str,
+    current: Option<&'a str>,
+}
 async fn poll_witness_once(
     client: &reqwest::Client,
     plan: &tos_health_core::witness::Plan,
     observer_base_url: &str,
     ingest_url: &str,
-    observer_token: &str,
-    ingest_token: &str,
+    credentials: WitnessCredentials<'_>,
     last_identity: &mut std::collections::BTreeMap<String, WitnessIdentity>,
 ) -> Result<(), String> {
     for endpoint in &plan.endpoints {
+        // This local stamp starts before the O GET and is never derived from
+        // remote wall time. A failed sample leaves historical archival intact.
+        let transit_start = credentials.current.and_then(|_| crate::transit::Stamp::capture());
         let url = format!("{}v1/witness/cache/{}", observer_base_url, endpoint.endpoint_id);
-        let response = match client.get(&url).bearer_auth(observer_token).send().await {
+        let response = match client.get(&url).bearer_auth(credentials.observer).send().await {
             Ok(response) if response.status().is_success() => response,
             _ => {
                 eprintln!("observer witness cache unavailable endpoint={}", endpoint.endpoint_id);
@@ -246,14 +274,14 @@ async fn poll_witness_once(
         );
         let expected_id =
             crate::witness::archive_evidence_id(&receipt.receipt).map_err(str::to_owned)?;
-        let accepted = match client
+        let mut request = client
             .post(&destination)
-            .bearer_auth(ingest_token)
-            .header("content-type", "application/json")
-            .body(body)
-            .send()
-            .await
-        {
+            .bearer_auth(credentials.ingest)
+            .header("content-type", "application/json");
+        if let (Some(stamp), Some(token)) = (&transit_start, credentials.current) {
+            request = stamp.add_headers(request, &body, token);
+        }
+        let accepted = match request.body(body).send().await {
             Ok(response) if response.status().is_success() => crate::bounded_body(response, 4096)
                 .await
                 .ok()
@@ -472,19 +500,40 @@ mod witness_tests {
         let mut last_identity = std::collections::BTreeMap::new();
         let base = format!("https://localhost:{port}/");
         let ingest = format!("https://localhost:{port}/v1/manager/snapshot-evidence");
-        poll_witness_once(&client, &plan, &base, &ingest, token, token, &mut last_identity)
-            .await
-            .unwrap();
+        poll_witness_once(
+            &client,
+            &plan,
+            &base,
+            &ingest,
+            WitnessCredentials { observer: token, ingest: token, current: None },
+            &mut last_identity,
+        )
+        .await
+        .unwrap();
         assert_eq!(posts.load(Ordering::SeqCst), 1);
         assert!(last_identity.is_empty(), "wrong ACK must not advance collector identity");
-        poll_witness_once(&client, &plan, &base, &ingest, token, token, &mut last_identity)
-            .await
-            .unwrap();
+        poll_witness_once(
+            &client,
+            &plan,
+            &base,
+            &ingest,
+            WitnessCredentials { observer: token, ingest: token, current: None },
+            &mut last_identity,
+        )
+        .await
+        .unwrap();
         assert_eq!(posts.load(Ordering::SeqCst), 2);
         assert_eq!(last_identity.len(), 1);
-        poll_witness_once(&client, &plan, &base, &ingest, token, token, &mut last_identity)
-            .await
-            .unwrap();
+        poll_witness_once(
+            &client,
+            &plan,
+            &base,
+            &ingest,
+            WitnessCredentials { observer: token, ingest: token, current: None },
+            &mut last_identity,
+        )
+        .await
+        .unwrap();
         assert_eq!(gets.load(Ordering::SeqCst), 3);
         assert_eq!(
             posts.load(Ordering::SeqCst),

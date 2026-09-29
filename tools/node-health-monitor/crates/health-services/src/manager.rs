@@ -3,6 +3,9 @@ use crate::durable::{
     ControlDb, ControlUpdate, DurableEvidence, Evaluation, EvidenceDb, EvidenceRow, RuleKey,
     WitnessArchiveRow,
 };
+use crate::witness::{
+    CacheResponse, RelativeAge, RemoteClock, RoleAtObserverReceipt, RowAge, RowQualification,
+};
 use axum::{
     extract::{OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
@@ -12,6 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::{
         mpsc::{sync_channel, RecvTimeoutError, SyncSender},
@@ -26,6 +30,200 @@ use tos_health_core::{
     source::{Availability, Coverage, SourceQuality},
     wire::U64,
 };
+const MAX_CURRENT_VIEW_BYTES: usize = 1_048_576;
+// Writer decode/qualification and two body-lifetime read permits are reserved
+// before retained admission. Raw Source is archived on disk, not held here.
+const CURRENT_SCRATCH_RESERVE: usize = 8 * 32_768;
+
+struct CurrentView {
+    endpoint: String,
+    observer_epoch: String,
+    source_epoch: String,
+    generation: u64,
+    source_hash: String,
+    first_received: Option<crate::transit::Stamp>,
+    collector_to_m_ms: Option<u64>,
+    rows: Vec<(RowQualification, RowAge, Option<u64>)>,
+}
+#[derive(Serialize)]
+struct CurrentReadRow<'a> {
+    qualification: RowQualification,
+    first_received_at: &'a str,
+    observer_clock_quality_at_first_receipt: tos_health_core::witness::ClockQuality,
+    source_age_at_first_receipt_ms: Option<String>,
+    effective_age_at_read_ms: Option<String>,
+}
+#[derive(Serialize)]
+struct CurrentReadOutput<'a> {
+    schema_version: u32,
+    status: &'static str,
+    production_usable: bool,
+    endpoint_id: &'a str,
+    observer_epoch: &'a str,
+    source_epoch: &'a str,
+    generation: String,
+    source_hash: &'a str,
+    m_elapsed_ms: Option<String>,
+    collector_to_m_ms: Option<String>,
+    rows: Vec<CurrentReadRow<'a>>,
+}
+struct CappedJson(Vec<u8>);
+impl std::io::Write for CappedJson {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > 32_768usize.saturating_sub(self.0.len()) {
+            return Err(std::io::Error::other("witness current output overflow"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+#[cfg(test)]
+mod current_output_tests {
+    use super::CappedJson;
+    use std::io::Write;
+    #[test]
+    fn serialization_buffer_accepts_exact_limit_and_refuses_next_byte() {
+        let mut buffer = CappedJson(Vec::with_capacity(32_768));
+        buffer.write_all(&vec![b'x'; 32_768]).unwrap();
+        assert_eq!(buffer.0.len(), 32_768);
+        assert_eq!(buffer.0.capacity(), 32_768);
+        assert!(buffer.write_all(b"x").is_err());
+        assert_eq!(buffer.0.len(), 32_768);
+    }
+}
+impl CurrentView {
+    fn new(
+        response: &CacheResponse,
+        qualifications: Vec<RowQualification>,
+        received: Option<crate::transit::Stamp>,
+        extra_ms: Option<u64>,
+    ) -> Option<Self> {
+        let rows = qualifications
+            .into_iter()
+            .map(|q| {
+                let original =
+                    response.row_ages.iter().find(|age| age.target_id == q.target_id).cloned()?;
+                let age = original
+                    .effective_age_ms
+                    .zip(extra_ms)
+                    .and_then(|(age, extra)| age.0.checked_add(extra));
+                Some((q, original, age))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            endpoint: response.receipt.endpoint_id.clone(),
+            observer_epoch: response.receipt.observer_epoch.clone(),
+            source_epoch: response.receipt.source_epoch.clone(),
+            generation: response.receipt.generation.0,
+            source_hash: response.receipt.source_hash.clone(),
+            first_received: received,
+            collector_to_m_ms: extra_ms,
+            rows,
+        })
+    }
+    fn charge(&self) -> usize {
+        let strings = self.endpoint.capacity()
+            + self.observer_epoch.capacity()
+            + self.source_epoch.capacity()
+            + self.source_hash.capacity();
+        std::mem::size_of::<Self>()
+            + strings
+            + self.rows.capacity() * std::mem::size_of::<(RowQualification, RowAge, Option<u64>)>()
+            + self
+                .rows
+                .iter()
+                .map(|(row, age, _)| {
+                    row.target_id.capacity()
+                        + age.target_id.capacity()
+                        + age.first_received_at.capacity()
+                })
+                .sum::<usize>()
+            + self.first_received.as_ref().map_or(0, crate::transit::Stamp::resident_bytes)
+            + 256 // BTreeMap node/index and allocator overhead, conservatively charged.
+    }
+    fn merge_same_generation(&mut self, other: &Self) {
+        let elapsed = self.first_received.as_ref().and_then(|stamp| stamp.elapsed_ms_now());
+        for ((existing, _, floor), (incoming, _, new_age)) in self.rows.iter_mut().zip(&other.rows)
+        {
+            if existing.target_id != incoming.target_id {
+                continue;
+            }
+            *floor = match (*floor, elapsed, *new_age) {
+                (Some(old), Some(elapsed), Some(new)) => {
+                    old.checked_add(elapsed).map(|aged| aged.max(new).saturating_sub(elapsed))
+                }
+                _ => None,
+            };
+            if incoming.relative_age != RelativeAge::Fresh {
+                existing.relative_age = incoming.relative_age;
+            }
+        }
+    }
+    fn read(&self) -> Result<Vec<u8>, String> {
+        let elapsed = self.first_received.as_ref().and_then(|stamp| stamp.elapsed_ms_now());
+        let rows = self
+            .rows
+            .iter()
+            .map(|(row, original, floor)| {
+                let mut row = row.clone();
+                let effective = floor.and_then(|v| elapsed.and_then(|e| v.checked_add(e)));
+                row.relative_age = match (row.relative_age, effective) {
+                    (RelativeAge::Stale, _) => RelativeAge::Stale,
+                    (RelativeAge::Unknown, _) | (_, None) => RelativeAge::Unknown,
+                    (_, Some(age)) if age > tos_health_core::witness::USABLE_AGE_MS => {
+                        RelativeAge::Stale
+                    }
+                    _ => RelativeAge::Fresh,
+                };
+                CurrentReadRow {
+                    qualification: row,
+                    first_received_at: &original.first_received_at,
+                    observer_clock_quality_at_first_receipt: original
+                        .observer_clock_quality_at_first_receipt,
+                    source_age_at_first_receipt_ms: original
+                        .source_age_at_first_receipt_ms
+                        .map(|v| v.0.to_string()),
+                    effective_age_at_read_ms: effective.map(|v| v.to_string()),
+                }
+            })
+            .collect::<Vec<_>>();
+        let status = if !rows.is_empty()
+            && rows.iter().all(|entry| {
+                let row = &entry.qualification;
+                row.relative_age == RelativeAge::Fresh
+                    && row.remote_clock == RemoteClock::Compatible
+                    && matches!(
+                        row.role_at_observer_receipt,
+                        RoleAtObserverReceipt::Normal
+                            | RoleAtObserverReceipt::ProbeOnly
+                            | RoleAtObserverReceipt::NonVoting
+                    )
+            }) {
+            "qualified"
+        } else {
+            "unknown"
+        };
+        let output = CurrentReadOutput {
+            schema_version: 1,
+            status,
+            production_usable: false,
+            endpoint_id: &self.endpoint,
+            observer_epoch: &self.observer_epoch,
+            source_epoch: &self.source_epoch,
+            generation: self.generation.to_string(),
+            source_hash: &self.source_hash,
+            m_elapsed_ms: elapsed.map(|v| v.to_string()),
+            collector_to_m_ms: self.collector_to_m_ms.map(|v| v.to_string()),
+            rows,
+        };
+        let mut bytes = CappedJson(Vec::with_capacity(32_768));
+        serde_json::to_writer(&mut bytes, &output).map_err(|e| e.to_string())?;
+        Ok(bytes.0)
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagerConfig {
@@ -40,6 +238,10 @@ pub struct ManagerConfig {
     pub receiver: Option<ReceiverConfig>,
     #[serde(default)]
     pub witness_plan_file: Option<PathBuf>,
+    #[serde(default)]
+    pub witness_current_token_file: Option<PathBuf>,
+    #[serde(default)]
+    pub witness_current_trusted_same_host: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +264,8 @@ pub struct Manager {
     pub inventory: Arc<RuleInventory>,
     quarantines: Quarantines,
     witness_plan: Option<Arc<tos_health_core::witness::Plan>>,
+    witness_current_token: Option<Arc<Vec<u8>>>,
+    witness_current_reads: Arc<tokio::sync::Semaphore>,
 }
 #[derive(Clone)]
 struct Cached {
@@ -82,7 +286,13 @@ enum EvidenceCommand {
     InsertWitness(
         Box<crate::witness::CacheResponse>,
         Arc<tos_health_core::witness::Plan>,
+        Option<crate::transit::Stamp>,
         oneshot::Sender<Result<WitnessArchiveRow, String>>,
+    ),
+    ReadWitness(
+        String,
+        Arc<tokio::sync::OwnedSemaphorePermit>,
+        oneshot::Sender<Result<Vec<u8>, String>>,
     ),
 }
 fn evidence(frame: &FactFrame) -> Result<DurableEvidence, String> {
@@ -164,6 +374,24 @@ impl Manager {
         if ingest == read {
             return Err("manager credentials must differ".into());
         }
+        if config.witness_current_trusted_same_host != config.witness_current_token_file.is_some()
+            || (config.witness_current_token_file.is_some() && config.witness_plan_file.is_none())
+        {
+            return Err(
+                "current witness requires development plan, same-host trust and token".into()
+            );
+        }
+        let witness_current_token = config
+            .witness_current_token_file
+            .as_ref()
+            .map(|path| crate::secret(path).map(Arc::new))
+            .transpose()?;
+        if witness_current_token
+            .as_deref()
+            .is_some_and(|token| token.as_slice() == ingest || token.as_slice() == read)
+        {
+            return Err("current witness credential must be distinct".into());
+        }
         let mut db = ControlDb::open(&config.control_db, config.control_quota_bytes.0, 2304, 4096)?;
         db.bind_network(&config.inventory.network_id)?;
         db.bind_inventory(
@@ -208,23 +436,94 @@ impl Manager {
         std::thread::Builder::new()
             .name("health-evidence-writer".into())
             .spawn(move || {
+                let mut current_views = BTreeMap::<String, CurrentView>::new();
                 while let Ok(command) = erx.recv() {
                     match command {
                         EvidenceCommand::Insert(value, reply) => {
                             let _ = reply.send(evidence_db.insert(*value));
                         }
-                        EvidenceCommand::InsertWitness(value, plan, reply) => {
+                        EvidenceCommand::InsertWitness(value, plan, stamp, reply) => {
+                            // Duplicate archive ACKs return the original stored body.
+                            // Current qualification must use this incoming validated
+                            // body, which is bound to the transit digest.
+                            let incoming = (*value).clone();
                             let archived = evidence_db.insert_witness(*value, &plan);
-                            if let Ok(row) = &archived {
-                                // Separate current gate: the historical ACK cannot claim
-                                // current freshness. Collector-to-M transit is not yet
-                                // measured, so every current age stays unknown and no
-                                // rule fact is emitted. A current refusal cannot erase
-                                // a valid historical archive commit.
-                                let _ =
-                                    evidence_db.review_witness_current(&row.response, &plan, None);
+                            if archived.is_ok() {
+                                // A current refusal cannot erase a valid historical commit.
+                                let received_at = crate::transit::Stamp::capture();
+                                let elapsed = stamp
+                                    .as_ref()
+                                    .zip(received_at.as_ref())
+                                    .and_then(|(start, end)| start.elapsed_ms_at(end));
+                                match evidence_db.review_witness_current_at(
+                                    &incoming,
+                                    &plan,
+                                    elapsed,
+                                    received_at.clone(),
+                                ) {
+                                    Ok(qualified) => {
+                                        if let Some(candidate) = CurrentView::new(
+                                            &incoming,
+                                            qualified,
+                                            received_at,
+                                            elapsed,
+                                        ) {
+                                            let endpoint = candidate.endpoint.clone();
+                                            if let Some(existing) = current_views.get_mut(&endpoint)
+                                            {
+                                                if existing.generation == candidate.generation
+                                                    && existing.source_hash == candidate.source_hash
+                                                {
+                                                    existing.merge_same_generation(&candidate);
+                                                } else {
+                                                    current_views.remove(&endpoint);
+                                                }
+                                            }
+                                            if !current_views.contains_key(&endpoint) {
+                                                let charged = CURRENT_SCRATCH_RESERVE
+                                                    + evidence_db.witness_current_resident_bytes()
+                                                    + current_views
+                                                        .iter()
+                                                        .map(|(key, view)| {
+                                                            key.capacity() + view.charge()
+                                                        })
+                                                        .sum::<usize>()
+                                                    + endpoint.capacity()
+                                                    + candidate.charge();
+                                                if charged <= MAX_CURRENT_VIEW_BYTES
+                                                    && current_views.len() < 16
+                                                {
+                                                    current_views.insert(endpoint, candidate);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(error) if error == "WITNESS_CURRENT_CONFLICT" => {
+                                        current_views.remove(&incoming.receipt.endpoint_id);
+                                    }
+                                    Err(_) => {} // An unrelated historical epoch cannot evict current.
+                                }
+                            } else if archived
+                                .as_ref()
+                                .err()
+                                .is_some_and(|e| e == "WITNESS_SOURCE_CONFLICT")
+                            {
+                                let receipt = &incoming.receipt;
+                                if current_views.get(&receipt.endpoint_id).is_some_and(|view| {
+                                    view.observer_epoch == receipt.observer_epoch
+                                        && view.source_epoch == receipt.source_epoch
+                                }) {
+                                    current_views.remove(&receipt.endpoint_id);
+                                }
                             }
                             let _ = reply.send(archived);
+                        }
+                        EvidenceCommand::ReadWitness(endpoint, _lease, reply) => {
+                            let result = current_views
+                                .get(&endpoint)
+                                .ok_or_else(|| "witness current view unavailable".to_owned())
+                                .and_then(CurrentView::read);
+                            let _ = reply.send(result);
                         }
                     }
                 }
@@ -252,6 +551,8 @@ impl Manager {
             inventory: Arc::new(config.inventory.clone()),
             quarantines,
             witness_plan,
+            witness_current_token,
+            witness_current_reads: Arc::new(tokio::sync::Semaphore::new(2)),
         })
     }
     pub async fn ingest(&self, frame: FactFrame) -> Result<String, String> {
@@ -359,12 +660,48 @@ impl Manager {
         endpoint_id: &str,
         bytes: &[u8],
     ) -> Result<WitnessArchiveRow, String> {
+        self.archive_witness_with_stamp(endpoint_id, bytes, None).await
+    }
+    async fn current_witness(
+        &self,
+        endpoint_id: &str,
+    ) -> Result<(Vec<u8>, Arc<tokio::sync::OwnedSemaphorePermit>), String> {
+        if self.witness_current_token.is_none()
+            || !self
+                .witness_plan
+                .as_ref()
+                .is_some_and(|plan| plan.endpoints.iter().any(|v| v.endpoint_id == endpoint_id))
+        {
+            return Err("witness current development lane disabled".into());
+        }
+        let lease = Arc::new(
+            self.witness_current_reads
+                .clone()
+                .try_acquire_owned()
+                .map_err(|_| "witness current read busy")?,
+        );
+        let (tx, rx) = oneshot::channel();
+        self.evidence
+            .try_send(EvidenceCommand::ReadWitness(endpoint_id.to_owned(), lease.clone(), tx))
+            .map_err(|_| "evidence queue unavailable")?;
+        let bytes = tokio::time::timeout(Duration::from_secs(2), rx)
+            .await
+            .map_err(|_| "evidence deadline")?
+            .map_err(|_| "evidence writer stopped")??;
+        Ok((bytes, lease))
+    }
+    async fn archive_witness_with_stamp(
+        &self,
+        endpoint_id: &str,
+        bytes: &[u8],
+        stamp: Option<crate::transit::Stamp>,
+    ) -> Result<WitnessArchiveRow, String> {
         let plan = self.witness_plan.as_ref().ok_or("witness development plan disabled")?;
         let (response, _) = crate::witness::CacheResponse::decode(bytes, plan, endpoint_id)
             .map_err(str::to_owned)?;
         let (tx, rx) = oneshot::channel();
         self.evidence
-            .try_send(EvidenceCommand::InsertWitness(Box::new(response), plan.clone(), tx))
+            .try_send(EvidenceCommand::InsertWitness(Box::new(response), plan.clone(), stamp, tx))
             .map_err(|_| "evidence queue unavailable")?;
         tokio::time::timeout(Duration::from_secs(2), rx)
             .await
@@ -465,15 +802,39 @@ async fn archive_witness(
     bytes: axum::body::Bytes,
 ) -> Result<Json<Value>, StatusCode> {
     permit(&headers, &state.ingest, &uri)?;
-    let row = state.archive_witness(&endpoint_id, &bytes).await.map_err(|error| {
-        if error == "WITNESS_SOURCE_CONFLICT" {
-            StatusCode::CONFLICT
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
-    })?;
+    let stamp = state
+        .witness_current_token
+        .as_ref()
+        .and_then(|token| crate::transit::Stamp::from_headers(&headers, &bytes, token));
+    let row =
+        state.archive_witness_with_stamp(&endpoint_id, &bytes, stamp).await.map_err(|error| {
+            if error == "WITNESS_SOURCE_CONFLICT" {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+        })?;
     Ok(Json(json!({"accepted":true,"namespace":row.namespace,
         "evidence_id":row.evidence_id,"archive_seq":row.archive_seq})))
+}
+async fn read_witness_current(
+    State(state): State<Manager>,
+    Path(endpoint_id): Path<String>,
+    headers: HeaderMap,
+    OriginalUri(uri): OriginalUri,
+) -> Result<axum::response::Response, StatusCode> {
+    permit(&headers, &state.read, &uri)?;
+    match state.current_witness(&endpoint_id).await {
+        Ok((bytes, lease)) => axum::response::Response::builder()
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(crate::witness::hold_permit(axum::body::Body::from(bytes), lease))
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE),
+        Err(_) => axum::response::Response::builder()
+            .status(StatusCode::SERVICE_UNAVAILABLE)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(br#"{"schema_version":1,"status":"unavailable","production_usable":false,"reason":"current_unavailable"}"#.to_vec()))
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE),
+    }
 }
 async fn snapshot(
     State(state): State<Manager>,
@@ -532,9 +893,12 @@ pub fn router(state: Manager) -> Router {
             Arc::new(tokio::sync::Semaphore::new(2)),
             crate::limit_requests,
         ));
+    let current_reads =
+        Router::new().route("/v1/manager/witness-current/{endpoint_id}", get(read_witness_current));
     Router::new()
         .merge(writes)
         .merge(reads)
+        .merge(current_reads)
         .route("/v1/monitor/heartbeat", get(heartbeat))
         .with_state(state)
 }

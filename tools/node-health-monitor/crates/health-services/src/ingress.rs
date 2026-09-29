@@ -33,6 +33,7 @@ pub enum Role {
     ManagerIngest,
     ManagerReader,
     PipelineSender,
+    WitnessReader,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +45,9 @@ pub struct IngressConfig {
     pub key_file: PathBuf,
     pub ca_file: PathBuf,
     pub peers: Vec<Peer>,
+    /// Explicit development-only fixed witness aliases. Empty disables routes.
+    #[serde(default)]
+    pub witness_endpoints: Vec<String>,
 }
 struct Bucket {
     at: Instant,
@@ -77,8 +81,22 @@ fn bounded_file(path: &Path) -> Result<Vec<u8>, String> {
     }
     std::fs::read(path).map_err(|e| e.to_string())
 }
-fn route(role: Role, method: &hyper::Method, path: &str) -> Option<usize> {
+fn witness_alias<'a>(path: &'a str, prefix: &str, config: &IngressConfig) -> Option<&'a str> {
+    let alias = path.strip_prefix(prefix)?;
+    config.witness_endpoints.iter().any(|item| item == alias).then_some(alias)
+}
+fn route(role: Role, method: &hyper::Method, path: &str, config: &IngressConfig) -> Option<usize> {
     if method == hyper::Method::GET {
+        if role == Role::WitnessReader
+            && witness_alias(path, "/v1/witness/cache/", config).is_some()
+        {
+            return Some(32_768);
+        }
+        if role == Role::ManagerReader
+            && witness_alias(path, "/v1/manager/witness-current/", config).is_some()
+        {
+            return Some(32_768);
+        }
         match (role, path) {
             (Role::EdgeReader | Role::EdgeWatchdog, "/v1/edge/heartbeat") => Some(4096),
             (Role::EdgeReader, "/v1/edge/capabilities") => Some(32768),
@@ -89,6 +107,11 @@ fn route(role: Role, method: &hyper::Method, path: &str) -> Option<usize> {
             _ => None,
         }
     } else if method == hyper::Method::POST {
+        if role == Role::ManagerIngest
+            && witness_alias(path, "/v1/manager/witness-evidence/", config).is_some()
+        {
+            return Some(4096);
+        }
         match (role, path) {
             (Role::ManagerIngest, "/v1/manager/facts") => Some(4096),
             (Role::ManagerIngest, "/v1/manager/snapshot-evidence") => Some(4096),
@@ -123,7 +146,7 @@ async fn proxy(
     {
         return Ok(response(StatusCode::BAD_REQUEST));
     }
-    let Some(max_response) = route(peer.role, request.method(), &path) else {
+    let Some(max_response) = route(peer.role, request.method(), &path, &config) else {
         return Ok(response(StatusCode::FORBIDDEN));
     };
     let heartbeat = path == "/v1/edge/heartbeat" || path == "/v1/monitor/heartbeat";
@@ -156,9 +179,31 @@ async fn proxy(
     }
     let method = request.method().clone();
     let authorization = request.headers().get("authorization").cloned();
+    let witness_post = peer.role == Role::ManagerIngest
+        && witness_alias(&path, "/v1/manager/witness-evidence/", &config).is_some();
+    let current_headers = if witness_post {
+        // Never normalize duplicates to a valid singleton or clone arbitrary
+        // header payloads. Invalid timing metadata is omitted; archive still
+        // receives the body and can return its independent historical ACK.
+        let widths = [1, 36, 32, 20, 64, 4096];
+        crate::transit::HEADERS
+            .iter()
+            .zip(widths)
+            .map(|(key, max)| {
+                let mut values = request.headers().get_all(*key).iter();
+                let value = values.next()?;
+                (values.next().is_none() && value.len() <= max).then(|| (*key, value.clone()))
+            })
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let max_input = if peer.role == Role::PipelineSender || path == "/v1/manager/snapshot-evidence"
     {
         262144
+    } else if witness_post {
+        32768
     } else {
         16384
     };
@@ -180,6 +225,9 @@ async fn proxy(
         .body(body);
     if let Some(value) = authorization {
         upstream = upstream.header("authorization", value);
+    }
+    for (key, value) in current_headers {
+        upstream = upstream.header(key, value);
     }
     let mut result = match upstream.send().await {
         Ok(r) => r,
@@ -218,6 +266,9 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         || config.server_name.is_empty()
         || config.server_name.len() > 253
         || !config.server_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+        || config.witness_endpoints.len() > 16
+        || config.witness_endpoints.iter().any(|alias| !crate::alias(alias))
+        || config.witness_endpoints.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Err("invalid ingress configuration".into());
     }

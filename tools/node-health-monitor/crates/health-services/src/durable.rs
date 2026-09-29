@@ -3,11 +3,7 @@ use crate::witness::{CacheReceipt, CacheResponse, RelativeAge, RowQualification}
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    collections::BTreeMap,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeMap, path::Path, time::Duration};
 use tos_health_core::{
     evidence::{Evidence, EvidenceStore},
     health_state::{HealthState, Sample},
@@ -146,7 +142,7 @@ pub struct EvidenceDb {
 struct CurrentTrack {
     generation: u64,
     source_hash: String,
-    first_received: Instant,
+    first_received: Option<crate::transit::Stamp>,
     first_extra_ms: Option<u64>,
     age_class: BTreeMap<String, RelativeAge>,
     first_age_floor_ms: BTreeMap<String, Option<u64>>,
@@ -154,6 +150,34 @@ struct CurrentTrack {
 type CurrentActivationRow =
     (String, String, String, Option<String>, Option<String>, Option<String>, i64);
 impl EvidenceDb {
+    /// Heap owned by the C05 volatile current-order index (not SQLite pages).
+    /// BTreeMap node/allocator overhead is charged conservatively per entry.
+    pub fn witness_current_resident_bytes(&self) -> usize {
+        self.current_tracks
+            .iter()
+            .map(|(endpoint, track)| {
+                std::mem::size_of::<(String, CurrentTrack)>()
+                    + endpoint.capacity()
+                    + track.source_hash.capacity()
+                    + 256
+                    + track
+                        .age_class
+                        .keys()
+                        .map(|key| {
+                            std::mem::size_of::<(String, RelativeAge)>() + key.capacity() + 256
+                        })
+                        .sum::<usize>()
+                    + track
+                        .first_age_floor_ms
+                        .keys()
+                        .map(|key| {
+                            std::mem::size_of::<(String, Option<u64>)>() + key.capacity() + 256
+                        })
+                        .sum::<usize>()
+                    + track.first_received.as_ref().map_or(0, crate::transit::Stamp::resident_bytes)
+            })
+            .sum()
+    }
     pub fn bind_network(&mut self, network: &str) -> Result<()> {
         bind_network(&mut self.conn, network)
     }
@@ -260,6 +284,22 @@ impl EvidenceDb {
         plan: &Plan,
         measured_extra_ms: Option<u64>,
     ) -> Result<Vec<RowQualification>> {
+        self.review_witness_current_at(
+            response,
+            plan,
+            measured_extra_ms,
+            crate::transit::Stamp::capture(),
+        )
+    }
+    /// `received_at` is the exact local clock sample that ended the collector
+    /// transit measurement. Later reads continue from this same BOOTTIME point.
+    pub fn review_witness_current_at(
+        &mut self,
+        response: &CacheResponse,
+        plan: &Plan,
+        measured_extra_ms: Option<u64>,
+        received_at: Option<crate::transit::Stamp>,
+    ) -> Result<Vec<RowQualification>> {
         wal_budget(&self.path, self.quota)?;
         let endpoint = &response.receipt.endpoint_id;
         let body = serde_json::to_vec(response).map_err(err)?;
@@ -342,14 +382,13 @@ impl EvidenceDb {
                         && track.source_hash == validated.receipt.source_hash
                 });
                 let extra = active.and_then(|track| {
-                    let elapsed: u64 =
-                        track.first_received.elapsed().as_millis().try_into().ok()?;
+                    let elapsed = track.first_received.as_ref()?.elapsed_ms_now()?;
                     Some(track.first_extra_ms?.checked_add(elapsed)?.max(measured_extra_ms?))
                 });
                 let mut qualified = qualify(extra)?;
                 if let Some(track) = self.current_tracks.get_mut(endpoint) {
-                    let elapsed: Option<u64> =
-                        track.first_received.elapsed().as_millis().try_into().ok();
+                    let elapsed =
+                        track.first_received.as_ref().and_then(|stamp| stamp.elapsed_ms_now());
                     for row in &mut qualified {
                         let original_floor = track
                             .first_age_floor_ms
@@ -388,7 +427,7 @@ impl EvidenceDb {
             CurrentTrack {
                 generation: source.generation.0,
                 source_hash: validated.receipt.source_hash.clone(),
-                first_received: Instant::now(),
+                first_received: received_at,
                 first_extra_ms: measured_extra_ms,
                 age_class: qualified
                     .iter()
