@@ -220,7 +220,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tos_health_services::secret(std::path::Path::new(&args[5]))?,
     )?
     .with_query_ledger(std::path::Path::new(&args[6]))?;
-    if let Some(path) = args.get(9) {
+    if let Some(path) = args.get(9).filter(|path| path.as_str() != "-") {
         state = state.with_manager_evidence(path.into())?;
     }
     if let Some(path) = args.get(8).filter(|path| path.as_str() != "-") {

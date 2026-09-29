@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "tos-nhm-aura-stdio"
+path = "src/bin/tos-nhm-aura-stdio.rs"
+required-features = ["mcp"]
+
 [features]
 default = []
 mcp = ["dep:rmcp"]
@@ -15,7 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
 sha2.workspace = true
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "signal", "sync", "fs", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "signal", "sync", "fs", "io-util", "io-std", "process"] }
 axum = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 subtle = "2.6"

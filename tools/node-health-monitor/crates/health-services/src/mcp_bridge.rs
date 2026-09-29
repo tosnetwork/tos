@@ -203,7 +203,10 @@ impl ServerHandler for McpBridge {
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        Cow::Owned(vec![ProtocolVersion::V_2025_06_18])
+        // Pinned AURA rmcp 0.12.0 initiates 2025-03-26. This surface is
+        // already private and grant-authenticated; do not accept arbitrary
+        // versions or expose a second listener for compatibility.
+        Cow::Owned(vec![ProtocolVersion::V_2025_03_26, ProtocolVersion::V_2025_06_18])
     }
 
     async fn list_tools(
