@@ -2,7 +2,7 @@
   "schema_version": 1,
   "rust": "1.97.1",
   "rust_toolchain_sha256": "279d77167cec5426fa80f457cd066dc74a360fbe4e2816f4f3fa01487a918fdc",
-  "cargo_lock_sha256": "50caba7c6ddbb3646f895c9f01c90296e5e78e32049df794ca18695bac03df73",
+  "cargo_lock_sha256": "9d7e1aaadabf852a87b35d27b06f271ec69e033a3e57521533c14ee9de0a5509",
   "contract_python": {
     "version": "3.14.4",
     "requirements_lock": "requirements-contracts.lock",
@@ -52,8 +52,8 @@
     "version": "3.5.0",
     "tag_commit": "0cde3c5cf3e6aff0cc852ce6045f107e95991f48",
     "crate_sha256": "fae7019994ae0fe4ada40b732f798f3ff26f0f04facb1477f1bf37eb4f18a2d3",
-    "runtime_gate": "C08_not_run",
-    "reason": "inventory pin only; no MCP dependency or endpoint is enabled before C08 integration tests"
+    "runtime_gate": "C08_isolated_sdk_and_unix_controls_partial",
+    "reason": "Exact rmcp 3.5.0 is feature-gated; isolated SDK and private Unix one-connection controls pass, but AURA/provider, whole-run budgets and production gates remain open"
   },
   "prometheus": {
     "enabled": false,

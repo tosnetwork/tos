@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+mcp = ["dep:rmcp"]
+
 [dependencies]
 tos-health-core = { path = "../health-core" }
 serde.workspace = true
@@ -18,11 +22,12 @@ subtle = "2.6"
 libc = "=0.2.189"
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 tower = { version = "0.5", features = ["util"] }
+rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"], optional = true }
 
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
-hyper = { version = "=1.11.1", features = ["server", "http1"] }
+hyper = { version = "=1.11.1", features = ["server", "client", "http1"] }
 hyper-util = { version = "=0.1.21", features = ["tokio"] }
+http-body-util = "0.1"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
-http-body-util = "0.1"

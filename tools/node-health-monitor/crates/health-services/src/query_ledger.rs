@@ -116,6 +116,11 @@ impl QueryLedger {
                 result_code TEXT NOT NULL,
                 returned_bytes INTEGER NOT NULL CHECK (returned_bytes >= 0)
             );
+            CREATE TABLE IF NOT EXISTS query_mcp_bindings (
+                run_id TEXT PRIMARY KEY REFERENCES query_grants(run_id),
+                boot_id TEXT NOT NULL,
+                bound_at_ms INTEGER NOT NULL CHECK (bound_at_ms >= 0)
+            );
             CREATE INDEX IF NOT EXISTS query_grants_live
                 ON query_grants(boot_id,revoked,expires_ms);
             CREATE TABLE IF NOT EXISTS query_evidence_meta (
@@ -165,6 +170,32 @@ impl QueryLedger {
             "INSERT INTO query_grants(run_id,boot_id,expires_ms,revoked,body) VALUES(?1,?2,?3,0,?4)",
             params![grant.run_id, self.clock_domain, expires, body],
         ).map_err(failure)?;
+        tx.commit().map_err(failure)
+    }
+
+    /// One MCP transport binding per grant, durably single-use even after a
+    /// service restart. A broken connection fails closed; the broker must
+    /// revoke and issue a fresh grant before opening another MCP session.
+    pub fn claim_mcp(&mut self, run_id: &str, now_ms: u64) -> Result<(), String> {
+        let now = i64::try_from(now_ms).map_err(failure)?;
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let active: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM query_grants WHERE run_id=?1 AND boot_id=?2 AND revoked=0 AND expires_ms>?3",
+                params![run_id, self.clock_domain, now],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(failure)?;
+        if active.is_none() {
+            return Err("MCP grant inactive".into());
+        }
+        tx.execute(
+            "INSERT INTO query_mcp_bindings(run_id,boot_id,bound_at_ms) VALUES(?1,?2,?3)",
+            params![run_id, self.clock_domain, now],
+        )
+        .map_err(|_| "MCP grant already bound".to_owned())?;
         tx.commit().map_err(failure)
     }
 

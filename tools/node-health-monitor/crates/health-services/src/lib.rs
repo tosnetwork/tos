@@ -5,6 +5,8 @@ use subtle::ConstantTimeEq;
 pub mod collector;
 pub mod edge;
 pub mod manager_query_source;
+#[cfg(feature = "mcp")]
+pub mod mcp_bridge;
 pub mod observability;
 pub mod query_ledger;
 pub mod transit;

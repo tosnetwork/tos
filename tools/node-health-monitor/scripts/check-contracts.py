@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse,copy,hashlib,json,re,struct,subprocess,sys,tempfile
+import argparse,copy,hashlib,json,re,struct,subprocess,sys,tempfile,tomllib
 from pathlib import Path
 from jsonschema import Draft202012Validator,FormatChecker
 ROOT=Path(__file__).resolve().parents[1];REPO=ROOT.parents[1]
@@ -212,8 +212,15 @@ def main():
  python_lock=dependencies['contract_python']
  assert python_lock['version']==(ROOT/'.python-version').read_text().strip()
  assert python_lock['requirements_lock_sha256']==hashlib.sha256((ROOT/python_lock['requirements_lock']).read_bytes()).hexdigest()
- assert dependencies['mcp']['enabled'] is False and dependencies['mcp']['runtime_gate']=='C08_not_run'
- assert dependencies['mcp']['version'] and dependencies['mcp']['crate_sha256']
+ assert dependencies['mcp']['enabled'] is False
+ assert dependencies['mcp']['runtime_gate']=='C08_isolated_sdk_and_unix_controls_partial'
+ packages=tomllib.loads((ROOT/'Cargo.lock').read_text())['package']
+ pinned=[p for p in packages if p['name']=='rmcp']
+ assert len(pinned)==1 and pinned[0]['version']==dependencies['mcp']['version']=='3.5.0'
+ assert pinned[0]['checksum']==dependencies['mcp']['crate_sha256']
+ mcp_manifest=tomllib.loads((ROOT/'crates/health-services/Cargo.toml').read_text())
+ assert mcp_manifest['dependencies']['rmcp']['optional'] is True
+ assert mcp_manifest['features']['default']==[] and 'dep:rmcp' in mcp_manifest['features']['mcp']
  assert dependencies['prometheus']['enabled'] is False and dependencies['prometheus']['runtime_gate']=='C03_isolated_runtime_passed_production_disabled'
  assert dependencies['prometheus']['version'] and dependencies['prometheus']['artifact_sha256']
  assert dependencies['alertmanager']['enabled'] is False and dependencies['alertmanager']['runtime_gate']=='C03_isolated_runtime_passed_production_disabled'
