@@ -15,7 +15,10 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Instant,
 };
 use tos_health_core::{
@@ -38,6 +41,9 @@ pub struct ObservabilityState {
     pub metrics: Arc<BTreeSet<String>>,
     pub query_ledger: Option<Arc<Mutex<QueryLedger>>>,
     pub manager_evidence_db: Option<PathBuf>,
+    /// Counts actual broker-side M archive read attempts. Query handlers must
+    /// not increment this witness even under a call storm or cache miss.
+    pub manager_projection_reads: Arc<AtomicU64>,
     pub started: Instant,
     pub epoch: String,
 }
@@ -65,6 +71,7 @@ impl ObservabilityState {
             metrics: Arc::new(BTreeSet::new()),
             query_ledger: None,
             manager_evidence_db: None,
+            manager_projection_reads: Arc::new(AtomicU64::new(0)),
             started: Instant::now(),
             epoch: hex(&random_token()?),
         })
@@ -125,6 +132,7 @@ fn import_manager_into(
         return Err("M projection conflict requires operator review".into());
     }
     let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+    state.manager_projection_reads.fetch_add(1, Ordering::Relaxed);
     let source = crate::manager_query_source::read_process_projection_state(
         path,
         &state.inventory.network_id,

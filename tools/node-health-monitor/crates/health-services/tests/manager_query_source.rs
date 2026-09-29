@@ -4,7 +4,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::atomic::Ordering};
 use tos_health_core::{
     edge_snapshot::{ProcessEnvelope, ProcessPayload},
     evidence::{Evidence, EvidenceStore},
@@ -472,6 +472,93 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
         .as_bool()
         .unwrap());
     drop(restored);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn thousand_real_query_requests_do_not_read_manager_archive() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-storm-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("edge-epoch-1")).unwrap();
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&ledger_path)
+    .unwrap()
+    .with_manager_evidence(manager_path)
+    .unwrap();
+    let grant = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/control/grants")
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(grant.status(), StatusCode::OK);
+    let granted = body(grant).await;
+    let run = granted["run_id"].as_str().unwrap();
+    let token = granted["run_token"].as_str().unwrap();
+    let before = state.manager_projection_reads.load(Ordering::Relaxed);
+    assert_eq!(before, 2, "startup and grant each perform one bounded broker import");
+    let mut accepted = 0;
+    let mut refused = 0;
+    for _ in 0..1000 {
+        let response = query_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/query/node-snapshot")
+                    .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                    .header("x-tos-run-token", token)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"run_id":run,"node_id":"v1",
+                        "as_of":"2026-09-29T00:00:02Z","max_age_seconds":30,
+                        "components":["process"]})
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        match response.status() {
+            StatusCode::OK => accepted += 1,
+            StatusCode::TOO_MANY_REQUESTS => refused += 1,
+            other => panic!("unexpected storm status: {other}"),
+        }
+    }
+    assert_eq!((accepted, refused), (16, 984));
+    assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before);
+    import_manager(&state).unwrap();
+    assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before + 1);
+    drop(state);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
 }
