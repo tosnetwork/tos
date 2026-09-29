@@ -201,6 +201,7 @@ async def bootstrap(args, client, blueprints):
 
 
 async def run(args):
+    require(4 <= args.nodes <= 21, "full-node count must be 4..21")
     require(
         math.isfinite(args.min_interval)
         and math.isfinite(args.max_interval)
@@ -226,11 +227,11 @@ async def run(args):
                 "wallet seed permissions differ",
             )
             blueprints.append(WalletV1Blueprint(0, nacl.signing.SigningKey(key_file.read_bytes())))
-        cdll = ToslibCDLL(REPO / "build/toslib/libtoslibjson.so")
+        cdll = ToslibCDLL(args.build / "toslib/libtoslibjson.so")
         cdll.client_set_verbosity_level(0)
         async with AsyncExitStack() as stack:
             clients = []
-            for i in (1, 2, 3, 4, 5, 6, 7):
+            for i in range(1, args.nodes + 1):
                 config = tos_api.Liteclient_config_global.from_dict(
                     json.loads((args.data / f"configs/node-{i}-lite.json").read_text())
                 )
@@ -377,7 +378,7 @@ async def run(args):
                         "sender_after": snapshot(after_s),
                         "recipient_after": snapshot(after_r),
                         "message_hash": sent_msg.hash.hex(),
-                        "nodes_agree": 7,
+                        "nodes_agree": len(clients),
                         "common_block": headers[0]["id"],
                         "transaction_bocs": [
                             base64.b64encode(tx.data).decode() for tx in (sender_tx, receipt)
@@ -390,6 +391,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=Path, default=Path("/data"))
     parser.add_argument("--output", type=Path, default=Path("/data/transfers"))
+    parser.add_argument("--nodes", type=int, default=7, help="fixed full-node inventory size")
+    parser.add_argument("--build", type=Path, default=REPO / "build")
     parser.add_argument("--bootstrap", action="store_true")
     parser.add_argument("--min-interval", type=float, default=2)
     parser.add_argument("--max-interval", type=float, default=8)
