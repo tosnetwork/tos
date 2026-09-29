@@ -342,11 +342,16 @@ them:
 cat ~/attestation-*.txt
 ```
 
-**Publish the text and the signature somewhere that is visibly yours** — a
-GitHub gist under your account, a comment on the ceremony's issue, your own
-website, a post from an account people know is you. This is the step that
-turns your contribution from an anonymous entry in a file into something a
-stranger can trace to a person who can be asked.
+**Publish the text and the signature somewhere that is visibly yours.**
+For the current open contribution program, a **public GitHub Gist under your
+account is preferred** because it gives reviewers one stable identity-linked
+URL for both the attestation and its signature. A comment on the ceremony's
+issue, your own website, or another public account you control can also provide
+identity evidence unless the operator asks you to mirror it into a Gist for
+submission consistency.
+
+This is the step that turns your contribution from an anonymous entry in a
+file into something a stranger can trace to a person who can be asked.
 
 Then send both files to the operator.
 

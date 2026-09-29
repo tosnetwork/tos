@@ -65,6 +65,8 @@ metadata-only history rewrite and unchanged signed artifact payloads.
 
 ## If you are going to contribute
 
+**Registration is open and additional independent contributors are welcome.**
+
 **[`PARTICIPANT-GUIDE.md`](PARTICIPANT-GUIDE.md)** — every command, from an
 empty VPS to a published attestation. It assumes you have never seen this
 repository. Roughly 25 minutes, most of it waiting.
@@ -150,9 +152,9 @@ acceptance conditions; neither needs to be arranged before the first contributio
 | Publish and retain announcement snapshot and publication receipt | completed before opening |
 | Register tosman and its new public signing key | public key and initial register published |
 | Open and accept the first signed contribution | completed: tosman, not independent |
-| Register and accept additional participants | open: tosdev2 and tosdev3 registered and accepted, neither independent |
-| Accept a contribution from an independent party | **not done; the final gate refuses without it** |
-| Close, apply the announced beacon, verify and accept | only after all final gates pass |
+| Register and accept additional participants | completed through contribution 5; registration remains open |
+| Accept a contribution from a party registered as independent of the operator | **completed: contribution 4 (BmswapProtocol) and contribution 5 (onemailweb3-design) are registered with independent declarations; the current final independence gate passes** |
+| Close, apply the announced beacon, verify and accept | pending; only after the announced close and all final gates pass |
 
 The confirmed heights remain **970141** (close) and **970285** (beacon).
 The initial register is not a closed list. Never rewrite accepted identities,
