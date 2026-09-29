@@ -1,0 +1,22 @@
+Script started on 2026-09-29 12:37:00+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.94s
+     Running unittests src/bin/health-watchdog.rs (target/debug/deps/health_watchdog-ad784523c5f0d393)
+
+running 1 test
+
+thread 'tests::unexpected_source_lane_exit_preempts_slow_notice_work' (1256628) panicked at crates/health-services/src/bin/health-watchdog.rs:229:10:
+called `Result::unwrap()` on an `Err` value: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::unexpected_source_lane_exit_preempts_slow_notice_work ... FAILED
+
+failures:
+
+failures:
+    tests::unexpected_source_lane_exit_preempts_slow_notice_work
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.20s
+
+error: test failed, to rerun pass `-p tos-health-services --bin health-watchdog`
+
+Script done on 2026-09-29 12:37:01+00:00 [COMMAND_EXIT_CODE="101"]

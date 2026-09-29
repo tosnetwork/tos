@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use std::{
+    future::Future,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -36,6 +37,35 @@ struct Heartbeat {
     schema_version: u32,
     sequence: String,
     process_epoch: String,
+}
+/// An O lane exiting (Err, panic, or unexpected Ok) preempts even a slow
+/// monitor request or notice delivery. The process then fails nonzero; it
+/// never reports a V fault or claims remote witness cancellation.
+async fn supervise_tick<F>(
+    pipeline: &mut tokio::task::JoinHandle<std::io::Result<()>>,
+    cache: &mut Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+    source: &mut Option<tokio::task::JoinHandle<Result<(), &'static str>>>,
+    tick: F,
+) -> Result<(), String>
+where
+    F: Future<Output = Result<(), String>>,
+{
+    tokio::select! {
+        biased;
+        result = pipeline => {
+            eprintln!("watchdog pipeline listener stopped: {result:?}");
+            Err("watchdog pipeline listener unavailable".into())
+        }
+        result = async { cache.as_mut().unwrap().await }, if cache.is_some() => {
+            eprintln!("witness cache listener stopped: {result:?}");
+            Err("witness cache listener unavailable".into())
+        }
+        result = async { source.as_mut().unwrap().await }, if source.is_some() => {
+            eprintln!("witness source owner stopped: {result:?}; remote completion remains unknown");
+            Err("witness source owner unavailable".into())
+        }
+        result = tick => result,
+    }
 }
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -123,21 +153,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
-            biased;
-            result = &mut pipeline_server => {
-                eprintln!("watchdog pipeline listener stopped: {result:?}");
-                return Err("watchdog pipeline listener unavailable".into());
-            }
-            result = async { witness_server.as_mut().unwrap().await }, if witness_server.is_some() => {
-                eprintln!("witness cache listener stopped: {result:?}");
-                return Err("witness cache listener unavailable".into());
-            }
-            result = async { witness_poller.as_mut().unwrap().await }, if witness_poller.is_some() => {
-                eprintln!("witness source owner stopped: {result:?}; remote completion remains unknown");
-                return Err("witness source owner unavailable".into());
-            }
             _ = tokio::signal::ctrl_c() => return Ok(()),
-            tick = async {
+            result = supervise_tick(&mut pipeline_server, &mut witness_server, &mut witness_poller, async {
                 interval.tick().await;
                 let now = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
                 if let Ok(response) =
@@ -176,8 +193,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 state.completed_tick()?;
-                Ok::<(), Box<dyn std::error::Error>>(())
-            } => tick?,
+                Ok::<(), String>(())
+            }) => result?,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn unexpected_source_lane_exit_preempts_slow_notice_work() {
+        let mut pipeline =
+            tokio::spawn(async { std::future::pending::<std::io::Result<()>>().await });
+        let mut cache = None;
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let mut source = Some(tokio::spawn(async move {
+            release_rx.await.unwrap();
+            Err("synthetic owner failure")
+        }));
+        let release = tokio::spawn(async move {
+            entered_rx.await.unwrap();
+            release_tx.send(()).unwrap();
+        });
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            supervise_tick(&mut pipeline, &mut cache, &mut source, async {
+                entered_tx.send(()).unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(())
+            }),
+        )
+        .await
+        .unwrap();
+        release.await.unwrap();
+        assert_eq!(result.unwrap_err(), "witness source owner unavailable");
+        pipeline.abort();
+    }
+    #[tokio::test]
+    async fn unexpected_cache_listener_ok_is_still_fatal() {
+        let mut pipeline =
+            tokio::spawn(async { std::future::pending::<std::io::Result<()>>().await });
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let mut cache = Some(tokio::spawn(async move {
+            release_rx.await.unwrap();
+            Ok(())
+        }));
+        let mut source = None;
+        let release = tokio::spawn(async move {
+            entered_rx.await.unwrap();
+            release_tx.send(()).unwrap();
+        });
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            supervise_tick(&mut pipeline, &mut cache, &mut source, async {
+                entered_tx.send(()).unwrap();
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                Ok(())
+            }),
+        )
+        .await
+        .unwrap();
+        release.await.unwrap();
+        assert_eq!(result.unwrap_err(), "witness cache listener unavailable");
+        pipeline.abort();
     }
 }

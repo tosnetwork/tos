@@ -77,7 +77,7 @@ async fn actual_read_handler_is_cache_only_and_duplicate_cannot_renew() {
         StatusCode::PAYLOAD_TOO_LARGE
     );
     let raw = source();
-    assert_eq!(cache.admit("cache_1", &raw, 120).unwrap(), true);
+    assert!(cache.admit("cache_1", &raw, 120).unwrap());
     let (status, first) = get(cache.clone(), path, true).await;
     assert_eq!(status, StatusCode::OK);
     CacheResponse::decode(&serde_json::to_vec(&first).unwrap(), &plan(), "cache_1").unwrap();
@@ -89,7 +89,7 @@ async fn actual_read_handler_is_cache_only_and_duplicate_cannot_renew() {
         first["row_ages"][0]["effective_age_ms"].as_str().unwrap().parse::<u64>().unwrap()
             >= 46_120
     );
-    assert_eq!(cache.admit("cache_1", &raw, 200).unwrap(), false);
+    assert!(!cache.admit("cache_1", &raw, 200).unwrap());
     let (status, second) = get(cache.clone(), path, true).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(second["receipt"], first["receipt"]);
@@ -259,7 +259,7 @@ async fn canonical_duplicate_ignores_raw_whitespace_and_escaped_response_overflo
     let (_, first) = get(cache.clone(), path, true).await;
     let mut whitespace = raw.clone();
     whitespace.extend_from_slice(b"\n\n");
-    assert_eq!(cache.admit("cache_1", &whitespace, 20).unwrap(), false);
+    assert!(!cache.admit("cache_1", &whitespace, 20).unwrap());
     let (_, duplicate) = get(cache.clone(), path, true).await;
     assert_eq!(duplicate["receipt"], first["receipt"]);
     let mut next: Value = serde_json::from_slice(&raw).unwrap();

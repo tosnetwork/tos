@@ -1,0 +1,15 @@
+Script started on 2026-09-29 12:37:13+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.79s
+     Running unittests src/bin/health-watchdog.rs (target/debug/deps/health_watchdog-ad784523c5f0d393)
+
+running 2 tests
+witness source owner stopped: Ok(Err("synthetic owner failure")); remote completion remains unknown
+witness cache listener stopped: Ok(Ok(()))
+test tests::unexpected_source_lane_exit_preempts_slow_notice_work ... ok
+test tests::unexpected_cache_listener_ok_is_still_fatal ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+Script done on 2026-09-29 12:37:13+00:00 [COMMAND_EXIT_CODE="0"]

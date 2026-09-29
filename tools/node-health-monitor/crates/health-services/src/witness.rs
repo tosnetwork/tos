@@ -58,6 +58,7 @@ pub struct CacheReceipt {
     /// Exact upstream JSON bytes encoded as a JSON string; its hash is over these bytes.
     pub source_json: String,
 }
+type CachedSnapshot = (CacheReceipt, u64, Vec<RowAge>);
 pub fn archive_evidence_id(receipt: &CacheReceipt) -> Result<String, &'static str> {
     let bytes = serde_json::to_vec(&(
         &receipt.observer_epoch,
@@ -344,10 +345,7 @@ impl WitnessCache {
         *inner = next;
         Ok(true)
     }
-    pub fn cached(
-        &self,
-        endpoint_id: &str,
-    ) -> Result<Option<(CacheReceipt, u64, Vec<RowAge>)>, &'static str> {
+    pub fn cached(&self, endpoint_id: &str) -> Result<Option<CachedSnapshot>, &'static str> {
         if !self.plan.endpoints.iter().any(|e| e.endpoint_id == endpoint_id) {
             return Err("unapproved witness endpoint");
         }

@@ -78,7 +78,7 @@ enum ControlCommand {
     Delivered(i64, oneshot::Sender<Result<(), String>>),
 }
 enum EvidenceCommand {
-    Insert(DurableEvidence, oneshot::Sender<Result<EvidenceRow, String>>),
+    Insert(Box<DurableEvidence>, oneshot::Sender<Result<EvidenceRow, String>>),
     InsertWitness(
         Box<crate::witness::CacheResponse>,
         Arc<tos_health_core::witness::Plan>,
@@ -208,7 +208,7 @@ impl Manager {
                 while let Ok(command) = erx.recv() {
                     match command {
                         EvidenceCommand::Insert(value, reply) => {
-                            let _ = reply.send(evidence_db.insert(value));
+                            let _ = reply.send(evidence_db.insert(*value));
                         }
                         EvidenceCommand::InsertWitness(value, plan, reply) => {
                             let _ = reply.send(evidence_db.insert_witness(*value, &plan));
@@ -249,7 +249,7 @@ impl Manager {
         validator.ingest(frame.clone(), 0).map_err(str::to_owned)?;
         let (tx, rx) = oneshot::channel();
         self.evidence
-            .try_send(EvidenceCommand::Insert(evidence(&frame)?, tx))
+            .try_send(EvidenceCommand::Insert(Box::new(evidence(&frame)?), tx))
             .map_err(|_| "evidence queue unavailable")?;
         let result = tokio::time::timeout(Duration::from_secs(2), rx)
             .await
@@ -327,7 +327,7 @@ impl Manager {
             let (tx, rx) = oneshot::channel();
             self.evidence
                 .try_send(EvidenceCommand::Insert(
-                    DurableEvidence { source_epoch: epoch.to_owned(), record },
+                    Box::new(DurableEvidence { source_epoch: epoch.to_owned(), record }),
                     tx,
                 ))
                 .map_err(|_| "evidence queue unavailable")?;

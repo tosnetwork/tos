@@ -208,7 +208,7 @@ async fn poll_witness_once(
 ) -> Result<(), String> {
     for endpoint in &plan.endpoints {
         let url = format!("{}v1/witness/cache/{}", observer_base_url, endpoint.endpoint_id);
-        let response = match client.get(&url).bearer_auth(&observer_token).send().await {
+        let response = match client.get(&url).bearer_auth(observer_token).send().await {
             Ok(response) if response.status().is_success() => response,
             _ => {
                 eprintln!("observer witness cache unavailable endpoint={}", endpoint.endpoint_id);
@@ -223,7 +223,7 @@ async fn poll_witness_once(
             }
         };
         let (receipt, _) =
-            match crate::witness::CacheResponse::decode(&body, &plan, &endpoint.endpoint_id) {
+            match crate::witness::CacheResponse::decode(&body, plan, &endpoint.endpoint_id) {
                 Ok(value) => value,
                 Err(_) => {
                     eprintln!("observer witness cache invalid endpoint={}", endpoint.endpoint_id);
@@ -248,7 +248,7 @@ async fn poll_witness_once(
             crate::witness::archive_evidence_id(&receipt.receipt).map_err(str::to_owned)?;
         let accepted = match client
             .post(&destination)
-            .bearer_auth(&ingest_token)
+            .bearer_auth(ingest_token)
             .header("content-type", "application/json")
             .body(body)
             .send()
@@ -308,6 +308,7 @@ pub fn decode_records(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)] // Keep the isolated TLS harness next to the witness collector.
 mod witness_tests {
     use super::*;
     use axum::{
