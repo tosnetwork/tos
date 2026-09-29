@@ -224,6 +224,22 @@ impl QueryLedger {
         if candidate.watermark() == previous {
             return Ok(id);
         }
+        // A grant pins its fixed W for the complete run. If bounded insertion
+        // would evict a record at or before any active W, refuse the new
+        // source row rather than turn a stable cursor into a later miss.
+        let pinned_w = self
+            .load_active_all(boot_millis()?)?
+            .iter()
+            .map(|grant| grant.watermark)
+            .max()
+            .unwrap_or(0);
+        if let Some(oldest) = store.entries().next() {
+            if oldest.watermark <= pinned_w
+                && candidate.entries().next().is_none_or(|next| next.watermark > oldest.watermark)
+            {
+                return Err("active grant evidence retention".into());
+            }
+        }
         let entry = candidate.entries().last().ok_or("missing inserted evidence")?;
         if entry.watermark != candidate.watermark() || entry.evidence_id != id {
             return Err("evidence insertion mismatch".into());

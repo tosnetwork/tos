@@ -1,7 +1,8 @@
 use std::{collections::BTreeSet, path::PathBuf};
 use tos_health_core::{
-    evidence::EvidenceStore,
+    evidence::{Evidence, EvidenceStore},
     query::{Grant, QueryService, TOOLS},
+    source::{Availability, Coverage, SourceQuality},
 };
 use tos_health_services::{
     query_ledger::{Attempt, QueryLedger},
@@ -35,6 +36,68 @@ fn grant(token: &[u8; 32]) -> Grant {
         17,
     )
     .unwrap()
+}
+
+fn evidence(sequence: u64) -> Evidence {
+    let observed = 1_700_000_000_000;
+    Evidence {
+        node_id: "v1".into(),
+        scope_id: "node".into(),
+        source_id: "native_core".into(),
+        source_record_id: format!("record-{sequence}"),
+        process_epoch: "process-1".into(),
+        observed_at_ms: observed,
+        received_at_ms: observed,
+        quality: SourceQuality {
+            availability: Availability::Available,
+            coverage: Coverage::Partial,
+            observed_at_ms: Some(observed),
+            last_success_at_ms: Some(observed),
+            clock_valid: true,
+            process_epoch: "process-1".into(),
+            source_sequence: sequence.to_string(),
+        },
+        payload: serde_json::json!({"kind":"unavailable","reason":"synthetic capacity fixture"}),
+        redacted: true,
+    }
+}
+
+#[test]
+fn active_watermark_prevents_eviction_across_restart_until_revoked() {
+    let (file, directory) = temporary();
+    let mut ledger = QueryLedger::open_for_context(&file, BOOT_A, "test-time-namespace").unwrap();
+    let mut store = EvidenceStore::new(4096);
+    ledger.insert_evidence(&mut store, evidence(1)).unwrap();
+    let now = tos_health_services::query_ledger::boot_millis().unwrap();
+    let g = Grant::new(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+        "aura".into(),
+        "a".repeat(64),
+        &[0x77; 32],
+        BTreeSet::from(["v1".into()]),
+        BTreeSet::from(["node".into()]),
+        1_000,
+        2_000,
+        now,
+        store.watermark(),
+    )
+    .unwrap();
+    ledger.create(&g, now).unwrap();
+    assert!(ledger.insert_evidence(&mut store, evidence(2)).unwrap_err().contains("retention"));
+    assert_eq!(store.watermark(), 1);
+    assert_eq!(ledger.load_evidence(4096).unwrap().watermark(), 1);
+    drop(ledger);
+    let mut ledger = QueryLedger::open_for_context(&file, BOOT_A, "test-time-namespace").unwrap();
+    let mut restored = ledger.load_evidence(4096).unwrap();
+    assert_eq!(ledger.load_active_all(now).unwrap().len(), 1);
+    assert!(ledger.insert_evidence(&mut restored, evidence(2)).unwrap_err().contains("retention"));
+    assert!(ledger.revoke(&g.run_id).unwrap());
+    ledger.insert_evidence(&mut restored, evidence(2)).unwrap();
+    assert_eq!(restored.watermark(), 2);
+    assert_eq!(restored.entries().count(), 1);
+    assert_eq!(ledger.load_evidence(4096).unwrap().entries().count(), 1);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

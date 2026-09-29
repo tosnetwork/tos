@@ -30,3 +30,16 @@ The scoped test's natural-exit-0 raw log is
 (SHA-256 `af4f7286500b9721aca7dcf229b9c906f458b83c62e920de2915ef99690d7806`);
 source `tos-observability.rs` SHA-256 is
 `6fd00293b04e2a4ac988d161269dcec9821666b2f1b126cf18f8ee89b1d6d93e`.
+
+Watermark retention follow-up: while any durable grant is active, an evidence
+insert that would evict a row at or before its fixed W is refused before the
+SQLite commit and before the in-memory candidate replaces the current store.
+The restart/revoke test confirms the original page remains visible across
+reopen and eviction resumes only after revoke. This is a fail-closed 8 MiB
+cache policy, not an increase in retention or a complete stable-cursor
+implementation; event/change pagination and M's main EvidenceDb import remain
+open C08 items.
+The focused 16 HTTP + 3 ledger test raw log is
+`/home/tomi/nhm-c07c08-build/edge-epoch-proof/query-pinning.log`
+(SHA-256 `e4a25bc34af84c4e6655e9c3d38493b209fa617e1e112f93f5b4ed334a494157`);
+strict workspace clippy/fmt/diff checks also exited 0.
