@@ -556,8 +556,74 @@ async fn thousand_real_query_requests_do_not_read_manager_archive() {
     }
     assert_eq!((accepted, refused), (16, 984));
     assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before);
+    // A fresh grant is needed because the storm correctly exhausted the
+    // first one. Exercise cache miss, bounded unknown ancestry, and a
+    // forbidden refresh argument while M remains unchanged.
+    let second_grant = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/control/grants")
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_grant.status(), StatusCode::OK);
+    let second = body(second_grant).await;
+    let second_run = second["run_id"].as_str().unwrap();
+    let second_token = second["run_token"].as_str().unwrap();
+    let after_second_grant = state.manager_projection_reads.load(Ordering::Relaxed);
+    assert_eq!(after_second_grant, before + 1);
+    let controls = [
+        (
+            "/v1/query/node-snapshot",
+            serde_json::json!({"run_id":second_run,"node_id":"v1",
+                "as_of":"2026-09-29T00:00:02Z","max_age_seconds":30,
+                "components":["chain"]}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "CACHE_MISS",
+        ),
+        (
+            "/v1/query/block-evidence",
+            serde_json::json!({"run_id":second_run,"node_ids":["v1"],
+                "reference_id":"blk_0123456789abcdef","ancestor_depth":4,"max_events":10}),
+            StatusCode::NOT_FOUND,
+            "UNKNOWN_REFERENCE",
+        ),
+        (
+            "/v1/query/capabilities",
+            serde_json::json!({"run_id":second_run,"force_refresh":true}),
+            StatusCode::BAD_REQUEST,
+            "INVALID_ARGUMENT",
+        ),
+    ];
+    for (uri, input, status, code) in controls {
+        let response = query_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                    .header("x-tos-run-token", second_token)
+                    .header("content-type", "application/json")
+                    .body(Body::from(input.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{uri}");
+        assert_eq!(body(response).await["error"]["code"], code, "{uri}");
+        assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), after_second_grant);
+    }
     import_manager(&state).unwrap();
-    assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before + 1);
+    assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), after_second_grant + 1);
     drop(state);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();

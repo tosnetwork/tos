@@ -5,23 +5,33 @@ before a broker-side M archive read attempt. A real HTTP test creates a
 retained M process row, starts the query cache, grants one fixed-W run, and
 issues 1000 `/v1/query/node-snapshot` requests through the actual router.
 Startup and grant produce two M read attempts. The route then returns 16
-successes and 984 budget refusals with the M counter unchanged at two;
-an explicit broker import increments it to three. No query path uses this
-counter to make a health claim or refresh the cache.
+successes and 984 budget refusals with the M counter unchanged at two. A
+second grant deliberately increments it to three. With that new grant,
+actual HTTP controls for missing chain cache data, an unknown block reference
+with `ancestor_depth=4`, and forbidden `force_refresh` each return their
+expected error while the counter stays at three. An explicit broker import
+then increments it to four. No query path uses this counter to make a health
+claim or refresh the cache. Unknown-reference refusal is not a test of an
+approved reference's ancestor traversal.
 
 A bounded compiled mutant inserted an `import_manager_into` call immediately
 after query-handler admission. The same test completed with exit 101 at the
 intended counter assertion: observed 1002 rather than two. The mutant was
 restored and the original source SHA rechecked before the full regression.
+The three refusal controls were appended after that compiled mutant; the
+original counter assertion and production source were unchanged. The
+successor affected test and clippy logs below bind the expanded test source.
 The first draft of the test expected one pre-storm read and failed because it
 omitted startup's bounded import; the final test correctly counts startup and
 grant separately. That first red was a test expectation error, not a product
 failure.
 
-Final source SHA-256:
+Production and successor test source SHA-256:
 
 - `observability.rs`: `7dbf77acb994a6d38c5d68e7eeedbaac467428ae1406395dd8f99a722556d54a`
-- `tests/manager_query_source.rs`: `b4daa06353eacd70ac3b7b055b7f0a49c51b64d6ec681599d18aab8fef613ab4`
+- `tests/manager_query_source.rs`: `5309750f1702342b0329944fb255bb6c434f1b5cfd34dd325797438af3e50254`
+- Test source used for the earlier full workspace and compiled mutant:
+  `b4daa06353eacd70ac3b7b055b7f0a49c51b64d6ec681599d18aab8fef613ab4`
 - Compiled mutant `observability.rs`:
   `bc90a7b3c13a14f50cc979c68495f93158c29f62e1aa1146ce41c73f1a82ace1`
 
@@ -36,11 +46,20 @@ Raw logs under `/home/tomi/nhm-c08-mcp-evidence/`:
   --all-targets`, natural exit 0, 217 tests passed and one optional C04 pair
   test ignored, SHA-256
   `30ff7b0eba062c71100191ce9de30b4fbf1a2b9e3aa773485fabcc4974d7287a`.
+  This complete regression preceded only three appended assertions in the
+  same integration test, not a production-source change.
 - `c08-zero-m-read-final-clippy.log`: `cargo clippy --locked --workspace
   --all-targets --features mcp -- -D warnings`, natural exit 0, SHA-256
   `580d8f25cf211b4ead11a690ef2cbfdb9fd5b730f5398572b22f8dfc952607bb`.
   `cargo fmt --all -- --check` also passed.
+- Successor `c08-zero-m-read-successor-targeted.log`: all eight
+  `manager_query_source` integration tests natural exit 0, SHA-256
+  `45d469fd5eccee9ddb5794e44c3c6145a465b356b94c2d2b0a65fdb3837da07d`.
+- Successor `c08-zero-m-read-successor-clippy.log`: strict all-targets MCP
+  feature clippy natural exit 0, SHA-256
+  `edf4a87a434af0243642233d4e82b7d5e70c332715a033b0c34805a03c578d79`.
 
-This proves only that the tested HTTP query storm did not re-read M's archive.
-It does not cover actual V/O request counters, miss/depth/redirect/replay
-scenarios, AURA child lifecycle, provider selection or production gates.
+This proves only that the tested HTTP storm and three refusal controls did not
+re-read M's archive. It does not cover actual V/O request counters, approved
+ancestor traversal, redirects/replay, AURA child lifecycle, provider selection
+or production gates.
