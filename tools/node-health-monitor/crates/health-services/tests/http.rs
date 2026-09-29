@@ -730,6 +730,89 @@ async fn event_pages_use_fixed_watermark_and_reject_changed_filter_at_router() {
     assert_eq!(actual, ["record-1", "record-2", "record-3"]);
 }
 
+#[tokio::test]
+async fn change_pages_use_store_order_for_equal_times_and_fixed_watermark() {
+    let state = state();
+    let run = "00000000-0000-4000-8000-000000000003";
+    let token = [9u8; 32];
+    let start =
+        chrono::DateTime::parse_from_rfc3339("2026-09-29T00:00:00Z").unwrap().timestamp_millis();
+    let change = |sequence| {
+        record(
+            start + 1_000,
+            sequence,
+            "operator_change",
+            contract(
+                json!({"kind":"config","change":{"kind":"config","completed":null,
+                    "actor_alias":"operator","before":{"mode":"old"},"after":{"mode":"new"},
+                    "reason":format!("isolated synthetic change {sequence}"),"trusted_origin":true},
+                    "contract_payload":{"kind":"diagnostic_fixture","record_type":1,"payload":"0102"}}),
+                "change",
+            ),
+        )
+    };
+    {
+        let mut data = state.data.lock().unwrap();
+        for sequence in 1..=3 {
+            data.store.insert(change(sequence)).unwrap();
+        }
+        let store_hashes: Vec<_> =
+            data.store.entries().map(|entry| entry.evidence_id.clone()).collect();
+        let mut hash_sorted = store_hashes.clone();
+        hash_sorted.sort();
+        assert_ne!(
+            store_hashes, hash_sorted,
+            "fixture must distinguish store order from hash order"
+        );
+        let grant = Grant::new(
+            run.into(),
+            "aura".into(),
+            "a".repeat(64),
+            &token,
+            set(&["v1"]),
+            set(&["node"]),
+            start,
+            start + 60_000,
+            tos_health_services::query_ledger::boot_millis().unwrap(),
+            data.store.watermark(),
+        )
+        .unwrap();
+        data.grants.insert(run.into(), grant);
+        data.store.insert(change(4)).unwrap();
+    }
+    let app = query_router(state);
+    let mut input = json!({"run_id":run,"node_ids":["v1"],
+        "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z",
+        "kinds":["config"],"limit":1,"cursor":""});
+    let mut actual = vec![];
+    for page in 0..3 {
+        let mut req = request("/v1/query/change-history", 'a', input.clone());
+        req.headers_mut()
+            .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        let _: ToolEnvelope = serde_json::from_value(body.clone()).unwrap();
+        actual.push(body["data"]["changes"][0]["change_id"].as_str().unwrap().to_owned());
+        assert_eq!(actual[page], format!("record-{}", page + 1));
+        assert_eq!(body["pagination"]["truncated"], page < 2);
+        let next = body["pagination"]["next_cursor"].as_str();
+        if page == 0 {
+            let mut changed = input.clone();
+            changed["kinds"] = json!(["restart"]);
+            changed["cursor"] = json!(next.unwrap());
+            let mut req = request("/v1/query/change-history", 'a', changed);
+            req.headers_mut()
+                .insert("x-tos-run-token", tos_health_services::hex(&token).parse().unwrap());
+            assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::CONFLICT);
+        }
+        if let Some(next) = next {
+            input["cursor"] = json!(next);
+        }
+    }
+    assert_eq!(actual, ["record-1", "record-2", "record-3"]);
+}
+
 async fn metric_response(records: Vec<Evidence>) -> (StatusCode, Value) {
     metric_response_for(records, &["rss_bytes"]).await
 }
