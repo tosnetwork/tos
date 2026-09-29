@@ -52,7 +52,7 @@ CHECK
         fift func toslibjson generate-random-id tos-pq-consensus-key dht-server \
         validator-engine-console validator-engine lite-client
     (cd tools/shielded-pool-circuit/crosscheck && sudo -u "$CALLER" "$CARGO" build \
-        --release --locked -j2 --bin local_pool)
+        --release --locked -j2 --bin local_pool --bin local_pool_traffic)
 fi
 for binary in validator-engine/validator-engine dht-server/dht-server \
     validator-engine-console/validator-engine-console lite-client/lite-client \
@@ -72,14 +72,14 @@ TOS_ROOT="$REPO" "$POOL_GENERATOR" "$REPO" "$STAGING/pool"
 if [[ -d /data ]] && [[ -n "$(find /data -mindepth 1 -maxdepth 1 -print -quit)" ]] && [[ $CLEAN != 1 ]]; then
     echo '/data contains an existing network. Use --clean to replace all of its data.'; exit 1
 fi
-for unit in tos-pq-elections tos-pq-lite-client tos-pq-observer@5 tos-pq-observer@6 tos-dht tos-pq-dht; do systemctl disable --now "$unit" 2>/dev/null || true; done
+for unit in tos-pq-privacy tos-pq-transfers tos-pq-elections tos-pq-lite-client tos-pq-observer@5 tos-pq-observer@6 tos-dht tos-pq-dht; do systemctl disable --now "$unit" 2>/dev/null || true; done
 for i in $(seq 1 20); do
     for prefix in tos-validator tos-pq-validator; do
         systemctl stop "$prefix@$i" 2>/dev/null || true
         systemctl disable "$prefix@$i" 2>/dev/null || true
     done
 done
-for unit in tos-pq-lite-client tos-pq-observer@{5,6} tos-dht tos-pq-dht tos-validator@{1,2,3,4} tos-pq-validator@{1,2,3,4,7}; do
+for unit in tos-pq-privacy tos-pq-transfers tos-pq-elections tos-pq-lite-client tos-pq-observer@{5,6} tos-dht tos-pq-dht tos-validator@{1,2,3,4} tos-pq-validator@{1,2,3,4,7}; do
     pid=$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)
     [[ -z "$pid" || "$pid" == 0 ]] || { echo "Refusing to reset data: $unit still owns PID $pid"; exit 1; }
 done
@@ -140,6 +140,50 @@ for port in [*range(2001,2023), *range(8011,8018)]:
             s.bind(('127.0.0.1',port))
 CHECK
 systemctl enable --now tos-pq-dht tos-pq-validator@{1,2,3,4} tos-pq-observer@{5,6}
+cat > /etc/systemd/system/tos-pq-privacy.service <<UNIT
+[Unit]
+Description=TOS development random shielded pool verification
+After=tos-pq-validator@1.service tos-pq-observer@6.service
+ConditionPathExists=/data/configs/privacy-test.json
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=$REPO
+Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=RAYON_NUM_THREADS=4
+ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-privacy.py
+Restart=no
+CPUQuota=400%
+MemoryMax=12G
+KillMode=control-group
+[Install]
+WantedBy=multi-user.target
+UNIT
+cat > /etc/systemd/system/tos-pq-transfers.service <<UNIT
+[Unit]
+Description=TOS development random transfer verification
+After=tos-pq-validator@1.service tos-pq-observer@6.service
+ConditionPathExists=/data/configs/transfer-test.json
+[Service]
+Type=simple
+User=root
+Group=root
+UMask=0077
+WorkingDirectory=$REPO
+Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-transfers.py
+Restart=no
+CPUQuota=100%
+MemoryMax=1G
+KillMode=control-group
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
 if [[ $ROTATE == 1 ]]; then
     systemctl enable --now tos-pq-validator@7
     cat > /etc/systemd/system/tos-pq-elections.service <<UNIT
