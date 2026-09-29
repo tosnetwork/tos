@@ -1,0 +1,35 @@
+{
+  "runtime_head": "b67f67981",
+  "files": [
+    {
+      "path": "REVIEW.md",
+      "sha256": "173fb77ce5be6f9d56683a17b3d8bf8bd1990ed0997e5c23739d04c2dd2eda70",
+      "bytes": 3137
+    },
+    {
+      "path": "clippy.log",
+      "sha256": "1609872468e4224620aead27b87b08c6ad37cf7d1619c063c23279951945cfbf",
+      "bytes": 145
+    },
+    {
+      "path": "contracts.log",
+      "sha256": "428ad244b054baaca4ee3aaa816416f8ce68e8012be523a1e30ec2ee82be88bc",
+      "bytes": 15656
+    },
+    {
+      "path": "fmt.log",
+      "sha256": "d7fec3e3e3a5129bfb7c0cde1a135248cec99caf025925543b6b77ce289af37f",
+      "bytes": 37
+    },
+    {
+      "path": "producer-pairs.log",
+      "sha256": "5e8d609cbca439f7fff64268017b909a0e3fe78256261819b728537859d1e1a9",
+      "bytes": 12425
+    },
+    {
+      "path": "receipt.json",
+      "sha256": "ac0bcba3892351f8e2b49d0ec4d08379175891dd1b2943678e75beaf03763a51",
+      "bytes": 23502
+    }
+  ]
+}
