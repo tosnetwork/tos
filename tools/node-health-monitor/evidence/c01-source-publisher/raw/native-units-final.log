@@ -1,0 +1,11 @@
+$ test-health-source-policy
+$ test-health-core-registry
+$ test-health-collector-completion
+$ test-health-collector-timestamps
+collector_children_peak=2 gate=disabled
+collector_children_peak=2 gate=enabled
+$ test-health-native-snapshot
+native_snapshot_unit_passed
+$ test-health-publisher-bench
+{"profile":"isolated_synthetic_c01","iterations":2000,"published_bytes":5400,"mean_contiguous_work_us":90.9515,"max_contiguous_work_us":954.952,"production_acceptance":false}
+EXIT=0

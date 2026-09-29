@@ -15,6 +15,27 @@ def closed(v):
  elif isinstance(v,list):
   for child in v:closed(child)
 def validator(name):return Draft202012Validator(json.loads((ROOT/'contracts'/name).read_text()),format_checker=formats)
+def check_metric_manifest(value):
+ assert value['profile']=='c01_source_publisher_contract'
+ assert value['max_series']<=value['r4_global_core_max_series']==2048
+ assert value['max_openmetrics_bytes']==2_097_152
+ assert value['registry_capacity_slots']==64 and value['registry_memory_bytes_max']==16_384
+ names=[family['name'] for family in value['families']]
+ assert len(names)==len(set(names))
+ computed=0;tuple_bytes=0
+ for family in value['families']:
+  tuples=family['allowed_tuples']
+  assert all(len(item)==len(family['label_names']) for item in tuples)
+  encoded=[json.dumps(item,separators=(',',':')) for item in tuples]
+  assert len(encoded)==len(set(encoded))
+  computed+=len(tuples)*(len(family['finite_buckets'])+3 if family['semantic_type']=='histogram' else 1)
+  tuple_bytes+=len(tuples)*family['bytes_per_tuple']
+ assert computed==value['computed_max_series']==107 and computed<=value['max_series']==128
+ assert tuple_bytes==value['declared_tuple_value_bytes']==874
+ approved=value['approved_registry_metric_names']
+ assert len(approved)==len(set(approved))<=value['registry_capacity_slots']
+ assert set(approved)<=set(names)
+ return True
 def main():
  parser=argparse.ArgumentParser();parser.add_argument('--runtime-output-dir',type=Path);args=parser.parse_args()
  files=list((ROOT/'contracts').rglob('*.schema.json'))
@@ -68,6 +89,7 @@ def main():
   assert len(boundary['data']['series'][0]['coverage']['gaps'])==32
  catalog=json.loads((ROOT/'contracts/source-manifest.json').read_text())
  assert catalog['c00_contract_inventory_complete'] is True
+ assert catalog['c01_source_publisher_inventory_complete'] is True
  assert catalog['complete_manifest'] is False and catalog['production_adapter_inventory_complete'] is False
  required_sources={'native_exporter','native_core','process','host_cgroup','readiness','guard','consensus_status','validator_stats','quic','vote_intent','vote_signed_commit','pq_sign','pq_verify','rocksdb','witness','diagnostic_trace'}
  assert required_sources=={source['source_id'] for source in catalog['sources']}
@@ -86,6 +108,12 @@ def main():
    elif source['fixture_schema']=='openmetrics_text':
     assert fixture.stat().st_size<=2_097_152 and fixture.read_text().rstrip().endswith('# EOF')
    else: raise AssertionError(source['fixture_schema'])
+ metric_manifest=json.loads((ROOT/'contracts/metric-manifest.json').read_text())
+ assert check_metric_manifest(metric_manifest)
+ bad_metric_manifest=copy.deepcopy(metric_manifest);bad_metric_manifest['computed_max_series']+=1
+ try: check_metric_manifest(bad_metric_manifest)
+ except AssertionError: pass
+ else: raise AssertionError('faulty metric manifest count was accepted')
  dependencies=json.loads((ROOT/'contracts/dependency-lock.json').read_text())
  assert dependencies['rust']==(ROOT/'rust-toolchain.toml').read_text().split('channel = "',1)[1].split('"',1)[0]
  assert dependencies['rust_toolchain_sha256']==hashlib.sha256((ROOT/'rust-toolchain.toml').read_bytes()).hexdigest()

@@ -3,23 +3,25 @@
   "design_revision": "R4",
   "design_blob": "c28a6b2506c98fc728f868081a8192f7d0cd0d0a",
   "work_order_blob": "f7cd3371c8023bb61409d5e77fd96a3741f0cddd",
-  "memo_commit": "6c0536c042405e857bdced8e327b6f018c816526",
+  "memo_commit": "cb84e1684b46b2d94e0f9c4654020a96ac71ca66",
   "base_commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+  "c01_implementation_commit": "be690c9252b962d21017026f5665b61547dccbdd",
   "complete_manifest": false,
   "c00_contract_inventory_complete": true,
+  "c01_source_publisher_inventory_complete": true,
   "production_adapter_inventory_complete": false,
-  "completeness_note": "C00 freezes every currently approved source class and its truth state. Native provider subcatalog expansion and real deployment fixtures belong to C01-C05; absent fixtures remain null and contract_valid=false.",
+  "completeness_note": "C01 closes only the bounded native source publisher inventory. Synthetic isolated exporter fixtures are not production fixtures; unavailable C02-C05 adapters remain null/disabled and production performance is not accepted.",
   "sources": [
     {
       "source_id": "native_exporter",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "be690c9252b962d21017026f5665b61547dccbdd",
         "path": "metrics/prometheus-exporter.cpp",
         "symbol": "PrometheusExporter::on_request",
-        "source_sha256": "cff0be59a2ddc240f6665a14caf133e4f5b36d29e9928d19ec1b17d0f6af2947"
+        "source_sha256": "e5883ca72a93648dd704520d1eb2a0620b3e7cd11c157112febbaaef7d097ce4"
       },
       "interface": "GET /metrics",
-      "grammar": "strict schema required before adapter enablement",
+      "grammar": "OpenMetrics 1.0 exact immutable body including EOF; paired native_core hash/generation",
       "semantic_type": "mixed",
       "unit": "per metric",
       "scope": "node",
@@ -27,7 +29,7 @@
       "reset": "process/source epoch",
       "generation": "increments only at valid source completion",
       "owner": "health_edge",
-      "cost": "bounded fan-out; per-provider contiguous work not accepted",
+      "cost": "one admitted fan-out per >=15 seconds; 2-second owner response; child lease drains; isolated publisher-prepare measurement only",
       "capacity": {
         "max_bytes": 2097152
       },
@@ -112,10 +114,10 @@
     {
       "source_id": "quic",
       "anchor": {
-        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "commit": "be690c9252b962d21017026f5665b61547dccbdd",
         "path": "quic/quic-sender.cpp",
-        "symbol": "collect_stats",
-        "source_sha256": "b54ea12bfaebb7df3ee9513beac4ae81047dccec9af9fa5a54e04cd99f468767"
+        "symbol": "health_metrics_policy::build_per_path",
+        "source_sha256": "0857f803ba99ff46967d07845cfecaeff6d099d76f10555333af76a788cf2199"
       },
       "interface": "native collector summary",
       "grammar": "strict schema required before adapter enablement",
@@ -126,7 +128,7 @@
       "reset": "process/source epoch",
       "generation": "increments only at valid source completion",
       "owner": "health_edge",
-      "cost": "connection traversal; performance gate not run",
+      "cost": "summary collection only; per-path construction compile-time disabled; production performance gate not run",
       "capacity": {
         "max_bytes": 262144
       },
@@ -472,13 +474,13 @@
     {
       "source_id": "native_core",
       "anchor": {
-        "commit": "d27f534d66be28a0753da1ef912df3fb1effba2e",
+        "commit": "be690c9252b962d21017026f5665b61547dccbdd",
         "path": "metrics/native-core-snapshot.h",
         "symbol": "NativeCorePublisher",
         "source_sha256": "8149ec2fdf4a441db08cb85e048dae97fa53629f460608be7b7c57ed38edb7bf"
       },
       "interface": "GET /health-snapshot (loopback, configured alias and network only)",
-      "grammar": "source-envelope.schema.json native_core payload; exact decimal u64; paired generation and immutable OpenMetrics hash",
+      "grammar": "source-envelope.schema.json native_core payload; exact decimal u64; exact bytes/hash/generation paired to immutable OpenMetrics body",
       "semantic_type": "cumulative counter and source metadata",
       "unit": "operations/bytes/milliseconds",
       "scope": "node",
@@ -486,7 +488,7 @@
       "reset": "process/source epoch",
       "generation": "same valid completion as OpenMetrics",
       "owner": "health_edge",
-      "cost": "one fixed paired read per 15-second native scrape; endpoint reads cached data; contiguous-work performance not accepted",
+      "cost": "cache-only reads; publisher preparation measured only in isolated fixture; upstream/full-callback and production acceptance not measured",
       "capacity": {
         "max_bytes": 262144
       },
@@ -496,6 +498,7 @@
         "kind": "isolated production exporter actor with synthetic collector",
         "test_source": "test/test-health-native-snapshot.cpp",
         "openmetrics_fixture": "crates/health-core/tests/fixtures/native-core.prom",
+        "implementation_commit": "be690c9252b962d21017026f5665b61547dccbdd",
         "production_node": false
       },
       "capability": {

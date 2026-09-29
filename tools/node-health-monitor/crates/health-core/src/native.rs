@@ -82,25 +82,9 @@ pub fn canonical_hash<T: Serialize>(value: &T) -> Result<String, String> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
-/// Transport counters may change between reads; all sampled families remain frozen.
+/// C01 freezes the complete returned body, including exporter transport fields.
 pub fn immutable_metrics(body: &str) -> String {
-    body.lines()
-        .filter(|line| {
-            let name = if line.starts_with("# HELP ") || line.starts_with("# TYPE ") {
-                line.split_whitespace().nth(2).unwrap_or("")
-            } else {
-                line.split_whitespace().next().unwrap_or("").split('{').next().unwrap_or("")
-            };
-            ![
-                "_exporter_collection_inflight",
-                "_exporter_collection_skipped_total",
-                "_exporter_collection_failures_total",
-            ]
-            .iter()
-            .any(|suffix| name.ends_with(suffix))
-        })
-        .map(|line| format!("{line}\n"))
-        .collect()
+    body.to_owned()
 }
 impl NativeEnvelope {
     pub fn validate(&self) -> Result<(), String> {

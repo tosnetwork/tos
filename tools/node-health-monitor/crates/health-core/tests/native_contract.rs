@@ -21,6 +21,12 @@ fn exact_pairing_rejects_changed_generation_and_content() {
     assert!(value.paired("v1", &"b".repeat(64), "1", &value.process_epoch, body).is_err());
     assert!(value.paired("v1", &"a".repeat(64), "1", "other", body).is_err());
     assert!(pair(&value, "1", &body.replace("fixture_calls 1", "fixture_calls 2")).is_err());
+    assert!(pair(
+        &value,
+        "1",
+        &body.replace("exporter_collection_skipped_total 0", "exporter_collection_skipped_total 1")
+    )
+    .is_err());
     let mut changed = value.clone();
     changed.payload.pq_sign.as_mut().expect("PQ enabled").failed.0 = 7;
     assert!(changed.validate().is_err());

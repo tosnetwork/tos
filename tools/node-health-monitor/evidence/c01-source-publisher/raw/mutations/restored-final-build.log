@@ -1,0 +1,5 @@
+$ cmake --build /home/tomi/tos-node-health-c01-build --target test-health-source-policy -j16
+[1/2] Building CXX object CMakeFiles/test-health-source-policy.dir/test/test-health-source-policy.cpp.o
+[2/2] Linking CXX executable test-health-source-policy
+
+EXIT=0

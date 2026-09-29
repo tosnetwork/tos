@@ -1,0 +1,11 @@
+$ cmake --build /home/tomi/tos-node-health-c01-build --target test-health-collector-timestamps -j16
+[1/58] Checking the git repository for changes...
+[2/4] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o
+/home/tomi/tos-node-health-impl/metrics/metrics-collectors.cpp:45:42: warning: lambda capture 'publish_source_metadata' is not required to be captured for this use [-Wunused-lambda-capture]
+   45 |           [promise = std::move(promise), publish_source_metadata](td::Result<MetricSet> result) mutable {
+      |                                        ~~^~~~~~~~~~~~~~~~~~~~~~~
+1 warning generated.
+[3/4] Linking CXX static library metrics/libmetrics.a
+[4/4] Linking CXX executable test-health-collector-timestamps
+
+EXIT=0

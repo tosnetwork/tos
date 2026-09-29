@@ -1,0 +1,15 @@
+$ /home/tomi/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python /home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py /home/tomi/tos-node-health-c01-build/test-health-native-snapshot --mode fast
+native_snapshot_unit_passed
+Traceback (most recent call last):
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 156, in <module>
+    else:check(mode);print(mode+': passed',flush=True)
+         ~~~~~^^^^^^
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 75, in check
+    helps,types,samples=parse_openmetrics(body)
+                        ~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 11, in parse_openmetrics
+    assert text.endswith('# EOF\n') and text.count('# EOF\n')==1
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+EXIT=1

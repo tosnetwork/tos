@@ -51,8 +51,8 @@ impl NativeCache {
         if body.len() > 2_097_152 || !body.ends_with("# EOF\n") {
             return Err("invalid native body".into());
         }
-        // The native exporter appends live transport counters after its immutable sample.
-        // They must not become the content identity of that sample.
+        // C01 freezes and identifies the complete returned body, including
+        // exporter transport fields from the completed generation.
         let stable = immutable_metrics(&body);
         let hash = format!("{:x}", Sha256::digest(stable.as_bytes()));
         let accepted = self

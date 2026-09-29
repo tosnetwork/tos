@@ -1,0 +1,5 @@
+$ /home/tomi/tos-node-health-c01-build/test-health-collector-timestamps
+collector_children_peak=2 gate=disabled
+[1;31m[ 0][t 1][2026-09-29 07:35:32.716669956][test-health-collector-timestamps.cpp:69][!driver]	Check `sample(body, "fast") < sample(body, "slow")` failed[0m
+
+EXIT=-6
