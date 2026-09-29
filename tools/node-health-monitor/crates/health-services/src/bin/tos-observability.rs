@@ -69,7 +69,7 @@ async fn serve_mcp(
                                 {
                                     None
                                 } else {
-                                    Some(service.clone())
+                                    Some((run.clone(), service.clone()))
                                 }
                             }
                             None => {
@@ -90,15 +90,41 @@ async fn serve_mcp(
                                             config,
                                         );
                                         *bound = Some((run.to_owned(), token, service.clone()));
-                                        Some(service)
+                                        Some((run.to_owned(), service))
                                     }
                                     Err(_) => None,
                                 }
                             }
                         }
                     };
-                    let Some(service) = service else { return Ok(refuse()) };
-                    service.oneshot(request).await
+                    let Some((run, service)) = service else { return Ok(refuse()) };
+                    let response = service.oneshot(request).await?;
+                    // Buffer the complete SDK body before sending any bytes. The
+                    // transport wrapper is counted too, and an oversized/failed
+                    // response cannot leak a partial uncharged result.
+                    let (parts, body) = response.into_parts();
+                    let Ok(collected) = http_body_util::Limited::new(body, 131_072).collect().await
+                    else {
+                        return Ok(hyper::Response::builder()
+                            .status(hyper::StatusCode::PAYLOAD_TOO_LARGE)
+                            .body(Full::new(axum::body::Bytes::new()).boxed())
+                            .expect("fixed MCP size refusal"));
+                    };
+                    let bytes = collected.to_bytes();
+                    let charged = state.query_ledger.as_ref().is_some_and(|ledger| {
+                        ledger
+                            .lock()
+                            .expect("query ledger")
+                            .charge_mcp_wire(&run, bytes.len())
+                            .is_ok()
+                    });
+                    if !charged {
+                        return Ok(hyper::Response::builder()
+                            .status(hyper::StatusCode::TOO_MANY_REQUESTS)
+                            .body(Full::new(axum::body::Bytes::new()).boxed())
+                            .expect("fixed MCP budget refusal"));
+                    }
+                    Ok(hyper::Response::from_parts(parts, Full::new(bytes).boxed()))
                 }
             });
             let _ = tokio::time::timeout(
@@ -430,12 +456,11 @@ mod tests {
         let initialized =
             client.send_request(request(2, "initialize", init(), Some(token))).await.unwrap();
         assert!(initialized.status().is_success(), "{}", initialized.status());
-        let _ = initialized.into_body().collect().await.unwrap();
+        let init_bytes = initialized.into_body().collect().await.unwrap().to_bytes();
         let listed = client.send_request(request(3, "tools/list", json!({}), None)).await.unwrap();
         assert!(listed.status().is_success(), "{}", listed.status());
-        let listed: Value =
-            serde_json::from_slice(&listed.into_body().collect().await.unwrap().to_bytes())
-                .unwrap();
+        let list_bytes = listed.into_body().collect().await.unwrap().to_bytes();
+        let listed: Value = serde_json::from_slice(&list_bytes).unwrap();
         assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 6);
         let called = client
             .send_request(request(
@@ -449,11 +474,14 @@ mod tests {
             .await
             .unwrap();
         assert!(called.status().is_success(), "{}", called.status());
-        let called: Value =
-            serde_json::from_slice(&called.into_body().collect().await.unwrap().to_bytes())
-                .unwrap();
+        let call_bytes = called.into_body().collect().await.unwrap().to_bytes();
+        let called: Value = serde_json::from_slice(&call_bytes).unwrap();
         assert_eq!(called["result"]["isError"], false, "{called}");
         assert!(!called.to_string().contains(token));
+        assert_eq!(
+            state.query_ledger.as_ref().unwrap().lock().unwrap().mcp_usage(run).unwrap(),
+            Some((1, (init_bytes.len() + list_bytes.len() + call_bytes.len()) as u64))
+        );
 
         let (mut replay, replay_task) = connect().await;
         let refused =

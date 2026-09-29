@@ -97,6 +97,22 @@ impl McpBridge {
         name: &str,
         arguments: JsonObject,
     ) -> Result<CallToolResult, McpError> {
+        let now = crate::query_ledger::boot_millis()
+            .map_err(|_| McpError::internal_error("query clock unavailable", None))?;
+        let ledger = self
+            .state
+            .query_ledger
+            .as_ref()
+            .ok_or_else(|| McpError::internal_error("query ledger unavailable", None))?;
+        if ledger
+            .lock()
+            .map_err(|_| McpError::internal_error("query ledger unavailable", None))?
+            .reserve_mcp_call(&self.bound_run, now)
+            .is_err()
+        {
+            // There is no further model-visible budget response to charge.
+            return Ok(CallToolResult::error(vec![]));
+        }
         let Some(index) = TOOLS.iter().position(|tool| *tool == name) else {
             return Err(McpError::new(ErrorCode::METHOD_NOT_FOUND, "unknown TOS tool", None));
         };

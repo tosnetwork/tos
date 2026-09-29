@@ -38,6 +38,57 @@ fn grant(token: &[u8; 32]) -> Grant {
     .unwrap()
 }
 
+#[test]
+fn mcp_binding_call_and_wire_budgets_survive_restart() {
+    let (file, directory) = temporary();
+    let g = grant(&[0x51; 32]);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    ledger.create(&g, 100).unwrap();
+    ledger.claim_mcp(&g.run_id, 101).unwrap();
+    assert!(ledger.claim_mcp(&g.run_id, 101).is_err());
+    for _ in 0..16 {
+        ledger.reserve_mcp_call(&g.run_id, 102).unwrap();
+    }
+    assert!(ledger.reserve_mcp_call(&g.run_id, 102).is_err());
+    ledger.charge_mcp_wire(&g.run_id, 131_071).unwrap();
+    assert!(ledger.charge_mcp_wire(&g.run_id, 2).is_err());
+    assert_eq!(ledger.mcp_usage(&g.run_id).unwrap(), Some((16, 131_071)));
+    drop(ledger);
+    let mut restored = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert!(restored.reserve_mcp_call(&g.run_id, 103).is_err());
+    restored.charge_mcp_wire(&g.run_id, 1).unwrap();
+    assert!(restored.charge_mcp_wire(&g.run_id, 1).is_err());
+    assert_eq!(restored.mcp_usage(&g.run_id).unwrap(), Some((16, 131_072)));
+    drop(restored);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn legacy_mcp_binding_cannot_reset_unknown_spent_budget() {
+    let (file, directory) = temporary();
+    let ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    drop(ledger);
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute_batch(
+        "DROP TABLE query_mcp_bindings;
+         CREATE TABLE query_mcp_bindings (
+           run_id TEXT PRIMARY KEY, boot_id TEXT NOT NULL, bound_at_ms INTEGER NOT NULL
+         );
+         INSERT INTO query_mcp_bindings VALUES ('old-run', 'old-boot', 1);",
+    )
+    .unwrap();
+    drop(db);
+    assert!(QueryLedger::open_for_boot(&file, BOOT_A)
+        .err()
+        .unwrap()
+        .contains("unknown spent budget"));
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute("DELETE FROM query_mcp_bindings", []).unwrap();
+    drop(db);
+    assert!(QueryLedger::open_for_boot(&file, BOOT_A).is_ok());
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 fn evidence(sequence: u64) -> Evidence {
     let observed = 1_700_000_000_000;
     Evidence {

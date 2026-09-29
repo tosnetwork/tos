@@ -119,7 +119,9 @@ impl QueryLedger {
             CREATE TABLE IF NOT EXISTS query_mcp_bindings (
                 run_id TEXT PRIMARY KEY REFERENCES query_grants(run_id),
                 boot_id TEXT NOT NULL,
-                bound_at_ms INTEGER NOT NULL CHECK (bound_at_ms >= 0)
+                bound_at_ms INTEGER NOT NULL CHECK (bound_at_ms >= 0),
+                call_count INTEGER NOT NULL DEFAULT 0 CHECK (call_count BETWEEN 0 AND 16),
+                wire_bytes INTEGER NOT NULL DEFAULT 0 CHECK (wire_bytes BETWEEN 0 AND 131072)
             );
             CREATE INDEX IF NOT EXISTS query_grants_live
                 ON query_grants(boot_id,revoked,expires_ms);
@@ -144,6 +146,34 @@ impl QueryLedger {
             );",
         )
         .map_err(failure)?;
+        // The earlier opt-in MCP checkpoint created bindings without these
+        // counters. Never reset an already-bound grant's spent budget during
+        // migration; require a fresh ledger/explicit grant instead.
+        let mut columns = conn.prepare("PRAGMA table_info(query_mcp_bindings)").map_err(failure)?;
+        let names: Vec<String> = columns
+            .query_map([], |row| row.get(1))
+            .map_err(failure)?
+            .collect::<Result<_, _>>()
+            .map_err(failure)?;
+        drop(columns);
+        if !names.iter().any(|name| name == "call_count")
+            || !names.iter().any(|name| name == "wire_bytes")
+        {
+            let bound: i64 = conn
+                .query_row("SELECT COUNT(*) FROM query_mcp_bindings", [], |row| row.get(0))
+                .map_err(failure)?;
+            if bound != 0 {
+                return Err("legacy MCP bindings have unknown spent budget".into());
+            }
+            if !names.iter().any(|name| name == "call_count") {
+                conn.execute_batch("ALTER TABLE query_mcp_bindings ADD COLUMN call_count INTEGER NOT NULL DEFAULT 0 CHECK(call_count BETWEEN 0 AND 16)")
+                    .map_err(failure)?;
+            }
+            if !names.iter().any(|name| name == "wire_bytes") {
+                conn.execute_batch("ALTER TABLE query_mcp_bindings ADD COLUMN wire_bytes INTEGER NOT NULL DEFAULT 0 CHECK(wire_bytes BETWEEN 0 AND 131072)")
+                    .map_err(failure)?;
+            }
+        }
         Ok(Self { conn, clock_domain: format!("{boot_id}|{namespace}") })
     }
 
@@ -192,11 +222,65 @@ impl QueryLedger {
             return Err("MCP grant inactive".into());
         }
         tx.execute(
-            "INSERT INTO query_mcp_bindings(run_id,boot_id,bound_at_ms) VALUES(?1,?2,?3)",
+            "INSERT INTO query_mcp_bindings(run_id,boot_id,bound_at_ms,call_count,wire_bytes) VALUES(?1,?2,?3,0,0)",
             params![run_id, self.clock_domain, now],
         )
         .map_err(|_| "MCP grant already bound".to_owned())?;
         tx.commit().map_err(failure)
+    }
+
+    /// The MCP handler reserves an attempt before invoking the shared HTTP
+    /// query handler. This counts tool-level failures and survives a crash;
+    /// the separate QueryService ledger can only be more restrictive.
+    pub fn reserve_mcp_call(&mut self, run_id: &str, now_ms: u64) -> Result<(), String> {
+        let now = i64::try_from(now_ms).map_err(failure)?;
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let changed = tx
+            .execute(
+                "UPDATE query_mcp_bindings SET call_count=call_count+1
+             WHERE run_id=?1 AND boot_id=?2 AND call_count<16
+             AND EXISTS(SELECT 1 FROM query_grants g WHERE g.run_id=query_mcp_bindings.run_id
+               AND g.boot_id=?2 AND g.revoked=0 AND g.expires_ms>?3)",
+                params![run_id, self.clock_domain, now],
+            )
+            .map_err(failure)?;
+        if changed != 1 {
+            return Err("MCP call budget or grant unavailable".into());
+        }
+        tx.commit().map_err(failure)
+    }
+
+    /// Count exact MCP HTTP response bytes, including JSON-RPC wrapper and
+    /// any duplicated representation, before releasing them to the client.
+    /// A rejected response is not delivered even if its underlying query
+    /// attempt has already committed; that is conservative rather than replay.
+    pub fn charge_mcp_wire(&mut self, run_id: &str, bytes: usize) -> Result<(), String> {
+        let bytes = i64::try_from(bytes).map_err(failure)?;
+        if bytes > 131_072 {
+            return Err("MCP wire response exceeds run budget".into());
+        }
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let changed = tx
+            .execute(
+                "UPDATE query_mcp_bindings SET wire_bytes=wire_bytes+?2
+             WHERE run_id=?1 AND boot_id=?3 AND wire_bytes<=131072-?2",
+                params![run_id, bytes, self.clock_domain],
+            )
+            .map_err(failure)?;
+        if changed != 1 {
+            return Err("MCP wire budget unavailable".into());
+        }
+        tx.commit().map_err(failure)
+    }
+
+    pub fn mcp_usage(&self, run_id: &str) -> Result<Option<(u32, u64)>, String> {
+        self.conn.query_row(
+            "SELECT call_count,wire_bytes FROM query_mcp_bindings WHERE run_id=?1 AND boot_id=?2",
+            params![run_id, self.clock_domain],
+            |row| Ok((row.get::<_, u32>(0)?, row.get::<_, u64>(1)?)),
+        ).optional().map_err(failure)
     }
 
     pub fn load_active(&self, run_id: &str, now_ms: u64) -> Result<Option<Grant>, String> {
