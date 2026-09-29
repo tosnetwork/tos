@@ -23,6 +23,7 @@ pub struct EdgeState {
     pub cache: Arc<Mutex<Option<Evidence>>>,
     pub native: Arc<Mutex<crate::native_cache::NativeCache>>,
     pub started: Instant,
+    pub source_epoch: Option<String>,
     pub limiter: Arc<Mutex<(Instant, u32)>>,
 }
 impl EdgeState {
@@ -33,6 +34,7 @@ impl EdgeState {
             cache: Arc::new(Mutex::new(None)),
             native: crate::native_cache::cache(),
             started: Instant::now(),
+            source_epoch: crate::random_token().ok().map(|bytes| crate::hex(&bytes)),
             limiter: Arc::new(Mutex::new((Instant::now(), 4))),
         }
     }
@@ -71,8 +73,11 @@ async fn snapshot(
     State(state): State<EdgeState>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-) -> Result<Json<Evidence>, StatusCode> {
+) -> Result<Json<Value>, StatusCode> {
     permit(&state, &headers, &uri)?;
+    if state.native.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?.network.is_some() {
+        return r4_snapshot(&state).map(Json).map_err(|_| StatusCode::SERVICE_UNAVAILABLE);
+    }
     let cache = state.cache.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let Some(value) = cache.as_ref() else {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
@@ -80,7 +85,7 @@ async fn snapshot(
     if !value.quality.usable(chrono::Utc::now().timestamp_millis(), 30_000, false) {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
-    Ok(Json(value.clone()))
+    serde_json::to_value(value).map(Json).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
 }
 async fn capabilities(
     State(state): State<EdgeState>,
@@ -225,4 +230,86 @@ pub async fn sample_loop(state: EdgeState, pid: u32) {
             }
         }
     }
+}
+
+pub fn r4_snapshot(state: &EdgeState) -> Result<Value, String> {
+    use tos_health_core::{
+        edge_snapshot::{EdgeSnapshot, EdgeSource, ProcessPayload},
+        native::{canonical_hash, Coverage as NativeCoverage, Quality, SourceEnvelope},
+        wire::{exact_u64, U64},
+    };
+    let mut sources = Vec::new();
+    let now = chrono::Utc::now().timestamp_millis();
+    {
+        let cache = state.cache.lock().map_err(|_| "process cache unavailable")?;
+        if let Some(e) = cache.as_ref().filter(|e| e.quality.usable(now, 30_000, false)) {
+            let scalar = |v: &Value| -> Result<Option<U64>, String> {
+                v.as_str().map(|v| exact_u64(v).map(U64).map_err(str::to_owned)).transpose()
+            };
+            let payload = ProcessPayload {
+                kind: "process".into(),
+                pid: e.payload["pid"]
+                    .as_u64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or("invalid pid")?,
+                rss_bytes: scalar(&e.payload["memory_bytes"]["VmRSS"])?,
+                anon_bytes: scalar(&e.payload["memory_bytes"]["RssAnon"])?,
+                file_bytes: scalar(&e.payload["memory_bytes"]["RssFile"])?,
+                swap_bytes: scalar(&e.payload["memory_bytes"]["VmSwap"])?,
+                cpu_user_ticks: scalar(&e.payload["cpu_user_ticks"])?,
+                cpu_system_ticks: scalar(&e.payload["cpu_system_ticks"])?,
+            };
+            let observed = chrono::DateTime::from_timestamp_millis(e.observed_at_ms)
+                .ok_or("invalid observation time")?
+                .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let age = now
+                .checked_sub(e.observed_at_ms)
+                .and_then(|v| u64::try_from(v).ok())
+                .ok_or("invalid process age")?;
+            sources.push(EdgeSource::Process(SourceEnvelope {
+                schema_version: 1,
+                source_id: "process".into(),
+                node_id: state.node.clone(),
+                scope_id: "node".into(),
+                process_epoch: e.process_epoch.clone(),
+                source_epoch: state.source_epoch.clone().ok_or("edge epoch unavailable")?,
+                source_version: "proc-v1".into(),
+                generation: U64(exact_u64(&e.source_record_id).map_err(str::to_owned)?),
+                availability: "available".into(),
+                observed_at: Some(observed.clone()),
+                last_success_at: Some(observed),
+                received_at: None,
+                source_age_ms: Some(age),
+                clock_quality: "valid".into(),
+                coverage: NativeCoverage {
+                    status: "partial".into(),
+                    missing_fields: vec![
+                        "host_pressure".into(),
+                        "cgroup_effective".into(),
+                        "fd_usage".into(),
+                    ],
+                    gaps: vec![],
+                    sampling_policy: "fixed_15s".into(),
+                },
+                content_hash: canonical_hash(&payload)?,
+                payload,
+                quality: Quality {
+                    instrumentation_complete: false,
+                    producer_dropped: U64(0),
+                    relay_dropped: U64(0),
+                    parse_errors: U64(0),
+                    shed_reason: None,
+                },
+            }));
+        }
+    }
+    let cache = state.native.lock().map_err(|_| "native cache unavailable")?;
+    if let Some(native) = cache.read_typed() {
+        sources.push(EdgeSource::Native(native));
+    }
+    let snapshot =
+        EdgeSnapshot { schema_version: 1, status: "partial".into(), sources, anchors: vec![] };
+    snapshot
+        .validate(&state.node, cache.network.as_deref().ok_or("native network not configured")?)?;
+    serde_json::to_value(snapshot).map_err(|e| e.to_string())
 }

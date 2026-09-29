@@ -18,8 +18,13 @@ permissions:
 jobs:
   rust-contracts:
     runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_PIPELINING: "false"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - run: scripts/install-rust-toolchain.sh
       - run: python3 -m pip install jsonschema
       - name: Check the generated input contracts
@@ -39,6 +44,7 @@ jobs:
           python3 tools/node-health-monitor/tests/r4-mutations.py
           python3 tools/node-health-monitor/tests/runtime-mutations.py
           python3 tools/node-health-monitor/tests/native-contract-mutations.py
+          python3 tools/node-health-monitor/tests/native-typed-mutations.py
       - name: Compile and remove native protections
         run: python3 tools/node-health-monitor/tests/native-mutations.py
   native:
@@ -46,6 +52,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev

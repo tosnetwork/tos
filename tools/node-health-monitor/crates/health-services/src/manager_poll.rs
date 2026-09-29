@@ -95,3 +95,92 @@ pub async fn run(config: ProbeConfig) -> Result<(), String> {
         }
     }
 }
+
+pub fn native_frame(
+    value: tos_health_core::native::NativeEnvelope,
+    duration: u64,
+) -> Result<FactFrame, String> {
+    value.validate()?;
+    let facts = value
+        .payload
+        .pq_sign
+        .as_ref()
+        .map(|pq| vec![Fact { id: FactId::PqSigningFailures, value: pq.failed }])
+        .unwrap_or_default();
+    Ok(FactFrame {
+        schema_version: 1,
+        network_id: value.payload.network_id,
+        node_id: value.node_id,
+        scope_id: value.scope_id,
+        source_id: value.source_id,
+        process_epoch: value.process_epoch,
+        source_epoch: value.source_epoch,
+        generation: value.generation,
+        source_age_ms: U64(value.source_age_ms.ok_or("missing source age")?),
+        request_duration_ms: U64(duration),
+        observed_at: value.observed_at.ok_or("missing observation time")?,
+        clock_valid: true,
+        complete: value.quality.instrumentation_complete
+            && value.quality.producer_dropped.0 == 0
+            && value.quality.relay_dropped.0 == 0
+            && value.quality.parse_errors.0 == 0,
+        facts,
+    })
+}
+
+/// Scheduled native facts use the edge cache; a missing source never becomes a zero counter.
+pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
+    if !tos_health_core::wire::hash(&config.network_id)
+        || !crate::alias(&config.node_id)
+        || config.scope_id != "node"
+        || !fixed(&config.edge_url, "/v1/edge/snapshot")
+        || !fixed(&config.manager_url, "/v1/manager/facts")
+    {
+        return Err("invalid fixed native poll configuration".into());
+    }
+    let client = crate::client(&config.ca_file, &config.identity_file)?;
+    let edge =
+        String::from_utf8(crate::secret(&config.edge_token_file)?).map_err(|e| e.to_string())?;
+    let manager =
+        String::from_utf8(crate::secret(&config.manager_token_file)?).map_err(|e| e.to_string())?;
+    if edge == manager {
+        return Err("native poll credentials must differ".into());
+    }
+    let mut timer = tokio::time::interval(Duration::from_secs(15));
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        timer.tick().await;
+        let started = Instant::now();
+        let Ok(response) = client.get(&config.edge_url).bearer_auth(&edge).send().await else {
+            continue;
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+        let Ok(bytes) = crate::bounded_body(response, 262_144).await else {
+            continue;
+        };
+        let Ok(snapshot) =
+            serde_json::from_slice::<tos_health_core::edge_snapshot::EdgeSnapshot>(&bytes)
+        else {
+            continue;
+        };
+        if snapshot.validate(&config.node_id, &config.network_id).is_err() {
+            continue;
+        }
+        let Some(native) = snapshot.native() else {
+            continue;
+        };
+        let Ok(frame) = native_frame(
+            native.clone(),
+            started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        ) else {
+            continue;
+        };
+        if let Ok(response) =
+            client.post(&config.manager_url).bearer_auth(&manager).json(&frame).send().await
+        {
+            let _ = crate::bounded_body(response, 4096).await;
+        }
+    }
+}

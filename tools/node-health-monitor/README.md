@@ -30,7 +30,7 @@ revoke old direct scrape owners or prove production admission isolation. A fixed
 ## Implemented boundaries
 
 - Native exporter: one actual collection at a time, 15-second start interval,
-  no HTTP waiters, 30-second cache maximum age, 2-second publication budget,
+  one bounded owner HTTP waiter, 30-second cache maximum age, 2-second publication budget,
   bounded publication, explicit cold/stale 503, cached generation/source time.
 - Async collector aggregation: batches of eight, single flight, and completion
   only after every child in a started batch finishes, including error paths.
@@ -90,6 +90,7 @@ Each executable prints its exact positional usage on invalid arguments.
 | `tos-observability` | Typed cache-only HTTP queries, separate operator/ingest/service credentials, 200s scoped grants and immediate revocation | MCP SDK transport, persistent ledger/store, opaque pagination, all aggregation modes, ancestor traversal |
 | `health-state` | Independent fixed-catalog rules, bounded SQLite writers, persisted state/metrics and receipt-checked outbox | Full source adapters, retention/grants/ledger and deployed notification chain |
 | `health-ingress` | Private-CA mTLS, leaf allowlist, fixed role routes, bounded traffic | Effective host/firewall isolation and fully reserved observer admission |
+| `health-native-poll` | Fixed cached native PQ facts over mTLS; exact counters and inventory checks | Duty, storage and witness adapters |
 | `health-probe` | Fixed 15-second edge management reachability sampling | Consensus facts remain separate and require real native adapters |
 | `health-watchdog` | Separate process and Alertmanager pipeline deadlines, epoch/sequence replay refusal | Actual Prometheus/Alertmanager integration, witness chain, human-delivery receipts |
 | `health-contract-check` | Fail-closed arithmetic and declared acceptance checks | Actual host/network/cgroup/notification verification |
@@ -113,3 +114,22 @@ H1b/H2 evidence, source-contiguous-work budgets, real cancellation/fault tests,
 mTLS/ACL deployment, production resource profiles, A/B/C/D/E performance
 measurements and the 72-hour soak have not passed. Do not install this branch
 on production validators as an accepted monitor.
+
+
+### Initial typed native pipeline
+
+Append the configured network identity after the native address:
+`health-edge NODE PID LOOPBACK_LISTEN TOKEN_FILE 127.0.0.1:PORT NETWORK_ID`.
+The address-only form retains the legacy snapshot format. Typed mode reads one
+native `/metrics` generation and one cache-only `/health-snapshot`, validates
+node/network/epoch/exact generation and frozen body hash, and never retries a
+mismatch. Duplicate generations do not renew freshness. The returned R4 subset
+contains process and native PQ sources, with partial coverage and no anchors.
+
+`health-native-poll CONFIG` uses `config/health-native-poll.development.json` to
+read this edge cache over mTLS every 15 seconds and submit PQ signing failure
+facts to health-state. Use `health-state-native.development.json` as an isolated
+development inventory example. Missing or incomplete PQ instrumentation is not
+zero failures and cannot recover an incident. Collector configs may set
+`network_id` to consume the typed edge form; without it only the legacy
+`collector` source is accepted. These examples are not production approval.

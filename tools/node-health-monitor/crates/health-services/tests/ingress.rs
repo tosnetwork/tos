@@ -323,3 +323,104 @@ async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
     manager_task.abort();
     app_task.abort();
 }
+
+#[tokio::test]
+async fn scheduled_native_poll_checks_inventory_over_mtls() {
+    use axum::{routing::post, Json};
+    use serde_json::{json, Value};
+    use tos_health_services::manager_poll::{run_native as run, ProbeConfig};
+    let t = fixture();
+    let wrong = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = wrong.clone();
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = calls.clone();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Value>(4);
+    let app = Router::new()
+        .route("/v1/edge/snapshot", get(move || {
+            let flag=flag.clone(); let count=count.clone(); async move {
+                count.fetch_add(1, Ordering::SeqCst);
+                let mut value:Value=serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json")).unwrap();
+                value["node_id"]=if flag.load(Ordering::SeqCst){"other"}else{"v1"}.into();
+                value["source_age_ms"]=0.into();
+                Json(json!({"schema_version":1,"status":"partial","sources":[value],"anchors":[]}))
+            }
+        }))
+        .route("/v1/manager/facts",post(move |Json(value):Json<Value>| { let tx=tx.clone(); async move {tx.try_send(value).unwrap(); Json(json!({"accepted":true}))} }));
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = socket.local_addr().unwrap();
+    let app_task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+    let edge_socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let edge_addr = edge_socket.local_addr().unwrap();
+    let manager_socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let manager_addr = manager_socket.local_addr().unwrap();
+    let config = IngressConfig {
+        listen: edge_addr,
+        server_name: "localhost".into(),
+        upstream,
+        cert_file: t.0.join("server.pem"),
+        key_file: t.0.join("server.key"),
+        ca_file: t.0.join("ca.pem"),
+        peers: vec![Peer {
+            alias: "probe".into(),
+            certificate_sha256: fingerprint(&t.0, "client"),
+            role: Role::EdgeReader,
+        }],
+    };
+    let mut manager_config = config.clone();
+    manager_config.listen = manager_addr;
+    manager_config.peers[0].role = Role::ManagerIngest;
+    let edge_task = tokio::spawn(tos_health_services::ingress::serve(config, edge_socket));
+    let manager_task =
+        tokio::spawn(tos_health_services::ingress::serve(manager_config, manager_socket));
+    let mut identity = std::fs::read(t.0.join("client.pem")).unwrap();
+    identity.extend(std::fs::read(t.0.join("client.key")).unwrap());
+    std::fs::write(t.0.join("identity.pem"), identity).unwrap();
+    for (name, value) in [("edge.token", "e".repeat(32)), ("manager.token", "m".repeat(32))] {
+        std::fs::write(t.0.join(name), value).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(t.0.join(name), std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+    }
+    for mismatch in [false, true] {
+        wrong.store(mismatch, Ordering::SeqCst);
+        let before = calls.load(Ordering::SeqCst);
+        let probe = ProbeConfig {
+            network_id: "a".repeat(64),
+            node_id: "v1".into(),
+            scope_id: "node".into(),
+            edge_url: format!("https://localhost:{}/v1/edge/snapshot", edge_addr.port()),
+            manager_url: format!("https://localhost:{}/v1/manager/facts", manager_addr.port()),
+            ca_file: t.0.join("ca.pem"),
+            identity_file: t.0.join("identity.pem"),
+            edge_token_file: t.0.join("edge.token"),
+            manager_token_file: t.0.join("manager.token"),
+        };
+        let task = tokio::spawn(run(probe));
+        if mismatch {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(700), rx.recv()).await.is_err(),
+                "wrong inventory reached ingest"
+            );
+        } else {
+            let frame =
+                tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
+            assert_eq!(frame["complete"], true);
+            assert_eq!(frame["source_id"], "native_core");
+            assert_eq!(frame["generation"], "1");
+            assert_eq!(frame["facts"], json!([{"id":"pq_signing_failures","value":"0"}]));
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            before + 1,
+            "poll must reach source even when rejected"
+        );
+        task.abort();
+    }
+    assert!(rx.try_recv().is_err());
+    edge_task.abort();
+    manager_task.abort();
+    app_task.abort();
+}

@@ -135,3 +135,17 @@ The JSON/OpenMetrics fixture was recaptured from the surviving isolated C++ test
 executable; it is not a production-node fixture or proof of the lost C++ source.
 The fixture deliberately carries a PQ counter above the exact floating-point
 integer range. No validator was deployed or restarted.
+
+### Recovered Rust native service wiring
+
+The restored Rust workspace passes 94 tests and all-target clippy with warnings
+denied. The service fixture covers real HTTP sampling, typed edge routing,
+1,000 cache-only reads, mismatch/no-retry behavior, source age plus request time,
+sticky conflicts, missing PQ quality, immutable evidence relay and source bounds.
+`scheduled_native_poll_checks_inventory_over_mtls` uses real TLS sockets and
+checks that the negative inventory case actually reached the upstream source.
+`tests/native-typed-mutations.py` compiled and killed 10 corresponding mutants;
+all source files were restored before the complete regression was rerun.
+
+This adds only the initial process/native PQ R4 subset. It does not complete all
+R4 capabilities, duties, storage, witness or production acceptance gates.

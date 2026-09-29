@@ -6,16 +6,27 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tos_health_core::freshness::Freshness;
+use tos_health_core::{
+    freshness::Freshness,
+    native::{immutable_metrics, NativeEnvelope},
+};
 #[derive(Debug)]
 pub struct NativeCache {
+    pub network: Option<String>,
     freshness: Freshness,
     body: Option<String>,
     started: Instant,
+    typed: Option<(NativeEnvelope, Instant)>,
 }
 impl Default for NativeCache {
     fn default() -> Self {
-        Self { freshness: Freshness::default(), body: None, started: Instant::now() }
+        Self {
+            network: None,
+            freshness: Freshness::default(),
+            body: None,
+            started: Instant::now(),
+            typed: None,
+        }
     }
 }
 impl NativeCache {
@@ -42,25 +53,68 @@ impl NativeCache {
         }
         // The native exporter appends live transport counters after its immutable sample.
         // They must not become the content identity of that sample.
-        let stable: String = body
-            .lines()
-            .filter(|line| {
-                ![
-                    "_exporter_collection_inflight",
-                    "_exporter_collection_skipped_total",
-                    "_exporter_collection_failures_total",
-                ]
-                .iter()
-                .any(|name| line.contains(name))
-            })
-            .map(|s| format!("{s}\n"))
-            .collect();
+        let stable = immutable_metrics(&body);
         let hash = format!("{:x}", Sha256::digest(stable.as_bytes()));
         let accepted = self
             .freshness
             .observe(process, "native-v1", generation, &hash, self.now(), age, duration)
             .map_err(str::to_owned)?;
         if accepted {
+            self.body = Some(body);
+            self.typed = None;
+        }
+        Ok(accepted)
+    }
+    pub fn read_typed(&self) -> Option<NativeEnvelope> {
+        if !self.freshness.usable(self.now(), 30_000) {
+            return None;
+        }
+        let (value, accepted) = self.typed.as_ref()?;
+        let mut value = value.clone();
+        value.source_age_ms = value
+            .source_age_ms?
+            .checked_add(accepted.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+        if value.source_age_ms.is_none_or(|age| age > 30_000) {
+            return None;
+        }
+        Some(value)
+    }
+    pub fn publish_typed(
+        &mut self,
+        value: NativeEnvelope,
+        body: String,
+        duration: u64,
+    ) -> Result<bool, String> {
+        value.paired(
+            &value.node_id,
+            &value.payload.network_id,
+            &value.generation.0.to_string(),
+            &value.process_epoch,
+            &body,
+        )?;
+        let age = value.source_age_ms.ok_or("missing source age")?;
+        let adjusted_age = age.checked_add(duration).ok_or("age overflow")?;
+        if adjusted_age > 30_000 {
+            return Err("native pair stale".into());
+        }
+        let accepted = self
+            .freshness
+            .observe(
+                &value.process_epoch,
+                &value.source_epoch,
+                value.generation.0,
+                &value.immutable_hash()?,
+                self.now(),
+                age,
+                duration,
+            )
+            .map_err(str::to_owned)?;
+        if accepted {
+            let mut value = value;
+            value.source_age_ms = Some(adjusted_age);
+            value.received_at =
+                Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+            self.typed = Some((value, Instant::now()));
             self.body = Some(body);
         }
         Ok(accepted)
@@ -71,6 +125,7 @@ pub struct NativeSampler {
     address: SocketAddr,
     state: EdgeState,
     next_due: Instant,
+    network: Option<String>,
 }
 impl NativeSampler {
     pub fn new(address: SocketAddr, state: EdgeState) -> Result<Self, String> {
@@ -83,7 +138,16 @@ impl NativeSampler {
             .timeout(Duration::from_secs(3))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Self { client, address, state, next_due: Instant::now() })
+        Ok(Self { client, address, state, next_due: Instant::now(), network: None })
+    }
+    pub fn with_network(mut self, network: String) -> Result<Self, String> {
+        if !tos_health_core::wire::hash(&network) {
+            return Err("invalid network identity".into());
+        }
+        self.state.native.lock().map_err(|_| "native cache unavailable")?.network =
+            Some(network.clone());
+        self.network = Some(network);
+        Ok(self)
     }
     pub async fn collect(&mut self) -> Result<bool, String> {
         if Instant::now() < self.next_due {
@@ -111,6 +175,16 @@ impl NativeSampler {
         if response.content_length().is_some_and(|n| n > 2_097_152) {
             return Err("native body limit".into());
         }
+        let generation_header = response
+            .headers()
+            .get("x-tos-snapshot-generation")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let epoch_header = response
+            .headers()
+            .get("x-tos-process-epoch")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let mut bytes = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
             if bytes.len().saturating_add(chunk.len()) > 2_097_152 {
@@ -119,6 +193,41 @@ impl NativeSampler {
             bytes.extend_from_slice(&chunk);
         }
         let body = String::from_utf8(bytes).map_err(|_| "native not UTF-8")?;
+        if let Some(network) = &self.network {
+            // One cache-only paired read per scheduled scrape. No mismatch retry.
+            let response = self
+                .client
+                .get(format!("http://{}/health-snapshot", self.address))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let bytes = crate::bounded_body(response, 262_144).await?;
+            let value: NativeEnvelope =
+                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            value.paired(
+                &self.state.node,
+                network,
+                generation_header.as_deref().ok_or("missing exact generation header")?,
+                epoch_header.as_deref().ok_or("missing native epoch header")?,
+                &body,
+            )?;
+            let current_epoch = self
+                .state
+                .cache
+                .lock()
+                .map_err(|_| "process cache unavailable")?
+                .as_ref()
+                .map(|e| e.process_epoch.clone());
+            if current_epoch.as_deref() != Some(&epoch) {
+                return Err("process epoch changed".into());
+            }
+            return self
+                .state
+                .native
+                .lock()
+                .map_err(|_| "native cache unavailable")?
+                .publish_typed(value, body, started.elapsed().as_millis() as u64);
+        }
         let scalar = |suffix: &str| -> Result<&str, String> {
             let mut found = None;
             for line in body.lines().filter(|l| !l.starts_with('#')) {

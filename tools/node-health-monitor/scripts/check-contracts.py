@@ -19,6 +19,11 @@ def main():
  files=list((ROOT/'contracts').rglob('*.schema.json'))
  for p in files:
   s=json.loads(p.read_text());Draft202012Validator.check_schema(s);closed(s)
+ native=json.loads((ROOT/'crates/health-core/tests/fixtures/native-core.json').read_text())
+ validator('source-envelope.schema.json').validate(native)
+ validator('edge-snapshot.schema.json').validate(dict(schema_version=1,status='partial',sources=[native],anchors=[]))
+ assert native['payload']['pq_sign']['succeeded']=='9007199254740993'
+ assert native['content_hash']==hashlib.sha256(json.dumps(native['payload'],sort_keys=True,separators=(',',':')).encode()).hexdigest()
  common=validator('common.schema.json');common.validate('18446744073709551615')
  for bad in ['18446744073709551616','01','１','-1',True,1.0,9007199254740993]:assert not common.is_valid(bad),bad
  run='00000000-0000-4000-8000-000000000001';start='2026-09-29T00:00:00Z';end='2026-09-29T00:01:00Z'

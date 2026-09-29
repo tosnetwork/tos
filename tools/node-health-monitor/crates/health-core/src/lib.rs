@@ -17,3 +17,5 @@ pub mod rules;
 pub mod wire;
 
 pub mod native;
+
+pub mod edge_snapshot;

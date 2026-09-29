@@ -1,9 +1,9 @@
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    if !(5..=6).contains(&args.len()) {
+    if !(5..=7).contains(&args.len()) {
         return Err(
-            "usage: health-edge NODE PID LOOPBACK_LISTEN TOKEN_FILE [NATIVE_LOOPBACK_ADDRESS]"
+            "usage: health-edge NODE PID LOOPBACK_LISTEN TOKEN_FILE [NATIVE_LOOPBACK_ADDRESS [NETWORK_ID]]"
                 .into(),
         );
     }
@@ -16,13 +16,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = tos_health_services::edge::EdgeState::new(args[1].clone(), token);
     let task = tokio::spawn(tos_health_services::edge::sample_loop(state.clone(), pid));
     let native = if let Some(address) = args.get(5) {
-        Some(tokio::spawn(
-            tos_health_services::native_cache::NativeSampler::new(
-                tos_health_services::loopback(address)?,
-                state.clone(),
-            )?
-            .run(),
-        ))
+        let sampler = tos_health_services::native_cache::NativeSampler::new(
+            tos_health_services::loopback(address)?,
+            state.clone(),
+        )?;
+        let sampler = match args.get(6) {
+            Some(network) => sampler.with_network(network.clone())?,
+            None => sampler,
+        };
+        Some(tokio::spawn(sampler.run()))
     } else {
         None
     };

@@ -789,6 +789,62 @@
       ],
       "additionalProperties": false
     },
+    "native_core": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native_core"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "openmetrics_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        },
+        "pq_sign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pq_verify": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "generation",
+        "network_id",
+        "openmetrics_hash",
+        "bytes",
+        "pq_sign",
+        "pq_verify"
+      ],
+      "additionalProperties": false
+    },
     "pagination": {
       "type": "object",
       "properties": {
@@ -826,6 +882,9 @@
           "$ref": "#/$defs/native"
         },
         {
+          "$ref": "#/$defs/native_core"
+        },
+        {
           "$ref": "#/$defs/unavailable"
         },
         {
@@ -844,6 +903,30 @@
           "$ref": "#/$defs/storage_ack"
         }
       ]
+    },
+    "pq_snapshot": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "failed": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "succeeded": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "complete",
+        "failed",
+        "succeeded"
+      ],
+      "additionalProperties": false
     },
     "process": {
       "type": "object",
