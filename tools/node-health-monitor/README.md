@@ -1,9 +1,31 @@
 # Node health monitor implementation
 
 **Status: partial implementation, not production accepted.** The normative
-specification is [R3, 2026-09-29](https://github.com/tosnetwork/memo/blob/main/node-health-monitor/TOS-NODE-HEALTH-MONITOR-DESIGN-20260929.md),
-blob `2d7653022fbcf477eb7396ca7a5e2d1a0698c903`. This branch starts from
+specification is [R4, 2026-09-29](https://github.com/tosnetwork/memo/blob/main/node-health-monitor/TOS-NODE-HEALTH-MONITOR-DESIGN-20260929.md),
+blob `b6ee93b81ad3794eecff3b6c8ed2faf28072120c`. This branch starts from
 `tos/main@b2c500dc6f26eb1530dac9679385b6f330b3d008`.
+
+## R4 continuation
+
+See [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) for C00–C09 status and
+[VALIDATION-R4.md](VALIDATION-R4.md) for this round's concrete evidence.
+No complete work order or production capability is marked accepted.
+
+Added strict schemas and contract checks, cross-language diagnostic framing,
+monotonic cache freshness, multisource incident recovery, isolated SQLite
+control/evidence components and optional fixed native collection in health-edge.
+The storage components are not yet connected to the existing HTTP query process.
+
+```sh
+python3 tools/node-health-monitor/scripts/check-contracts.py
+bash tools/node-health-monitor/scripts/run-contract-tests.sh
+python3 tools/node-health-monitor/tests/r4-mutations.py
+```
+
+Optional local native sampling: append `127.0.0.1:PORT` to the existing
+`health-edge NODE PID LOOPBACK_LISTEN TOKEN_FILE` command. Consumers use the
+edge's authenticated `/metrics` cache. This development interface does not
+supply the required production mTLS ingress or revoke old direct scrape owners.
 
 ## Implemented boundaries
 

@@ -1,47 +1,59 @@
-# R3 implementation and acceptance ledger
+# R4 implementation and acceptance ledger
 
-This ledger distinguishes implemented primitives from integrated sources and
-runtime acceptance. No row below is a claim that H0–H6 are complete.
+Design: R4, memo blob `b6ee93b81ad3794eecff3b6c8ed2faf28072120c`.
+Reviewed code baseline: `86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f`.
+No C00–C09 stage is accepted. A checked item below means its named bounded
+implementation and local tests exist, not that the whole stage or deployment passes.
 
-| Phase | Delivered in this branch | Outstanding |
+| Work order | Delivered and locally tested | Still required before stage completion |
 |---|---|---|
-| H0 | Spec/blob/base binding; initial source anchors; source semantics and bounded primitives; reproducible test commands | Complete frozen source/duty/point/proof manifests, fixtures for every existing source, actual host inventory and hardware profiles, per-actor contiguous-work budget |
-| H1a | Exporter actual-work admission/cache; bounded async batches; summary-only QUIC metrics; process edge and fixed collector; basic cache-query service and watchdog code | Full source latency/capacity protection, getStats/admin adapters, mTLS ingress/ACL, HA ownership/fencing, durable storage, complete rules/inventory disappearance handling, actual independent notification receipt |
-| H1b | Production consensus PQ hooks and fixed histograms; tested duty/guard primitives | Hook actual assigned/eligible/started/terminal/deadline duties; cancellation/restart cohorts; persistence completion semantics and hooks; queue/session/resolver lifecycle sources; role/scope manifests; stage/PQ queue histograms |
-| H2 | Full block-identity comparison primitive and heartbeat replay tests | Real witness/non-voting-node adapters, evidence/proof validation, coverage accounting, independent failure-domain and notification testing |
-| H3 | Bounded native diagnostic ring primitive | Trace producer early-disable/sampling migration; IPC/pump/relay; ingest/retention; global budgets; drop provenance; slow-consumer/ENOSPC integration tests |
-| H4 | Cache query primitives/HTTP, run grants and ledgers in memory, broker cancellation model, strict diagnosis validation | Persistent run ledger; exact full envelopes/quality contracts across all backends; pagination/aggregates/ancestors; MCP Rust SDK sessions; AURA provider integration; model/context/token accounting; child cancellation; actual zero-upstream and M-protection tests |
-| H5 | No enablement | Optional provider/API/CLI bridges and service-specific index/RPC extensions |
-| H6 | CI and repeatable local checks | Real upgrade/rotation/notification/expiry/recovery exercises, 72h soak, performance acceptance on approved hardware |
+| C00 — implementing | ✅ 20 closed 2020-12 schemas, six-tool positive/negative contract fixtures; exact u64; frozen Python/Rust/C++ IPC vector; source/action/persistence/catalog manifests; sparse histogram series counting; production placeholder refusal; R4 semantic tests | Complete source catalog and actual source fixtures; full wire DTO/handler equivalence; catalog payload variants beyond the approved initial subset; MCP/Prometheus version and artifact pins; review of complete C00 output |
+| C01 — implementing | ✅ Existing native actual-work admission, cache, collector completion and PQ counters; new standalone diagnostic wire codec | Feature-gated source rollout; loopback typed `/health-snapshot` sharing publisher generation; per-source timestamps; all collector contiguous-work/capacity evidence and full source/core publication tests |
+| C02 — implementing | ✅ Optional fixed loopback native sampler; cached `/metrics`; 1,000 HTTP reads cause no extra native calls; minimum interval; same-generation stale/conflict protection; process sampler; nonempty query rejection | Full R4 SourceEnvelope/edge DTO migration; typed generation pairing; mTLS role ACL and heartbeat reservation; approved cgroup/host/readiness adapters; getStats remains unsupported |
+| C03 — implementing | ✅ Deterministic multisource recovery contract; SQLite WAL/FULL control/evidence storage components; immutable sequence/watermark; persistent conflict quarantine; atomic incident/outbox; restart-to-unknown; evidence quota failure leaves control usable | Wire durable components into the collector/query/health-state processes; bounded writer executors and complete rules; persistence of inventory/grants/ledger; retention and migration/backup; actual Prometheus/Alertmanager/dead-man/independent receipt integration |
+| C04 — implementing | ✅ Existing production PQ sign/verify hooks; real stage anchors and persistence ordering documented; contract vote-order/replay tests | Actual proposal/notarize/finalize/skip request/pending/outcome instrumentation and dedupe; queue/session teardown facts; storage hooks and restart proof; trace-off native integration tests. Contract vote model is not production instrumentation |
+| C05 — implementing | ✅ Complete block-identity comparison primitive; canonical unsigned shard/hash validation; existing heartbeat replay test | Witness adapters and schedule; inventory genesis/role binding; five evidence dimensions; proof verifier separately unsupported; independent observer notification tests |
+| C06 — implementing | ✅ Bounded ring primitive; frozen datagram codec; independent JSON/decoded diagnostic batch limits | Real producer early gate, authenticated nonblocking IPC, edge relay, persistent batch ingest and idempotent ACK; actual slow/dead consumers, disk-full and shutdown integration |
+| C07 — not_started | No provider enabled | Fixed immutable evidence package; approved AURA/model integration, actual provider validation, private egress and resource-isolation tests |
+| C08 — implementing | ✅ Existing cache query/grant primitives; strict request validation; HTTP failures no longer return successful 200 | Full output DTOs enforced in runtime, persistent run ledger, stable authorized cursors/ancestors/materialized aggregates, MCP SDK, model/child cancellation, run-wide byte/token budgets and actual zero-upstream integration |
+| C09 — not_started | ✅ Development contracts and examples fail production readiness without evidence | Approved host/failure domains, credentials/receiver, effective quotas; A–F raw monotonic performance profiles; rotation/rollback/restore and 72h soak. No runtime deployment acceptance |
 
-## Native behavior changes
+## Evidence mapping
 
-`/metrics` now returns 503 until a successful generation is ready, and returns
-503 when the last successful generation is older than 30s. Valid cached
-responses preserve generation and original completion timestamp. Requests can
-start a collection only at the admitted interval; none waits on it. A result
-finishing after the 2s source budget is rejected for publication, and its
-actual-work token is not released before completion. This does not yet cancel
-or preempt a slow individual collector.
+- `crates/health-core/tests/contracts.rs`: prior 30 deterministic behavior tests.
+- `crates/health-core/tests/r4.rs`: 16 exact-integer, IPC, monotonic freshness,
+  multisource recovery, metric-capacity, vote-order and deployment-refusal tests.
+- `crates/health-services/tests/http.rs`: 10 credential/cache/query HTTP tests.
+- `crates/health-services/tests/native_cache.rs`: 5 cache/schedule/bounds tests,
+  including a real loopback fake server and 1,000 router requests.
+- `crates/health-services/tests/durable.rs`: 6 actual SQLite file tests covering
+  restart, immutable pages, scope identity/conflict, atomic outbox and quota isolation.
+- `scripts/check-contracts.py`: validates generated contracts and source anchors;
+  compiles and executes the C++ codec against the Python/Rust frozen bytes.
+- `tests/r4-mutations.py`: 15 compiled Rust mutations plus one compiled C++ mutation.
+  Every named baseline must pass, every mutant must compile and fail its named
+  behavioral test. Build failure does not count as a killed mutation.
+- The existing 10 Rust and 6 C++ mutations remain in CI.
 
-Per-path QUIC metrics disappear from the native metrics scrape by design;
-`collect_stats()` callers outside this path retain detailed stats. Individual
-server connection traversal still needs an approved contiguous-work budget
-and batching validation before production acceptance.
+## Runtime boundaries
 
-`--health-core-metrics` currently enables only process-wide consensus PQ
-operation metrics. Sign calls cover `ValidatorPQKeyStore::sign_consensus`;
-verify calls cover `PeerValidator::check_signature`. It must not be described
-as all PQ cryptography or complete validator duty health. Snapshots are
-concurrent approximate reads, not a global atomic snapshot.
+The new SQLite components are tested storage building blocks; the existing
+`tos-observability` HTTP process still uses its bounded memory store. Do not
+claim that those HTTP grants or results now survive restart. There is no
+production `health-state` process or full rule package yet.
 
-## Evidence boundaries
+`health-edge` accepts an optional fixed numeric loopback native address. It is
+the only owner within that process; all `/metrics` consumers read the completed
+cache. Deployment must revoke old direct scrapes and prohibit duplicate edge
+owners. The code does not prove a remote deployment has done this. The legacy
+native float generation marker is rejected above 2^53−1; exact typed native
+snapshots are still outstanding. Local age conversion assumes the native and
+edge wall clocks refer to the same host and rejects future/stale timestamps.
 
-- Unit/HTTP tests do not establish physical isolation, notification delivery,
-  chain safety or performance overhead.
-- A source-code anchor establishes where a fact is produced, not that a
-  deployed instance has enabled it.
-- The default acceptance file contains only false values. Production must
-  remain unapproved until implementation and runtime evidence close each gate.
-- A compiled test that fails after removing its guard provides sensitivity
-  evidence for that guard. It does not cover unrelated unfinished components.
+Only the synthetic catalog 7/type 1 has a frozen diagnostic payload. No existing
+trace is sent through this codec, and it is not a production trace schema.
+Source fixtures that have not been captured remain null with contract_valid=false.
+The PQ metric manifest is an initial sparse catalog, not a complete core profile.
+
+No production validator was deployed, restarted or fault-injected. No signing,
+vote-journal ordering, database durability or protocol condition was changed.

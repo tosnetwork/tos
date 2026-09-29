@@ -25,6 +25,8 @@ jobs:
       - name: Check the generated input contracts
         run: |
           python3 tools/node-health-monitor/tests/generate_schemas.py
+          python3 tools/node-health-monitor/scripts/generate-contracts.py
+          python3 tools/node-health-monitor/scripts/check-contracts.py
           git diff --exit-code -- tools/node-health-monitor/contracts
       - name: Compile and exercise HTTP and state contracts
         run: |
@@ -34,6 +36,7 @@ jobs:
           cargo build --manifest-path tools/node-health-monitor/Cargo.toml --locked
           python3 tools/node-health-monitor/tests/process-smoke.py
           python3 tools/node-health-monitor/tests/mutations.py
+          python3 tools/node-health-monitor/tests/r4-mutations.py
       - name: Compile and remove native protections
         run: python3 tools/node-health-monitor/tests/native-mutations.py
   native:
