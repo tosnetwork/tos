@@ -792,6 +792,7 @@ async fn runtime_output_reflects_unknown_quality_and_rejects_conflicts() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "partial");
     assert_eq!(body["data"]["series"][0]["clock"], "invalid");
+    assert_eq!(body["evidence"][0]["clock_quality"], "invalid");
     assert_eq!(body["missing_evidence"][0]["source_id"], "collector");
 
     let mut partial = record(start + 1_000, 1, "collector", metric_payload("bytes"));

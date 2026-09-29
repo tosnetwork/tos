@@ -622,7 +622,16 @@ fn evidence(record: &StoredEvidence) -> Result<EvidenceDto, &'static str> {
         process_epoch: record.record.process_epoch.clone(),
         observed_at: record.record.quality.observed_at_ms.map(time).transpose()?,
         received_at: time(record.record.received_at_ms)?,
-        clock_quality: if record.record.quality.clock_valid { "valid" } else { "invalid" }.into(),
+        clock_quality: if record.record.quality.clock_valid {
+            "valid"
+        } else if record.record.source_id == "consensus_diagnostic" {
+            // C06 has no verified native wall-clock basis; false is unknown,
+            // not evidence that a particular timestamp was proven invalid.
+            "uncertain"
+        } else {
+            "invalid"
+        }
+        .into(),
         scope_id: record.record.scope_id.clone(),
         payload: payload(record)?,
         content_hash,

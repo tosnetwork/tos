@@ -21,13 +21,18 @@ Checkpoint note: `tos-observability` now requires a private ledger DB and Unix c
 C06 integration boundary: the process projection scans only M rows declared as
 `source='process'`, so a full population of diagnostic archives cannot consume
 its 4096-row/8 MiB cap or revoke unrelated process runs. Diagnostic phases are
-persisted by M, but source-reported wall time (when present) has invalid clock
-quality; genuinely unknown time remains `observed_at=null`. The six-tool event
+persisted by M, but source-reported wall time (when present) lacks a verified
+clock basis; genuinely unknown time remains `observed_at=null`. The six-tool event
 window is defined over trustworthy observed time, so it
 explicitly returns `CAPABILITY_UNSUPPORTED` for the C06 diagnostic source or
 kind. It does not substitute M receipt time or the compatibility zero sentinel
 for an observation. A separately approved time-basis contract and a retained
 parent adapter would be required for diagnostic event-window success.
+For direct C06 typed projection, unverified diagnostic clock quality emits
+`uncertain` (never `valid` or a claimed proven-invalid clock); a truly absent
+source observation emits `observed_at=null`. Other sources with known invalid
+clock still emit `invalid`. Neither form makes a diagnostic event selectable by
+the observed-time window.
 
 Control socket follow-up: admission is now limited to eight connections before
 task spawn; permits last through response transmission and a five-second

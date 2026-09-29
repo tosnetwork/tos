@@ -390,6 +390,7 @@ mod tests {
             output["evidence"][0]["observed_at"].is_null()
                 && output["data"]["events"][0]["observed_at"].is_null()
         );
+        assert_eq!(output["evidence"][0]["clock_quality"], "uncertain");
         for field in ["producer_dropped", "relay_dropped", "parse_errors"] {
             assert!(output["evidence"][0]["quality"][field].is_null());
         }
