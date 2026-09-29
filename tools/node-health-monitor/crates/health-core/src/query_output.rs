@@ -14,9 +14,12 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub struct QualityDto {
     pub instrumentation_complete: bool,
-    pub producer_dropped: U64,
-    pub relay_dropped: U64,
-    pub parse_errors: U64,
+    #[serde(deserialize_with="crate::native::required_nullable")]
+    pub producer_dropped: Option<U64>,
+    #[serde(deserialize_with="crate::native::required_nullable")]
+    pub relay_dropped: Option<U64>,
+    #[serde(deserialize_with="crate::native::required_nullable")]
+    pub parse_errors: Option<U64>,
     pub shed_reason: Option<String>,
 }
 
@@ -57,6 +60,11 @@ pub enum PayloadDto {
     DiagnosticFixture {
         record_type: u16,
         payload: String,
+    },
+    DiagnosticPhase {
+        record_type: u16,
+        payload: String,
+        monotonic_ns: U64,
     },
     Block {
         network_id: String,
@@ -492,6 +500,19 @@ fn payload(record: &StoredEvidence) -> Result<PayloadDto, &'static str> {
                 && payload.len() == 4
                 && payload.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         }
+        PayloadDto::DiagnosticPhase { record_type, payload, .. } => {
+            if payload.len()!=8 || !payload.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {false} else {
+                let mut decoded=[0u8;4];
+                let mut valid=true;
+                for (i, byte) in decoded.iter_mut().enumerate() {
+                    match u8::from_str_radix(&payload[i*2..i*2+2],16) {
+                        Ok(value) => *byte=value,
+                        Err(_) => valid=false,
+                    }
+                }
+                valid && crate::wire::diagnostic_payload(8,*record_type,&decoded)
+            }
+        }
         PayloadDto::Block { network_id, scope_id, root_hash, file_hash, point, .. } => {
             crate::wire::hash(network_id)
                 && crate::wire::alias(scope_id)
@@ -595,7 +616,7 @@ fn evidence(record: &StoredEvidence) -> Result<EvidenceDto, &'static str> {
         source_version: source_version.into(),
         source_record_id: record.record.source_record_id.clone(),
         process_epoch: record.record.process_epoch.clone(),
-        observed_at: Some(time(record.record.observed_at_ms)?),
+        observed_at: record.record.quality.observed_at_ms.map(time).transpose()?,
         received_at: time(record.record.received_at_ms)?,
         clock_quality: if record.record.quality.clock_valid { "valid" } else { "invalid" }.into(),
         scope_id: record.record.scope_id.clone(),
@@ -629,7 +650,7 @@ fn event(record: &StoredEvidence) -> Result<EventDto, &'static str> {
         source_id: record.record.source_id.clone(),
         source_record_id: record.record.source_record_id.clone(),
         process_epoch: record.record.process_epoch.clone(),
-        observed_at: Some(time(record.record.observed_at_ms)?),
+        observed_at: record.record.quality.observed_at_ms.map(time).transpose()?,
         scope_id: record.record.scope_id.clone(),
         kind: kind.into(),
         stage: stage.map(str::to_owned),

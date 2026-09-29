@@ -499,6 +499,14 @@ pub struct ManagerConfig {
     pub witness_current_token_file: Option<PathBuf>,
     #[serde(default)]
     pub witness_current_trusted_same_host: bool,
+    #[serde(default)]
+    pub diagnostic: Option<DiagnosticConfig>,
+}
+#[derive(Debug,Clone,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticConfig {
+    pub token_file:PathBuf,
+    pub nodes:Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -524,6 +532,9 @@ pub struct Manager {
     witness_current_token: Option<Arc<Vec<u8>>>,
     witness_current_reads: Arc<tokio::sync::Semaphore>,
     witness_current_writes: Arc<tokio::sync::Semaphore>,
+    diagnostic_token:Option<Arc<Vec<u8>>>,
+    diagnostic_nodes:Arc<Vec<String>>,
+    diagnostic_budget:Arc<crate::diagnostic_ingest::Budget>,
 }
 #[derive(Clone)]
 struct Cached {
@@ -541,6 +552,8 @@ enum ControlCommand {
 }
 enum EvidenceCommand {
     Insert(Box<DurableEvidence>, oneshot::Sender<Result<EvidenceRow, String>>),
+    Diagnostic(Box<tos_health_core::contracts::DiagnosticBatch>,crate::diagnostic_ingest::Lease,
+        oneshot::Sender<Result<crate::diagnostic_ingest::Ack,String>>),
     InsertWitness(
         Box<crate::witness::CacheResponse>,
         Arc<tos_health_core::witness::Plan>,
@@ -651,6 +664,17 @@ impl Manager {
         {
             return Err("current witness credential must be distinct".into());
         }
+        let diagnostic_token=config.diagnostic.as_ref().map(|diagnostic|crate::diagnostic_ipc::read_token(&diagnostic.token_file).map(Arc::new)).transpose()?;
+        let diagnostic_nodes=config.diagnostic.as_ref().map_or_else(Vec::new,|diagnostic|diagnostic.nodes.clone());
+        if diagnostic_token.as_deref().is_some_and(|token|token.as_slice()==ingest || token.as_slice()==read
+            || witness_current_token.as_deref().is_some_and(|witness|token.as_slice()==witness.as_slice())) {
+            return Err("diagnostic credential must be distinct".into());
+        }
+        if config.diagnostic.is_some() && (diagnostic_nodes.is_empty() || diagnostic_nodes.len()>1024
+            || diagnostic_nodes.iter().collect::<std::collections::BTreeSet<_>>().len()!=diagnostic_nodes.len()
+            || diagnostic_nodes.iter().any(|node|!crate::alias(node) || !config.inventory.targets.iter().any(|target|target.node==*node))) {
+            return Err("diagnostic node outside inventory".into());
+        }
         let mut db = ControlDb::open(&config.control_db, config.control_quota_bytes.0, 2304, 4096)?;
         db.bind_network(&config.inventory.network_id)?;
         db.bind_inventory(
@@ -700,6 +724,9 @@ impl Manager {
                     match command {
                         EvidenceCommand::Insert(value, reply) => {
                             let _ = reply.send(evidence_db.insert(*value));
+                        }
+                        EvidenceCommand::Diagnostic(batch,_lease,reply)=>{
+                            let _=reply.send(evidence_db.insert_diagnostic(&batch));
                         }
                         EvidenceCommand::InsertWitness(
                             value,
@@ -890,6 +917,9 @@ impl Manager {
             witness_current_token,
             witness_current_reads: Arc::new(tokio::sync::Semaphore::new(2)),
             witness_current_writes: Arc::new(tokio::sync::Semaphore::new(1)),
+            diagnostic_token,
+            diagnostic_nodes:Arc::new(diagnostic_nodes),
+            diagnostic_budget:Arc::new(crate::diagnostic_ingest::Budget::default()),
         })
     }
     pub async fn ingest(&self, frame: FactFrame) -> Result<String, String> {
@@ -1123,6 +1153,26 @@ async fn ingest(
     })?;
     Ok(Json(json!({"evidence_id":id,"accepted":true})))
 }
+async fn ingest_diagnostic(State(state):State<Manager>,request:axum::extract::Request)->Result<Json<crate::diagnostic_ingest::Ack>,StatusCode> {
+    let token=state.diagnostic_token.as_deref().ok_or(StatusCode::NOT_FOUND)?;
+    permit(request.headers(),token,request.uri())?;
+    let mut lease=state.diagnostic_budget.acquire_request().map_err(|_|StatusCode::TOO_MANY_REQUESTS)?;
+    let bytes=tokio::time::timeout(Duration::from_secs(1),axum::body::to_bytes(request.into_body(),262144)).await
+        .map_err(|_|StatusCode::BAD_REQUEST)?.map_err(|_|StatusCode::PAYLOAD_TOO_LARGE)?;
+    let body=bytes.to_vec();drop(bytes);
+    let batch=tos_health_core::contracts::DiagnosticBatch::decode(&body).map_err(|_|StatusCode::BAD_REQUEST)?;
+    if batch.source_id!="consensus_diagnostic" || !state.diagnostic_nodes.contains(&batch.node_id)
+        || batch.content_id().map_err(|_|StatusCode::BAD_REQUEST)?!=batch.batch_id {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    lease.narrow(body.capacity(),&batch).map_err(|_|StatusCode::PAYLOAD_TOO_LARGE)?;
+    let (tx,rx)=oneshot::channel();
+    state.evidence.try_send(EvidenceCommand::Diagnostic(Box::new(batch),lease,tx)).map_err(|_|StatusCode::TOO_MANY_REQUESTS)?;
+    let ack=tokio::time::timeout(Duration::from_secs(2),rx).await.map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?
+        .map_err(|_|StatusCode::SERVICE_UNAVAILABLE)?.map_err(|error|if error=="SOURCE_CONFLICT" {StatusCode::CONFLICT}
+            else if error=="DIAGNOSTIC_INVALID" {StatusCode::BAD_REQUEST} else {StatusCode::SERVICE_UNAVAILABLE})?;
+    Ok(Json(ack))
+}
 async fn archive_snapshot(
     State(state): State<Manager>,
     headers: HeaderMap,
@@ -1240,6 +1290,7 @@ pub fn router(state: Manager) -> Router {
         .merge(writes)
         .merge(reads)
         .merge(current_reads)
+        .route("/v1/ingest/diagnostic-batches",post(ingest_diagnostic))
         .route("/v1/monitor/heartbeat", get(heartbeat))
         .with_state(state)
 }

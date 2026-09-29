@@ -57,7 +57,7 @@ pub struct DiagnosticRecord {
 }
 impl DiagnosticRecord {
     pub fn encode(&self) -> Result<Vec<u8>, &'static str> {
-        if self.record_type != 1 || self.source_catalog_id != 7 || self.payload.len() != 2 {
+        if !diagnostic_payload(self.source_catalog_id, self.record_type, &self.payload) {
             return Err("unknown catalog or payload");
         }
         let mut out = vec![0u8; 64 + self.payload.len()];
@@ -106,7 +106,7 @@ impl DiagnosticRecord {
         {
             return Err("invalid header");
         }
-        if u16_at(10) != 1 || u32_at(12) != 7 || u16_at(56) != 2 {
+        if !diagnostic_payload(u32_at(12), u16_at(10), &bytes[64..]) {
             return Err("unknown catalog or payload");
         }
         let mut epoch = [0; 16];
@@ -120,5 +120,12 @@ impl DiagnosticRecord {
             wall_unix_ns: if flags == 1 { Some(u64_at(48)) } else { None },
             payload: bytes[64..].to_vec(),
         })
+    }
+}
+pub fn diagnostic_payload(catalog: u32, record_type: u16, payload: &[u8]) -> bool {
+    record_type == 1 && match catalog {
+        7 => payload.len() == 2,
+        8 => payload.len() == 4 && payload[0] < 4 && payload[1] < 3 && payload[2] < 22 && payload[3] == 0,
+        _ => false,
     }
 }

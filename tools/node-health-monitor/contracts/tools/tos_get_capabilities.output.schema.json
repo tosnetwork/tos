@@ -428,6 +428,33 @@
       ],
       "additionalProperties": false
     },
+    "diagnostic_phase": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "diagnostic_phase"
+        },
+        "record_type": {
+          "const": 1
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$"
+        },
+        "monotonic_ns": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "kind",
+        "record_type",
+        "payload",
+        "monotonic_ns"
+      ],
+      "additionalProperties": false
+    },
     "diagnostic": {
       "type": "object",
       "properties": {
@@ -841,6 +868,7 @@
         {
           "$ref": "#/$defs/diagnostic"
         },
+        {"$ref": "#/$defs/diagnostic_phase"},
         {
           "$ref": "#/$defs/block"
         },
@@ -979,19 +1007,40 @@
           "type": "boolean"
         },
         "producer_dropped": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]{0,19})$",
-          "format": "uint64"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "relay_dropped": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]{0,19})$",
-          "format": "uint64"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "parse_errors": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]{0,19})$",
-          "format": "uint64"
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "shed_reason": {
           "anyOf": [

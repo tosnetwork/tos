@@ -70,7 +70,8 @@ impl EvidenceStore {
     pub fn insert(&mut self, record: Evidence) -> Result<String, &'static str> {
         if !record.redacted
             || record.process_epoch != record.quality.process_epoch
-            || record.quality.observed_at_ms != Some(record.observed_at_ms)
+            || !(record.quality.observed_at_ms == Some(record.observed_at_ms)
+                || (record.quality.observed_at_ms.is_none() && !record.quality.clock_valid && record.observed_at_ms == 0))
             || [
                 &record.node_id,
                 &record.scope_id,

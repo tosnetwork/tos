@@ -6,7 +6,7 @@ struct FixedMetricDescriptor {
   const char *name; const char *type; const char *suffix;
   std::array<std::array<const char *, 2>, 3> labels; std::size_t label_count; double scale;
 };
-inline constexpr std::array<FixedMetricDescriptor, 142> consensus_metric_catalog{{
+inline constexpr std::array<FixedMetricDescriptor, 149> consensus_metric_catalog{{
   {"tos_consensus_actions_total", "counter", "", {{{{"action", "proposal"}}, {{"phase", "requested"}}, {{"origin", "live"}}}}, 3, 1},
   {"tos_consensus_actions_total", "counter", "", {{{{"action", "proposal"}}, {{"phase", "signed"}}, {{"origin", "live"}}}}, 3, 1},
   {"tos_consensus_actions_total", "counter", "", {{{{"action", "proposal"}}, {{"phase", "candidate_published"}}, {{"origin", "live"}}}}, 3, 1},
@@ -149,6 +149,13 @@ inline constexpr std::array<FixedMetricDescriptor, 142> consensus_metric_catalog
   {"tos_state_resolver_results_total", "counter", "", {{{{"operation", "finalization"}}, {{"result", "cancelled"}}, {{"", ""}}}}, 2, 1},
   {"tos_consensus_current_slot", "gauge", "", {{{{"scope", "masterchain"}}, {{"", ""}}, {{"", ""}}}}, 1, 1},
   {"tos_consensus_last_finalized_slot", "gauge", "", {{{{"scope", "masterchain"}}, {{"", ""}}, {{"", ""}}}}, 1, 1},
+  {"tos_diagnostic_dropped_total", "counter", "", {}, 0, 1},
+  {"tos_diagnostic_sampled_out_total", "counter", "", {}, 0, 1},
+  {"tos_diagnostic_queue_records", "gauge", "", {}, 0, 1},
+  {"tos_diagnostic_queue_bytes", "gauge", "", {}, 0, 1},
+  {"tos_diagnostic_sent_total", "counter", "", {}, 0, 1},
+  {"tos_diagnostic_enabled", "gauge", "", {}, 0, 1},
+  {"tos_diagnostic_counter_complete", "gauge", "", {}, 0, 1},
 }};
 static_assert(consensus_metric_catalog.size() <= 256);
 }  // namespace tos::health

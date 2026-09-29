@@ -33,6 +33,7 @@ pub enum Role {
     ManagerIngest,
     ManagerReader,
     PipelineSender,
+    DiagnosticSender,
     WitnessReader,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +117,7 @@ fn route(role: Role, method: &hyper::Method, path: &str, config: &IngressConfig)
             (Role::ManagerIngest, "/v1/manager/facts") => Some(4096),
             (Role::ManagerIngest, "/v1/manager/snapshot-evidence") => Some(4096),
             (Role::PipelineSender, "/v1/watchdog/pipeline") => Some(4096),
+            (Role::DiagnosticSender, "/v1/ingest/diagnostic-batches") => Some(4096),
             _ => None,
         }
     } else {
@@ -199,7 +201,7 @@ async fn proxy(
     } else {
         Vec::new()
     };
-    let max_input = if peer.role == Role::PipelineSender || path == "/v1/manager/snapshot-evidence"
+    let max_input = if matches!(peer.role,Role::PipelineSender|Role::DiagnosticSender) || path == "/v1/manager/snapshot-evidence"
     {
         262144
     } else if witness_post {

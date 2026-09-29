@@ -11,11 +11,13 @@
     },
     "edge_epoch": {
       "type": "string",
-      "maxLength": 128
+      "maxLength": 128,
+      "minLength": 1
     },
     "process_epoch": {
       "type": "string",
-      "maxLength": 128
+      "maxLength": 128,
+      "minLength": 1
     },
     "source_id": {
       "type": "string",
@@ -58,7 +60,7 @@
           },
           "payload": {
             "type": "string",
-            "pattern": "^[0-9a-f]{4}$"
+            "pattern": "^([0-9a-f]{4}|0[0-3]0[0-2](0[0-9a-f]|1[0-5])00)$"
           }
         },
         "required": [
@@ -70,7 +72,8 @@
         ],
         "additionalProperties": false
       },
-      "maxItems": 128
+      "maxItems": 128,
+      "minItems": 1
     },
     "quality": {
       "type": "object",
@@ -102,5 +105,45 @@
     "quality"
   ],
   "additionalProperties": false,
-  "$defs": {}
+  "$defs": {},
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source_id": {
+            "const": "consensus_diagnostic"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "process_epoch": {
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "records": {
+            "items": {
+              "properties": {
+                "payload": {
+                  "pattern": "^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "records": {
+            "items": {
+              "properties": {
+                "payload": {
+                  "pattern": "^[0-9a-f]{4}$"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

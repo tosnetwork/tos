@@ -9,6 +9,7 @@
 
 #include "core-health.h"
 #include "core-registry.h"
+#include "diagnostic-producer.h"
 
 namespace tos::health {
 // Process lifetime observations. Labels are frozen enums; no session, candidate,
@@ -243,6 +244,8 @@ class ActionObservation {
         }
         if (!stats_.add(stats_.phase(action_, origin_, phase))) stats_.incomplete(action_);
         seen |= bit;
+        diagnostic_phase(static_cast<std::uint8_t>(action_), static_cast<std::uint8_t>(origin_),
+                         static_cast<std::uint8_t>(phase));
       }
       enqueued_ |= phase == Phase::BroadcastEnqueued || phase == Phase::CandidatePublished;
     }

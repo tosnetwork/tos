@@ -507,6 +507,10 @@ impl EvidenceDb {
             evidence: value,
         })
     }
+    pub fn insert_diagnostic(&mut self,batch:&tos_health_core::contracts::DiagnosticBatch)->Result<crate::diagnostic_ingest::Ack> {
+        wal_budget(&self.path,self.quota)?;
+        crate::diagnostic_ingest::insert(&mut self.conn,batch)
+    }
     pub fn insert_witness(
         &mut self,
         response: CacheResponse,

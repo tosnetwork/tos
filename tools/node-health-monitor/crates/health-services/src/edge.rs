@@ -60,6 +60,7 @@ pub struct EdgeState {
     cgroup_status: Arc<Mutex<String>>,
     pub started: Instant,
     pub source_epoch: Option<String>,
+    pub diagnostic_stats:Arc<crate::diagnostic_relay::Stats>,
     limiter: Arc<Mutex<Bucket>>,
 }
 impl EdgeState {
@@ -74,6 +75,7 @@ impl EdgeState {
             cgroup_status: Arc::new(Mutex::new("disabled".into())),
             started: Instant::now(),
             source_epoch: crate::random_token().ok().map(|bytes| crate::hex(&bytes)),
+            diagnostic_stats:Arc::new(crate::diagnostic_relay::Stats::default()),
             limiter: Arc::new(Mutex::new(Bucket::new())),
         }
     }
@@ -403,12 +405,18 @@ pub fn router(state: EdgeState) -> Router {
         .route("/v1/edge/heartbeat", get(heartbeat))
         .route("/v1/edge/snapshot", get(snapshot))
         .route("/v1/edge/capabilities", get(capabilities))
+        .route("/v1/edge/diagnostics",get(diagnostics))
         .layer(axum::extract::DefaultBodyLimit::max(4096))
         .layer(axum::middleware::from_fn_with_state(
             Arc::new(tokio::sync::Semaphore::new(8)),
             crate::limit_requests,
         ))
         .with_state(state)
+}
+async fn diagnostics(State(state):State<EdgeState>,headers:HeaderMap,OriginalUri(uri):OriginalUri)
+    ->Result<Response,StatusCode> {
+    permit(&state,&headers,&uri)?;
+    bounded_json(&state.diagnostic_stats.snapshot(),4096)
 }
 fn bounded_read(path: &Path, limit: u64) -> Result<String, String> {
     use std::io::Read;

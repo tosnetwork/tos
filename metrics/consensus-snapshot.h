@@ -124,7 +124,7 @@ inline std::size_t consensus_core_resident_bytes() {
       sizeof(ActionLedger::Bank) * ActionLedger::max_banks + sizeof(SessionObservation::context_rows) +
       sizeof(consensus_metric_catalog) + sizeof(replay_metric_phases) + sizeof(action_age_ns) + sizeof(action_complete_value) +
       sizeof(action_age_available) + sizeof(work_age_ns) + sizeof(work_age_available) + sizeof(masterchain_slots) +
-      sizeof(masterchain_slot_available) + 4096;
+      sizeof(masterchain_slot_available) + sizeof(DiagnosticProducer::Stats) + 4096 + 8 * 4096;
   for (const auto &descriptor : consensus_metric_catalog) {
     result += std::strlen(descriptor.name) + std::strlen(descriptor.type) + std::strlen(descriptor.suffix) + 3;
     for (const auto &label : descriptor.labels) result += std::strlen(label[0]) + std::strlen(label[1]) + 2;

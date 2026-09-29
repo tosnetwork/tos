@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import json
+import re
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('inputs', ROOT/'tests/generate_schemas.py')
@@ -21,7 +22,7 @@ TIME = m.TIME
 ALIAS = m.NODE
 COMMON = {
  'u64':U,'hash':H,'utc':TIME,'alias':ALIAS,
- 'quality':O(instrumentation_complete=B,producer_dropped=U,relay_dropped=U,parse_errors=U,shed_reason=N(S(96))),
+ 'quality':O(instrumentation_complete=B,producer_dropped=N(U),relay_dropped=N(U),parse_errors=N(U),shed_reason=N(S(96))),
  'coverage':O(status=E('complete','partial','unknown'),missing_fields=A(S(96),64),gaps=A(S(256),32),sampling_policy=S(128)),
  'capability':O(supported=B,enabled=B,contract_valid=B,performance_gate=E('pass','fail','not_run')),
  'gate':O(name=ALIAS,status=E('pass','fail','not_run'),evidence_digest=N(H)),
@@ -41,9 +42,10 @@ COMMON = {
  'unavailable':O(kind={'const':'unavailable'},reason=S(256)),
  'scalar':O(kind={'const':'scalar'},metric_id=S(96),value=N({'type':'number'}),unit=S(32)),
  'diagnostic':O(kind={'const':'diagnostic_fixture'},record_type={'const':1},payload={'type':'string','pattern':'^[0-9a-f]{4}$'}),
+ 'diagnostic_phase':O(kind={'const':'diagnostic_phase'},record_type={'const':1},payload={'type':'string','pattern':'^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$'},monotonic_ns=U),
 }
 COMMON['anchor']={'oneOf':[R('block'),R('consensus'),R('storage_ack')]}
-COMMON['payload']={'oneOf':[R(x) for x in ['process','host_cgroup','native','native_core','unavailable','scalar','diagnostic','block','consensus','storage_ack']]}
+COMMON['payload']={'oneOf':[R(x) for x in ['process','host_cgroup','native','native_core','unavailable','scalar','diagnostic','diagnostic_phase','block','consensus','storage_ack']]}
 COMMON['source']=O(schema_version={'const':1},source_id=ALIAS,node_id=ALIAS,scope_id=ALIAS,process_epoch=S(128),source_epoch=S(128),source_version=S(96),generation=U,availability=E('available','disabled','unsupported','unauthorized','error','unknown'),observed_at=N(TIME),last_success_at=N(TIME),received_at=N(TIME),source_age_ms=N(I(0,9007199254740991)),clock_quality=E('valid','uncertain','invalid'),coverage=R('coverage'),content_hash=H,payload=R('payload'),quality=R('quality'))
 COMMON['evidence']=O(evidence_id=S(128),kind=E('observation','derived','event','change'),node_id=ALIAS,source_id=ALIAS,source_version=S(96),source_record_id=S(256),process_epoch=S(128),observed_at=N(TIME),received_at=TIME,clock_quality=E('valid','uncertain','invalid'),scope_id=ALIAS,payload=R('payload'),content_hash=H,quality=R('quality'),redacted={'const':True},parent_evidence_ids=A(S(128),32),derivation_version=N(S(96)))
 COMMON['component']=O(kind=E('process','host','chain','consensus','network','storage','index','gpu','telemetry','deployment'),sources=A(ALIAS,32),value=N(R('payload')),quality=R('quality'))
@@ -86,4 +88,46 @@ def main():
  for name,body in m.INPUT_SCHEMAS.items(): write('tools/'+name+'.input.schema.json',body);write('tools/'+name+'.output.schema.json',envelope(DATA[name]))
  write('diagnosis.schema.json',O(status=E('analysis','insufficient_evidence'),summary=S(2000),findings=A(O(claim=S(1000),basis=E('observed','hypothesis'),evidence_ids={**A(S(128),8),'uniqueItems':True}),6),missing_evidence=A(S(256),16),recommended_runbooks={**A(E('inspect_duty_accounting','inspect_persistence_progress','inspect_consensus_queues','inspect_storage_pressure','inspect_quic_backlog','inspect_observer_coverage','inspect_telemetry_unavailable','inspect_ai_unavailable'),6),'uniqueItems':True}))
  write('config.schema.json',O(schema_version={'const':1},placement=E('development_fixture','production_off_validator'),native_owner={'const':'health_edge'},remote_native_mode={'const':'cached_only'},native_interval_seconds={'const':15},native_actual_inflight={'const':1},native_source_budget_ms={'const':2000},native_http_timeout_ms={'const':3000},native_cache_max_age_seconds={'const':30},native_max_bytes={'const':2097152},native_build_per_path={'const':False},getstats_enabled={'const':False},skip_missed_ticks={'const':True},retry_on_timeout={'const':False},core_max_bytes={'const':4194304},core_max_series={'const':2048},core_max_scopes={'const':8},diagnostics_enabled={'const':False},ai_enabled={'const':False},live_fallback={'const':False},max_contiguous_monitor_work_us=N(U),network_id=N(H),binary_digest=N(H),performance_digest=N(H),failure_domains=N(O(validator=ALIAS,monitor=ALIAS,watchdog=ALIAS)),mtls_digest=N(H),receiver_digest=N(H),effective_resource_digest=N(H)))
-if __name__=='__main__':main()
+def diagnostics_only():
+ # Preserve the already frozen native-v2 schema additions and their bytes.
+ # Validate the patch's semantic scope independently before writing it.
+ for path in sorted((ROOT/'contracts').rglob('*.schema.json')):
+  original=path.read_text();document_before=json.loads(original)
+  defs=document_before.get('$defs',{})
+  if 'quality' in defs:
+   old=json.dumps(defs['quality'],indent=2)
+   new=copy.deepcopy(defs['quality'])
+   for field in ('producer_dropped','relay_dropped','parse_errors'):new['properties'][field]=N(U)
+   old='    "quality": '+old.replace('\n','\n    ')
+   new='    "quality": '+json.dumps(new,indent=2).replace('\n','\n    ')
+   assert original.count(old)==1,path
+   original=original.replace(old,new,1)
+   check=json.loads(original);check['$defs']['quality']=defs['quality'];assert check==document_before,path
+   path.write_text(original);document_before=json.loads(original);defs=document_before.get('$defs',{})
+  if 'payload' not in defs or 'diagnostic' not in defs:continue
+  if 'diagnostic_phase' in defs:continue
+  anchor='    "diagnostic": {'
+  assert original.count(anchor)==1,path
+  phase=json.dumps(COMMON['diagnostic_phase'],indent=2)
+  inserted='    "diagnostic_phase": '+phase.replace('\n','\n    ')+',\n'
+  changed=original.replace(anchor,inserted+anchor,1)
+  pattern=r'\{\s*"\$ref"\s*:\s*"#/\$defs/diagnostic"\s*\}'
+  assert len(re.findall(pattern,changed))==1,path
+  changed=re.sub(pattern,lambda match:match[0]+',\n        {"$ref": "#/$defs/diagnostic_phase"}',changed,count=1)
+  after=json.loads(changed);check=copy.deepcopy(after);del check['$defs']['diagnostic_phase']
+  check['$defs']['payload']['oneOf'].remove(R('diagnostic_phase'))
+  assert check==document_before,path
+  path.write_text(changed)
+ batch=json.loads((ROOT/'contracts/diagnostic-batch.schema.json').read_text())
+ batch['properties']['records']['minItems']=1
+ batch['properties']['records']['items']['properties']['payload']['pattern']='^([0-9a-f]{4}|0[0-3]0[0-2](0[0-9a-f]|1[0-5])00)$'
+ batch['properties']['edge_epoch']['minLength']=1;batch['properties']['process_epoch']['minLength']=1
+ batch['allOf']=[{'if':{'properties':{'source_id':{'const':'consensus_diagnostic'}}},'then':{'properties':{
+  'process_epoch':{'pattern':'^[0-9a-f]{32}$'},'records':{'items':{'properties':{'payload':{'pattern':'^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$'}}}}}},
+  'else':{'properties':{'records':{'items':{'properties':{'payload':{'pattern':'^[0-9a-f]{4}$'}}}}}}}]
+ (ROOT/'contracts/diagnostic-batch.schema.json').write_text(json.dumps(batch,indent=2)+'\n')
+if __name__=='__main__':
+ import sys
+ if sys.argv[1:]==['--diagnostics-only']:diagnostics_only()
+ elif not sys.argv[1:]:main();diagnostics_only()
+ else:raise SystemExit('unsupported schema generation mode')

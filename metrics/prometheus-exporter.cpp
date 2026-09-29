@@ -4,6 +4,7 @@
 
 #include "core-health.h"
 #include "core-registry.h"
+#include "diagnostic-ipc.h"
 #include "metrics-types.h"
 #include "prometheus-exporter.h"
 
@@ -50,6 +51,25 @@ void PrometheusExporter::set_health_native_v2() {
   health::consensus_enabled.store(true, std::memory_order_relaxed);
   if (!health::register_consensus_metrics(health::core_registry))
     health::consensus_stats.global_incomplete(health::IncompleteReason::ObservationGap);
+  auto &d=health::diagnostic_stats;
+  std::array<std::atomic<std::uint64_t> *,7> values{&d.dropped,&d.sampled_out,&d.records,&d.bytes,&d.sent,&d.enabled,&d.complete};
+  for (std::size_t i=0; i<values.size(); ++i)
+    if (!health::core_registry.register_fixed(142+i,values[i])) d.complete.store(0);
+}
+void PrometheusExporter::set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling) {
+  if (health::diagnostic_ipc || !health::enabled.load() || !health::consensus_enabled.load()) {
+    LOG(ERROR) << "Diagnostic setup requires enabled core metrics and a single producer"; return;
+  }
+  const auto &text=core_publisher_.epoch();
+  std::array<std::uint8_t,16> epoch{};
+  auto nibble=[](char c) { return c<='9' ? c-'0' : c-'a'+10; };
+  for (std::size_t i=0; i<16; ++i) epoch[i]=static_cast<std::uint8_t>((nibble(text[2*i])<<4)|nibble(text[2*i+1]));
+  auto candidate=std::make_unique<health::DiagnosticIpc>(std::move(path),peer_pid,epoch,sampling);
+  if (!candidate->start()) { LOG(ERROR) << "Diagnostic IPC startup rejected"; return; }
+  health::diagnostic_ipc=std::move(candidate);
+}
+void PrometheusExporter::tear_down() {
+  if (health::diagnostic_ipc) health::diagnostic_ipc->stop();
 }
 void PrometheusExporter::set_health_network(std::string value) {
   if (!core_publisher_.set_network(std::move(value)))
@@ -89,6 +109,17 @@ void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, cons
 }
 
 void PrometheusExporter::on_request(RequestPtr request, PayloadPtr, td::Promise<HttpReturn> promise) {
+  if (request->url() == "/health-diagnostics") {
+    if (!loopback_ || !native_v2_) return respond(std::move(promise),404,"Not Found","");
+    if (request->method() != "GET") return respond(std::move(promise),405,"Method Not Allowed","");
+    const auto &d=health::diagnostic_stats;
+    const char *names[]={"capacity","contention","sequence","encoding","socket","shutdown"};
+    std::string body="{\"schema_version\":1,\"process_epoch\":\""+core_publisher_.epoch()+"\",\"source_id\":\"consensus_diagnostic\",\"catalog\":8,\"enabled\":"+(d.enabled.load()?std::string("true"):std::string("false"))+",\"counter_complete\":"+(d.complete.load()?std::string("true"):std::string("false"))+",\"dropped\":\""+std::to_string(d.dropped.load())+"\",\"sampled_out\":\""+std::to_string(d.sampled_out.load())+"\",\"queue_records\":\""+std::to_string(d.records.load())+"\",\"queue_bytes\":\""+std::to_string(d.bytes.load())+"\",\"sent\":\""+std::to_string(d.sent.load())+"\",\"reasons\":{";
+    for (std::size_t i=0;i<6;++i) { if (i) body+=","; body+="\""+std::string(names[i])+"\":\""+std::to_string(d.reasons[i].load())+"\""; }
+    body+="}}";
+    if (body.size()>2048) return respond(std::move(promise),503,"Service Unavailable","");
+    return respond(std::move(promise),200,"OK",std::move(body),"application/json");
+  }
   if (request->url() == "/health-snapshot") {
     if (!loopback_ || !core_publisher_.configured())
       return respond(std::move(promise), 404, "Not Found", "");

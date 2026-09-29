@@ -20,6 +20,8 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   void set_health_node(std::string value);
   void set_health_network(std::string value);
   void set_health_native_v2();
+  void set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling);
+  void tear_down() override;
 
   explicit PrometheusExporter(std::string prefix);
 

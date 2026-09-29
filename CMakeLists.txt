@@ -991,6 +991,17 @@ add_executable(test-health-core-registry test/test-health-core-registry.cpp)
 target_include_directories(test-health-core-registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-core-registry PRIVATE metrics tdutils)
 
+add_executable(test-health-diagnostic-action test/test-health-diagnostic-action.cpp)
+target_include_directories(test-health-diagnostic-action PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-diagnostic-action PRIVATE metrics tdutils)
+foreach(diagnostic_test producer ipc)
+  add_executable(test-health-diagnostic-${diagnostic_test}
+    tools/node-health-monitor/tests/native/diagnostic-${diagnostic_test}.cpp)
+  target_include_directories(test-health-diagnostic-${diagnostic_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(test-health-diagnostic-${diagnostic_test} PRIVATE -UNDEBUG)
+  target_link_libraries(test-health-diagnostic-${diagnostic_test} PRIVATE tdutils)
+endforeach()
+
 add_executable(test-health-source-policy test/test-health-source-policy.cpp)
 target_include_directories(test-health-source-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-source-policy PRIVATE tdutils)
