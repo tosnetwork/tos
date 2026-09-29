@@ -240,6 +240,7 @@ impl QueryLedger {
             .execute(
                 "UPDATE query_mcp_bindings SET call_count=call_count+1
              WHERE run_id=?1 AND boot_id=?2 AND call_count<16
+               AND bound_at_ms<=?3 AND ?3-bound_at_ms<180000
              AND EXISTS(SELECT 1 FROM query_grants g WHERE g.run_id=query_mcp_bindings.run_id
                AND g.boot_id=?2 AND g.revoked=0 AND g.expires_ms>?3)",
                 params![run_id, self.clock_domain, now],
@@ -255,8 +256,14 @@ impl QueryLedger {
     /// any duplicated representation, before releasing them to the client.
     /// A rejected response is not delivered even if its underlying query
     /// attempt has already committed; that is conservative rather than replay.
-    pub fn charge_mcp_wire(&mut self, run_id: &str, bytes: usize) -> Result<(), String> {
+    pub fn charge_mcp_wire(
+        &mut self,
+        run_id: &str,
+        bytes: usize,
+        now_ms: u64,
+    ) -> Result<(), String> {
         let bytes = i64::try_from(bytes).map_err(failure)?;
+        let now = i64::try_from(now_ms).map_err(failure)?;
         if bytes > 131_072 {
             return Err("MCP wire response exceeds run budget".into());
         }
@@ -265,8 +272,11 @@ impl QueryLedger {
         let changed = tx
             .execute(
                 "UPDATE query_mcp_bindings SET wire_bytes=wire_bytes+?2
-             WHERE run_id=?1 AND boot_id=?3 AND wire_bytes<=131072-?2",
-                params![run_id, bytes, self.clock_domain],
+             WHERE run_id=?1 AND boot_id=?3 AND wire_bytes<=131072-?2
+               AND bound_at_ms<=?4 AND ?4-bound_at_ms<180000
+               AND EXISTS(SELECT 1 FROM query_grants g WHERE g.run_id=query_mcp_bindings.run_id
+                 AND g.boot_id=?3 AND g.revoked=0 AND g.expires_ms>?4)",
+                params![run_id, bytes, self.clock_domain, now],
             )
             .map_err(failure)?;
         if changed != 1 {

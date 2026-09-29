@@ -26,3 +26,17 @@ termination, two-child concurrency, provider/AURA compatibility, actual
 zero-upstream storm controls, or production deployment. `wire_bytes` denotes
 HTTP response body bytes, not socket framing or headers. The MCP feature is
 still disabled by default.
+
+Successor boundary check: the private MCP connection is capped at 180 seconds
+from accept, and the durable binding rejects calls or response release at
+`bound_at_ms + 180000` even while the 200-second grant remains active. A
+focused virtual-clock control passed at `+179999` and refused at `+180000`;
+actual Unix and ledger tests and feature strict clippy passed after this edit.
+The successor `cargo test -p tos-health-services --features mcp --test query_ledger
+--bin tos-observability --locked -j2` raw log is
+`/home/tomi/nhm-c08-mcp-evidence/session-deadline-tests.log` (SHA-256
+`40de848a2e437aa931975a8cb8a518765c7f774121b8bc4cfc18cfae88f7cb84`);
+strict feature clippy is `session-deadline-clippy.log` in that directory
+(SHA-256 `dd621e9ff7c9eac161c730aa8a79332dd68698435a7a84d044d9ad39dfa1f5d2`).
+This is a transport-session deadline, not yet proof of whole AURA child
+termination or a complete broker-run deadline.

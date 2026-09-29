@@ -111,12 +111,15 @@ async fn serve_mcp(
                             .expect("fixed MCP size refusal"));
                     };
                     let bytes = collected.to_bytes();
+                    let now = tos_health_services::query_ledger::boot_millis();
                     let charged = state.query_ledger.as_ref().is_some_and(|ledger| {
-                        ledger
-                            .lock()
-                            .expect("query ledger")
-                            .charge_mcp_wire(&run, bytes.len())
-                            .is_ok()
+                        now.as_ref().is_ok_and(|now| {
+                            ledger
+                                .lock()
+                                .expect("query ledger")
+                                .charge_mcp_wire(&run, bytes.len(), *now)
+                                .is_ok()
+                        })
                     });
                     if !charged {
                         return Ok(hyper::Response::builder()
@@ -128,7 +131,7 @@ async fn serve_mcp(
                 }
             });
             let _ = tokio::time::timeout(
-                Duration::from_secs(200),
+                Duration::from_secs(180),
                 hyper::server::conn::http1::Builder::new()
                     .keep_alive(true)
                     .serve_connection(TokioIo::new(stream), transport),

@@ -50,15 +50,24 @@ fn mcp_binding_call_and_wire_budgets_survive_restart() {
         ledger.reserve_mcp_call(&g.run_id, 102).unwrap();
     }
     assert!(ledger.reserve_mcp_call(&g.run_id, 102).is_err());
-    ledger.charge_mcp_wire(&g.run_id, 131_071).unwrap();
-    assert!(ledger.charge_mcp_wire(&g.run_id, 2).is_err());
+    ledger.charge_mcp_wire(&g.run_id, 131_071, 102).unwrap();
+    assert!(ledger.charge_mcp_wire(&g.run_id, 2, 102).is_err());
     assert_eq!(ledger.mcp_usage(&g.run_id).unwrap(), Some((16, 131_071)));
     drop(ledger);
     let mut restored = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
     assert!(restored.reserve_mcp_call(&g.run_id, 103).is_err());
-    restored.charge_mcp_wire(&g.run_id, 1).unwrap();
-    assert!(restored.charge_mcp_wire(&g.run_id, 1).is_err());
+    restored.charge_mcp_wire(&g.run_id, 1, 103).unwrap();
+    assert!(restored.charge_mcp_wire(&g.run_id, 1, 103).is_err());
     assert_eq!(restored.mcp_usage(&g.run_id).unwrap(), Some((16, 131_072)));
+    let mut deadline_grant = grant(&[0x52; 32]);
+    deadline_grant.run_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into();
+    restored.create(&deadline_grant, 100).unwrap();
+    restored.claim_mcp(&deadline_grant.run_id, 101).unwrap();
+    restored.reserve_mcp_call(&deadline_grant.run_id, 180_100).unwrap();
+    restored.charge_mcp_wire(&deadline_grant.run_id, 1, 180_100).unwrap();
+    assert!(restored.reserve_mcp_call(&deadline_grant.run_id, 180_101).is_err());
+    assert!(restored.charge_mcp_wire(&deadline_grant.run_id, 1, 180_101).is_err());
+    assert_eq!(restored.mcp_usage(&deadline_grant.run_id).unwrap(), Some((1, 1)));
     drop(restored);
     std::fs::remove_dir_all(directory).unwrap();
 }
