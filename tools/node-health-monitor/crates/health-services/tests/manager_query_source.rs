@@ -20,7 +20,7 @@ use tos_health_services::{
         project_process, read_process_projection, read_process_projection_page,
     },
     observability::{control_router, import_manager, router as query_router, ObservabilityState},
-    query_ledger::QueryLedger,
+    query_ledger::{ManagerCursor, QueryLedger},
     random_token, Inventory,
 };
 use tower::ServiceExt;
@@ -83,6 +83,48 @@ fn live_read_only_projection_cost_witness() {
 async fn body(response: axum::response::Response) -> serde_json::Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+#[test]
+fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-cursor-validation-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("query.sqlite");
+    let mut ledger = QueryLedger::open(&path).unwrap();
+    let mut cursor =
+        ManagerCursor { network: "a".repeat(64), device: 1, inode: 1, watermark: 3, anchor: None };
+    // A global M boundary may contain only non-process observations.
+    ledger.commit_manager_cursor(None, &cursor).unwrap();
+    assert_eq!(ledger.manager_cursor().unwrap(), Some(cursor.clone()));
+    let previous = ledger.manager_cursor().unwrap().unwrap();
+    cursor.watermark = 4;
+    cursor.anchor = Some((4, "b".repeat(64)));
+    assert!(ledger
+        .commit_manager_cursor(Some(&previous), &cursor)
+        .unwrap_err()
+        .contains("no retained source row"));
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute("UPDATE query_manager_cursor SET network='bad' WHERE singleton=1", []).unwrap();
+    assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
+    sql.execute(
+        "UPDATE query_manager_cursor SET network=?1,anchor_seq=4,anchor_hash=?2 WHERE singleton=1",
+        rusqlite::params!["a".repeat(64), "b".repeat(64)],
+    )
+    .unwrap();
+    assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
+    sql.execute(
+        "UPDATE query_manager_cursor SET anchor_seq=3,anchor_hash='bad' WHERE singleton=1",
+        [],
+    )
+    .unwrap();
+    assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
+    drop(sql);
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[tokio::test]

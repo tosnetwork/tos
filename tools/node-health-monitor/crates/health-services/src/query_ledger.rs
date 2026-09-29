@@ -27,6 +27,20 @@ pub struct ManagerCursor {
 }
 type CursorSqlRow = (String, String, String, i64, Option<i64>, Option<String>);
 
+fn validate_manager_cursor(cursor: &ManagerCursor) -> Result<(), String> {
+    if !tos_health_core::wire::hash(&cursor.network)
+        || cursor.anchor.as_ref().is_some_and(|(seq, hash)| {
+            *seq == 0 || *seq > cursor.watermark || !tos_health_core::wire::hash(hash)
+        })
+    {
+        return Err("invalid persisted M projection cursor".into());
+    }
+    // A nonzero watermark can have no process anchor when the source snapshot
+    // contains only other observation classes. The page reader, not this Q
+    // ledger, witnesses that absence before the cursor is committed.
+    Ok(())
+}
+
 /// Linux BOOTTIME includes suspend and keeps the same origin across process
 /// restarts in one time namespace. Instant::elapsed would renew old grants.
 pub fn boot_millis() -> Result<u64, String> {
@@ -230,13 +244,15 @@ impl QueryLedger {
                 (None, None) => None,
                 _ => return Err("M cursor anchor incomplete".into()),
             };
-            Ok(ManagerCursor {
+            let cursor = ManagerCursor {
                 network,
                 device: device.parse().map_err(failure)?,
                 inode: inode.parse().map_err(failure)?,
                 watermark: u64::try_from(watermark).map_err(failure)?,
                 anchor,
-            })
+            };
+            validate_manager_cursor(&cursor)?;
+            Ok(cursor)
         }).transpose()
     }
 
@@ -248,26 +264,18 @@ impl QueryLedger {
         previous: Option<&ManagerCursor>,
         next: &ManagerCursor,
     ) -> Result<(), String> {
-        if next.network.len() != 64
-            || !next.network.bytes().all(|byte| byte.is_ascii_hexdigit())
-            || next.anchor.as_ref().is_some_and(|(seq, hash)| {
-                *seq == 0
-                    || *seq > next.watermark
-                    || hash.len() != 64
-                    || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-            })
-            || previous.is_some_and(|old| {
-                old.network != next.network
-                    || old.device != next.device
-                    || old.inode != next.inode
-                    || old.watermark > next.watermark
-                    || old.anchor.as_ref().is_some_and(|(seq, hash)| {
-                        next.anchor.as_ref().is_none_or(|(new_seq, new_hash)| {
-                            new_seq < seq || (new_seq == seq && new_hash != hash)
-                        })
+        validate_manager_cursor(next)?;
+        if previous.is_some_and(|old| {
+            old.network != next.network
+                || old.device != next.device
+                || old.inode != next.inode
+                || old.watermark > next.watermark
+                || old.anchor.as_ref().is_some_and(|(seq, hash)| {
+                    next.anchor.as_ref().is_none_or(|(new_seq, new_hash)| {
+                        new_seq < seq || (new_seq == seq && new_hash != hash)
                     })
-            })
-        {
+                })
+        }) {
             return Err("invalid M projection cursor advancement".into());
         }
         let tx =
@@ -294,6 +302,25 @@ impl QueryLedger {
             .transpose()?;
         if actual != expected {
             return Err("M projection cursor changed concurrently".into());
+        }
+        if let Some((seq, hash)) = next
+            .anchor
+            .as_ref()
+            .filter(|anchor| previous.and_then(|old| old.anchor.as_ref()) != Some(*anchor))
+        {
+            // A changed anchor is justified only by a process row already
+            // projected and retained in Q. The M page reader witnessed the
+            // original row; this check prevents a direct cursor-only jump.
+            let witnessed: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM query_origins WHERE origin_id=?1 AND manager_seq=?2)",
+                    params![hash, i64::try_from(*seq).map_err(failure)?],
+                    |row| row.get(0),
+                )
+                .map_err(failure)?;
+            if !witnessed {
+                return Err("M cursor anchor has no retained source row".into());
+            }
         }
         tx.execute(
             "INSERT INTO query_manager_cursor(singleton,network,device,inode,watermark,anchor_seq,anchor_hash)
