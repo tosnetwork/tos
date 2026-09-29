@@ -381,6 +381,35 @@ async fn actual_observer_cache_to_manager_retained_archive_dedups_without_rule_f
         Some("1"),
         "historical other epoch cannot advance the current activation"
     );
+    let mut revised: Value = serde_json::to_value(fixture.plan()).unwrap();
+    revised["revision"] = json!("b".repeat(64));
+    let revised_bytes = serde_json::to_vec(&revised).unwrap();
+    std::fs::write(fixture.0.join("plan.json"), &revised_bytes).unwrap();
+    let revised_plan = Plan::decode(&revised_bytes).unwrap();
+    let reactivated = Manager::start(&fixture.config()).unwrap();
+    let current_before: i64 = rusqlite::Connection::open(fixture.0.join("evidence.db"))
+        .unwrap()
+        .query_row(
+            "SELECT quarantined FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(current_before, 0, "new explicit revision reactivates current only");
+    let prior_history = cached(revised_plan, &source('d')).await;
+    assert_eq!(post(reactivated, prior_history).await.0, StatusCode::CONFLICT);
+    let current_after: i64 = rusqlite::Connection::open(fixture.0.join("evidence.db"))
+        .unwrap()
+        .query_row(
+            "SELECT quarantined FROM witness_current_activation WHERE endpoint='cache_1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        current_after, 1,
+        "pre-existing historical quarantine must invalidate matching reactivated current"
+    );
 }
 
 #[tokio::test]

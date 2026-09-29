@@ -67,3 +67,29 @@ The service, test and current-age source hashes above are before any further
 changes. This slice has no actual measured M current-view read surface, no A
 consumer, no production witness source or proof verifier, and does not make
 `observer_disagreement` live. It is a review milestone, not READY_FOR_REVIEW.
+
+## Successor: pre-existing historical quarantine after reactivation
+
+The first conflict fix covered a newly detected historical conflict. A later
+review found that the pre-existing `witness_quarantined` early return could
+skip current invalidation after a new plan revision explicitly reactivated the
+same O/source identity. Both conflict branches now call the same matched
+current-quarantine update in the historical SQLite transaction; only the
+matching active plan hash, endpoint, O epoch and source epoch are affected.
+The actual O cache→M route test activates a new revision after historical
+quarantine, verifies current reset to 0, posts the still-quarantined history,
+gets HTTP conflict and verifies current quarantine returns to 1.
+
+Restored `CARGO_BUILD_JOBS=2 cargo test --locked -p tos-health-services --test witness_archive`
+passed 6/6, exit 0: `raw/current-reactivation-suite.log` SHA-256
+`359dced96d505477995d156adec20b9dacf955967ccb3c294a47bfa3786998cb`.
+The single actual-route negative also passed, exit 0:
+`raw/current-reactivation-conflict.log` SHA-256
+`f79f88f3d10a79996281a25af6d5c51a10220f8a9484d4ec8b3a84ebf0bd153d`.
+Restored workspace Clippy exited 0:
+`raw/current-reactivation-clippy.log` SHA-256
+`40a520b60bbd24e8330a9472b629184fbee6faae6587d0f57c79f621363168cc`.
+Successor source SHA-256: `crates/health-services/src/durable.rs`
+`f24cd4edc4e431ff3eb06f0f1e0587f53caa262a723a14399ea4c204e964da21`;
+`crates/health-services/tests/witness_archive.rs`
+`1c05c7e92309d8c5336fee1bc08f8e3335ca91d167e5216e48e4c4b5a1987d2e`.

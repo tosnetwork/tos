@@ -1,6 +1,6 @@
 //! Local monitoring-host storage. Control transactions never share the evidence database.
-use crate::witness::{CacheResponse, RelativeAge, RowQualification};
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::witness::{CacheReceipt, CacheResponse, RelativeAge, RowQualification};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -124,6 +124,19 @@ fn witness_immutable_metadata_hash(response: &CacheResponse) -> Result<String> {
     .map_err(err)?;
     Ok(format!("{:x}", Sha256::digest(&metadata)))
 }
+fn quarantine_matching_current(
+    tx: &Transaction<'_>,
+    receipt: &CacheReceipt,
+    plan_hash: &str,
+) -> Result<bool> {
+    tx.execute(
+        "UPDATE witness_current_activation SET quarantined=1
+         WHERE endpoint=?1 AND plan_hash=?2 AND observer_epoch=?3 AND source_epoch=?4",
+        params![receipt.endpoint_id, plan_hash, receipt.observer_epoch, receipt.source_epoch],
+    )
+    .map(|rows| rows != 0)
+    .map_err(err)
+}
 pub struct EvidenceDb {
     conn: Connection,
     path: std::path::PathBuf,
@@ -237,9 +250,10 @@ impl EvidenceDb {
         }
         tx.commit().map_err(err)
     }
-    /// Separate development current-order gate. It is never called by the
-    /// historical archive route, never enters `observations`, and its rows
-    /// cannot feed rules until the caller supplies a complete measured age.
+    /// Separate development current-order gate. The historical writer calls
+    /// it only after a valid archive commit and with unknown transport age;
+    /// it never enters `observations` or feeds rules without a separately
+    /// complete measured-age path.
     pub fn review_witness_current(
         &mut self,
         response: &CacheResponse,
@@ -476,6 +490,12 @@ impl EvidenceDb {
             )
             .map_err(err)?;
         if quarantined {
+            let current_quarantined =
+                quarantine_matching_current(&tx, receipt, &current_plan_hash)?;
+            tx.commit().map_err(err)?;
+            if current_quarantined {
+                self.current_tracks.remove(endpoint);
+            }
             return Err("WITNESS_SOURCE_CONFLICT".into());
         }
         let prior: Option<(i64, String, String, String)> = tx
@@ -499,15 +519,10 @@ impl EvidenceDb {
                     params![receipt.observer_epoch, endpoint, receipt.source_epoch],
                 )
                 .map_err(err)?;
-                let current_quarantined = tx
-                    .execute(
-                        "UPDATE witness_current_activation SET quarantined=1
-                         WHERE endpoint=?1 AND plan_hash=?2 AND observer_epoch=?3 AND source_epoch=?4",
-                        params![endpoint, current_plan_hash, receipt.observer_epoch, receipt.source_epoch],
-                    )
-                    .map_err(err)?;
+                let current_quarantined =
+                    quarantine_matching_current(&tx, receipt, &current_plan_hash)?;
                 tx.commit().map_err(err)?;
-                if current_quarantined != 0 {
+                if current_quarantined {
                     self.current_tracks.remove(endpoint);
                 }
                 return Err("WITNESS_SOURCE_CONFLICT".into());
