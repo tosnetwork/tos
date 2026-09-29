@@ -13,4 +13,5 @@ pub mod contracts;
 pub mod diagnosis;
 pub mod freshness;
 pub mod health_state;
+pub mod rules;
 pub mod wire;

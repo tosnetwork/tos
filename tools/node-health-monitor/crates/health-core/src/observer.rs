@@ -73,3 +73,58 @@ impl Deadman {
         now.saturating_sub(self.last_received.unwrap_or(self.start_ms)) >= 45_000
     }
 }
+/// Process and pipeline heartbeats have separate deadlines and replay histories.
+#[derive(Debug)]
+pub struct EpochDeadman {
+    epoch: Option<String>,
+    retired: std::collections::BTreeSet<String>,
+    sequence: Option<u64>,
+    started: u64,
+    last_received: Option<u64>,
+    timeout_ms: u64,
+}
+impl EpochDeadman {
+    pub fn new(now: u64, timeout_ms: u64) -> Result<Self, &'static str> {
+        if timeout_ms == 0 {
+            return Err("invalid deadline");
+        }
+        Ok(Self {
+            epoch: None,
+            retired: std::collections::BTreeSet::new(),
+            sequence: None,
+            started: now,
+            last_received: None,
+            timeout_ms,
+        })
+    }
+    pub fn receive(&mut self, now: u64, epoch: &str, sequence: u64) -> Result<bool, &'static str> {
+        if epoch.is_empty()
+            || epoch.len() > 128
+            || now < self.started
+            || self.last_received.is_some_and(|t| now < t)
+        {
+            return Err("invalid heartbeat");
+        }
+        if self.epoch.as_deref() != Some(epoch) {
+            if self.retired.contains(epoch) || self.retired.len() >= 32 {
+                return Err("retired epoch or epoch budget");
+            }
+            if let Some(old) = self.epoch.replace(epoch.into()) {
+                self.retired.insert(old);
+            }
+            self.sequence = Some(sequence);
+            self.last_received = Some(now);
+            return Ok(true);
+        }
+        if self.sequence.is_some_and(|s| sequence <= s) {
+            return Ok(false);
+        }
+        self.sequence = Some(sequence);
+        self.last_received = Some(now);
+        Ok(true)
+    }
+    pub fn unavailable(&self, now: u64) -> bool {
+        now.checked_sub(self.last_received.unwrap_or(self.started))
+            .is_none_or(|age| age >= self.timeout_ms)
+    }
+}
