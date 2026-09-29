@@ -45,11 +45,13 @@ unrelated cursor/evidence test expansion.
    listener remains the only service endpoint and owns all query budgets.
 2. Broker creates a per-run private credential handoff (authorized development
    profile: a 0600 regular file in a 0700 temporary directory). The isolated
-   harness removes its directory after the test; a production broker has not
-   yet proved cleanup on every failure. Only the pathname is present in AURA stdio config;
+   adapter verifies the private directory/file identity and unlinks this
+   one-use file before reading it; the isolated harness removes its directory
+   afterward. A production broker has not yet proved cleanup for failures
+   before adapter launch. Only the pathname is present in AURA stdio config;
    never put the raw run token or service credential in `cmd`, `args`,
    AURA-config `env`, JSON-RPC/tool schema/result, or logs. The adapter checks
-   file ownership/type/mode, reads it once, opens the fixed Unix path and
+   file ownership/type/mode and link count, consumes it once, opens the fixed Unix path and
    presents the three authorization headers. The model is not given file,
    shell, network, or other MCP tools. A production handoff must additionally
    prove process-user/sandbox separation or replace this file with a one-use
@@ -60,7 +62,10 @@ unrelated cursor/evidence test expansion.
    forward a caller-supplied token. Bound each stdio line to 16 KiB input,
    each HTTP/MCP output to 32 KiB, whole run to the existing 16-call/
    128-KiB/180-second/200-second grant limits and five-second tool deadline.
-   Adapter buffering and response framing need separate bounded accounting.
+   Adapter buffering and response framing are bounded. rmcp 3.5 requires
+   `Accept: application/json, text/event-stream`; actual simple replies in
+   the pinned 0.12 ⇄ 3.5 run are JSON. The adapter checks `Content-Type` and
+   refuses an SSE response rather than parsing one as a JSON body.
 4. On cancellation, timeout, malformed frame, authentication failure or
    unexpected EOF, fail closed: stop forwarding, terminate/reap the AURA
    child and adapter, revoke the grant, and wait for termination before a

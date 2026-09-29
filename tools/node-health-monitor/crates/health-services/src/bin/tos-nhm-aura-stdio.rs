@@ -7,9 +7,17 @@ use hyper_util::rt::TokioIo;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
+    ffi::CString,
     fs::{self, OpenOptions},
     io::Read,
-    os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+    mem::MaybeUninit,
+    os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::{
+            ffi::OsStrExt,
+            fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+        },
+    },
     path::Path,
     time::Duration,
 };
@@ -27,27 +35,104 @@ struct Credentials {
     service_token: String,
 }
 
-fn private_file(path: &Path) -> Result<Credentials, ()> {
-    let parent = path.parent().ok_or(())?;
-    let parent_meta = fs::symlink_metadata(parent).map_err(|_| ())?;
-    let file_meta = fs::symlink_metadata(path).map_err(|_| ())?;
-    let uid = unsafe { libc::geteuid() };
-    if !parent_meta.file_type().is_dir()
-        || !file_meta.file_type().is_file()
-        || parent_meta.uid() != uid
-        || file_meta.uid() != uid
-        || parent_meta.mode() & 0o077 != 0
-        || file_meta.mode() & 0o177 != 0
+fn entry_stat(dir: &fs::File, name: &CString) -> Result<libc::stat, ()> {
+    let mut stat = MaybeUninit::<libc::stat>::uninit();
+    // The pathname is resolved relative to the already-open private directory.
+    if unsafe {
+        libc::fstatat(dir.as_raw_fd(), name.as_ptr(), stat.as_mut_ptr(), libc::AT_SYMLINK_NOFOLLOW)
+    } != 0
     {
         return Err(());
     }
-    let file = OpenOptions::new()
+    Ok(unsafe { stat.assume_init() })
+}
+
+fn remove_owned_entry(
+    dir: &fs::File,
+    name: &CString,
+    uid: libc::uid_t,
+    expected: Option<&libc::stat>,
+) -> Result<(), ()> {
+    let current = entry_stat(dir, name)?;
+    let kind = current.st_mode & libc::S_IFMT;
+    if current.st_uid != uid
+        || (kind != libc::S_IFREG && kind != libc::S_IFLNK)
+        || expected.is_some_and(|opened| {
+            current.st_dev != opened.st_dev || current.st_ino != opened.st_ino
+        })
+    {
+        return Err(());
+    }
+    if unsafe { libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        return Err(());
+    }
+    Ok(())
+}
+
+fn private_file(path: &Path) -> Result<Credentials, ()> {
+    let parent = path.parent().ok_or(())?;
+    let parent_meta = fs::symlink_metadata(parent).map_err(|_| ())?;
+    let uid = unsafe { libc::geteuid() };
+    if !parent_meta.file_type().is_dir()
+        || parent_meta.uid() != uid
+        || parent_meta.mode() & 0o077 != 0
+    {
+        return Err(());
+    }
+    let dir = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(path)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open(parent)
         .map_err(|_| ())?;
-    let opened = file.metadata().map_err(|_| ())?;
-    if !opened.is_file() || opened.uid() != uid || opened.mode() & 0o177 != 0 {
+    let opened_parent = dir.metadata().map_err(|_| ())?;
+    if opened_parent.dev() != parent_meta.dev()
+        || opened_parent.ino() != parent_meta.ino()
+        || opened_parent.uid() != uid
+        || opened_parent.mode() & 0o077 != 0
+    {
+        return Err(());
+    }
+    let name = CString::new(path.file_name().ok_or(())?.as_bytes()).map_err(|_| ())?;
+    let entry = entry_stat(&dir, &name)?;
+    if entry.st_uid != uid || entry.st_mode & libc::S_IFMT != libc::S_IFREG {
+        // Only remove a same-owner symlink inside the verified private
+        // directory. Never follow it or delete its target.
+        if entry.st_uid == uid && entry.st_mode & libc::S_IFMT == libc::S_IFLNK {
+            let _ = remove_owned_entry(&dir, &name, uid, Some(&entry));
+        }
+        return Err(());
+    }
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        let _ = remove_owned_entry(&dir, &name, uid, Some(&entry));
+        return Err(());
+    }
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    let opened = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            let _ = remove_owned_entry(&dir, &name, uid, Some(&entry));
+            return Err(());
+        }
+    };
+    if !opened.is_file()
+        || opened.uid() != uid
+        || opened.dev() != entry.st_dev
+        || opened.ino() != entry.st_ino
+    {
+        return Err(());
+    }
+    let links = opened.nlink();
+    // Unlink before parsing or connecting: bad permissions, malformed JSON,
+    // socket failure and normal completion all consume this one-use handoff.
+    remove_owned_entry(&dir, &name, uid, Some(&entry))?;
+    if opened.mode() & 0o177 != 0 || links != 1 {
         return Err(());
     }
     let mut file = file.take(1025);
@@ -96,14 +181,19 @@ fn allowed(request: &Value) -> Result<bool, ()> {
 }
 
 async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
     let metadata = fs::symlink_metadata(socket).map_err(|_| ())?;
     if !metadata.file_type().is_socket() {
         return Err(());
     }
-    let stream = tokio::net::UnixStream::connect(socket).await.map_err(|_| ())?;
-    let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await.map_err(|_| ())?;
+    let (mut sender, connection) = tokio::time::timeout(Duration::from_secs(5), async {
+        let stream = tokio::net::UnixStream::connect(socket).await.map_err(|_| ())?;
+        http1::handshake(TokioIo::new(stream)).await.map_err(|_| ())
+    })
+    .await
+    .map_err(|_| ())??;
     let connection = tokio::spawn(async move { connection.await.map_err(|_| ()) });
-    let result = tokio::time::timeout(Duration::from_secs(180), async {
+    let result = tokio::time::timeout_at(deadline, async {
         let mut stdin = tokio::io::stdin();
         let mut stdout = tokio::io::stdout();
         let mut chunk = [0u8; 1024];
@@ -143,6 +233,8 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                     .header("authorization", format!("Bearer {}", credentials.service_token))
                     .header("x-tos-run-id", &credentials.run_id)
                     .header("x-tos-run-token", &credentials.run_token)
+                    // rmcp requires both advertised types; the bounded
+                    // response path below admits JSON only and refuses SSE.
                     .header("accept", "application/json, text/event-stream")
                     .header("content-type", "application/json")
                     .header("mcp-protocol-version", version);
@@ -168,6 +260,14 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                     }
                     if response_expected {
                         if response.status() != StatusCode::OK {
+                            return Err(());
+                        }
+                        if response
+                            .headers()
+                            .get("content-type")
+                            .and_then(|value| value.to_str().ok())
+                            .is_none_or(|value| !value.eq_ignore_ascii_case("application/json"))
+                        {
                             return Err(());
                         }
                         let bytes = Limited::new(response.into_body(), MAX_OUTPUT)
@@ -199,11 +299,13 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
             }
         }
     })
-    .await
-    .map_err(|_| ())?;
+    .await;
     drop(sender);
     connection.abort();
-    result
+    // Do not return control while this connection task can still own an
+    // in-flight request. The broker separately owns grant revoke/replacement.
+    let _ = tokio::time::timeout(Duration::from_secs(5), connection).await.map_err(|_| ())?;
+    result.map_err(|_| ())?
 }
 
 #[tokio::main]

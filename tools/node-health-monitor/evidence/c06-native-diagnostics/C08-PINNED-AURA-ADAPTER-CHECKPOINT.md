@@ -1,7 +1,8 @@
 # C08 pinned AURA adapter checkpoint — isolated development only
 
 Source baseline: `0c48b1c847da720e29c27e07410b6d56aa40bd92`
-(the transport plan commit). Pinned AURA source is
+(the transport plan commit); preceding adapter checkpoint is
+`0710a9a4f2e616b2be407f23d51af3842c69db33`. Pinned AURA source is
 `1000f119d38f4c4656ced0ae883c90f6f7610890` in
 `/home/tomi/nhm-aura-source.dujJrk`; NHM and AURA use their own locked Cargo
 dependency sets and separate target directories. This is not C08 acceptance.
@@ -44,19 +45,19 @@ child while AURA's manager lived and observed its PID disappear after manager
 drop. This is normal-drop evidence only, not broker cancel/revoke/replacement
 sequencing.
 
-## Exact source and binary hashes (SHA-256)
+## Exact final source and binary hashes (SHA-256)
 
 | Artifact | SHA-256 |
 | --- | --- |
 | `crates/health-services/Cargo.toml` | `e5da6f079b5f0d4a7f8d0142fdff9d8e9aa6e40db65247e35ecb6bfaace47124` |
 | `crates/health-services/src/bin/tos-observability.rs` | `548e1fad19abb1a0b6a10753ecbba17093853f6e7bcde10bee842cc43a7187eb` |
 | `crates/health-services/src/mcp_bridge.rs` | `b17c1291797fa1ac6b5c4af3aff751010fad08b22f954ad6c85be0b3e784ae87` |
-| `crates/health-services/src/bin/tos-nhm-aura-stdio.rs` | `5bffa62e02e183d324df81fb0e446a11158d972f61e29b159434b834cb1fb6e9` |
-| `crates/health-services/tests/aura_stdio.rs` | `18505dcc94a977bfd1a5cc224c2fa3e55792cc13a9d08b3f4b35a579938f874d` |
-| `tests/pinned-aura/nhm_stdio.rs` | `4cd7a750849acaf09f7a49dfffcf499036e86fef6af765b878b74392a1f66d60` |
+| `crates/health-services/src/bin/tos-nhm-aura-stdio.rs` | `51a57791140a6782217dbf8887f324cd399a9a165ffbe2e123b48add95345558` |
+| `crates/health-services/tests/aura_stdio.rs` | `4ff5589e4c6f0afea79283ac5748e1774a7f98d38061c530b438b4abfd95a0ce` |
+| `tests/pinned-aura/nhm_stdio.rs` | `083c3fbd9c4e019922d75e968edae72fc6961cb6cb617cdb5583aecfc76cd6bb` |
 | `/home/tomi/nhm-c08-build/debug/tos-observability` | `babb171de3feb9c075276903224a730a79884794bced3ac3914f2fe33cb8389a` |
-| `/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio` | `5d4131039d3b3c7e73ce881d7374660975b922a20689aaae92c33ebd34a5fd50` |
-| `/home/tomi/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `5d78df77e832d049828b1623a866434339d5f8ae69f972a1c030ce6760c35f2b` |
+| `/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio` | `3eec9bb861eef89afc66503b0fc76e68717327e2187fb01d2fa7496a0f046396` |
+| `/home/tomi/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `9a6582bf17e2fa5dec5defe87a785dad3f4a432746a64a5ad9110b3d14a5ffa0` |
 
 ## Raw commands, results and lineage
 
@@ -81,6 +82,19 @@ local build workaround, not a changed dependency or production fix.
 | `aura-pinned-deterministic-restored.log` | `609f75d58139dce2f19389afab99fe8f26e8a491af15f47165668e804fa92603` | exit 0, final pinned AURA six calls, synthetic warning/unknown control and child-reap witness |
 | `aura-session-clippy-final.log` | `76a02c09e10ccbd0c55cbc5c485c2cfe5e3ccab0eae98745087650decc029351` | exit 0, final NHM strict workspace clippy after stateless-session correction |
 | `aura-session-fmt-final.log` | `7691ab977c5d6176ed084dcf8bd71e02530b66c555a3e26b19116b65c4c67e1a` | exit 0, final NHM workspace format check |
+| `aura-pinned-final-handoff.log` | `0705d58a7d656e04cdbd4749448ec907367ffcf15d81c72ad531e0d05c0c4c81` | exit 0, preceding pinned AURA six calls and consumed-file assertion |
+| `aura-handoff-workspace-final.log` | `42c02771612034658971115cb3461b79e5f03af42f5943918c512ed75b5d9bea` | exit 0, preceding `--features mcp` workspace 228 passed/one conditional native-pair ignored |
+| `aura-handoff-clippy-final.log` | `53e91262a320beb21581f77a06d45e7305783694330c4c2a043b5a2c4cec5212` | exit 0, preceding strict NHM workspace clippy |
+| `aura-handoff-fmt-final.log` | `85a3ca804da5d1982480d87ec5143c4c99e2437b716c8459e1e7258743c768ee` | exit 0, preceding NHM workspace fmt check |
+| `aura-handoff-targeted-successor.log` | `67a78a19d9a29f0bda5a209100311aef2eee50ebfa52df6d81a42ded307a6722` | exit 0, preceding direct Unix 3-test suite before the explicit slow-body Drop assertion |
+| `aura-pinned-handoff-successor.log` | `6d5e4bf4d18b929e9c5753b84e45569340ac777dc094f0058ce0ff98190e9bc4` | exit 0, final pinned AURA six calls and consumed-file assertion; tested AURA and NHM executable sources unchanged in the final test-only edit |
+| `aura-handoff-workspace-successor.log` | `274d03f8c21eecd1e8325741903c78304a01bfe0093b4869ccb3aea55cbfb9da` | exit 0, preceding workspace 228 passed/one conditional native-pair ignored |
+| `aura-handoff-clippy-successor.log` | `ef9815a2f64818164bb560f0577645f0c9d9d399bcf64350732fd0c285adcfe8` | exit 0, preceding strict NHM workspace clippy |
+| `aura-handoff-fmt-successor.log` | `c8915c8954f9c82c90861651fd2cb7d68ba93702cd1a896c0ab6c20dffe2b2c7` | exit 0, preceding NHM workspace fmt check |
+| `aura-handoff-targeted-final2.log` | `e661e909b71327ef3daeb386f4016e273612feaa9710197358a1c20753c19e60` | exit 0, final direct Unix 3-test suite including slow-body task Drop witness |
+| `aura-handoff-workspace-final2.log` | `dc8c3bc33f3d355656b2f7beae9699d099ccabeae9b1d995287e8cf80a4bc632` | exit 0, final workspace 228 passed/one conditional native-pair ignored |
+| `aura-handoff-clippy-final2.log` | `f9789979982dacabff635f0fc86f1f6042316598ce18376a99ab0a3294109865` | exit 0, final strict NHM workspace clippy |
+| `aura-handoff-fmt-final2.log` | `ff81bfd5da0628a8f6da790825c4e85ab584c859d1cdff2a5e308c7c960e3fd0` | exit 0, final NHM workspace fmt check |
 | `aura-adapter-workspace-final.log` | `a7144706c97611ec932daf1dfda89f94b0435729bc66796a3c9db97010831c03` | exit 0, `cargo test --locked --workspace --features mcp`, 226 passed across 39 results, one native-pair test ignored without its indexed C++ fixture |
 | `aura-adapter-clippy.log` | `22c927047b0fb5e5fdcaeb7c99d53863bdd263fad8243f0137921400c60b08a0` | exit 101, new test's redundant async wrapper only |
 | `aura-adapter-clippy-restored.log` | `b9be4ccb6414ecc00258ea65b24c7dbff5564f46f0f8fc32bf365bdb27d75264` | exit 0, `cargo clippy --locked --workspace --all-targets --features mcp -- -D warnings` |
@@ -92,9 +106,24 @@ Pinned AURA command: `CXXFLAGS='-include cstdint' NHM_OBSERVABILITY_BIN=/home/to
 ## Open boundary
 
 The isolated development credential handoff is a 0600 file in a 0700
-directory. The test owner deletes its temporary directory; a production
-broker still needs a supervised child/process-user boundary, guaranteed
-credential cleanup on all failures, termination/reaping and grant revocation.
+directory. The adapter now opens that directory without following a symlink,
+checks file inode/owner/mode and one-link identity, unlinks the named entry
+before reading or connecting, and refuses a second use. Tests prove absence
+after success, bad file mode, missing socket, replay, symlink and hardlink
+refusals; symlink/hardlink targets remain intact. A verified private parent is
+required before any deletion, so an invalid/untrusted parent is refused
+without attempting arbitrary cleanup. The adapter uses one 5-second deadline
+for send, complete JSON body and stdout flush, serializes calls, and aborts
+then awaits its HTTP connection task before exit. Mock slow-body and SSE
+responses cannot forward a queued next call or emit partial stdout. rmcp 3.5
+requires `Accept` to name both JSON and SSE even with `json_response=true`;
+the adapter advertises both but explicitly rejects a non-JSON result. The
+actual pinned AURA initialize/list/six calls pass under this exact rule.
+
+A production broker still needs a supervised child/process-user boundary,
+credential cleanup for its own failure before launch, guaranteed model-child
+termination/reaping and grant revocation. The adapter's connection-task wait
+does not prove remote handler work has ended or broker replacement sequencing.
 The owner has authorized read-only local-node evidence and this development
 credential profile, so neither is a waiting-for-approval gate. The isolated
 test still used synthetic records; no C09 live-source projection or model

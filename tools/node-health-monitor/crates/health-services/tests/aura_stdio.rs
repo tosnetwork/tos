@@ -1,10 +1,29 @@
 #![cfg(feature = "mcp")]
 
 use http_body_util::{BodyExt, Full};
-use hyper::{body::Bytes, client::conn::http1, Request};
+use hyper::{
+    body::{Body as HttpBody, Bytes, Frame},
+    client::conn::http1,
+    server::conn::http1 as server_http1,
+    service::service_fn,
+    Request, Response,
+};
 use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
-use std::{os::unix::fs::PermissionsExt, path::Path, process::Stdio, time::Duration};
+use std::{
+    convert::Infallible,
+    future::Future,
+    os::unix::fs::PermissionsExt,
+    path::Path,
+    pin::Pin,
+    process::Stdio,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    task::{Context, Poll},
+    time::Duration,
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{ChildStdin, ChildStdout, Command},
@@ -58,6 +77,168 @@ async fn rpc(
         .unwrap()
         .unwrap();
     serde_json::from_str(&line).unwrap()
+}
+
+struct SlowBody {
+    delay: Pin<Box<tokio::time::Sleep>>,
+    complete: bool,
+    dropped: Arc<AtomicBool>,
+}
+impl SlowBody {
+    fn new(dropped: Arc<AtomicBool>) -> Self {
+        Self {
+            delay: Box::pin(tokio::time::sleep(Duration::from_secs(10))),
+            complete: false,
+            dropped,
+        }
+    }
+}
+impl Drop for SlowBody {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
+impl HttpBody for SlowBody {
+    type Data = Bytes;
+    type Error = Infallible;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        if self.complete {
+            return Poll::Ready(None);
+        }
+        if self.delay.as_mut().poll(context).is_pending() {
+            return Poll::Pending;
+        }
+        self.complete = true;
+        Poll::Ready(Some(Ok(Frame::data(Bytes::from_static(
+            br#"{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}"#,
+        )))))
+    }
+}
+
+async fn mock_refusal(sse: bool) {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-aura-mock-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&tos_health_services::random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = directory.join("mcp.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    let calls = count.clone();
+    let dropped = Arc::new(AtomicBool::new(false));
+    let producer_dropped = dropped.clone();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let service = service_fn(move |request: Request<hyper::body::Incoming>| {
+            let calls = calls.clone();
+            let producer_dropped = producer_dropped.clone();
+            async move {
+                assert_eq!(request.headers()["accept"], "application/json, text/event-stream");
+                let index = calls.fetch_add(1, Ordering::SeqCst);
+                let response = if index == 0 {
+                    Response::builder()
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(Bytes::from_static(br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"mock","version":"1"}}}"#)))
+                        .unwrap()
+                } else if sse {
+                    Response::builder()
+                        .header("content-type", "text/event-stream")
+                        .body(axum::body::Body::from(Bytes::from_static(
+                            b"event: message\ndata: {}\n\n",
+                        )))
+                        .unwrap()
+                } else {
+                    Response::builder()
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::new(SlowBody::new(producer_dropped)))
+                        .unwrap()
+                };
+                Ok::<_, Infallible>(response)
+            }
+        });
+        let _ = server_http1::Builder::new().serve_connection(TokioIo::new(stream), service).await;
+    });
+    let credential = directory.join("credential.json");
+    std::fs::write(
+        &credential,
+        json!({
+            "run_id":"01234567-89ab-4cde-8f01-23456789abcd",
+            "run_token":"b".repeat(64),
+            "service_token":"a".repeat(32)
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut adapter = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
+        .arg(&socket)
+        .arg(&credential)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut stdin = adapter.stdin.take().unwrap();
+    let mut output = BufReader::new(adapter.stdout.take().unwrap()).lines();
+    let init = rpc(
+        &mut stdin,
+        &mut output,
+        json!({"jsonrpc":"2.0","id":1,
+        "method":"initialize","params":{"protocolVersion":"2025-06-18",
+        "capabilities":{},"clientInfo":{"name":"mock","version":"1"}}}),
+    )
+    .await;
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+    assert!(!credential.exists(), "mock handoff remained on disk");
+    // Queue a third request before the second response. The adapter must not
+    // forward it after an SSE refusal or the complete five-second deadline.
+    stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/list\",\"params\":{}}\n").await.unwrap();
+    stdin.flush().await.unwrap();
+    let start = tokio::time::Instant::now();
+    let status =
+        tokio::time::timeout(Duration::from_secs(7), adapter.wait()).await.unwrap().unwrap();
+    assert!(!status.success(), "unsupported/slow response was accepted");
+    assert!(start.elapsed() < Duration::from_secs(7), "tool deadline became whole-run deadline");
+    assert_eq!(count.load(Ordering::SeqCst), 2, "a second tool call was forwarded after failure");
+    if !sse {
+        for _ in 0..50 {
+            if dropped.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "slow response producer survived client termination"
+        );
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), output.next_line())
+            .await
+            .unwrap()
+            .unwrap()
+            .is_none(),
+        "refusal produced a model-visible partial result"
+    );
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn sse_response_is_refused_without_forwarding_next_call() {
+    mock_refusal(true).await;
+}
+
+#[tokio::test]
+async fn tool_deadline_covers_complete_body_and_stops_next_call() {
+    mock_refusal(false).await;
 }
 
 #[tokio::test]
@@ -126,6 +307,72 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
         .unwrap();
     assert!(!refused.status.success(), "world-readable credential file was admitted");
     assert!(refused.stdout.is_empty(), "credential refusal reached model-visible stdout");
+    assert!(!credential.exists(), "refused credential handoff remained on disk");
+    let target = directory.join("target-credential.json");
+    std::fs::write(
+        &target,
+        json!({"run_id":run,"run_token":grant["run_token"],
+        "service_token":"a".repeat(32)})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::os::unix::fs::symlink(&target, &credential).unwrap();
+    let linked = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
+        .arg(&mcp)
+        .arg(&credential)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    assert!(!linked.status.success() && linked.stdout.is_empty());
+    assert!(!credential.exists() && target.exists(), "symlink refusal touched target");
+    std::fs::hard_link(&target, &credential).unwrap();
+    let linked = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
+        .arg(&mcp)
+        .arg(&credential)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    assert!(!linked.status.success() && linked.stdout.is_empty());
+    assert!(!credential.exists() && target.exists(), "hardlink refusal touched target");
+    std::fs::write(&credential, b"{invalid-json").unwrap();
+    std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let malformed = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
+        .arg(&mcp)
+        .arg(&credential)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    assert!(!malformed.status.success() && malformed.stdout.is_empty());
+    assert!(!credential.exists(), "malformed handoff remained on disk");
+    std::fs::write(
+        &credential,
+        json!({"run_id":run,"run_token":grant["run_token"],
+        "service_token":"a".repeat(32)})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let no_socket = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
+        .arg(directory.join("missing.sock"))
+        .arg(&credential)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .unwrap();
+    assert!(!no_socket.status.success(), "missing Unix socket was admitted");
+    assert!(no_socket.stdout.is_empty());
+    assert!(!credential.exists(), "transport refusal retained credential handoff");
+    std::fs::write(
+        &credential,
+        json!({"run_id":run,"run_token":grant["run_token"],
+        "service_token":"a".repeat(32)})
+        .to_string(),
+    )
+    .unwrap();
     std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut adapter = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
         .arg(&mcp)
@@ -147,6 +394,7 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
     )
     .await;
     assert_eq!(initialized["result"]["protocolVersion"], "2025-06-18");
+    assert!(!credential.exists(), "connected adapter retained credential handoff");
     stdin
         .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
         .await
@@ -194,6 +442,14 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
         .unwrap()
         .unwrap()
         .success());
+    std::fs::write(
+        &credential,
+        json!({"run_id":run,"run_token":grant["run_token"],
+        "service_token":"a".repeat(32)})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
     let mut replay = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
         .arg(&mcp)
         .arg(&credential)
@@ -212,6 +468,7 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
         .unwrap();
     assert!(!replay_output.status.success(), "second connection reclaimed a single-use grant");
     assert!(replay_output.stdout.is_empty(), "replayed grant returned model-visible data");
+    assert!(!credential.exists(), "replayed handoff remained on disk");
     service.kill().await.unwrap();
     service.wait().await.unwrap();
     std::fs::remove_dir_all(directory).unwrap();

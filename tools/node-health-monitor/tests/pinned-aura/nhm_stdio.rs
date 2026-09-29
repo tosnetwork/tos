@@ -219,6 +219,7 @@ async fn pinned_aura_calls_six_nhm_tools_over_private_unix_adapter() {
         manager.server_info
     );
     assert_eq!(manager.stdio_clients.len(), 1);
+    assert!(!credential.exists(), "AURA adapter retained the one-use credential file");
     #[cfg(target_os = "linux")]
     let adapter_pid = {
         let pids = adapter_pids(&credential);
