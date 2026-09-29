@@ -30,6 +30,7 @@ pub struct Data {
     pub store: EvidenceStore,
     pub grants: BTreeMap<String, Grant>,
     pub manager_conflicted: bool,
+    pub manager_caught_up: bool,
 }
 #[derive(Clone)]
 pub struct ObservabilityState {
@@ -63,6 +64,7 @@ impl ObservabilityState {
                 store: EvidenceStore::new(8 * 1024 * 1024),
                 grants: BTreeMap::new(),
                 manager_conflicted: false,
+                manager_caught_up: true,
             })),
             inventory: Arc::new(inventory),
             operator_token: Arc::new(operator),
@@ -101,9 +103,12 @@ impl ObservabilityState {
         if self.query_ledger.is_none() {
             return Err("M projection requires durable query ledger".into());
         }
-        crate::manager_query_source::read_process_projection(&path, &self.inventory.network_id)?;
         self.manager_evidence_db = Some(path);
-        import_manager(&self)?;
+        match import_manager(&self) {
+            Ok(_) => {}
+            Err(error) if error == "active grant evidence retention" => {}
+            Err(error) => return Err(error),
+        }
         Ok(self)
     }
 }
@@ -133,46 +138,70 @@ fn import_manager_into(
     }
     let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
     state.manager_projection_reads.fetch_add(1, Ordering::Relaxed);
-    let source = crate::manager_query_source::read_process_projection_state(
-        path,
-        &state.inventory.network_id,
-    );
-    let (m_watermark, records, quarantined) = match source {
+    let cursor_and_retained = {
+        let guard = ledger.lock().map_err(|_| "query ledger unavailable")?;
+        guard
+            .manager_cursor()
+            .and_then(|cursor| guard.retained_origin_rows().map(|retained| (cursor, retained)))
+    };
+    let (previous, retained) = match cursor_and_retained {
         Ok(value) => value,
         Err(error) => {
             block_manager_queries(state, data)?;
             return Err(error);
         }
     };
-    let retained_result = {
-        let guard = ledger.lock().map_err(|_| "query ledger unavailable")?;
-        guard.retained_origin_ids()
-    };
-    let retained = match retained_result {
-        Ok(ids) => ids,
+    let source = crate::manager_query_source::read_process_projection_page(
+        path,
+        &state.inventory.network_id,
+        previous.as_ref(),
+        &retained,
+    );
+    let page = match source {
+        Ok(value) => value,
         Err(error) => {
             block_manager_queries(state, data)?;
             return Err(error);
         }
     };
-    if !retained.is_disjoint(&quarantined) {
+    if !page.quarantined_retained.is_empty() {
         block_manager_queries(state, data)?;
         return Err("retained M parent was quarantined".into());
     }
-    let count = records.len();
-    for (origin, record) in records {
+    let count = page.records.len();
+    for (origin, record) in page.records {
         if !state.inventory.nodes.contains(&record.node_id)
             || !state.inventory.scopes.contains(&record.scope_id)
         {
+            block_manager_queries(state, data)?;
             return Err("M projection outside inventory".into());
         }
-        ledger.lock().map_err(|_| "query ledger unavailable")?.insert_projection(
+        let inserted = ledger.lock().map_err(|_| "query ledger unavailable")?.insert_projection(
             &mut data.store,
             &origin,
             record,
-        )?;
+        );
+        if let Err(error) = inserted {
+            if error == "active grant evidence retention" {
+                // Keep the frozen W usable. This is a bounded catch-up pause,
+                // not a source-integrity conflict or a new grant watermark.
+                data.manager_caught_up = false;
+                return Err(error);
+            }
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
     }
-    Ok((m_watermark, count))
+    let committed = ledger
+        .lock()
+        .map_err(|_| "query ledger unavailable")?
+        .commit_manager_cursor(previous.as_ref(), &page.cursor);
+    if let Err(error) = committed {
+        block_manager_queries(state, data)?;
+        return Err(error);
+    }
+    data.manager_caught_up = page.caught_up;
+    Ok((page.cursor.watermark, count))
 }
 /// This is a broker-control operation, not a query handler fallback.
 pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String> {
@@ -273,6 +302,9 @@ async fn grant(
     }
     let (manager_watermark, _) =
         import_manager_into(&state, &mut data).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if !data.manager_caught_up {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
     let mut g = Grant::new(
         run.clone(),
         "aura".into(),

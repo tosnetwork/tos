@@ -4,7 +4,7 @@
 use crate::durable::{DurableEvidence, EvidenceRow};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::{collections::BTreeSet, os::unix::fs::MetadataExt, path::Path};
 use tos_health_core::{
     edge_snapshot::{ProcessEnvelope, ProcessPayload},
     evidence::Evidence,
@@ -16,8 +16,18 @@ use tos_health_core::{
 
 const MAX_ROWS: usize = 4096;
 const MAX_BYTES: usize = 8 * 1024 * 1024;
+const PAGE_ROWS: usize = 256;
 const VERSION: &str = "m-observation-projection-v1";
 pub type ProjectionScan = (u64, Vec<(EvidenceRow, Evidence)>, std::collections::BTreeSet<String>);
+type RetainedSqlRow = (String, String, String, String, String, String, String, String, i64);
+
+#[derive(Debug)]
+pub struct ProjectionPage {
+    pub cursor: crate::query_ledger::ManagerCursor,
+    pub records: Vec<(EvidenceRow, Evidence)>,
+    pub quarantined_retained: BTreeSet<String>,
+    pub caught_up: bool,
+}
 
 fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
@@ -117,6 +127,201 @@ pub fn read_process_projection(
 ) -> Result<(u64, Vec<(EvidenceRow, Evidence)>), String> {
     let (watermark, records, _) = read_process_projection_state(path, network)?;
     Ok((watermark, records))
+}
+
+/// One bounded incremental page from a single read transaction. The previous
+/// cursor is persisted in QueryLedger, not inferred from the in-memory store:
+/// evicted query rows must not cause old M history to be scanned again.
+pub fn read_process_projection_page(
+    path: &Path,
+    network: &str,
+    previous: Option<&crate::query_ledger::ManagerCursor>,
+    retained: &[EvidenceRow],
+) -> Result<ProjectionPage, String> {
+    if !tos_health_core::wire::hash(network) || retained.len() > MAX_ROWS {
+        return Err("invalid M projection source or retained set".into());
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(failure)?;
+    if !meta.file_type().is_file() {
+        return Err("M evidence path is not a regular file".into());
+    }
+    if previous.is_some_and(|old| {
+        old.network != network || old.device != meta.dev() || old.inode != meta.ino()
+    }) {
+        return Err("M projection database identity changed".into());
+    }
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(failure)?;
+    conn.busy_timeout(std::time::Duration::from_millis(100)).map_err(failure)?;
+    conn.execute_batch("PRAGMA query_only=ON; BEGIN TRANSACTION").map_err(failure)?;
+    let bound: String = conn
+        .query_row("SELECT network FROM database_identity WHERE singleton=1", [], |row| row.get(0))
+        .map_err(failure)?;
+    if bound != network {
+        return Err("M evidence network mismatch".into());
+    }
+    let watermark: Option<i64> = conn
+        .query_row("SELECT seq FROM sqlite_sequence WHERE name='observations'", [], |row| {
+            row.get(0)
+        })
+        .optional()
+        .map_err(failure)?;
+    let watermark = u64::try_from(watermark.unwrap_or(0)).map_err(failure)?;
+    let after = previous.map_or(0, |old| old.watermark);
+    if watermark < after {
+        return Err("M projection watermark regressed".into());
+    }
+    if let Some((seq, expected)) = previous.and_then(|old| old.anchor.as_ref()) {
+        let actual: Option<String> = conn
+            .query_row(
+                "SELECT content_hash FROM observations WHERE store_seq=?1 AND source='process'",
+                [i64::try_from(*seq).map_err(failure)?],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(failure)?;
+        if actual.as_deref() != Some(expected) {
+            return Err("M projection anchor changed".into());
+        }
+    }
+    // A late quarantine or replacement may target a row older than `after`.
+    // Revalidate exact retained parent seq/hash/body in this same M snapshot.
+    let mut quarantined_retained = BTreeSet::new();
+    let mut parent = conn
+        .prepare(
+            "SELECT o.content_hash,o.body,o.node,o.scope,o.process_epoch,
+             o.source_epoch,o.source,o.source_record,
+             EXISTS(SELECT 1 FROM quarantined q
+             WHERE q.node=o.node AND q.scope=o.scope AND q.process_epoch=o.process_epoch
+             AND q.source_epoch=o.source_epoch AND q.source=o.source)
+             FROM observations o WHERE o.store_seq=?1 AND o.source='process'",
+        )
+        .map_err(failure)?;
+    for origin in retained {
+        if origin.store_seq.0 == 0 || origin.store_seq.0 > watermark {
+            return Err("retained M parent sequence outside snapshot".into());
+        }
+        let actual: Option<RetainedSqlRow> = parent
+            .query_row([i64::try_from(origin.store_seq.0).map_err(failure)?], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            })
+            .optional()
+            .map_err(failure)?;
+        let (
+            id,
+            body,
+            node,
+            scope,
+            process_epoch,
+            source_epoch,
+            source,
+            source_record,
+            quarantined,
+        ) = actual.ok_or("retained M parent missing")?;
+        let original = &origin.evidence.record;
+        if id != origin.evidence_id
+            || body.as_bytes() != serde_json::to_vec(&origin.evidence).map_err(failure)?
+            || node != original.node_id
+            || scope != original.scope_id
+            || process_epoch != original.process_epoch
+            || source_epoch != origin.evidence.source_epoch
+            || source != original.source_id
+            || source_record != original.source_record_id
+        {
+            return Err("retained M parent changed".into());
+        }
+        if quarantined != 0 {
+            quarantined_retained.insert(id);
+        }
+    }
+    drop(parent);
+    let mut query = conn
+        .prepare(
+            "SELECT store_seq,content_hash,length(CAST(body AS BLOB)),
+         CASE WHEN length(CAST(body AS BLOB))<=32768 THEN body ELSE NULL END
+         FROM observations WHERE store_seq>?1 AND store_seq<=?2 AND source='process'
+         AND NOT EXISTS(SELECT 1 FROM quarantined q WHERE q.node=observations.node
+         AND q.scope=observations.scope AND q.process_epoch=observations.process_epoch
+         AND q.source_epoch=observations.source_epoch AND q.source=observations.source)
+         ORDER BY store_seq LIMIT ?3",
+        )
+        .map_err(failure)?;
+    let rows = query
+        .query_map(
+            params![
+                i64::try_from(after).map_err(failure)?,
+                i64::try_from(watermark).map_err(failure)?,
+                (PAGE_ROWS + 1) as i64
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .map_err(failure)?;
+    let mut records = Vec::new();
+    let mut bytes = 0usize;
+    let mut last = after;
+    let mut anchor = previous.and_then(|old| old.anchor.clone());
+    let mut caught_up = true;
+    for (count, row) in rows.enumerate() {
+        if count == PAGE_ROWS {
+            caught_up = false;
+            break;
+        }
+        let (seq, id, length, body) = row.map_err(failure)?;
+        let length = usize::try_from(length).map_err(failure)?;
+        bytes = bytes.checked_add(length).ok_or("M scan overflow")?;
+        if bytes > MAX_BYTES || length > 32_768 {
+            return Err("M projection page bound exceeded".into());
+        }
+        let row = EvidenceRow {
+            store_seq: U64(u64::try_from(seq).map_err(failure)?),
+            evidence_id: id,
+            evidence: serde_json::from_str::<DurableEvidence>(
+                &body.ok_or("M projection body unavailable")?,
+            )
+            .map_err(failure)?,
+        };
+        last = row.store_seq.0;
+        anchor = Some((last, row.evidence_id.clone()));
+        let projected = project_process(&row)?.ok_or("M process row payload not process")?;
+        records.push((row, projected));
+    }
+    drop(query);
+    let end_meta = std::fs::symlink_metadata(path).map_err(failure)?;
+    if end_meta.dev() != meta.dev() || end_meta.ino() != meta.ino() {
+        return Err("M projection database replaced during read".into());
+    }
+    Ok(ProjectionPage {
+        cursor: crate::query_ledger::ManagerCursor {
+            network: network.to_owned(),
+            device: meta.dev(),
+            inode: meta.ino(),
+            watermark: if caught_up { watermark } else { last },
+            anchor,
+        },
+        records,
+        quarantined_retained,
+        caught_up,
+    })
 }
 
 /// The third value is a bounded set of M original IDs whose source tuple is

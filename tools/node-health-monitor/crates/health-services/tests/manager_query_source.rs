@@ -16,7 +16,9 @@ use tos_health_core::{
 use tos_health_services::{
     durable::{DurableEvidence, EvidenceDb},
     fixed_package::freeze_process_package,
-    manager_query_source::{project_process, read_process_projection},
+    manager_query_source::{
+        project_process, read_process_projection, read_process_projection_page,
+    },
     observability::{control_router, import_manager, router as query_router, ObservabilityState},
     query_ledger::QueryLedger,
     random_token, Inventory,
@@ -136,6 +138,583 @@ fn row(epoch: &str) -> DurableEvidence {
             redacted: true,
         },
     }
+}
+
+#[test]
+fn incremental_projection_pages_4097_history_and_sparse_global_sequence() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-pages-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 64 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    drop(manager);
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    let tx = conn.transaction().unwrap();
+    for index in 1..=4097 {
+        let epoch = format!("epoch-{index}");
+        let value = row(&epoch);
+        let mut canonical = value.clone();
+        canonical.record.received_at_ms = 0;
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap()));
+        let evidence = &value.record;
+        tx.execute(
+            "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![evidence.node_id,evidence.scope_id,evidence.process_epoch,
+                value.source_epoch,evidence.source_id,evidence.source_record_id,digest,
+                serde_json::to_string(&value).unwrap()],
+        ).unwrap();
+    }
+    // A non-process sequence must advance the global high-water only after
+    // the final process page has actually caught up.
+    tx.execute(
+        "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+         VALUES('v1','node','boot:4242:100','diag','diagnostic','diag:1',?1,'{}')",
+        ["d".repeat(64)],
+    ).unwrap();
+    tx.commit().unwrap();
+    drop(conn);
+    let mut previous = None;
+    let mut pages = 0usize;
+    let mut imported = 0usize;
+    loop {
+        let page = read_process_projection_page(&path, &network, previous.as_ref(), &[]).unwrap();
+        assert!(page.records.len() <= 256);
+        assert!(
+            page.cursor.watermark
+                > previous
+                    .as_ref()
+                    .map_or(0, |cursor: &tos_health_services::query_ledger::ManagerCursor| cursor
+                        .watermark)
+        );
+        pages += 1;
+        imported += page.records.len();
+        if page.caught_up {
+            assert_eq!(page.cursor.watermark, 4098);
+            assert_eq!(page.cursor.anchor.as_ref().unwrap().0, 4097);
+            break;
+        }
+        previous = Some(page.cursor);
+    }
+    assert_eq!(pages, 17);
+    assert_eq!(imported, 4097);
+    drop(previous);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn partial_projection_restart_replays_cursor_and_refuses_uncaught_grant() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-catchup-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    for index in 1..=513 {
+        manager.insert(row(&format!("epoch-{index}"))).unwrap();
+    }
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state =
+        ObservabilityState::new(inventory.clone(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .unwrap();
+    assert!(!state.data.lock().unwrap().manager_caught_up);
+    assert_eq!(
+        state
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark,
+        256
+    );
+    drop(state);
+    let restored =
+        ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path)
+            .unwrap();
+    assert_eq!(
+        restored
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark,
+        512
+    );
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+            "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    // Introduce one more page before grant creation; the route may consume
+    // only a single bounded page and must not issue a grant while behind.
+    for index in 514..=769 {
+        manager.insert(row(&format!("epoch-{index}"))).unwrap();
+    }
+    let refused = control_router(restored.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!restored.data.lock().unwrap().manager_conflicted);
+    assert!(!restored.data.lock().unwrap().manager_caught_up);
+    assert_eq!(import_manager(&restored).unwrap().0, 769);
+    assert!(restored.data.lock().unwrap().manager_caught_up);
+    let granted = control_router(restored.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+    drop(restored);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn durable_parent_before_cursor_replays_exactly_once_after_restart() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-crash-window-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let first = manager.insert(row("edge-epoch-1")).unwrap();
+    let second = manager.insert(row("edge-epoch-2")).unwrap();
+    let (_, records) = read_process_projection(&manager_path, &network).unwrap();
+    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
+    let mut store = EvidenceStore::new(8 * 1024 * 1024);
+    ledger.insert_projection(&mut store, &records[0].0, records[0].1.clone()).unwrap();
+    assert!(
+        ledger.manager_cursor().unwrap().is_none(),
+        "cursor must not advance with first parent"
+    );
+    drop(ledger);
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&ledger_path)
+    .unwrap()
+    .with_manager_evidence(manager_path)
+    .unwrap();
+    let data = state.data.lock().unwrap();
+    assert_eq!(data.store.watermark(), 2, "replay must deduplicate the committed first parent");
+    drop(data);
+    let ledger = state.query_ledger.as_ref().unwrap().lock().unwrap();
+    assert_eq!(ledger.manager_cursor().unwrap().unwrap().watermark, second.store_seq.0);
+    let retained = ledger.retained_origin_rows().unwrap();
+    assert_eq!(retained.len(), 2);
+    assert!(retained.iter().any(|origin| origin.evidence_id == first.evidence_id));
+    drop(ledger);
+    drop(state);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn cursor_refuses_missing_or_rewritten_retained_parent_and_invalid_middle_row() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-source-rollback-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let first = manager.insert(row("edge-epoch-1")).unwrap();
+    let page = read_process_projection_page(&path, &network, None, &[]).unwrap();
+    assert_eq!(page.cursor.watermark, first.store_seq.0);
+    let retained = vec![first.clone()];
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute("UPDATE observations SET body='{}' WHERE store_seq=?1", [first.store_seq.0])
+        .unwrap();
+    assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+        .unwrap_err()
+        .contains("parent changed"));
+    conn.execute(
+        "UPDATE observations SET body=?1,node='wrong-node' WHERE store_seq=?2",
+        rusqlite::params![serde_json::to_string(&first.evidence).unwrap(), first.store_seq.0],
+    )
+    .unwrap();
+    assert!(
+        read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+            .unwrap_err()
+            .contains("parent changed"),
+        "mutable tuple must not bypass quarantine identity"
+    );
+    conn.execute("DELETE FROM observations WHERE store_seq=?1", [first.store_seq.0]).unwrap();
+    assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+        .unwrap_err()
+        .contains("anchor changed"));
+    drop(conn);
+    drop(manager);
+    let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let second = manager.insert(row("edge-epoch-2")).unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute("UPDATE observations SET body='{}' WHERE store_seq=?1", [second.store_seq.0])
+        .unwrap();
+    assert!(read_process_projection_page(&path, &network, None, &[])
+        .unwrap_err()
+        .contains("missing field"));
+    drop(conn);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart() {
+    for mode in ["projection_insert", "cursor_commit"] {
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-m-query-failure-{mode}-{}-{}",
+            std::process::id(),
+            tos_health_services::hex(&random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let manager_path = directory.join("manager.sqlite");
+        let ledger_path = directory.join("query.sqlite");
+        let network = "a".repeat(64);
+        let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+        manager.bind_network(&network).unwrap();
+        manager.insert(row("edge-epoch-1")).unwrap();
+        let inventory = Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        };
+        let state = ObservabilityState::new(
+            inventory.clone(),
+            vec![b'o'; 32],
+            vec![b'i'; 32],
+            vec![b'a'; 32],
+        )
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap()
+        .with_manager_evidence(manager_path.clone())
+        .unwrap();
+        let response = control_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/control/grants")
+                    .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let grant = body(response).await;
+        manager.insert(row("edge-epoch-2")).unwrap();
+        manager.insert(row("edge-epoch-3")).unwrap();
+        let conn = rusqlite::Connection::open(&ledger_path).unwrap();
+        match mode {
+            "projection_insert" => conn
+                .execute_batch(
+                    "CREATE TRIGGER c09_inject BEFORE INSERT ON query_evidence
+                 WHEN NEW.store_seq=3 BEGIN SELECT RAISE(FAIL,'injected projection commit'); END;",
+                )
+                .unwrap(),
+            "cursor_commit" => conn
+                .execute_batch(
+                    "CREATE TRIGGER c09_inject BEFORE UPDATE ON query_manager_cursor
+                 BEGIN SELECT RAISE(FAIL,'injected cursor commit'); END;",
+                )
+                .unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(import_manager(&state).unwrap_err().contains("injected"));
+        assert!(state.data.lock().unwrap().manager_conflicted);
+        assert_eq!(
+            state
+                .query_ledger
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .manager_cursor()
+                .unwrap()
+                .unwrap()
+                .watermark,
+            1
+        );
+        let refused = query_router(state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/query/capabilities")
+                    .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                    .header("x-tos-run-token", grant["run_token"].as_str().unwrap())
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({"run_id":grant["run_id"]}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        drop(state);
+        conn.execute_batch("DROP TRIGGER c09_inject").unwrap();
+        drop(conn);
+        let restored =
+            ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+                .unwrap()
+                .with_query_ledger(&ledger_path)
+                .unwrap()
+                .with_manager_evidence(manager_path)
+                .unwrap();
+        assert_eq!(
+            restored
+                .query_ledger
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .manager_cursor()
+                .unwrap()
+                .unwrap()
+                .watermark,
+            3
+        );
+        assert_eq!(
+            restored.data.lock().unwrap().store.watermark(),
+            3,
+            "committed parents must replay without another query row"
+        );
+        assert!(
+            restored.data.lock().unwrap().grants.is_empty(),
+            "revoked grant must not renew across restart"
+        );
+        drop(restored);
+        drop(manager);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-migrate-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("epoch-1")).unwrap();
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state =
+        ObservabilityState::new(inventory.clone(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .unwrap();
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+            "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    let issued = control_router(state.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(issued.status(), StatusCode::OK);
+    let grant = body(issued).await;
+    drop(state);
+    drop(manager);
+    let mut conn = rusqlite::Connection::open(&manager_path).unwrap();
+    let tx = conn.transaction().unwrap();
+    for index in 2..=4097 {
+        let value = row(&format!("epoch-{index}"));
+        let mut canonical = value.clone();
+        canonical.record.received_at_ms = 0;
+        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap()));
+        let evidence = &value.record;
+        tx.execute(
+            "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![evidence.node_id,evidence.scope_id,evidence.process_epoch,
+                value.source_epoch,evidence.source_id,evidence.source_record_id,digest,
+                serde_json::to_string(&value).unwrap()],
+        ).unwrap();
+    }
+    tx.commit().unwrap();
+    drop(conn);
+    let restored =
+        ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path)
+            .unwrap();
+    assert!(!restored.data.lock().unwrap().manager_caught_up);
+    let denied = control_router(restored.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!restored.data.lock().unwrap().manager_conflicted);
+    let cursor_after_two_pages = restored
+        .query_ledger
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .manager_cursor()
+        .unwrap()
+        .unwrap()
+        .watermark;
+    assert_eq!(cursor_after_two_pages, 513);
+    let old = query_router(restored.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/query/node-snapshot")
+                .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                .header("x-tos-run-token", grant["run_token"].as_str().unwrap())
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"run_id":grant["run_id"],"node_id":"v1",
+            "as_of":"2026-09-29T00:00:02Z","max_age_seconds":30,"components":["process"]})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(old.status(), StatusCode::OK, "fixed old W remains usable during catch-up");
+    let mut paused_for_grant = false;
+    for _ in 0..32 {
+        let cursor = restored
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark;
+        if cursor == 4097 {
+            break;
+        }
+        match import_manager(&restored) {
+            Ok(_) => {}
+            Err(error) if error == "active grant evidence retention" => {
+                paused_for_grant = true;
+                assert!(!restored.data.lock().unwrap().manager_conflicted);
+                break;
+            }
+            Err(error) => panic!("unexpected migration failure: {error}"),
+        }
+    }
+    if paused_for_grant {
+        let revoked = control_router(restored.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/control/grants/{}/revoke", grant["run_id"].as_str().unwrap()))
+                    .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(revoked.status(), StatusCode::OK);
+        for _ in 0..32 {
+            let cursor = restored
+                .query_ledger
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .manager_cursor()
+                .unwrap()
+                .unwrap()
+                .watermark;
+            if cursor == 4097 {
+                break;
+            }
+            import_manager(&restored).unwrap();
+        }
+    }
+    assert_eq!(
+        restored
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark,
+        4097
+    );
+    assert!(restored.data.lock().unwrap().manager_caught_up);
+    assert!(!restored.data.lock().unwrap().manager_conflicted);
+    drop(restored);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

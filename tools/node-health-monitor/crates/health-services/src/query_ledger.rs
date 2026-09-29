@@ -15,6 +15,18 @@ pub struct QueryLedger {
     clock_domain: String,
 }
 
+/// Last fully imported M snapshot. The anchor detects replacement or rewrite
+/// of the append-only source across QueryService restarts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagerCursor {
+    pub network: String,
+    pub device: u64,
+    pub inode: u64,
+    pub watermark: u64,
+    pub anchor: Option<(u64, String)>,
+}
+type CursorSqlRow = (String, String, String, i64, Option<i64>, Option<String>);
+
 /// Linux BOOTTIME includes suspend and keeps the same origin across process
 /// restarts in one time namespace. Instant::elapsed would renew old grants.
 pub fn boot_millis() -> Result<u64, String> {
@@ -155,6 +167,16 @@ impl QueryLedger {
             CREATE TABLE IF NOT EXISTS query_projection_origin (
                 query_evidence_id TEXT PRIMARY KEY,
                 origin_id TEXT NOT NULL REFERENCES query_origins(origin_id)
+            );
+            CREATE TABLE IF NOT EXISTS query_manager_cursor (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                network TEXT NOT NULL,
+                device TEXT NOT NULL,
+                inode TEXT NOT NULL,
+                watermark INTEGER NOT NULL CHECK(watermark >= 0),
+                anchor_seq INTEGER,
+                anchor_hash TEXT,
+                CHECK((anchor_seq IS NULL) = (anchor_hash IS NULL))
             );",
         )
         .map_err(failure)?;
@@ -187,6 +209,104 @@ impl QueryLedger {
             }
         }
         Ok(Self { conn, clock_domain: format!("{boot_id}|{namespace}") })
+    }
+
+    pub fn manager_cursor(&self) -> Result<Option<ManagerCursor>, String> {
+        self.conn.query_row(
+            "SELECT network,device,inode,watermark,anchor_seq,anchor_hash FROM query_manager_cursor WHERE singleton=1",
+            [],
+            |row| {
+                let network: String = row.get(0)?;
+                let device: String = row.get(1)?;
+                let inode: String = row.get(2)?;
+                let watermark: i64 = row.get(3)?;
+                let anchor_seq: Option<i64> = row.get(4)?;
+                let anchor_hash: Option<String> = row.get(5)?;
+                Ok((network,device,inode,watermark,anchor_seq,anchor_hash))
+            },
+        ).optional().map_err(failure)?.map(|(network,device,inode,watermark,anchor_seq,anchor_hash)| {
+            let anchor = match (anchor_seq, anchor_hash) {
+                (Some(seq), Some(hash)) => Some((u64::try_from(seq).map_err(failure)?,hash)),
+                (None, None) => None,
+                _ => return Err("M cursor anchor incomplete".into()),
+            };
+            Ok(ManagerCursor {
+                network,
+                device: device.parse().map_err(failure)?,
+                inode: inode.parse().map_err(failure)?,
+                watermark: u64::try_from(watermark).map_err(failure)?,
+                anchor,
+            })
+        }).transpose()
+    }
+
+    /// Projection rows are individually durable and idempotent. Advance this
+    /// cursor only after every row in the page has committed; replay after a
+    /// crash may repeat a page but must never skip an uncommitted M parent.
+    pub fn commit_manager_cursor(
+        &mut self,
+        previous: Option<&ManagerCursor>,
+        next: &ManagerCursor,
+    ) -> Result<(), String> {
+        if next.network.len() != 64
+            || !next.network.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || next.anchor.as_ref().is_some_and(|(seq, hash)| {
+                *seq == 0
+                    || *seq > next.watermark
+                    || hash.len() != 64
+                    || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+            || previous.is_some_and(|old| {
+                old.network != next.network
+                    || old.device != next.device
+                    || old.inode != next.inode
+                    || old.watermark > next.watermark
+                    || old.anchor.as_ref().is_some_and(|(seq, hash)| {
+                        next.anchor.as_ref().is_none_or(|(new_seq, new_hash)| {
+                            new_seq < seq || (new_seq == seq && new_hash != hash)
+                        })
+                    })
+            })
+        {
+            return Err("invalid M projection cursor advancement".into());
+        }
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let actual: Option<CursorSqlRow> = tx.query_row(
+            "SELECT network,device,inode,watermark,anchor_seq,anchor_hash FROM query_manager_cursor WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
+        ).optional().map_err(failure)?;
+        let expected = previous
+            .map(|old| -> Result<_, String> {
+                Ok((
+                    old.network.clone(),
+                    old.device.to_string(),
+                    old.inode.to_string(),
+                    i64::try_from(old.watermark).map_err(failure)?,
+                    old.anchor
+                        .as_ref()
+                        .map(|(seq, _)| i64::try_from(*seq).map_err(failure))
+                        .transpose()?,
+                    old.anchor.as_ref().map(|(_, hash)| hash.clone()),
+                ))
+            })
+            .transpose()?;
+        if actual != expected {
+            return Err("M projection cursor changed concurrently".into());
+        }
+        tx.execute(
+            "INSERT INTO query_manager_cursor(singleton,network,device,inode,watermark,anchor_seq,anchor_hash)
+             VALUES(1,?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(singleton) DO UPDATE SET network=excluded.network,device=excluded.device,
+             inode=excluded.inode,watermark=excluded.watermark,anchor_seq=excluded.anchor_seq,
+             anchor_hash=excluded.anchor_hash",
+            params![next.network,next.device.to_string(),next.inode.to_string(),
+                i64::try_from(next.watermark).map_err(failure)?,
+                next.anchor.as_ref().map(|(seq,_)| i64::try_from(*seq).map_err(failure)).transpose()?,
+                next.anchor.as_ref().map(|(_,hash)| hash)],
+        ).map_err(failure)?;
+        tx.commit().map_err(failure)
     }
 
     pub fn create(&mut self, grant: &Grant, now_ms: u64) -> Result<(), String> {
@@ -508,20 +628,35 @@ impl QueryLedger {
         self.insert_bound(store, record, Some(origin))
     }
 
-    /// Only original IDs that still back a resident derived query row matter
-    /// for conflict propagation. The retained-parent cap bounds this scan.
-    pub fn retained_origin_ids(&self) -> Result<std::collections::BTreeSet<String>, String> {
+    /// Only original rows still backing a resident derived query row matter.
+    /// Their full immutable bodies permit exact M revalidation even when no
+    /// new observation follows a quarantine or source-file replacement.
+    pub fn retained_origin_rows(&self) -> Result<Vec<EvidenceRow>, String> {
+        let (count, total): (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*),COALESCE(SUM(length(body)),0) FROM query_origins",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(failure)?;
+        if count > 4096 || total > 8 * 1024 * 1024 {
+            return Err("retained M parent index overflow".into());
+        }
         let mut query =
-            self.conn.prepare("SELECT origin_id FROM query_origins LIMIT 4097").map_err(failure)?;
-        let rows = query.query_map([], |row| row.get::<_, String>(0)).map_err(failure)?;
-        let mut ids = std::collections::BTreeSet::new();
+            self.conn.prepare("SELECT body FROM query_origins LIMIT 4097").map_err(failure)?;
+        let rows = query.query_map([], |row| row.get::<_, Vec<u8>>(0)).map_err(failure)?;
+        let mut origins = Vec::new();
+        let mut bytes = 0usize;
         for row in rows {
-            if ids.len() >= 4096 {
+            let body = row.map_err(failure)?;
+            bytes = bytes.checked_add(body.len()).ok_or("retained M parent size overflow")?;
+            if origins.len() >= 4096 || bytes > 8 * 1024 * 1024 {
                 return Err("retained M parent index overflow".into());
             }
-            ids.insert(row.map_err(failure)?);
+            origins.push(serde_json::from_slice::<EvidenceRow>(&body).map_err(failure)?);
         }
-        Ok(ids)
+        Ok(origins)
     }
 
     fn insert_bound(
