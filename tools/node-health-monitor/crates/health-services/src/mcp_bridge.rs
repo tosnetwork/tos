@@ -3,8 +3,9 @@
 
 use crate::observability::{router, ObservabilityState};
 use axum::{
-    body::{to_bytes, Body},
+    body::{to_bytes, Body, Bytes},
     http::Request,
+    response::Response,
 };
 use rmcp::{
     model::{
@@ -16,7 +17,8 @@ use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
 };
 use serde_json::Value;
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{borrow::Cow, future::Future, sync::Arc, time::Duration};
+use tokio::sync::Semaphore;
 use tos_health_core::query::TOOLS;
 use tower::ServiceExt;
 
@@ -37,11 +39,37 @@ const ROUTES: [&str; 6] = [
     "block-evidence",
 ];
 
+/// The five-second tool deadline covers the entire route and body drain.
+/// Timing only `oneshot` would allow a delayed response body to outlive it.
+async fn bounded_query_response<F, E>(
+    request: F,
+    deadline: Duration,
+) -> Result<(bool, Bytes), McpError>
+where
+    F: Future<Output = Result<Response, E>>,
+{
+    tokio::time::timeout(deadline, async {
+        let response =
+            request.await.map_err(|_| McpError::internal_error("query route unavailable", None))?;
+        let error = !response.status().is_success();
+        let bytes = to_bytes(response.into_body(), 32_768)
+            .await
+            .map_err(|_| McpError::internal_error("query response exceeded 32 KiB", None))?;
+        Ok((error, bytes))
+    })
+    .await
+    .map_err(|_| McpError::internal_error("query deadline exceeded", None))?
+}
+
 #[derive(Clone)]
 pub struct McpBridge {
     state: ObservabilityState,
     bound_run: String,
     bound_token: [u8; 32],
+    // Shared by SDK service clones for one admitted run. The permit spans the
+    // actual HTTP handler and body read, and is released if the call is
+    // cancelled. It does not claim to bound a future AURA model subprocess.
+    child_slots: Arc<Semaphore>,
 }
 
 impl McpBridge {
@@ -69,7 +97,12 @@ impl McpBridge {
         let ledger = state.query_ledger.as_ref().ok_or(refused)?;
         ledger.lock().map_err(|_| refused)?.claim_mcp(run_id, now).map_err(|_| refused)?;
         drop(data);
-        Ok(Self { state, bound_run: run_id.to_owned(), bound_token: token })
+        Ok(Self {
+            state,
+            bound_run: run_id.to_owned(),
+            bound_token: token,
+            child_slots: Arc::new(Semaphore::new(2)),
+        })
     }
 
     fn tool(index: usize) -> Tool {
@@ -113,6 +146,11 @@ impl McpBridge {
             // There is no further model-visible budget response to charge.
             return Ok(CallToolResult::error(vec![]));
         }
+        let Ok(_child_slot) = self.child_slots.clone().try_acquire_owned() else {
+            // A busy call consumes its durable attempt, but performs no query
+            // dispatch and creates no evidence or upstream work.
+            return Ok(CallToolResult::error(vec![]));
+        };
         let Some(index) = TOOLS.iter().position(|tool| *tool == name) else {
             return Err(McpError::new(ErrorCode::METHOD_NOT_FOUND, "unknown TOS tool", None));
         };
@@ -136,17 +174,11 @@ impl McpBridge {
             .header("content-type", "application/json")
             .body(Body::from(input))
             .map_err(|_| McpError::invalid_params("invalid tool request", None))?;
-        let response = tokio::time::timeout(
-            Duration::from_secs(5),
+        let (error, bytes) = bounded_query_response(
             router(self.state.clone()).oneshot(request),
+            Duration::from_secs(5),
         )
-        .await
-        .map_err(|_| McpError::internal_error("query deadline exceeded", None))?
-        .map_err(|_| McpError::internal_error("query route unavailable", None))?;
-        let error = !response.status().is_success();
-        let bytes = to_bytes(response.into_body(), 32_768)
-            .await
-            .map_err(|_| McpError::internal_error("query response exceeded 32 KiB", None))?;
+        .await?;
         if bytes.is_empty() {
             // HTTP admission refusals have no query envelope. Do not invent a
             // cause, and do not return uncharged text on that path.
@@ -192,5 +224,130 @@ impl ServerHandler for McpBridge {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         self.invoke(&request.name, request.arguments.unwrap_or_default()).await.map(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{query_ledger::boot_millis, random_token, Inventory};
+    use serde_json::json;
+    use std::{
+        collections::BTreeSet,
+        convert::Infallible,
+        pin::Pin,
+        task::{Context, Poll},
+    };
+    use tos_health_core::query::Grant;
+
+    struct NeverFinishedBody;
+
+    impl hyper::body::Body for NeverFinishedBody {
+        type Data = Bytes;
+        type Error = std::io::Error;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+            Poll::Pending
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_deadline_covers_body_drain_and_never_delivers_partial_output() {
+        let pending = Response::new(Body::new(NeverFinishedBody));
+        let error = bounded_query_response(
+            async { Ok::<_, Infallible>(pending) },
+            Duration::from_millis(15),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert!(format!("{error:?}").contains("query deadline exceeded"));
+        let complete = Response::new(Body::from(vec![b'x'; 32_768]));
+        assert_eq!(
+            bounded_query_response(async { Ok::<_, Infallible>(complete) }, Duration::from_secs(1))
+                .await
+                .unwrap()
+                .1
+                .len(),
+            32_768
+        );
+        let too_large = Response::new(Body::from(vec![b'x'; 32_769]));
+        assert!(bounded_query_response(
+            async { Ok::<_, Infallible>(too_large) },
+            Duration::from_secs(1)
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn two_child_slots_refuse_third_before_actual_query_dispatch() {
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-mcp-children-{}-{}",
+            std::process::id(),
+            crate::hex(&random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let state = ObservabilityState::new(
+            Inventory {
+                network_id: "a".repeat(64),
+                nodes: BTreeSet::from(["v1".into()]),
+                scopes: BTreeSet::from(["node".into()]),
+            },
+            vec![b'o'; 32],
+            vec![b'i'; 32],
+            vec![b'a'; 32],
+        )
+        .unwrap()
+        .with_query_ledger(&directory.join("query.sqlite"))
+        .unwrap();
+        let run = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let token = [b't'; 32];
+        let now = boot_millis().unwrap();
+        let grant = Grant::new(
+            run.into(),
+            "aura".into(),
+            state.inventory.network_id.clone(),
+            &token,
+            BTreeSet::from(["v1".into()]),
+            BTreeSet::from(["node".into()]),
+            1_700_000_000_000,
+            1_700_000_060_000,
+            now,
+            0,
+        )
+        .unwrap();
+        state.query_ledger.as_ref().unwrap().lock().unwrap().create(&grant, now).unwrap();
+        state.data.lock().unwrap().grants.insert(run.into(), grant);
+        let bridge = McpBridge::admit(
+            state.clone(),
+            Some(&format!("Bearer {}", "a".repeat(32))),
+            run,
+            &crate::hex(&token),
+        )
+        .unwrap();
+        let first = bridge.child_slots.clone().try_acquire_owned().unwrap();
+        let second = bridge.child_slots.clone().try_acquire_owned().unwrap();
+        let arguments = || serde_json::from_value(json!({"run_id":run})).unwrap();
+        let busy = bridge.invoke(TOOLS[0], arguments()).await.unwrap();
+        assert_eq!(serde_json::to_value(busy).unwrap()["isError"], true);
+        assert_eq!(state.data.lock().unwrap().grants[run].calls(), 0);
+        assert_eq!(
+            state.query_ledger.as_ref().unwrap().lock().unwrap().mcp_usage(run).unwrap(),
+            Some((1, 0))
+        );
+        drop(first);
+        let accepted = bridge.invoke(TOOLS[0], arguments()).await.unwrap();
+        assert_eq!(serde_json::to_value(accepted).unwrap()["isError"], false);
+        assert_eq!(state.data.lock().unwrap().grants[run].calls(), 1);
+        assert_eq!(
+            state.query_ledger.as_ref().unwrap().lock().unwrap().mcp_usage(run).unwrap(),
+            Some((2, 0))
+        );
+        drop(second);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
