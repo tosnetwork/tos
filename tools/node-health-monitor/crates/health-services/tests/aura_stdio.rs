@@ -40,6 +40,20 @@ async fn wait_for_socket(path: &Path) {
     panic!("isolated NHM Unix socket did not appear");
 }
 
+async fn wait_for_handoff_consumption(path: &Path, child: &mut tokio::process::Child) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            assert!(child.try_wait().unwrap().is_none(), "adapter exited before consuming handoff");
+            if !path.exists() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("adapter did not consume one-use handoff within two seconds");
+}
+
 async fn control_grant(path: &Path, start: &str, end: &str) -> Value {
     let stream = tokio::net::UnixStream::connect(path).await.unwrap();
     let (mut sender, connection) = http1::handshake(TokioIo::new(stream)).await.unwrap();
@@ -77,6 +91,83 @@ async fn rpc(
         .unwrap()
         .unwrap();
     serde_json::from_str(&line).unwrap()
+}
+
+#[tokio::test]
+async fn dead_unix_connection_exits_with_stdin_still_open() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-aura-dead-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&tos_health_services::random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let socket = directory.join("mcp.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (disconnect, disconnected) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let service = service_fn(|_request: Request<hyper::body::Incoming>| async {
+            Ok::<_, Infallible>(
+                Response::builder()
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(Bytes::from_static(br#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"mock","version":"1"}}}"#)))
+                    .unwrap(),
+            )
+        });
+        let connection =
+            server_http1::Builder::new().serve_connection(TokioIo::new(stream), service);
+        tokio::select! {
+            _ = connection => {},
+            _ = disconnected => {},
+        }
+    });
+    let credential = directory.join("credential.json");
+    std::fs::write(
+        &credential,
+        json!({"run_id":"01234567-89ab-4cde-8f01-23456789abcd",
+            "run_token":"b".repeat(64),"service_token":"a".repeat(32)})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let mut adapter = Command::new(env!("CARGO_BIN_EXE_tos-nhm-aura-stdio"))
+        .arg(&socket)
+        .arg(&credential)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    wait_for_handoff_consumption(&credential, &mut adapter).await;
+    let mut stdin = adapter.stdin.take().unwrap();
+    let mut output = BufReader::new(adapter.stdout.take().unwrap()).lines();
+    let mut stderr = adapter.stderr.take().unwrap();
+    let init = rpc(
+        &mut stdin,
+        &mut output,
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-06-18","capabilities":{},
+            "clientInfo":{"name":"dead-connection-control","version":"1"}}}),
+    )
+    .await;
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+    let started = tokio::time::Instant::now();
+    disconnect.send(()).unwrap();
+    server.await.unwrap();
+    // The stdin writer is deliberately retained throughout the wait. The
+    // adapter must observe its Unix task's death, not wait for stdin EOF.
+    let status =
+        tokio::time::timeout(Duration::from_secs(3), adapter.wait()).await.unwrap().unwrap();
+    assert!(!status.success());
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(output.next_line().await.unwrap().is_none(), "dead transport emitted a tool result");
+    let mut diagnostic = Vec::new();
+    stderr.read_to_end(&mut diagnostic).await.unwrap();
+    assert_eq!(diagnostic, b"NHM AURA stdio transport refused\n");
+    drop(stdin);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 struct SlowBody {
@@ -184,6 +275,7 @@ async fn mock_refusal(sse: bool) {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
+    wait_for_handoff_consumption(&credential, &mut adapter).await;
     let mut stdin = adapter.stdin.take().unwrap();
     let mut output = BufReader::new(adapter.stdout.take().unwrap()).lines();
     let init = rpc(
@@ -387,6 +479,7 @@ async fn stdio_adapter_uses_actual_private_unix_mcp_for_six_tools() {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
+    wait_for_handoff_consumption(&credential, &mut adapter).await;
     let mut stdin = adapter.stdin.take().unwrap();
     let mut output = BufReader::new(adapter.stdout.take().unwrap()).lines();
     let mut stderr = adapter.stderr.take().unwrap();

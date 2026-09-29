@@ -192,8 +192,17 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
     })
     .await
     .map_err(|_| ())??;
-    let connection = tokio::spawn(async move { connection.await.map_err(|_| ()) });
-    let result = tokio::time::timeout_at(deadline, async {
+    let mut connection = tokio::spawn(async move { connection.await.map_err(|_| ()) });
+    let mut connection_ended = false;
+    let result = tokio::select! {
+        biased;
+        // Detect a dead Unix transport even while AURA keeps stdin open.
+        // No later frame may wait until the whole-run deadline or be retried.
+        _ = &mut connection => {
+            connection_ended = true;
+            Err(())
+        }
+        result = tokio::time::timeout_at(deadline, async {
         let mut stdin = tokio::io::stdin();
         let mut stdout = tokio::io::stdout();
         let mut chunk = [0u8; 1024];
@@ -317,14 +326,17 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                 line.clear();
             }
         }
-    })
-    .await;
+        }) => result.unwrap_or(Err(())),
+    };
     drop(sender);
-    connection.abort();
-    // Do not return control while this connection task can still own an
-    // in-flight request. The broker separately owns grant revoke/replacement.
-    let _ = tokio::time::timeout(Duration::from_secs(5), connection).await.map_err(|_| ())?;
-    result.map_err(|_| ())?
+    if !connection_ended {
+        connection.abort();
+        // Do not return control while this connection task can still own an
+        // in-flight request. Broker revoke/replacement is a separate gate.
+        let _ =
+            tokio::time::timeout(Duration::from_secs(5), &mut connection).await.map_err(|_| ())?;
+    }
+    result
 }
 
 #[tokio::main]
