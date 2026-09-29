@@ -397,6 +397,93 @@ async fn durable_http_grant_restarts_with_fixed_watermark_and_charged_calls() {
     drop(restored);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[tokio::test]
+async fn durable_http_event_cursor_resumes_after_restart_without_late_row() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-http-cursor-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&tos_health_services::random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let file = directory.join("query.sqlite");
+    let first = state().with_query_ledger(&file).unwrap();
+    let now = chrono::Utc::now();
+    let observed = (now - chrono::Duration::seconds(30)).timestamp_millis();
+    let start =
+        (now - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let end = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let event = |sequence: i64| {
+        record(
+            observed + sequence * 1_000,
+            sequence as u64,
+            "collector",
+            contract(
+                json!({"kind":"warning","event":{"kind":"warning","stage":null,
+                    "reason":"synthetic","correlation_id":null,"excerpt":"synthetic"},
+                    "contract_payload":{"kind":"diagnostic_fixture","record_type":1,"payload":"0102"}}),
+                "event",
+            ),
+        )
+    };
+    let app = query_router(first.clone());
+    for sequence in 1..=3 {
+        let response =
+            app.clone().oneshot(request("/v1/ingest", 'i', json!(event(sequence)))).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let issued = json_body(
+        control_router(first.clone())
+            .oneshot(request(
+                "/v1/control/grants",
+                'o',
+                json!({"node_ids":["v1"],"scope_ids":["node"],"start":start,"end":end}),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let run = issued["run_id"].as_str().unwrap().to_owned();
+    let token = issued["run_token"].as_str().unwrap().to_owned();
+    let mut input = json!({"run_id":run,"node_ids":["v1"],"scope_id":"node",
+        "start":start,"end":end,"sources":["collector"],"kinds":["warning"],
+        "correlation_id":"","contains":"","limit":1,"cursor":""});
+    let mut req = request("/v1/query/event-window", 'a', input.clone());
+    req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let first_page = json_body(response).await;
+    assert_eq!(first_page["data"]["events"][0]["source_record_id"], "record-1");
+    input["cursor"] = first_page["pagination"]["next_cursor"].clone();
+    assert!(input["cursor"].as_str().is_some());
+    drop(app);
+    drop(first);
+
+    let restored = state().with_query_ledger(&file).unwrap();
+    let app = query_router(restored.clone());
+    assert_eq!(
+        app.clone().oneshot(request("/v1/ingest", 'i', json!(event(4)))).await.unwrap().status(),
+        StatusCode::OK
+    );
+    for sequence in 2..=3 {
+        let mut req = request("/v1/query/event-window", 'a', input.clone());
+        req.headers_mut().insert("x-tos-run-token", token.parse().unwrap());
+        let response = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_body(response).await;
+        assert_eq!(body["data"]["events"][0]["source_record_id"], format!("record-{sequence}"));
+        assert_eq!(body["pagination"]["truncated"], sequence == 2);
+        input["cursor"] = body["pagination"]["next_cursor"].clone();
+    }
+    assert_eq!(
+        restored.query_ledger.as_ref().unwrap().lock().unwrap().attempt_count(&run).unwrap(),
+        3
+    );
+    drop(app);
+    drop(restored);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[tokio::test]
 async fn ingest_checks_bound_identity() {
     let app = query_router(state());
