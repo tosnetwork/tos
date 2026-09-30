@@ -267,12 +267,16 @@ class FunctionalWitnessTests(unittest.TestCase):
                 m_above.execute("INSERT INTO observations SELECT 2,content_hash,node,scope,process_epoch,"
                                 "source_epoch,source,body FROM observations WHERE store_seq=1")
                 m_above.commit()
-            q.execute("UPDATE query_origins SET manager_seq=2")
+            q.execute("UPDATE query_origins SET manager_seq=2,body=?", (json.dumps({
+                "store_seq": "2", "evidence_id": self.parent_id, "evidence": self.parent},
+                separators=(",", ":")).encode(),))
             q.execute("UPDATE query_manager_cursor SET watermark=2")
             q.commit()
             with self.assertRaisesRegex(witness.WitnessError, "retained_source_identity"):
                 witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
-            q.execute("UPDATE query_origins SET manager_seq=1")
+            q.execute("UPDATE query_origins SET manager_seq=1,body=?", (json.dumps({
+                "store_seq": "1", "evidence_id": self.parent_id, "evidence": self.parent},
+                separators=(",", ":")).encode(),))
             q.execute("DELETE FROM query_projection_origin")
             q.commit()
             with self.assertRaisesRegex(witness.WitnessError, "retained_binding_missing"):
