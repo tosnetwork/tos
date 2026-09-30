@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 
 from jsonschema import Draft202012Validator
+from native_chain_anchor import chain_anchor
 
 
 NODES = tuple([f"validator{i}" for i in range(1, 5)] + ["observer5", "observer6"])
@@ -104,7 +105,7 @@ def node_sample(node, manifest, validator):
     if next(validator.iter_errors(native), None) is not None:
         raise ValueError("native_schema")
     if (native.get("source_id") != "native_core" or native.get("node_id") != node
-            or native.get("source_version") != "native-core-v2"
+            or native.get("source_version") not in ("native-core-v2", "native-core-v3")
             or native.get("availability") != "available"
             or native.get("clock_quality") != "valid"
             or native.get("payload", {}).get("network_id") != manifest["network_id"]
@@ -152,6 +153,10 @@ def node_sample(node, manifest, validator):
         }
     if len(actions) != 4:
         raise ValueError("action_coverage")
+    version = native["source_version"]
+    anchor, anchor_status = (chain_anchor(payload.get("chain"), manifest["network_id"],
+                                          native["observed_at"], now)
+                             if version == "native-core-v3" else (None, None))
     return {
         "pid": pid,
         "native_epoch": native["process_epoch"],
@@ -159,6 +164,9 @@ def node_sample(node, manifest, validator):
         "native_hash": native["content_hash"],
         "native_complete": consensus["instrumentation_complete"],
         "native_missing": native["coverage"]["missing_fields"],
+        "native_version": version,
+        "chain_anchor": anchor,
+        "chain_anchor_status": anchor_status,
         "ready": readiness["ready"],
         "sync_lag_seconds": readiness["sync_lag_seconds"],
         "block_seqno": readiness["last_block"]["seqno"],
@@ -192,6 +200,8 @@ def evaluate(current, previous, elapsed_ms):
         if now["failed"] > old["failed"]:
             return "degraded", ["local_action_failure"]
     if not current["native_complete"] or current["native_missing"]:
+        if current.get("native_version") == "native-core-v3" and current["chain_anchor_status"] != "observed":
+            return "unknown", ["chain_anchor_" + current["chain_anchor_status"]]
         return "unknown", ["unverified_validator_dimensions"]
     return "unknown", ["validator_duty_and_finality_unverified"]
 
@@ -213,6 +223,10 @@ def facts(current, previous):
         ):
             if type(prior) is int and new >= prior:
                 result[label] = new - prior
+    if current.get("native_version") == "native-core-v3":
+        result["chain_anchor_status"] = current["chain_anchor_status"]
+        if current["chain_anchor"] is not None:
+            result["chain_anchor"] = current["chain_anchor"]
     return result
 
 
@@ -233,10 +247,11 @@ def run(manifest, schema, previous, fetch=node_sample):
         for node, future in futures.items():
             try:
                 sample = future.result(timeout=8)
-                samples[node] = sample
                 prior = previous.get("samples", {}).get(node)
                 status, reasons = evaluate(sample, prior, elapsed)
                 checked = facts(sample, prior)
+                sample.pop("chain_anchor", None)
+                samples[node] = sample
             except (OSError, ValueError, KeyError, TypeError, TimeoutError) as error:
                 status, reasons = "unknown", [type(error).__name__ if not isinstance(error, ValueError) else str(error)]
                 checked = {}

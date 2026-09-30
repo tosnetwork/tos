@@ -17,6 +17,8 @@ import subprocess
 import sys
 import tempfile
 
+from native_chain_anchor import chain_anchor
+
 
 NODES = frozenset(("validator1", "validator2", "validator3", "validator4", "observer5", "observer6"))
 PROCESS_LINE = re.compile(
@@ -144,7 +146,8 @@ def archived_native_parents(manager_db, samples, network_id):
                             or native["node_id"] != node
                             or native["scope_id"] != "node"
                             or native["source_id"] != "native_core"
-                            or native["source_version"] != "native-core-v2"
+                            or native["source_version"] != sample.get("native_version", "native-core-v2")
+                            or native["source_version"] not in ("native-core-v2", "native-core-v3")
                             or native["process_epoch"] != sample["native_epoch"]
                             or native["source_epoch"] != sample["native_epoch"]
                             or native["generation"] != str(sample["native_generation"])
@@ -171,7 +174,7 @@ def archived_native_parents(manager_db, samples, network_id):
                     ).fetchone()
                     if quarantined:
                         raise ValueError("local_health_archive_quarantined")
-                    parents[node] = parent_hash
+                    parents[node] = (parent_hash, native)
                     break
                 if node not in parents:
                     raise ValueError("local_health_archive_missing")
@@ -229,8 +232,24 @@ def read_local_health(path, sources, network_id, manager_db):
                          "reasons": verdict["reasons"],
                          "facts": verdict["facts"]}
     parents = archived_native_parents(manager_db, value["samples"], network_id)
-    for node, parent in parents.items():
+    now_seconds = int(dt.datetime.now(dt.timezone.utc).timestamp())
+    for node, (parent, native) in parents.items():
         compact[node]["native_archive_parent"] = parent
+        if native["source_version"] == "native-core-v3":
+            anchor, status = chain_anchor(native["payload"].get("chain"), network_id,
+                                          native["observed_at"], now_seconds)
+            sample_status = value["samples"][node].get("chain_anchor_status")
+            if (compact[node]["facts"].get("chain_anchor_status") != sample_status
+                    or (status == "observed" and sample_status != "observed")
+                    or (status == "missing" and sample_status != "missing")
+                    or (status == "stale" and sample_status not in ("observed", "stale"))):
+                raise ValueError("local_health_chain_identity")
+            if sample_status == "observed" and compact[node]["facts"].get("chain_anchor") != native["payload"]["chain"]:
+                raise ValueError("local_health_chain_identity")
+            compact[node]["facts"].pop("chain_anchor", None)
+            compact[node]["facts"]["chain_anchor_status"] = status
+            if anchor is not None:
+                compact[node]["facts"]["chain_anchor"] = anchor
     return compact
 
 
@@ -249,7 +268,9 @@ def analyze(args, sources, checked_at, local_health=None):
             "the diagnosis contract. The six process snapshots are partial; consensus, duty, "
             "persistence and whole-validator health are unknown. Local development "
             "facts, if present, may show sync or local action progress or degradation; "
-            "they do not prove full duty or finality health. Use status "
+            "they do not prove full duty or finality health. A v3 chain anchor identifies "
+            "one observation; its timestamps alone do not prove chain progress, agreement, "
+            "or finality. Use status "
             "insufficient_evidence. Do not infer healthy or safe. Cite only supplied "
             "M process parent IDs or M native archive parent IDs for observed findings. "
             "Do not request tools or remediation."

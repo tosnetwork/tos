@@ -7,6 +7,7 @@ import os
 import hashlib
 import sqlite3
 from pathlib import Path
+import sys
 import tempfile
 import types
 import unittest
@@ -14,6 +15,7 @@ from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "run-aura-process-watch.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SCHEMA = Path(__file__).parents[1] / "contracts" / "diagnosis.schema.json"
 spec = importlib.util.spec_from_file_location("aura_process_watch", SCRIPT)
 watch = importlib.util.module_from_spec(spec)
@@ -195,6 +197,100 @@ class CodexWatchTest(unittest.TestCase):
             db.execute("UPDATE observations SET content_hash=? WHERE node='validator1'", ("f" * 64,))
         with self.assertRaisesRegex(ValueError, "local_health_archive_mismatch"):
             watch.read_local_health(path, self.sources, network, database)
+
+    def test_v3_chain_fact_requires_exact_archived_parent(self):
+        path = Path(self.temp.name) / "v3-health.json"
+        database = Path(self.temp.name) / "v3-evidence.db"
+        network = "a" * 64
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        observed_at = now.isoformat().replace("+00:00", "Z")
+        observed_ms = int(now.timestamp()) * 1000
+        block = {"file_hash": "b" * 64, "kind": "block", "network_id": network,
+                 "point": "applied", "root_hash": "c" * 64, "scope_id": "masterchain",
+                 "seqno": 15, "shard": "9223372036854775808", "workchain": -1}
+        chain = {"applied": block, "served": None,
+                 "observed_unix_seconds": str(int(now.timestamp())),
+                 "applied_advanced_unix_seconds": "0"}
+        payload = {"network_id": network, "consensus": {"instrumentation_complete": False},
+                   "chain": chain}
+        native_hash = hashlib.sha256(json.dumps(
+            payload, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        with sqlite3.connect(database) as db:
+            db.executescript("CREATE TABLE observations(store_seq INTEGER PRIMARY KEY,"
+                             "node TEXT,scope TEXT,source TEXT,process_epoch TEXT,"
+                             "source_epoch TEXT,source_record TEXT,content_hash TEXT,body TEXT);"
+                             "CREATE TABLE quarantined(node TEXT,scope TEXT,process_epoch TEXT,"
+                             "source_epoch TEXT,source TEXT);")
+            for index, node in enumerate(sorted(watch.NODES)):
+                native = {"content_hash": native_hash, "node_id": node, "scope_id": "node",
+                          "source_id": "native_core", "source_version": "native-core-v3",
+                          "process_epoch": "epoch", "source_epoch": "epoch", "generation": "1",
+                          "availability": "available", "clock_quality": "valid", "observed_at": observed_at,
+                          "coverage": {"status": "partial", "missing_fields": ["local_duties"]},
+                          "quality": {"instrumentation_complete": False}, "payload": payload}
+                value = {"source_epoch": "epoch", "record": {
+                    "node_id": node, "source_id": "native_core", "source_record_id": "epoch:1",
+                    "process_epoch": "epoch", "observed_at_ms": observed_ms,
+                    "received_at_ms": 1, "quality": {"observed_at_ms": observed_ms,
+                    "availability": "available", "clock_valid": True, "coverage": "partial"},
+                    "payload": {"source": native}}}
+                canonical = json.loads(json.dumps(value))
+                canonical["record"]["received_at_ms"] = 0
+                parent = hashlib.sha256(json.dumps(
+                    canonical, separators=(",", ":")
+                ).encode()).hexdigest()
+                db.execute("INSERT INTO observations VALUES(?,?,?,?,?,?,?,?,?)",
+                           (index + 1, node, "node", "native_core", "epoch", "epoch", "epoch:1",
+                            parent, json.dumps(value, separators=(",", ":"))))
+        state = {"schema_version": 1, "scope": "local_development_validator_sources",
+                 "network_id": network, "whole_validator_health": "unknown",
+                 "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                 "samples": {node: {"pid": source["pid"], "native_hash": native_hash,
+                                    "native_epoch": "epoch", "native_generation": 1,
+                                    "native_complete": False, "native_missing": ["local_duties"],
+                                    "native_version": "native-core-v3", "chain_anchor_status": "observed"}
+                             for node, source in self.sources.items()},
+                 "verdicts": {node: {"status": "unknown", "reasons": ["unverified_validator_dimensions"],
+                                    "facts": {"native_hash": native_hash,
+                                              "chain_anchor_status": "observed", "chain_anchor": chain}}
+                              for node in self.sources}}
+        path.write_text(json.dumps(state))
+        path.chmod(0o600)
+        actual = watch.read_local_health(path, self.sources, network, database)
+        self.assertEqual(sum("native_archive_parent" in item for item in actual.values()), 6)
+        self.assertEqual(actual["validator1"]["facts"]["chain_anchor"], chain)
+        state["verdicts"]["validator1"]["facts"]["chain_anchor"] = {**chain, "applied":
+            {**block, "root_hash": "f" * 64}}
+        path.write_text(json.dumps(state))
+        with self.assertRaisesRegex(ValueError, "local_health_chain_identity"):
+            watch.read_local_health(path, self.sources, network, database)
+        with sqlite3.connect(database) as db:
+            for node in sorted(watch.NODES):
+                body = json.loads(db.execute(
+                    "SELECT body FROM observations WHERE node=?", (node,)
+                ).fetchone()[0])
+                source = body["record"]["payload"]["source"]
+                source["payload"]["chain"]["observed_unix_seconds"] = str(int(now.timestamp()) - 31)
+                stale_hash = hashlib.sha256(json.dumps(
+                    source["payload"], sort_keys=True, separators=(",", ":")
+                ).encode()).hexdigest()
+                source["content_hash"] = stale_hash
+                canonical = json.loads(json.dumps(body))
+                canonical["record"]["received_at_ms"] = 0
+                parent = hashlib.sha256(json.dumps(
+                    canonical, separators=(",", ":")
+                ).encode()).hexdigest()
+                db.execute("UPDATE observations SET body=?,content_hash=? WHERE node=?",
+                           (json.dumps(body, separators=(",", ":")), parent, node))
+                state["samples"][node]["native_hash"] = stale_hash
+                state["samples"][node]["chain_anchor_status"] = "stale"
+                state["verdicts"][node]["facts"] = {
+                    "native_hash": stale_hash, "chain_anchor_status": "stale"}
+        path.write_text(json.dumps(state))
+        stale = watch.read_local_health(path, self.sources, network, database)
+        self.assertEqual(stale["validator1"]["facts"]["chain_anchor_status"], "stale")
+        self.assertNotIn("chain_anchor", stale["validator1"]["facts"])
 
 
 if __name__ == "__main__":
