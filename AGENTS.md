@@ -60,6 +60,13 @@ against source, not against memory.
 
 ## Conventions
 
+- For node-health-monitor work, use the existing `node-health-monitor` branch
+  when the shared tree is available. If concurrent changes require an isolated
+  worktree, make one short-lived branch, merge only reviewed changes into
+  `node-health-monitor`, then remove its local and remote branch and worktree.
+  Reuse an active isolation branch instead of creating successors for each
+  test or receipt. Never merge a withdrawn or unreviewed candidate just to
+  reduce branch count.
 - Financial arithmetic uses `checked_*`, never raw `+ - * /`. A bound that
   holds "because of a limit declared elsewhere" is not a checked operation —
   it is a dependency on a constant nobody will remember to re-check.
