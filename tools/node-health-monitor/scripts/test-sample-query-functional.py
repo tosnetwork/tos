@@ -463,6 +463,49 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual(row["error_kind"], "cleanup_unconfirmed")
         self.assertFalse(row["cleanup_confirmed"])
 
+    def test_hourly_second_grant_503_preserves_primary_and_unknown_cleanup(self):
+        log = Path(self.temporary.name) / "hourly-503.jsonl"
+        args = SimpleNamespace(log_file=str(log), operator_token_file="operator", service_token_file="service",
+                               query_unit="query", expected_query_sha256="a" * 64, control_socket="control",
+                               mcp_socket="mcp", m_db=self.db, q_ledger="q", window_id="c" * 64,
+                               baseline_file="baseline", expected_baseline_sha256="b" * 64)
+        run = "11111111-1111-4111-8111-111111111111"
+        grant = {"run_id": run, "run_token": "a" * 64, "expires_in_seconds": 200}
+        calls = iter(((200, {"content-type": "application/json"}, json.dumps(grant).encode()),
+                      (503, {"content-type": "application/json"}, b"{}")))
+        class FakeSession:
+            def __init__(self, *_args): pass
+            def initialize(self): pass
+            def snapshot(self, _run, _node, _end, component):
+                return self_envelope if component == "process" else negative
+            def close(self): pass
+        self_envelope = self.envelope
+        negative = {"run_id": run, "status": "error", "error": {"code": "CACHE_MISS"},
+                    "coverage": {"status": "unknown"}, "data": None, "evidence": []}
+        with patch.object(witness.time, "time", return_value=3600), \
+             patch.object(witness, "private_token", return_value="secret"), \
+             patch.object(witness, "bound_service", return_value=os.getpid()), \
+             patch.object(witness, "frozen_baseline", return_value={"time_namespace": os.readlink("/proc/self/ns/time")}), \
+             patch.object(witness, "ledger_growth", return_value=1), \
+             patch.object(witness, "projection_head", return_value="caught_up"), \
+             patch.object(witness, "control", side_effect=lambda *_args, **_kw: next(calls)), \
+             patch.object(witness, "McpSession", FakeSession), \
+             patch.object(witness, "validate_process"), \
+             patch.object(witness, "verify_retained_binding"), \
+             patch.object(witness, "ledger_revoked", return_value=True), \
+             patch.object(witness, "revoke", return_value=True):
+            self.assertEqual(witness.run(args), 1)
+        row = json.loads(log.read_text().strip())
+        self.assertEqual(row["phase"], "scope_grant")
+        self.assertEqual(row["fixed_grant_query_status"], "pass")
+        self.assertEqual(row["error_kind"], "cleanup_unconfirmed")
+        self.assertEqual(row["primary_error_kind"], "grant_refused")
+        self.assertEqual(row["cleanup_error_kind"], "cleanup_unconfirmed")
+        self.assertEqual(row["grant_requests_attempted"], 2)
+        self.assertEqual(row["known_run_ids"], 1)
+        self.assertNotIn("grants_created", row)
+        self.assertTrue(Path(witness.inflight_path(str(log))).exists())
+
     def test_failed_journal_append_keeps_inflight_across_restart(self):
         log = Path(self.temporary.name) / "append-failure.jsonl"
         args = SimpleNamespace(log_file=str(log), operator_token_file="operator", service_token_file="service",
@@ -489,7 +532,7 @@ class FunctionalWitnessTests(unittest.TestCase):
                                     "--service-token-file", "absent-token", "--m-db", "absent-m",
                                     "--q-ledger", "absent-q", "--log-file", str(log), "--query-unit", "absent",
                                     "--expected-query-sha256", "a" * 64, "--baseline-file", "absent-baseline",
-                                    "--expected-baseline-sha256", "b" * 64], capture_output=True, text=True,
+                                    "--expected-baseline-sha256", "b" * 64, "--window-id", "c" * 64], capture_output=True, text=True,
                                    timeout=5)
         self.assertEqual(restarted.returncode, 1)
         self.assertEqual(json.loads(restarted.stdout)["instrument_error"], "inflight_review_required")

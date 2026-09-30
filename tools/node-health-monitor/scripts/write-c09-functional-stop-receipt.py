@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import subprocess
 import time
@@ -15,6 +16,8 @@ MAX_LOG_BYTES = 4 * 1024 * 1024
 MAX_ROW_BYTES = 1024
 MAX_MARKER_BYTES = 256
 MIN_ELAPSED_NS = (72 * 60 + 5) * 60 * 1_000_000_000
+MAX_SAMPLE_GAP_NS = 360 * 1_000_000_000
+MIN_SAMPLE_GAP_NS = 300 * 1_000_000_000
 
 
 def boot_domain():
@@ -59,7 +62,12 @@ def main():
     parser.add_argument("--expected-baseline-sha256", required=True)
     parser.add_argument("--window-end-utc", required=True)
     parser.add_argument("--first-pass-not-after-utc", required=True)
+    parser.add_argument("--window-id", required=True)
+    parser.add_argument("--timer-unit", required=True)
+    parser.add_argument("--service-unit", required=True)
     args = parser.parse_args()
+    if re.fullmatch(r"[0-9a-f]{64}", args.window_id) is None:
+        raise RuntimeError("window ID")
     directory = Path(args.runtime_dir)
     meta = directory.stat(follow_symlinks=False)
     if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != os.getuid() or meta.st_mode & 0o077:
@@ -70,8 +78,8 @@ def main():
     if (window_end.utcoffset() != dt.timedelta(0) or first_deadline.utcoffset() != dt.timedelta(0)
             or now < window_end):
         raise RuntimeError("window not ended")
-    timer = unit_state("nhm-c09-functional.timer")
-    service = unit_state("nhm-c09-functional.service")
+    timer = unit_state(args.timer_unit)
+    service = unit_state(args.service_unit)
     if timer["ActiveState"] != "inactive" or service["ActiveState"] not in {"inactive", "failed"}:
         raise RuntimeError("functional unit still active")
     q_meta = Path(args.q_ledger).stat(follow_symlinks=False)
@@ -82,6 +90,21 @@ def main():
     if baseline_raw is None or hashlib.sha256(baseline_raw).hexdigest() != args.expected_baseline_sha256:
         raise RuntimeError("baseline digest")
     baseline = json.loads(baseline_raw)
+    if baseline.get("schema_version") != 2 or baseline.get("window_id") != args.window_id:
+        raise RuntimeError("baseline window mismatch")
+    if (baseline.get("boot_id") != Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            or baseline.get("time_namespace") != os.readlink("/proc/self/ns/time")):
+        raise RuntimeError("baseline clock domain mismatch")
+    anchor_raw = private_file(str(directory / "window-anchor.private.json"), 1024)
+    if anchor_raw is None:
+        raise RuntimeError("window anchor missing")
+    anchor = json.loads(anchor_raw)
+    if (anchor.get("schema_version") != 1 or anchor.get("window_id") != args.window_id
+            or anchor.get("manual_resolution_sha256") != args.window_id
+            or anchor.get("baseline_sha256") != hashlib.sha256(baseline_raw).hexdigest()
+            or anchor.get("old_log_sha256") != baseline.get("prior_log_sha256")
+            or anchor.get("old_marker_sha256") != baseline.get("prior_marker_sha256")):
+        raise RuntimeError("window anchor mismatch")
     q_identity_match = (baseline.get("q_device") == str(q_meta.st_dev)
                         and baseline.get("q_inode") == str(q_meta.st_ino))
     log = private_file(str(directory / "samples.private.jsonl"), MAX_LOG_BYTES)
@@ -91,6 +114,13 @@ def main():
     first_pass = None
     first_pass_boot = None
     first_pass_boottime = None
+    last_boottime = None
+    last_boot = None
+    all_rows_pass = True
+    sample_gaps_bounded = True
+    sample_count = 0
+    previous_slot = None
+    previous_highwater = None
     if log:
         if not log.endswith(b"\n"):
             raise RuntimeError("incomplete sample row")
@@ -98,6 +128,31 @@ def main():
             if len(line) > MAX_ROW_BYTES:
                 raise RuntimeError("sample row too large")
             row = json.loads(line)
+            if row.get("window_id") != args.window_id:
+                raise RuntimeError("window log mismatch")
+            sample_count += 1
+            slot = row.get("slot")
+            highwater = row.get("slot_highwater")
+            if (type(slot) is not int or type(highwater) is not int or slot < 0 or highwater < slot
+                    or (previous_slot is not None and slot <= previous_slot)
+                    or (previous_highwater is not None and highwater <= previous_highwater)):
+                all_rows_pass = False
+            previous_slot, previous_highwater = slot, highwater
+            sample_boot = row.get("boot_id")
+            sample_boottime = row.get("boottime_ns")
+            if type(sample_boottime) is not int or sample_boottime < 0 or not isinstance(sample_boot, str):
+                raise RuntimeError("sample monotonic clock")
+            if last_boottime is not None and (sample_boot != last_boot or sample_boottime <= last_boottime
+                                             or not MIN_SAMPLE_GAP_NS <= sample_boottime - last_boottime <= MAX_SAMPLE_GAP_NS):
+                sample_gaps_bounded = False
+            last_boottime, last_boot = sample_boottime, sample_boot
+            if (row.get("status") != "pass" or row.get("cleanup_confirmed") is not True
+                    or row.get("fixed_grant_query_status") != "pass"
+                    or row.get("error_kind") is not None
+                    or row.get("primary_error_kind") is not None
+                    or row.get("cleanup_error_kind") is not None
+                    or row.get("negative_controls") is not (type(slot) is int and slot % 12 == 0)):
+                all_rows_pass = False
             wall = dt.datetime.fromisoformat(row["wall_utc"].replace("Z", "+00:00"))
             if wall.utcoffset() != dt.timedelta(0):
                 raise RuntimeError("sample clock domain")
@@ -117,7 +172,10 @@ def main():
     same_boot = (first_pass_boot == stop_boot and type(first_pass_boottime) is int
                  and 0 <= first_pass_boottime <= stop_boottime)
     elapsed_ns = stop_boottime - first_pass_boottime if same_boot else None
+    last_to_stop_bounded = (last_boot == stop_boot and last_boottime is not None
+                            and 0 <= stop_boottime - last_boottime <= MAX_SAMPLE_GAP_NS)
     receipt = {"schema_version": 1, "kind": "c09_functional_window_stop",
+               "window_id": args.window_id,
                "window_end_utc": args.window_end_utc, "recorded_at_utc": now.isoformat(),
                "first_pass_deadline_utc": args.first_pass_not_after_utc,
                "first_sample_wall_utc": first_sample.isoformat() if first_sample else None,
@@ -127,8 +185,13 @@ def main():
                "first_success_boot_id": first_pass_boot, "first_success_boottime_ns": first_pass_boottime,
                "stop_boot_id": stop_boot, "stop_boottime_ns": stop_boottime,
                "monotonic_elapsed_ns": elapsed_ns,
+               "sample_count": sample_count, "all_rows_pass": all_rows_pass,
+               "sample_gaps_bounded": sample_gaps_bounded,
+               "last_to_stop_bounded": last_to_stop_bounded,
                "functional_elapsed_gate_met": (first_pass is not None and first_pass <= first_deadline
-                                               and elapsed_ns is not None and elapsed_ns >= MIN_ELAPSED_NS),
+                                               and elapsed_ns is not None and elapsed_ns >= MIN_ELAPSED_NS
+                                               and all_rows_pass and sample_gaps_bounded and last_to_stop_bounded
+                                               and q_identity_match and marker is None),
                "timer": timer, "service": service,
                "q_ledger_device": q_meta.st_dev, "q_ledger_inode": q_meta.st_ino,
                "q_identity_match": q_identity_match,

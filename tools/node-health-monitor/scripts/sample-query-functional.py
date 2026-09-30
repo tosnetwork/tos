@@ -301,7 +301,7 @@ def validate_negative(envelope, code, run):
         raise WitnessError("negative_" + code.lower())
 
 
-def frozen_baseline(path, expected_digest, expected_query_sha):
+def frozen_baseline(path, expected_digest, expected_query_sha, window_id=None):
     fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
     try:
         meta = os.fstat(fd)
@@ -316,9 +316,18 @@ def frozen_baseline(path, expected_digest, expected_query_sha):
     value = checked_json(raw, 2048)
     required = {"schema_version", "q_device", "q_inode", "grants", "grant_body_bytes", "attempts",
                 "query_sha256", "max_new_grants", "max_new_grant_body_bytes", "max_new_attempts"}
+    if window_id is not None:
+        required |= {"window_id", "prior_log_sha256", "prior_marker_sha256", "boot_id", "time_namespace"}
     if (set(value) != required or type(value["schema_version"]) is not int
-            or value["schema_version"] != 1 or value["query_sha256"] != expected_query_sha):
+            or value["schema_version"] != (2 if window_id is not None else 1)
+            or value["query_sha256"] != expected_query_sha):
         raise WitnessError("baseline_schema")
+    if window_id is not None and (value["window_id"] != window_id
+                               or any(re.fullmatch(r"[0-9a-f]{64}", value[key]) is None
+                                      for key in ("prior_log_sha256", "prior_marker_sha256"))
+                               or value["boot_id"] != Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+                               or value["time_namespace"] != os.readlink("/proc/self/ns/time")):
+        raise WitnessError("baseline_window")
     for key in ("q_device", "q_inode"):
         if not isinstance(value[key], str) or not value[key].isascii() or not value[key].isdecimal():
             raise WitnessError("baseline_schema")
@@ -632,6 +641,7 @@ def run(args):
     phase = "preflight"
     status = "failed"
     error_kind = None
+    primary_error_kind = None
     cleanup_ok = True
     ledger_delta = None
     baseline = None
@@ -643,6 +653,9 @@ def run(args):
     inflight_started = False
     started = time.monotonic_ns()
     try:
+        window_id = getattr(args, "window_id", None)
+        if window_id is not None and re.fullmatch(r"[0-9a-f]{64}", window_id) is None:
+            raise WitnessError("window_id")
         if os.path.lexists(inflight_path(args.log_file)):
             latch_refused = True
             raise WitnessError("inflight_review_required")
@@ -651,6 +664,8 @@ def run(args):
             os.lseek(fd, max(0, size - 2048), os.SEEK_SET)
             last = os.read(fd, min(size, 2048)).splitlines()[-1]
             previous = checked_json(last, 1024)
+            if window_id is not None and previous.get("window_id") != window_id:
+                raise WitnessError("window_mismatch")
             prior_slot = previous.get("slot")
             prior_highwater = previous.get("slot_highwater", prior_slot)
             if (type(prior_slot) is not int or type(prior_highwater) is not int
@@ -705,8 +720,11 @@ def run(args):
                 raise WitnessError("window_closed")
         operator = private_token(args.operator_token_file)
         service = private_token(args.service_token_file)
-        baseline = frozen_baseline(args.baseline_file, args.expected_baseline_sha256, args.expected_query_sha256)
+        baseline = frozen_baseline(args.baseline_file, args.expected_baseline_sha256,
+                                   args.expected_query_sha256, window_id)
         pid = bound_service(args.query_unit, args.expected_query_sha256, args.control_socket, args.mcp_socket, args.m_db, args.q_ledger)
+        if window_id is not None and os.readlink("/proc/" + str(pid) + "/ns/time") != baseline["time_namespace"]:
+            raise WitnessError("q_clock_domain")
         hourly = slot % 12 == 0
         # Reserve the full worst-case cost before any side-effect: each grant
         # body is capped at 32768 bytes by QueryLedger::encoded.
@@ -756,12 +774,15 @@ def run(args):
         status = "pass" if head_probe_error is None else "failed"
         if head_probe_error is not None:
             error_kind = "projection_probe_failed"
+            primary_error_kind = error_kind
     except WitnessError as exc:
         if latch_refused:
             raise
         error_kind = exc.kind
+        primary_error_kind = error_kind
     except Exception as exc:
         error_kind = type(exc).__name__
+        primary_error_kind = error_kind
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         for run_id in reversed(leases):
@@ -780,12 +801,21 @@ def run(args):
                           "boot_id": boot_id, "boottime_ns": boottime_ns,
                           "wall_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
                           "status": status, "phase": phase, "error_kind": error_kind,
+                          "primary_error_kind": primary_error_kind,
+                          "cleanup_error_kind": "cleanup_unconfirmed" if not cleanup_ok else None,
                           "negative_controls": slot % 12 == 0, "grants_created": len(leases),
                           "cleanup_confirmed": cleanup_ok, "q_grants_since_baseline": ledger_delta,
                           "fixed_grant_query_status": fixed_grant_query_status,
                           "projection_head_status": head_status, "projection_probe_error": head_probe_error,
                           "review_ack_sha256": review_ack_sha256,
                           "elapsed_ms": (time.monotonic_ns() - started) // 1_000_000}
+                if window_id is not None:
+                    sample["window_id"] = window_id
+                    # The pre-POST unknown lease is an attempted request, not
+                    # evidence that Q durably created a grant.
+                    sample.pop("grants_created")
+                    sample["grant_requests_attempted"] = len(leases)
+                    sample["known_run_ids"] = sum(run_id is not None for run_id in leases)
                 append_log(fd, sample)
                 if status == "pass" and inflight_started:
                     finish_inflight(args.log_file)
@@ -803,6 +833,7 @@ def main():
     parser.add_argument("--review-file")
     parser.add_argument("--not-after-utc")
     parser.add_argument("--first-pass-not-after-utc")
+    parser.add_argument("--window-id", required=True)
     args = parser.parse_args()
     if (re.fullmatch(r"[0-9a-f]{64}", args.expected_query_sha256) is None
             or re.fullmatch(r"[0-9a-f]{64}", args.expected_baseline_sha256) is None):

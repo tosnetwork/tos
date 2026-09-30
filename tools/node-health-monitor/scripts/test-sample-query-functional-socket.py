@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 
-ROOT = Path('/home/tomi/tos-node-health-c09-functional-soak/tools/node-health-monitor')
+ROOT = Path(__file__).resolve().parents[1]
 LIVE_M = Path('/home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db')
 BIN = Path('/home/tomi/nhm-supervision/c09-local/runtime/bin/tos-observability')
 NODES = ('validator1', 'validator2', 'validator3', 'validator4', 'observer5', 'observer6')
@@ -78,7 +78,11 @@ with tempfile.TemporaryDirectory(prefix='c09-isolated-', dir='/home/tomi') as ra
         with sqlite3.connect('file:'+str(q)+'?mode=ro',uri=True) as qc:
             grants,body=qc.execute('SELECT count(*),coalesce(sum(length(body)),0) FROM query_grants').fetchone()
             attempts=qc.execute('SELECT count(*) FROM query_attempts').fetchone()[0]
-        baseline={'schema_version':1,'q_device':str(meta.st_dev),'q_inode':str(meta.st_ino),
+        window_id='a'*64
+        baseline={'schema_version':2,'window_id':window_id,'prior_log_sha256':'b'*64,
+                  'prior_marker_sha256':'c'*64,'boot_id':Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                  'time_namespace':os.readlink('/proc/self/ns/time'),
+                  'q_device':str(meta.st_dev),'q_inode':str(meta.st_ino),
                   'grants':grants,'grant_body_bytes':body,'attempts':attempts,'query_sha256':sha,
                   'max_new_grants':1024,'max_new_grant_body_bytes':33554432,'max_new_attempts':3072}
         bp=d/'baseline.json'; bp.write_text(json.dumps(baseline,separators=(',',':'))); bp.chmod(0o600)
@@ -96,7 +100,7 @@ with tempfile.TemporaryDirectory(prefix='c09-isolated-', dir='/home/tomi') as ra
               '--operator-token-file',str(d/'operator.token'),'--service-token-file',str(d/'service.token'),
               '--m-db',str(m),'--q-ledger',str(q),'--log-file',str(d/'sample.jsonl'),
               '--query-unit','isolated-query','--expected-query-sha256',sha,
-              '--baseline-file',str(bp),'--expected-baseline-sha256',digest]
+              '--baseline-file',str(bp),'--expected-baseline-sha256',digest,'--window-id',window_id]
         result=subprocess.run(args,env=env,capture_output=True,text=True,timeout=35)
         sample=json.loads((d/'sample.jsonl').read_text().strip()) if (d/'sample.jsonl').exists() else None
         with sqlite3.connect('file:'+str(q)+'?mode=ro',uri=True) as qc:
