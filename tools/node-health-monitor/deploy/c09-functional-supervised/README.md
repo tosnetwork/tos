@@ -5,14 +5,14 @@ enablement. At the source-review snapshot these units had not been installed;
 the supervisor's later owner-controlled rollout is recorded separately and
 current state must be checked with `systemctl --user show`. The service
 executes a checksum-pinned Python copy in
-`/home/tomi/nhm-supervision/c09-local/runtime/functional/`, outside the
+`$HOME/nhm-supervision/c09-local/runtime/functional/`, outside the
 disposable Git worktree, against the existing private local Q/M sockets. It
 does not launch or restart QueryService, collectors, business nodes, or a model
 API.
 
 ## Private runtime setup and ownership
 
-The dedicated `functional/` directory is owned by `tomi:tomi` and mode
+The dedicated `functional/` directory is owned by the service account and mode
 0700. It currently contains mode-0500 copies of the exact candidate sampler
 and stop-receipt scripts, a mode-0400 `SCRIPT.sha256` manifest, and a mode-0600
 copy of the pinned one-shot Q baseline. Both script hashes in the manifest

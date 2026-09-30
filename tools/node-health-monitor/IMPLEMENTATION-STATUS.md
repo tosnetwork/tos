@@ -46,7 +46,7 @@ The first actual functional tick at `2026-09-30T02:55:09Z` returned `pass` for
 the fixed-grant process query, durably revoked its one new grant, and left no
 inflight marker. Its projection-head status was `lagging`, so this receipt is
 not a caught-up or continuous-availability pass. Private owner rollout and
-first-sample receipts are under `/home/tomi/nhm-supervision/c09-local/`.
+first-sample receipts are under `$HOME/nhm-supervision/c09-local/`.
 The running Q binary remains the pinned `31fc2f615` rollout; later isolated
 projection-health changes are not deployed during this frozen functional
 window. The next tick at `2026-09-30T03:00:10Z` failed during the hourly
@@ -70,7 +70,7 @@ marker; projection health was `lagging`. The v2 first-pass deadline is
 `2026-09-30T04:00:00Z`, its stop timer is `2026-10-03T04:15:00Z`, and the
 Q-aware stop timer remains `2026-10-03T07:10:00Z`. Private render, deployment,
 and first-sample receipts are under
-`/home/tomi/nhm-supervision/c09-local/reviews/fresh-window-render/`. This one
+`$HOME/nhm-supervision/c09-local/reviews/fresh-window-render/`. This one
 successful tick starts a new observation interval; it does not establish
 continuous availability or satisfy the 72-hour gate.
 

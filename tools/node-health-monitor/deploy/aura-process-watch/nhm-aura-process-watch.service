@@ -9,16 +9,16 @@ UMask=0077
 NoNewPrivileges=yes
 TimeoutStartSec=60s
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/usr/bin/python3 /home/tomi/tos-node-health-impl/tools/node-health-monitor/scripts/run-aura-process-watch.py \
-  --test-binary /home/tomi/nhm-aura-build/debug/deps/nhm_c09_live_process-91c96421d130c431 \
+ExecStart=/usr/bin/python3 %h/tos-node-health-impl/tools/node-health-monitor/scripts/run-aura-process-watch.py \
+  --test-binary %h/nhm-aura-build/debug/deps/nhm_c09_live_process-91c96421d130c431 \
   --test-sha256 c3b0b59beab178bf9cb682c094d99bd64970e20af8c7722b7febdfde2740f652 \
-  --adapter-binary /home/tomi/nhm-c08-mcp-evidence/c09-aura-adapter-pinned \
+  --adapter-binary %h/nhm-c08-mcp-evidence/c09-aura-adapter-pinned \
   --adapter-sha256 cb8417e29d6190260807312e10217180f934cbce1ce6ea53fdb7443a1960aa2d \
-  --manifest /home/tomi/nhm-supervision/c09-local/runtime/deployment-public.json \
-  --manager-db /home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db \
+  --manifest %h/nhm-supervision/c09-local/runtime/deployment-public.json \
+  --manager-db %h/nhm-supervision/c09-local/runtime/evidence/evidence.db \
   --manager-unit nhm-local-manager.service \
   --broker-unit nhm-local-query.service \
-  --control-socket /run/user/1000/nhm-local-query/control.sock \
-  --mcp-socket /run/user/1000/nhm-local-query/mcp.sock \
-  --operator-token-file /home/tomi/nhm-supervision/c09-local/runtime/config/query-operator.token \
-  --service-token-file /home/tomi/nhm-supervision/c09-local/runtime/config/query-service.token
+  --control-socket %t/nhm-local-query/control.sock \
+  --mcp-socket %t/nhm-local-query/mcp.sock \
+  --operator-token-file %h/nhm-supervision/c09-local/runtime/config/query-operator.token \
+  --service-token-file %h/nhm-supervision/c09-local/runtime/config/query-service.token

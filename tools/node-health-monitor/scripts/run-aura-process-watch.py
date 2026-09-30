@@ -253,9 +253,7 @@ def analyze(args, sources, checked_at, local_health=None):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as wire:
         json.dump(output_schema(schema), wire)
         wire.flush()
-        command = [args.codex_bin, "codex", "--socket", args.codex_socket,
-                   "--thread-file", args.codex_thread_file,
-                   "--output-schema", wire.name, "--timeout-seconds", "60"]
+        command = codex_command(args, wire.name)
         result = subprocess.run(command, input=json.dumps(prompt).encode(),
                                 capture_output=True, timeout=65)
     if result.returncode != 0 or len(result.stdout) > 16384:
@@ -274,6 +272,19 @@ def analyze(args, sources, checked_at, local_health=None):
     return diagnosis
 
 
+def codex_command(args, output_schema_path):
+    """The AURA bridge accepts either a dedicated app-server socket or a child
+    app-server launched with its own CODEX_HOME, and always an empty private
+    working directory."""
+    if args.codex_socket:
+        endpoint = ["--socket", args.codex_socket]
+    else:
+        endpoint = ["--spawn-app-server", "--codex-home", args.codex_home]
+    return [args.codex_bin, "codex", *endpoint, "--workdir", args.codex_workdir,
+            "--thread-file", args.codex_thread_file,
+            "--output-schema", output_schema_path, "--timeout-seconds", "60"]
+
+
 def main():
     parser = argparse.ArgumentParser()
     for name in (
@@ -282,14 +293,20 @@ def main():
         "control-socket", "mcp-socket", "operator-token-file", "service-token-file",
     ):
         parser.add_argument("--" + name, required=True)
-    for name in ("codex-bin", "codex-socket", "codex-thread-file", "diagnosis-schema"):
+    for name in ("codex-bin", "codex-socket", "codex-home", "codex-workdir",
+                 "codex-thread-file", "diagnosis-schema"):
         parser.add_argument("--" + name)
     parser.add_argument("--local-health-file")
     args = parser.parse_args()
-    codex_options = (args.codex_bin, args.codex_socket, args.codex_thread_file,
+    codex_options = (args.codex_bin, args.codex_workdir, args.codex_thread_file,
                      args.diagnosis_schema)
-    if any(codex_options) and not all(codex_options):
-        parser.error("all Codex options are required together")
+    endpoints = (args.codex_socket, args.codex_home)
+    if any(codex_options + endpoints):
+        if not all(codex_options):
+            parser.error("--codex-bin, --codex-workdir, --codex-thread-file and "
+                         "--diagnosis-schema are required together")
+        if sum(1 for endpoint in endpoints if endpoint) != 1:
+            parser.error("give exactly one of --codex-socket or --codex-home")
     status = {"schema_version": 1, "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
               "source": "pinned_aura_mcp", "scope": "process_source_only"}
     try:
