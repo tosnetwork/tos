@@ -1,4 +1,8 @@
 //! Local monitoring-host storage. Control transactions never share the evidence database.
+use crate::retention::{
+    generation_of, RetentionPass, RetentionPolicy, MAX_PAGES_PER_PASS, PAGE_ROWS, PASS_BUDGET_MS,
+    RETAINED_ROWS_PER_SOURCE,
+};
 use crate::witness::{CacheReceipt, CacheResponse, RelativeAge, RowQualification};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
@@ -66,6 +70,318 @@ fn wal_budget(path: &Path, quota: u64) -> Result<()> {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(err(e)),
+    }
+}
+/// A write refused for space, not for content: page quota, WAL budget or a
+/// full filesystem. Only these justify an out-of-schedule retention pass.
+pub fn is_capacity_error(error: &str) -> bool {
+    error == "WAL quota exceeded"
+        || error.contains("database or disk is full")
+        || error.contains("disk I/O error")
+}
+/// True when `source_record` is at or below the identity's retention seal.
+pub(crate) fn observation_sealed(
+    conn: &Connection,
+    identity: [&str; 5],
+    source_record: &str,
+) -> Result<bool> {
+    let Some(generation) = generation_of(source_record) else {
+        return Ok(false);
+    };
+    let sealed: Option<String> = conn
+        .query_row(
+            "SELECT max_generation FROM retention_seals WHERE node=?1 AND scope=?2 AND process_epoch=?3 AND source_epoch=?4 AND source=?5",
+            params![identity[0], identity[1], identity[2], identity[3], identity[4]],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    match sealed {
+        Some(value) => {
+            let sealed = tos_health_core::wire::exact_u64(&value).map_err(str::to_owned)?;
+            Ok(generation <= sealed)
+        }
+        None => Ok(false),
+    }
+}
+fn count(conn: &Connection, table: &str) -> Result<u64> {
+    let n: i64 = match table {
+        "observations" => conn.query_row("SELECT COUNT(*) FROM observations", [], |r| r.get(0)),
+        "witness_observations" => {
+            conn.query_row("SELECT COUNT(*) FROM witness_observations", [], |r| r.get(0))
+        }
+        _ => return Err("unknown table".into()),
+    }
+    .map_err(err)?;
+    u64::try_from(n).map_err(err)
+}
+type ScannedObservation = (i64, String, String, String, String, String, String, Option<i64>);
+/// Sequence below which rows of a (node, scope, source) group may go: the
+/// newest `RETAINED_ROWS_PER_SOURCE` rows are always kept. `None` means the
+/// group has too few rows to delete any.
+fn protected_floor(
+    conn: &Connection,
+    memo: &mut BTreeMap<(String, String, String), Option<i64>>,
+    key: (String, String, String),
+) -> Result<Option<i64>> {
+    if let Some(value) = memo.get(&key) {
+        return Ok(*value);
+    }
+    let floor: Option<i64> = conn
+        .query_row(
+            "SELECT store_seq FROM observations WHERE node=?1 AND scope=?2 AND source=?3 ORDER BY store_seq DESC LIMIT 1 OFFSET ?4",
+            params![key.0, key.1, key.2, i64::from(RETAINED_ROWS_PER_SOURCE) - 1],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    memo.insert(key, floor);
+    Ok(floor)
+}
+fn retain_observations(
+    conn: &mut Connection,
+    cutoff: i64,
+    started: std::time::Instant,
+    budget: Duration,
+    pass: &mut RetentionPass,
+) -> Result<()> {
+    let mut cursor = 0i64;
+    let mut memo = BTreeMap::new();
+    loop {
+        let rows: Vec<ScannedObservation> = {
+            let mut scan = conn
+                .prepare(
+                    "SELECT store_seq,node,scope,process_epoch,source_epoch,source,source_record,
+                     json_extract(body,'$.record.received_at_ms')
+                     FROM observations WHERE store_seq>?1 ORDER BY store_seq LIMIT ?2",
+                )
+                .map_err(err)?;
+            let rows = scan
+                .query_map(params![cursor, PAGE_ROWS], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                })
+                .map_err(err)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>().map_err(err)?
+        };
+        let Some(last) = rows.last() else {
+            return Ok(());
+        };
+        cursor = last.0;
+        // Rows without an integer receipt time are never age-eligible.
+        let mut candidates = Vec::new();
+        for row in rows {
+            let old = row.7.is_some_and(|received| received < cutoff);
+            if !old {
+                continue;
+            }
+            let floor =
+                protected_floor(conn, &mut memo, (row.1.clone(), row.2.clone(), row.5.clone()))?;
+            if floor.is_some_and(|floor| row.0 < floor) {
+                candidates.push(row);
+            }
+        }
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let tx = conn.transaction().map_err(err)?;
+        let mut seals: BTreeMap<[String; 5], (u64, u64, i64)> = BTreeMap::new();
+        for (seq, node, scope, process_epoch, source_epoch, source, source_record, _) in candidates
+        {
+            let Some(generation) = generation_of(&source_record) else {
+                pass.unsealable_kept = pass.unsealable_kept.saturating_add(1);
+                continue;
+            };
+            let deleted =
+                tx.execute("DELETE FROM observations WHERE store_seq=?1", [seq]).map_err(err)?;
+            if deleted != 1 {
+                return Err("retention candidate vanished inside its transaction".into());
+            }
+            let entry = seals
+                .entry([node, scope, process_epoch, source_epoch, source])
+                .or_insert((generation, 0, seq));
+            entry.0 = entry.0.max(generation);
+            entry.1 = entry.1.saturating_add(1);
+            entry.2 = entry.2.max(seq);
+            pass.observations_deleted = pass.observations_deleted.saturating_add(1);
+        }
+        for (identity, (generation, deleted, last_seq)) in seals {
+            let prior: Option<(String, i64)> = tx
+                .query_row(
+                    "SELECT max_generation,deleted_rows FROM retention_seals WHERE node=?1 AND scope=?2 AND process_epoch=?3 AND source_epoch=?4 AND source=?5",
+                    params![identity[0], identity[1], identity[2], identity[3], identity[4]],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(err)?;
+            let (generation, total) = match prior {
+                Some((sealed, rows)) => {
+                    let sealed =
+                        tos_health_core::wire::exact_u64(&sealed).map_err(str::to_owned)?;
+                    let rows = u64::try_from(rows).map_err(err)?;
+                    (sealed.max(generation), rows.saturating_add(deleted))
+                }
+                None => (generation, deleted),
+            };
+            tx.execute(
+                "INSERT INTO retention_seals(node,scope,process_epoch,source_epoch,source,max_generation,deleted_rows,last_deleted_seq)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+                 ON CONFLICT(node,scope,process_epoch,source_epoch,source) DO UPDATE SET
+                 max_generation=excluded.max_generation,deleted_rows=excluded.deleted_rows,
+                 last_deleted_seq=MAX(last_deleted_seq,excluded.last_deleted_seq)",
+                params![
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    identity[3],
+                    identity[4],
+                    generation.to_string(),
+                    i64::try_from(total).map_err(err)?,
+                    last_seq
+                ],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
+        // Deleted rows changed the group floors; recompute lazily next page.
+        memo.clear();
+        pass.pages = pass.pages.saturating_add(1);
+        if pass.pages >= MAX_PAGES_PER_PASS || started.elapsed() > budget {
+            pass.complete = false;
+            return Ok(());
+        }
+    }
+}
+type ScannedWitness = (i64, String, String, String, String, Option<String>);
+fn retain_witness(
+    conn: &mut Connection,
+    cutoff: i64,
+    started: std::time::Instant,
+    budget: Duration,
+    pass: &mut RetentionPass,
+) -> Result<()> {
+    let mut cursor = 0i64;
+    let mut pages = 0u32;
+    loop {
+        let rows: Vec<ScannedWitness> = {
+            let mut scan = conn
+                .prepare(
+                    "SELECT store_seq,observer_epoch,endpoint,source_epoch,generation,
+                     json_extract(body,'$.receipt.first_received_at')
+                     FROM witness_observations WHERE store_seq>?1 ORDER BY store_seq LIMIT ?2",
+                )
+                .map_err(err)?;
+            let rows = scan
+                .query_map(params![cursor, PAGE_ROWS], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+                })
+                .map_err(err)?;
+            rows.collect::<std::result::Result<Vec<_>, _>>().map_err(err)?
+        };
+        let Some(last) = rows.last() else {
+            return Ok(());
+        };
+        cursor = last.0;
+        let mut floors: BTreeMap<String, Option<i64>> = BTreeMap::new();
+        let mut candidates = Vec::new();
+        for row in rows {
+            let received = row
+                .5
+                .as_deref()
+                .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+                .map(|at| at.timestamp_millis());
+            if !received.is_some_and(|received| received < cutoff) {
+                continue;
+            }
+            let floor = match floors.get(&row.2) {
+                Some(value) => *value,
+                None => {
+                    let value: Option<i64> = conn
+                        .query_row(
+                            "SELECT store_seq FROM witness_observations WHERE endpoint=?1 ORDER BY store_seq DESC LIMIT 1 OFFSET ?2",
+                            params![row.2, i64::from(RETAINED_ROWS_PER_SOURCE) - 1],
+                            |r| r.get(0),
+                        )
+                        .optional()
+                        .map_err(err)?;
+                    floors.insert(row.2.clone(), value);
+                    value
+                }
+            };
+            if floor.is_some_and(|floor| row.0 < floor) {
+                candidates.push(row);
+            }
+        }
+        if candidates.is_empty() {
+            return Ok(());
+        }
+        let tx = conn.transaction().map_err(err)?;
+        let mut seals: BTreeMap<[String; 3], (u64, u64)> = BTreeMap::new();
+        for (seq, observer_epoch, endpoint, source_epoch, generation, _) in candidates {
+            let Ok(generation) = tos_health_core::wire::exact_u64(&generation) else {
+                pass.unsealable_kept = pass.unsealable_kept.saturating_add(1);
+                continue;
+            };
+            let deleted = tx
+                .execute("DELETE FROM witness_observations WHERE store_seq=?1", [seq])
+                .map_err(err)?;
+            if deleted != 1 {
+                return Err("retention candidate vanished inside its transaction".into());
+            }
+            let entry =
+                seals.entry([observer_epoch, endpoint, source_epoch]).or_insert((generation, 0));
+            entry.0 = entry.0.max(generation);
+            entry.1 = entry.1.saturating_add(1);
+            pass.witness_deleted = pass.witness_deleted.saturating_add(1);
+        }
+        for (identity, (generation, deleted)) in seals {
+            let prior: Option<(String, i64)> = tx
+                .query_row(
+                    "SELECT max_generation,deleted_rows FROM witness_retention_seals WHERE observer_epoch=?1 AND endpoint=?2 AND source_epoch=?3",
+                    params![identity[0], identity[1], identity[2]],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(err)?;
+            let (generation, total) = match prior {
+                Some((sealed, rows)) => {
+                    let sealed =
+                        tos_health_core::wire::exact_u64(&sealed).map_err(str::to_owned)?;
+                    let rows = u64::try_from(rows).map_err(err)?;
+                    (sealed.max(generation), rows.saturating_add(deleted))
+                }
+                None => (generation, deleted),
+            };
+            tx.execute(
+                "INSERT INTO witness_retention_seals(observer_epoch,endpoint,source_epoch,max_generation,deleted_rows)
+                 VALUES(?1,?2,?3,?4,?5)
+                 ON CONFLICT(observer_epoch,endpoint,source_epoch) DO UPDATE SET
+                 max_generation=excluded.max_generation,deleted_rows=excluded.deleted_rows",
+                params![
+                    identity[0],
+                    identity[1],
+                    identity[2],
+                    generation.to_string(),
+                    i64::try_from(total).map_err(err)?
+                ],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)?;
+        pages = pages.saturating_add(1);
+        pass.pages = pass.pages.saturating_add(1);
+        if pages >= MAX_PAGES_PER_PASS || started.elapsed() > budget {
+            pass.complete = false;
+            return Ok(());
+        }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,8 +526,72 @@ impl EvidenceDb {
             CREATE TABLE IF NOT EXISTS witness_current_activation (
             endpoint TEXT PRIMARY KEY,plan_revision TEXT NOT NULL,plan_hash TEXT NOT NULL,observer_epoch TEXT NOT NULL,
             source_epoch TEXT NOT NULL,highest_generation TEXT,source_hash TEXT,metadata_hash TEXT,
-            quarantined INTEGER NOT NULL DEFAULT 0);").map_err(err)?;
+            quarantined INTEGER NOT NULL DEFAULT 0);
+            CREATE INDEX IF NOT EXISTS observation_source_seq ON observations(node,scope,source,store_seq);
+            CREATE TABLE IF NOT EXISTS retention_seals(node TEXT NOT NULL,scope TEXT NOT NULL,process_epoch TEXT NOT NULL,
+            source_epoch TEXT NOT NULL,source TEXT NOT NULL,max_generation TEXT NOT NULL,
+            deleted_rows INTEGER NOT NULL,last_deleted_seq INTEGER NOT NULL,
+            PRIMARY KEY(node,scope,process_epoch,source_epoch,source));
+            CREATE TABLE IF NOT EXISTS witness_retention_seals(observer_epoch TEXT NOT NULL,endpoint TEXT NOT NULL,
+            source_epoch TEXT NOT NULL,max_generation TEXT NOT NULL,deleted_rows INTEGER NOT NULL,
+            PRIMARY KEY(observer_epoch,endpoint,source_epoch));").map_err(err)?;
         Ok(Self { conn, path: path.into(), quota, current_tracks: BTreeMap::new() })
+    }
+    /// One bounded retention pass: delete eligible old rows, seal their
+    /// identities in the same transaction, then run a passive checkpoint.
+    /// The caller is the single evidence writer; `now_ms` is UTC.
+    pub fn retain(&mut self, policy: &RetentionPolicy, now_ms: i64) -> Result<RetentionPass> {
+        policy.validate()?;
+        let started = std::time::Instant::now();
+        let budget = Duration::from_millis(PASS_BUDGET_MS);
+        let mut pass = RetentionPass { complete: true, ..RetentionPass::default() };
+        if let Some(cutoff) = policy.evidence_cutoff_ms(now_ms) {
+            retain_observations(&mut self.conn, cutoff, started, budget, &mut pass)?;
+        }
+        if let Some(cutoff) = policy.witness_cutoff_ms(now_ms) {
+            retain_witness(&mut self.conn, cutoff, started, budget, &mut pass)?;
+        }
+        pass.observations_rows = count(&self.conn, "observations")?;
+        pass.witness_rows = count(&self.conn, "witness_observations")?;
+        pass.oldest_retained_received_at_ms = {
+            let mut oldest = self
+                .conn
+                .prepare(
+                    "SELECT json_extract(body,'$.record.received_at_ms') FROM observations ORDER BY store_seq LIMIT 64",
+                )
+                .map_err(err)?;
+            let rows = oldest.query_map([], |r| r.get::<_, Option<i64>>(0)).map_err(err)?;
+            let mut minimum: Option<i64> = None;
+            for row in rows {
+                if let Some(value) = row.map_err(err)? {
+                    minimum = Some(minimum.map_or(value, |m| m.min(value)));
+                }
+            }
+            minimum
+        };
+        pass.checkpoint = self.checkpoint()?;
+        Ok(pass)
+    }
+    pub fn evidence_seal(
+        &self,
+        node: &str,
+        scope: &str,
+        process_epoch: &str,
+        source_epoch: &str,
+        source: &str,
+    ) -> Result<Option<u64>> {
+        let sealed: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT max_generation FROM retention_seals WHERE node=?1 AND scope=?2 AND process_epoch=?3 AND source_epoch=?4 AND source=?5",
+                params![node, scope, process_epoch, source_epoch, source],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        sealed
+            .map(|value| tos_health_core::wire::exact_u64(&value).map_err(str::to_owned))
+            .transpose()
     }
     /// Activate the explicit startup plan's current source epochs. Historical
     /// witness rows and their independent quarantine are not changed.
@@ -498,6 +878,15 @@ impl EvidenceDb {
                 evidence: serde_json::from_str(&stored).map_err(err)?,
             });
         }
+        // A record at or below the retention seal was deleted by age; a replay
+        // must not reappear with a fresh sequence number.
+        if observation_sealed(
+            &tx,
+            [&e.node_id, &e.scope_id, &e.process_epoch, &value.source_epoch, &e.source_id],
+            &e.source_record_id,
+        )? {
+            return Err("EVIDENCE_EXPIRED".into());
+        }
         tx.execute("INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![e.node_id,e.scope_id,e.process_epoch,value.source_epoch,e.source_id,e.source_record_id,digest,body]).map_err(err)?;
         let seq = tx.last_insert_rowid();
         tx.commit().map_err(err)?;
@@ -584,6 +973,20 @@ impl EvidenceDb {
                 evidence_id,
                 response: serde_json::from_str(&stored).map_err(err)?,
             });
+        }
+        let sealed: Option<String> = tx
+            .query_row(
+                "SELECT max_generation FROM witness_retention_seals WHERE observer_epoch=?1 AND endpoint=?2 AND source_epoch=?3",
+                params![receipt.observer_epoch, endpoint, receipt.source_epoch],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        if let Some(sealed) = sealed {
+            let sealed = tos_health_core::wire::exact_u64(&sealed).map_err(str::to_owned)?;
+            if receipt.generation.0 <= sealed {
+                return Err("EVIDENCE_EXPIRED".into());
+            }
         }
         let count: i64 = tx
             .query_row("SELECT COUNT(*) FROM witness_observations", [], |r| r.get(0))

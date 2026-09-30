@@ -3,6 +3,7 @@ use crate::durable::{
     ControlDb, ControlUpdate, DurableEvidence, Evaluation, EvidenceDb, EvidenceRow, RuleKey,
     WitnessArchiveRow,
 };
+use crate::retention::{RetentionPolicy, RetentionSchedule, RetentionStatus};
 use crate::witness::{
     CacheResponse, RelativeAge, RemoteClock, RoleAtObserverReceipt, RowAge, RowQualification,
 };
@@ -501,6 +502,43 @@ pub struct ManagerConfig {
     pub witness_current_trusted_same_host: bool,
     #[serde(default)]
     pub diagnostic: Option<DiagnosticConfig>,
+    /// Age after which ordinary observations may be deleted (1 h to 90 d).
+    /// Absent keeps the store unbounded, as before.
+    #[serde(default)]
+    pub evidence_retention_ms: Option<U64>,
+    /// Same bound for the historical witness archive.
+    #[serde(default)]
+    pub witness_retention_ms: Option<U64>,
+}
+impl ManagerConfig {
+    pub fn retention_policy(&self) -> RetentionPolicy {
+        RetentionPolicy {
+            evidence_retention_ms: self.evidence_retention_ms.map(|value| value.0),
+            witness_retention_ms: self.witness_retention_ms.map(|value| value.0),
+        }
+    }
+}
+/// Delivery facts the doctor reads: whether a receiver exists and when the
+/// last authenticated receipt was accepted in this process lifetime.
+#[derive(Debug, Clone, Default)]
+pub struct NotificationStatus {
+    pub receiver_configured: bool,
+    pub receiver_alias: Option<String>,
+    pub deliveries: u64,
+    pub last_delivery_at_ms: Option<i64>,
+}
+impl NotificationStatus {
+    fn json(&self, now_ms: i64) -> Value {
+        json!({
+            "receiver_configured": self.receiver_configured,
+            "receiver_alias": self.receiver_alias,
+            "deliveries": self.deliveries.to_string(),
+            "last_delivery_at_ms": self.last_delivery_at_ms.map(|value| value.to_string()),
+            "last_delivery_age_ms": self.last_delivery_at_ms
+                .and_then(|value| now_ms.checked_sub(value))
+                .map(|age| age.max(0).to_string()),
+        })
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -535,6 +573,8 @@ pub struct Manager {
     diagnostic_token: Option<Arc<Vec<u8>>>,
     diagnostic_nodes: Arc<Vec<String>>,
     diagnostic_budget: Arc<crate::diagnostic_ingest::Budget>,
+    retention: Arc<Mutex<RetentionStatus>>,
+    notification: Arc<Mutex<NotificationStatus>>,
 }
 #[derive(Clone)]
 struct Cached {
@@ -656,6 +696,8 @@ impl Manager {
         if same_database(&config.control_db, &config.evidence_db)? {
             return Err("control and evidence must be separate databases".into());
         }
+        let policy = config.retention_policy();
+        policy.validate()?;
         crate::loopback(&config.listen)?;
         let ingest = crate::secret(&config.ingest_token_file)?;
         let read = crate::secret(&config.read_token_file)?;
@@ -751,17 +793,50 @@ impl Manager {
         }));
         let (control, rx) = sync_channel(32);
         let (evidence_tx, erx) = sync_channel(32);
+        let retention = Arc::new(Mutex::new(RetentionStatus::new(&policy)));
+        let retention_writer = retention.clone();
         std::thread::Builder::new()
             .name("health-evidence-writer".into())
             .spawn(move || {
                 let mut current_views = BTreeMap::<String, CurrentView>::new();
-                while let Ok(command) = erx.recv() {
+                let mut schedule = RetentionSchedule::new(policy);
+                loop {
+                    schedule.tick(&mut evidence_db, &retention_writer);
+                    let command = match erx.recv_timeout(schedule.until_next()) {
+                        Ok(command) => command,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
                     match command {
                         EvidenceCommand::Insert(value, reply) => {
-                            let _ = reply.send(evidence_db.insert(*value));
+                            let result = match evidence_db.insert((*value).clone()) {
+                                Err(error)
+                                    if schedule.recover(
+                                        &mut evidence_db,
+                                        &retention_writer,
+                                        &error,
+                                    ) =>
+                                {
+                                    evidence_db.insert(*value)
+                                }
+                                other => other,
+                            };
+                            let _ = reply.send(result);
                         }
                         EvidenceCommand::Diagnostic(batch, _lease, reply) => {
-                            let _ = reply.send(evidence_db.insert_diagnostic(&batch));
+                            let result = match evidence_db.insert_diagnostic(&batch) {
+                                Err(error)
+                                    if schedule.recover(
+                                        &mut evidence_db,
+                                        &retention_writer,
+                                        &error,
+                                    ) =>
+                                {
+                                    evidence_db.insert_diagnostic(&batch)
+                                }
+                                other => other,
+                            };
+                            let _ = reply.send(result);
                         }
                         EvidenceCommand::InsertWitness(
                             value,
@@ -955,6 +1030,51 @@ impl Manager {
             diagnostic_token,
             diagnostic_nodes: Arc::new(diagnostic_nodes),
             diagnostic_budget: Arc::new(crate::diagnostic_ingest::Budget::default()),
+            retention,
+            notification: Arc::new(Mutex::new(NotificationStatus {
+                receiver_configured: config.receiver.is_some(),
+                receiver_alias: config.receiver.as_ref().map(|receiver| receiver.alias.clone()),
+                deliveries: 0,
+                last_delivery_at_ms: None,
+            })),
+        })
+    }
+    /// Operator-facing facts beside the rule round: the inventory the doctor
+    /// must see covered, quarantines, retention and delivery status.
+    fn operator_facts(&self, now_ms: i64) -> Value {
+        let inventory = json!({
+            "revision": self.inventory.revision,
+            "network_id": self.inventory.network_id,
+            "targets": self.inventory.targets.iter().map(|target| json!({
+                "node": target.node,
+                "scope": target.scope,
+                "rules": target.rules.iter().map(|rule| rule.id.clone()).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        });
+        let quarantined = self.quarantines.lock().map_or_else(
+            |_| json!(null),
+            |entries| {
+                json!(entries
+                    .iter()
+                    .map(|((node, scope, source), entry)| json!({
+                        "node": node, "scope": scope, "source": source,
+                        "exhausted": entry.exhausted,
+                        "epochs": entry.epochs.iter().map(|(process, source_epoch)| json!({
+                            "process_epoch": process, "source_epoch": source_epoch
+                        })).collect::<Vec<_>>(),
+                    }))
+                    .collect::<Vec<_>>())
+            },
+        );
+        let retention =
+            self.retention.lock().map_or_else(|_| json!(null), |status| status.json(now_ms));
+        let notification =
+            self.notification.lock().map_or_else(|_| json!(null), |status| status.json(now_ms));
+        json!({
+            "inventory": inventory,
+            "quarantined_sources": quarantined,
+            "retention": retention,
+            "notification": notification,
         })
     }
     pub async fn ingest(&self, frame: FactFrame) -> Result<String, String> {
@@ -1119,18 +1239,39 @@ impl Manager {
             .map_err(|_| "evidence writer stopped")?
     }
     pub fn snapshot(&self) -> Result<Value, String> {
-        let c = self.cache.lock().map_err(|_| "cache unavailable")?;
-        if c.failure || c.completed.is_none_or(|t| t.elapsed() > Duration::from_secs(15)) {
-            return Err("rule evaluation unavailable".into());
+        let mut value = {
+            let c = self.cache.lock().map_err(|_| "cache unavailable")?;
+            if c.failure || c.completed.is_none_or(|t| t.elapsed() > Duration::from_secs(15)) {
+                return Err("rule evaluation unavailable".into());
+            }
+            c.json.clone()
+        };
+        let facts = self.operator_facts(chrono::Utc::now().timestamp_millis());
+        match (value.as_object_mut(), facts.as_object()) {
+            (Some(target), Some(facts)) => {
+                for (key, item) in facts {
+                    target.insert(key.clone(), item.clone());
+                }
+            }
+            _ => return Err("state shape unavailable".into()),
         }
-        Ok(c.json.clone())
+        Ok(value)
     }
     pub fn metrics(&self) -> Result<String, String> {
-        let c = self.cache.lock().map_err(|_| "cache unavailable")?;
-        if c.failure || c.completed.is_none_or(|t| t.elapsed() > Duration::from_secs(15)) {
-            return Err("rule evaluation unavailable".into());
-        }
-        Ok(c.metrics.clone())
+        let round = {
+            let c = self.cache.lock().map_err(|_| "cache unavailable")?;
+            if c.failure || c.completed.is_none_or(|t| t.elapsed() > Duration::from_secs(15)) {
+                return Err("rule evaluation unavailable".into());
+            }
+            c.metrics.clone()
+        };
+        let retention = self
+            .retention
+            .lock()
+            .map_err(|_| "retention status unavailable")?
+            .metrics(chrono::Utc::now().timestamp_millis());
+        let body = round.strip_suffix("# EOF\n").ok_or("metrics shape unavailable")?;
+        Ok(format!("{body}{retention}# EOF\n"))
     }
     pub async fn pending(&self) -> Result<Vec<(i64, String, String)>, String> {
         let (tx, rx) = oneshot::channel();
@@ -1164,7 +1305,12 @@ impl Manager {
         tokio::time::timeout(Duration::from_secs(2), rx)
             .await
             .map_err(|_| "control deadline")?
-            .map_err(|_| "control stopped")?
+            .map_err(|_| "control stopped")??;
+        if let Ok(mut status) = self.notification.lock() {
+            status.deliveries = status.deliveries.saturating_add(1);
+            status.last_delivery_at_ms = Some(chrono::Utc::now().timestamp_millis());
+        }
+        Ok(())
     }
 }
 fn permit(headers: &HeaderMap, token: &[u8], uri: &axum::http::Uri) -> Result<(), StatusCode> {
