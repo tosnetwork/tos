@@ -4,7 +4,7 @@ Design: R4, current design blob `c28a6b2506c98fc728f868081a8192f7d0cd0d0a`
 from memo `main@6c0536c042405e857bdced8e327b6f018c816526`.
 Reviewed recovery checkpoint: `628d2967b1bccdab752e9fbe4b66087df68d18b4`.
 The branch includes main commit `b9d8bc433c760f104a81cd1256581a4537923218`.
-Status as of 2026-09-29 23:08 UTC: C00–C05 have scoped development acceptances
+Status as of 2026-09-30 03:05 UTC: C00–C05 have scoped development acceptances
 (6 of 10 stages). C06–C08 have bounded development implementations, but not
 stage acceptance (3 stages). C09 is RED/open (1 stage): local observability and
 a scoped live-data receipt exist, but continuous AURA availability, production
@@ -49,8 +49,15 @@ not a caught-up or continuous-availability pass. Private owner rollout and
 first-sample receipts are under `/home/tomi/nhm-supervision/c09-local/`.
 The running Q binary remains the pinned `31fc2f615` rollout; later isolated
 projection-health changes are not deployed during this frozen functional
-window. Retention, model diagnosis, performance, and the 72-hour C09 gate
-remain open.
+window. The next tick at `2026-09-30T03:00:10Z` failed during the hourly
+cross-scope grant control with `cleanup_unconfirmed`; its OnFailure alert
+stopped the functional timer. A read-only audit found the one new durable Q
+grant from that tick revoked, but the sampler retained its inflight marker
+because the second grant request had an unconfirmed side effect. The failed
+log and marker are frozen under the private C09 review directory. This
+interruption invalidates the current continuous functional window; any new
+window requires separate manual review and a new first-pass anchor. Retention,
+model diagnosis, performance, and the 72-hour C09 gate remain open.
 
 ## Evidence mapping
 
