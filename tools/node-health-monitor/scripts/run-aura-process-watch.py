@@ -108,7 +108,7 @@ def archived_native_parents(manager_db, samples, network_id):
     try:
         with sqlite3.connect(f"file:{Path(manager_db)}?mode=ro", uri=True, timeout=1) as db:
             db.execute("BEGIN")
-            for node in sorted(NODES):
+        for node in sorted(samples):
                 sample = samples[node]
                 for _store_seq, parent_hash, body in db.execute(
                 "SELECT store_seq,content_hash,body FROM observations "
@@ -179,13 +179,18 @@ def read_local_health(path, sources, network_id, manager_db):
             or value.get("network_id") != network_id
             or value.get("whole_validator_health") != "unknown"
             or at.tzinfo is None or not 0 <= age <= 90
-            or set(value.get("samples", {})) != NODES
+            or not set(value.get("samples", {})) <= NODES
             or set(value.get("verdicts", {})) != NODES):
         raise ValueError("local_health_stale_or_mismatched")
     compact = {}
     for node in sorted(NODES):
-        sample = value["samples"][node]
         verdict = value["verdicts"][node]
+        if node not in value["samples"]:
+            if verdict.get("status") != "unknown" or verdict.get("facts") != {}:
+                raise ValueError("local_health_missing_source_state")
+            compact[node] = {"status": "unknown", "reasons": verdict["reasons"], "facts": {}}
+            continue
+        sample = value["samples"][node]
         native_hash = sample.get("native_hash")
         if (sample.get("pid") != sources[node]["pid"]
                 or not isinstance(native_hash, str)
@@ -211,7 +216,8 @@ def analyze(args, sources, checked_at, local_health=None):
     Draft202012Validator.check_schema(schema)
     evidence_ids = {item["evidence_id"] for item in sources.values()}
     if local_health:
-        evidence_ids.update(item["native_archive_parent"] for item in local_health.values())
+        evidence_ids.update(item["native_archive_parent"] for item in local_health.values()
+                            if "native_archive_parent" in item)
     prompt = {
         "instruction": (
             "Analyze only this AURA process-source receipt. Return one JSON object matching "

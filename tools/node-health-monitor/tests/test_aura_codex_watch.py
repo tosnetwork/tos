@@ -102,6 +102,17 @@ class CodexWatchTest(unittest.TestCase):
         actual = watch.read_local_health(path, self.sources, network, database)
         self.assertEqual(len(actual), 6)
         self.assertTrue(all(len(item["native_archive_parent"]) == 64 for item in actual.values()))
+        missing_sample = value["samples"].pop("validator1")
+        value["verdicts"]["validator1"] = {"status": "unknown", "reasons": ["source_unavailable"],
+                                            "facts": {}}
+        path.write_text(json.dumps(value))
+        partial = watch.read_local_health(path, self.sources, network, database)
+        self.assertEqual(partial["validator1"],
+                         {"status": "unknown", "reasons": ["source_unavailable"], "facts": {}})
+        self.assertEqual(sum("native_archive_parent" in item for item in partial.values()), 5)
+        value["samples"]["validator1"] = missing_sample
+        value["verdicts"]["validator1"] = {"status": "unknown", "reasons": ["unverified"],
+                                            "facts": {"native_hash": native_hash}}
         value["samples"]["validator1"]["pid"] += 1
         path.write_text(json.dumps(value))
         with self.assertRaisesRegex(ValueError, "local_health_identity"):
