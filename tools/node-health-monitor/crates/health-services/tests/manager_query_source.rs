@@ -116,6 +116,88 @@ async fn live_read_only_projection_cost_witness() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Two bounded cold-start sizes. Fixture creation is outside the timed region;
+/// this is isolated Q catch-up cost, not a production latency threshold.
+#[test]
+#[ignore = "opt-in synthetic cold-start timing witness"]
+fn synthetic_1500_and_4000_process_cold_start_cost_witness() {
+    for rows in [1500_u64, 4000_u64] {
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-m-cold-rows-{rows}-{}-{}",
+            std::process::id(),
+            tos_health_services::hex(&random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let manager_path = directory.join("manager.sqlite");
+        let ledger_path = directory.join("query.sqlite");
+        let network = "a".repeat(64);
+        let mut manager = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+        manager.bind_network(&network).unwrap();
+        drop(manager);
+        let mut conn = rusqlite::Connection::open(&manager_path).unwrap();
+        let tx = conn.transaction().unwrap();
+        for index in 1..=rows {
+            let value = row(&format!("epoch-{index}"));
+            let mut canonical = value.clone();
+            canonical.record.received_at_ms = 0;
+            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap()));
+            let evidence = &value.record;
+            tx.execute(
+                "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                rusqlite::params![evidence.node_id,evidence.scope_id,evidence.process_epoch,
+                    value.source_epoch,evidence.source_id,evidence.source_record_id,digest,
+                    serde_json::to_string(&value).unwrap()],
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        drop(conn);
+        let inventory = Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        };
+        let started = std::time::Instant::now();
+        let state =
+            ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+                .unwrap()
+                .with_query_ledger(&ledger_path)
+                .unwrap()
+                .with_manager_evidence(manager_path)
+                .unwrap();
+        let startup_ms = started.elapsed().as_millis();
+        let mut pages = 1_u64;
+        let mut max_refresh_page_ms = 0_u128;
+        while !state.data.lock().unwrap().manager_caught_up {
+            assert!(pages < 32, "cold-start page bound exceeded");
+            let page_started = std::time::Instant::now();
+            import_manager(&state).unwrap();
+            max_refresh_page_ms = max_refresh_page_ms.max(page_started.elapsed().as_millis());
+            pages += 1;
+        }
+        let caught_up_ms = started.elapsed().as_millis();
+        assert_eq!(
+            state
+                .query_ledger
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .manager_cursor()
+                .unwrap()
+                .unwrap()
+                .watermark,
+            rows
+        );
+        println!(
+            "cold_rows={rows} startup_first_page_ms={startup_ms} pages={pages} caught_up_ms={caught_up_ms} max_refresh_page_ms={max_refresh_page_ms}"
+        );
+        drop(state);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}
+
 async fn body(response: axum::response::Response) -> serde_json::Value {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     serde_json::from_slice(&bytes).unwrap()
