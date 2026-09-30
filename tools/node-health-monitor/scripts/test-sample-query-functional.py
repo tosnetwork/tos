@@ -368,6 +368,34 @@ class FunctionalWitnessTests(unittest.TestCase):
             with self.assertRaisesRegex(witness.WitnessError, "projection_false_caught_up"):
                 witness.projection_head("socket", "service")
 
+    def test_transition_503_is_explicit_unavailable_never_caught_up(self):
+        value = {"schema_version": 1, "projection_status": "transition",
+                 "manager_conflicted": False, "caught_up_at_last_import": True,
+                 "query_watermark": "4", "cursor_global_m_seq": "10",
+                 "source_global_m_seq": "11", "lag_global_m_seq": "1",
+                 "source_identity_match": True}
+        def probe(status, body):
+            with patch.object(witness, "control", return_value=(status, {"content-type": "application/json"},
+                                                                 json.dumps(body).encode())):
+                return witness.projection_head("socket", "service")
+        self.assertEqual(probe(503, value), "transition")
+        for status, changed in ((200, value),
+                                (503, {**value, "manager_conflicted": True}),
+                                (503, {**value, "source_global_m_seq": None}),
+                                (503, {**value, "query_watermark": "04"}),
+                                (503, {**value, "lag_global_m_seq": "0"}),
+                                (503, {**value, "cursor_global_m_seq": None})):
+            with self.subTest(status=status, changed=changed):
+                with self.assertRaises(witness.WitnessError):
+                    probe(status, changed)
+        self.assertEqual(probe(503, {**value, "cursor_global_m_seq": None,
+                                     "lag_global_m_seq": None, "source_identity_match": None}), "transition")
+        self.assertEqual(probe(503, {**value, "cursor_global_m_seq": "12",
+                                     "lag_global_m_seq": None, "source_identity_match": False}), "transition")
+        with self.assertRaisesRegex(witness.WitnessError, "projection_false_caught_up"):
+            probe(503, {**value, "projection_status": "caught_up", "source_global_m_seq": "10",
+                        "lag_global_m_seq": "0"})
+
     def test_fixed_query_success_recorded_separately_from_lagging_head(self):
         log = Path(self.temporary.name) / "separate.jsonl"
         args = SimpleNamespace(log_file=str(log), operator_token_file="operator", service_token_file="service",
@@ -408,6 +436,27 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual(row["fixed_grant_query_status"], "pass")
         self.assertEqual(row["projection_head_status"], "lagging")
         self.assertEqual(row["status"], "pass")
+        for unavailable in ("transition", "source_unavailable", "conflict"):
+            with self.subTest(unavailable=unavailable):
+                args.log_file = str(Path(self.temporary.name) / (unavailable + ".jsonl"))
+                with patch.object(witness.time, "time", return_value=301), \
+                     patch.object(witness, "private_token", return_value="secret"), \
+                     patch.object(witness, "bound_service", return_value=123), \
+                     patch.object(witness, "frozen_baseline", return_value={}), \
+                     patch.object(witness, "ledger_growth", return_value=1), \
+                     patch.object(witness, "projection_head", return_value=unavailable), \
+                     patch.object(witness, "issue", side_effect=fake_issue), \
+                     patch.object(witness, "McpSession", FakeSession), \
+                     patch.object(witness, "validate_process"), \
+                     patch.object(witness, "verify_retained_binding"), \
+                     patch.object(witness, "ledger_revoked", return_value=True), \
+                     patch.object(witness, "revoke", return_value=True):
+                    self.assertEqual(witness.run(args), 1)
+                sample = json.loads(Path(args.log_file).read_text().strip())
+                self.assertEqual(sample["fixed_grant_query_status"], "pass")
+                self.assertEqual(sample["projection_head_status"], unavailable)
+                self.assertEqual(sample["error_kind"], "projection_" + unavailable)
+                self.assertTrue(Path(witness.inflight_path(args.log_file)).exists())
 
     def test_timeout_after_grant_attempts_revoke_and_logs_failure(self):
         log = Path(self.temporary.name) / "samples.jsonl"

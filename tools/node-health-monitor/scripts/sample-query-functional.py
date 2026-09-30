@@ -133,7 +133,7 @@ def projection_head(socket_path, service_token):
     name = value.get("projection_status")
     if type(value.get("schema_version")) is not int or value["schema_version"] != 1 or name not in (
             "caught_up", "lagging", "conflict", "source_unavailable", "uninitialized",
-            "identity_or_watermark_mismatch"):
+            "identity_or_watermark_mismatch", "transition"):
         raise WitnessError("projection_shape")
     conflicted = value.get("manager_conflicted")
     caught = value.get("caught_up_at_last_import")
@@ -158,6 +158,19 @@ def projection_head(socket_path, service_token):
         raise WitnessError("projection_false_lagging")
     if name == "conflict" and not (status == 503 and conflicted):
         raise WitnessError("projection_false_conflict")
+    if name == "transition":
+        query = value.get("query_watermark")
+        if (status != 503 or conflicted or not isinstance(query, str)
+                or re.fullmatch(r"(?:0|[1-9][0-9]{0,19})", query) is None
+                or int(query) > 2**64 - 1 or not isinstance(source, str)):
+            raise WitnessError("projection_false_transition")
+        if cursor is None:
+            if identity is not None or lag is not None:
+                raise WitnessError("projection_false_transition")
+        else:
+            expected_lag = str(int(source) - int(cursor)) if int(source) >= int(cursor) else None
+            if type(identity) is not bool or lag != expected_lag:
+                raise WitnessError("projection_false_transition")
     return name
 
 
@@ -732,6 +745,8 @@ def run(args):
                                      3 if hourly else 1)
         try:
             head_status = projection_head(args.control_socket, service)
+            if head_status not in ("caught_up", "lagging"):
+                head_probe_error = "projection_" + head_status
         except WholeRunTimeout:
             # The outer 22-second alarm is a whole-run failure, even when it
             # fires during the independent head probe. Never issue a grant.
@@ -773,7 +788,7 @@ def run(args):
                 session.close()
         status = "pass" if head_probe_error is None else "failed"
         if head_probe_error is not None:
-            error_kind = "projection_probe_failed"
+            error_kind = head_probe_error if head_status != "probe_failed" else "projection_probe_failed"
             primary_error_kind = error_kind
     except WitnessError as exc:
         if latch_refused:
