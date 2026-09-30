@@ -31,13 +31,13 @@ fn validate_manager_cursor(cursor: &ManagerCursor) -> Result<(), String> {
     if !tos_health_core::wire::hash(&cursor.network)
         || (cursor.watermark == 0) != cursor.anchor.is_none()
         || cursor.anchor.as_ref().is_some_and(|(seq, hash)| {
-            *seq == 0 || *seq > cursor.watermark || !tos_health_core::wire::hash(hash)
+            *seq != cursor.watermark || !tos_health_core::wire::hash(hash)
         })
     {
         return Err("invalid persisted M projection cursor".into());
     }
-    // A nonzero global boundary always anchors an actual M observation. It
-    // may be a non-process row when no process row exists at that sequence.
+    // A nonzero global boundary anchors the exact last M observation, which
+    // may be non-process. An older valid process hash cannot justify a later W.
     Ok(())
 }
 

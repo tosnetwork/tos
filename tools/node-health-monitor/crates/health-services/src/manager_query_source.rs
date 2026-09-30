@@ -199,6 +199,13 @@ pub fn read_process_projection_page(
     }) {
         return Err("M projection database identity changed".into());
     }
+    if previous.is_some_and(|old| match (old.watermark, old.anchor.as_ref()) {
+        (0, None) => false,
+        (watermark, Some((seq, hash))) => *seq != watermark || !tos_health_core::wire::hash(hash),
+        _ => true,
+    }) {
+        return Err("invalid persisted M projection cursor".into());
+    }
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -223,6 +230,9 @@ pub fn read_process_projection_page(
     if watermark < after {
         return Err("M projection watermark regressed".into());
     }
+    // The cursor shape above binds seq to old W. This lookup and the later
+    // page scan share one M read transaction, so a real boundary at W must
+    // still have the original hash even when it is not a process row.
     if let Some((seq, expected)) = previous.and_then(|old| old.anchor.as_ref()) {
         let actual: Option<String> = conn
             .query_row(

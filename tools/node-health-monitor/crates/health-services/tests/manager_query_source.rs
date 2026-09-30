@@ -128,6 +128,12 @@ fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
     )
     .unwrap();
     assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
+    sql.execute(
+        "UPDATE query_manager_cursor SET watermark=4,anchor_seq=3,anchor_hash=?1 WHERE singleton=1",
+        ["b".repeat(64)],
+    )
+    .unwrap();
+    assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
     drop(sql);
     drop(ledger);
     std::fs::remove_dir_all(directory).unwrap();
@@ -293,7 +299,7 @@ fn process_parent_and_trailing_diagnostic_have_distinct_durable_identities() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    assert_eq!(origins, vec![process_id]);
+    assert_eq!(origins, vec![process_id.clone()]);
     drop(query);
     drop(state);
     let restored =
@@ -305,6 +311,30 @@ fn process_parent_and_trailing_diagnostic_have_distinct_durable_identities() {
             .unwrap();
     assert!(restored.data.lock().unwrap().manager_caught_up);
     drop(restored);
+    // The retained process at seq 1 is genuine, but cannot anchor global W=2.
+    // The durable parser and direct same-snapshot reader must reject it.
+    let query = rusqlite::Connection::open(&ledger_path).unwrap();
+    query
+        .execute(
+            "UPDATE query_manager_cursor SET anchor_seq=1,anchor_hash=?1 WHERE singleton=1",
+            [&process_id],
+        )
+        .unwrap();
+    let ledger = QueryLedger::open(&ledger_path).unwrap();
+    assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
+    drop(ledger);
+    let mut forged = cursor.clone();
+    forged.anchor = Some((1, process_id.clone()));
+    assert!(read_process_projection_page(&manager_path, &inventory.network_id, Some(&forged), &[])
+        .unwrap_err()
+        .contains("invalid persisted"));
+    query
+        .execute(
+            "UPDATE query_manager_cursor SET anchor_seq=2,anchor_hash=?1 WHERE singleton=1",
+            ["d".repeat(64)],
+        )
+        .unwrap();
+    drop(query);
     sql.execute("UPDATE observations SET content_hash=?1 WHERE store_seq=2", ["e".repeat(64)])
         .unwrap();
     let error =

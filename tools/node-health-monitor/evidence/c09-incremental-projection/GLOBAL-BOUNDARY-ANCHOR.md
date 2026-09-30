@@ -79,3 +79,43 @@ database, not the local deployed ledger. They cannot silently skip a
 diagnostic-only prefix. Rebuilding/migrating such a cursor needs a separate
 reviewed path. This follow-up is still an isolated
 development candidate, not a live Q update or a C09 soak acceptance.
+
+## Exact-watermark anchor successor (isolated, 2026-09-30 UTC)
+
+`nhm/c09-global-boundary-2836` now rejects a persisted nonzero cursor unless
+`anchor_seq == watermark`. An older genuine process hash cannot stand in for
+the later global M boundary. The direct M page reader checks that cursor shape
+independently, then verifies the exact boundary row and hash in the same M
+read transaction as the page. A diagnostic-only snapshot remains valid when
+its diagnostic row is itself the global boundary.
+
+The added controls SQL-tamper a Q cursor to `watermark=4,anchor_seq=3` with a
+syntactically valid hash, and forge `watermark=2,anchor_seq=1` using the real
+retained process hash while diagnostic seq 2 is unchanged. Both are refused;
+the latter is checked at both the durable Q parser and direct M reader.
+
+Changed-property checks compiled and failed at the intended assertions:
+
+- Replacing Q's `seq != watermark` with `seq > watermark` exited 101 in
+  `persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor` on an
+  accepted `W=4,anchor_seq=3` cursor. An earlier broader mutation also went
+  red at the pre-existing `anchor_seq > W` assertion; it is not counted as
+  the intended new-property control.
+- Replacing the M reader's `seq != watermark` with `seq > watermark` exited
+  101 in `process_parent_and_trailing_diagnostic_have_distinct_durable_identities`:
+  the forged old process anchor produced an `Ok(ProjectionPage)` where
+  refusal was required.
+
+Both mutations were restored. Restored `cargo test --locked -p
+tos-health-services` exited 0, including `manager_query_source` 21 passed / 1
+opt-in ignored and the dynamic-date `witness_archive` test. `cargo fmt --all
+-- --check`, strict `cargo clippy --locked -p tos-health-services --all-targets
+-- -D warnings`, and `git diff --check` exited 0. No business, M, or Q
+service was changed; this does not close C09's runtime or 72-hour gates.
+
+Restored source SHA-256: `query_ledger.rs`
+`2152491e042fa50920f9b5d821e3884b8e0d338b301aabce6f2ad310d497b288`,
+`manager_query_source.rs`
+`f2e7451e64c30cf6553b989743f6dbe371bb3584c5fbcbed10792f0d0051b622`,
+and `tests/manager_query_source.rs`
+`2312352e2256c7b1233d3a1ab7a3ea2cdecd057a91fc058e18cbf6ad8e895e21`.
