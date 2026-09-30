@@ -49,19 +49,38 @@ pub struct IngressConfig {
     /// Explicit development-only fixed witness aliases. Empty disables routes.
     #[serde(default)]
     pub witness_endpoints: Vec<String>,
+    /// Request budget shared by the listener and applied per peer: sustained
+    /// requests per second and burst capacity. The defaults are the fixed
+    /// node-entry contract (1/s, burst 4); an aggregating manager ingress
+    /// that serves many fixed lanes sets its own bounded values.
+    #[serde(default = "default_rate_per_second")]
+    pub rate_per_second: u32,
+    #[serde(default = "default_burst")]
+    pub burst: u32,
+}
+fn default_rate_per_second() -> u32 {
+    1
+}
+fn default_burst() -> u32 {
+    4
 }
 struct Bucket {
     at: Instant,
     tokens: u32,
+    rate: u32,
+    burst: u32,
 }
 impl Bucket {
-    fn new() -> Self {
-        Self { at: Instant::now(), tokens: 4 }
+    fn new(rate: u32, burst: u32) -> Self {
+        Self { at: Instant::now(), tokens: burst, rate, burst }
     }
     fn take(&mut self, reserve: bool) -> bool {
         let elapsed = self.at.elapsed().as_secs();
         if elapsed > 0 {
-            self.tokens = self.tokens.saturating_add(elapsed.min(4) as u32).min(4);
+            let refill = u32::try_from(elapsed.min(u64::from(self.burst)))
+                .unwrap_or(self.burst)
+                .saturating_mul(self.rate);
+            self.tokens = self.tokens.saturating_add(refill).min(self.burst);
             self.at += Duration::from_secs(elapsed);
         }
         if self.tokens <= u32::from(reserve) {
@@ -272,6 +291,9 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         || !config.server_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
         || config.witness_endpoints.len() > 16
         || config.witness_endpoints.iter().any(|alias| !crate::alias(alias))
+        || !(1..=64).contains(&config.rate_per_second)
+        || !(1..=256).contains(&config.burst)
+        || config.burst < config.rate_per_second
         || config.witness_endpoints.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Err("invalid ingress configuration".into());
@@ -282,7 +304,9 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         if !crate::alias(&peer.alias)
             || !tos_health_core::wire::hash(&peer.certificate_sha256)
             || peers.insert(peer.certificate_sha256.clone(), peer.clone()).is_some()
-            || buckets.insert(peer.alias.clone(), Bucket::new()).is_some()
+            || buckets
+                .insert(peer.alias.clone(), Bucket::new(config.rate_per_second, config.burst))
+                .is_some()
         {
             return Err("invalid peer ACL".into());
         }
@@ -328,7 +352,10 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         .pool_max_idle_per_host(1)
         .build()
         .map_err(|e| e.to_string())?;
-    let limits = Arc::new(Mutex::new(Limits { global: Bucket::new(), peers: buckets }));
+    let limits = Arc::new(Mutex::new(Limits {
+        global: Bucket::new(config.rate_per_second, config.burst),
+        peers: buckets,
+    }));
     let config = Arc::new(config);
     let peers = Arc::new(peers);
     let slots = Arc::new(tokio::sync::Semaphore::new(8));

@@ -49,6 +49,8 @@ async fn fixed_development_witness_routes_keep_peer_and_header_bounds() {
     let config = IngressConfig {
         listen: m_addr,
         witness_endpoints: vec!["cache_1".into()],
+        rate_per_second: 1,
+        burst: 4,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -207,6 +209,8 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
         ca_file: t.0.join("ca.pem"),
         peers: vec![Peer { alias: "collector".into(), certificate_sha256: peer.clone(), role }],
         witness_endpoints: vec!["cache_1".into()],
+        rate_per_second: 1,
+        burst: 4,
     };
     let o_ingress = tokio::spawn(tos_health_services::ingress::serve(
         make_ingress(o_tls_addr, o_up_addr, Role::WitnessReader),
@@ -437,6 +441,8 @@ async fn split_collector_identities_archive_validated_process_without_probe_rela
         key_file: t.0.join("server.key"),
         ca_file: t.0.join("ca.pem"),
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         peers: vec![Peer {
             alias: "collector".into(),
             certificate_sha256: fingerprint(&t.0, cert),
@@ -735,6 +741,8 @@ async fn mtls_acl_rejects_missing_expired_and_unapproved_before_upstream() {
     let config = IngressConfig {
         listen: address,
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -814,6 +822,8 @@ async fn eight_idle_authenticated_readers_are_bounded_then_release() {
     let config = IngressConfig {
         listen: address,
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -874,6 +884,8 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
     let config = IngressConfig {
         listen: address,
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -1004,6 +1016,8 @@ async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
     let config = IngressConfig {
         listen: edge_addr,
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -1131,6 +1145,8 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     let config = IngressConfig {
         listen: edge_addr,
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),

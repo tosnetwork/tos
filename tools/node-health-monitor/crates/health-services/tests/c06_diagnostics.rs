@@ -146,6 +146,8 @@ async fn actual_native_ipc_relay_mtls_manager_transaction_chain() {
         key_file: f.0.join("server.key"),
         ca_file: f.0.join("ca.pem"),
         witness_endpoints: vec![],
+        rate_per_second: 1,
+        burst: 4,
         peers: vec![Peer {
             alias: "diagnostic_edge".into(),
             certificate_sha256: format!("{:x}", Sha256::digest(der.stdout)),
@@ -473,6 +475,8 @@ async fn actual_manager_death_then_edge_shutdown_preserves_native_core_progress(
             key_file: f.0.join("server.key"),
             ca_file: f.0.join("ca.pem"),
             witness_endpoints: vec![],
+            rate_per_second: 1,
+            burst: 4,
             peers: vec![Peer {
                 alias: "diagnostic_edge".into(),
                 certificate_sha256: format!("{:x}", Sha256::digest(der.stdout)),
