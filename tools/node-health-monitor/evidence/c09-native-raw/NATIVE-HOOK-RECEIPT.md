@@ -21,7 +21,9 @@ The earlier external RTT capture and soak audit files are unchanged.
   compiled to 57,480 bytes. No dynamic record allocation, file/network write
   or blocking lock occurs on `start`/`finish`; full/contended records are
   dropped and counted, and either drop sets `complete=false` for the entire
-  timing population. Counter saturation/failed finite CAS also sets
+  timing population. A start or finish clock failure is also a missing timing
+  sample: it increments `clock_error` and sets `complete=false`. Counter
+  saturation/failed finite CAS also sets
   `complete=false`. A caller-provided span receives a snapshot outside the
   hot path. Construction obtains a nonce once; failure disables capture.
 - The primitive is intentionally **not wired** into `simplex/pool.cpp`,
@@ -66,11 +68,32 @@ nanosecond remainder check compiled and exited 15. Both original paths
 compiled and exited 0. `raw_now` now delegates its conversion to the tested
 checked function, so the boundary assertion exercises production conversion.
 
+The next semantic correction covers clock failures on both endpoints. A
+separate controlled test uses the linker's `--wrap=clock_gettime` only in its
+isolated binary; it forces the next clock call to fail, then checks both
+`start` and `finish` refuse the sample with `clock_error=1` and
+`complete=false`. The production header still calls the real Linux clock.
+
+```sh
+c++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -pthread -I. \
+  test/pq-native/c09-raw-clock-failure-test.cpp \
+  -Wl,--wrap=clock_gettime -o /tmp/c09-raw-clock-failure-test
+/tmp/c09-raw-clock-failure-test
+```
+
+Natural exit 0:
+`C09_NATIVE_CLOCK_FAILURE_OK start_error=1 finish_error=1 complete=0`.
+Exact isolated header mutants changed only the `start` or `finish` failure
+branch back to `add(clock_error_)`. Both compiled with exit 0; the unchanged
+controlled test exited 3 for the start mutant and 6 for the finish mutant.
+
 | Artifact | SHA-256 |
 |---|---|
-| `validator/measurement/c09-raw-monotonic.h` | `23a05e2c83d9f8a43b0f3adbb7130d7d59fca591fba758342e00f6182d4b18af` |
+| `validator/measurement/c09-raw-monotonic.h` | `fcfd5c619a0c0b3ddcd42ae47490c805f4e85473cc111316571e9d6a53cfec74` |
 | `test/pq-native/c09-raw-monotonic-test.cpp` | `281c80ca527efa89ebc03972af1e0c7fb710a787e078c237331164c1d914d500` |
-| compiled temporary test binary | `97de751b0e8151f638358e6307838c67016c5e046aa52f09fe70e17a5eec2661` |
+| `test/pq-native/c09-raw-clock-failure-test.cpp` | `0b8fde53516217a8c23a8e123803cedffa245d1b0549ed4b1ea745165081641f` |
+| compiled temporary baseline test binary | `559520f8e466926783a583f2b967b4bd018adc6fde3909b4cb20e03baad44a72` |
+| compiled temporary clock-failure test binary | `4d1e8b40b0e4b91dcf118619fba4a340963f4964271c32e4fbd4b6688e53c938` |
 
 No broad rebuild, live node test, restart, deploy or model API call occurred.
 The next step that needs actual native call-site coverage would edit consensus

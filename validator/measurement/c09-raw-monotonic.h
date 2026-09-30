@@ -102,7 +102,7 @@ class Capture final {
     }
     std::int64_t now = 0;
     if (!raw_now(now)) {
-      add(clock_error_);
+      drop(clock_error_);
       return false;
     }
     point = {nonce_, now, pid_, clock_domain, stage};
@@ -114,7 +114,7 @@ class Capture final {
     // Capture the endpoint before accounting, validation and lock attempts.
     std::int64_t end = 0;
     if (!raw_now(end)) {
-      add(clock_error_);
+      drop(clock_error_);
       return false;
     }
     if (!ready_ || getpid() != pid_ || point.pid != pid_ || point.process_nonce != nonce_ ||
