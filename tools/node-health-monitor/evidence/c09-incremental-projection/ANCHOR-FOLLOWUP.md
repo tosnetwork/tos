@@ -40,11 +40,12 @@ Production role qualification and other historical fixtures are unchanged.
   exit 0.
 - `cargo fmt --all --check` and `git diff --check`: exit 0.
 
-Raw logs are in `anchor-followup-raw/`:
+Raw logs are in `anchor-followup-raw/`; the full log is losslessly gzip
+compressed to preserve its exact output bytes:
 
 | File | SHA-256 |
 |---|---|
-| `full-health-services-restored.log` | `7853d219953e7b838e0f02bd1b16fe4b372e5c1b0f3cfc7878e5fb2392c8da3f` |
+| `full-health-services-restored.log.gz` | `f907b483484a685e67ffb01a9169b1eba2bab3d4fbfb9cf7bdd7f1db959a0e49` (uncompressed SHA-256 `7853d219953e7b838e0f02bd1b16fe4b372e5c1b0f3cfc7878e5fb2392c8da3f`) |
 | `mixed-boundary-anchor-mutant.log` | `6beb76dda25b350ab7afcf8c48bec07fdf3b3f4bc8d7d5f992929c76621fdef1` |
 
 This is a development source/test check, not C09 deployed availability or
