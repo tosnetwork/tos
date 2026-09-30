@@ -45,7 +45,7 @@ new grants become available; this is a source-derived estimate, not a measured
 service restart. A grant attempt imports one page but returns 503 until fully
 caught up. Existing fixed-W grants are governed by the separate ledger rules.
 
-`QueryLedger::insert_bound` clones the whole `EvidenceStore` for each projected
-row. This makes catch-up work grow with retained store size across rows; the
-15-page measurement is bounded but does not prove larger-backlog or 72-hour
-latency. No row/byte cap, freshness threshold, or timeout was increased.
+The M importer uses `insert_projection_page`, which clones the `EvidenceStore`
+once per bounded page, not once per row. The 15-page measurement remains
+bounded evidence, not a larger-backlog or 72-hour latency result. No row/byte
+cap, freshness threshold, or timeout was increased.

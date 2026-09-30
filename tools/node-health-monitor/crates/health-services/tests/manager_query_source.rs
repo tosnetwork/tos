@@ -498,6 +498,35 @@ fn row(epoch: &str) -> DurableEvidence {
 }
 
 #[test]
+fn production_process_parent_bound_is_below_query_resident_charge() {
+    // The production store charges every projected row its JSON bytes plus
+    // 2048. Exercise the short live-style source and the maximal accepted
+    // source epoch/missing-field profile; a 32 MiB test store does not model
+    // the production 4096-parent boundary.
+    for wide in [false, true] {
+        let epoch = if wide { "e".repeat(128) } else { "epoch-1".into() };
+        let mut evidence = row(&epoch);
+        if wide {
+            evidence.record.payload["source"]["coverage"]["missing_fields"] =
+                serde_json::json!(vec!["m".repeat(96); 64]);
+        }
+        let mut canonical = evidence.clone();
+        canonical.record.received_at_ms = 0;
+        let origin = tos_health_services::durable::EvidenceRow {
+            store_seq: U64(1),
+            evidence_id: format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap())),
+            evidence,
+        };
+        let projected = project_process(&origin).unwrap().unwrap();
+        let parent_bytes = serde_json::to_vec(&origin).unwrap().len();
+        let query_charge = serde_json::to_vec(&projected).unwrap().len() + 2048;
+        eprintln!("wide={wide} parent_bytes={parent_bytes} query_charge={query_charge}");
+        assert!(parent_bytes <= 34_816);
+        assert!(parent_bytes < query_charge, "parent={parent_bytes} query_charge={query_charge}");
+    }
+}
+
+#[test]
 fn incremental_projection_pages_4097_history_and_sparse_global_sequence() {
     let directory = std::env::temp_dir().join(format!(
         "nhm-m-query-pages-{}-{}",
