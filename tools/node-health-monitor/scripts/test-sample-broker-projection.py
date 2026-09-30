@@ -2,13 +2,16 @@
 """Isolated Unix HTTP controls for the low-rate projection sampler."""
 
 import json
+import os
 from pathlib import Path
+import runpy
 import socketserver
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("sample-broker-projection.py")
@@ -159,6 +162,15 @@ class ProjectionProbeTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(json.loads(result.stdout)["error_kind"], "ValueError")
+
+    def test_local_profile_rejects_different_token_owner_before_request(self):
+        # Rust secret(path) has no owner check; this soak probe intentionally
+        # enforces a narrower same-UID local profile for its service token.
+        private_token = runpy.run_path(str(SCRIPT))["private_token"]
+        with mock.patch("os.getuid", return_value=os.getuid() + 1):
+            with self.assertRaisesRegex(ValueError, "private token file rejected"):
+                private_token(self.token)
+        self.assertFalse(self.sock.exists())
 
 
 if __name__ == "__main__":
