@@ -44,6 +44,7 @@
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
 #include "metrics/chain-anchor-snapshot.h"
+#include "metrics/core-health.h"
 #include "metrics/node-state-snapshot.h"
 
 #include <sys/statvfs.h>
@@ -3971,11 +3972,16 @@ BlockHandle ValidatorManagerImpl::get_handle_from_lru(BlockIdExt id) {
   }
 }
 
-// Node-state gauges for the health snapshot: membership, duty counters live in
-// the consensus group, the three real waiter queues of this actor, and the
-// storage position. One pass over the waiter maps per second, which the timer
-// sweep already does; one statvfs of the database root.
+// Node-state gauges for the health snapshot: membership (duty counters live in
+// the consensus group), the three real waiter queues of this actor, and the
+// storage position. Runs only while health instrumentation is on. It is a
+// second pass over the waiter maps per second, of the same order as the timer
+// sweep below; the statvfs of the database root runs at most every ten seconds
+// because it is a syscall on this actor's thread.
 void ValidatorManagerImpl::publish_health_node_state() {
+  if (!health::enabled.load(std::memory_order_relaxed)) {
+    return;
+  }
   auto &g = health::node_state;
   const auto now = td::Timestamp::now();
   auto oldest_ms = [&](double created_at) -> std::uint64_t {
@@ -4018,13 +4024,16 @@ void ValidatorManagerImpl::publish_health_node_state() {
   g.validator_member.store(!validator_groups_.empty(), std::memory_order_relaxed);
   g.gc_seqno.store(gc_masterchain_handle_ ? gc_masterchain_handle_->id().id.seqno : 0, std::memory_order_relaxed);
   g.persistent_state_seqno.store(state_serializer_masterchain_seqno_, std::memory_order_relaxed);
-  struct statvfs st;
-  if (statvfs(db_root_.c_str(), &st) == 0 && st.f_frsize > 0) {
-    g.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize, std::memory_order_relaxed);
-    g.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize, std::memory_order_relaxed);
-    g.storage_valid.store(true, std::memory_order_relaxed);
-  } else {
-    g.storage_valid.store(false, std::memory_order_relaxed);
+  if (health_statvfs_at_.is_in_past()) {
+    health_statvfs_at_ = td::Timestamp::in(10.0);
+    struct statvfs st;
+    if (statvfs(db_root_.c_str(), &st) == 0 && st.f_frsize > 0) {
+      g.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize, std::memory_order_relaxed);
+      g.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize, std::memory_order_relaxed);
+      g.storage_valid.store(true, std::memory_order_relaxed);
+    } else {
+      g.storage_valid.store(false, std::memory_order_relaxed);
+    }
   }
   g.observed_unix_seconds.store(static_cast<std::uint64_t>(td::Clocks::system()), std::memory_order_release);
 }

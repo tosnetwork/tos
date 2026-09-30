@@ -176,7 +176,8 @@ inline std::optional<ConsensusPublication> capture_consensus(const std::string &
     for (const auto &byte : row.session) { auto value = byte.load(); session += hex[value >> 4]; session += hex[value & 15]; }
     const auto wc = row.workchain.load();
     const auto shard = row.shard.load(), slot = row.current_slot.load(), final_slot = row.finalized_slot.load(), stop = row.stop_started.load();
-    if (!row.leased.load(std::memory_order_acquire) || sequence != row.sequence.load(std::memory_order_acquire)) {
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (!row.leased.load(std::memory_order_relaxed) || sequence != row.sequence.load(std::memory_order_relaxed)) {
       consensus_stats.global_incomplete(IncompleteReason::SnapshotContention); continue;
     }
     const bool approved = wc == -1 && shard == (std::uint64_t{1} << 63);

@@ -81,7 +81,10 @@ struct ChainAnchorState {
       value.observed_unix_seconds = observed_unix_seconds.load(std::memory_order_relaxed);
       value.key_block_seqno = key_block_seqno.load(std::memory_order_relaxed);
       value.key_block_unix_seconds = key_block_unix_seconds.load(std::memory_order_relaxed);
-      if (before == sequence.load(std::memory_order_acquire)) return value;
+      // The fence keeps the relaxed field loads above from moving past the
+      // re-read of the sequence; an acquire load alone would not.
+      std::atomic_thread_fence(std::memory_order_acquire);
+      if (before == sequence.load(std::memory_order_relaxed)) return value;
     }
     return std::nullopt;
   }

@@ -40,6 +40,7 @@
 #include "keys/keys.hpp"
 #include "memprof/memprof.h"
 #include "metrics/core-health.h"
+#include "td/utils/StorageHealth.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
@@ -6553,7 +6554,10 @@ int main(int argc, char *argv[]) {
   });
   p.add_option('\0', "health-core-metrics",
                "enable bounded consensus PQ operation metrics (requires performance acceptance)",
-               []() { tos::health::enabled.store(true, std::memory_order_relaxed); });
+               []() {
+                 tos::health::enabled.store(true, std::memory_order_relaxed);
+                 td::storage_health.enabled.store(true, std::memory_order_relaxed);
+               });
   p.add_checked_option('\0', "health-diagnostic", "private socket path,approved edge PID,sample every N (core metrics and v2 required)", [&](td::Slice arg) {
     const auto value=arg.str();
     const auto first=value.find(',');

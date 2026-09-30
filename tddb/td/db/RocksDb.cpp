@@ -35,6 +35,8 @@
 #include "rocksdb/write_buffer_manager.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/StorageHealth.h"
+
+#include <chrono>
 #include "td/utils/memory-tracker.h"
 #include "td/utils/misc.h"
 
@@ -560,10 +562,20 @@ namespace {
 // After a committed write, record whether RocksDB reports a write stop. The
 // property read is a lock-free counter read inside RocksDB; the fact is
 // published through the process-wide storage health for the exporter.
-void observe_write_stop(rocksdb::DB *db) {
-  if (db == nullptr) {
+// At most one property read per second per database, and only while health
+// instrumentation is on: the property takes the DB mutex, and a write stop is
+// a sustained condition that a one-second sample cannot miss.
+void observe_write_stop(rocksdb::DB *db, std::uint64_t &last_probe_ms) {
+  if (db == nullptr || !storage_health.enabled.load(std::memory_order_relaxed)) {
     return;
   }
+  const auto now_ms = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+  if (last_probe_ms != 0 && now_ms - last_probe_ms < 1000) {
+    return;
+  }
+  last_probe_ms = now_ms;
   uint64_t stopped = 0;
   if (!db->GetIntProperty(rocksdb::DB::Properties::kIsWriteStopped, &stopped)) {
     return;
@@ -583,7 +595,7 @@ Status RocksDb::commit_write_batch() {
   rocksdb::WriteOptions options;
   options.sync = true;
   auto status = from_rocksdb(db_->Write(options, write_batch.get()));
-  observe_write_stop(db_.get());
+  observe_write_stop(db_.get(), write_stop_probe_ms_);
   return status;
 }
 
@@ -592,7 +604,7 @@ Status RocksDb::commit_transaction() {
   CHECK(transaction_);
   auto transaction = std::move(transaction_);
   auto status = from_rocksdb(transaction->Commit());
-  observe_write_stop(db_.get());
+  observe_write_stop(db_.get(), write_stop_probe_ms_);
   return status;
 }
 

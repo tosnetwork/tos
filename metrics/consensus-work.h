@@ -29,8 +29,10 @@ struct WorkStats {
     std::uint64_t oldest = UINT64_MAX;
     for (const auto &row : rows) {
       const auto started = row.started_ns.load(std::memory_order_acquire);
-      if (started != 0 && started != UINT64_MAX && row.work.load(std::memory_order_relaxed) == work &&
-          row.started_ns.load(std::memory_order_acquire) == started && started < oldest) oldest = started;
+      if (started == 0 || started == UINT64_MAX) continue;
+      const auto row_work = row.work.load(std::memory_order_relaxed);
+      std::atomic_thread_fence(std::memory_order_acquire);
+      if (row_work == work && row.started_ns.load(std::memory_order_relaxed) == started && started < oldest) oldest = started;
     }
     return oldest == UINT64_MAX ? 0 : oldest;
   }

@@ -266,16 +266,12 @@ class CoreRegistry {
   }
   void refuse_update() noexcept {
     complete_.store(false, std::memory_order_relaxed);
-    auto old = dropped_updates_.load(std::memory_order_relaxed);
-    for (std::size_t attempt = 0; attempt < max_update_attempts; ++attempt) {
-      if (old == std::numeric_limits<std::uint64_t>::max() ||
-          dropped_updates_.compare_exchange_weak(old, old + 1, std::memory_order_relaxed)) {
-        return;
-      }
+    // One fetch_add cannot fail under contention; it only saturates at the top,
+    // where the count is pinned instead of wrapping.
+    const auto previous = dropped_updates_.fetch_add(1, std::memory_order_relaxed);
+    if (previous == std::numeric_limits<std::uint64_t>::max()) {
+      dropped_updates_.store(std::numeric_limits<std::uint64_t>::max(), std::memory_order_relaxed);
     }
-    // Preserve monotonicity even when the accounting counter itself is highly
-    // contended; saturation is an explicit lower bound, never a wraparound.
-    dropped_updates_.store(std::numeric_limits<std::uint64_t>::max(), std::memory_order_relaxed);
   }
 
   std::array<Slot, max_slots> slots_{};

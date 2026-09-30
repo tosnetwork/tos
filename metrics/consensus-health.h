@@ -75,9 +75,12 @@ struct ConsensusStats {
     std::uint64_t oldest = UINT64_MAX;
     for (const auto &row : pending_rows) {
       auto started = row.started_ns.load(std::memory_order_acquire);
-      if (started != 0 && started != UINT64_MAX && row.action.load(std::memory_order_relaxed) == action &&
-          row.origin.load(std::memory_order_relaxed) == origin &&
-          started == row.started_ns.load(std::memory_order_acquire) && started < oldest) oldest = started;
+      if (started == 0 || started == UINT64_MAX) continue;
+      const auto row_action = row.action.load(std::memory_order_relaxed);
+      const auto row_origin = row.origin.load(std::memory_order_relaxed);
+      std::atomic_thread_fence(std::memory_order_acquire);
+      if (row_action == action && row_origin == origin && started == row.started_ns.load(std::memory_order_relaxed) &&
+          started < oldest) oldest = started;
     }
     return oldest == UINT64_MAX ? 0 : oldest;
   }
