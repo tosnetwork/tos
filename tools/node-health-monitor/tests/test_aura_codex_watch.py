@@ -1,6 +1,7 @@
 """AURA model output must stay tied to the six verified process parents."""
 
 import importlib.util
+import datetime as dt
 import json
 import os
 from pathlib import Path
@@ -55,6 +56,33 @@ class CodexWatchTest(unittest.TestCase):
             with patch.dict(os.environ, {"FAKE_ANSWER": json.dumps(answer)}):
                 with self.assertRaises(ValueError):
                     watch.analyze(self.args, self.sources, "2026-09-30T00:00:00+00:00")
+
+    def test_local_facts_require_fresh_private_matching_source(self):
+        path = Path(self.temp.name) / "health.json"
+        value = {
+            "schema_version": 1,
+            "scope": "local_development_validator_sources",
+            "network_id": "a" * 64,
+            "whole_validator_health": "unknown",
+            "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "samples": {node: {"pid": source["pid"], "native_hash": "b" * 64}
+                        for node, source in self.sources.items()},
+            "verdicts": {node: {"status": "unknown", "reasons": ["unverified"],
+                               "facts": {"native_hash": "b" * 64}}
+                         for node in self.sources},
+        }
+        path.write_text(json.dumps(value))
+        path.chmod(0o600)
+        self.assertEqual(len(watch.read_local_health(path, self.sources, "a" * 64)), 6)
+        value["samples"]["validator1"]["pid"] += 1
+        path.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError, "local_health_identity"):
+            watch.read_local_health(path, self.sources, "a" * 64)
+        value["samples"]["validator1"]["pid"] -= 1
+        path.write_text(json.dumps(value))
+        path.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "local_health_permissions"):
+            watch.read_local_health(path, self.sources, "a" * 64)
 
 
 if __name__ == "__main__":

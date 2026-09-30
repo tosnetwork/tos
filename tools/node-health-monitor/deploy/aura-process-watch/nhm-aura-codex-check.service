@@ -24,4 +24,5 @@ ExecStart=/home/tomi/nhm-c07-contract-venv/bin/python /home/tomi/tos-node-health
   --codex-bin /home/tomi/tos-aura-codex/target/debug/aura \
   --codex-socket /home/tomi/.codex/app-server-control/app-server-control.sock \
   --codex-thread-file /home/tomi/.local/state/nhm-aura-codex/validator.thread \
+  --local-health-file /home/tomi/.local/state/nhm-local-validator-health/sample.json \
   --diagnosis-schema /home/tomi/tos-node-health-impl/tools/node-health-monitor/contracts/diagnosis.schema.json

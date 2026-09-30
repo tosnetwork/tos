@@ -101,19 +101,68 @@ def run(args):
     return evaluate(output.decode("utf-8", errors="replace"))
 
 
-def analyze(args, sources, checked_at):
+def read_local_health(path, sources, network_id):
+    """Read the independent local sampler cache; never contact a node here."""
+    import os
+    import stat
+
+    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        metadata = os.fstat(fd)
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid()
+                or metadata.st_mode & 0o077):
+            raise ValueError("local_health_permissions")
+        raw = os.read(fd, 16_385)
+    finally:
+        os.close(fd)
+    if len(raw) > 16_384:
+        raise ValueError("local_health_oversize")
+    value = json.loads(raw)
+    at = dt.datetime.fromisoformat(value["checked_at"])
+    age = (dt.datetime.now(dt.timezone.utc) - at).total_seconds()
+    if (value.get("schema_version") != 1
+            or value.get("scope") != "local_development_validator_sources"
+            or value.get("network_id") != network_id
+            or value.get("whole_validator_health") != "unknown"
+            or at.tzinfo is None or not 0 <= age <= 90
+            or set(value.get("samples", {})) != NODES
+            or set(value.get("verdicts", {})) != NODES):
+        raise ValueError("local_health_stale_or_mismatched")
+    compact = {}
+    for node in sorted(NODES):
+        sample = value["samples"][node]
+        verdict = value["verdicts"][node]
+        native_hash = sample.get("native_hash")
+        if (sample.get("pid") != sources[node]["pid"]
+                or not isinstance(native_hash, str)
+                or re.fullmatch(r"[0-9a-f]{64}", native_hash) is None
+                or verdict.get("status") not in ("unknown", "degraded")
+                or verdict.get("facts", {}).get("native_hash") != native_hash):
+            raise ValueError("local_health_identity")
+        compact[node] = {"status": verdict["status"],
+                         "reasons": verdict["reasons"],
+                         "facts": verdict["facts"]}
+    return compact
+
+
+def analyze(args, sources, checked_at, local_health=None):
     from jsonschema import Draft202012Validator
 
     schema = json.loads(Path(args.diagnosis_schema).read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     evidence_ids = {item["evidence_id"] for item in sources.values()}
+    if local_health:
+        evidence_ids.update(item["facts"]["native_hash"] for item in local_health.values())
     prompt = {
         "instruction": (
             "Analyze only this AURA process-source receipt. Return one JSON object matching "
             "the diagnosis contract. The six process snapshots are partial; consensus, duty, "
-            "persistence and whole-validator health are unknown. Use status "
+            "persistence and whole-validator health are unknown. Local development "
+            "facts, if present, may show sync or local action progress or degradation; "
+            "they do not prove full duty or finality health. Use status "
             "insufficient_evidence. Do not infer healthy or safe. Cite only supplied "
-            "evidence IDs for observed findings. Do not request tools or remediation."
+            "process parent IDs or native source hashes for observed findings. "
+            "Do not request tools or remediation."
         ),
         "checked_at": checked_at,
         "source": "pinned_aura_mcp",
@@ -121,6 +170,7 @@ def analyze(args, sources, checked_at):
         "process_sources": [
             {"node_id": node, **sources[node]} for node in sorted(sources)
         ],
+        "local_development_facts": local_health,
     }
     # The app-server accepts a subset of JSON Schema. It constrains the shape;
     # the complete repository contract is checked after the turn.
@@ -168,6 +218,7 @@ def main():
         parser.add_argument("--" + name, required=True)
     for name in ("codex-bin", "codex-socket", "codex-thread-file", "diagnosis-schema"):
         parser.add_argument("--" + name)
+    parser.add_argument("--local-health-file")
     args = parser.parse_args()
     codex_options = (args.codex_bin, args.codex_socket, args.codex_thread_file,
                      args.diagnosis_schema)
@@ -181,7 +232,14 @@ def main():
         status["result"] = "observed_partial"
         if args.codex_bin:
             try:
-                status["diagnosis"] = analyze(args, sources, status["checked_at"])
+                local_health = None
+                if args.local_health_file:
+                    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
+                    local_health = read_local_health(
+                        args.local_health_file, sources, manifest["network_id"]
+                    )
+                    status["local_validator_facts"] = local_health
+                status["diagnosis"] = analyze(args, sources, status["checked_at"], local_health)
                 status["ai_result"] = "insufficient_evidence"
             except (ImportError, OSError, ValueError, subprocess.SubprocessError) as error:
                 status["ai_result"] = "unavailable"

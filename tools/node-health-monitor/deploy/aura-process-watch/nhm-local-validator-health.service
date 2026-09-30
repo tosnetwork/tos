@@ -1,0 +1,11 @@
+[Unit]
+Description=Sample bounded local validator facts for AURA development monitoring
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/tomi/nhm-c07-contract-venv/bin/python /home/tomi/tos-node-health-impl/tools/node-health-monitor/scripts/sample-local-validator-health.py --manifest /home/tomi/nhm-supervision/c09-local/runtime/deployment-public.json --source-schema /home/tomi/tos-node-health-impl/tools/node-health-monitor/contracts/source-envelope.schema.json --state-file /home/tomi/.local/state/nhm-local-validator-health/sample.json
+TimeoutStartSec=12s
+MemoryMax=128M
+CPUQuota=50%
+NoNewPrivileges=yes

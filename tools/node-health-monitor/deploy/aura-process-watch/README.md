@@ -34,6 +34,16 @@ with mode 0700 before starting it. The Codex thread file is private and reused
 across turns; no API token is passed. The timer adds two short-lived QueryService
 grants per run, so the finite Q ledger limit still applies.
 
+The separate `nhm-local-validator-health.timer` samples the six approved
+loopback `/readyz` and native snapshot routes every minute. It validates the
+source schema/hash, manifest PID and network, and two samples in one Linux boot
+and time namespace. It writes a private bounded summary; AURA reads only that
+cache and never contacts validator endpoints. Sync and local action progress
+can be reported as development facts. The native source currently declares
+missing chain anchors, duties and storage state, so whole-validator health
+remains `unknown` even when these limited signals progress. A non-ready node,
+new signing failure or new local action failure is reported as `degraded`.
+
 Inspect with `systemctl --user status nhm-aura-process-watch.timer` and
 `journalctl --user -u nhm-aura-process-watch.service`. Disable with
 `systemctl --user disable --now nhm-aura-process-watch.timer`.
