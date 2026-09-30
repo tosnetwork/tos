@@ -398,6 +398,31 @@ mod projection_state_tests {
         changed.manager_conflicted = true;
         assert_eq!(classify(&changed), "conflict");
     }
+
+    #[test]
+    fn conflict_latched_after_first_sample_refuses_matching_head() {
+        let before = ProjectionStateSample {
+            manager_conflicted: false,
+            caught_up_at_last_import: true,
+            validated_version: Some(7),
+            query_watermark: 4,
+            cursor: Some(ManagerCursor {
+                network: "a".repeat(64),
+                device: 1,
+                inode: 2,
+                watermark: 10,
+                anchor: Some((10, "b".repeat(64))),
+            }),
+        };
+        let mut after = before.clone();
+        after.manager_conflicted = true;
+        // The M head and data version still match the first sample. Only
+        // the second Data/Q sample can reveal the interleaved conflict.
+        assert_eq!(
+            projection_status(&before, &after, true, true, Some(true), Some("0"), Some(7)),
+            "conflict"
+        );
+    }
 }
 /// Authenticated, read-only control-socket witness. This is not a grant and
 /// does not import M, so a failing projection cannot be hidden by the probe.
