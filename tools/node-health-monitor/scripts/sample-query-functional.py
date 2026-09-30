@@ -2,6 +2,7 @@
 """One bounded, low-rate private QueryService functional witness. No model calls."""
 
 import argparse
+from contextlib import contextmanager
 import datetime as dt
 import fcntl
 import hashlib
@@ -19,15 +20,41 @@ import sys
 import time
 
 NODES = ("validator1", "validator2", "validator3", "validator4", "observer5", "observer6")
+CONTROL_TIMEOUT_S = 3
+MCP_TIMEOUT_S = 5
+SQLITE_TIMEOUT_S = 0.5
+WHOLE_RUN_TIMEOUT_S = 22
+SERVICE_GRANT_EXPIRY_S = 200
+MAX_REQUEST_BYTES = 4096
+MAX_CONTROL_BYTES = 4096
 LIMIT = 32768
+MAX_LOG_ROW_BYTES = 1024
 SLOT_SECONDS = 300
 LOG_LIMIT = 4 * 1024 * 1024
+MAX_NEW_GRANTS = 1024
+MAX_NEW_GRANT_BODY_BYTES = 32 * 1024 * 1024
+MAX_NEW_ATTEMPTS = 3072
 
 
 class WitnessError(Exception):
     def __init__(self, kind):
         super().__init__(kind)
         self.kind = kind
+
+
+@contextmanager
+def call_deadline(seconds):
+    """Preserve the shorter whole-run alarm around one blocking socket call."""
+    remaining, interval = signal.getitimer(signal.ITIMER_REAL)
+    started = time.monotonic()
+    signal.setitimer(signal.ITIMER_REAL, min(seconds, remaining) if remaining > 0 else seconds)
+    try:
+        yield
+    finally:
+        if remaining > 0:
+            signal.setitimer(signal.ITIMER_REAL, max(0.000001, remaining - (time.monotonic() - started)), interval)
+        else:
+            signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 class UnixHTTP(http.client.HTTPConnection):
@@ -72,7 +99,7 @@ def checked_json(raw, cap=LIMIT):
 
 def request(conn, method, path, body=None, headers=None, cap=LIMIT):
     encoded = None if body is None else json.dumps(body, separators=(",", ":")).encode()
-    if encoded is not None and len(encoded) > 4096:
+    if encoded is not None and len(encoded) > MAX_REQUEST_BYTES:
         raise WitnessError("request_oversize")
     conn.request(method, path, body=encoded, headers={"Accept": "application/json", "Connection": "keep-alive",
                                                     **({"Content-Type": "application/json"} if encoded is not None else {}),
@@ -85,28 +112,69 @@ def request(conn, method, path, body=None, headers=None, cap=LIMIT):
 
 
 def control(socket_path, token, method, path, body=None):
-    conn = UnixHTTP(socket_path, timeout=3)
+    conn = UnixHTTP(socket_path, timeout=CONTROL_TIMEOUT_S)
     try:
-        return request(conn, method, path, body, {"Authorization": "Bearer " + token}, 4096)
+        with call_deadline(CONTROL_TIMEOUT_S):
+            return request(conn, method, path, body, {"Authorization": "Bearer " + token}, MAX_CONTROL_BYTES)
     finally:
         conn.close()
 
 
+def projection_head(socket_path, service_token):
+    status, headers, raw = control(socket_path, service_token, "GET", "/v1/control/projection-health")
+    if status not in (200, 503) or headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        raise WitnessError("projection_http")
+    value = checked_json(raw, MAX_CONTROL_BYTES)
+    name = value.get("projection_status")
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 1 or name not in (
+            "caught_up", "lagging", "conflict", "source_unavailable", "uninitialized",
+            "identity_or_watermark_mismatch"):
+        raise WitnessError("projection_shape")
+    conflicted = value.get("manager_conflicted")
+    caught = value.get("caught_up_at_last_import")
+    identity = value.get("source_identity_match")
+    cursor = value.get("cursor_global_m_seq")
+    source = value.get("source_global_m_seq")
+    lag = value.get("lag_global_m_seq")
+    if type(conflicted) is not bool or type(caught) is not bool or not (type(identity) is bool or identity is None):
+        raise WitnessError("projection_shape")
+    for number in (cursor, source, lag):
+        if number is not None and (not isinstance(number, str) or re.fullmatch(r"(?:0|[1-9][0-9]{0,19})", number) is None
+                                   or int(number) > 2**64 - 1):
+            raise WitnessError("projection_counter")
+    if cursor is not None and source is not None and lag is not None:
+        if int(source) < int(cursor) or int(source) - int(cursor) != int(lag):
+            raise WitnessError("projection_lag")
+    if name == "caught_up" and not (status == 200 and not conflicted and caught and identity is True
+                                    and isinstance(cursor, str) and source == cursor and lag == "0"):
+        raise WitnessError("projection_false_caught_up")
+    if name == "lagging" and not (status == 200 and not conflicted and identity is True
+                                  and isinstance(lag, str) and (not caught or lag != "0")):
+        raise WitnessError("projection_false_lagging")
+    if name == "conflict" and not (status == 503 and conflicted):
+        raise WitnessError("projection_false_conflict")
+    return name
+
+
 def issue(socket_path, token, node, start, end, leases):
+    # A transport timeout can occur after Q commits a grant but before its
+    # run ID reaches us. The unknown side effect must fail cleanup confirmation.
+    leases.append(None)
     status, headers, raw = control(socket_path, token, "POST", "/v1/control/grants",
                              {"node_ids": [node], "scope_ids": ["node"], "start": start, "end": end})
     if status != 200:
+        leases.pop()
         raise WitnessError("grant_refused")
     # A 200 may have created a grant even if its response cannot be decoded.
-    # Keep that uncertainty visible instead of reporting successful cleanup.
-    leases.append(None)
     if headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
         raise WitnessError("grant_content_type")
-    value = checked_json(raw, 4096)
+    value = checked_json(raw, MAX_CONTROL_BYTES)
     run, secret = value.get("run_id"), value.get("run_token")
     if not isinstance(run, str) or re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", run) is None:
         raise WitnessError("grant_shape")
     leases[-1] = run
+    if value.get("expires_in_seconds") != SERVICE_GRANT_EXPIRY_S:
+        raise WitnessError("grant_expiry")
     if not isinstance(secret, str) or len(secret) != 64 or any(c not in "0123456789abcdef" for c in secret):
         raise WitnessError("grant_shape")
     return run, secret
@@ -116,14 +184,14 @@ def revoke(socket_path, token, run):
     try:
         status, headers, raw = control(socket_path, token, "POST", "/v1/control/grants/" + run + "/revoke")
         return (status == 200 and headers.get("content-type", "").split(";", 1)[0].strip().lower() == "application/json"
-                and checked_json(raw, 4096).get("revoked") is True)
+                and checked_json(raw, MAX_CONTROL_BYTES).get("revoked") is True)
     except (OSError, TimeoutError, WitnessError, http.client.HTTPException):
         return False
 
 
 class McpSession:
     def __init__(self, socket_path, service_token, run, run_token):
-        self.conn = UnixHTTP(socket_path, timeout=5)
+        self.conn = UnixHTTP(socket_path, timeout=MCP_TIMEOUT_S)
         self.headers = {"Authorization": "Bearer " + service_token, "x-tos-run-id": run,
                         "x-tos-run-token": run_token, "mcp-protocol-version": "2025-06-18",
                         "Accept": "application/json, text/event-stream"}
@@ -135,9 +203,10 @@ class McpSession:
         headers = dict(self.headers)
         if self.session:
             headers["mcp-session-id"] = self.session
-        status, reply_headers, raw = request(self.conn, "POST", "/mcp",
-                                              {"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": params},
-                                              headers)
+        with call_deadline(MCP_TIMEOUT_S):
+            status, reply_headers, raw = request(self.conn, "POST", "/mcp",
+                                                  {"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": params},
+                                                  headers)
         if status != 200 or reply_headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
             raise WitnessError("mcp_http")
         session = reply_headers.get("mcp-session-id")
@@ -158,8 +227,9 @@ class McpSession:
         headers = dict(self.headers)
         if self.session:
             headers["mcp-session-id"] = self.session
-        status, _, raw = request(self.conn, "POST", "/mcp",
-                                 {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers)
+        with call_deadline(MCP_TIMEOUT_S):
+            status, _, raw = request(self.conn, "POST", "/mcp",
+                                     {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers)
         if status not in (200, 202, 204) or raw:
             raise WitnessError("mcp_initialized")
 
@@ -178,36 +248,7 @@ class McpSession:
         self.conn.close()
 
 
-def parent_from_m(path, evidence_id, node):
-    if len(evidence_id) != 64 or any(c not in "0123456789abcdef" for c in evidence_id):
-        raise WitnessError("parent_id")
-    meta = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISREG(meta.st_mode):
-        raise WitnessError("m_path")
-    uri = "file:" + str(Path(path).resolve()) + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=0.5)
-    try:
-        conn.execute("PRAGMA query_only=ON")
-        rows = conn.execute("SELECT body FROM observations WHERE content_hash=? AND node=? AND source='process' LIMIT 2",
-                            (evidence_id, node)).fetchall()
-        if len(rows) != 1:
-            raise WitnessError("parent_missing_or_duplicate")
-        if len(rows[0][0]) > 32768:
-            raise WitnessError("parent_oversize")
-        parent = checked_json(rows[0][0].encode(), 32768)
-        if not isinstance(parent.get("record"), dict):
-            raise WitnessError("parent_shape")
-        canonical = json.loads(json.dumps(parent))
-        canonical["record"]["received_at_ms"] = 0
-        digest = hashlib.sha256(json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-        if digest != evidence_id:
-            raise WitnessError("parent_hash")
-        return parent
-    finally:
-        conn.close()
-
-
-def validate_process(envelope, run, node, as_of_ms, m_path):
+def validate_process(envelope, run, node, as_of_ms, parent):
     if envelope.get("run_id") != run or envelope.get("status") not in ("ok", "partial"):
         raise WitnessError("process_status")
     data, evidence = envelope.get("data"), envelope.get("evidence")
@@ -225,7 +266,6 @@ def validate_process(envelope, run, node, as_of_ms, m_path):
     parents = derived.get("parent_evidence_ids")
     if not isinstance(parents, list) or len(parents) != 1 or derived.get("source_record_id") != "m-" + str(parents[0]):
         raise WitnessError("derived_parent")
-    parent = parent_from_m(m_path, parents[0], node)
     original = parent.get("record")
     if not isinstance(original, dict) or original.get("node_id") != node or original.get("source_id") != "process":
         raise WitnessError("parent_identity")
@@ -255,23 +295,157 @@ def validate_negative(envelope, code, run):
         raise WitnessError("negative_" + code.lower())
 
 
+def frozen_baseline(path, expected_digest, expected_query_sha):
+    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        meta = os.fstat(fd)
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid()
+                or meta.st_mode & 0o077 or meta.st_nlink != 1 or meta.st_size > 2048):
+            raise WitnessError("baseline_file")
+        raw = os.read(fd, 2049)
+        if len(raw) != meta.st_size or hashlib.sha256(raw).hexdigest() != expected_digest:
+            raise WitnessError("baseline_digest")
+    finally:
+        os.close(fd)
+    value = checked_json(raw, 2048)
+    required = {"schema_version", "q_device", "q_inode", "grants", "grant_body_bytes", "attempts",
+                "query_sha256", "max_new_grants", "max_new_grant_body_bytes", "max_new_attempts"}
+    if (set(value) != required or type(value["schema_version"]) is not int
+            or value["schema_version"] != 1 or value["query_sha256"] != expected_query_sha):
+        raise WitnessError("baseline_schema")
+    for key in ("q_device", "q_inode"):
+        if not isinstance(value[key], str) or not value[key].isascii() or not value[key].isdecimal():
+            raise WitnessError("baseline_schema")
+    for key in ("grants", "grant_body_bytes", "attempts"):
+        if type(value[key]) is not int or value[key] < 0:
+            raise WitnessError("baseline_schema")
+    if (value["max_new_grants"] != MAX_NEW_GRANTS
+            or value["max_new_grant_body_bytes"] != MAX_NEW_GRANT_BODY_BYTES
+            or value["max_new_attempts"] != MAX_NEW_ATTEMPTS):
+        raise WitnessError("baseline_budget")
+    return value
+
+
 def ledger_growth(path, baseline):
+    meta = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISREG(meta.st_mode) or str(meta.st_dev) != baseline["q_device"] or str(meta.st_ino) != baseline["q_inode"]:
+        raise WitnessError("q_ledger_identity")
     uri = "file:" + str(Path(path).resolve()) + "?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=0.5)
+    conn = sqlite3.connect(uri, uri=True, timeout=SQLITE_TIMEOUT_S)
     try:
         conn.execute("PRAGMA query_only=ON")
         count, body = conn.execute("SELECT count(*),coalesce(sum(length(body)),0) FROM query_grants").fetchone()
         attempts = conn.execute("SELECT count(*) FROM query_attempts").fetchone()[0]
     finally:
         conn.close()
-    if count < baseline[0] or body < baseline[1] or attempts < baseline[2]:
+    end_meta = os.stat(path, follow_symlinks=False)
+    if end_meta.st_dev != meta.st_dev or end_meta.st_ino != meta.st_ino:
+        raise WitnessError("q_ledger_identity")
+    if count < baseline["grants"] or body < baseline["grant_body_bytes"] or attempts < baseline["attempts"]:
         raise WitnessError("ledger_regression")
-    if count > baseline[0] + 1024 or body > baseline[1] + 32 * 1024 * 1024 or attempts > baseline[2] + 3072:
+    if (count > baseline["grants"] + MAX_NEW_GRANTS
+            or body > baseline["grant_body_bytes"] + MAX_NEW_GRANT_BODY_BYTES
+            or attempts > baseline["attempts"] + MAX_NEW_ATTEMPTS):
         raise WitnessError("ledger_growth")
-    return count - baseline[0]
+    return count - baseline["grants"]
 
 
-def bound_service(unit, expected_sha, control_path, mcp_path, m_path):
+def process_owns_db(pid, path):
+    expected = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISREG(expected.st_mode):
+        raise WitnessError("q_ledger_identity")
+    with os.scandir(f"/proc/{pid}/fd") as entries:
+        for count, entry in enumerate(entries):
+            if count >= 256:
+                raise WitnessError("query_fds")
+            try:
+                opened = os.stat(entry.path)
+            except OSError:
+                continue
+            if opened.st_dev == expected.st_dev and opened.st_ino == expected.st_ino:
+                return
+    raise WitnessError("query_ledger_not_open")
+
+
+def verify_retained_binding(envelope, q_path, m_path, baseline, pid):
+    evidence = envelope["evidence"][0]
+    query_id = evidence.get("evidence_id")
+    parent_id = evidence["parent_evidence_ids"][0]
+    if (not isinstance(query_id, str) or len(query_id) != 64
+            or any(c not in "0123456789abcdef" for c in query_id)
+            or not isinstance(parent_id, str) or len(parent_id) != 64
+            or any(c not in "0123456789abcdef" for c in parent_id)):
+        raise WitnessError("derived_id")
+    m_meta = os.stat(m_path, follow_symlinks=False)
+    q_meta = os.stat(q_path, follow_symlinks=False)
+    if not stat.S_ISREG(m_meta.st_mode) or not stat.S_ISREG(q_meta.st_mode):
+        raise WitnessError("database_identity")
+    if str(q_meta.st_dev) != baseline["q_device"] or str(q_meta.st_ino) != baseline["q_inode"]:
+        raise WitnessError("q_ledger_identity")
+    process_owns_db(pid, q_path)
+    m = sqlite3.connect("file:" + str(Path(m_path).resolve()) + "?mode=ro", uri=True, timeout=SQLITE_TIMEOUT_S)
+    q = sqlite3.connect("file:" + str(Path(q_path).resolve()) + "?mode=ro", uri=True, timeout=SQLITE_TIMEOUT_S)
+    try:
+        m.execute("PRAGMA query_only=ON")
+        q.execute("PRAGMA query_only=ON")
+        m.execute("BEGIN TRANSACTION")
+        q.execute("BEGIN TRANSACTION")
+        cursor = q.execute("SELECT network,device,inode,watermark FROM query_manager_cursor WHERE singleton=1").fetchone()
+        binding = q.execute("SELECT o.manager_seq,o.body FROM query_projection_origin p "
+                            "JOIN query_origins o ON o.origin_id=p.origin_id "
+                            "JOIN query_evidence e ON e.evidence_id=p.query_evidence_id "
+                            "WHERE p.query_evidence_id=? AND p.origin_id=? LIMIT 2",
+                            (query_id, parent_id)).fetchall()
+        if not cursor or len(binding) != 1:
+            raise WitnessError("retained_binding_missing")
+        manager_seq, q_body = binding[0]
+        if type(manager_seq) is not int or manager_seq <= 0:
+            raise WitnessError("retained_source_identity")
+        network = m.execute("SELECT network FROM database_identity WHERE singleton=1").fetchone()
+        source = m.execute("SELECT content_hash,node,scope,process_epoch,source_epoch,source,body "
+                           "FROM observations WHERE store_seq=?", (manager_seq,)).fetchone()
+        if not network or not source:
+            raise WitnessError("retained_binding_missing")
+        content_hash, node, scope, process_epoch, source_epoch, source_name, m_body = source
+        if (cursor[0] != network[0] or cursor[1] != str(m_meta.st_dev)
+                or cursor[2] != str(m_meta.st_ino) or manager_seq > cursor[3]
+                or content_hash != parent_id or node != envelope["data"]["node_id"]
+                or source_name != "process"):
+            raise WitnessError("retained_source_identity")
+        parent = checked_json(m_body.encode(), 32768)
+        original = parent.get("record")
+        if not isinstance(original, dict):
+            raise WitnessError("parent_shape")
+        if (node != original.get("node_id") or scope != original.get("scope_id")
+                or process_epoch != original.get("process_epoch")
+                or source_epoch != parent.get("source_epoch") or source_name != original.get("source_id")):
+            raise WitnessError("retained_source_tuple")
+        quarantined = m.execute("SELECT 1 FROM quarantined WHERE node=? AND scope=? AND process_epoch=? "
+                                "AND source_epoch=? AND source=? LIMIT 1",
+                                (node, scope, process_epoch, source_epoch, source_name)).fetchone()
+        if quarantined:
+            raise WitnessError("retained_parent_quarantined")
+        canonical = json.loads(json.dumps(parent))
+        canonical["record"]["received_at_ms"] = 0
+        digest = hashlib.sha256(json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+        if digest != parent_id:
+            raise WitnessError("parent_hash")
+        expected = json.dumps({"store_seq": str(manager_seq), "evidence_id": parent_id,
+                               "evidence": parent},
+                              ensure_ascii=False, separators=(",", ":")).encode()
+        if q_body != expected:
+            raise WitnessError("retained_parent_changed")
+    finally:
+        m.close()
+        q.close()
+    m_end = os.stat(m_path, follow_symlinks=False)
+    q_end = os.stat(q_path, follow_symlinks=False)
+    if (m_end.st_dev, m_end.st_ino) != (m_meta.st_dev, m_meta.st_ino) or (q_end.st_dev, q_end.st_ino) != (q_meta.st_dev, q_meta.st_ino):
+        raise WitnessError("database_replaced")
+    return parent
+
+
+def bound_service(unit, expected_sha, control_path, mcp_path, m_path, q_path):
     output = subprocess.check_output(["systemctl", "--user", "show", unit, "-p", "MainPID", "--value"], timeout=2)
     pid = int(output.strip())
     if pid <= 1:
@@ -281,9 +455,10 @@ def bound_service(unit, expected_sha, control_path, mcp_path, m_path):
     if digest != expected_sha:
         raise WitnessError("query_binary")
     args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
-    for path in (control_path, mcp_path, m_path):
+    for path in (control_path, mcp_path, m_path, q_path):
         if os.fsencode(path) not in args:
             raise WitnessError("query_binding")
+    process_owns_db(pid, q_path)
     return pid
 
 
@@ -305,7 +480,7 @@ def open_log(path):
 
 def append_log(fd, sample):
     body = (json.dumps(sample, sort_keys=True, separators=(",", ":")) + "\n").encode()
-    if len(body) > 1024 or os.fstat(fd).st_size + len(body) > LOG_LIMIT:
+    if len(body) > MAX_LOG_ROW_BYTES or os.fstat(fd).st_size + len(body) > LOG_LIMIT:
         raise WitnessError("log_full")
     if os.write(fd, body) != len(body):
         raise WitnessError("log_short_write")
@@ -324,6 +499,9 @@ def run(args):
     error_kind = None
     cleanup_ok = True
     ledger_delta = None
+    fixed_grant_query_status = "not_run"
+    head_status = "not_run"
+    head_probe_error = None
     started = time.monotonic_ns()
     try:
         size = os.fstat(fd).st_size
@@ -339,8 +517,14 @@ def run(args):
                     raise WitnessError("sample_too_soon")
         operator = private_token(args.operator_token_file)
         service = private_token(args.service_token_file)
-        bound_service(args.query_unit, args.expected_query_sha256, args.control_socket, args.mcp_socket, args.m_db)
-        ledger_delta = ledger_growth(args.q_ledger, (args.baseline_grants, args.baseline_grant_bytes, args.baseline_attempts))
+        baseline = frozen_baseline(args.baseline_file, args.expected_baseline_sha256, args.expected_query_sha256)
+        pid = bound_service(args.query_unit, args.expected_query_sha256, args.control_socket, args.mcp_socket, args.m_db, args.q_ledger)
+        ledger_delta = ledger_growth(args.q_ledger, baseline)
+        try:
+            head_status = projection_head(args.control_socket, service)
+        except Exception as exc:
+            head_probe_error = exc.kind if isinstance(exc, WitnessError) else type(exc).__name__
+            head_status = "probe_failed"
         now = dt.datetime.now(dt.timezone.utc)
         end = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         start = (now - dt.timedelta(minutes=4)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -352,7 +536,9 @@ def run(args):
         try:
             session.initialize()
             envelope = session.snapshot(run_id, node, end, "process")
-            validate_process(envelope, run_id, node, int(now.timestamp() * 1000), args.m_db)
+            parent = verify_retained_binding(envelope, args.q_ledger, args.m_db, baseline, pid)
+            validate_process(envelope, run_id, node, int(now.timestamp() * 1000), parent)
+            fixed_grant_query_status = "pass"
             if slot % 12 == 0:
                 phase = "consensus_negative"
                 validate_negative(session.snapshot(run_id, node, end, "consensus"), "CACHE_MISS", run_id)
@@ -369,7 +555,9 @@ def run(args):
                 validate_negative(session.snapshot(other_run, node, end, "process"), "OUT_OF_SCOPE", other_run)
             finally:
                 session.close()
-        status = "pass"
+        status = "pass" if head_probe_error is None else "failed"
+        if head_probe_error is not None:
+            error_kind = "projection_probe_failed"
     except WitnessError as exc:
         error_kind = exc.kind
     except Exception as exc:
@@ -386,6 +574,8 @@ def run(args):
                   "status": status, "phase": phase, "error_kind": error_kind,
                   "negative_controls": slot % 12 == 0, "grants_created": len(leases),
                   "cleanup_confirmed": cleanup_ok, "q_grants_since_baseline": ledger_delta,
+                  "fixed_grant_query_status": fixed_grant_query_status,
+                  "projection_head_status": head_status, "projection_probe_error": head_probe_error,
                   "elapsed_ms": (time.monotonic_ns() - started) // 1_000_000}
         append_log(fd, sample)
         os.close(fd)
@@ -395,17 +585,17 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser()
     for name in ("control-socket", "mcp-socket", "operator-token-file", "service-token-file", "m-db",
-                 "q-ledger", "log-file", "query-unit", "expected-query-sha256"):
+                 "q-ledger", "log-file", "query-unit", "expected-query-sha256", "baseline-file",
+                 "expected-baseline-sha256"):
         parser.add_argument("--" + name, required=True)
-    for name in ("baseline-grants", "baseline-grant-bytes", "baseline-attempts"):
-        parser.add_argument("--" + name, required=True, type=int)
     args = parser.parse_args()
-    if any(getattr(args, name) < 0 for name in ("baseline_grants", "baseline_grant_bytes", "baseline_attempts")) or len(args.expected_query_sha256) != 64:
+    if (re.fullmatch(r"[0-9a-f]{64}", args.expected_query_sha256) is None
+            or re.fullmatch(r"[0-9a-f]{64}", args.expected_baseline_sha256) is None):
         parser.error("invalid pinned baseline or binary digest")
     def expired(_signum, _frame):
         raise TimeoutError("functional witness deadline")
     signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, 22)
+    signal.setitimer(signal.ITIMER_REAL, WHOLE_RUN_TIMEOUT_S)
     try:
         code = run(args)
         error_kind = None
