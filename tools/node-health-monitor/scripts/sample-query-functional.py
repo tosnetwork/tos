@@ -167,7 +167,8 @@ def issue(socket_path, token, node, start, end, leases):
     status, headers, raw = control(socket_path, token, "POST", "/v1/control/grants",
                              {"node_ids": [node], "scope_ids": ["node"], "start": start, "end": end})
     if status != 200:
-        leases.pop()
+        # A non-200 reply is not proof that no durable side effect occurred.
+        # Without a returned run ID, cleanup cannot be confirmed.
         raise WitnessError("grant_refused")
     # A 200 may have created a grant even if its response cannot be decoded.
     if headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
@@ -523,6 +524,7 @@ def append_log(fd, sample):
 
 def run(args):
     slot = int(time.time()) // SLOT_SECONDS
+    slot_highwater = slot
     boot_id = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     boottime_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
     fd = open_log(args.log_file)
@@ -544,8 +546,14 @@ def run(args):
             os.lseek(fd, max(0, size - 2048), os.SEEK_SET)
             last = os.read(fd, min(size, 2048)).splitlines()[-1]
             previous = checked_json(last, 1024)
-            if previous.get("slot") == slot:
-                raise WitnessError("duplicate_slot")
+            prior_slot = previous.get("slot")
+            prior_highwater = previous.get("slot_highwater", prior_slot)
+            if (type(prior_slot) is not int or type(prior_highwater) is not int
+                    or prior_highwater < prior_slot):
+                raise WitnessError("log_slot_invalid")
+            slot_highwater = max(slot, prior_highwater)
+            if slot <= prior_highwater:
+                raise WitnessError("slot_not_advanced")
             if previous.get("boot_id") == boot_id:
                 prior = previous.get("boottime_ns")
                 if type(prior) is not int or boottime_ns < prior or boottime_ns - prior < SLOT_SECONDS * 1_000_000_000:
@@ -617,7 +625,8 @@ def run(args):
         if not cleanup_ok:
             status = "failed"
             error_kind = "cleanup_unconfirmed"
-        sample = {"schema_version": 1, "slot": slot, "boot_id": boot_id, "boottime_ns": boottime_ns,
+        sample = {"schema_version": 1, "slot": slot, "slot_highwater": slot_highwater,
+                  "boot_id": boot_id, "boottime_ns": boottime_ns,
                   "wall_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
                   "status": status, "phase": phase, "error_kind": error_kind,
                   "negative_controls": slot % 12 == 0, "grants_created": len(leases),

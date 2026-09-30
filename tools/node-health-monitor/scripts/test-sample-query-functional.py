@@ -2,12 +2,15 @@
 """Offline controls for the bounded functional witness; never use live tokens."""
 
 import importlib.util
+from contextlib import closing
 import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
+import socket
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -90,6 +93,11 @@ class FunctionalWitnessTests(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 witness.issue("socket", "token", "validator1", "start", "end", leases)
             self.assertEqual(leases, [None])
+        with patch.object(witness, "control", return_value=(503, {}, b"")):
+            leases = []
+            with self.assertRaisesRegex(witness.WitnessError, "grant_refused"):
+                witness.issue("socket", "token", "validator1", "start", "end", leases)
+            self.assertEqual(leases, [None])
 
     def test_whole_run_timeout_in_head_probe_never_issues_grant(self):
         log = str(Path(self.temporary.name) / "sample.jsonl")
@@ -108,6 +116,61 @@ class FunctionalWitnessTests(unittest.TestCase):
         row = json.loads(Path(log).read_text().strip())
         self.assertEqual((row["status"], row["error_kind"], row["grants_created"]),
                          ("failed", "WholeRunTimeout", 0))
+
+    def test_real_socket_grant_commit_with_lost_response_is_unconfirmed(self):
+        path = str(Path(self.temporary.name) / "control.sock")
+        side_effect_db = str(Path(self.temporary.name) / "committed.db")
+        with closing(sqlite3.connect(side_effect_db)) as db:
+            db.execute("CREATE TABLE issued(id INTEGER PRIMARY KEY)")
+            db.commit()
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(path)
+        listener.listen(1)
+        committed = threading.Event()
+        def lose_response():
+            conn, _ = listener.accept()
+            with conn:
+                raw = b""
+                while b"\r\n\r\n" not in raw:
+                    part = conn.recv(4096)
+                    if not part:
+                        return
+                    raw += part
+                header, body = raw.split(b"\r\n\r\n", 1)
+                length = next(int(line.split(b":", 1)[1].strip()) for line in header.split(b"\r\n")
+                              if line.lower().startswith(b"content-length:"))
+                while len(body) < length:
+                    body += conn.recv(length - len(body))
+                self.assertIn(b"POST /v1/control/grants HTTP/1.1", header)
+                with closing(sqlite3.connect(side_effect_db)) as db:
+                    db.execute("INSERT INTO issued VALUES(1)")
+                    db.commit()
+                committed.set()  # Simulates durable commit before transport loss.
+            listener.close()
+        server = threading.Thread(target=lose_response, daemon=True)
+        server.start()
+        log = str(Path(self.temporary.name) / "lost-response.jsonl")
+        args = SimpleNamespace(log_file=log, operator_token_file="operator", service_token_file="service",
+                               baseline_file="baseline", expected_baseline_sha256="a" * 64,
+                               expected_query_sha256="b" * 64, query_unit="isolated-query",
+                               control_socket=path, mcp_socket="mcp", m_db="m", q_ledger="q")
+        try:
+            with (patch.object(witness, "private_token", return_value="a" * 64),
+                  patch.object(witness, "frozen_baseline", return_value={}),
+                  patch.object(witness, "bound_service", return_value=123),
+                  patch.object(witness, "ledger_growth", return_value=0),
+                  patch.object(witness, "projection_head", return_value="caught_up")):
+                self.assertEqual(witness.run(args), 1)
+            self.assertTrue(committed.wait(1))
+            with closing(sqlite3.connect(side_effect_db)) as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM issued").fetchone(), (1,))
+            row = json.loads(Path(log).read_text().strip())
+            self.assertEqual((row["status"], row["error_kind"], row["grants_created"],
+                              row["cleanup_confirmed"]),
+                             ("failed", "cleanup_unconfirmed", 1, False))
+        finally:
+            listener.close()
+            server.join(timeout=1)
 
     def test_ledger_growth_refuses_before_next_grant(self):
         path = str(Path(self.temporary.name) / "q.db")
@@ -199,6 +262,18 @@ class FunctionalWitnessTests(unittest.TestCase):
             with self.assertRaisesRegex(witness.WitnessError, "retained_source_identity"):
                 witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
             q.execute("UPDATE query_evidence SET store_seq=1")
+            q.commit()
+            q.execute("UPDATE query_origins SET manager_seq=2")
+            q.execute("UPDATE query_manager_cursor SET watermark=2")
+            q.commit()
+            with self.assertRaisesRegex(witness.WitnessError, "retained_source_identity"):
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
+            q.execute("UPDATE query_origins SET manager_seq=1")
+            q.execute("DELETE FROM query_projection_origin")
+            q.commit()
+            with self.assertRaisesRegex(witness.WitnessError, "retained_binding_missing"):
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
+            q.execute("INSERT INTO query_projection_origin VALUES(?,?)", ("b" * 64, self.parent_id))
             q.commit()
             q.execute("UPDATE query_origins SET body=?", (b"{}",))
             q.commit()
@@ -364,6 +439,21 @@ class FunctionalWitnessTests(unittest.TestCase):
             self.assertEqual(witness.run(args), 1)
         issue.assert_not_called()
         self.assertEqual(json.loads(log.read_text().splitlines()[-1])["error_kind"], "sample_too_soon")
+
+    def test_wall_slot_rollback_refuses_new_grant(self):
+        log = Path(self.temporary.name) / "rollback.jsonl"
+        slot = int(time.time()) // witness.SLOT_SECONDS
+        log.write_text(json.dumps({"slot": slot + 1, "boot_id": "previous-boot", "boottime_ns": 0}) + "\n")
+        log.chmod(0o600)
+        with patch.object(witness, "issue") as issue:
+            self.assertEqual(witness.run(SimpleNamespace(log_file=str(log))), 1)
+        issue.assert_not_called()
+        first = json.loads(log.read_text().splitlines()[-1])
+        self.assertEqual((first["error_kind"], first["slot_highwater"]), ("slot_not_advanced", slot + 1))
+        with patch.object(witness, "issue") as issue:
+            self.assertEqual(witness.run(SimpleNamespace(log_file=str(log))), 1)
+        issue.assert_not_called()
+        self.assertEqual(json.loads(log.read_text().splitlines()[-1])["slot_highwater"], slot + 1)
 
 
 if __name__ == "__main__":

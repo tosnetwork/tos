@@ -10,7 +10,9 @@ not deployed, scheduled, or counted toward the running 72-hour gate.
 The script is a **one-shot** instrument. An operator-owned timer may invoke it
 at most once per 300-second wall-clock slot; its private append-only JSONL lock
 refuses a second invocation in the same slot or less than 300 seconds of
-same-boot `CLOCK_BOOTTIME` after the previous sample. It selects one of the six approved
+same-boot `CLOCK_BOOTTIME` after the previous sample. A persisted slot
+highwater also refuses wall-clock rollback, including repeated attempts after
+a logged rollback failure. It selects one of the six approved
 nodes in round-robin order. One control grant permits exactly that node and
 `node` scope for a four-minute window. One persistent private MCP connection
 initializes protocol `2025-06-18` and calls `tos_get_node_snapshot` with only
@@ -85,7 +87,8 @@ for its own continuous head-status series.
 Once a grant response contains a valid run ID it is registered for cleanup
 before its token is used. A 200 response that cannot be decoded records an
 unknown grant side effect and fails cleanup confirmation; so does a grant
-transport timeout that may have occurred after Q committed a grant. On timeout or any
+transport timeout, disconnect, or non-200 response that may have occurred
+after Q committed a grant. On timeout or any
 other failure the script cancels the functional alarm, tries every known
 revoke through a new bounded control connection, and marks the sample failed
 if any revoke is not acknowledged. An unconfirmed grant must be inspected by
@@ -98,8 +101,11 @@ known run ID to have `revoked=1` in the same pinned Q ledger inode.
 Offline tests cover exact parent/payload/age rejection, source hash mismatch,
 grant-frozen W, Q retained-binding and M inode rejection, negative-envelope
 validation, malformed grant cleanup registration, frozen baseline digest,
-reserved ledger budget, durable revocation, and the whole-run timeout at the
-head probe. An isolated one-shot control on 2026-09-30 used a disposable
+reserved ledger budget, durable revocation, slot rollback, and the whole-run
+timeout at the head probe. A real Unix-socket fault test commits an issued row
+to a disposable SQLite database then drops the grant response; the witness
+records `cleanup_unconfirmed` rather than a clean failure. An isolated one-shot
+control on 2026-09-30 used a disposable
 private M/Q directory, six archived process source envelopes refreshed only
 inside that disposable M, a separate Q process with generated private tokens,
 and a frozen empty Q baseline. The actual private control/MCP sockets passed
