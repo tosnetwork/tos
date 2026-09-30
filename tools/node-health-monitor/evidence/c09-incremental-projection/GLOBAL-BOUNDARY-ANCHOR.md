@@ -41,3 +41,31 @@ Restored source SHA-256:
 
 This controls the development projection cursor; it does not establish C09
 production or 72-hour availability, and it was not deployed.
+
+## Mixed process/diagnostic follow-up (isolated branch)
+
+The cursor anchor is a **global M boundary**, not a declaration that its row
+is process evidence. On a partial page it is the last projected process row
+and `watermark` stops there. On a fully caught-up page it becomes the exact
+M observation at the global watermark, even if that row is diagnostic. The
+same M read transaction supplies `boundary_witness`; Q advances only after
+the process projections are committed. Process provenance is held separately
+in bounded `query_origins` (original M sequence, hash, and body) and is
+revalidated on restart/import. A diagnostic boundary is never inserted into
+that process-parent table or promoted to a query fact.
+
+The added `process_parent_and_trailing_diagnostic_have_distinct_durable_identities`
+control inserts process seq 1 and diagnostic seq 2. It checks Q retains only
+the seq-1 process origin, persists global cursor `(2, diagnostic_hash)`,
+reopens successfully, then refuses when the M diagnostic boundary hash changes.
+The exact control passed, and the restored `manager_query_source` target had
+19 passed / 1 opt-in ignored; fmt, Clippy `-D warnings`, and diff check passed.
+A compiled mutation restoring the old `source='process'` anchor lookup failed
+at the expected restart assertion (`M projection anchor changed`); the source
+was restored and the full targeted suite passed again.
+Restored test SHA-256: `fa24d7c14421deba8b5103dca05297ceb030c7f6c10606f1f33e26921f4e4f1c`.
+
+Legacy Q cursors with nonzero watermark and null anchor are refused on open;
+they cannot silently skip a diagnostic-only prefix. Rebuilding/migrating such
+a cursor needs a separate reviewed path. This follow-up is still an isolated
+development candidate, not a live Q update or a C09 soak acceptance.

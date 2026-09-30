@@ -244,6 +244,82 @@ fn diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn process_parent_and_trailing_diagnostic_have_distinct_durable_identities() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-mixed-boundary-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("edge-epoch-1")).unwrap();
+    let sql = rusqlite::Connection::open(&manager_path).unwrap();
+    let process_id: String = sql
+        .query_row("SELECT content_hash FROM observations WHERE store_seq=1", [], |row| row.get(0))
+        .unwrap();
+    sql.execute(
+        "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+         VALUES('v1','node','boot:4242:100','diag','diagnostic','diag:1',?1,'{}')",
+        ["d".repeat(64)],
+    )
+    .unwrap();
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state =
+        ObservabilityState::new(inventory.clone(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .unwrap();
+    assert!(state.data.lock().unwrap().manager_caught_up);
+    let cursor =
+        state.query_ledger.as_ref().unwrap().lock().unwrap().manager_cursor().unwrap().unwrap();
+    assert_eq!(cursor.watermark, 2);
+    assert_eq!(cursor.anchor, Some((2, "d".repeat(64))));
+    let query = rusqlite::Connection::open(&ledger_path).unwrap();
+    let origins: Vec<String> = query
+        .prepare("SELECT origin_id FROM query_origins ORDER BY manager_seq")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(origins, vec![process_id]);
+    drop(query);
+    drop(state);
+    let restored =
+        ObservabilityState::new(inventory.clone(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .unwrap();
+    assert!(restored.data.lock().unwrap().manager_caught_up);
+    drop(restored);
+    sql.execute("UPDATE observations SET content_hash=?1 WHERE store_seq=2", ["e".repeat(64)])
+        .unwrap();
+    let error = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap()
+        .with_manager_evidence(manager_path.clone())
+        .err()
+        .unwrap();
+    assert!(error.contains("M projection anchor changed"), "{error}");
+    drop(sql);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[tokio::test]
 async fn private_projection_health_exposes_lag_and_conflict_without_grant_or_import() {
     let directory = std::env::temp_dir().join(format!(
