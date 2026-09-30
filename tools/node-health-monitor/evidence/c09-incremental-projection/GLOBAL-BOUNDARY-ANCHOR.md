@@ -44,6 +44,12 @@ production or 72-hour availability, and it was not deployed.
 
 ## Mixed process/diagnostic follow-up (isolated branch)
 
+Integration candidate `nhm/c09-global-boundary-2836` is based on shared
+`2836e2bb2991d2cd559d9bbcb46bfb3027ad2bfb`, which already contains the
+global-anchor implementation and typed fail-closed capacity handling. Only
+the mixed-boundary control and this receipt are added; the original `f022`
+base above describes the earlier implementation lineage, not this candidate.
+
 The cursor anchor is a **global M boundary**, not a declaration that its row
 is process evidence. On a partial page it is the last projected process row
 and `watermark` stops there. On a fully caught-up page it becomes the exact
@@ -58,8 +64,8 @@ The added `process_parent_and_trailing_diagnostic_have_distinct_durable_identiti
 control inserts process seq 1 and diagnostic seq 2. It checks Q retains only
 the seq-1 process origin, persists global cursor `(2, diagnostic_hash)`,
 reopens successfully, then refuses when the M diagnostic boundary hash changes.
-The exact control passed, and the restored `manager_query_source` target had
-19 passed / 1 opt-in ignored; fmt, Clippy `-D warnings`, and diff check passed.
+The exact control passed, and the rebased `manager_query_source` target had
+21 passed / 1 opt-in ignored; fmt, Clippy `-D warnings`, and diff check passed.
 A compiled mutation restoring the old `source='process'` anchor lookup failed
 at the expected restart assertion (`M projection anchor changed`); the source
 was restored and the full targeted suite passed again.
