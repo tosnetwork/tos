@@ -520,7 +520,7 @@ def open_log(path):
     return fd
 
 
-def reviewed_failure(path, failed_row, highwater, inflight_raw=None):
+def reviewed_failure(path, failed_row, highwater):
     if not path:
         return None
     directory = os.stat(Path(path).parent, follow_symlinks=False)
@@ -541,12 +541,11 @@ def reviewed_failure(path, failed_row, highwater, inflight_raw=None):
     finally:
         os.close(fd)
     value = checked_json(raw, MAX_REVIEW_BYTES)
-    if (set(value) != {"schema_version", "failed_row_sha256", "inflight_sha256", "slot_highwater", "reviewer", "reviewed_at_utc"}
+    if (set(value) != {"schema_version", "failed_row_sha256", "slot_highwater", "reviewer", "reviewed_at_utc"}
             or type(value["schema_version"]) is not int or value["schema_version"] != 1
             or type(value["slot_highwater"]) is not int
             or value["slot_highwater"] != highwater
-            or value["failed_row_sha256"] != (hashlib.sha256(failed_row).hexdigest() if failed_row else None)
-            or value["inflight_sha256"] != (hashlib.sha256(inflight_raw).hexdigest() if inflight_raw else None)
+            or value["failed_row_sha256"] != hashlib.sha256(failed_row).hexdigest()
             or not isinstance(value["reviewer"], str)
             or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value["reviewer"]) is None):
         raise WitnessError("review_mismatch")
@@ -554,14 +553,9 @@ def reviewed_failure(path, failed_row, highwater, inflight_raw=None):
         reviewed = dt.datetime.fromisoformat(value["reviewed_at_utc"].replace("Z", "+00:00"))
         if reviewed.utcoffset() != dt.timedelta(0) or reviewed > dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60):
             raise ValueError("review time")
-        if failed_row:
-            failed = dt.datetime.fromisoformat(checked_json(failed_row, MAX_LOG_ROW_BYTES)["wall_utc"].replace("Z", "+00:00"))
-            if failed.utcoffset() != dt.timedelta(0) or reviewed <= failed:
-                raise ValueError("review time")
-        if inflight_raw:
-            created = dt.datetime.fromisoformat(checked_json(inflight_raw, 256)["created_at_utc"].replace("Z", "+00:00"))
-            if created.utcoffset() != dt.timedelta(0) or reviewed <= created:
-                raise ValueError("review time")
+        failed = dt.datetime.fromisoformat(checked_json(failed_row, MAX_LOG_ROW_BYTES)["wall_utc"].replace("Z", "+00:00"))
+        if failed.utcoffset() != dt.timedelta(0) or reviewed <= failed:
+            raise ValueError("review time")
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise WitnessError("review_time") from exc
     return hashlib.sha256(raw).hexdigest()
@@ -569,32 +563,6 @@ def reviewed_failure(path, failed_row, highwater, inflight_raw=None):
 
 def inflight_path(log_path):
     return log_path + ".inflight"
-
-
-def read_inflight(log_path):
-    path = inflight_path(log_path)
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
-    except FileNotFoundError:
-        return None
-    try:
-        meta = os.fstat(fd)
-        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid()
-                or meta.st_mode & 0o077 or meta.st_nlink != 1 or meta.st_size > 256):
-            raise WitnessError("inflight_file")
-        raw = os.read(fd, 257)
-        if len(raw) != meta.st_size:
-            raise WitnessError("inflight_file")
-    finally:
-        os.close(fd)
-    value = checked_json(raw, 256)
-    if (set(value) != {"schema_version", "slot", "boot_id", "created_at_utc"}
-            or type(value["schema_version"]) is not int or value["schema_version"] != 1
-            or type(value["slot"]) is not int or value["slot"] < 0
-            or not isinstance(value["boot_id"], str)
-            or re.fullmatch(r"[0-9a-f-]{36}", value["boot_id"]) is None):
-        raise WitnessError("inflight_file")
-    return raw, value
 
 
 def sync_parent(path):
@@ -659,17 +627,10 @@ def run(args):
     inflight_started = False
     started = time.monotonic_ns()
     try:
-        try:
-            old_inflight = read_inflight(args.log_file)
-        except (OSError, WitnessError) as exc:
-            latch_refused = True
-            raise WitnessError("inflight_review_required") from exc
-        if old_inflight is None and os.path.lexists(inflight_path(args.log_file)):
+        if os.path.lexists(inflight_path(args.log_file)):
             latch_refused = True
             raise WitnessError("inflight_review_required")
         size = os.fstat(fd).st_size
-        last = None
-        prior_highwater = -1
         if size:
             os.lseek(fd, max(0, size - 2048), os.SEEK_SET)
             last = os.read(fd, min(size, 2048)).splitlines()[-1]
@@ -679,30 +640,21 @@ def run(args):
             if (type(prior_slot) is not int or type(prior_highwater) is not int
                     or prior_highwater < prior_slot):
                 raise WitnessError("log_slot_invalid")
-        if old_inflight is not None:
-            prior_highwater = max(prior_highwater, old_inflight[1]["slot"])
-        slot_highwater = max(slot, prior_highwater)
-        if old_inflight is not None or (last is not None and
-                                        (previous.get("status") != "pass" or previous.get("cleanup_confirmed") is not True)):
-            try:
-                review_ack_sha256 = reviewed_failure(getattr(args, "review_file", None), last,
-                                                      prior_highwater, old_inflight[0] if old_inflight else None)
-            except (OSError, WitnessError):
-                review_ack_sha256 = None
-            if review_ack_sha256 is None:
-                latch_refused = True
-                raise WitnessError("inflight_review_required" if old_inflight else "operator_review_required")
-            if old_inflight is not None:
-                finish_inflight(args.log_file)
-        if size:
+            slot_highwater = max(slot, prior_highwater)
+            if previous.get("status") != "pass" or previous.get("cleanup_confirmed") is not True:
+                try:
+                    review_ack_sha256 = reviewed_failure(getattr(args, "review_file", None), last, prior_highwater)
+                except (OSError, WitnessError):
+                    review_ack_sha256 = None
+                if review_ack_sha256 is None:
+                    latch_refused = True
+                    raise WitnessError("operator_review_required")
             if slot <= prior_highwater:
                 raise WitnessError("slot_not_advanced")
             if previous.get("boot_id") == boot_id:
                 prior = previous.get("boottime_ns")
                 if type(prior) is not int or boottime_ns < prior or boottime_ns - prior < SLOT_SECONDS * 1_000_000_000:
                     raise WitnessError("sample_too_soon")
-        elif old_inflight is not None and slot <= prior_highwater:
-            raise WitnessError("slot_not_advanced")
         if getattr(args, "not_after_utc", None):
             try:
                 end_of_window = dt.datetime.fromisoformat(args.not_after_utc.replace("Z", "+00:00"))

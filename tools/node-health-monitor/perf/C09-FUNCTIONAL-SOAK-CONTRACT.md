@@ -89,13 +89,16 @@ is fsynced and every grant is durably revoked. A previous row whose
 `status != pass` or `cleanup_confirmed != true`, or any orphaned inflight
 marker, blocks every later grant. A blocked tick exits nonzero without
 appending a new JSONL row, preserving the failed row and slot highwater.
-Operator review is recorded by a private 0600 acknowledgement file naming
-the exact preceding row SHA-256 (null if none), inflight-marker SHA-256 (null
-if none), and maximum slot highwater. The review timestamp must follow both
-present artifacts. A valid review removes and fsyncs the old marker before
-another grant; manual deletion is not the reset procedure. The receipt cannot
-clear a later failure or a changed marker. A log near its 4 MiB cap refuses
-before issuing a grant.
+An existing `.inflight` blocks before the receipt is read; a receipt cannot
+remove it or permit a retry. An operator must freeze a private byte-for-byte
+copy and digest of the marker and log, establish the exact Q ledger identity,
+and confirm all possibly created grants are durably revoked or expired before
+manually removing and fsyncing the marker. If a failed row remains, its
+separate 0600 receipt must bind the exact failed-row SHA-256 and slot
+highwater. The failed row and archived marker are never edited. If the Q
+identity, candidate grants, or clock domain cannot be established, the marker
+stays and the timer stays stopped. A log near its 4 MiB cap refuses before
+issuing a grant.
 
 The candidate timer waits five minutes after service deactivation, the
 script preserves its 300-second same-boot spacing, and a separate stop timer
