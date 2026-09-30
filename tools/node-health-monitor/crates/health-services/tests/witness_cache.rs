@@ -351,8 +351,14 @@ async fn retained_ingest_decoder_refuses_identity_age_and_proof_laundering() {
 
 #[tokio::test]
 async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensions() {
-    let future = (chrono::Utc::now() + chrono::Duration::seconds(60))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let now = chrono::Utc::now();
+    let mut active_plan = plan();
+    active_plan.targets[0].valid_from =
+        (now - chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    active_plan.targets[0].valid_until =
+        (now + chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let future =
+        (now + chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     let mut reported: Value = serde_json::from_slice(&source()).unwrap();
     reported["clock_quality"] = json!("valid");
     reported["observed_at"] = json!(future);
@@ -360,7 +366,7 @@ async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensi
     reported["rows"][0]["source_age_ms"] = json!("0");
     let raw = serde_json::to_vec(&reported).unwrap();
     let cache = WitnessCache::new_synthetic_valid_clock_fixture(
-        plan(),
+        active_plan.clone(),
         b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec(),
     )
     .unwrap();
@@ -368,7 +374,7 @@ async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensi
     let (_, wire) = get(cache, "/v1/witness/cache/cache_1", true).await;
     let bytes = serde_json::to_vec(&wire).unwrap();
     let qualified =
-        qualify_row_from_wire(&bytes, &plan(), "cache_1", "validator_1", Some(100)).unwrap();
+        qualify_row_from_wire(&bytes, &active_plan, "cache_1", "validator_1", Some(100)).unwrap();
     assert_eq!(qualified.relative_age, RelativeAge::Fresh);
     assert_eq!(qualified.remote_clock, RemoteClock::Future);
     assert_eq!(qualified.role_at_observer_receipt, RoleAtObserverReceipt::Normal);
@@ -378,14 +384,14 @@ async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensi
     assert_eq!(serde_json::to_value(&qualified).unwrap()["reported_proof"], "reported_valid");
     assert_eq!(serde_json::to_value(&qualified).unwrap()["private_vote_visibility"], "unavailable");
     assert_eq!(
-        qualify_row_from_wire(&bytes, &plan(), "cache_1", "validator_1", None)
+        qualify_row_from_wire(&bytes, &active_plan, "cache_1", "validator_1", None)
             .unwrap()
             .relative_age,
         RelativeAge::Unknown,
         "unmeasured collector/M elapsed cannot become verified fresh"
     );
     assert_eq!(
-        qualify_row_from_wire(&bytes, &plan(), "cache_1", "validator_1", Some(46_000))
+        qualify_row_from_wire(&bytes, &active_plan, "cache_1", "validator_1", Some(46_000))
             .unwrap()
             .relative_age,
         RelativeAge::Stale
@@ -395,7 +401,7 @@ async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensi
         ("probe_only", RoleAtObserverReceipt::ProbeOnly),
         ("non_voting", RoleAtObserverReceipt::NonVoting),
     ] {
-        let mut value = serde_json::to_value(plan()).unwrap();
+        let mut value = serde_json::to_value(&active_plan).unwrap();
         value["targets"][0]["role"] = json!(role);
         let alternate = Plan::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(
@@ -420,8 +426,10 @@ async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensi
         assert_eq!(status.role_at_observer_receipt, expected);
         assert!(!status.node_fault_from_witness_alone);
     }
-    let mut outside = serde_json::to_value(plan()).unwrap();
-    outside["targets"][0]["valid_until"] = json!("2026-09-29T00:00:01Z");
+    let mut outside = serde_json::to_value(&active_plan).unwrap();
+    outside["targets"][0]["valid_until"] =
+        json!((now - chrono::Duration::minutes(30))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
     let outside = Plan::decode(&serde_json::to_vec(&outside).unwrap()).unwrap();
     let outside_cache = WitnessCache::new_synthetic_valid_clock_fixture(
         outside.clone(),
@@ -443,12 +451,13 @@ async fn actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensi
         RoleAtObserverReceipt::OutsideWindow
     );
     let unknown_clock =
-        WitnessCache::new(plan(), b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec()).unwrap();
+        WitnessCache::new(active_plan.clone(), b"abcdefghijklmnopqrstuvwxyz0123456789".to_vec())
+            .unwrap();
     unknown_clock.admit("cache_1", &raw, 50).unwrap();
     let (_, unknown_wire) = get(unknown_clock, "/v1/witness/cache/cache_1", true).await;
     let unknown = qualify_row_from_wire(
         &serde_json::to_vec(&unknown_wire).unwrap(),
-        &plan(),
+        &active_plan,
         "cache_1",
         "validator_1",
         Some(100),

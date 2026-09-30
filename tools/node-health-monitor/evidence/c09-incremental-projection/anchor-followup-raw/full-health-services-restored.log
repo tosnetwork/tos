@@ -1,0 +1,337 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-followup/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.64s
+     Running unittests src/lib.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/tos_health_services-1b4c0582a7c524ed)
+
+running 18 tests
+test manager::current_output_tests::current_budget_accepts_exact_cap_and_refuses_overflow ... ok
+test diagnostic_transport::tests::ack_framing_has_independent_bounds ... ok
+test manager::current_output_tests::current_budget_structural_sizes_are_visible ... ok
+test manager::current_output_tests::full_row_candidate_is_charged_before_current_mutation ... ok
+test diagnostic_ipc::tests::restart_needs_an_explicit_epoch_remap_and_drop_preserves_replaced_inode ... ok
+test manager::current_output_tests::serialization_buffer_accepts_exact_limit_and_refuses_next_byte ... ok
+test diagnostic_relay::tests::late_sequence_crosses_flush_boundary_and_original_age_is_not_renewed ... ok
+test transit::tests::same_host_stamp_is_bound_to_singleton_headers_body_and_monotonic_order ... ok
+test diagnostic_ingest::tests::conflict_quarantines_without_committing_an_earlier_new_record ... ok
+test diagnostic_ingest::tests::late_sequence_across_batches_is_not_a_replay_and_edge_restart_is_idempotent ... ok
+test diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting ... ok
+test manager::current_output_tests::timed_out_queued_reads_keep_leases_until_command_drain ... ok
+test collector::witness_tests::wrong_archive_ack_cannot_suppress_next_real_collector_post ... ok
+test diagnostic_ipc::tests::real_credentials_and_epoch_are_separate_rejection_gates ... ok
+test manager::current_output_tests::projected_full_row_entry_covers_decoded_track_and_view ... ok
+test diagnostic_transport::tests::actual_tcp_writer_obeys_rate_and_counts_all_written_bytes ... ok
+test diagnostic_ingest::tests::actual_mid_transaction_failure_rolls_back_and_never_returns_ack ... ok
+test native_cache::tests::actual_run_waits_full_interval_after_source_misses_tick ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.52s
+
+     Running unittests src/bin/health-collector.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_collector-466dc7207addcaab)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-contract-check.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_contract_check-8f576e89292c154c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-edge.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_edge-cb8fd38d2c5a1bc9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-ingress.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_ingress-5e774110dd6f6e73)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-native-poll.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_native_poll-ef4d6b26b22e0050)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-probe.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_probe-c441d5364bdf1cb7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-state.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_state-ab933a9cdcbbf790)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-watchdog.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/health_watchdog-5142d83452665ef9)
+
+running 2 tests
+test tests::unexpected_cache_listener_ok_is_still_fatal ... ok
+test tests::unexpected_source_lane_exit_preempts_slow_notice_work ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/tos-observability.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/tos_observability-c72dc679981d3990)
+
+running 2 tests
+test tests::control_permit_covers_the_slow_request_until_connection_finishes ... ok
+test tests::eight_idle_control_connections_are_bounded_and_expire ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.01s
+
+     Running tests/aura_stdio.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/aura_stdio-e5af7a3895c5ecef)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/c06_diagnostics.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/c06_diagnostics-6df3ea8f685afcbe)
+
+running 3 tests
+test actual_native_ipc_relay_mtls_manager_transaction_chain ... ok
+test actual_manager_http_refusals_and_conflict_survive_reopen ... ok
+test actual_manager_death_then_edge_shutdown_preserves_native_core_progress ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 41.24s
+
+     Running tests/cgroup.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/cgroup-5695fda485ea2041)
+
+running 4 tests
+test descendant_quota_symlink_and_zero_are_refused ... ok
+test effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample ... ok
+test unlimited_parent_and_finite_child_resolve_to_child ... ok
+test discovery_keeps_unsupported_and_invalid_profiles_distinct ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/durable.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/durable-8e32a4922f181167)
+
+running 12 tests
+test whole_round_rolls_back_when_any_outbox_change_fails ... ok
+test future_schema_and_invalid_page_are_rejected ... ok
+test outbox_capacity_failure_cannot_advance_recovery_or_sequence ... ok
+test incident_and_outbox_commit_together ... ok
+test conflict_is_persistent_and_scope_is_identity ... ok
+test immutable_sequence_survives_restart_and_late_arrival ... ok
+test restart_does_not_resolve_or_continue_old_hold ... ok
+test legacy_pending_outbox_migrates_without_ack_and_retry_metadata_is_durable ... ok
+test ordered_episode_timeline_is_persisted_and_outboxed ... ok
+test both_databases_verify_wal_full_and_passive_checkpoint_is_bounded_by_reader ... ok
+test evidence_disk_limit_does_not_consume_control_capacity ... ok
+test immutable_inventory_revision_is_enforced ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/edge_lifecycle.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/edge_lifecycle-9781cd9ad475581c)
+
+running 1 test
+test edge_exit_does_not_signal_or_restart_configured_source_process ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests/http.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/http-1def3221e8dbe8ec)
+
+running 19 tests
+test direct_listener_must_be_local ... ok
+test inventory_and_secret_domains_are_enforced ... ok
+test private_token_validation_and_randomness ... ok
+test edge_reads_are_cached_and_authenticated ... ok
+test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
+test edge_rejects_refresh_and_enforces_burst ... ok
+test edge_router_reserves_burst_token_for_approved_heartbeat ... ok
+test ingest_checks_bound_identity ... ok
+test oversized_requests_fail_before_handler ... ok
+test grant_query_and_revocation_round_trip ... ok
+test change_pages_use_store_order_for_equal_times_and_fixed_watermark ... ok
+test event_pages_use_fixed_watermark_and_reject_changed_filter_at_router ... ok
+test service_identities_do_not_cross_roles ... ok
+test all_six_success_handlers_emit_runtime_dtos ... ok
+test query_rejections_are_not_http_success ... ok
+test runtime_output_reflects_unknown_quality_and_rejects_conflicts ... ok
+test durable_http_grant_restarts_with_fixed_watermark_and_charged_calls ... ok
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+test durable_http_event_cursor_resumes_after_restart_without_late_row ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/ingress.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/ingress-bb20189a7317f285)
+
+running 8 tests
+test fixed_development_witness_routes_keep_peer_and_header_bounds ... ok
+test scheduled_probe_uses_mtls_and_never_claims_consensus_health ... ok
+test mtls_acl_rejects_missing_expired_and_unapproved_before_upstream ... ok
+test split_collector_identities_archive_validated_process_without_probe_relabel ... ok
+test scheduled_native_poll_checks_inventory_over_mtls ... ok
+test eight_idle_authenticated_readers_are_bounded_then_release ... ok
+test actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only ... ok
+test seven_slow_regular_requests_leave_classified_heartbeat_capacity ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.24s
+
+     Running tests/manager.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/manager-6f7add01b3a56259)
+
+running 11 tests
+test local_c09_edge_snapshot_is_accepted_by_isolated_manager ... ignored
+test local_c09_six_edge_snapshots_project_six_process_sources ... ignored
+test queued_observation_cannot_be_rejuvenated ... ok
+test pending_c04_c05_rule_inputs_cannot_be_enabled_on_manager ... ok
+test database_aliases_cannot_defeat_isolation ... ok
+test partial_archive_failure_has_no_receipt_and_replay_preserves_committed_record ... ok
+test typed_snapshot_archive_commits_exact_refs_without_creating_healthy_facts ... ok
+test full_evidence_writer_queue_refuses_without_receipt_or_green ... ok
+test source_reference_write_failure_cannot_publish_green ... ok
+test killed_process_reopens_active_incident_as_unknown ... ok
+test conflict_quarantines_live_rule_and_receipt_controls_outbox ... ok
+
+test result: ok. 9 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 10.09s
+
+     Running tests/manager_query_source.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/manager_query_source-723ab372f789f937)
+
+running 20 tests
+test live_read_only_projection_cost_witness ... ignored, requires explicit read-only local M path and network
+test projection_refuses_wrong_origin_hash_and_unknown_source_fields ... ok
+test persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor ... ok
+test real_m_writer_process_row_projects_with_parent_and_fixed_query_watermark ... ok
+test non_anchor_retained_parent_body_change_is_refused_by_sequence_lookup ... ok
+test diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process ... ok
+test fixed_package_marks_unmaterialized_process_missing_without_promoting_direct_cache ... ok
+test durable_parent_before_cursor_replays_exactly_once_after_restart ... ok
+test durable_projection_requires_exact_retained_parent_on_insert_and_reopen ... ok
+test diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup ... ok
+test private_projection_health_exposes_lag_and_conflict_without_grant_or_import ... ok
+test cursor_refuses_missing_or_rewritten_retained_parent_and_invalid_middle_row ... ok
+test broker_parent_index_overflow_latches_refusal_without_deadlocking_ledger ... ok
+test broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot ... ok
+test projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart ... ok
+test thousand_real_query_requests_do_not_read_manager_archive ... ok
+test unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap ... ok
+test partial_projection_restart_replays_cursor_and_refuses_uncaught_grant ... ok
+test incremental_projection_pages_4097_history_and_sparse_global_sequence ... ok
+test pre_cursor_ledger_with_active_grant_catches_up_over_4096_history ... ok
+
+test result: ok. 19 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 9.01s
+
+     Running tests/mcp.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/mcp-a9991de450e9c685)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/mcp_token_visibility.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/mcp_token_visibility-bbfb08498a416c17)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native_cache.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/native_cache-b810939fa45fc37c)
+
+running 6 tests
+test duplicate_native_sample_keeps_original_age ... ok
+test native_conflict_cannot_recover_in_same_epoch ... ok
+test cold_metrics_and_query_rejected_without_sampler ... ok
+test metrics_route_refuses_stale_conflicted_and_restarted_cache ... ok
+test native_bounds_and_loopback_are_enforced ... ok
+test thousand_cache_reads_never_call_native ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/native_typed.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/native_typed-498971f8c497bca1)
+
+running 10 tests
+test scheduler_skips_a_tick_missed_by_a_slow_source ... ok
+test native_adapter_does_not_turn_missing_pq_into_zero ... ok
+test v2_cache_epoch_switch_retires_old_pair_without_counter_merge ... ok
+test mismatched_pair_has_no_retry_and_no_publication ... ok
+test native_binding_requires_the_configured_process_owned_listener ... ok
+test v2_edge_route_and_collector_keep_incomplete_consensus_typed ... ok
+test r4_collector_preserves_source_identity_and_immutable_payload ... ok
+test typed_cache_duplicate_age_and_conflict_are_sticky ... ok
+test snapshot_route_refuses_conflicted_and_restarted_typed_cache ... ok
+test typed_sampler_and_edge_read_only_cache ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s
+
+     Running tests/native_v2_producer_pair.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/native_v2_producer_pair-fc7d02596f2fef4d)
+
+running 1 test
+test actual_cpp_publisher_pairs_and_negatives ... ignored, requires indexed native C++ publisher pair; run with NHM_C04_PAIR_DIR
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/query_ledger.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/query_ledger-e00883477a591ad7)
+
+running 7 tests
+test query_ledger_rejects_aliasing_private_file_and_expiry ... ok
+test active_watermark_prevents_eviction_across_restart_until_revoked ... ok
+test durable_grant_restarts_without_raw_token_or_budget_replay ... ok
+test event_cursor_survives_ledger_restart_without_later_rows ... ok
+test legacy_mcp_binding_cannot_reset_unknown_spent_budget ... ok
+test fixed_broker_package_is_single_write_and_integrity_checked_after_restart ... ok
+test mcp_binding_call_and_wire_budgets_survive_restart ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/watchdog.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/watchdog-234009e1fbee7e5a)
+
+running 3 tests
+test pipeline_requires_own_firing_new_evaluation ... ok
+test own_observer_heartbeat_and_notice_delivery_are_distinct_from_monitor_fault ... ok
+test direct_observer_notice_has_stable_timestamp_key_and_bounded_retry ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/witness_archive.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/witness_archive-b38b2ff1cb1b2671)
+
+running 9 tests
+test synthetic_valid_clock_current_route_qualifies_context_without_proof ... ok
+test current_read_uses_measured_incoming_body_and_matched_conflict_only ... ok
+test current_activation_reopen_preserves_guard_and_total_index_is_bounded ... ok
+test manager_refuses_oversized_or_uninventoried_witness_plan_before_activation ... ok
+test actual_observer_cache_to_manager_retained_archive_dedups_without_rule_fact ... ok
+test witness_archive_quota_refusal_has_no_success_ack_or_partial_row ... ok
+test historical_dedup_and_conflict_quarantine_survive_manager_restart ... ok
+test current_review_is_separate_from_archive_and_preserves_order_and_conflict ... ok
+test bad_current_clock_or_auth_keeps_historical_ack_but_never_qualifies ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/witness_cache.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/witness_cache-762553f12edb8887)
+
+running 13 tests
+test malformed_or_late_source_never_materializes_on_handler ... ok
+test owned_capacity_not_only_length_is_charged_at_startup ... ok
+test four_read_permits_live_until_cached_response_bodies_drain ... ok
+test originally_unknown_row_remains_unknown_after_newer_finite_report ... ok
+test same_row_newer_reported_age_only_raises_lower_bound ... ok
+test same_row_newer_unknown_or_overflow_age_cannot_inherit_freshness ... ok
+test cache_retains_at_most_four_generations_without_revival ... ok
+test actual_read_handler_is_cache_only_and_duplicate_cannot_renew ... ok
+test new_generation_of_same_old_row_does_not_renew_age_or_receipt ... ok
+test canonical_duplicate_ignores_raw_whitespace_and_escaped_response_overflow_keeps_old ... ok
+test retained_ingest_decoder_refuses_identity_age_and_proof_laundering ... ok
+test actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensions ... ok
+test republished_old_row_keeps_first_role_window_and_clock_context ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+     Running tests/witness_poll.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/witness_poll-b118f495044814bd)
+
+running 6 tests
+test fixed_schedule_skips_missed_tick_without_immediate_catch_up ... ok
+test development_owner_keeps_independent_watchdog_alive_when_source_is_invalid ... ok
+test one_actual_https_get_serves_two_planned_targets_per_round ... ok
+test cancelled_round_then_new_round_never_exceeds_four_local_requests ... ok
+test local_timeout_quarantines_late_remote_work_without_retry ... ok
+test actual_development_process_serves_heartbeat_with_bad_source_and_failed_delayed_notice ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 47.05s
+
+   Doc-tests tos_health_services
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

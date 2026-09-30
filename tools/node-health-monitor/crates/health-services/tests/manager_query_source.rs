@@ -195,6 +195,54 @@ fn diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-mixed-global-boundary-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let process = manager.insert(row("edge-epoch-1")).unwrap();
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute(
+        "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+         VALUES('v1','node','boot:4242:100','diag','diagnostic','diag:1',?1,'{}')",
+        ["d".repeat(64)],
+    )
+    .unwrap();
+    let page = read_process_projection_page(&path, &network, None, &[]).unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].0.evidence_id, process.evidence_id);
+    assert_eq!(page.cursor.anchor, Some((process.store_seq.0 + 1, "d".repeat(64))));
+    let retained = vec![process];
+    assert!(
+        read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+            .unwrap()
+            .caught_up
+    );
+
+    sql.execute(
+        "UPDATE observations SET content_hash=?1 WHERE store_seq=?2",
+        rusqlite::params!["e".repeat(64), page.cursor.watermark],
+    )
+    .unwrap();
+    assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+        .unwrap_err()
+        .contains("anchor changed"));
+    sql.execute("DELETE FROM observations WHERE store_seq=?1", [page.cursor.watermark]).unwrap();
+    assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
+        .unwrap_err()
+        .contains("anchor changed"));
+    drop(sql);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[tokio::test]
 async fn private_projection_health_exposes_lag_and_conflict_without_grant_or_import() {
     let directory = std::env::temp_dir().join(format!(
