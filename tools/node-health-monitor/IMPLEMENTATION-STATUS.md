@@ -81,6 +81,10 @@ remains the earlier `31fc2f615` build. The retention inventory added through
 `0c66aaf83` reads bounded M/Q/control pages and always reports zero deletion
 candidates; it has been tested only with disposable databases. No TTL, live
 pruning, or 72-hour retention result follows from that inventory.
+Selected parent-capacity and read-only catch-up tests now run on the combined
+source; the opt-in M witness reached sequence 36585 in 39 tight-loop pages
+with 503 before catch-up and 200 after it. This is a development cost sample,
+not the running Q scheduler or a C09 performance/availability pass.
 
 ## Evidence mapping
 

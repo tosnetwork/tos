@@ -27,9 +27,9 @@ use tower::ServiceExt;
 
 /// Opt-in local cost witness. M is opened read-only; only a disposable Q ledger
 /// is written. It is not a performance acceptance threshold or an AURA call.
-#[test]
+#[tokio::test]
 #[ignore = "requires explicit read-only local M path and network"]
-fn live_read_only_projection_cost_witness() {
+async fn live_read_only_projection_cost_witness() {
     let manager_path = std::path::PathBuf::from(std::env::var("NHM_C09_READONLY_M_DB").unwrap());
     let network = std::env::var("NHM_C09_NETWORK").unwrap();
     let directory = std::env::temp_dir().join(format!(
@@ -59,8 +59,28 @@ fn live_read_only_projection_cost_witness() {
         .with_manager_evidence(manager_path)
         .unwrap();
     println!("initial_page_ms={}", started.elapsed().as_millis());
-    let mut pages = 1;
-    while !state.data.lock().unwrap().manager_caught_up && pages < 32 {
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["validator1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    let denied = control_router(state.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!state.data.lock().unwrap().manager_conflicted);
+    println!("grant_during_catchup=503");
+    // Startup imports one page; the refused grant attempts exactly one more.
+    // This is an opt-in measurement ceiling, not a production page/row cap.
+    const MAX_WITNESS_PAGES: usize = 128;
+    let mut pages = 2;
+    while !state.data.lock().unwrap().manager_caught_up && pages < MAX_WITNESS_PAGES {
         let started = std::time::Instant::now();
         let (watermark, count) = import_manager(&state).unwrap();
         pages += 1;
@@ -69,7 +89,25 @@ fn live_read_only_projection_cost_witness() {
             started.elapsed().as_millis()
         );
     }
-    assert!(state.data.lock().unwrap().manager_caught_up);
+    assert!(state.data.lock().unwrap().manager_caught_up, "opt-in witness page ceiling reached");
+    let caught_up_ms = started.elapsed().as_millis();
+    let granted = control_router(state.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+    let granted = body(granted).await;
+    let run = granted["run_id"].as_str().unwrap();
+    let revoked = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/control/grants/{run}/revoke"))
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    println!("caught_up_ms={caught_up_ms} grant_after_catchup=200 revoked=200");
     let started = std::time::Instant::now();
     let (watermark, count) = import_manager(&state).unwrap();
     println!(
@@ -544,6 +582,35 @@ fn row(epoch: &str) -> DurableEvidence {
             payload: serde_json::json!({"component":"process","source":source}),
             redacted: true,
         },
+    }
+}
+
+#[test]
+fn production_process_parent_bound_is_below_query_resident_charge() {
+    // The production store charges every projected row its JSON bytes plus
+    // 2048. Exercise the short live-style source and the maximal accepted
+    // source epoch/missing-field profile; a 32 MiB test store does not model
+    // the production 4096-parent boundary.
+    for wide in [false, true] {
+        let epoch = if wide { "e".repeat(128) } else { "epoch-1".into() };
+        let mut evidence = row(&epoch);
+        if wide {
+            evidence.record.payload["source"]["coverage"]["missing_fields"] =
+                serde_json::json!(vec!["m".repeat(96); 64]);
+        }
+        let mut canonical = evidence.clone();
+        canonical.record.received_at_ms = 0;
+        let origin = tos_health_services::durable::EvidenceRow {
+            store_seq: U64(1),
+            evidence_id: format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap())),
+            evidence,
+        };
+        let projected = project_process(&origin).unwrap().unwrap();
+        let parent_bytes = serde_json::to_vec(&origin).unwrap().len();
+        let query_charge = serde_json::to_vec(&projected).unwrap().len() + 2048;
+        eprintln!("wide={wide} parent_bytes={parent_bytes} query_charge={query_charge}");
+        assert!(parent_bytes <= 34_816);
+        assert!(parent_bytes < query_charge, "parent={parent_bytes} query_charge={query_charge}");
     }
 }
 
