@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from types import SimpleNamespace
@@ -135,6 +136,19 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual(row["error_kind"], "TimeoutError")
         self.assertTrue(row["cleanup_confirmed"])
         self.assertNotIn(run, log.read_text())
+
+    def test_boottime_spacing_refuses_new_grant(self):
+        log = Path(self.temporary.name) / "spacing.jsonl"
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        slot = int(time.time()) // witness.SLOT_SECONDS
+        log.write_text(json.dumps({"slot": slot - 1, "boot_id": boot,
+                                   "boottime_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME) - 100_000_000_000}) + "\n")
+        log.chmod(0o600)
+        args = SimpleNamespace(log_file=str(log), control_socket="control")
+        with patch.object(witness, "issue") as issue:
+            self.assertEqual(witness.run(args), 1)
+        issue.assert_not_called()
+        self.assertEqual(json.loads(log.read_text().splitlines()[-1])["error_kind"], "sample_too_soon")
 
 
 if __name__ == "__main__":

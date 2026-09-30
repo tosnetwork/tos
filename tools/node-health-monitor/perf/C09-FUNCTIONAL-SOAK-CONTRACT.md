@@ -9,7 +9,8 @@ not deployed, scheduled, or counted toward the running 72-hour gate.
 
 The script is a **one-shot** instrument. An operator-owned timer may invoke it
 at most once per 300-second wall-clock slot; its private append-only JSONL lock
-refuses a second invocation in the same slot. It selects one of the six approved
+refuses a second invocation in the same slot or less than 300 seconds of
+same-boot `CLOCK_BOOTTIME` after the previous sample. It selects one of the six approved
 nodes in round-robin order. One control grant permits exactly that node and
 `node` scope for a four-minute window. One persistent private MCP connection
 initializes protocol `2025-06-18` and calls `tos_get_node_snapshot` with only
