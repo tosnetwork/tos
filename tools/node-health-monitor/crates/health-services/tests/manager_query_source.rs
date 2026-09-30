@@ -96,19 +96,24 @@ fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
     let path = directory.join("query.sqlite");
     let mut ledger = QueryLedger::open(&path).unwrap();
     let mut cursor =
-        ManagerCursor { network: "a".repeat(64), device: 1, inode: 1, watermark: 3, anchor: None };
-    // A global M boundary may contain only non-process observations.
-    ledger.commit_manager_cursor(None, &cursor).unwrap();
+        ManagerCursor { network: "a".repeat(64), device: 1, inode: 1, watermark: 0, anchor: None };
+    ledger.commit_manager_cursor(None, &cursor, None).unwrap();
     assert_eq!(ledger.manager_cursor().unwrap(), Some(cursor.clone()));
     let previous = ledger.manager_cursor().unwrap().unwrap();
     cursor.watermark = 4;
     cursor.anchor = Some((4, "b".repeat(64)));
     assert!(ledger
-        .commit_manager_cursor(Some(&previous), &cursor)
+        .commit_manager_cursor(Some(&previous), &cursor, None)
         .unwrap_err()
         .contains("no retained source row"));
     let sql = rusqlite::Connection::open(&path).unwrap();
     sql.execute("UPDATE query_manager_cursor SET network='bad' WHERE singleton=1", []).unwrap();
+    assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
+    sql.execute(
+        "UPDATE query_manager_cursor SET network=?1,watermark=3 WHERE singleton=1",
+        ["a".repeat(64)],
+    )
+    .unwrap();
     assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
     sql.execute(
         "UPDATE query_manager_cursor SET network=?1,anchor_seq=4,anchor_hash=?2 WHERE singleton=1",
@@ -124,6 +129,69 @@ fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
     assert!(ledger.manager_cursor().unwrap_err().contains("invalid persisted"));
     drop(sql);
     drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-global-boundary-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let sql = rusqlite::Connection::open(&manager_path).unwrap();
+    sql.execute(
+        "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+         VALUES('v1','node','boot:4242:100','diag','diagnostic','diag:1',?1,'{}')",
+        ["d".repeat(64)],
+    )
+    .unwrap();
+    drop(sql);
+    let page = read_process_projection_page(&manager_path, &network, None, &[]).unwrap();
+    assert!(page.records.is_empty());
+    assert!(page.caught_up);
+    assert_eq!(page.cursor.watermark, 1);
+    assert_eq!(page.cursor.anchor, Some((1, "d".repeat(64))));
+    assert_eq!(page.boundary_witness, page.cursor.anchor);
+    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
+    ledger.commit_manager_cursor(None, &page.cursor, page.boundary_witness.as_ref()).unwrap();
+    assert_eq!(ledger.manager_cursor().unwrap(), Some(page.cursor.clone()));
+    assert!(
+        read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[])
+            .unwrap()
+            .caught_up
+    );
+    drop(ledger);
+    // SQL CHECK permits a paired NULL anchor. The application must still
+    // refuse this nonzero watermark before it can issue any query grant.
+    let sql = rusqlite::Connection::open(&ledger_path).unwrap();
+    sql.execute(
+        "UPDATE query_manager_cursor SET anchor_seq=NULL,anchor_hash=NULL WHERE singleton=1",
+        [],
+    )
+    .unwrap();
+    drop(sql);
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap();
+    assert!(state
+        .with_manager_evidence(manager_path.clone())
+        .err()
+        .unwrap()
+        .contains("invalid persisted M projection cursor"));
+    drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -367,7 +435,8 @@ fn incremental_projection_pages_4097_history_and_sparse_global_sequence() {
         imported += page.records.len();
         if page.caught_up {
             assert_eq!(page.cursor.watermark, 4098);
-            assert_eq!(page.cursor.anchor.as_ref().unwrap().0, 4097);
+            assert_eq!(page.cursor.anchor.as_ref().unwrap().0, 4098);
+            assert_eq!(page.boundary_witness, page.cursor.anchor);
             break;
         }
         previous = Some(page.cursor);

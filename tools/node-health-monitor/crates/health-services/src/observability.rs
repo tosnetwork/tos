@@ -205,10 +205,11 @@ fn import_manager_into(
         }
         return Err(error);
     }
-    let committed = ledger
-        .lock()
-        .map_err(|_| "query ledger unavailable")?
-        .commit_manager_cursor(previous.as_ref(), &page.cursor);
+    let committed = ledger.lock().map_err(|_| "query ledger unavailable")?.commit_manager_cursor(
+        previous.as_ref(),
+        &page.cursor,
+        page.boundary_witness.as_ref(),
+    );
     if let Err(error) = committed {
         // A failed cursor commit can be an invariant or SQLite integrity
         // failure. Do not infer recoverability from an unknown error string.
