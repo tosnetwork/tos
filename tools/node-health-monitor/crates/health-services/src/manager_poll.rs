@@ -161,6 +161,48 @@ pub fn native_frame_v2(
     })
 }
 
+/// Fixed native fact frame for any supported native version. Facts come from
+/// `native_facts::derive`; a fact the sample cannot support is absent and the
+/// frame is marked incomplete, never filled with zero.
+pub fn native_fact_frame(
+    record: &tos_health_core::native::NativeRecord,
+    duration: u64,
+    state: &mut tos_health_core::native_facts::NativeFactState,
+) -> Result<FactFrame, String> {
+    use tos_health_core::native::NativeRecord;
+    let (validated, source_epoch, source_age, observed_at, quality) = match record {
+        // The v1 publisher carries only the PQ counters; it keeps its fixed frame.
+        NativeRecord::V1(v) => return native_frame(v.clone(), duration),
+        NativeRecord::V2(v) => {
+            (v.validate(), &v.source_epoch, v.source_age_ms, &v.observed_at, &v.quality)
+        }
+        NativeRecord::V3(v) => {
+            (v.validate(), &v.source_epoch, v.source_age_ms, &v.observed_at, &v.quality)
+        }
+    };
+    validated?;
+    let observed_at = observed_at.clone().ok_or("missing observation time")?;
+    let observed_ms = u64::try_from(tos_health_core::query::utc_ms(&observed_at)?)
+        .map_err(|_| "observation time before epoch")?;
+    let derived = tos_health_core::native_facts::derive(record, observed_ms, state)?;
+    Ok(FactFrame {
+        schema_version: 1,
+        network_id: record.network_id().to_owned(),
+        node_id: record.node_id().to_owned(),
+        scope_id: "node".into(),
+        source_id: "native_core".into(),
+        process_epoch: record.process_epoch().to_owned(),
+        source_epoch: source_epoch.clone(),
+        generation: record.generation(),
+        source_age_ms: U64(source_age.ok_or("missing source age")?),
+        request_duration_ms: U64(duration),
+        observed_at,
+        clock_valid: quality.parse_errors.0 == 0,
+        complete: derived.complete,
+        facts: derived.facts,
+    })
+}
+
 /// Scheduled native facts use the edge cache; a missing source never becomes a zero counter.
 pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     if !tos_health_core::wire::hash(&config.network_id)
@@ -181,6 +223,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     }
     let mut timer = tokio::time::interval(Duration::from_secs(15));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut state = tos_health_core::native_facts::NativeFactState::default();
     loop {
         timer.tick().await;
         let started = Instant::now();
@@ -202,14 +245,10 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
             continue;
         }
         let elapsed = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        let frame = if let Some(native) = snapshot.native_v2() {
-            native_frame_v2(native.clone(), elapsed)
-        } else if let Some(native) = snapshot.native() {
-            native_frame(native.clone(), elapsed)
-        } else {
+        let Some(record) = snapshot.native_record() else {
             continue;
         };
-        let Ok(frame) = frame else {
+        let Ok(frame) = native_fact_frame(&record, elapsed, &mut state) else {
             continue;
         };
         if let Ok(response) =

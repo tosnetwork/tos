@@ -20,5 +20,6 @@ pub mod witness;
 
 pub mod consensus_v2;
 pub mod native;
+pub mod native_facts;
 
 pub mod edge_snapshot;

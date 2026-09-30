@@ -158,8 +158,11 @@ class NativeCorePublisher {
                          "\",\"kind\":\"native_core\",\"network_id\":\"" + network_ + "\",\"openmetrics_hash\":\"" +
                          digest(openmetrics) + "\",\"pq_sign\":" + (pq_enabled ? sign.json() : "null") +
                          ",\"pq_verify\":" + (pq_enabled ? verify.json() : "null") + "}";
-    const bool complete = !v3 && pq_enabled && sign.complete && verify.complete &&
-                          (!v2 || (consensus != nullptr && consensus->complete));
+    // v3 is complete only while a fresh chain anchor sample is attached; the
+    // unsupported duty/queue denominators stay listed as missing coverage.
+    const bool complete = pq_enabled && sign.complete && verify.complete &&
+                          (!v2 || (consensus != nullptr && consensus->complete)) &&
+                          (!v3 || anchors.has_value());
     NativeCoreSnapshot result;
     result.sampled_at = sampled_at;
     result.publication_limit = v2 ? 64 * 1024 : NativeCoreSnapshot::max_bytes;

@@ -182,6 +182,9 @@ pub fn parse_native(bytes: &[u8]) -> Result<NativeRecord, String> {
         _ => Err("unsupported native source version".into()),
     }
 }
+// Parsed once per 15-second sample; the size spread between versions is
+// irrelevant next to the 256 KiB body it is decoded from.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum NativeRecord {
     V1(NativeEnvelope),

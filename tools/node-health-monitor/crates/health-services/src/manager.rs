@@ -635,7 +635,15 @@ impl Manager {
                 match (rule.id.as_str(), rule.source.as_str()) {
                     ("target_unreachable", "edge_probe")
                     | ("telemetry_unavailable", "inventory")
-                    | ("pq_signing_failure", "native_core") => {}
+                    | (
+                        "pq_signing_failure"
+                        | "local_chain_stalled"
+                        | "local_action_failure"
+                        | "local_action_overdue"
+                        | "storage_ack_failure"
+                        | "session_stop_pending",
+                        "native_core",
+                    ) => {}
                     _ => return Err(format!("rule adapter unavailable: {}", rule.id)),
                 }
             }

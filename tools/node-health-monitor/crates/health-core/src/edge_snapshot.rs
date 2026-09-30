@@ -38,6 +38,9 @@ pub struct CgroupPayload {
     pub oom_events: U64,
 }
 pub type CgroupEnvelope = SourceEnvelope<CgroupPayload>;
+// One bounded snapshot per 15-second tick; the variant size spread does not
+// matter next to the 256 KiB body it is decoded from.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EdgeSource {
@@ -195,6 +198,20 @@ impl EdgeSnapshot {
             EdgeSource::NativeV2(value) => Some(value),
             _ => None,
         })
+    }
+    pub fn native_v3(&self) -> Option<&NativeEnvelopeV3> {
+        self.sources.iter().find_map(|source| match source {
+            EdgeSource::NativeV3(value) => Some(value),
+            _ => None,
+        })
+    }
+    /// The single native source of any supported version, newest version first.
+    pub fn native_record(&self) -> Option<crate::native::NativeRecord> {
+        use crate::native::NativeRecord;
+        self.native_v3()
+            .map(|v| NativeRecord::V3(v.clone()))
+            .or_else(|| self.native_v2().map(|v| NativeRecord::V2(v.clone())))
+            .or_else(|| self.native().map(|v| NativeRecord::V1(v.clone())))
     }
     pub fn validate(&self, node: &str, network: &str) -> Result<(), String> {
         if self.schema_version != 1
