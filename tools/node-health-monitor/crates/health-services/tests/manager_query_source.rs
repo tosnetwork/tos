@@ -1594,6 +1594,84 @@ fn unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].0.evidence_id, process.evidence_id);
     assert!(quarantined.is_empty());
+    let plan = {
+        let mut statement = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT o.store_seq,q.source FROM observations o
+                 LEFT JOIN quarantined q ON q.node=o.node AND q.scope=o.scope
+                 AND q.process_epoch=o.process_epoch AND q.source_epoch=o.source_epoch
+                 AND q.source=o.source WHERE o.store_seq>?1 AND o.store_seq<=?2
+                 ORDER BY o.store_seq LIMIT ?3",
+            )
+            .unwrap();
+        statement
+            .query_map(rusqlite::params![0, 4098, 257], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    };
+    assert!(
+        plan.iter().any(|detail| detail.contains("SEARCH o USING INTEGER PRIMARY KEY")),
+        "global M page must use the store_seq primary key: {plan:?}"
+    );
+    let mut previous = None;
+    let mut pages = 0usize;
+    let mut projected = 0usize;
+    loop {
+        let page = read_process_projection_page(&path, &network, previous.as_ref(), &[]).unwrap();
+        let prior = previous.as_ref().map_or(0, |cursor: &ManagerCursor| cursor.watermark);
+        assert!(page.cursor.watermark > prior);
+        let scanned: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations WHERE store_seq>?1 AND store_seq<=?2",
+                rusqlite::params![prior, page.cursor.watermark],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((1..=256).contains(&scanned), "global row count, not seq delta, bounds a page");
+        assert_eq!(page.cursor.anchor.as_ref().unwrap().0, page.cursor.watermark);
+        projected += page.records.len();
+        pages += 1;
+        if pages == 1 {
+            assert!(page.records.is_empty(), "the late process must not appear on page one");
+            assert!(!page.caught_up, "4097 diagnostics require multiple bounded pages");
+        }
+        if page.caught_up {
+            assert_eq!(page.cursor.watermark, 4098);
+            break;
+        }
+        assert!(page.records.is_empty());
+        assert_eq!(page.boundary_witness, page.cursor.anchor);
+        previous = Some(page.cursor);
+    }
+    assert_eq!(pages, 17);
+    assert_eq!(projected, 1);
+    // Deleted rows create legitimate sequence gaps. Bound actual scanned rows.
+    conn.execute("DELETE FROM observations WHERE store_seq BETWEEN 10 AND 210", []).unwrap();
+    let mut previous = None;
+    let mut saw_seq_gap = false;
+    let mut projected_after_gap = 0usize;
+    loop {
+        let page = read_process_projection_page(&path, &network, previous.as_ref(), &[]).unwrap();
+        let prior = previous.as_ref().map_or(0, |cursor: &ManagerCursor| cursor.watermark);
+        let scanned: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM observations WHERE store_seq>?1 AND store_seq<=?2",
+                rusqlite::params![prior, page.cursor.watermark],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!((1..=256).contains(&scanned));
+        saw_seq_gap |= page.cursor.watermark - prior > 256;
+        projected_after_gap += page.records.len();
+        if page.caught_up {
+            assert_eq!(page.cursor.watermark, 4098);
+            break;
+        }
+        previous = Some(page.cursor);
+    }
+    assert!(saw_seq_gap, "the gap control must exceed 256 numeric sequence IDs");
+    assert_eq!(projected_after_gap, 1);
     conn.execute(
         "INSERT INTO quarantined(node,scope,process_epoch,source_epoch,source) VALUES(?1,?2,?3,?4,?5)",
         rusqlite::params!["v1", "node", "boot:4242:100", "d1", "consensus_diagnostic"],
