@@ -24,6 +24,23 @@ metrics::MetricSet sample(std::size_t bytes, std::size_t families = 1) {
   return result;
 }
 void unit() {
+  auto &intent = work_stats.results[static_cast<unsigned>(Work::IntentStorage)][static_cast<unsigned>(WorkResult::Success)];
+  auto &signed_vote = work_stats.results[static_cast<unsigned>(Work::SignedStorage)][static_cast<unsigned>(WorkResult::Success)];
+  auto &intent_complete = work_stats.complete[static_cast<unsigned>(Work::IntentStorage)];
+  auto &signed_complete = work_stats.complete[static_cast<unsigned>(Work::SignedStorage)];
+  require(!storage_commit_ack_observed(), "storage ack requires both completed database writes");
+  intent.store(1);
+  require(!storage_commit_ack_observed(), "intent ack alone cannot establish signed vote ack");
+  signed_vote.store(1);
+  require(storage_commit_ack_observed(), "both complete commit observations establish local ack");
+  signed_complete.store(false);
+  require(!storage_commit_ack_observed(), "signed write observation gap revokes storage ack capability");
+  signed_complete.store(true);
+  intent_complete.store(false);
+  require(!storage_commit_ack_observed(), "intent write observation gap revokes storage ack capability");
+  intent_complete.store(true);
+  intent.store(0);
+  signed_vote.store(0);
   constexpr std::size_t limit = 1048576;
   auto baseline = sample(0).render_bounded(limit);
   require(baseline.has_value(), "empty padding renders valid complete body");

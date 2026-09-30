@@ -134,6 +134,15 @@ inline std::size_t consensus_core_resident_bytes() {
   return result;
 }
 
+// Both awaited database writes must have completed successfully, and neither
+// observation stream may have lost an event. This is a local commit ack only.
+inline bool storage_commit_ack_observed() noexcept {
+  return work_stats.complete[static_cast<unsigned>(Work::IntentStorage)].load(std::memory_order_relaxed) &&
+         work_stats.complete[static_cast<unsigned>(Work::SignedStorage)].load(std::memory_order_relaxed) &&
+         work_stats.results[static_cast<unsigned>(Work::IntentStorage)][static_cast<unsigned>(WorkResult::Success)].load() != 0 &&
+         work_stats.results[static_cast<unsigned>(Work::SignedStorage)][static_cast<unsigned>(WorkResult::Success)].load() != 0;
+}
+
 struct ConsensusPublication {
   std::string json;
   bool complete = false;
@@ -210,7 +219,7 @@ inline std::optional<ConsensusPublication> capture_consensus(const std::string &
   for (std::size_t a = 0; a < action_count; ++a) requested |= consensus_stats.phases[a][0][0].load();
   capability("local_actions", requested != 0, "observation_incomplete");
   capability("leader_progress", consensus_stats.leader_windows_observed.load() != 0, "observation_incomplete");
-  capability("storage_commit_ack", work_stats.results[0][0].load() != 0 && work_stats.results[1][0].load() != 0, "observation_incomplete");
+  capability("storage_commit_ack", storage_commit_ack_observed(), "observation_incomplete");
   capability("typed_consensus_progress", typed_observed && scope_valid, scope_valid ? "observation_incomplete" : "scope_unapproved");
   capability("session_lifecycle", lifecycle_verified.load(), "lifecycle_unverified");
   std::vector<std::string> actions;
