@@ -50,3 +50,12 @@ Source SHA-256 for these controls: `manager_query_source.rs` `b31218e1d6b25a670d
 | `raw/source-bound-closure/control-socket-five-second.log` | `29681983afb1ba2cd7b17577b0650a2f0fe695022da8cf677920f0060ce25fe0` | 0 tests; not counted |
 
 These controls establish current source behavior in isolation, not sustained live-broker availability or stage acceptance. Do not promote the faster disposable-ledger page timings to deployed performance evidence.
+
+At the same restored source (test SHA `349d7f18b0a5c51b42d2f4e2a87badc285fddf0d7edd8b798327b106dcd6b2b2`, M reader SHA `b31218e1d6b25a670d8eb75942631d48efbfad4de0a25328cb45689da7438f58`), two further exact tests have separate natural-exit logs:
+
+| Raw log | SHA-256 | Exact branch reached |
+| --- | --- | --- |
+| `raw/source-bound-closure/post-catchup-4098-grant.log` | `1bff5008304bda62c4e8563b63e582c6e98587074b02c7dbd8be9cb8db6089a7` | 1/1 passed; after 4,097 parents, one new M process row imports as `(4098,1)` and a fresh control grant freezes `manager_watermark=4098` within five seconds. |
+| `raw/source-bound-closure/rename-over-identity.log` | `c92726643c7dee09b1d5feb4f82a7bb1b75aeb19427a27f90b6b9b925a1de899` | 1/1 passed; a separate same-network EvidenceDb replaces the path by rename, and the prior cursor is refused on device/inode mismatch. |
+
+These are isolated source tests, not a live broker rollout, retention, or soak result.
