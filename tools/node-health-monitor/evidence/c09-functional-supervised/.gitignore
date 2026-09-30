@@ -7,3 +7,4 @@ units-verify.raw.log
 source-check.raw.log
 stop-receipt-tests.raw.log
 runtime-layout.raw.log
+q-timer-alignment.raw.log

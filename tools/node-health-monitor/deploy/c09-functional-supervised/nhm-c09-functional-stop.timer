@@ -1,8 +1,8 @@
 [Unit]
-Description=Stop C09 functional sampler at 2026-10-03 01:10 UTC
+Description=Stop C09 functional sampler at 2026-10-03 07:10 UTC
 
 [Timer]
-OnCalendar=2026-10-03 01:10:00 UTC
+OnCalendar=2026-10-03 07:10:00 UTC
 AccuracySec=1s
 Persistent=false
 Unit=nhm-c09-functional-stop.service

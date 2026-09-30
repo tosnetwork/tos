@@ -605,6 +605,22 @@ def append_log(fd, sample):
     os.fsync(fd)
 
 
+def first_successful_sample(fd, size):
+    if not size:
+        return None
+    os.lseek(fd, 0, os.SEEK_SET)
+    raw = os.read(fd, size)
+    if len(raw) != size or not raw.endswith(b"\n"):
+        raise WitnessError("log_incomplete")
+    first = None
+    for line in raw.splitlines():
+        row = checked_json(line, MAX_LOG_ROW_BYTES)
+        if (row.get("status") == "pass" and row.get("cleanup_confirmed") is True
+                and row.get("fixed_grant_query_status") == "pass" and first is None):
+            first = row
+    return first
+
+
 def run(args):
     slot = int(time.time()) // SLOT_SECONDS
     slot_highwater = slot
@@ -655,6 +671,29 @@ def run(args):
                 prior = previous.get("boottime_ns")
                 if type(prior) is not int or boottime_ns < prior or boottime_ns - prior < SLOT_SECONDS * 1_000_000_000:
                     raise WitnessError("sample_too_soon")
+        if getattr(args, "first_pass_not_after_utc", None):
+            try:
+                first_deadline = dt.datetime.fromisoformat(args.first_pass_not_after_utc.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise WitnessError("first_sample_window_config") from exc
+            if first_deadline.utcoffset() != dt.timedelta(0):
+                raise WitnessError("first_sample_window_config")
+            first = first_successful_sample(fd, size)
+            if first is None:
+                # Leave a full systemd service deadline before the latest
+                # valid first-pass row.
+                if dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=35) > first_deadline:
+                    raise WitnessError("first_sample_window_closed")
+            else:
+                try:
+                    first_wall = dt.datetime.fromisoformat(first["wall_utc"].replace("Z", "+00:00"))
+                except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                    raise WitnessError("first_sample_clock") from exc
+                if (first_wall.utcoffset() != dt.timedelta(0) or first_wall > first_deadline
+                        or first.get("boot_id") != boot_id
+                        or type(first.get("boottime_ns")) is not int
+                        or first["boottime_ns"] > boottime_ns):
+                    raise WitnessError("first_sample_window_closed")
         if getattr(args, "not_after_utc", None):
             try:
                 end_of_window = dt.datetime.fromisoformat(args.not_after_utc.replace("Z", "+00:00"))
@@ -763,6 +802,7 @@ def main():
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--review-file")
     parser.add_argument("--not-after-utc")
+    parser.add_argument("--first-pass-not-after-utc")
     args = parser.parse_args()
     if (re.fullmatch(r"[0-9a-f]{64}", args.expected_query_sha256) is None
             or re.fullmatch(r"[0-9a-f]{64}", args.expected_baseline_sha256) is None):

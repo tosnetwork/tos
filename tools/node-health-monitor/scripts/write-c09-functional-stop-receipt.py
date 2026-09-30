@@ -9,10 +9,16 @@ import os
 from pathlib import Path
 import stat
 import subprocess
+import time
 
 MAX_LOG_BYTES = 4 * 1024 * 1024
 MAX_ROW_BYTES = 1024
 MAX_MARKER_BYTES = 256
+MIN_ELAPSED_NS = (72 * 60 + 5) * 60 * 1_000_000_000
+
+
+def boot_domain():
+    return Path("/proc/sys/kernel/random/boot_id").read_text().strip(), time.clock_gettime_ns(time.CLOCK_BOOTTIME)
 
 
 def private_file(path, limit):
@@ -52,14 +58,17 @@ def main():
     parser.add_argument("--baseline-file", required=True)
     parser.add_argument("--expected-baseline-sha256", required=True)
     parser.add_argument("--window-end-utc", required=True)
+    parser.add_argument("--first-pass-not-after-utc", required=True)
     args = parser.parse_args()
     directory = Path(args.runtime_dir)
     meta = directory.stat(follow_symlinks=False)
     if not stat.S_ISDIR(meta.st_mode) or meta.st_uid != os.getuid() or meta.st_mode & 0o077:
         raise RuntimeError("runtime directory")
     window_end = dt.datetime.fromisoformat(args.window_end_utc.replace("Z", "+00:00"))
+    first_deadline = dt.datetime.fromisoformat(args.first_pass_not_after_utc.replace("Z", "+00:00"))
     now = dt.datetime.now(dt.timezone.utc)
-    if window_end.utcoffset() != dt.timedelta(0) or now < window_end:
+    if (window_end.utcoffset() != dt.timedelta(0) or first_deadline.utcoffset() != dt.timedelta(0)
+            or now < window_end):
         raise RuntimeError("window not ended")
     timer = unit_state("nhm-c09-functional.timer")
     service = unit_state("nhm-c09-functional.service")
@@ -78,18 +87,48 @@ def main():
     log = private_file(str(directory / "samples.private.jsonl"), MAX_LOG_BYTES)
     marker = private_file(str(directory / "samples.private.jsonl.inflight"), MAX_MARKER_BYTES)
     last = None
+    first_sample = None
+    first_pass = None
+    first_pass_boot = None
+    first_pass_boottime = None
     if log:
         if not log.endswith(b"\n"):
             raise RuntimeError("incomplete sample row")
-        line = log.splitlines()[-1]
-        if len(line) > MAX_ROW_BYTES:
-            raise RuntimeError("sample row too large")
-        row = json.loads(line)
+        for line in log.splitlines():
+            if len(line) > MAX_ROW_BYTES:
+                raise RuntimeError("sample row too large")
+            row = json.loads(line)
+            wall = dt.datetime.fromisoformat(row["wall_utc"].replace("Z", "+00:00"))
+            if wall.utcoffset() != dt.timedelta(0):
+                raise RuntimeError("sample clock domain")
+            if first_sample is None:
+                first_sample = wall
+            if (first_pass is None and row.get("status") == "pass"
+                    and row.get("cleanup_confirmed") is True
+                    and row.get("fixed_grant_query_status") == "pass"):
+                first_pass = wall
+                first_pass_boot = row.get("boot_id")
+                first_pass_boottime = row.get("boottime_ns")
         last = {"sha256": hashlib.sha256(line).hexdigest(), "slot": row["slot"],
                 "slot_highwater": row["slot_highwater"], "status": row["status"],
                 "cleanup_confirmed": row["cleanup_confirmed"]}
+    minimum_end = first_pass + dt.timedelta(hours=72, minutes=5) if first_pass else None
+    stop_boot, stop_boottime = boot_domain()
+    same_boot = (first_pass_boot == stop_boot and type(first_pass_boottime) is int
+                 and 0 <= first_pass_boottime <= stop_boottime)
+    elapsed_ns = stop_boottime - first_pass_boottime if same_boot else None
     receipt = {"schema_version": 1, "kind": "c09_functional_window_stop",
                "window_end_utc": args.window_end_utc, "recorded_at_utc": now.isoformat(),
+               "first_pass_deadline_utc": args.first_pass_not_after_utc,
+               "first_sample_wall_utc": first_sample.isoformat() if first_sample else None,
+               "first_successful_sample_wall_utc": first_pass.isoformat() if first_pass else None,
+               "first_success_within_deadline": first_pass is not None and first_pass <= first_deadline,
+               "minimum_72h_plus_tick_end_utc": minimum_end.isoformat() if minimum_end else None,
+               "first_success_boot_id": first_pass_boot, "first_success_boottime_ns": first_pass_boottime,
+               "stop_boot_id": stop_boot, "stop_boottime_ns": stop_boottime,
+               "monotonic_elapsed_ns": elapsed_ns,
+               "functional_elapsed_gate_met": (first_pass is not None and first_pass <= first_deadline
+                                               and elapsed_ns is not None and elapsed_ns >= MIN_ELAPSED_NS),
                "timer": timer, "service": service,
                "q_ledger_device": q_meta.st_dev, "q_ledger_inode": q_meta.st_ino,
                "q_identity_match": q_identity_match,

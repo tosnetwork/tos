@@ -573,6 +573,27 @@ class FunctionalWitnessTests(unittest.TestCase):
         issue.assert_not_called()
         self.assertEqual(json.loads(log.read_text().splitlines()[-1])["slot_highwater"], slot + 1)
 
+    def test_first_pass_deadline_refuses_late_start_and_late_prior_pass(self):
+        cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).isoformat()
+        slot = int(time.time()) // witness.SLOT_SECONDS
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        for prior_pass in (False, True):
+            with self.subTest(prior_pass=prior_pass):
+                log = Path(self.temporary.name) / ("late-prior.jsonl" if prior_pass else "late-empty.jsonl")
+                if prior_pass:
+                    log.write_text(json.dumps({"slot": slot - 1, "slot_highwater": slot - 1,
+                                               "status": "pass", "cleanup_confirmed": True,
+                                               "fixed_grant_query_status": "pass", "boot_id": boot,
+                                               "boottime_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME) - 310_000_000_000,
+                                               "wall_utc": dt.datetime.now(dt.timezone.utc).isoformat()}) + "\n")
+                    log.chmod(0o600)
+                args = SimpleNamespace(log_file=str(log), first_pass_not_after_utc=cutoff)
+                with patch.object(witness, "issue") as issue:
+                    self.assertEqual(witness.run(args), 1)
+                issue.assert_not_called()
+                self.assertEqual(json.loads(log.read_text().splitlines()[-1])["error_kind"],
+                                 "first_sample_window_closed")
+
     def test_failure_latch_requires_exact_private_review(self):
         log = Path(self.temporary.name) / "latched.jsonl"
         review = Path(self.temporary.name) / "review.json"

@@ -108,14 +108,21 @@ identity, candidate grants, or clock domain cannot be established, the marker
 stays and the timer stays stopped. A log near its 4 MiB cap refuses before
 issuing a grant.
 
-The candidate timer waits five minutes after service deactivation, the
-script preserves its 300-second same-boot spacing, and a separate stop timer
-targets 2026-10-03 01:10 UTC. The script also refuses a grant within 45
-seconds of that boundary. The stop service also stops any active functional
-service and writes a private, one-time stop receipt with timer/service states,
-Q ledger identity, log/marker digests and last-row status; it does not assert
-72-hour acceptance. A failed sampling unit triggers only a fixed local-journal
-alert; external paging and timer enablement remain the owner's decisions.
+The candidate timer waits five minutes after service deactivation, and the
+script preserves its 300-second same-boot spacing. Its first successful
+fixed-grant sample must finish by 2026-09-30 06:55 UTC; before the first pass,
+the script reserves 35 seconds and refuses late activation. A separate stop
+timer targets 2026-10-03 07:10 UTC, leaving at least 72 hours plus 15 minutes
+from the latest permitted first pass. The supervisor extended the active
+Q-aware stop timer to 07:10 UTC (`nhm-c09-q-soak-stop-v2.timer`), stopped the
+old 01:10 timer, and left `nhm-c09-soak.timer` active; those states must be
+rechecked before functional enablement. The script also refuses a
+grant within 45 seconds of its stop boundary. The stop service stops any
+active functional service and writes a private, one-time receipt with actual
+first/last sample times, same-boot `CLOCK_BOOTTIME` elapsed gate, timer/service states, Q ledger
+identity and log/marker digests; it does not assert 72-hour acceptance. A
+failed sampling unit triggers only a fixed local-journal alert; external
+paging and timer enablement remain the owner's decisions.
 
 Each JSONL row separately records `fixed_grant_query_status` and
 `projection_head_status`. The latter is a separate, read-only private control

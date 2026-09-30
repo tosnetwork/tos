@@ -42,11 +42,22 @@ review receipt mode 0600. Do not put these files or their contents in Git.
 minutes after the preceding service becomes inactive. The script additionally
 requires a new wall-clock slot and at least 300 seconds of same-boot
 `CLOCK_BOOTTIME`. Every twelfth wall slot includes the bounded unknown
-consensus and cross-run denial controls. `nhm-c09-functional-stop.timer`
-stops the sampler timer at **2026-10-03 01:10:00 UTC**, the existing Q-aware
-window stop. The script itself refuses to start a grant within 45 seconds of
-that boundary. The service has a 35-second systemd timeout; a timeout leaves
-the durable inflight marker for operator review.
+consensus and cross-run denial controls. The candidate first successful
+fixed-grant sample must finish by **2026-09-30 06:55:00 UTC**. Before that
+first pass, the script reserves the full 35-second service deadline and
+refuses a grant when it can no longer meet the cutoff. The candidate
+`nhm-c09-functional-stop.timer` ends at **2026-10-03 07:10:00 UTC**: at least
+72 hours plus 15 minutes after the latest allowed first pass. The script
+refuses to start a grant within 45 seconds of that end. A service timeout
+leaves the durable inflight marker for operator review.
+
+The supervisor extended the active Q-aware stop timer to
+**2026-10-03 07:10 UTC** as `nhm-c09-q-soak-stop-v2.timer`; the old 01:10
+timer is inactive and `nhm-c09-soak.timer` remains active. Recheck these
+three unit states immediately before owner-controlled functional enablement.
+If source review or installation misses
+the 06:55 first-pass cutoff, move both proposed ends and review new pins;
+do not start a late or shortened window under these units.
 
 The existing pinned private baseline is
 `evidence/c09-functional-live-one-shot-20260930T014805Z/baseline.private.json`
@@ -140,15 +151,19 @@ reset procedure.
 
 ## Review boundary
 
-At 2026-10-03 01:10:00 UTC the separate stop timer calls a service that stops
+At 2026-10-03 07:10:00 UTC the separate stop timer calls a service that stops
 both the functional timer and functional service, then writes a private,
 single-write `stop-receipt.private.json` after checking they are no longer
 active. That receipt records the configured window end, actual UTC receipt
 time, timer/service states, Q ledger device/inode and baseline identity match,
-sample-log byte count/SHA-256, last row digest/status/highwater, and marker
-presence/digest. It excludes token values, run IDs, grant bodies, and sample
-payloads. A missing receipt or active timer/service is a stop-control failure;
-the receipt itself explicitly makes no 72-hour or C09 acceptance claim. If a
+sample-log byte count/SHA-256, first recorded and first successful sample
+times, the first-pass cutoff, the calculated wall-clock end, same-boot
+`CLOCK_BOOTTIME` elapsed nanoseconds, whether the 72-hour-plus-one-tick
+monotonic bound was met, last row digest/status/highwater,
+and marker presence/digest. It excludes token values, run IDs, grant bodies,
+and sample payloads. A missing receipt or active timer/service is a
+stop-control failure. The receipt does not prove uninterrupted coverage,
+Q-aware overlap, or C09 acceptance; those require independent evidence. If a
 grant was interrupted, the marker stays for the manual procedure above.
 
 The source is pinned by the runtime `SCRIPT.sha256` and checked by

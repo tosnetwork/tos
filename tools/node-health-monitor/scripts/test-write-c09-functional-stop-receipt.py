@@ -34,6 +34,7 @@ class StopReceiptTests(unittest.TestCase):
         self.baseline.chmod(0o600)
         self.log = self.directory / "samples.private.jsonl"
         row = {"slot": 1, "slot_highwater": 1, "status": "failed", "cleanup_confirmed": False,
+               "wall_utc": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=73)).isoformat(),
                "secret": "must-not-appear"}
         self.log.write_text(json.dumps(row) + "\n")
         self.log.chmod(0o600)
@@ -41,11 +42,11 @@ class StopReceiptTests(unittest.TestCase):
         self.marker.write_bytes(b"private marker")
         self.marker.chmod(0o600)
 
-    def call(self, end, timer_active="inactive"):
+    def call(self, end, timer_active="inactive", first_deadline=None):
         argv = [str(SOURCE), "--runtime-dir", str(self.directory), "--q-ledger", str(self.q),
                 "--baseline-file", str(self.baseline), "--expected-baseline-sha256",
                 hashlib.sha256(self.baseline.read_bytes()).hexdigest(),
-                "--window-end-utc", end]
+                "--window-end-utc", end, "--first-pass-not-after-utc", first_deadline or end]
         def state(unit):
             return {"LoadState": "loaded", "ActiveState": timer_active if unit.endswith(".timer") else "inactive",
                     "SubState": "dead"}
@@ -70,6 +71,8 @@ class StopReceiptTests(unittest.TestCase):
         value = json.loads(raw)
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertFalse(value["acceptance_claim"])
+        self.assertIsNone(value["first_successful_sample_wall_utc"])
+        self.assertFalse(value["functional_elapsed_gate_met"])
         self.assertTrue(value["q_identity_match"])
         self.assertEqual(value["last_sample"]["status"], "failed")
         self.assertEqual(value["inflight_sha256"], hashlib.sha256(self.marker.read_bytes()).hexdigest())
@@ -88,6 +91,36 @@ class StopReceiptTests(unittest.TestCase):
         value = json.loads((self.directory / "stop-receipt.private.json").read_bytes())
         self.assertFalse(value["q_identity_match"])
         self.assertFalse(value["acceptance_claim"])
+
+    def test_actual_first_success_controls_elapsed_gate(self):
+        wall = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=72, minutes=10)
+        self.log.write_text(json.dumps({"slot": 1, "slot_highwater": 1, "status": "pass",
+                                        "cleanup_confirmed": True, "fixed_grant_query_status": "pass",
+                                        "boot_id": "test-boot", "boottime_ns": 1_000_000_000,
+                                        "wall_utc": wall.isoformat()}) + "\n")
+        self.log.chmod(0o600)
+        past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        with patch.object(receipt, "boot_domain", return_value=("test-boot", 1_000_000_000 + receipt.MIN_ELAPSED_NS)):
+            self.call(past, first_deadline=(wall + dt.timedelta(minutes=1)).isoformat())
+        value = json.loads((self.directory / "stop-receipt.private.json").read_bytes())
+        self.assertEqual(value["first_successful_sample_wall_utc"], wall.isoformat())
+        self.assertTrue(value["first_success_within_deadline"])
+        self.assertTrue(value["functional_elapsed_gate_met"])
+        self.assertFalse(value["acceptance_claim"])
+
+    def test_boot_change_cannot_satisfy_elapsed_gate(self):
+        wall = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=73)
+        self.log.write_text(json.dumps({"slot": 1, "slot_highwater": 1, "status": "pass",
+                                        "cleanup_confirmed": True, "fixed_grant_query_status": "pass",
+                                        "boot_id": "prior-boot", "boottime_ns": 1_000_000_000,
+                                        "wall_utc": wall.isoformat()}) + "\n")
+        self.log.chmod(0o600)
+        past = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1)).isoformat()
+        with patch.object(receipt, "boot_domain", return_value=("new-boot", receipt.MIN_ELAPSED_NS * 2)):
+            self.call(past, first_deadline=(wall + dt.timedelta(minutes=1)).isoformat())
+        value = json.loads((self.directory / "stop-receipt.private.json").read_bytes())
+        self.assertIsNone(value["monotonic_elapsed_ns"])
+        self.assertFalse(value["functional_elapsed_gate_met"])
 
 
 if __name__ == "__main__":
