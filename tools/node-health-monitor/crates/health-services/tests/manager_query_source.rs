@@ -25,6 +25,175 @@ use tos_health_services::{
 };
 use tower::ServiceExt;
 
+/// Opt-in live-cadence witness. SQLite reads M and a consistent read-only
+/// backup of Q; every grant/revoke writes only a private disposable Q copy.
+/// No online broker socket, credential, or business process is touched.
+#[tokio::test]
+#[ignore = "requires explicit read-only live M/Q paths and network"]
+async fn live_m_commit_cadence_vs_disposable_q_grants() {
+    let manager_path = std::path::PathBuf::from(std::env::var("NHM_C09_READONLY_M_DB").unwrap());
+    let source_query_path =
+        std::path::PathBuf::from(std::env::var("NHM_C09_READONLY_Q_DB").unwrap());
+    let network = std::env::var("NHM_C09_NETWORK").unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-c09-grant-cadence-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let query_path = directory.join("query.sqlite");
+    let source = rusqlite::Connection::open_with_flags(
+        source_query_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .unwrap();
+    // VACUUM INTO takes a transactionally consistent snapshot, including WAL.
+    source.execute("VACUUM INTO ?1", [query_path.to_str().unwrap()]).unwrap();
+    drop(source);
+    std::fs::set_permissions(&query_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from([
+            "validator1".into(),
+            "validator2".into(),
+            "validator3".into(),
+            "validator4".into(),
+            "observer5".into(),
+            "observer6".into(),
+        ]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&query_path)
+        .unwrap()
+        .with_manager_evidence(manager_path.clone())
+        .unwrap();
+    let mut grants = 0usize;
+    let mut stale_version_refusals = 0usize;
+    let mut other_refusals = 0usize;
+    let mut imports = 0usize;
+    let mut both_guards_503 = 0usize;
+    let mut version_only_503 = 0usize;
+    let mut cursor_only_503 = 0usize;
+    let mut changing_during_probe_503 = 0usize;
+    let started = std::time::Instant::now();
+    for second in 0..46 {
+        if second % 15 == 0 {
+            let (watermark, rows) = import_manager(&state).unwrap();
+            imports += 1;
+            println!("import_second={second} global_m_seq={watermark} process_rows={rows}");
+        }
+        let (caught_up, validated) = {
+            let data = state.data.lock().unwrap();
+            (data.manager_caught_up, data.manager_validated_data_version)
+        };
+        let current: u64 = state
+            .manager_change_witness
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .unwrap();
+        let cursor =
+            state.query_ledger.as_ref().unwrap().lock().unwrap().manager_cursor().unwrap().unwrap();
+        let head = tos_health_services::manager_query_source::read_projection_head(
+            &manager_path,
+            &state.inventory.network_id,
+        )
+        .unwrap();
+        let end = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let start = end - chrono::Duration::minutes(1);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["validator1"],"scope_ids":["node"],
+                    "start":start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    "end":end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)})
+                .to_string(),
+            ))
+            .unwrap();
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            control_router(state.clone()).oneshot(request),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let status = response.status();
+        let current_after: u64 = state
+            .manager_change_witness
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .unwrap();
+        let head_after = tos_health_services::manager_query_source::read_projection_head(
+            &manager_path,
+            &state.inventory.network_id,
+        )
+        .unwrap();
+        match status {
+            StatusCode::OK => {
+                grants += 1;
+                let run = body(response).await["run_id"].as_str().unwrap().to_owned();
+                let revoke = control_router(state.clone())
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri(format!("/v1/control/grants/{run}/revoke"))
+                            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(revoke.status(), StatusCode::OK);
+            }
+            StatusCode::SERVICE_UNAVAILABLE => {
+                if caught_up && validated != Some(current) {
+                    stale_version_refusals += 1;
+                } else {
+                    other_refusals += 1;
+                }
+                if current == current_after && head.global_m_seq == head_after.global_m_seq {
+                    match (validated != Some(current), cursor.watermark != head.global_m_seq) {
+                        (true, true) => both_guards_503 += 1,
+                        (true, false) => version_only_503 += 1,
+                        (false, true) => cursor_only_503 += 1,
+                        (false, false) => {}
+                    }
+                } else {
+                    changing_during_probe_503 += 1;
+                }
+            }
+            other => panic!("unexpected grant status {other}"),
+        }
+        println!(
+            "second={second} status={status} caught_up={caught_up} validated={validated:?} current={current} cursor={} head={} stable={}",
+            cursor.watermark,
+            head.global_m_seq,
+            current == current_after && head.global_m_seq == head_after.global_m_seq
+        );
+        let next = started + std::time::Duration::from_secs(second + 1);
+        if let Some(remaining) = next.checked_duration_since(std::time::Instant::now()) {
+            tokio::time::sleep(remaining).await;
+        }
+    }
+    println!(
+        "SUMMARY seconds=46 imports={imports} grants_200={grants} stale_version_503={stale_version_refusals} other_503={other_refusals} both_guards_503={both_guards_503} version_only_503={version_only_503} cursor_only_503={cursor_only_503} changing_during_probe_503={changing_during_probe_503}"
+    );
+    drop(state);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 /// Opt-in local cost witness. M is opened read-only; only a disposable Q ledger
 /// is written. It is not a performance acceptance threshold or an AURA call.
 #[tokio::test]
