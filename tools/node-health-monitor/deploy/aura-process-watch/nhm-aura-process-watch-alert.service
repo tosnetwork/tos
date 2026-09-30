@@ -1,0 +1,7 @@
+[Unit]
+Description=Record an unavailable AURA process watch sample
+
+[Service]
+Type=oneshot
+NoNewPrivileges=yes
+ExecStart=/usr/bin/logger -p user.err -t nhm-aura-process-watch AURA-process-watch-unavailable-check-private-query-and-collector-units
