@@ -194,6 +194,120 @@ async fn live_m_commit_cadence_vs_disposable_q_grants() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Exact 15-second development cadence with *only* new, unique process rows
+/// in a disposable M. No quarantine, rewrite, external service, or fallback
+/// import is involved. This exposes the availability cost of treating every
+/// append as a reason to deny a new fixed-W grant.
+#[tokio::test]
+#[ignore = "31-second controlled M append/grant cadence witness"]
+async fn ordinary_m_appends_deny_grants_between_fifteen_second_imports() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-ordinary-cadence-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let query_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("initial-epoch")).unwrap();
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&query_path)
+    .unwrap()
+    .with_manager_evidence(manager_path.clone())
+    .unwrap();
+    let mut granted = 0usize;
+    let mut refused = 0usize;
+    let started = std::time::Instant::now();
+    for second in 0..31 {
+        if second > 0 && second % 2 == 0 {
+            manager.insert(row(&format!("ordinary-epoch-{second}"))).unwrap();
+        }
+        if second % 15 == 0 {
+            let (_, count) = import_manager(&state).unwrap();
+            assert_eq!(
+                count,
+                if second == 0 {
+                    0
+                } else if second == 15 {
+                    7
+                } else {
+                    8
+                }
+            );
+        }
+        let before = state.manager_projection_reads.load(Ordering::Relaxed);
+        let end = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let start = end - chrono::Duration::minutes(1);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    "end":end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)})
+                .to_string(),
+            ))
+            .unwrap();
+        let response = control_router(state.clone()).oneshot(request).await.unwrap();
+        let expected = if second <= 1 || second == 15 || second == 30 {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        assert_eq!(response.status(), expected, "ordinary append at second {second}");
+        assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before);
+        if expected == StatusCode::OK {
+            granted += 1;
+            let run = body(response).await["run_id"].as_str().unwrap().to_owned();
+            let revoked = control_router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(format!("/v1/control/grants/{run}/revoke"))
+                        .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(revoked.status(), StatusCode::OK);
+        } else {
+            refused += 1;
+        }
+        let next = started + std::time::Duration::from_secs(second + 1);
+        if let Some(remaining) = next.checked_duration_since(std::time::Instant::now()) {
+            tokio::time::sleep(remaining).await;
+        }
+    }
+    assert_eq!((granted, refused), (4, 27));
+    let quarantine_count: i64 = rusqlite::Connection::open(&manager_path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM quarantined", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(quarantine_count, 0);
+    println!(
+        "SUMMARY ordinary_only=15 imports=3 grants_200={granted} grants_503={refused} quarantine=0"
+    );
+    drop(state);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 /// Opt-in local cost witness. M is opened read-only; only a disposable Q ledger
 /// is written. It is not a performance acceptance threshold or an AURA call.
 #[tokio::test]
