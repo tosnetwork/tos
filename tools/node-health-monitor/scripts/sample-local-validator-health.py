@@ -92,6 +92,11 @@ def get_json(port, route):
     return json.loads(raw)
 
 
+def check_readiness_clock(readiness, now):
+    if abs(now - readiness["node_time"]) > 30 or readiness["last_block_utime"] > now + 30:
+        raise ValueError("readiness_clock")
+
+
 def node_sample(node, manifest, validator):
     index = int(node[-1])
     native = get_json(9010 + index, "/health-snapshot")
@@ -129,8 +134,7 @@ def node_sample(node, manifest, validator):
             or type(readiness["last_block"].get("seqno")) is not int):
         raise ValueError("readiness_contract")
     now = int(time.time())
-    if abs(now - readiness["node_time"]) > 30 or abs(now - readiness["last_block_utime"]) > 60:
-        raise ValueError("readiness_clock")
+    check_readiness_clock(readiness, now)
     consensus = payload.get("consensus")
     if type(consensus) is not dict:
         raise ValueError("missing_consensus")

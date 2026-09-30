@@ -76,7 +76,9 @@ class CodexWatchTest(unittest.TestCase):
                 native = {"content_hash": native_hash, "node_id": node, "scope_id": "node",
                           "source_id": "native_core", "source_version": "native-core-v2",
                           "process_epoch": "epoch", "source_epoch": "epoch", "generation": "1",
-                          "availability": "available", "clock_quality": "valid", "source_age_ms": 1,
+                          "availability": "available", "clock_quality": "valid", "source_age_ms": None,
+                          "observed_at": "2026-09-30T00:00:00Z",
+                          "quality": {"instrumentation_complete": False},
                           "coverage": {"missing_fields": ["local_duties"]}, "payload": native_payload}
                 value = {"source_epoch": "epoch", "record": {
                     "node_id": node, "source_id": "native_core", "source_record_id": "epoch:1",

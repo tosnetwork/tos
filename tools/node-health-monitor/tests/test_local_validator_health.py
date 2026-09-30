@@ -58,6 +58,19 @@ class LocalValidatorHealthTest(unittest.TestCase):
         self.assertEqual(sampler.evaluate(new, old, 60_000),
                          ("degraded", ["pq_sign_failure"]))
 
+    def test_stale_block_time_reaches_stall_decision(self):
+        now = 1_000_000
+        sampler.check_readiness_clock({"node_time": now, "last_block_utime": now - 120}, now)
+        old = sample()
+        new = sample()
+        old["native_generation"] = 1
+        self.assertEqual(sampler.evaluate(new, old, 60_000),
+                         ("degraded", ["chain_not_progressing"]))
+        with self.assertRaisesRegex(ValueError, "readiness_clock"):
+            sampler.check_readiness_clock({"node_time": now, "last_block_utime": now + 31}, now)
+        with self.assertRaisesRegex(ValueError, "readiness_clock"):
+            sampler.check_readiness_clock({"node_time": now - 31, "last_block_utime": now}, now)
+
     def test_epoch_change_and_counter_reset_do_not_fake_progress(self):
         old = sample()
         new = sample()

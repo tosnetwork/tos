@@ -146,8 +146,8 @@ def archived_native_parents(manager_db, samples, network_id):
                             or native["generation"] != str(sample["native_generation"])
                             or native["availability"] != "available"
                             or native["clock_quality"] != "valid"
-                            or type(native["source_age_ms"]) is not int
-                            or not 0 <= native["source_age_ms"] <= 30_000
+                            or not isinstance(native["observed_at"], str)
+                            or type(native["quality"]["instrumentation_complete"]) is not bool
                             or native["coverage"]["missing_fields"] != sample["native_missing"]
                             or native["payload"]["consensus"]["instrumentation_complete"]
                             != sample["native_complete"]
