@@ -83,16 +83,25 @@ class ProjectionProbeTest(unittest.TestCase):
         result, output = self.run_probe(self.document())
         self.assertEqual(result.returncode, 0)
         self.assertEqual(output["projection_status"], "caught_up")
+        self.assertTrue(output["projection_caught_up"])
+        self.assertTrue(output["sample_boottime_ms"].isdecimal())
         self.sock.unlink()
         result, output = self.run_probe(self.document(
             projection_status="lagging", source_global_m_seq="26", lag_global_m_seq="1"
         ))
         self.assertEqual(result.returncode, 0)
         self.assertEqual(output["lag_global_m_seq"], "1")
+        self.assertTrue(output["probe_ok"])
+        self.assertFalse(output["projection_caught_up"])
+        self.assertTrue(output["sample_boottime_ms"].isdecimal())
 
     def test_false_caught_up_and_oversize_are_refused_without_secret_output(self):
         result, output = self.run_probe(self.document(source_global_m_seq="26", lag_global_m_seq="1"))
         self.assertEqual(result.returncode, 1)
+        self.assertEqual(output["error_kind"], "ValueError")
+        self.sock.unlink()
+        result, output = self.run_probe(self.document(projection_status="transition"))
+        self.assertEqual(result.returncode, 1, "transition must not be HTTP 200")
         self.assertEqual(output["error_kind"], "ValueError")
         self.sock.unlink()
         missing = self.document()
@@ -109,6 +118,12 @@ class ProjectionProbeTest(unittest.TestCase):
         result, output = self.run_probe(self.document(projection_status="conflict", manager_conflicted=True), 503)
         self.assertEqual(result.returncode, 0)
         self.assertTrue(output["manager_conflicted"])
+        self.assertFalse(output["projection_caught_up"])
+        self.sock.unlink()
+        result, output = self.run_probe(self.document(projection_status="transition"), 503)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(output["probe_ok"])
+        self.assertFalse(output["projection_caught_up"])
         self.token.chmod(0o644)
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--socket", str(self.sock), "--token-file", str(self.token)],

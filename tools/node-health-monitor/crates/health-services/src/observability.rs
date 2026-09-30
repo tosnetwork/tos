@@ -304,6 +304,101 @@ async fn monitor_heartbeat(
 async fn healthz() -> Json<Value> {
     Json(json!({"service":"available","validator_health":"unknown"}))
 }
+#[derive(Clone, PartialEq, Eq)]
+struct ProjectionStateSample {
+    manager_conflicted: bool,
+    caught_up_at_last_import: bool,
+    validated_version: Option<u64>,
+    query_watermark: u64,
+    cursor: Option<crate::query_ledger::ManagerCursor>,
+}
+
+fn projection_state_sample(
+    state: &ObservabilityState,
+) -> Result<ProjectionStateSample, StatusCode> {
+    let data = state.data.try_lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let cursor = state
+        .query_ledger
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+        .try_lock()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .manager_cursor()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(ProjectionStateSample {
+        manager_conflicted: data.manager_conflicted,
+        caught_up_at_last_import: data.manager_caught_up,
+        validated_version: data.manager_validated_data_version,
+        query_watermark: data.store.watermark(),
+        cursor,
+    })
+}
+
+fn projection_status(
+    before: &ProjectionStateSample,
+    after: &ProjectionStateSample,
+    head_available: bool,
+    version_available: bool,
+    identity_match: Option<bool>,
+    lag: Option<&str>,
+    current_version: Option<u64>,
+) -> &'static str {
+    if before.manager_conflicted || after.manager_conflicted {
+        "conflict"
+    } else if !head_available || !version_available {
+        "source_unavailable"
+    } else if before != after {
+        // The M head and Q state were not one stable observation. Never
+        // publish caught_up from a mixture of two importer generations.
+        "transition"
+    } else if after.cursor.is_none() {
+        "uninitialized"
+    } else if identity_match != Some(true) || lag.is_none() {
+        "identity_or_watermark_mismatch"
+    } else if !after.caught_up_at_last_import
+        || after.validated_version != current_version
+        || lag != Some("0")
+    {
+        "lagging"
+    } else {
+        "caught_up"
+    }
+}
+#[cfg(test)]
+mod projection_state_tests {
+    use super::{projection_status, ProjectionStateSample};
+    use crate::query_ledger::ManagerCursor;
+
+    #[test]
+    fn concurrent_import_or_conflict_cannot_publish_caught_up() {
+        let before = ProjectionStateSample {
+            manager_conflicted: false,
+            caught_up_at_last_import: true,
+            validated_version: Some(7),
+            query_watermark: 4,
+            cursor: Some(ManagerCursor {
+                network: "a".repeat(64),
+                device: 1,
+                inode: 2,
+                watermark: 10,
+                anchor: Some((10, "b".repeat(64))),
+            }),
+        };
+        let classify = |after: &ProjectionStateSample| {
+            projection_status(&before, after, true, true, Some(true), Some("0"), Some(7))
+        };
+        assert_eq!(classify(&before), "caught_up");
+        let mut changed = before.clone();
+        changed.query_watermark += 1;
+        assert_eq!(classify(&changed), "transition");
+        changed = before.clone();
+        changed.cursor.as_mut().unwrap().watermark += 1;
+        assert_eq!(classify(&changed), "transition");
+        changed = before.clone();
+        changed.manager_conflicted = true;
+        assert_eq!(classify(&changed), "conflict");
+    }
+}
 /// Authenticated, read-only control-socket witness. This is not a grant and
 /// does not import M, so a failing projection cannot be hidden by the probe.
 async fn projection_health(
@@ -313,26 +408,11 @@ async fn projection_health(
     if !authorized(bearer(&headers), &state.service_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let path = state.manager_evidence_db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     // Never park a control-socket Tokio worker behind a slow importer. Take
     // the flags and durable cursor together under non-waiting locks, then do
     // the SQLite source-head I/O on the blocking pool without either lock.
-    let (manager_conflicted, caught_up_at_last_import, validated_version, query_watermark, cursor) = {
-        let data = state.data.try_lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        let cursor = ledger
-            .try_lock()
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-            .manager_cursor()
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        (
-            data.manager_conflicted,
-            data.manager_caught_up,
-            data.manager_validated_data_version,
-            data.store.watermark(),
-            cursor,
-        )
-    };
+    let before = projection_state_sample(&state)?;
     let path = path.clone();
     let network = state.inventory.network_id.clone();
     let head = tokio::time::timeout(
@@ -345,50 +425,47 @@ async fn projection_health(
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let current_version = manager_data_version(&state, false);
-    let (source_global_m_seq, source_identity_match, lag_global_m_seq) = match (&head, &cursor) {
-        (Ok(head), Some(cursor)) => (
-            Some(head.global_m_seq.to_string()),
-            Some(
-                cursor.network == state.inventory.network_id
-                    && cursor.device == head.device
-                    && cursor.inode == head.inode,
+    let after = projection_state_sample(&state)?;
+    let (source_global_m_seq, source_identity_match, lag_global_m_seq) =
+        match (&head, &after.cursor) {
+            (Ok(head), Some(cursor)) => (
+                Some(head.global_m_seq.to_string()),
+                Some(
+                    cursor.network == state.inventory.network_id
+                        && cursor.device == head.device
+                        && cursor.inode == head.inode,
+                ),
+                head.global_m_seq.checked_sub(cursor.watermark).map(|lag| lag.to_string()),
             ),
-            head.global_m_seq.checked_sub(cursor.watermark).map(|lag| lag.to_string()),
-        ),
-        (Ok(head), None) => (Some(head.global_m_seq.to_string()), None, None),
-        (Err(_), _) => (None, None, None),
-    };
-    let status = if manager_conflicted {
-        "conflict"
-    } else if head.is_err() || current_version.is_err() {
-        "source_unavailable"
-    } else if cursor.is_none() {
-        "uninitialized"
-    } else if source_identity_match != Some(true) || lag_global_m_seq.is_none() {
-        "identity_or_watermark_mismatch"
-    } else if !caught_up_at_last_import
-        || validated_version != current_version.ok()
-        || lag_global_m_seq.as_deref() != Some("0")
-    {
-        "lagging"
-    } else {
-        "caught_up"
-    };
-    let code =
-        if matches!(status, "conflict" | "source_unavailable" | "identity_or_watermark_mismatch") {
-            StatusCode::SERVICE_UNAVAILABLE
-        } else {
-            StatusCode::OK
+            (Ok(head), None) => (Some(head.global_m_seq.to_string()), None, None),
+            (Err(_), _) => (None, None, None),
         };
+    let status = projection_status(
+        &before,
+        &after,
+        head.is_ok(),
+        current_version.is_ok(),
+        source_identity_match,
+        lag_global_m_seq.as_deref(),
+        current_version.ok(),
+    );
+    let code = if matches!(
+        status,
+        "conflict" | "source_unavailable" | "identity_or_watermark_mismatch" | "transition"
+    ) {
+        StatusCode::SERVICE_UNAVAILABLE
+    } else {
+        StatusCode::OK
+    };
     let response = (
         code,
         Json(json!({
             "schema_version":1,
             "projection_status":status,
-            "manager_conflicted":manager_conflicted,
-            "caught_up_at_last_import":caught_up_at_last_import,
-            "query_watermark":query_watermark.to_string(),
-            "cursor_global_m_seq":cursor.map(|value| value.watermark.to_string()),
+            "manager_conflicted":before.manager_conflicted || after.manager_conflicted,
+            "caught_up_at_last_import":after.caught_up_at_last_import,
+            "query_watermark":after.query_watermark.to_string(),
+            "cursor_global_m_seq":after.cursor.map(|value| value.watermark.to_string()),
             "source_global_m_seq":source_global_m_seq,
             "lag_global_m_seq":lag_global_m_seq,
             "source_identity_match":source_identity_match,

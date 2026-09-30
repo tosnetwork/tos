@@ -13,6 +13,7 @@ import signal
 import socket
 import stat
 import sys
+import time
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -89,7 +90,7 @@ def sample(sock_path, token_path):
         status = value.get("projection_status")
         if status not in {
             "caught_up", "lagging", "conflict", "source_unavailable",
-            "uninitialized", "identity_or_watermark_mismatch",
+            "uninitialized", "identity_or_watermark_mismatch", "transition",
         }:
             raise ValueError("projection status rejected")
         conflicted = value.get("manager_conflicted")
@@ -122,12 +123,19 @@ def sample(sock_path, token_path):
             raise ValueError("false lagging projection")
         if status == "source_unavailable" and not (reply.status == 503 and source is None):
             raise ValueError("false unavailable projection")
+        if status == "transition" and reply.status != 503:
+            raise ValueError("false transition projection")
         if status == "identity_or_watermark_mismatch" and not (
             reply.status == 503 and identity is False or reply.status == 503 and lag is None
         ):
             raise ValueError("false identity projection")
         return {
             "probe_ok": True,
+            # A valid response is not proof that the projection is usable.
+            "projection_caught_up": status == "caught_up",
+            # Stable across probe processes on this Linux boot. A sampler can
+            # calculate consecutive lag duration without trusting wall time.
+            "sample_boottime_ms": str(time.clock_gettime_ns(time.CLOCK_BOOTTIME) // 1_000_000),
             "http_status": reply.status,
             "projection_status": status,
             "manager_conflicted": conflicted,

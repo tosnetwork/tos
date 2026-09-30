@@ -1,0 +1,22 @@
+# C09 projection snapshot-transition successor (isolated, not deployed)
+
+Base: isolated `nhm/c09-anchor-integration@8609811e0f4e755daa78760d991ac40d8bcf36e1`. The running local QueryService remains the separate `31fc2f615ec3325d0e6bfe69f37f692068786bc0` / binary SHA-256 `e37f9c4353bb80f5ae8acd3a941d7eeb21b5f116a448448adb79588fb94cf8ee` deployment. This candidate did not modify its executable, private token, Q database, sampler copy, or any business/M/Edge service.
+
+The private authenticated projection-health handler now samples Q/Data flags, validated M version, query watermark, and durable M cursor both **before and after** the bounded read-only M head query. If those two Q snapshots differ, it returns `transition`/HTTP 503 instead of combining generations into `caught_up`. Conflict still wins over transition. It retains the existing non-waiting Data/ledger locks and three-second M head bound. A response is a point-in-time observation, not a continuous availability proof.
+
+The isolated Python probe keeps `probe_ok` as transport/schema validity. It now emits a distinct `projection_caught_up` boolean and Linux `sample_boottime_ms` decimal string, so a low-rate sampler can calculate elapsed consecutive lag without treating a valid `lagging`, `transition`, or `conflict` response as health. A one-off lagging row is not a sustained outage. The **running** sampler still uses its prior private copy; it records status, lag, and `caught_up_at_last_import` but has no accepted consecutive-duration rule. A coordinated probe/sampler rollout and continuity evaluation remain open.
+
+Restored source SHA-256: `observability.rs` `c105cb2924c13da5ec1eeff79b68b9a43a5febdf2a13b14fdf4ece7fceb82a25`; `sample-broker-projection.py` `5959fd077480c12ce3bc116b6cdbaaf8e5951f72c3f55b1570fbea0b47420ebe`; `test-sample-broker-projection.py` `a4e806f8b65956a3f1e20639cadbcc1d74d6407a87a7e33b46d17a59e6fd119a`. The focused Rust control uses the same status classifier wired by the handler. Replacing only the double-sample comparison with `false` produced compiled exit 101 on the intended `caught_up` versus `transition` assertion; mutant Rust SHA-256 `eb107f2b7a6d93012c23e9f3703c317ee3e26cab664b282d9e3d6240cd19bc9a`. The original source was restored byte-for-byte and the control rerun natural 0.
+
+| Raw log in `raw/projection-transition/` | SHA-256 | Result |
+| --- | --- | --- |
+| `baseline.log` | `8bfdcbc0c9f405c8095c0ae4a80807655b979f19df55562e3ed98379cb4dfbcd` | focused Rust 1/1 exit 0 |
+| `skip-double-sample-mutant.log` | `beecf144257dea61ab70b88445f063198c691fd1e49082a786dfe81b80531ec8` | compiled intended assertion exit 101 |
+| `restored.log` | `907234e3fbb7c5acbbfcfdc4c8c348a9f8780beebd68667be841b961990560ca` | restored Rust 1/1 exit 0 |
+| `manager-query-source.log` | `59cf1f57570ff8f92dc8b5f169e8673984f077ee34de235c573b208091b9b159` | 20 passed; 2 opt-in ignored |
+| `services-package.log` | `1ed1b4913770517260bee5914c03c30a6cab285c19028b85ba92b81e8b8fd50e` | locked `tos-health-services` package: 153 passed, 5 opt-in ignored, natural exit 0 |
+| `python-probe-final.log` | `eedf0edb1656eb0a0f2ac31848a7b29b2f34a632e689bab263b2d49d203c097a` | four Unix mock receiver controls passed, including transition 503/200 negative |
+| `live-readonly-double-sample.log` | `8818776cc9a6faa3b1b869a61afafd7c51584cdd172572861aa27cc30ac4bb68` | opt-in read-only M/disposable Q: 108 pages, max page 655 ms, peak 2,479 parents, source-read grant max 6 ms, late Data-lock combined control max 2 ms, caught-up grant/revoke 200, natural exit 0 |
+| `clippy.log` | `62164c2e8989b5a7af6f5e40bf4f5c2cc45c9e7e276d45a8d0e34b9bebce4cc7` | `cargo clippy --locked -p tos-health-services --all-targets -- -D warnings`, exit 0 |
+
+`cargo fmt --check` and `git diff --check` also exited 0. Intermediate Python logs are retained as source-change lineage but are not substituted for the final parser test. The classifier mutation and live router normal/conflict controls do not constitute a deterministic real-handler race injection or a full Unix socket/import overlap test. C09 acceptance, continuous broker latency, retention/backup/restore, sampler continuity, and 72-hour soak remain open.
