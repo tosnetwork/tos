@@ -215,7 +215,7 @@ class Bus : public td::actor::Bus {
   Bus() = default;
   ~Bus() override {
     db = {};
-    health_session.stop();
+    health_session.close();
     stop_promise.set_value(td::Unit());
   }
 

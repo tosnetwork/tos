@@ -48,6 +48,15 @@ class Fixture : public td::actor::SpawnsWith<simplex::Bus>, public td::actor::Co
   }
 };
 
+class FailingCloseDb : public consensus::Db {
+ public:
+  std::optional<td::BufferSlice> get(td::Slice) const override { return std::nullopt; }
+  std::vector<std::pair<td::BufferSlice, td::BufferSlice>> get_by_prefix(td::uint32) const override { return {}; }
+  td::actor::Task<std::optional<td::BufferSlice>> get_latest(td::BufferSlice) const override { co_return std::nullopt; }
+  td::actor::Task<> set(td::BufferSlice, td::BufferSlice) override { co_return td::Unit{}; }
+  td::actor::Task<> close() override { co_return td::Status::Error("fixture close failure"); }
+};
+
 std::uint64_t count(Action action, Origin origin, Phase phase) {
   return consensus_stats.phase(action, origin, phase).load();
 }
@@ -110,6 +119,28 @@ class Driver : public td::actor::Actor {
     if (mode == "lease") {
       co_await lifetime_control();
       std::printf("C04_ACTION_PASS lease: actual suspended coroutine, terminal, retirement, blocked reuse, resume, safe reuse\n");
+      std::exit(0);
+    }
+    if (mode == "close-error") {
+      auto bus = std::make_shared<simplex::Bus>();
+      bus->db = std::make_unique<FailingCloseDb>();
+      const auto session_id = fill(0x55);
+      bus->health_session.start(session_id.data(), -1, std::uint64_t{1} << 63);
+      auto [stopped, stop_promise] = td::actor::StartedTask<>::make_bridge();
+      bus->stop_promise = std::move(stop_promise);
+      td::actor::Runtime runtime;
+      auto handle = runtime.start(bus, "c04-close-error");
+      bus->health_session.begin_stop();
+      handle.publish<StopRequested>();
+      bus.reset();
+      auto closed = co_await simplex::close_and_release_bus(handle).wrap();
+      require(closed.is_error() && !handle, "failed DB close still releases bridge bus handle");
+      co_await std::move(stopped);
+      require(consensus_stats.sessions_drained.load() == 1 && consensus_stats.sessions_active.load() == 0,
+              "failed DB close still drains observation before bus stop promise");
+      for (const auto &row : SessionObservation::context_rows)
+        require(!row.leased.load(), "failed DB close releases context before bus stop promise");
+      std::printf("C04_ACTION_PASS close-error: failed DB close released bus and observation before stop promise\n");
       std::exit(0);
     }
     NativeCorePublisher publisher;
@@ -287,6 +318,9 @@ class Driver : public td::actor::Actor {
       co_await std::move(stopped);
       require(consensus_stats.sessions_stopping.load() == 0, "stopping cleared only at release boundary");
       require(consensus_stats.sessions_active.load() == 0, "bus lifetime released after stop");
+      require(consensus_stats.sessions_drained.load() == n, "observation drain precedes bus stop promise");
+      for (const auto &row : SessionObservation::context_rows)
+        require(!row.leased.load(), "context lease released before bus stop promise");
       require(consensus_stats.sessions_started.load() == n && consensus_stats.sessions_stopped.load() == n,
               "session rotation counters monotonic and exact");
     }

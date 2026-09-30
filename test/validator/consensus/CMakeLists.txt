@@ -5,7 +5,7 @@ target_include_directories(test-health-ledger PRIVATE ${CMAKE_SOURCE_DIR})
 add_test(NAME c04-health-ledger COMMAND test-health-ledger)
 target_link_libraries(test-health-actions PRIVATE validator tos_validator tos_block adnl overlay dht tl_api
     tl-utils tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 tdactor tdutils)
-foreach(mode success intent-failure no-signer sign-failure signed-failure apply-false duplicate replay-signed replay-intent
+foreach(mode success intent-failure no-signer sign-failure signed-failure apply-false duplicate replay-signed replay-intent close-error
              skip finalize journal-suppressed finality-suppressed post-terminal lease replay-intent-sign-failure replay-intent-signed-failure)
   add_test(NAME c04-health-action-${mode} COMMAND test-health-actions ${mode})
   set_tests_properties(c04-health-action-${mode} PROPERTIES TIMEOUT 30)

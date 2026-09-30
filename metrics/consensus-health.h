@@ -380,15 +380,22 @@ class SessionObservation {
       active_ = false;
     }
   }
-  ~SessionObservation() {
+  void close() noexcept {
+    if (closed_) return;
+    closed_ = true;
+    const bool was_active = active_.load(std::memory_order_acquire);
     stop();
     vote_ledger.reset();
     proposal_ledger.reset();
     if (context_ < context_rows.size()) {
       context_rows[context_].sequence.store(0, std::memory_order_release);
       context_rows[context_].leased.store(false, std::memory_order_release);
+      context_ = context_rows.size();
     }
+    if (was_active && !consensus_stats.add(consensus_stats.sessions_drained))
+      consensus_stats.global_incomplete(IncompleteReason::CounterSaturation);
   }
+  ~SessionObservation() { close(); }
   void current_slot(std::uint32_t slot) noexcept {
     if (context_ < context_rows.size()) context_rows[context_].current_slot.store(slot, std::memory_order_relaxed);
   }
@@ -403,6 +410,7 @@ class SessionObservation {
   std::size_t context_ = context_rows.size();
   std::atomic<bool> active_{false}, stopping_{false}, stop_requested_{false};
   bool recorded_ = false, stopping_recorded_ = false;
+  bool closed_ = false;
 };
 inline std::array<SessionObservation::Context, 8> SessionObservation::context_rows{};
 static_assert(sizeof(ConsensusStats) < 40 * 1024);

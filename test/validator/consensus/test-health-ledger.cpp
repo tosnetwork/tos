@@ -113,5 +113,14 @@ int main() {
   }
   require(ages.phase(Action::Finalize, Origin::Live, Phase::Requested) == before_declined + ActionLedger::max_rows,
           "declined frame termination frees its retired key without a business terminal");
+  session.begin_stop();
+  session.close();
+  require(consensus_stats.sessions_drained.load() == 1 && consensus_stats.sessions_active.load() == 0,
+          "explicit observation close drains one active session");
+  for (const auto &row : SessionObservation::context_rows)
+    require(!row.leased.load(), "observation close releases context lease");
+  session.close();
+  require(consensus_stats.sessions_drained.load() == 1 && consensus_stats.sessions_stopped.load() == 1,
+          "observation close is idempotent before destructor");
   std::printf("C04_LEDGER_PASS capacity, pending age, cancellation, retirement, repeated phases, saturation\n");
 }
