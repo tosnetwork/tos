@@ -29,6 +29,8 @@ REACH_RULES = ("target_unreachable", "telemetry_unavailable")
 MAX_STATE_BYTES = 1 << 20
 MAX_ARCHIVE_BODY = 32_768
 NATIVE_FRESH_SECONDS = 90
+UNOBSERVABLE_SECONDS = 180
+ACTIVE_STATES = ("open", "suspended_unknown", "recovering")
 
 
 def utc_now():
@@ -63,10 +65,14 @@ def incidents_by_node(state, nodes):
         if key.get("scope") != "node" or key.get("node") not in result:
             continue
         s = incident["state"]
+        # An incident stays active while suspended on unknown input or while
+        # recovering inside its hold; only clear/closed_recovered end it.
+        active = s["state"] in ACTIVE_STATES
         result[key["node"]][key["rule"]] = {
             "input": incident["input"],
-            "open": s["state"] == "open",
-            "severity": s["severity"] if s["state"] == "open" else None,
+            "open": active,
+            "state": s["state"],
+            "severity": s["severity"] if active else None,
             "episode": s["episode"],
         }
     return result
@@ -137,7 +143,22 @@ def latest_native(db_path, node, now_ms):
     }
 
 
-def verdict_for(node, rules, native, role):
+def latest_process_age(db_path, node, now_ms):
+    """Age in seconds of the latest archived process snapshot row, or None."""
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2) as db:
+        rows = db.execute(
+            "SELECT body FROM observations WHERE node=? AND scope='node' AND source='process' "
+            "ORDER BY store_seq DESC LIMIT 8", (node,)).fetchall()
+    for (body,) in rows:
+        if len(body) > MAX_ARCHIVE_BODY:
+            continue
+        record = json.loads(body).get("record", {})
+        if isinstance(record.get("payload"), dict) and "source" in record["payload"]:
+            return max(0, (now_ms - record["observed_at_ms"]) // 1000)
+    return None
+
+
+def verdict_for(node, rules, native, role, process_age=None):
     """Deterministic verdict. unknown beats healthy; any open critical is unhealthy."""
     reasons = []
     if native is None:
@@ -146,6 +167,13 @@ def verdict_for(node, rules, native, role):
         return "unknown", ["native_source_quarantined"]
     if native["age_seconds"] > NATIVE_FRESH_SECONDS:
         reasons.append("native_sample_stale")
+    # The management edge answers but neither the process nor the native
+    # source has produced a sample for a long time: the node process itself is
+    # gone or wedged. That is delivered evidence, not absence of evidence.
+    reachable = rules.get("target_unreachable", {}).get("input") == "good"
+    if (reachable and native["age_seconds"] > UNOBSERVABLE_SECONDS
+            and (process_age is None or process_age > UNOBSERVABLE_SECONDS)):
+        return "unhealthy", ["node_process_unobservable"] + reasons
     open_critical = [r for r, s in rules.items() if s["open"] and s["severity"] == "critical"]
     open_warning = [r for r, s in rules.items() if s["open"] and s["severity"] == "warning"]
     expected = list(REACH_RULES) + list(NATIVE_RULES[:4]) + (list(NATIVE_RULES[4:]) if role == "validator" else [])
@@ -174,12 +202,14 @@ def judge(args):
               "evaluation_sequence": state.get("evaluation_sequence"), "nodes": {}, "evidence_ids": []}
     for node, role in sorted(nodes.items()):
         native = latest_native(args.evidence_db, node, now_ms)
-        verdict, reasons = verdict_for(node, incidents[node], native, role)
+        process_age = latest_process_age(args.evidence_db, node, now_ms)
+        verdict, reasons = verdict_for(node, incidents[node], native, role, process_age)
         report["nodes"][node] = {
             "role": role, "verdict": verdict, "reasons": reasons,
-            "rules": {r: {"input": s["input"], "open": s["open"], "severity": s["severity"]}
+            "rules": {r: {"input": s["input"], "open": s["open"], "state": s["state"], "severity": s["severity"]}
                       for r, s in sorted(incidents[node].items())},
             "native": native,
+            "process_age_seconds": process_age,
         }
         if native:
             report["evidence_ids"].append(native["archive_parent"])

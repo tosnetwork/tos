@@ -48,10 +48,12 @@ def make_db(path, rows):
         "CREATE TABLE observations(store_seq INTEGER PRIMARY KEY AUTOINCREMENT, node TEXT, scope TEXT,"
         " process_epoch TEXT, source_epoch TEXT, source TEXT, source_record TEXT, content_hash TEXT, body BLOB);"
         "CREATE TABLE quarantined(node TEXT, scope TEXT, process_epoch TEXT, source_epoch TEXT, source TEXT);")
-    for node, native, body, parent in rows:
+    for row in rows:
+        node, native, body, parent = row[:4]
+        source = row[4] if len(row) > 4 else "native_core"
         db.execute("INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)"
                    " VALUES(?,?,?,?,?,?,?,?)",
-                   (node, "node", native["process_epoch"], native["source_epoch"], "native_core",
+                   (node, "node", native["process_epoch"], native["source_epoch"], source,
                     f"{native['process_epoch']}:{native['generation']}", parent, body))
     db.commit()
     db.close()
@@ -168,11 +170,44 @@ def test_unknown_input_missing_rule_or_stale_native_is_unknown(tmp_path, monkeyp
     incidents = [i for i in all_good("validator1") if i["key"]["rule"] != "local_action_failure"]
     report = run_judge(tmp_path, incidents, [("validator1", native, body, parent)], monkeypatch)
     assert "rule_not_in_inventory:local_action_failure" in report["nodes"]["validator1"]["reasons"]
+    # Stale native sample while the process source is still fresh: unknown,
+    # not unhealthy (the node is observable, only the native lane is behind).
     stale = fresh_native(now_ms - 600_000)
     body, parent = archive_row(stale, now_ms - 600_000, now_ms - 599_000)
-    report = run_judge(tmp_path, all_good("validator1"), [("validator1", stale, body, parent)], monkeypatch)
+    process_body = json.dumps({"source_epoch": stale["source_epoch"], "record": {
+        "node_id": "validator1", "scope_id": "node", "source_id": "process",
+        "source_record_id": "p:1", "process_epoch": stale["process_epoch"],
+        "observed_at_ms": now_ms - 5_000, "received_at_ms": now_ms - 4_000, "quality": {},
+        "payload": {"component": "process", "source": {"payload": {"pid": 1}}}, "redacted": True}})
+    report = run_judge(tmp_path, all_good("validator1"),
+                       [("validator1", stale, body, parent), ("validator1", stale, process_body, "0" * 64, "process")],
+                       monkeypatch)
     assert report["nodes"]["validator1"]["verdict"] == "unknown"
     assert "native_sample_stale" in report["nodes"]["validator1"]["reasons"]
+
+
+def test_suspended_unknown_keeps_incident_active_and_unobservable_node_is_unhealthy(tmp_path, monkeypatch):
+    now_ms = int(judge.utc_now().timestamp() * 1000)
+    native = fresh_native(now_ms - 10_000)
+    body, parent = archive_row(native, now_ms - 10_000, now_ms - 9_000)
+    incidents = [i for i in all_good("validator1") if i["key"]["rule"] != "telemetry_unavailable"]
+    incidents.append(incident("validator1", "telemetry_unavailable", "unknown", "suspended_unknown", "warning"))
+    report = run_judge(tmp_path, incidents, [("validator1", native, body, parent)], monkeypatch)
+    assert report["nodes"]["validator1"]["verdict"] == "degraded"
+    assert report["nodes"]["validator1"]["rules"]["telemetry_unavailable"]["state"] == "suspended_unknown"
+    # Edge reachable, but no native or process sample for longer than the
+    # unobservable bound: the node process is gone, which is unhealthy.
+    stale = fresh_native(now_ms - 400_000)
+    body, parent = archive_row(stale, now_ms - 400_000, now_ms - 399_000)
+    report = run_judge(tmp_path, all_good("validator1"), [("validator1", stale, body, parent)], monkeypatch)
+    assert report["nodes"]["validator1"]["verdict"] == "unhealthy"
+    assert report["nodes"]["validator1"]["reasons"][0] == "node_process_unobservable"
+    # Same staleness while the edge itself is unreachable stays unknown/critical by rule.
+    incidents = [i for i in all_good("validator1") if i["key"]["rule"] != "target_unreachable"]
+    incidents.append(incident("validator1", "target_unreachable", "bad", "open", "critical"))
+    report = run_judge(tmp_path, incidents, [("validator1", stale, body, parent)], monkeypatch)
+    assert report["nodes"]["validator1"]["verdict"] == "unhealthy"
+    assert report["nodes"]["validator1"]["reasons"][0] == "target_unreachable"
 
 
 def test_missing_archive_row_and_tampered_parent_are_refused(tmp_path, monkeypatch):
