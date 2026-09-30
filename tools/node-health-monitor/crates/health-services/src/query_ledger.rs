@@ -776,7 +776,13 @@ impl QueryLedger {
             )
             .map_err(failure)?;
         for (origin, entry) in &staged {
-            if entry.watermark < first_live {
+            if entry.watermark
+                < candidate
+                    .entries()
+                    .next()
+                    .map(|resident| resident.watermark)
+                    .unwrap_or(candidate.watermark())
+            {
                 continue;
             }
             let parent = serde_json::to_vec(origin).map_err(failure)?;
@@ -797,9 +803,46 @@ impl QueryLedger {
                 }
             } else {
                 let size = i64::try_from(parent.len()).map_err(failure)?;
-                if count >= 4096 || bytes.checked_add(size).is_none_or(|sum| sum > 8 * 1024 * 1024)
+                // The M-parent index has independent count and byte caps.
+                // Retire the oldest Q row and its parent in this transaction
+                // if the EvidenceStore byte cap has not already done so.
+                // An active fixed-W grant forbids that retirement, in which
+                // case the entire page rolls back and the cursor stays put.
+                while count >= 4096
+                    || bytes.checked_add(size).is_none_or(|sum| sum > 8 * 1024 * 1024)
                 {
-                    return Err("M parent retention full".into());
+                    let oldest = candidate.evict_oldest_after(pinned_w).map_err(str::to_owned)?;
+                    if oldest >= entry.watermark {
+                        return Err("M parent retention full".into());
+                    }
+                    let oldest_id: String = tx
+                        .query_row(
+                            "SELECT evidence_id FROM query_evidence WHERE store_seq=?1",
+                            [i64::try_from(oldest).map_err(failure)?],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(failure)?
+                        .ok_or("M parent eviction row missing")?;
+                    tx.execute(
+                        "DELETE FROM query_projection_origin WHERE query_evidence_id=?1",
+                        [&oldest_id],
+                    )
+                    .map_err(failure)?;
+                    tx.execute(
+                        "DELETE FROM query_evidence WHERE store_seq=?1",
+                        [i64::try_from(oldest).map_err(failure)?],
+                    )
+                    .map_err(failure)?;
+                    tx.execute("DELETE FROM query_origins WHERE origin_id NOT IN (SELECT origin_id FROM query_projection_origin)", [])
+                        .map_err(failure)?;
+                    (count, bytes) = tx
+                        .query_row(
+                            "SELECT COUNT(*), COALESCE(SUM(length(body)),0) FROM query_origins",
+                            [],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .map_err(failure)?;
                 }
                 tx.execute(
                     "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,?2,?3)",
