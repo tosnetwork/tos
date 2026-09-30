@@ -9,6 +9,7 @@ pub mod manager_query_source;
 #[cfg(feature = "mcp")]
 pub mod mcp_bridge;
 pub mod observability;
+pub mod provider;
 pub mod query_ledger;
 pub mod transit;
 pub mod witness;

@@ -525,7 +525,11 @@ async fn split_collector_identities_archive_validated_process_without_probe_rela
         &"a".repeat(64),
     )
     .unwrap();
-    assert_eq!(projected.len(), 1, "M archive did not preserve a queryable process origin");
+    // The projection now also carries the archived native consensus row; the
+    // process origin must still be exactly one queryable derived row.
+    let process_rows =
+        projected.iter().filter(|(_, record)| record.payload["component"] == "process").count();
+    assert_eq!(process_rows, 1, "M archive did not preserve a queryable process origin");
     let edge_probe_count: i64 = rusqlite::Connection::open(t.0.join("evidence.db"))
         .unwrap()
         .query_row("SELECT COUNT(*) FROM observations WHERE source='edge_probe'", [], |row| {

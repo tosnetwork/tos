@@ -21,5 +21,6 @@ pub mod witness;
 pub mod consensus_v2;
 pub mod native;
 pub mod native_facts;
+pub mod native_metrics;
 
 pub mod edge_snapshot;

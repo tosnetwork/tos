@@ -45,10 +45,24 @@ COMMON = {
  'diagnostic_phase':O(kind={'const':'diagnostic_phase'},record_type={'const':1},payload={'type':'string','pattern':'^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$'},monotonic_ns=U),
 }
 COMMON['anchor']={'oneOf':[R('block'),R('consensus'),R('storage_ack')]}
-COMMON['payload']={'oneOf':[R(x) for x in ['process','host_cgroup','native','native_core','unavailable','scalar','diagnostic','diagnostic_phase','block','consensus','storage_ack']]}
+# Typed native consensus projection, its fixed chain/storage views and the
+# read-only M verdict copy. All four are derived from retained M rows only.
+COMMON['count']=O(name=S(64),count=U)
+COMMON['sessions']=O(active=U,started=U,stop_started=U,stopped=N(U),stopping=U)
+COMMON['context']=O(session_id=H,scope_id=N(ALIAS),workchain=I(-2147483648,2147483647),shard=U,current_slot=N(I()),last_finalized_slot=N(I()),lifecycle=E('active','stopping'),stop_started_monotonic_ns=N(U))
+COMMON['action']=O(action=E('proposal','notarize_vote','finalize_vote','skip_vote'),accounting_complete=B,incomplete_reasons=A(S(64),16),phases=A(R('count'),8),outcomes=A(R('count'),8),failures=A(R('count'),16),pending=U,oldest_age_ns=N(U))
+COMMON['native_consensus']=O(kind={'const':'native_consensus'},source_version=E('native-core-v2','native-core-v3'),generation=U,network_id=H,instrumentation_complete=B,incomplete_reasons=A(S(64),16),repeated_requests=U,retired_requests=U,post_terminal_progress=U,sessions=R('sessions'),contexts=A(R('context'),8),actions=A(R('action'),4),pq_sign=N(R('pq_snapshot')),pq_verify=N(R('pq_snapshot')))
+COMMON['block_anchor']=O(workchain=I(-2147483648,2147483647),shard=U,seqno=I(),root_hash=H,file_hash=H)
+COMMON['chain_anchors']=O(kind={'const':'chain_anchors'},network_id=H,applied=R('block_anchor'),served=N(R('block_anchor')),applied_advanced_at=TIME,observed_at=TIME,applied_age_seconds=U,served_gap=N(U))
+COMMON['storage_capability']=O(supported=B,enabled=B,contract_valid=B,reason=N(S(128)))
+COMMON['storage_state']=O(kind={'const':'storage_state'},storage_commit_ack=R('storage_capability'),durable_finality_reason=N(S(128)),intent_storage_failures=U,signed_storage_failures=U,journal_unusable_failures=U)
+COMMON['health_verdict']=O(rule=ALIAS,scope_id=ALIAS,state=E('clear','open','suspended_unknown','recovering','closed_recovered'),severity=S(32),episode=U,acknowledged=B,active=B)
+COMMON['health_verdicts']=O(kind={'const':'health_verdicts'},source_id=ALIAS,evaluation_sequence=U,verdicts=A(R('health_verdict'),64))
+COMMON['health']=O(evidence_id=S(128),observed_at=TIME,evaluation_sequence=U,since_basis={'const':'query_import'},active_incidents=A(R('health_verdict'),64),rules_evaluated=I(0,64))
+COMMON['payload']={'oneOf':[R(x) for x in ['process','host_cgroup','native','native_core','unavailable','scalar','diagnostic','diagnostic_phase','block','consensus','storage_ack','native_consensus','chain_anchors','storage_state','health_verdicts']]}
 COMMON['source']=O(schema_version={'const':1},source_id=ALIAS,node_id=ALIAS,scope_id=ALIAS,process_epoch=S(128),source_epoch=S(128),source_version=S(96),generation=U,availability=E('available','disabled','unsupported','unauthorized','error','unknown'),observed_at=N(TIME),last_success_at=N(TIME),received_at=N(TIME),source_age_ms=N(I(0,9007199254740991)),clock_quality=E('valid','uncertain','invalid'),coverage=R('coverage'),content_hash=H,payload=R('payload'),quality=R('quality'))
 COMMON['evidence']=O(evidence_id=S(128),kind=E('observation','derived','event','change'),node_id=ALIAS,source_id=ALIAS,source_version=S(96),source_record_id=S(256),process_epoch=S(128),observed_at=N(TIME),received_at=TIME,clock_quality=E('valid','uncertain','invalid'),scope_id=ALIAS,payload=R('payload'),content_hash=H,quality=R('quality'),redacted={'const':True},parent_evidence_ids=A(S(128),32),derivation_version=N(S(96)))
-COMMON['component']=O(kind=E('process','host','chain','consensus','network','storage','index','gpu','telemetry','deployment'),sources=A(ALIAS,32),value=N(R('payload')),quality=R('quality'))
+COMMON['component']=O(kind=E('process','host','chain','consensus','network','storage','index','gpu','telemetry','deployment'),sources=A(ALIAS,32),value=N(R('payload')),quality=R('quality'),health=N(R('health')))
 COMMON['event']=O(event_id=S(128),evidence_id=S(128),source_id=ALIAS,source_record_id=S(256),process_epoch=S(128),observed_at=N(TIME),scope_id=ALIAS,kind=S(64),stage=N(S(64)),reason=N(S(256)),correlation_id=N(S(160)),excerpt=S(512),content_hash=H,quality=R('quality'))
 COMMON['change_field']=O(field=S(96),value=N(S(512)))
 COMMON['dimensions']=O(local_action=E('requested','signed','committed','applied','enqueued','failed','unknown'),network_observation=E('observed','not_observed_in_window','unavailable'),certificate_membership=E('included','not_in_this_certificate','not_checked','unavailable'),proof_verification=E('not_checked','reported_valid','locally_verified','invalid','unavailable'),local_persistence=E('commit_acknowledged','restart_verified_in_test','unknown'))

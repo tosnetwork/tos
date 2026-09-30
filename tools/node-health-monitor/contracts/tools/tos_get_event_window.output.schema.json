@@ -114,6 +114,80 @@
   ],
   "additionalProperties": false,
   "$defs": {
+    "action": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "proposal",
+            "notarize_vote",
+            "finalize_vote",
+            "skip_vote"
+          ]
+        },
+        "accounting_complete": {
+          "type": "boolean"
+        },
+        "incomplete_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 16
+        },
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          },
+          "maxItems": 8
+        },
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          },
+          "maxItems": 8
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          },
+          "maxItems": 16
+        },
+        "pending": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "oldest_age_ns": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "accounting_complete",
+        "incomplete_reasons",
+        "phases",
+        "outcomes",
+        "failures",
+        "pending",
+        "oldest_age_ns"
+      ],
+      "additionalProperties": false
+    },
     "block": {
       "type": "object",
       "properties": {
@@ -169,6 +243,42 @@
       ],
       "additionalProperties": false
     },
+    "block_anchor": {
+      "type": "object",
+      "properties": {
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash"
+      ],
+      "additionalProperties": false
+    },
     "budget": {
       "type": "object",
       "properties": {
@@ -193,6 +303,71 @@
         "remaining_calls",
         "remaining_bytes",
         "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "chain_anchors": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "chain_anchors"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "applied": {
+          "$ref": "#/$defs/block_anchor"
+        },
+        "served": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/block_anchor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "applied_advanced_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        },
+        "applied_age_seconds": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "served_gap": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "network_id",
+        "applied",
+        "served",
+        "applied_advanced_at",
+        "observed_at",
+        "applied_age_seconds",
+        "served_gap"
       ],
       "additionalProperties": false
     },
@@ -246,6 +421,109 @@
       ],
       "additionalProperties": false
     },
+    "context": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "current_slot": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_finalized_slot": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "active",
+            "stopping"
+          ]
+        },
+        "stop_started_monotonic_ns": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "scope_id",
+        "workchain",
+        "shard",
+        "current_slot",
+        "last_finalized_slot",
+        "lifecycle",
+        "stop_started_monotonic_ns"
+      ],
+      "additionalProperties": false
+    },
+    "count": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "count": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "name",
+        "count"
+      ],
+      "additionalProperties": false
+    },
     "coverage": {
       "type": "object",
       "properties": {
@@ -286,6 +564,27 @@
       ],
       "additionalProperties": false
     },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "diagnostic_fixture"
+        },
+        "record_type": {
+          "const": 1
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{4}$"
+        }
+      },
+      "required": [
+        "kind",
+        "record_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
     "diagnostic_phase": {
       "type": "object",
       "properties": {
@@ -310,27 +609,6 @@
         "record_type",
         "payload",
         "monotonic_ns"
-      ],
-      "additionalProperties": false
-    },
-    "diagnostic": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "const": "diagnostic_fixture"
-        },
-        "record_type": {
-          "const": 1
-        },
-        "payload": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{4}$"
-        }
-      },
-      "required": [
-        "kind",
-        "record_type",
-        "payload"
       ],
       "additionalProperties": false
     },
@@ -597,6 +875,85 @@
       ],
       "additionalProperties": false
     },
+    "health_verdict": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "clear",
+            "open",
+            "suspended_unknown",
+            "recovering",
+            "closed_recovered"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "episode": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rule",
+        "scope_id",
+        "state",
+        "severity",
+        "episode",
+        "acknowledged",
+        "active"
+      ],
+      "additionalProperties": false
+    },
+    "health_verdicts": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "health_verdicts"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "evaluation_sequence": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/health_verdict"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "kind",
+        "source_id",
+        "evaluation_sequence",
+        "verdicts"
+      ],
+      "additionalProperties": false
+    },
     "host_cgroup": {
       "type": "object",
       "properties": {
@@ -689,6 +1046,110 @@
         "generation",
         "openmetrics_hash",
         "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "native_consensus": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native_consensus"
+        },
+        "source_version": {
+          "type": "string",
+          "enum": [
+            "native-core-v2",
+            "native-core-v3"
+          ]
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "instrumentation_complete": {
+          "type": "boolean"
+        },
+        "incomplete_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 16
+        },
+        "repeated_requests": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "retired_requests": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "post_terminal_progress": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "sessions": {
+          "$ref": "#/$defs/sessions"
+        },
+        "contexts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/context"
+          },
+          "maxItems": 8
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action"
+          },
+          "maxItems": 4
+        },
+        "pq_sign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pq_verify": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "source_version",
+        "generation",
+        "network_id",
+        "instrumentation_complete",
+        "incomplete_reasons",
+        "repeated_requests",
+        "retired_requests",
+        "post_terminal_progress",
+        "sessions",
+        "contexts",
+        "actions",
+        "pq_sign",
+        "pq_verify"
       ],
       "additionalProperties": false
     },
@@ -799,7 +1260,9 @@
         {
           "$ref": "#/$defs/diagnostic"
         },
-        {"$ref": "#/$defs/diagnostic_phase"},
+        {
+          "$ref": "#/$defs/diagnostic_phase"
+        },
         {
           "$ref": "#/$defs/block"
         },
@@ -808,6 +1271,18 @@
         },
         {
           "$ref": "#/$defs/storage_ack"
+        },
+        {
+          "$ref": "#/$defs/native_consensus"
+        },
+        {
+          "$ref": "#/$defs/chain_anchors"
+        },
+        {
+          "$ref": "#/$defs/storage_state"
+        },
+        {
+          "$ref": "#/$defs/health_verdicts"
         }
       ]
     },
@@ -1027,6 +1502,51 @@
       ],
       "additionalProperties": false
     },
+    "sessions": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "started": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "stop_started": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "stopped": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopping": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "active",
+        "started",
+        "stop_started",
+        "stopped",
+        "stopping"
+      ],
+      "additionalProperties": false
+    },
     "storage_ack": {
       "type": "object",
       "properties": {
@@ -1071,6 +1591,84 @@
         "source_epoch",
         "completion_sequence",
         "durability"
+      ],
+      "additionalProperties": false
+    },
+    "storage_capability": {
+      "type": "object",
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "contract_valid": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "supported",
+        "enabled",
+        "contract_valid",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "storage_state": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "storage_state"
+        },
+        "storage_commit_ack": {
+          "$ref": "#/$defs/storage_capability"
+        },
+        "durable_finality_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intent_storage_failures": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "signed_storage_failures": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "journal_unusable_failures": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "kind",
+        "storage_commit_ack",
+        "durable_finality_reason",
+        "intent_storage_failures",
+        "signed_storage_failures",
+        "journal_unusable_failures"
       ],
       "additionalProperties": false
     },
