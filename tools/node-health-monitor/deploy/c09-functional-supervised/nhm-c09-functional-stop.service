@@ -3,4 +3,11 @@ Description=Stop C09 functional sampler at Q-aware window end
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/systemctl --user stop nhm-c09-functional.timer
+WorkingDirectory=/home/tomi/nhm-supervision/c09-local/runtime/functional-soak
+UMask=0077
+NoNewPrivileges=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=15s
+ExecStartPre=/usr/bin/sha256sum --check --status /home/tomi/nhm-supervision/c09-local/runtime/functional-soak/SCRIPT.sha256
+ExecStart=/usr/bin/systemctl --user stop nhm-c09-functional.timer nhm-c09-functional.service
+ExecStartPost=/usr/bin/python3 /home/tomi/nhm-supervision/c09-local/runtime/functional-soak/write-c09-functional-stop-receipt.py --runtime-dir /home/tomi/nhm-supervision/c09-local/runtime/functional-soak --q-ledger /home/tomi/nhm-supervision/c09-local/runtime/query/query-ledger.db --baseline-file /home/tomi/nhm-supervision/c09-local/runtime/functional-soak/baseline.private.json --expected-baseline-sha256 25c0458888a275bcf9568bc1fc53d914e9d5a3901932b0840444d99a3ea3382f --window-end-utc 2026-10-03T01:10:00Z

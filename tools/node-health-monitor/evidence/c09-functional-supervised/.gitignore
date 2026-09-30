@@ -5,3 +5,5 @@ offline-tests.raw.log
 isolated-socket.raw.json
 units-verify.raw.log
 source-check.raw.log
+stop-receipt-tests.raw.log
+runtime-layout.raw.log

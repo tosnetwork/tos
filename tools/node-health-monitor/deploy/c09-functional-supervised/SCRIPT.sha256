@@ -1,1 +1,2 @@
-9bd72cb805a660442049791a3deeebe933f395f0c767c422624d699f85ebc1e3  tools/node-health-monitor/scripts/sample-query-functional.py
+9bd72cb805a660442049791a3deeebe933f395f0c767c422624d699f85ebc1e3  /home/tomi/nhm-supervision/c09-local/runtime/functional-soak/sample-query-functional.py
+2ea2eb0b7b5b7233ea6628ccd3c211e908f82945606729b3f97f0613de3f16d7  /home/tomi/nhm-supervision/c09-local/runtime/functional-soak/write-c09-functional-stop-receipt.py

@@ -83,6 +83,14 @@ database or lower ledger count is an explicit failure.
 ## Supervised failure latch
 
 The candidate service and timer are in `deploy/c09-functional-supervised/`.
+They execute checksum-pinned copies of the sampler and stop-receipt scripts
+from the dedicated same-UID 0700
+`/home/tomi/nhm-supervision/c09-local/runtime/functional-soak/` directory.
+The 72-hour sample log, review receipt, inflight marker, frozen baseline and
+private stop receipt reside there, outside Git. A runtime `SCRIPT.sha256`
+pins both script copies and is checked before either service runs. The owner
+must verify file ownership, modes, digests and unchanged unit paths before
+enablement; no candidate unit is installed or active as part of this branch.
 Before a grant POST the script fsyncs a same-UID 0600 `.inflight` marker and
 its private parent directory. It removes that marker only after a `pass` row
 is fsynced and every grant is durably revoked. A previous row whose
@@ -103,7 +111,10 @@ issuing a grant.
 The candidate timer waits five minutes after service deactivation, the
 script preserves its 300-second same-boot spacing, and a separate stop timer
 targets 2026-10-03 01:10 UTC. The script also refuses a grant within 45
-seconds of that boundary. A failed unit triggers only a fixed local-journal
+seconds of that boundary. The stop service also stops any active functional
+service and writes a private, one-time stop receipt with timer/service states,
+Q ledger identity, log/marker digests and last-row status; it does not assert
+72-hour acceptance. A failed sampling unit triggers only a fixed local-journal
 alert; external paging and timer enablement remain the owner's decisions.
 
 Each JSONL row separately records `fixed_grant_query_status` and

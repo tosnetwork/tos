@@ -2,9 +2,39 @@
 
 These are candidate **user** systemd units. The owner controls installation and
 enablement. No unit in this directory has been copied to the user manager or
-enabled by this branch. The service executes the checked Python source from
-this separate worktree against the existing private local Q/M sockets; it does
-not launch or restart QueryService, collectors, business nodes, or a model API.
+enabled by this branch. The service executes a checksum-pinned Python copy in
+`/home/tomi/nhm-supervision/c09-local/runtime/functional-soak/`, outside the
+disposable Git worktree, against the existing private local Q/M sockets. It
+does not launch or restart QueryService, collectors, business nodes, or a model
+API.
+
+## Private runtime setup and ownership
+
+The dedicated `functional-soak/` directory is owned by `tomi:tomi` and mode
+0700. It currently contains mode-0500 copies of the exact candidate sampler
+and stop-receipt scripts, a mode-0400 `SCRIPT.sha256` manifest, and a mode-0600
+copy of the pinned one-shot Q baseline. Both script hashes in the manifest
+match the frozen files; `ExecStartPre` checks them before either unit runs.
+The manifest in this candidate is the installation source and must be copied
+byte-for-byte to that runtime directory before enablement. If source changes,
+review the successor and install its scripts and manifest together while the
+functional timer is stopped; never update a running window in place.
+
+Before owner-controlled enablement, check `stat -c '%a %U:%G %n'` on the
+directory and four frozen files, run `sha256sum --check` against the **runtime**
+`SCRIPT.sha256`, and verify the baseline digest
+`25c0458888a275bcf9568bc1fc53d914e9d5a3901932b0840444d99a3ea3382f`.
+If rebuilding the directory, use a same-UID mode-0700 directory, copy the
+reviewed scripts as mode 0500, manifest as 0400, and baseline as 0600; fsync
+each file and the directory. Refuse to overwrite an existing sample log,
+review receipt, `.inflight`, or stop receipt. The operator and service must run
+under the same UID. The operator/service token files remain in the existing
+private runtime `config/` directory; token values are never copied here.
+
+The 72-hour `samples.private.jsonl`, `review.private.json`, its `.inflight`
+marker, and `stop-receipt.private.json` live only in this runtime directory.
+The sampler creates sample log and marker mode 0600; an operator creates any
+review receipt mode 0600. Do not put these files or their contents in Git.
 
 ## Exact schedule and limits
 
@@ -29,17 +59,16 @@ match the pinned files. The script refuses growth above 1,024 grants, 32 MiB
 grant bodies, or 3,072 attempts from that baseline, reserving the next slot's
 worst-case cost before issuing a grant.
 
-The private sample log directory is
-`evidence/c09-functional-supervised/` (same UID, mode 0700). Each JSONL row is
+The private sample log directory is the dedicated runtime `functional-soak/`
+directory (same UID, mode 0700). Each JSONL row is
 at most 1,024 bytes; the file stops at 4 MiB. A full 72 hours at five-minute
 cadence has at most 864 ticks and 936 grants including hourly controls, before
 accounting for the already-used one-shot or any unrelated Q activity. The
 script's functional alarm is 22 seconds, each control/revoke call 3 seconds,
 each MCP call 5 seconds, and SQLite busy timeout 0.5 seconds. Token values,
 run IDs, evidence IDs, and process payload never enter the log or journal.
-Git does not preserve directory modes: the owner must verify this directory
-is same-UID mode 0700 before installation. A wrong mode makes the script
-refuse before any grant.
+The owner must verify this directory is same-UID mode 0700 before enablement.
+A wrong mode makes the script refuse before any grant.
 
 ## Failure latch and alert
 
@@ -111,9 +140,20 @@ reset procedure.
 
 ## Review boundary
 
-The source is pinned by `SCRIPT.sha256` and checked by `ExecStartPre`; the
-binary SHA and baseline SHA are pinned again by the script arguments. The
-candidate unit files, source, latch tests, and an isolated disposable Q/M
-control must pass source review before the owner installs or enables either
-timer. Enablement is the owner's separate action. This work does not claim
-C09 or 72-hour acceptance.
+At 2026-10-03 01:10:00 UTC the separate stop timer calls a service that stops
+both the functional timer and functional service, then writes a private,
+single-write `stop-receipt.private.json` after checking they are no longer
+active. That receipt records the configured window end, actual UTC receipt
+time, timer/service states, Q ledger device/inode and baseline identity match,
+sample-log byte count/SHA-256, last row digest/status/highwater, and marker
+presence/digest. It excludes token values, run IDs, grant bodies, and sample
+payloads. A missing receipt or active timer/service is a stop-control failure;
+the receipt itself explicitly makes no 72-hour or C09 acceptance claim. If a
+grant was interrupted, the marker stays for the manual procedure above.
+
+The source is pinned by the runtime `SCRIPT.sha256` and checked by
+`ExecStartPre`; the binary SHA and baseline SHA are pinned again by the
+sampler arguments. The candidate unit files, both scripts, latch and stop
+receipt tests, and an isolated disposable Q/M control must pass source review
+before the owner installs or enables either timer. Enablement is the owner's
+separate action. This work does not claim C09 or 72-hour acceptance.
