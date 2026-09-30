@@ -28,3 +28,25 @@ Raw SHA-256:
 | `raw/late-publication/third-row-and-cursor-failure.log` | `9c708fe3ce84aa36e711f9dc4e1d9fe102aff25db0dd0a75d7e037d7fb6c3938` |
 
 This is a cost and lock-overlap witness, not C09 acceptance. Cursor/global-W integrity and underlying global-row scan work are separate open review items; no production deployment or 72-hour claim follows from these timings.
+
+## Source-bound companion controls
+
+At restored source commit `4b3cb7526d05dbe20802b1dfc95bdf7efe622104` (which contains document-only `af74eca30be3ab02f0e6418af86b6bdb6f655d7d` in its ancestry), the `manager_query_source` test target ran natural 0: 20 passed and two explicitly opt-in cost tests ignored, 8.57 s. Three focused controls then ran on the same source without edits:
+
+* `diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup`: 1/1 natural 0. A legitimate diagnostic-only prefix carries the global-row anchor; a forged no-anchor or old-anchor cursor over a process row is refused on restart.
+* `unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap`: 1/1 natural 0. The 4,097-diagnostic control exercises bounded global-`store_seq` paging and its SQLite query plan, rather than a `LIMIT` on filtered process results.
+* `tests::eight_idle_control_connections_are_bounded_and_expire` in the real `tos-observability` Unix listener: 1/1 natural 0, 5.01 s. This proves the unchanged five-second connection lifetime for eight idle connections. It is **separate** from the live M importer overlap test above, which calls the actual control router in-process; a full socket/import overlap is not claimed.
+
+The first socket test invocation added `--exact` without the `tests::` prefix and ran **zero tests**; its log is retained but is not evidence. The corrected invocation removed `--exact` and ran one test.
+
+Source SHA-256 for these controls: `manager_query_source.rs` `b31218e1d6b25a670d8eb75942631d48efbfad4de0a25328cb45689da7438f58`; `query_ledger.rs` `c329dcfa073b7c0c95b1bba2e37dbad50716b6ca4833b95bf29dff66be2efccb`; `observability.rs` `3945b6dc34da71589b4826dac1901e77afe0b19e908a2e417c5c6f17dae61687`; `tos-observability.rs` `548e1fad19abb1a0b6a10753ecbba17093853f6e7bcde10bee842cc43a7187eb`; test `manager_query_source.rs` `349d7f18b0a5c51b42d2f4e2a87badc285fddf0d7edd8b798327b106dcd6b2b2`.
+
+| Raw log | SHA-256 | Result |
+| --- | --- | --- |
+| `raw/source-bound-closure/anchor-restart.log` | `8386c69162e1c9d04092b3926938ad72ae5adcd37055c819fc8d7e0feac6e467` | 1/1 passed |
+| `raw/source-bound-closure/diagnostic-heavy-global-page.log` | `d62aae2860fc10b2f1d3029804ecc2eeb64461376ac9253741f8d68499b899cb` | 1/1 passed |
+| `raw/source-bound-closure/control-socket-five-second-actual.log` | `69ff3e56566c7ea8037b5df4f801eae42baafbd085112f28eb68d7b5575286bd` | 1/1 passed |
+| `raw/source-bound-closure/manager-query-source-target.log` | `d058db7b7cd875bde3a01185320d81793792d29886adcceb07fe95a2686946c5` | 20 passed, 2 opt-in ignored |
+| `raw/source-bound-closure/control-socket-five-second.log` | `29681983afb1ba2cd7b17577b0650a2f0fe695022da8cf677920f0060ce25fe0` | 0 tests; not counted |
+
+These controls establish current source behavior in isolation, not sustained live-broker availability or stage acceptance. Do not promote the faster disposable-ledger page timings to deployed performance evidence.
