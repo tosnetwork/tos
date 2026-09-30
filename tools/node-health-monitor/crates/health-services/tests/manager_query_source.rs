@@ -14,7 +14,7 @@ use tos_health_core::{
     wire::U64,
 };
 use tos_health_services::{
-    durable::{DurableEvidence, EvidenceDb, EvidenceRow},
+    durable::{DurableEvidence, EvidenceDb},
     fixed_package::freeze_process_package,
     manager_query_source::{
         project_process, read_process_projection, read_process_projection_page,
@@ -495,86 +495,6 @@ fn row(epoch: &str) -> DurableEvidence {
             redacted: true,
         },
     }
-}
-
-#[test]
-fn parent_count_capacity_resumes_after_fixed_grant_expires() {
-    let directory = std::env::temp_dir().join(format!(
-        "nhm-m-parent-count-{}-{}",
-        std::process::id(),
-        tos_health_services::hex(&random_token().unwrap())
-    ));
-    std::fs::create_dir(&directory).unwrap();
-    let ledger_path = directory.join("query.sqlite");
-    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
-    // This oversized *test-only* store isolates the parent's 4096-row cap
-    // from the production EvidenceStore's stricter 8 MiB resident bound.
-    let mut store = EvidenceStore::new(32 * 1024 * 1024);
-    let projected = |index: u64| {
-        let value = row(&format!("epoch-{index}"));
-        let mut canonical = value.clone();
-        canonical.record.received_at_ms = 0;
-        let origin = EvidenceRow {
-            store_seq: U64(index),
-            evidence_id: format!("{:x}", Sha256::digest(serde_json::to_vec(&canonical).unwrap())),
-            evidence: value,
-        };
-        let record = project_process(&origin).unwrap().unwrap();
-        (origin, record)
-    };
-    assert!(serde_json::to_vec(&projected(1).0).unwrap().len() * 4096 < 8 * 1024 * 1024);
-    ledger.insert_projection_page(&mut store, &[projected(1)]).unwrap();
-    let now = tos_health_services::query_ledger::boot_millis().unwrap();
-    let grant = Grant::new(
-        "00000000-0000-4000-8000-000000000001".into(),
-        "aura".into(),
-        "a".repeat(64),
-        &[b't'; 32],
-        BTreeSet::from(["v1".into()]),
-        BTreeSet::from(["node".into()]),
-        1_000_000_000,
-        1_000_001_000,
-        now,
-        1,
-    )
-    .unwrap();
-    ledger.create(&grant, now).unwrap();
-    for start in (2..=4096).step_by(256) {
-        let end = (start + 255).min(4096);
-        let page = (start..=end).map(projected).collect::<Vec<_>>();
-        ledger.insert_projection_page(&mut store, &page).unwrap();
-    }
-    assert_eq!(store.entries().count(), 4096);
-    assert!(store.resident_bytes() < 32 * 1024 * 1024);
-    assert_eq!(ledger.retained_origin_rows().unwrap().len(), 4096);
-    let next = projected(4097);
-    assert_eq!(
-        ledger.insert_projection_page(&mut store, std::slice::from_ref(&next)).unwrap_err(),
-        "active grant evidence retention"
-    );
-    assert_eq!(store.watermark(), 4096);
-    assert_eq!(store.entries().next().unwrap().watermark, 1);
-    assert_eq!(ledger.retained_origin_rows().unwrap().len(), 4096);
-    // Expiry, like a revoke, removes the fixed-W pin. A retry must then
-    // advance without raising either independent capacity limit.
-    let sql = rusqlite::Connection::open(&ledger_path).unwrap();
-    sql.execute("UPDATE query_grants SET expires_ms=0 WHERE run_id=?1", [&grant.run_id]).unwrap();
-    drop(sql);
-    ledger.insert_projection_page(&mut store, &[next]).unwrap();
-    assert_eq!(store.watermark(), 4097);
-    assert_eq!(store.entries().next().unwrap().watermark, 2);
-    assert_eq!(ledger.retained_origin_rows().unwrap().len(), 4096);
-    ledger.insert_projection_page(&mut store, &[projected(4098)]).unwrap();
-    assert_eq!(store.watermark(), 4098);
-    assert_eq!(store.entries().next().unwrap().watermark, 3);
-    assert_eq!(ledger.retained_origin_rows().unwrap().len(), 4096);
-    drop(ledger);
-    let ledger = QueryLedger::open(&ledger_path).unwrap();
-    let restored = ledger.load_evidence(32 * 1024 * 1024).unwrap();
-    assert_eq!(restored.watermark(), 4098);
-    assert_eq!(restored.entries().next().unwrap().watermark, 3);
-    drop(ledger);
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

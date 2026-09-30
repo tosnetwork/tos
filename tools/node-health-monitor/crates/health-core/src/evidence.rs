@@ -135,17 +135,6 @@ impl EvidenceStore {
             self.bytes -= bytes;
         }
     }
-    /// Explicitly retire the oldest resident row only when no fixed-watermark
-    /// reader can still include it. The caller commits any durable index
-    /// removal before publishing this candidate store.
-    pub fn evict_oldest_after(&mut self, pinned_watermark: u64) -> Result<u64, &'static str> {
-        let oldest = self.records.front().ok_or("no evidence to evict")?.0.watermark;
-        if oldest <= pinned_watermark {
-            return Err("active grant evidence retention");
-        }
-        self.evict_one();
-        Ok(oldest)
-    }
     pub fn expire_before(&mut self, received_ms: i64) {
         // Insertion order is independent of the source wall clock.
         let expired: Vec<_> = self
