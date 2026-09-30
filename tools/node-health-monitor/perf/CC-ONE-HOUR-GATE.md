@@ -60,3 +60,29 @@ on a live chain for all 30 minutes (`at_head_throughout`). Conclusive only if
 the mean difference exceeds the between-round spread; reported as measured.
 While the edge is stopped the monitor correctly reports validator4 as
 unobservable; that is a drill, not a fault.
+
+### Result (2026-09-30, validator4, engine `…-db5cdeaa53103994`, chain ~2.4 blocks/s)
+
+| Round | C: edge attached | A: edge detached | C − A |
+| --- | --- | --- | --- |
+| 1 | 1310.6 s | 1227.3 s | +83.2 s |
+| 2 | 1313.0 s | 1312.1 s | +1.0 s |
+| 3 | 1316.0 s | 1341.8 s | −25.8 s |
+
+Mean C 1313.2 s vs A 1293.7 s per 30-minute window: **+19.5 s (+1.5 %)**,
+per-round differences +83.2 / +1.0 / −25.8 s, spread 109 s. Every window was
+verified against the one-minute soak samples: validator4 within 5 blocks of
+the highest seqno any node reported at every sample, 4220–4388 blocks per
+window. By the frozen rule the result is **inconclusive**: the run-to-run
+noise of a validating node (about ±4 % between windows of the same profile)
+is several times any edge-serving cost, and one round even ran cheaper with
+the edge attached. What the three rounds do establish is a ceiling: the
+serving cost is not distinguishable from zero at 30-minute resolution, and
+the +1.5 % mean is dominated by the first round's outlier. The R4 1 % bound
+cannot be proven on this host with this method; a longer series or a
+lower-noise host would be needed, and the restart-based flags-off comparison
+stays at its two inconclusive rounds. Validator4's memory grew from 6.5 to
+10.6 GiB across the rounds regardless of profile (see the evidence note on
+the missing key block). Raw records: `ac-rounds-edge-20260930T*.jsonl` in
+the private judge state directory; the 10-hour soak record carries the
+per-minute seqno and memory series.

@@ -130,6 +130,21 @@ without a key block saves nothing). One config change or a validator-set
 rotation would create the key block. This is a node/network property, not a
 monitor defect, but it changes what an operator can do with the network.
 
+### 8b. Same root, second symptom: validators grow ~1.4 GiB/h
+
+The soak samplers show every validator's cgroup memory growing linearly since
+genesis (1.85 GiB at 11:34, 3.25 at 12:34, 7.7 at 16:30 UTC; observers stay
+near 1 GiB). Validator garbage collection advances with persistent states,
+and there is none, so nothing is ever released. At 16 GiB the four validators
+would have been killed together around 22:00 UTC and replayed for hours. At
+16:35 UTC I raised the ceiling to 22 GiB at runtime for the four validator
+units (`systemctl set-property --runtime`, host has 125 GiB; the installed
+unit files stay at 16 GiB), which buys until roughly 01:30 UTC. The monitor's
+`memory_growth_unexplained` rule is bound at 4 GiB per 15 minutes and does
+not see a 0.35 GiB/15 min trend; the trend is visible in the soak record and
+in the process samples Q serves. The durable fix is the key block (§8); the
+threshold is an owner decision.
+
 ## 9. Derived epochs bound to the deriving run (commit `baf4dfba8`)
 
 Redeploying the pollers and the witness comparer quarantined `native_facts`
@@ -156,6 +171,19 @@ usable; proven capability → usable. Deployed to the six pollers at 15:33 UTC:
 `storage_ack_failure` good on all six within one hold. The publisher still
 reports its coverage gap; that is what `diagnostic_coverage_reduced` is for.
 
+## 10b. Fourth defect: the AI fact expired between model turns (commit below)
+
+The doctor's `ai_lane` and `rule_inputs_usable` gates failed at 18:44 UTC
+with `ai_unavailable` **unknown** although the model lane had been producing
+accepted explanations every ten minutes since 17:46. The catalog bounds a
+source ttl at 180 s (an attempt to set 900 s made M refuse the inventory,
+`invalid source catalog`; the previous revision was restored within a
+minute), while the fact was posted only by the ten-minute model turn, so it
+was fresh for three minutes in ten. The minute judgement now posts the fact
+from the model journal (accepted and younger than 15 min → 1), the model run
+no longer posts it (one writer, no generation race), and the unit files are
+updated. `ai_unavailable` read good on the next minute.
+
 ## 10. Performance rounds and soak
 
 Design re-frozen in `perf/CC-ONE-HOUR-GATE.md` ("Conclusive rounds,
@@ -166,7 +194,18 @@ day. Soak: `soak-long` sampler, 10 hours from 14:33 UTC, one record per
 minute with node/edge/M/Q accounting, the verdict, observer lag and M's
 retention counters, so the record shows the first deleting pass.
 
-Results are appended below when the runs complete.
+Results:
+
+- **A/C rounds** (15:28–18:40 UTC, six 30-minute windows, all verified at the
+  head): C 1310.6 / 1313.0 / 1316.0 s, A 1227.3 / 1312.1 / 1341.8 s; mean
+  difference +19.5 s (+1.5 %) with a 109 s spread → inconclusive by the frozen
+  rule; the edge-serving cost is below the ~±4 % window-to-window noise of a
+  validating node. Full table and reading in `perf/CC-ONE-HOUR-GATE.md`.
+- **Retention crossed live**: the first deleting pass ran at ~17:05 UTC; by
+  18:42 M reported 51 passes, 9,822 observation rows deleted, oldest retained
+  row 6.06 h, 0 failed passes, 0 quarantined sources, evidence DB 179 MiB.
+  Q kept serving throughout (retained parents inside the 2 h floor).
+- **Soak**: running to 00:33 UTC; final numbers in §11.
 
 ## 11. Final state
 

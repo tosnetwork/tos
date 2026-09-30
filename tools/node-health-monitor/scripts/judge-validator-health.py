@@ -387,6 +387,34 @@ def validate_diagnosis(schema, diagnosis, report):
 AI_FACT_EPOCH_MAX = 128
 
 
+def ai_available_from_journal(path, max_age_s, now):
+    """Whether the model lane produced an accepted explanation recently: the
+    last line of the model journal must be an accepted result younger than
+    `max_age_s`. Missing, unreadable or malformed journals mean unavailable.
+    The judge posts this every minute, so the fact's freshness follows the
+    minute timer while the model turn keeps its own bounded period."""
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 65536))
+            lines = stream.read().splitlines()
+    except OSError:
+        return False
+    if not lines:
+        return False
+    try:
+        record = json.loads(lines[-1])
+        checked = dt.datetime.fromisoformat(record["checked_at"])
+        if checked.tzinfo is None:
+            return False
+        result = record.get("model", {}).get("result")
+    except (ValueError, KeyError, AttributeError, TypeError):
+        return False
+    age = (now - checked).total_seconds()
+    return result == "accepted" and 0 <= age <= max_age_s
+
+
 def post_ai_fact(args, available):
     """One `ai_optional` fact frame per run: 1 when the model turn was accepted,
     0 otherwise. Epoch and generation persist in a private state file so the
@@ -454,6 +482,9 @@ def main():
     parser.add_argument("--ai-fact-token-file", help="M ingest token for --ai-fact-url")
     parser.add_argument("--ai-fact-state", help="private file holding the ai_optional epoch and generation")
     parser.add_argument("--ai-fact-node", default="monitor", help="node alias the ai_optional fact is filed under")
+    parser.add_argument("--ai-fact-journal", help="model journal the availability fact is judged from when this run has no model turn")
+    parser.add_argument("--ai-fact-max-age", type=int, default=900,
+                        help="seconds an accepted model explanation counts as available (default 900)")
     args = parser.parse_args()
     if not HEX.match(args.network_id):
         parser.error("network id must be 64 lowercase hex characters")
@@ -467,11 +498,18 @@ def main():
     ai_args = (args.ai_fact_url, args.ai_fact_token_file, args.ai_fact_state)
     if any(ai_args) and not all(ai_args):
         parser.error("--ai-fact-url, --ai-fact-token-file and --ai-fact-state go together")
+    if args.ai_fact_journal and all(model_args):
+        parser.error("--ai-fact-journal is for the run without a model turn; the model run posts its own result")
+    if args.ai_fact_max_age <= 0:
+        parser.error("--ai-fact-max-age must be positive")
     report = judge(args)
     if all(model_args):
         report["model"] = model_explanation(args, report)
         if args.ai_fact_url:
             report["ai_fact"] = post_ai_fact(args, report["model"].get("result") == "accepted")
+    elif args.ai_fact_url and args.ai_fact_journal:
+        available = ai_available_from_journal(args.ai_fact_journal, args.ai_fact_max_age, utc_now())
+        report["ai_fact"] = post_ai_fact(args, available)
     line = canonical(report)
     if args.journal:
         path = Path(args.journal)

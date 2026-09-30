@@ -176,12 +176,16 @@ echoed as the receipt M verifies, every delivery appended to a private journal.
 M's `receiver` config points at it; the doctor's `notification_receiver` gate
 reads M's last accepted receipt.
 
-The judgement's model turn posts an `ai_optional` availability fact for the
-`monitor` node after every attempt (`--ai-fact-url`, `--ai-fact-token-file`,
-`--ai-fact-state`): `1` when a validated explanation was produced, `0`
-otherwise, epoch and generation persisted in the state file. A silent model
-lane therefore opens `ai_unavailable` on the `monitor` target instead of
-vanishing; the deterministic verdict never depends on it.
+The `ai_optional` availability fact for the `monitor` node is posted by the
+**minute** judgement run (`--ai-fact-url`, `--ai-fact-token-file`,
+`--ai-fact-state`, `--ai-fact-journal`, `--ai-fact-max-age 900`): `1` while
+the last line of the model journal is an accepted explanation younger than
+the maximum age, `0` otherwise; epoch and generation persist in the state
+file and there is exactly one writer. Source ttls are bounded at 180 s by
+the catalog, so a fact posted only by the ten-minute model turn would expire
+between turns (it did, and read as unknown for seven minutes in ten). A silent
+model lane therefore opens `ai_unavailable` on the `monitor` target instead
+of vanishing; the deterministic verdict never depends on it.
 
 The engine records `rocksdb.is-write-stopped` after every synchronous commit
 into a process-wide storage health (`td::storage_health`), the exporter

@@ -337,3 +337,27 @@ def test_anthropic_provider_sends_key_only_in_header_and_refuses_redirects(tmp_p
             raise judge.urllib.error.HTTPError(request.full_url, 302, "redirect refused", {}, None)
     monkeypatch.setattr(judge.urllib.request, "build_opener", lambda *handlers: Redirecting())
     assert judge.model_explanation(Args, report)["error"] == "http_302"
+
+
+def test_ai_availability_from_the_model_journal(tmp_path):
+    import datetime as dt
+    pass
+    now = dt.datetime(2026, 9, 30, 18, 0, tzinfo=dt.timezone.utc)
+    journal = tmp_path / "model.jsonl"
+    assert judge.ai_available_from_journal(journal, 900, now) is False  # missing
+    journal.write_text("")
+    assert judge.ai_available_from_journal(journal, 900, now) is False  # empty
+    fresh = {"checked_at": "2026-09-30T17:55:00+00:00", "model": {"result": "accepted"}}
+    stale = {"checked_at": "2026-09-30T17:30:00+00:00", "model": {"result": "accepted"}}
+    refused = {"checked_at": "2026-09-30T17:59:00+00:00", "model": {"result": "refused"}}
+    journal.write_text(json.dumps(stale) + "\n" + json.dumps(fresh) + "\n")
+    assert judge.ai_available_from_journal(journal, 900, now) is True
+    journal.write_text(json.dumps(fresh) + "\n" + json.dumps(stale) + "\n")
+    assert judge.ai_available_from_journal(journal, 900, now) is False  # last line rules
+    journal.write_text(json.dumps(refused) + "\n")
+    assert judge.ai_available_from_journal(journal, 900, now) is False
+    journal.write_text("not json\n")
+    assert judge.ai_available_from_journal(journal, 900, now) is False
+    future = {"checked_at": "2026-09-30T18:05:00+00:00", "model": {"result": "accepted"}}
+    journal.write_text(json.dumps(future) + "\n")
+    assert judge.ai_available_from_journal(journal, 900, now) is False  # a future clock is not fresh
