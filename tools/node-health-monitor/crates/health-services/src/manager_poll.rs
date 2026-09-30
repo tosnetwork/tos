@@ -427,6 +427,10 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
             let chain = secondary_frame(&frame, "native_chain", FactId::AppliedServedGap, gap);
             post_frame(&manager_client, &config.manager_url, &manager, &chain).await;
         }
+        if let Some(age) = tos_health_core::native_facts::key_block_age_ms(&record) {
+            let key = secondary_frame(&frame, "native_key_block", FactId::KeyBlockAgeMs, age);
+            post_frame(&manager_client, &config.manager_url, &manager, &key).await;
+        }
         let drops = tos_health_core::native_facts::diagnostic_drops(&record);
         let diagnostic = secondary_frame(&frame, "diagnostic", FactId::DiagnosticDrops, drops);
         post_frame(&manager_client, &config.manager_url, &manager, &diagnostic).await;

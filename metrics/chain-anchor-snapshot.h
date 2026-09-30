@@ -17,6 +17,10 @@ struct ChainAnchorSnapshot {
   bool have_served = false;
   std::uint64_t applied_advanced_unix_seconds = 0;
   std::uint64_t observed_unix_seconds = 0;
+  // Last known key block: the checkpoint persistent states and garbage
+  // collection follow. Seqno 0 with the zero state's time means none yet.
+  std::uint32_t key_block_seqno = 0;
+  std::uint64_t key_block_unix_seconds = 0;
 };
 
 // One manager actor writes; exporter readers retry a bounded number of times.
@@ -29,6 +33,8 @@ struct ChainAnchorState {
     std::atomic<std::uint32_t> seqno{0};
   } applied, served;
   std::atomic<std::uint64_t> sequence{0}, observed_unix_seconds{0}, applied_advanced_unix_seconds{0};
+  std::atomic<std::uint64_t> key_block_unix_seconds{0};
+  std::atomic<std::uint32_t> key_block_seqno{0};
   std::atomic<bool> have_served{false};
   std::atomic_flag writing = ATOMIC_FLAG_INIT;
 
@@ -56,6 +62,8 @@ struct ChainAnchorState {
     have_served.store(value.have_served, std::memory_order_relaxed);
     applied_advanced_unix_seconds.store(value.applied_advanced_unix_seconds, std::memory_order_relaxed);
     observed_unix_seconds.store(value.observed_unix_seconds, std::memory_order_relaxed);
+    key_block_seqno.store(value.key_block_seqno, std::memory_order_relaxed);
+    key_block_unix_seconds.store(value.key_block_unix_seconds, std::memory_order_relaxed);
     sequence.fetch_add(1, std::memory_order_release);
     writing.clear(std::memory_order_release);
   }
@@ -71,6 +79,8 @@ struct ChainAnchorState {
       value.have_served = have_served.load(std::memory_order_relaxed);
       value.applied_advanced_unix_seconds = applied_advanced_unix_seconds.load(std::memory_order_relaxed);
       value.observed_unix_seconds = observed_unix_seconds.load(std::memory_order_relaxed);
+      value.key_block_seqno = key_block_seqno.load(std::memory_order_relaxed);
+      value.key_block_unix_seconds = key_block_unix_seconds.load(std::memory_order_relaxed);
       if (before == sequence.load(std::memory_order_acquire)) return value;
     }
     return std::nullopt;

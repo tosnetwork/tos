@@ -328,6 +328,16 @@ pub fn chain_gap(record: &NativeRecord) -> Option<u64> {
     Some(u64::from(chain.applied.seqno.saturating_sub(served.seqno)))
 }
 
+/// Age of the last key block the node knows, in ms, from the v3 anchors'
+/// own clocks (observation time minus the key block's time). Absent when the
+/// publisher has no key block anchor; never invented from the zero state.
+pub fn key_block_age_ms(record: &NativeRecord) -> Option<u64> {
+    let NativeRecord::V3(v) = record else { return None };
+    let chain = v.payload.chain.as_ref()?;
+    let key = chain.key_block.as_ref()?.as_ref()?;
+    chain.observed_unix_seconds.0.checked_sub(key.unix_seconds.0)?.checked_mul(1000)
+}
+
 /// Diagnostic coverage counter: every record the native publisher or its
 /// relay dropped or failed to parse. Monotonic within a process epoch.
 pub fn diagnostic_drops(record: &NativeRecord) -> u64 {

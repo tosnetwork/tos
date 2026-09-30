@@ -131,6 +131,8 @@ void unit() {
   anchor.applied.seqno = 17166;
   anchor.applied_advanced_unix_seconds = 1700000000;
   anchor.observed_unix_seconds = 1700000000;
+  anchor.key_block_seqno = 17000;
+  anchor.key_block_unix_seconds = 1699990000;
   chain_anchor_state.publish(anchor);
   auto anchored = publisher.prepare(2, 10, 1700000000, "# EOF\n", true, sign, verify, true, &consensus, true);
   CHECK(anchored);
@@ -138,9 +140,10 @@ void unit() {
   CHECK(anchored_body);
   std::string parse_copy = *anchored_body;
   CHECK(td::json_decode(td::MutableSlice(parse_copy)).is_ok());
-  CHECK(anchored_body->find("\"applied_advanced_unix_seconds\":\"1700000000\",\"observed_unix_seconds\":\"1700000000\"") !=
-        std::string::npos);
+  CHECK(anchored_body->find("\"applied_advanced_unix_seconds\":\"1700000000\",\"key_block\":") != std::string::npos);
+  CHECK(anchored_body->find(",\"observed_unix_seconds\":\"1700000000\",\"served\":") != std::string::npos);
   CHECK(anchored_body->find("\"seqno\":17166") != std::string::npos);
+  CHECK(anchored_body->find("\"key_block\":{\"seqno\":17000,\"unix_seconds\":\"1699990000\"}") != std::string::npos);
   CHECK(anchored_body->find("\"instrumentation_complete\":true") != std::string::npos);
   CHECK(anchored_body->find("\"missing_fields\":[\"local_duties\"") != std::string::npos);
   // A halted chain keeps its anchor: the sample is still refreshed by the
@@ -153,8 +156,8 @@ void unit() {
   CHECK(halted);
   auto halted_body = halted->read(10);
   CHECK(halted_body);
-  CHECK(halted_body->find("\"applied_advanced_unix_seconds\":\"1699999400\",\"observed_unix_seconds\":\"1700000000\"") !=
-        std::string::npos);
+  CHECK(halted_body->find("\"applied_advanced_unix_seconds\":\"1699999400\",\"key_block\":") != std::string::npos);
+  CHECK(halted_body->find(",\"observed_unix_seconds\":\"1700000000\",\"served\":") != std::string::npos);
   CHECK(halted_body->find("\"instrumentation_complete\":true") != std::string::npos);
   // A sample nobody refreshed for more than 30 s is not evidence about the
   // present: the anchor is dropped and the snapshot is partial again.
@@ -164,6 +167,24 @@ void unit() {
   CHECK(stale_body);
   CHECK(stale_body->find("\"chain\":null") != std::string::npos);
   CHECK(stale_body->find("\"instrumentation_complete\":false") != std::string::npos);
+  // No key block known yet: the field is null, the anchor itself stays.
+  anchor.key_block_unix_seconds = 0;
+  chain_anchor_state.publish(anchor);
+  auto no_key = publisher.prepare(6, 10, 1700000002, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(no_key);
+  auto no_key_body = no_key->read(10);
+  CHECK(no_key_body);
+  CHECK(no_key_body->find("\"key_block\":null") != std::string::npos);
+  CHECK(no_key_body->find("\"seqno\":17166") != std::string::npos);
+  // A key block clock ahead of the observation is malformed.
+  anchor.key_block_unix_seconds = 1700000001;
+  chain_anchor_state.publish(anchor);
+  auto bad_key = publisher.prepare(7, 10, 1700000002, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(bad_key);
+  auto bad_key_body = bad_key->read(10);
+  CHECK(bad_key_body);
+  CHECK(bad_key_body->find("\"chain\":null") != std::string::npos);
+  anchor.key_block_unix_seconds = 1699990000;
   // An applied-advance clock ahead of its own observation is malformed.
   anchor.applied_advanced_unix_seconds = 1700000001;
   chain_anchor_state.publish(anchor);

@@ -74,6 +74,18 @@
       "deadline_source": "source_observation"
     },
     {
+      "id": "key_block_stale",
+      "fact": "KeyBlockAgeMs",
+      "predicate": "Above",
+      "source_class": "native_key_block",
+      "role": "all",
+      "adapter": "implemented",
+      "bad": "value>threshold",
+      "good": "value<=threshold",
+      "manual_clear": "not_required",
+      "deadline_source": "source_observation"
+    },
+    {
       "id": "local_action_failure",
       "fact": "ActionFailures",
       "predicate": "Increase",

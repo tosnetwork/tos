@@ -134,6 +134,7 @@ class NativeCorePublisher {
                     !network_matches() ||
                     anchors->applied_advanced_unix_seconds == 0 ||
                     anchors->applied_advanced_unix_seconds > anchors->observed_unix_seconds ||
+                    anchors->key_block_unix_seconds > anchors->observed_unix_seconds ||
                     (wall_seconds > anchors->observed_unix_seconds &&
                      wall_seconds - anchors->observed_unix_seconds > 30))) anchors.reset();
     auto anchor_json = [&](const ChainAnchorSnapshot::Block &block, const char *point) {
@@ -152,7 +153,11 @@ class NativeCorePublisher {
     const auto chain = !anchors ? std::string("null") :
         "{\"applied\":" + anchor_json(anchors->applied, "applied") +
         ",\"applied_advanced_unix_seconds\":\"" + std::to_string(anchors->applied_advanced_unix_seconds) +
-        "\",\"observed_unix_seconds\":\"" + std::to_string(anchors->observed_unix_seconds) +
+        "\",\"key_block\":" +
+        (anchors->key_block_unix_seconds == 0 ? std::string("null") :
+         "{\"seqno\":" + std::to_string(anchors->key_block_seqno) + ",\"unix_seconds\":\"" +
+             std::to_string(anchors->key_block_unix_seconds) + "\"}") +
+        ",\"observed_unix_seconds\":\"" + std::to_string(anchors->observed_unix_seconds) +
         "\",\"served\":" + (anchors->have_served ? anchor_json(anchors->served, "served") : std::string("null")) + "}";
     // Keys are canonical lexical order; exact integers remain decimal strings.
     const auto payload = "{\"bytes\":" + std::to_string(openmetrics.size()) +

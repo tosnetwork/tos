@@ -69,3 +69,49 @@ fn exact_chain_identity_and_event_time_fail_closed() {
     marked_missing["coverage"]["missing_fields"] = serde_json::json!(["chain_anchors"]);
     assert!(!accepts(&marked_missing));
 }
+
+#[test]
+fn key_block_anchor_is_optional_bounded_and_yields_an_age_fact() {
+    use tos_health_core::native_facts::key_block_age_ms;
+    let parse = |value: &serde_json::Value| parse_native(&serde_json::to_vec(value).unwrap());
+    // Publishers before the key block anchor: accepted, no fact, never zero.
+    let value = fixture();
+    assert!(accepts(&value));
+    assert_eq!(key_block_age_ms(&parse(&value).unwrap()), None);
+    // A null key block (none resolved yet) is accepted and yields no fact.
+    let mut none = value.clone();
+    none["payload"]["chain"]["key_block"] = serde_json::Value::Null;
+    rehash(&mut none);
+    assert!(accepts(&none));
+    assert_eq!(key_block_age_ms(&parse(&none).unwrap()), None);
+    // A key block 65 s before the observation: age 65,000 ms.
+    let mut keyed = value.clone();
+    keyed["payload"]["chain"]["key_block"] =
+        serde_json::json!({"seqno": 12, "unix_seconds": "1790668000"});
+    rehash(&mut keyed);
+    assert!(accepts(&keyed));
+    assert_eq!(key_block_age_ms(&parse(&keyed).unwrap()), Some(65_000));
+    // The zero state as the last key block is a truthful, large age.
+    let mut genesis = value.clone();
+    genesis["payload"]["chain"]["key_block"] =
+        serde_json::json!({"seqno": 0, "unix_seconds": "1790600000"});
+    rehash(&mut genesis);
+    assert!(accepts(&genesis));
+    assert_eq!(key_block_age_ms(&parse(&genesis).unwrap()), Some(68_065_000));
+    // Malformed: a clock of zero, a clock after the observation, a seqno past the applied block.
+    for (field, bad) in [
+        ("unix_seconds", serde_json::json!("0")),
+        ("unix_seconds", serde_json::json!("1790668066")),
+        ("seqno", serde_json::json!(18)),
+    ] {
+        let mut wrong = keyed.clone();
+        wrong["payload"]["chain"]["key_block"][field] = bad;
+        rehash(&mut wrong);
+        assert!(!accepts(&wrong), "{field}");
+    }
+    // Unknown fields inside the anchor are refused.
+    let mut extra = keyed.clone();
+    extra["payload"]["chain"]["key_block"]["root_hash"] = "3".repeat(64).into();
+    rehash(&mut extra);
+    assert!(!accepts(&extra));
+}

@@ -686,6 +686,7 @@ impl Manager {
                         "native_core" | "native_facts",
                     )
                     | ("applied_served_gap", "native_chain")
+                    | ("key_block_stale", "native_key_block")
                     | ("diagnostic_coverage_reduced", "diagnostic")
                     | ("memory_growth_unexplained", "process_facts")
                     | ("quic_pressure" | "rocksdb_write_stopped", "native_gauges")

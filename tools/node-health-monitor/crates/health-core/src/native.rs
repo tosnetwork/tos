@@ -107,11 +107,37 @@ pub struct BlockAnchor {
     pub shard: U64,
     pub workchain: i32,
 }
+/// The last key block the node knows: persistent states and garbage
+/// collection follow key blocks, so their age is a chain health fact.
+/// A key that is present (possibly null): `Some(None)` for null, so that a
+/// missing key and an explicit null re-serialize exactly as they arrived.
+pub(crate) fn present_nullable<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyBlockAnchor {
+    pub seqno: u32,
+    pub unix_seconds: U64,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChainAnchors {
     pub applied: BlockAnchor,
     pub applied_advanced_unix_seconds: U64,
+    /// Absent on publishers older than the key block anchor (outer `None`,
+    /// not re-serialized, so the exact-bytes content hash still holds); null
+    /// when the node has not yet resolved one (`Some(None)`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_nullable"
+    )]
+    pub key_block: Option<Option<KeyBlockAnchor>>,
     pub observed_unix_seconds: U64,
     #[serde(deserialize_with = "required_nullable")]
     pub served: Option<BlockAnchor>,
@@ -137,6 +163,11 @@ impl ChainAnchors {
                 .served
                 .as_ref()
                 .is_some_and(|s| !valid(s, "served") || s.seqno > self.applied.seqno)
+            || self.key_block.as_ref().and_then(|k| k.as_ref()).is_some_and(|k| {
+                k.unix_seconds.0 == 0
+                    || k.unix_seconds.0 > self.observed_unix_seconds.0
+                    || k.seqno > self.applied.seqno
+            })
         {
             return Err("invalid chain anchors".into());
         }
