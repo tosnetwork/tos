@@ -307,14 +307,27 @@ fn process_parent_and_trailing_diagnostic_have_distinct_durable_identities() {
     drop(restored);
     sql.execute("UPDATE observations SET content_hash=?1 WHERE store_seq=2", ["e".repeat(64)])
         .unwrap();
-    let error = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
-        .unwrap()
-        .with_query_ledger(&ledger_path)
-        .unwrap()
-        .with_manager_evidence(manager_path.clone())
-        .err()
-        .unwrap();
+    let error =
+        ObservabilityState::new(inventory.clone(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .err()
+            .unwrap();
     assert!(error.contains("M projection anchor changed"), "{error}");
+    sql.execute("UPDATE observations SET content_hash=?1 WHERE store_seq=2", ["d".repeat(64)])
+        .unwrap();
+    sql.execute("DELETE FROM observations WHERE store_seq=2", []).unwrap();
+    let missing =
+        ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .err()
+            .unwrap();
+    assert!(missing.contains("M projection anchor changed"), "{missing}");
     drop(sql);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();

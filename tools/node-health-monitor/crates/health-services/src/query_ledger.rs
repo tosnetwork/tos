@@ -363,9 +363,10 @@ impl QueryLedger {
             .as_ref()
             .filter(|anchor| previous.and_then(|old| old.anchor.as_ref()) != Some(*anchor))
         {
-            // A changed anchor is justified only by a process row already
-            // projected and retained in Q. The M page reader witnessed the
-            // original row; this check prevents a direct cursor-only jump.
+            // A changed anchor needs either a projected process origin
+            // retained in Q or the exact global M boundary witnessed by the
+            // page reader in the same source snapshot. The latter may be a
+            // diagnostic row; it is never promoted to a process origin.
             let witnessed: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM query_origins WHERE origin_id=?1 AND manager_seq=?2)",
