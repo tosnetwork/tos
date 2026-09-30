@@ -199,6 +199,7 @@ impl QueryLedger {
                 result_code TEXT NOT NULL,
                 returned_bytes INTEGER NOT NULL CHECK (returned_bytes >= 0)
             );
+            CREATE INDEX IF NOT EXISTS query_attempts_run ON query_attempts(run_id);
             CREATE TABLE IF NOT EXISTS query_mcp_bindings (
                 run_id TEXT PRIMARY KEY REFERENCES query_grants(run_id),
                 boot_id TEXT NOT NULL,
@@ -1099,15 +1100,19 @@ impl QueryLedger {
     pub fn revoke(&mut self, run_id: &str) -> Result<bool, String> {
         let tx =
             self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
-        let previous: Option<Vec<u8>> = tx
+        let previous: Option<(i64, Vec<u8>)> = tx
             .query_row(
-                "SELECT body FROM query_grants WHERE run_id=?1 AND boot_id=?2",
+                "SELECT revoked,body FROM query_grants WHERE run_id=?1 AND boot_id=?2",
                 params![run_id, self.clock_domain],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
             .map_err(failure)?;
-        let Some(previous) = previous else { return Ok(false) };
+        let Some((revoked, previous)) = previous else { return Ok(false) };
+        // A compacted terminal row is the permanent run-ID replay seal.
+        if previous.is_empty() {
+            return if revoked == 1 { Ok(true) } else { Err("invalid terminal grant seal".into()) };
+        }
         let mut grant: Grant = serde_json::from_slice(&previous).map_err(failure)?;
         grant.revoke();
         tx.execute(
@@ -1117,6 +1122,66 @@ impl QueryLedger {
         .map_err(failure)?;
         tx.commit().map_err(failure)?;
         Ok(true)
+    }
+
+    /// Reclaim only the payload of expired runs. The grant row and its unique
+    /// run ID remain forever as a replay seal; the 4096-run lifetime cap is
+    /// deliberately unchanged. `cutoff_ms` is an explicit operator policy
+    /// input, never inferred from a wall clock or another boot's monotonic
+    /// origin. Each call touches at most 16 runs in one FULL transaction.
+    pub fn compact_terminal(&mut self, cutoff_ms: u64, limit: usize) -> Result<usize, String> {
+        if limit == 0 || limit > 16 {
+            return Err("terminal compaction limit must be 1..16".into());
+        }
+        if cutoff_ms > boot_millis()? {
+            return Err("terminal compaction cutoff is in the future".into());
+        }
+        let cutoff = i64::try_from(cutoff_ms).map_err(failure)?;
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let runs: Vec<String> = {
+            let mut query = tx
+                .prepare(
+                    "SELECT run_id FROM query_grants
+                 WHERE boot_id=?1 AND expires_ms<=?2 AND length(body)>0
+                 ORDER BY expires_ms,run_id LIMIT ?3",
+                )
+                .map_err(failure)?;
+            let rows = query
+                .query_map(
+                    params![self.clock_domain, cutoff, i64::try_from(limit).map_err(failure)?],
+                    |row| row.get(0),
+                )
+                .map_err(failure)?
+                .collect::<Result<_, _>>()
+                .map_err(failure)?;
+            rows
+        };
+        for run in &runs {
+            let attempts: i64 = tx
+                .query_row("SELECT COUNT(*) FROM query_attempts WHERE run_id=?1", [run], |row| {
+                    row.get(0)
+                })
+                .map_err(failure)?;
+            if attempts > 16 {
+                return Err("terminal run attempt count exceeds budget".into());
+            }
+            tx.execute("DELETE FROM query_attempts WHERE run_id=?1", [run]).map_err(failure)?;
+            tx.execute("DELETE FROM query_mcp_bindings WHERE run_id=?1", [run]).map_err(failure)?;
+            tx.execute("DELETE FROM query_packages WHERE run_id=?1", [run]).map_err(failure)?;
+            let changed = tx
+                .execute(
+                    "UPDATE query_grants SET revoked=1,body=X''
+                 WHERE run_id=?1 AND boot_id=?2 AND expires_ms<=?3 AND length(body)>0",
+                    params![run, self.clock_domain, cutoff],
+                )
+                .map_err(failure)?;
+            if changed != 1 {
+                return Err("terminal compaction grant changed".into());
+            }
+        }
+        tx.commit().map_err(failure)?;
+        Ok(runs.len())
     }
 
     pub fn attempt_count(&self, run_id: &str) -> Result<u64, String> {
@@ -1139,6 +1204,17 @@ impl QueryLedger {
             .optional()
             .map_err(failure)?;
         let Some((clock_domain, revoked, body)) = row else { return Ok(None) };
+        if body.is_empty() {
+            if revoked != 1 {
+                return Err("invalid terminal grant seal".into());
+            }
+            return Ok(Some(serde_json::json!({
+                "run_id":run_id,
+                "revoked":true,
+                "terminal_payload_compacted":true,
+                "clock_domain_current":clock_domain == self.clock_domain,
+            })));
+        }
         let grant: Grant = serde_json::from_slice(&body).map_err(failure)?;
         Ok(Some(serde_json::json!({
             "run_id":grant.run_id,

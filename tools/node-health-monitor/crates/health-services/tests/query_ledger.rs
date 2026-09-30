@@ -40,6 +40,73 @@ fn grant(token: &[u8; 32]) -> Grant {
 }
 
 #[test]
+fn terminal_payload_compaction_is_atomic_and_seals_replay() {
+    let (file, directory) = temporary();
+    let clock_now = tos_health_services::query_ledger::boot_millis().unwrap();
+    let old_expiry = clock_now.checked_sub(1).unwrap();
+    let mut old = grant(&[0x79; 32]);
+    old.expires_monotonic_ms = old_expiry;
+    let mut current = grant(&[0x7a; 32]);
+    current.run_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb".into();
+    current.expires_monotonic_ms = clock_now.checked_add(200_000).unwrap();
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    ledger.create(&old, 100).unwrap();
+    ledger.claim_mcp(&old.run_id, 101).unwrap();
+    ledger.create(&current, 100).unwrap();
+    assert_eq!(ledger.compact_terminal(old_expiry - 1, 16).unwrap(), 0);
+    assert!(ledger.compact_terminal(old_expiry, 17).is_err());
+    drop(ledger);
+    let mut foreign_clock = QueryLedger::open_for_boot(&file, BOOT_B).unwrap();
+    assert_eq!(foreign_clock.compact_terminal(old_expiry, 16).unwrap(), 0);
+    drop(foreign_clock);
+
+    // Fixture rows exercise the same foreign-key and AUTOINCREMENT tables as
+    // real calls, including an injected failure midway through the transaction.
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute("INSERT INTO query_attempts(run_id,tool,result_code,returned_bytes) VALUES(?1,'test','ok',1)", [&old.run_id]).unwrap();
+    let first_seq: i64 =
+        db.query_row("SELECT max(attempt_seq) FROM query_attempts", [], |row| row.get(0)).unwrap();
+    db.execute("INSERT INTO query_packages(run_id,boot_id,package_sha256,body,fixed_at_ms) VALUES(?1,?2,?3,X'01',101)",
+        rusqlite::params![old.run_id, format!("{BOOT_A}|test-time-namespace"), "a".repeat(64)]).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER deny_package_delete BEFORE DELETE ON query_packages
+        BEGIN SELECT RAISE(FAIL,'injected failure'); END;",
+    )
+    .unwrap();
+    drop(db);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert!(ledger.compact_terminal(old_expiry, 16).unwrap_err().contains("injected failure"));
+    assert!(ledger.load_active(&current.run_id, old_expiry).unwrap().is_some());
+    assert!(ledger.inspect(&old.run_id).unwrap().unwrap()["terminal_payload_compacted"].is_null());
+    assert_eq!(ledger.attempt_count(&old.run_id).unwrap(), 1);
+    drop(ledger);
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute_batch("DROP TRIGGER deny_package_delete").unwrap();
+    drop(db);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(ledger.compact_terminal(old_expiry, 16).unwrap(), 1);
+    assert_eq!(ledger.compact_terminal(old_expiry, 16).unwrap(), 0);
+    assert_eq!(ledger.attempt_count(&old.run_id).unwrap(), 0);
+    assert_eq!(ledger.mcp_usage(&old.run_id).unwrap(), None);
+    assert!(ledger.load_active_package(&old.run_id, old_expiry).unwrap().is_none());
+    assert_eq!(ledger.inspect(&old.run_id).unwrap().unwrap()["terminal_payload_compacted"], true);
+    assert!(ledger.revoke(&old.run_id).unwrap());
+    assert!(ledger.create(&old, 100).is_err(), "sealed run ID must not be recreated");
+    assert!(ledger.load_active(&current.run_id, old_expiry).unwrap().is_some());
+    drop(ledger);
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute("INSERT INTO query_attempts(run_id,tool,result_code,returned_bytes) VALUES(?1,'test','ok',1)", [&current.run_id]).unwrap();
+    let next_seq: i64 =
+        db.query_row("SELECT max(attempt_seq) FROM query_attempts", [], |row| row.get(0)).unwrap();
+    assert!(next_seq > first_seq, "attempt sequence must never reset after deletion");
+    drop(db);
+    let restored = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(restored.inspect(&old.run_id).unwrap().unwrap()["terminal_payload_compacted"], true);
+    drop(restored);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn mcp_binding_call_and_wire_budgets_survive_restart() {
     let (file, directory) = temporary();
     let g = grant(&[0x51; 32]);
