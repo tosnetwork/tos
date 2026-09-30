@@ -165,6 +165,16 @@ pub fn native_frame_v2(
     })
 }
 
+/// Identity of one deriving process run. Derived facts depend on state the
+/// deriver keeps in memory (growth windows, observation gaps), so the same
+/// archived generation re-derived by a restarted poller can legitimately
+/// differ. Binding the derived source epoch to the run keeps such a restart
+/// from ever colliding with, and quarantining, its own earlier frames.
+pub fn derivation_run_id() -> String {
+    let started = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
+    format!("{started:x}-{:x}", std::process::id())
+}
+
 /// Fixed native fact frame for any supported native version. Facts come from
 /// `native_facts::derive`; a fact the sample cannot support is absent and the
 /// frame is marked incomplete, never filled with zero.
@@ -172,6 +182,7 @@ pub fn native_fact_frame(
     record: &tos_health_core::native::NativeRecord,
     duration: u64,
     state: &mut tos_health_core::native_facts::NativeFactState,
+    run: &str,
 ) -> Result<FactFrame, String> {
     use tos_health_core::native::NativeRecord;
     let (validated, source_epoch, source_age, observed_at, quality) = match record {
@@ -199,7 +210,7 @@ pub fn native_fact_frame(
         source_id: "native_facts".into(),
         process_epoch: record.process_epoch().to_owned(),
         source_epoch: format!(
-            "{source_epoch}:facts-v{}",
+            "{source_epoch}:facts-v{}:{run}",
             tos_health_core::native_facts::CATALOG_VERSION
         ),
         generation: record.generation(),
@@ -231,6 +242,7 @@ pub fn process_frame(
     network_id: &str,
     duration: u64,
     state: &mut tos_health_core::native_facts::NativeFactState,
+    run: &str,
 ) -> Result<FactFrame, String> {
     let observed_at = process.observed_at.clone().ok_or("missing process observation time")?;
     let observed_ms = u64::try_from(tos_health_core::query::utc_ms(&observed_at)?)
@@ -248,7 +260,7 @@ pub fn process_frame(
         source_id: "process_facts".into(),
         process_epoch: process.process_epoch.clone(),
         source_epoch: format!(
-            "{}:facts-v{}",
+            "{}:facts-v{}:{run}",
             process.source_epoch,
             tos_health_core::native_facts::CATALOG_VERSION
         ),
@@ -363,6 +375,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     let mut timer = tokio::time::interval(Duration::from_secs(15));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state = tos_health_core::native_facts::NativeFactState::default();
+    let run = derivation_run_id();
     let mut first = true;
     loop {
         timer.tick().await;
@@ -401,7 +414,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
             eprintln!("native poll: no native source in edge snapshot");
             continue;
         };
-        let frame = match native_fact_frame(&record, elapsed, &mut state) {
+        let frame = match native_fact_frame(&record, elapsed, &mut state, &run) {
             Ok(frame) => frame,
             Err(e) => {
                 eprintln!("native poll: fact frame refused: {e}");
@@ -447,7 +460,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
             }
         }
         if let Some(process) = snapshot.process() {
-            match process_frame(process, &config.network_id, elapsed, &mut state) {
+            match process_frame(process, &config.network_id, elapsed, &mut state, &run) {
                 Ok(memory) => {
                     post_frame(&manager_client, &config.manager_url, &manager, &memory).await
                 }

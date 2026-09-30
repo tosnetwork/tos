@@ -172,6 +172,7 @@ pub fn frame(
     generation: u64,
     now_ms: u64,
     value: u64,
+    run: &str,
 ) -> FactFrame {
     FactFrame {
         schema_version: 1,
@@ -180,7 +181,9 @@ pub fn frame(
         scope_id: "node".into(),
         source_id: WITNESS_SOURCE.into(),
         process_epoch: epoch.to_owned(),
-        source_epoch: format!("{epoch}:witness-v{COMPARE_VERSION}"),
+        // Bound to this comparer run: a restarted comparer counts generations
+        // from zero again and must not collide with its earlier frames.
+        source_epoch: format!("{epoch}:witness-v{COMPARE_VERSION}:{run}"),
         generation: U64(generation),
         source_age_ms: U64(0),
         request_duration_ms: U64(0),
@@ -208,6 +211,7 @@ pub async fn run(config: WitnessConfig) -> Result<(), String> {
     let token =
         String::from_utf8(crate::secret(&config.manager_token_file)?).map_err(|e| e.to_string())?;
     let mut generation = 0u64;
+    let run = crate::manager_poll::derivation_run_id();
     let mut timer = tokio::time::interval(Duration::from_secs(15));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let all: Vec<String> = config.validators.iter().chain(&config.observers).cloned().collect();
@@ -242,7 +246,7 @@ pub async fn run(config: WitnessConfig) -> Result<(), String> {
                     result.witnesses
                 );
             }
-            let f = frame(&config, node, &epoch, generation, now_ms, result.value);
+            let f = frame(&config, node, &epoch, generation, now_ms, result.value, &run);
             match client.post(&config.manager_url).bearer_auth(&token).json(&f).send().await {
                 Ok(response) if response.status().is_success() => {}
                 Ok(response) => {

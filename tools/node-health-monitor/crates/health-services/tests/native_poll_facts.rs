@@ -39,10 +39,19 @@ fn secondary_frames_keep_the_native_identity_and_carry_one_fact() {
     );
     let record = parse_native(&std::fs::read(path).unwrap()).unwrap();
     let mut state = NativeFactState::default();
-    let native = native_fact_frame(&record, 3, &mut state).unwrap();
+    let native = native_fact_frame(&record, 3, &mut state, "run-a").unwrap();
     assert_eq!(native.facts.len(), 8);
     assert_eq!(native.source_id, "native_facts");
-    assert!(native.source_epoch.ends_with(":facts-v2"));
+    assert!(native.source_epoch.ends_with(":facts-v2:run-a"));
+    assert!(native.source_epoch.len() <= 128);
+    // A second deriver run over the same archived generation is a new source
+    // epoch, so it can never conflict with the first run's frames.
+    let again = native_fact_frame(&record, 3, &mut NativeFactState::default(), "run-b").unwrap();
+    assert_eq!(again.process_epoch, native.process_epoch);
+    assert_eq!(again.generation, native.generation);
+    assert_ne!(again.source_epoch, native.source_epoch);
+    let run = tos_health_services::manager_poll::derivation_run_id();
+    assert!(run.len() <= 32 && run.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
     let diagnostic = secondary_frame(&native, "diagnostic", FactId::DiagnosticDrops, 0);
     assert_eq!(diagnostic.source_id, "diagnostic");
     assert_eq!(diagnostic.process_epoch, native.process_epoch);
