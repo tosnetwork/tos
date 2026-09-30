@@ -23,18 +23,20 @@ approval.
 | C06 — integrated development implementation | ✅ Gated native diagnostic producer and bounded catalog-8 scalar payload, private authenticated native-to-Edge IPC, bounded relay, distinct M diagnostic ingest identity and single-writer durable batch/atomic idempotent ACK were integrated and tested. The catalog-7 fixture remains separate. | Business-node hook rollout and production cost/consumer-drain gates remain open; unknown diagnostic observation times remain null. M-to-Query diagnostic projection is unsupported, not a process fact. |
 | C07 — bounded development package | ✅ Deterministic 16-KiB process-only package from verified retained M parents at fixed grant watermarks, durable private QueryLedger with 8-MiB cap, restart/late-row/conflict/missing/tamper controls and a closed diagnosis parser. No model/provider is enabled. | Actual model token accounting, semantic entailment, approved model/provider configuration, retention cleanup, private egress and resource-isolation acceptance remain open. The test-side deterministic judgment is not AURA model diagnosis. |
 | C08 — gated transport implemented | ✅ Durable grants/cursors and six-tool private Unix MCP, a pinned AURA 0.12 stdio adapter, one-use credential handoff, bounded calls/body/session, child cancellation/reap and disconnect controls were exercised. Six real tool calls through AURA establish transport/error propagation; unavailable fixture tools did not become business successes. | Complete source adapters, production broker authorization/rotation and sustained resource/zero-upstream evidence remain open. External model calls remain disabled; transport success is not model judgment or production acceptance. |
-| C09 — RED/open: local observability running, 72-hour continuity unproven | ✅ Six role-split 15-second supervised collectors and the local MCP query broker archived distinct live `process` sources without relabelling `edge_probe`. Pinned AURA 0.12 read six `partial` process snapshots with retained M parents under fixed 4+2 grants; consensus stayed unknown, cross-run access was denied, and both grants were revoked. The reviewed `14bb30d0c8d599d56ce0963a2e7a6949c56353da` incremental QueryService binary was deployed locally in a query-only rollout; its running SHA-256 is `ff7c11e51edbb2a3d4f9633aff8298587c7dda8dc2a2b4bb9b6e0f2ff9a0bc5e`. Business nodes were not restarted for that rollout. | No production or 72-hour pass. The deployed incremental importer removes the old full-history scan blocker, but the private projection-health route and later cursor-validation commits are not deployed. The running sampler observes M freshness and unit state only, not continuous QueryService or AURA availability. M's local 2-GiB evidence quota is a temporary capacity bridge, not retention. Concurrent broker latency, A–F resource/performance and failure-domain profiles, credential/receiver rotation, retention, rollback/restore and 72-hour soak remain open. A partial process snapshot is not whole-node health or model diagnosis. |
+| C09 — RED/open: local observability running, 72-hour continuity unproven | ✅ Six role-split 15-second supervised collectors and the private MCP query broker archive distinct live `process` sources without relabelling `edge_probe`. The local query-only rollout now runs source `31fc2f615ec3325d0e6bfe69f37f692068786bc0`, binary SHA-256 `e37f9c4353bb80f5ae8acd3a941d7eeb21b5f116a448448adb79588fb94cf8ee`, with the bounded importer, global M boundary anchor and authenticated projection-health route. Pinned AURA 0.12 read six `partial` process payloads with retained M parents under fixed 4+2 grants; consensus remained unknown, cross-run access was denied, and both grants were revoked. Only QueryService restarted; business nodes, M and collectors retained their PIDs. | No production or 72-hour pass. The one-minute sampler first included a Q projection probe at `2026-09-30T00:38:14Z`; it measured lag 16, then lag 3, then caught up with lag 0. The preceding 153 M-only rows do not count toward Q continuity, and the sampler does not continuously call AURA. M's local 2-GiB evidence quota is a temporary capacity bridge, not retention. Concurrent broker latency, A–F resource/performance and failure-domain profiles, credential/receiver rotation, retention, rollback drill and 72-hour soak remain open. A partial process snapshot is not whole-node health or model diagnosis. |
 
 C09 rollout checkpoint: the initial `9a6a79519b84fdfb79eef7f7036a644bd4af12e3`
 incremental candidate measured late read-only M catch-up pages at 5.735 and
 6.128 seconds, beyond the unchanged 5-second control connection limit (raw
 SHA-256 `307a9e37fcc7903e85d8d179c991fbe5cd9e5e17bc83c6cee37f24386da2b9f1`).
 The batch successor reduced its isolated read-only catch-up sample, and the
-reviewed `14bb30d0` source is now the locally running query-only binary.
-That rollout and a successful six-node pinned-AURA read do not prove concurrent
-broker latency or sustained availability. The later private projection-health
-route and cursor-validation successors remain undeployed; rollback/restore and
-the 72-hour gate remain open.
+reviewed `14bb30d0` source was deployed first. The later query-only rollout
+installed `31fc2f615` with a durable global M boundary anchor and the private
+projection-health route; the scoped live trial and six-node pinned-AURA check
+passed. These samples do not prove concurrent broker latency or sustained
+availability. The projection-health route entered the one-minute sampler at
+`2026-09-30T00:38:14Z`; rollback/restore and the new Q-aware 72-hour gate
+remain open.
 
 ## Evidence mapping
 
@@ -125,15 +127,17 @@ soak/performance work, not zero-error claims. The old deployed importer scanned
 oldest-first process history; a historical live M sample had 940 process rows /
 1,580,107 bytes, approaching its 4096-row/8-MiB refusal. The reviewed
 `14bb30d0` bounded-page, durable-cursor successor replaced that importer in a
-query-only local rollout. Its first correctness candidate exceeded the existing
+query-only local rollout; `31fc2f615` later added a global M boundary anchor.
+The first correctness candidate exceeded the existing
 5-second control deadline on two read-only catch-up pages; the batch-write
 successor passed an isolated bounded read-only cost sample but has not passed
-concurrent live latency or soak. A further private control-socket projection-health
-witness is implemented and tested as a candidate
-(`evidence/c09-incremental-projection/PROJECTION-HEALTH-WITNESS.md`), but is not
-deployed or wired into the existing 72-hour sampler. That sampler
-currently measures M process freshness and service activity only, not broker
-grant/query availability. External model/API use is disabled.
+concurrent live latency or soak. A private control-socket projection-health
+witness is implemented and deployed locally
+(`evidence/c09-incremental-projection/PROJECTION-HEALTH-WITNESS.md`). A bounded
+read-only Q probe entered the one-minute sampler at `2026-09-30T00:38:14Z`;
+prior M-only samples do not certify Q continuity. The sampler records M process
+freshness, service activity and Q projection status, but does not issue grants
+or repeatedly exercise AURA tool calls. External model/API use is disabled.
 No business-node signing, vote-journal ordering, business-node database durability
 semantics, or protocol condition was changed; C06 did add durable M diagnostic ingest.
 
