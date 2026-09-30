@@ -121,7 +121,7 @@ def choose(state, rng, sequence):
 
 async def pool_state(args, address):
     return {
-        k: await asyncio.to_thread(local.get_method, REPO / "build", args.data, address, k)
+        k: await asyncio.to_thread(local.get_method, args.build, args.data, address, k)
         for k in METHODS
     }
 
@@ -139,6 +139,7 @@ async def generate(process, request):
 
 
 async def run(args):
+    require(4 <= args.nodes <= 21, "full-node count must be 4..21")
     require(
         math.isfinite(args.min_interval)
         and math.isfinite(args.max_interval)
@@ -162,11 +163,11 @@ async def run(args):
                 "wallet seed permissions differ",
             )
             wallets.append(WalletV1Blueprint(0, nacl.signing.SigningKey(p.read_bytes())))
-        cdll = ToslibCDLL(REPO / "build/toslib/libtoslibjson.so")
+        cdll = ToslibCDLL(args.build / "toslib/libtoslibjson.so")
         cdll.client_set_verbosity_level(0)
         async with AsyncExitStack() as stack:
             clients = []
-            for i in range(1, 8):
+            for i in range(1, args.nodes + 1):
                 cfg = tos_api.Liteclient_config_global.from_dict(
                     json.loads((args.data / f"configs/node-{i}-lite.json").read_text())
                 )
@@ -193,8 +194,7 @@ async def run(args):
             stderr = stack.enter_context((args.output / "generator.stderr").open("ab"))
             generator = await asyncio.create_subprocess_exec(
                 str(
-                    REPO
-                    / "tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic"
+                    args.generator
                 ),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -224,7 +224,7 @@ async def run(args):
                 while args.count == 0 or done < args.count:
                     await asyncio.sleep(rng.uniform(args.min_interval, args.max_interval))
                     request = choose(state, rng, sequence)
-                    client = clients[sequence % 7]
+                    client = clients[sequence % len(clients)]
                     source = rng.randrange(3)
                     recipient_index = (source + 1) % 3
                     sender = wallets[source].materialize(client)
@@ -388,7 +388,7 @@ async def run(args):
                             "counts": counts,
                             "amount_nanotos": request["amount"],
                             "elapsed_seconds": round(time.monotonic() - started, 3),
-                            "nodes_agree": 7,
+                            "nodes_agree": len(clients),
                             "expected": expected,
                             "transaction_bocs": [base64.b64encode(tx.data).decode(), payout_boc],
                         },
@@ -408,6 +408,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data", type=Path, default=Path("/data"))
     p.add_argument("--output", type=Path, default=Path("/data/privacy-transfers"))
+    p.add_argument("--nodes", type=int, default=7, help="fixed full-node inventory size")
+    p.add_argument("--build", type=Path, default=REPO / "build")
+    p.add_argument(
+        "--generator", type=Path,
+        default=REPO / "tools/shielded-pool-circuit/crosscheck/target/release/local_pool_traffic",
+    )
     p.add_argument("--bootstrap", action="store_true")
     p.add_argument("--count", type=int, default=0)
     p.add_argument("--min-interval", type=float, default=20)
