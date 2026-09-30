@@ -117,9 +117,10 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual((row["status"], row["error_kind"], row["grants_created"]),
                          ("failed", "WholeRunTimeout", 0))
 
-    def test_real_socket_grant_commit_with_lost_response_is_unconfirmed(self):
-        path = str(Path(self.temporary.name) / "control.sock")
-        side_effect_db = str(Path(self.temporary.name) / "committed.db")
+    def _assert_real_socket_grant_commit_failure(self, response_status):
+        suffix = str(response_status or "disconnect")
+        path = str(Path(self.temporary.name) / ("control-" + suffix + ".sock"))
+        side_effect_db = str(Path(self.temporary.name) / ("committed-" + suffix + ".db"))
         with closing(sqlite3.connect(side_effect_db)) as db:
             db.execute("CREATE TABLE issued(id INTEGER PRIMARY KEY)")
             db.commit()
@@ -127,7 +128,7 @@ class FunctionalWitnessTests(unittest.TestCase):
         listener.bind(path)
         listener.listen(1)
         committed = threading.Event()
-        def lose_response():
+        def complete_with_ambiguous_response():
             conn, _ = listener.accept()
             with conn:
                 raw = b""
@@ -145,11 +146,13 @@ class FunctionalWitnessTests(unittest.TestCase):
                 with closing(sqlite3.connect(side_effect_db)) as db:
                     db.execute("INSERT INTO issued VALUES(1)")
                     db.commit()
-                committed.set()  # Simulates durable commit before transport loss.
+                committed.set()  # Durable side effect precedes response loss or 503.
+                if response_status == 503:
+                    conn.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             listener.close()
-        server = threading.Thread(target=lose_response, daemon=True)
+        server = threading.Thread(target=complete_with_ambiguous_response, daemon=True)
         server.start()
-        log = str(Path(self.temporary.name) / "lost-response.jsonl")
+        log = str(Path(self.temporary.name) / ("response-" + suffix + ".jsonl"))
         args = SimpleNamespace(log_file=log, operator_token_file="operator", service_token_file="service",
                                baseline_file="baseline", expected_baseline_sha256="a" * 64,
                                expected_query_sha256="b" * 64, query_unit="isolated-query",
@@ -171,6 +174,12 @@ class FunctionalWitnessTests(unittest.TestCase):
         finally:
             listener.close()
             server.join(timeout=1)
+
+    def test_real_socket_grant_commit_with_lost_response_is_unconfirmed(self):
+        self._assert_real_socket_grant_commit_failure(None)
+
+    def test_real_socket_grant_commit_with_503_is_unconfirmed(self):
+        self._assert_real_socket_grant_commit_failure(503)
 
     def test_ledger_growth_refuses_before_next_grant(self):
         path = str(Path(self.temporary.name) / "q.db")

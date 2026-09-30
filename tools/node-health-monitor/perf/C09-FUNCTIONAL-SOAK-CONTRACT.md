@@ -104,9 +104,9 @@ Offline tests cover exact parent/payload/age rejection, source hash mismatch,
 grant-frozen W, Q retained-binding and M inode rejection, negative-envelope
 validation, malformed grant cleanup registration, frozen baseline digest,
 reserved ledger budget, durable revocation, slot rollback, and the whole-run
-timeout at the head probe. A real Unix-socket fault test commits an issued row
-to a disposable SQLite database then drops the grant response; the witness
-records `cleanup_unconfirmed` rather than a clean failure. An isolated one-shot
+timeout at the head probe. Real Unix-socket fault tests commit an issued row
+to a disposable SQLite database, then either drop the grant response or send
+HTTP 503; both must record `cleanup_unconfirmed`. An isolated one-shot
 control on 2026-09-30 used a disposable
 private M/Q directory, six archived process source envelopes refreshed only
 inside that disposable M, a separate Q process with generated private tokens,
