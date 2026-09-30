@@ -1,6 +1,8 @@
 //! Secondary fact frames of the native poll: fixed gauge parsing and frame identity.
 use tos_health_core::{native::parse_native, native_facts::NativeFactState, rules::FactId};
-use tos_health_services::manager_poll::{native_fact_frame, quic_backlog_bytes, secondary_frame};
+use tos_health_services::manager_poll::{
+    native_fact_frame, quic_backlog_bytes, secondary_frame, stagger_ms,
+};
 
 const METRICS: &str = "# TYPE tos_quic_summary_unsent_bytes gauge\n\
 tos_quic_summary_unsent_bytes 1024\n\
@@ -49,4 +51,16 @@ fn secondary_frames_keep_the_native_identity_and_carry_one_fact() {
     assert!(diagnostic.complete);
     assert_eq!(diagnostic.facts[0].id, FactId::DiagnosticDrops);
     diagnostic.validate().unwrap();
+}
+
+#[test]
+fn stagger_offsets_are_deterministic_and_spread_the_local_nodes() {
+    let nodes = ["validator1", "validator2", "validator3", "validator4", "observer5", "observer6"];
+    let offsets: Vec<u64> = nodes.iter().map(|n| stagger_ms(n)).collect();
+    assert!(offsets.iter().all(|o| *o < 12_000));
+    assert_eq!(offsets, nodes.iter().map(|n| stagger_ms(n)).collect::<Vec<_>>());
+    let mut sorted = offsets.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert!(sorted.len() >= 5, "offsets collide: {offsets:?}");
 }

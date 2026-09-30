@@ -161,7 +161,7 @@
       "id": "memory_growth_unexplained",
       "fact": "UnexplainedMemoryBytes",
       "predicate": "Above",
-      "source_class": "process",
+      "source_class": "process_facts",
       "role": "all",
       "adapter": "implemented",
       "bad": "value>threshold",

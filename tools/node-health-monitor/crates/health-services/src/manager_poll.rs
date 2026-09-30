@@ -242,9 +242,16 @@ pub fn process_frame(
         network_id: network_id.to_owned(),
         node_id: process.node_id.clone(),
         scope_id: "node".into(),
-        source_id: "process".into(),
+        // Derived from the archived process source but its own source: the
+        // archived snapshot rows of the same epoch must never be quarantined
+        // by a change in this derivation.
+        source_id: "process_facts".into(),
         process_epoch: process.process_epoch.clone(),
-        source_epoch: process.source_epoch.clone(),
+        source_epoch: format!(
+            "{}:facts-v{}",
+            process.source_epoch,
+            tos_health_core::native_facts::CATALOG_VERSION
+        ),
         generation: process.generation,
         source_age_ms: U64(process.source_age_ms.ok_or("missing source age")?),
         request_duration_ms: U64(duration),
@@ -277,20 +284,40 @@ pub fn quic_backlog_bytes(openmetrics: &str) -> Option<u64> {
     Some(total as u64)
 }
 
+/// Deterministic start offset inside the 15-second period, from the node alias.
+pub fn stagger_ms(node_id: &str) -> u64 {
+    let hash = node_id.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    hash % 12_000
+}
+
 async fn post_frame(client: &reqwest::Client, url: &str, token: &str, frame: &FactFrame) {
-    match client.post(url).bearer_auth(token).json(frame).send().await {
-        Ok(response) => {
-            let status = response.status();
-            let body = crate::bounded_body(response, 4096).await.unwrap_or_default();
-            if !status.is_success() {
-                eprintln!(
-                    "native poll: manager refused {} facts: {status} {}",
-                    frame.source_id,
-                    String::from_utf8_lossy(&body)
-                );
+    // One bounded retry after admission shedding; anything else is reported
+    // and dropped, never queued.
+    for attempt in 0..2u8 {
+        match client.post(url).bearer_auth(token).json(frame).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let body = crate::bounded_body(response, 4096).await.unwrap_or_default();
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt == 0 {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+                if !status.is_success() {
+                    eprintln!(
+                        "native poll: manager refused {} facts: {status} {}",
+                        frame.source_id,
+                        String::from_utf8_lossy(&body)
+                    );
+                }
+                return;
+            }
+            Err(e) => {
+                eprintln!("native poll: manager request failed: {e}");
+                return;
             }
         }
-        Err(e) => eprintln!("native poll: manager request failed: {e}"),
     }
 }
 
@@ -319,6 +346,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     let mut timer = tokio::time::interval(Duration::from_secs(15));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state = tos_health_core::native_facts::NativeFactState::default();
+    let mut first = true;
     loop {
         timer.tick().await;
         let started = Instant::now();
@@ -397,6 +425,16 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
                 }
                 Err(e) => eprintln!("native poll: process frame skipped: {e}"),
             }
+        }
+        if first {
+            // The first sample went out at once. A fixed per-node offset now
+            // re-phases the periodic timer so the pollers of different nodes
+            // spread over the period instead of hitting the manager's bounded
+            // ingest admission as one synchronized burst after a deployment.
+            first = false;
+            tokio::time::sleep(Duration::from_millis(stagger_ms(&config.node_id))).await;
+            timer = tokio::time::interval(Duration::from_secs(15));
+            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         }
     }
 }

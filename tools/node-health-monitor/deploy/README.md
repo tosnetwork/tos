@@ -137,8 +137,8 @@ under their own source id `native_facts` (source epoch suffixed with the
 catalog version) with exactly the eight catalog facts; the same tick also posts
 one-fact frames for `native_chain` (applied/served gap, only when the node
 serves lite state), `diagnostic` (publisher drops), `native_gauges` (QUIC
-backlog from two fixed OpenMetrics lines) and `process` (anonymous memory
-growth over 15 minutes). A catalog change must bump `CATALOG_VERSION` and the
+backlog from two fixed OpenMetrics lines) and `process_facts` (anonymous
+memory growth over 15 minutes). A catalog change must bump `CATALOG_VERSION` and the
 inventory revision; it never rewrites an archived generation.
 
 The manager ingress that aggregates many lanes sets `rate_per_second` /

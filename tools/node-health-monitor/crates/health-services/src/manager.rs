@@ -647,7 +647,7 @@ impl Manager {
                     )
                     | ("applied_served_gap", "native_chain")
                     | ("diagnostic_coverage_reduced", "diagnostic")
-                    | ("memory_growth_unexplained", "process")
+                    | ("memory_growth_unexplained", "process_facts")
                     | ("quic_pressure", "native_gauges") => {}
                     _ => return Err(format!("rule adapter unavailable: {}", rule.id)),
                 }
@@ -1352,8 +1352,10 @@ pub fn router(state: Manager) -> Router {
             "/v1/manager/witness-evidence/{endpoint_id}",
             post(archive_witness).layer(axum::extract::DefaultBodyLimit::max(32_768)),
         )
+        // Ingest admission: five fact lanes, a collector and a probe per node
+        // share this; the single evidence writer behind it stays the real bound.
         .layer(axum::middleware::from_fn_with_state(
-            Arc::new(tokio::sync::Semaphore::new(4)),
+            Arc::new(tokio::sync::Semaphore::new(16)),
             crate::limit_requests,
         ));
     let reads = Router::new()
