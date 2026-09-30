@@ -1,0 +1,9 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-q-retention-starbridge/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.26s
+     Running tests/query_ledger.rs (target/debug/deps/query_ledger-e00883477a591ad7)
+
+running 1 test
+test terminal_payload_compaction_is_atomic_and_seals_replay ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.03s
+
