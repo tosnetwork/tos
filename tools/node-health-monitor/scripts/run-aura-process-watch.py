@@ -108,13 +108,18 @@ def archived_native_parents(manager_db, samples, network_id):
     try:
         with sqlite3.connect(f"file:{Path(manager_db)}?mode=ro", uri=True, timeout=1) as db:
             db.execute("BEGIN")
-        for node in sorted(samples):
+            for node in sorted(samples):
                 sample = samples[node]
-                for _store_seq, parent_hash, body in db.execute(
-                "SELECT store_seq,content_hash,body FROM observations "
-                "WHERE node=? AND scope='node' AND source='native_core' "
-                "ORDER BY store_seq DESC LIMIT 32", (node,)
+                for store_seq, process_epoch, source_epoch, source_record, parent_hash, body in db.execute(
+                    "SELECT store_seq,process_epoch,source_epoch,source_record,content_hash,body "
+                    "FROM observations WHERE node=? AND scope='node' AND source='native_core' "
+                    "ORDER BY store_seq DESC LIMIT 32", (node,)
                 ):
+                    if (type(store_seq) is not int or store_seq <= 0
+                            or process_epoch != sample["native_epoch"]
+                            or source_epoch != sample["native_epoch"]
+                            or source_record != f"{sample['native_epoch']}:{sample['native_generation']}"):
+                        continue
                     if len(body) > 32_768:
                         raise ValueError("local_health_archive_oversize")
                     value = json.loads(body)
@@ -132,8 +137,20 @@ def archived_native_parents(manager_db, samples, network_id):
                             or record["source_record_id"] != f"{sample['native_epoch']}:{sample['native_generation']}"
                             or record["process_epoch"] != sample["native_epoch"]
                             or value["source_epoch"] != sample["native_epoch"]
+                            or native["node_id"] != node
+                            or native["scope_id"] != "node"
+                            or native["source_id"] != "native_core"
+                            or native["source_version"] != "native-core-v2"
+                            or native["process_epoch"] != sample["native_epoch"]
                             or native["source_epoch"] != sample["native_epoch"]
                             or native["generation"] != str(sample["native_generation"])
+                            or native["availability"] != "available"
+                            or native["clock_quality"] != "valid"
+                            or type(native["source_age_ms"]) is not int
+                            or not 0 <= native["source_age_ms"] <= 30_000
+                            or native["coverage"]["missing_fields"] != sample["native_missing"]
+                            or native["payload"]["consensus"]["instrumentation_complete"]
+                            != sample["native_complete"]
                             or native["payload"]["network_id"] != network_id
                             or hashlib.sha256(json.dumps(native["payload"], sort_keys=True,
                                                          separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()

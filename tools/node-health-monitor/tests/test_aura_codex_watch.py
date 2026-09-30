@@ -63,17 +63,21 @@ class CodexWatchTest(unittest.TestCase):
         path = Path(self.temp.name) / "health.json"
         database = Path(self.temp.name) / "evidence.db"
         network = "a" * 64
-        native_payload = {"network_id": network}
+        native_payload = {"network_id": network, "consensus": {"instrumentation_complete": False}}
         native_hash = hashlib.sha256(json.dumps(native_payload, sort_keys=True,
                                                 separators=(",", ":")).encode()).hexdigest()
         with sqlite3.connect(database) as db:
             db.executescript("CREATE TABLE observations(store_seq INTEGER PRIMARY KEY,"
-                             "node TEXT,scope TEXT,source TEXT,content_hash TEXT,body TEXT);"
+                             "node TEXT,scope TEXT,source TEXT,process_epoch TEXT,"
+                             "source_epoch TEXT,source_record TEXT,content_hash TEXT,body TEXT);"
                              "CREATE TABLE quarantined(node TEXT,scope TEXT,process_epoch TEXT,"
                              "source_epoch TEXT,source TEXT);")
             for index, node in enumerate(sorted(watch.NODES)):
-                native = {"content_hash": native_hash, "generation": "1", "source_epoch": "epoch",
-                          "payload": native_payload}
+                native = {"content_hash": native_hash, "node_id": node, "scope_id": "node",
+                          "source_id": "native_core", "source_version": "native-core-v2",
+                          "process_epoch": "epoch", "source_epoch": "epoch", "generation": "1",
+                          "availability": "available", "clock_quality": "valid", "source_age_ms": 1,
+                          "coverage": {"missing_fields": ["local_duties"]}, "payload": native_payload}
                 value = {"source_epoch": "epoch", "record": {
                     "node_id": node, "source_id": "native_core", "source_record_id": "epoch:1",
                     "process_epoch": "epoch", "received_at_ms": 1,
@@ -81,8 +85,8 @@ class CodexWatchTest(unittest.TestCase):
                 canonical = json.loads(json.dumps(value))
                 canonical["record"]["received_at_ms"] = 0
                 parent = hashlib.sha256(json.dumps(canonical, separators=(",", ":")).encode()).hexdigest()
-                db.execute("INSERT INTO observations VALUES(?,?,?,?,?,?)",
-                           (index + 1, node, "node", "native_core", parent,
+                db.execute("INSERT INTO observations VALUES(?,?,?,?,?,?,?,?,?)",
+                           (index + 1, node, "node", "native_core", "epoch", "epoch", "epoch:1", parent,
                             json.dumps(value, separators=(",", ":"))))
         value = {
             "schema_version": 1,
@@ -91,7 +95,8 @@ class CodexWatchTest(unittest.TestCase):
             "whole_validator_health": "unknown",
             "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "samples": {node: {"pid": source["pid"], "native_hash": native_hash,
-                               "native_epoch": "epoch", "native_generation": 1}
+                               "native_epoch": "epoch", "native_generation": 1,
+                               "native_missing": ["local_duties"], "native_complete": False}
                         for node, source in self.sources.items()},
             "verdicts": {node: {"status": "unknown", "reasons": ["unverified"],
                                "facts": {"native_hash": native_hash}}
@@ -99,7 +104,19 @@ class CodexWatchTest(unittest.TestCase):
         }
         path.write_text(json.dumps(value))
         path.chmod(0o600)
-        actual = watch.read_local_health(path, self.sources, network, database)
+        real_connect = sqlite3.connect
+
+        class TransactionChecked(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if sql.startswith("SELECT") and not self.in_transaction:
+                    raise AssertionError("archive_read_outside_transaction")
+                return super().execute(sql, parameters)
+
+        def checked_connect(*args, **kwargs):
+            return real_connect(*args, factory=TransactionChecked, **kwargs)
+
+        with patch.object(watch.sqlite3, "connect", side_effect=checked_connect):
+            actual = watch.read_local_health(path, self.sources, network, database)
         self.assertEqual(len(actual), 6)
         self.assertTrue(all(len(item["native_archive_parent"]) == 64 for item in actual.values()))
         missing_sample = value["samples"].pop("validator1")
@@ -130,6 +147,33 @@ class CodexWatchTest(unittest.TestCase):
             watch.read_local_health(path, self.sources, network, database)
         with sqlite3.connect(database) as db:
             db.execute("DELETE FROM quarantined")
+            body = json.loads(db.execute(
+                "SELECT body FROM observations WHERE node='validator1'"
+            ).fetchone()[0])
+            body["record"]["payload"]["source"]["clock_quality"] = "invalid"
+            canonical = json.loads(json.dumps(body))
+            canonical["record"]["received_at_ms"] = 0
+            parent = hashlib.sha256(json.dumps(
+                canonical, separators=(",", ":")
+            ).encode()).hexdigest()
+            db.execute("UPDATE observations SET body=?,content_hash=? WHERE node='validator1'",
+                       (json.dumps(body, separators=(",", ":")), parent))
+        with self.assertRaisesRegex(ValueError, "local_health_archive_mismatch"):
+            watch.read_local_health(path, self.sources, network, database)
+        with sqlite3.connect(database) as db:
+            body["record"]["payload"]["source"]["clock_quality"] = "valid"
+            canonical = json.loads(json.dumps(body))
+            canonical["record"]["received_at_ms"] = 0
+            parent = hashlib.sha256(json.dumps(
+                canonical, separators=(",", ":")
+            ).encode()).hexdigest()
+            db.execute("UPDATE observations SET body=?,content_hash=? WHERE node='validator1'",
+                       (json.dumps(body, separators=(",", ":")), parent))
+            db.execute("UPDATE observations SET source_record=? WHERE node='validator1'", ("epoch:2",))
+        with self.assertRaisesRegex(ValueError, "local_health_archive_missing"):
+            watch.read_local_health(path, self.sources, network, database)
+        with sqlite3.connect(database) as db:
+            db.execute("UPDATE observations SET source_record=? WHERE node='validator1'", ("epoch:1",))
             db.execute("UPDATE observations SET content_hash=? WHERE node='validator1'", ("f" * 64,))
         with self.assertRaisesRegex(ValueError, "local_health_archive_mismatch"):
             watch.read_local_health(path, self.sources, network, database)
