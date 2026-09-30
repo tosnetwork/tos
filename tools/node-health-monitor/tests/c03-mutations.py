@@ -36,7 +36,7 @@ args = parser.parse_args()
 if args.timeout <= 0:
     parser.error('--timeout must be positive')
 args.log_dir.mkdir(parents=True, exist_ok=True)
-env = dict(os.environ, CARGO_BUILD_JOBS='2', CARGO_TARGET_DIR='/home/tomi/nhm-c03-build',
+env = dict(os.environ, CARGO_BUILD_JOBS='2', CARGO_TARGET_DIR=str(Path.home()/'nhm-c03-build'),
            CARGO_INCREMENTAL='0', CARGO_BUILD_PIPELINING='false')
 
 def digest(value):

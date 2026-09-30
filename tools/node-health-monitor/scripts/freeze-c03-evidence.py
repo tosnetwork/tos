@@ -26,8 +26,8 @@ sources = sorted(set(git_paths('diff','--relative','--name-only','-z',BASE)
 sources = [path for path in sources if not str(path).startswith('evidence/c03-state-rules-notification/')]
 raw = sorted((EVIDENCE/'raw').rglob('*'))
 raw = [path for path in raw if path.is_file()]
-tools = Path('/home/tomi/nhm-c03-tools')
-build = Path('/home/tomi/nhm-c03-build/debug')
+tools = Path.home()/'nhm-c03-tools'
+build = Path.home()/'nhm-c03-build'/'debug'
 binaries = [
     build/'health-state',build/'health-watchdog',
     tools/'prometheus-3.9.1.linux-amd64/prometheus',

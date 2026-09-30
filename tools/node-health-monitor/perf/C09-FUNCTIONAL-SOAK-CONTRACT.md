@@ -85,7 +85,7 @@ database or lower ledger count is an explicit failure.
 The candidate service and timer are in `deploy/c09-functional-supervised/`.
 They execute checksum-pinned copies of the sampler and stop-receipt scripts
 from the dedicated same-UID 0700
-`/home/tomi/nhm-supervision/c09-local/runtime/functional/` directory.
+`$HOME/nhm-supervision/c09-local/runtime/functional/` directory.
 The 72-hour sample log, review receipt, inflight marker, frozen baseline and
 private stop receipt reside there, outside Git. A runtime `SCRIPT.sha256`
 pins both script copies and is checked before either service runs. The owner
