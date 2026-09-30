@@ -37,3 +37,22 @@ the withdrawn count-driven eviction code. The combined locked
 `manager_query_source` target passed 22 tests with one opt-in witness ignored;
 the two fixture measurements remain examples, not a universal proof that the
 production 8 MiB parent byte bound can never bind first.
+
+The cursor's anchor is a **global M row**, not a process-row assertion. A
+nonzero diagnostic-only prefix is accepted with its diagnostic boundary row
+anchored. The tightened test then inserts an actual process row and tampers
+the persisted cursor to skip it with paired NULL anchor columns; startup must
+refuse. This is a test-only control, not a production cursor change or a
+capacity progression claim. The isolated `3c4885703` removal mutant compiled
+and failed at that startup-refusal assertion (exit 101); source-bound checks
+for the shared successor: test source SHA-256
+`dcea5c826fd2e261d63b081535ebd5d69917034659232e8a422e456aa30d81b0`,
+unchanged `query_ledger.rs` SHA-256
+`2152491e042fa50920f9b5d821e3884b8e0d338b301aabce6f2ad310d497b288`,
+and fresh isolated-target test binary SHA-256
+`8cd9e2e4db781137b4238ce92c4d25da45f6f3f157e3db433dbe778e7f0e7c46`.
+The locked `manager_query_source` target on the shared successor exited 0:
+22 passed, 1 opt-in local-M witness ignored, including the pre-existing
+mixed-boundary rewrite test. The shared test binary was freshly compiled under
+`/home/tomi/nhm-c09-shared-global-boundary-build`; a prior reused-target run
+that executed tests absent from its source was discarded as invalid evidence.

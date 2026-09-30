@@ -213,11 +213,17 @@ fn diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup() {
             .caught_up
     );
     drop(ledger);
-    // SQL CHECK permits a paired NULL anchor. The application must still
-    // refuse this nonzero watermark before it can issue any query grant.
+    // A diagnostic-only prefix is valid and uses the actual global-row anchor.
+    // Now add a real process row, then forge a cursor past it with no anchor.
+    // SQL CHECK permits the paired NULLs, but the reader must not skip process.
+    manager.insert(row("edge-epoch-after-diagnostic")).unwrap();
+    let process_page =
+        read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[]).unwrap();
+    assert_eq!(process_page.records.len(), 1);
+    assert_eq!(process_page.cursor.watermark, 2);
     let sql = rusqlite::Connection::open(&ledger_path).unwrap();
     sql.execute(
-        "UPDATE query_manager_cursor SET anchor_seq=NULL,anchor_hash=NULL WHERE singleton=1",
+        "UPDATE query_manager_cursor SET watermark=2,anchor_seq=NULL,anchor_hash=NULL WHERE singleton=1",
         [],
     )
     .unwrap();
