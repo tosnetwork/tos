@@ -254,7 +254,11 @@ def run_codex(args, prompt, schema):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as wire:
         json.dump(strip(schema), wire)
         wire.flush()
-        command = [args.codex_bin, "codex", "--socket", args.codex_socket, "--workdir", args.codex_workdir,
+        # A dedicated private app-server (own CODEX_HOME, no MCP servers) or a
+        # dedicated socket; never the operator's own Codex session.
+        endpoint = (["--spawn-app-server", "--codex-home", args.codex_home] if args.codex_home
+                    else ["--socket", args.codex_socket])
+        command = [args.codex_bin, "codex", *endpoint, "--workdir", args.codex_workdir,
                    "--thread-file", args.codex_thread_file, "--output-schema", wire.name,
                    "--timeout-seconds", str(args.model_timeout)]
         result = subprocess.run(command, input=json.dumps(prompt).encode(), capture_output=True,
@@ -388,6 +392,7 @@ def main():
     parser.add_argument("--journal", help="append one JSON line per run to this private file")
     parser.add_argument("--codex-bin")
     parser.add_argument("--codex-socket")
+    parser.add_argument("--codex-home", help="private CODEX_HOME for a spawned app-server")
     parser.add_argument("--codex-workdir")
     parser.add_argument("--codex-thread-file")
     parser.add_argument("--diagnosis-schema")
@@ -403,8 +408,8 @@ def main():
     if args.provider == "anthropic":
         model_args = (args.api_key_file, args.diagnosis_schema)
     else:
-        model_args = (args.codex_bin, args.codex_socket, args.codex_workdir, args.codex_thread_file,
-                      args.diagnosis_schema)
+        model_args = (args.codex_bin, args.codex_socket or args.codex_home, args.codex_workdir,
+                      args.codex_thread_file, args.diagnosis_schema)
     if any(model_args) and not all(model_args):
         parser.error("model options must be given together")
     report = judge(args)

@@ -250,6 +250,7 @@ def test_model_answer_cannot_upgrade_a_verdict(tmp_path, monkeypatch):
         diagnosis_schema = str(schema)
         codex_bin = "aura"
         codex_socket = "sock"
+        codex_home = None
         codex_workdir = str(tmp_path)
         codex_thread_file = str(tmp_path / "thread")
         model_timeout = 5

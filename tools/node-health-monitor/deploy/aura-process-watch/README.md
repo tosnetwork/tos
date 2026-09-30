@@ -41,6 +41,15 @@ install -d -m 700 $HOME/.local/state/nhm-aura-codex \
   $HOME/.local/state/nhm-aura-codex/codex-home \
   $HOME/.local/state/nhm-aura-codex/work
 CODEX_HOME=$HOME/.local/state/nhm-aura-codex/codex-home codex login
+
+A ChatGPT login also enables the built-in apps connector, which the bridge
+reports as an MCP server (`codex_apps`). Keep the private home's
+`config.toml` at exactly:
+
+```toml
+[features]
+apps = false
+```
 ```
 
 Keep that `CODEX_HOME` free of MCP servers and connectors, and keep `work`
