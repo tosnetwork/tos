@@ -88,7 +88,7 @@ async fn live_m_commit_cadence_vs_disposable_q_grants() {
         }
         let (caught_up, validated) = {
             let data = state.data.lock().unwrap();
-            (data.manager_caught_up, data.manager_validated_data_version)
+            (data.manager_caught_up, data.manager_validated_integrity_revision)
         };
         let current: u64 = state
             .manager_change_witness
@@ -196,11 +196,11 @@ async fn live_m_commit_cadence_vs_disposable_q_grants() {
 
 /// Exact 15-second development cadence with *only* new, unique process rows
 /// in a disposable M. No quarantine, rewrite, external service, or fallback
-/// import is involved. This exposes the availability cost of treating every
-/// append as a reason to deny a new fixed-W grant.
+/// import is involved. Each grant must keep the last completely validated M W
+/// while allowing ordinary immutable M tail rows to arrive.
 #[tokio::test]
 #[ignore = "31-second controlled M append/grant cadence witness"]
-async fn ordinary_m_appends_deny_grants_between_fifteen_second_imports() {
+async fn ordinary_m_appends_preserve_fixed_w_grants_between_fifteen_second_imports() {
     let directory = std::env::temp_dir().join(format!(
         "nhm-m-ordinary-cadence-{}-{}",
         std::process::id(),
@@ -230,13 +230,15 @@ async fn ordinary_m_appends_deny_grants_between_fifteen_second_imports() {
     .unwrap();
     let mut granted = 0usize;
     let mut refused = 0usize;
+    let mut last_validated_m_w = 0u64;
     let started = std::time::Instant::now();
     for second in 0..31 {
         if second > 0 && second % 2 == 0 {
             manager.insert(row(&format!("ordinary-epoch-{second}"))).unwrap();
         }
         if second % 15 == 0 {
-            let (_, count) = import_manager(&state).unwrap();
+            let (watermark, count) = import_manager(&state).unwrap();
+            last_validated_m_w = watermark;
             assert_eq!(
                 count,
                 if second == 0 {
@@ -263,17 +265,23 @@ async fn ordinary_m_appends_deny_grants_between_fifteen_second_imports() {
                 .to_string(),
             ))
             .unwrap();
-        let response = control_router(state.clone()).oneshot(request).await.unwrap();
-        let expected = if second <= 1 || second == 15 || second == 30 {
-            StatusCode::OK
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        };
-        assert_eq!(response.status(), expected, "ordinary append at second {second}");
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            control_router(state.clone()).oneshot(request),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "ordinary append at second {second}");
         assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before);
-        if expected == StatusCode::OK {
+        if response.status() == StatusCode::OK {
             granted += 1;
             let run = body(response).await["run_id"].as_str().unwrap().to_owned();
+            assert_eq!(
+                state.data.lock().unwrap().grants[&run].manager_watermark,
+                Some(last_validated_m_w),
+                "new ordinary M tail must not enter the fixed-W grant"
+            );
             let revoked = control_router(state.clone())
                 .oneshot(
                     Request::builder()
@@ -294,7 +302,7 @@ async fn ordinary_m_appends_deny_grants_between_fifteen_second_imports() {
             tokio::time::sleep(remaining).await;
         }
     }
-    assert_eq!((granted, refused), (4, 27));
+    assert_eq!((granted, refused), (31, 0));
     let quarantine_count: i64 = rusqlite::Connection::open(&manager_path)
         .unwrap()
         .query_row("SELECT COUNT(*) FROM quarantined", [], |row| row.get(0))
@@ -1144,6 +1152,114 @@ fn row(epoch: &str) -> DurableEvidence {
             redacted: true,
         },
     }
+}
+
+#[test]
+fn m_integrity_revision_distinguishes_append_from_quarantine_and_rewrite() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-integrity-revision-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let revision = || {
+        tos_health_services::manager_query_source::read_projection_head(&path, &network)
+            .unwrap()
+            .integrity_revision
+    };
+    assert_eq!(revision(), 0);
+    let original = manager.insert(row("edge-epoch-1")).unwrap();
+    assert_eq!(revision(), 0, "ordinary immutable append must not invalidate a fixed W");
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    let quarantine =
+        "INSERT OR IGNORE INTO quarantined(node,scope,process_epoch,source_epoch,source)
+        VALUES('v1','node','boot:4242:100','edge-epoch-1','process')";
+    assert_eq!(sql.execute(quarantine, []).unwrap(), 1);
+    assert_eq!(revision(), 1);
+    assert_eq!(sql.execute(quarantine, []).unwrap(), 0);
+    assert_eq!(revision(), 1, "ignored duplicate is not a new integrity event");
+    sql.execute("UPDATE quarantined SET source=source", []).unwrap();
+    assert_eq!(revision(), 2);
+    sql.execute("DELETE FROM quarantined", []).unwrap();
+    assert_eq!(revision(), 3);
+    sql.execute(
+        "UPDATE observations SET body=body WHERE store_seq=?1",
+        [i64::try_from(original.store_seq.0).unwrap()],
+    )
+    .unwrap();
+    assert_eq!(revision(), 4);
+    sql.execute("BEGIN", []).unwrap();
+    sql.execute(quarantine, []).unwrap();
+    sql.execute("ROLLBACK", []).unwrap();
+    assert_eq!(revision(), 4, "rolled-back quarantine cannot publish a revision");
+    sql.execute(
+        "DELETE FROM observations WHERE store_seq=?1",
+        [i64::try_from(original.store_seq.0).unwrap()],
+    )
+    .unwrap();
+    assert_eq!(revision(), 5);
+    sql.execute("UPDATE integrity_revision SET revision=9223372036854775807 WHERE singleton=1", [])
+        .unwrap();
+    assert!(sql.execute(quarantine, []).is_err(), "revision must never wrap");
+    let quarantined: i64 =
+        sql.query_row("SELECT COUNT(*) FROM quarantined", [], |row| row.get(0)).unwrap();
+    assert_eq!(quarantined, 0, "overflow refuses the entire source mutation");
+    sql.execute("DROP TRIGGER nhm_quarantine_insert_revision", []).unwrap();
+    assert!(
+        tos_health_services::manager_query_source::read_projection_head(&path, &network).is_err()
+    );
+    assert!(
+        EvidenceDb::open(&path, 4 * 1024 * 1024).is_err(),
+        "v2 reopen must not repair a missing integrity trigger silently"
+    );
+    drop(sql);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn legacy_m_evidence_migrates_revision_without_changing_observation_identity() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-integrity-migration-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let original = manager.insert(row("legacy-epoch")).unwrap();
+    drop(manager);
+    let sql = rusqlite::Connection::open(&path).unwrap();
+    sql.execute_batch(
+        "DROP TRIGGER nhm_quarantine_insert_revision;
+         DROP TRIGGER nhm_quarantine_update_revision;
+         DROP TRIGGER nhm_quarantine_delete_revision;
+         DROP TRIGGER nhm_observation_update_revision;
+         DROP TRIGGER nhm_observation_delete_revision;
+         DROP TABLE integrity_revision;
+         PRAGMA user_version=1;",
+    )
+    .unwrap();
+    drop(sql);
+    assert!(
+        tos_health_services::manager_query_source::read_projection_head(&path, &network).is_err()
+    );
+    let reopened = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
+    let head =
+        tos_health_services::manager_query_source::read_projection_head(&path, &network).unwrap();
+    assert_eq!(head.global_m_seq, original.store_seq.0);
+    assert_eq!(head.integrity_revision, 0);
+    let migrated = reopened.page("v1", "node", original.store_seq.0, 0, 1).unwrap();
+    assert_eq!(migrated.len(), 1);
+    assert_eq!(migrated[0].evidence_id, original.evidence_id);
+    drop(reopened);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

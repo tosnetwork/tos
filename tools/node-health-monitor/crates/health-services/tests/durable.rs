@@ -197,7 +197,7 @@ fn future_schema_and_invalid_page_are_rejected() {
     let t = Temp::new();
     let p = t.0.join("future.db");
     let conn = rusqlite::Connection::open(&p).unwrap();
-    conn.pragma_update(None, "user_version", 2).unwrap();
+    conn.pragma_update(None, "user_version", 3).unwrap();
     drop(conn);
     assert!(EvidenceDb::open(&p, 1_048_576).is_err());
     let e = EvidenceDb::open(&t.0.join("e.db"), 1_048_576).unwrap();

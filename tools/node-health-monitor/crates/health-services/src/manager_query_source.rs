@@ -1,7 +1,7 @@
 //! Read-only, bounded M observation projection for the query process.
 //! Only the exact archived process envelope is implemented. Unsupported
 //! source classes are not silently recast as a complete query component.
-use crate::durable::{DurableEvidence, EvidenceRow};
+use crate::durable::{validate_integrity_schema, DurableEvidence, EvidenceRow};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, os::unix::fs::MetadataExt, path::Path};
@@ -29,11 +29,13 @@ pub struct ProjectionPage {
     pub records: Vec<(EvidenceRow, Evidence)>,
     pub quarantined_retained: BTreeSet<String>,
     pub caught_up: bool,
+    pub integrity_revision: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectionHead {
     pub global_m_seq: u64,
+    pub integrity_revision: u64,
     pub device: u64,
     pub inode: u64,
 }
@@ -65,6 +67,7 @@ pub fn read_projection_head(path: &Path, network: &str) -> Result<ProjectionHead
     if bound != network {
         return Err("M evidence network mismatch".into());
     }
+    let integrity_revision = validate_integrity_schema(&conn)?;
     let watermark: Option<i64> = conn
         .query_row("SELECT seq FROM sqlite_sequence WHERE name='observations'", [], |row| {
             row.get(0)
@@ -77,6 +80,7 @@ pub fn read_projection_head(path: &Path, network: &str) -> Result<ProjectionHead
     }
     Ok(ProjectionHead {
         global_m_seq: u64::try_from(watermark.unwrap_or(0)).map_err(failure)?,
+        integrity_revision,
         device: meta.dev(),
         inode: meta.ino(),
     })
@@ -212,6 +216,7 @@ pub fn read_process_projection_page(
     if bound != network {
         return Err("M evidence network mismatch".into());
     }
+    let integrity_revision = validate_integrity_schema(&conn)?;
     let watermark: Option<i64> = conn
         .query_row("SELECT seq FROM sqlite_sequence WHERE name='observations'", [], |row| {
             row.get(0)
@@ -410,6 +415,7 @@ pub fn read_process_projection_page(
         records,
         quarantined_retained,
         caught_up,
+        integrity_revision,
     })
 }
 

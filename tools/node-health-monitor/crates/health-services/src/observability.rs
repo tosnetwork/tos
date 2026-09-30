@@ -32,7 +32,7 @@ pub struct Data {
     pub grants: BTreeMap<String, Grant>,
     pub manager_conflicted: bool,
     pub manager_caught_up: bool,
-    pub manager_validated_data_version: Option<u64>,
+    pub manager_validated_integrity_revision: Option<u64>,
 }
 // Unit-test-only interleaving point. Production builds contain neither this
 // hook nor a caller-supplied way to pause between cursor validation and grant.
@@ -80,7 +80,7 @@ impl ObservabilityState {
                 grants: BTreeMap::new(),
                 manager_conflicted: false,
                 manager_caught_up: true,
-                manager_validated_data_version: None,
+                manager_validated_integrity_revision: None,
             })),
             inventory: Arc::new(inventory),
             operator_token: Arc::new(operator),
@@ -169,17 +169,14 @@ fn projection_insert_can_pause(error: &str) -> bool {
     // are not evidence of a recoverable pause.
     matches!(error, "active grant evidence retention" | "M parent retention full")
 }
-fn manager_data_version(state: &ObservabilityState, wait: bool) -> Result<u64, String> {
+fn manager_integrity_revision(state: &ObservabilityState, wait: bool) -> Result<u64, String> {
     let witness = state.manager_change_witness.as_ref().ok_or("M change witness unavailable")?;
     let guard = if wait {
         witness.lock().map_err(|_| "M change witness unavailable")?
     } else {
         witness.try_lock().map_err(|_| "M change witness busy")?
     };
-    let version: i64 = guard
-        .query_row("PRAGMA data_version", [], |row| row.get(0))
-        .map_err(|error| error.to_string())?;
-    u64::try_from(version).map_err(|error| error.to_string())
+    crate::durable::validate_integrity_schema(&guard)
 }
 fn block_import_error(state: &ObservabilityState, error: String) -> Result<(u64, usize), String> {
     let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
@@ -210,7 +207,7 @@ pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String
     if state.data.lock().map_err(|_| "query state unavailable")?.manager_conflicted {
         return Err("M projection conflict requires operator review".into());
     }
-    let version_before = match manager_data_version(state, true) {
+    let revision_before = match manager_integrity_revision(state, true) {
         Ok(value) => value,
         Err(error) => return block_import_error(state, error),
     };
@@ -279,15 +276,17 @@ pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String
         block_manager_queries(state, &mut data)?;
         return Err(error);
     }
-    let version_after = match manager_data_version(state, true) {
+    let revision_after = match manager_integrity_revision(state, true) {
         Ok(value) => value,
         Err(error) => {
             block_manager_queries(state, &mut data)?;
             return Err(error);
         }
     };
-    data.manager_caught_up = page.caught_up && version_before == version_after;
-    data.manager_validated_data_version = data.manager_caught_up.then_some(version_after);
+    data.manager_caught_up = page.caught_up
+        && revision_before == page.integrity_revision
+        && page.integrity_revision == revision_after;
+    data.manager_validated_integrity_revision = data.manager_caught_up.then_some(revision_after);
     Ok((page.cursor.watermark, count))
 }
 fn bearer(headers: &HeaderMap) -> Option<&str> {
@@ -332,7 +331,7 @@ async fn projection_health(
         (
             data.manager_conflicted,
             data.manager_caught_up,
-            data.manager_validated_data_version,
+            data.manager_validated_integrity_revision,
             data.store.watermark(),
             cursor,
         )
@@ -348,7 +347,7 @@ async fn projection_health(
     .await
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
     .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let current_version = manager_data_version(&state, false);
+    let current_revision = manager_integrity_revision(&state, false);
     let (source_global_m_seq, source_identity_match, lag_global_m_seq) = match (&head, &cursor) {
         (Ok(head), Some(cursor)) => (
             Some(head.global_m_seq.to_string()),
@@ -364,14 +363,14 @@ async fn projection_health(
     };
     let status = if manager_conflicted {
         "conflict"
-    } else if head.is_err() || current_version.is_err() {
+    } else if head.is_err() || current_revision.is_err() {
         "source_unavailable"
     } else if cursor.is_none() {
         "uninitialized"
     } else if source_identity_match != Some(true) || lag_global_m_seq.is_none() {
         "identity_or_watermark_mismatch"
     } else if !caught_up_at_last_import
-        || validated_version != current_version.ok()
+        || validated_version != current_revision.ok()
         || lag_global_m_seq.as_deref() != Some("0")
     {
         "lagging"
@@ -503,9 +502,9 @@ async fn grant(
         None => None,
     };
     let manager_watermark = if let Some(head) = source_head {
-        let current_version =
-            manager_data_version(&state, false).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        if !data.manager_caught_up || data.manager_validated_data_version != Some(current_version) {
+        if !data.manager_caught_up
+            || data.manager_validated_integrity_revision != Some(head.integrity_revision)
+        {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         let cursor = ledger
@@ -517,7 +516,7 @@ async fn grant(
         if cursor.network != state.inventory.network_id
             || cursor.device != head.device
             || cursor.inode != head.inode
-            || cursor.watermark != head.global_m_seq
+            || cursor.watermark > head.global_m_seq
         {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
@@ -952,7 +951,8 @@ mod grant_cursor_interleaving_tests {
         .unwrap()
         .with_manager_evidence(manager_path.clone())
         .unwrap();
-        let validated_version = state.data.lock().unwrap().manager_validated_data_version.unwrap();
+        let validated_revision =
+            state.data.lock().unwrap().manager_validated_integrity_revision.unwrap();
         let committed_quarantine = Arc::new(AtomicBool::new(false));
         let in_hook = committed_quarantine.clone();
         *GRANT_AFTER_CURSOR_HOOK.lock().unwrap() = Some(Box::new(move || {
@@ -978,7 +978,7 @@ mod grant_cursor_interleaving_tests {
             .unwrap();
         let response = control_router(state.clone()).oneshot(request).await.unwrap();
         assert!(committed_quarantine.load(Ordering::SeqCst));
-        assert_ne!(manager_data_version(&state, false).unwrap(), validated_version);
+        assert_ne!(manager_integrity_revision(&state, false).unwrap(), validated_revision);
         assert_eq!(response.status(), StatusCode::OK, "late quarantine reached durable grant");
         let durable: i64 = rusqlite::Connection::open(&query_path)
             .unwrap()

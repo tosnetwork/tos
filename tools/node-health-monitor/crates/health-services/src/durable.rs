@@ -16,14 +16,14 @@ type Result<T> = std::result::Result<T, String>;
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-fn open(path: &Path, max_bytes: u64) -> Result<Connection> {
+fn open(path: &Path, max_bytes: u64, max_version: i64) -> Result<Connection> {
     if max_bytes < 262_144 {
         return Err("database quota too small".into());
     }
     let conn = Connection::open(path).map_err(err)?;
     conn.busy_timeout(Duration::from_millis(100)).map_err(err)?;
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(err)?;
-    if version > 1 {
+    if version > max_version {
         return Err("unsupported database schema".into());
     }
     conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
@@ -41,7 +41,9 @@ fn open(path: &Path, max_bytes: u64) -> Result<Connection> {
     if effective > pages {
         return Err("database exceeds configured quota".into());
     }
-    conn.pragma_update(None, "user_version", 1).map_err(err)?;
+    if version == 0 {
+        conn.pragma_update(None, "user_version", 1).map_err(err)?;
+    }
     Ok(conn)
 }
 fn bind_network(conn: &mut Connection, network: &str) -> Result<()> {
@@ -67,6 +69,85 @@ fn wal_budget(path: &Path, quota: u64) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(err(e)),
     }
+}
+
+const INTEGRITY_TRIGGERS: [(&str, &str, &str); 5] = [
+    ("nhm_quarantine_insert_revision", "INSERT", "quarantined"),
+    ("nhm_quarantine_update_revision", "UPDATE", "quarantined"),
+    ("nhm_quarantine_delete_revision", "DELETE", "quarantined"),
+    ("nhm_observation_update_revision", "UPDATE", "observations"),
+    ("nhm_observation_delete_revision", "DELETE", "observations"),
+];
+
+pub(crate) fn integrity_trigger_sql(name: &str, operation: &str, table: &str) -> String {
+    format!(
+        "CREATE TRIGGER {name} AFTER {operation} ON {table} BEGIN \
+         UPDATE integrity_revision SET revision=revision+1 \
+         WHERE singleton=1 AND revision<9223372036854775807; \
+         SELECT CASE WHEN changes()!=1 THEN RAISE(ABORT,'integrity revision unavailable') END; END"
+    )
+}
+
+pub(crate) fn validate_integrity_schema(conn: &Connection) -> Result<u64> {
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(err)?;
+    if version != 2 {
+        return Err("M integrity schema version unavailable".into());
+    }
+    for (name, operation, table) in INTEGRITY_TRIGGERS {
+        let stored: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1",
+                [name],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        if stored.trim_end_matches(';') != integrity_trigger_sql(name, operation, table) {
+            return Err("M integrity trigger changed".into());
+        }
+    }
+    let revision: i64 = conn
+        .query_row("SELECT revision FROM integrity_revision WHERE singleton=1", [], |row| {
+            row.get(0)
+        })
+        .map_err(err)?;
+    u64::try_from(revision).map_err(err)
+}
+
+fn install_integrity_schema(conn: &mut Connection) -> Result<()> {
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(err)?;
+    if version == 2 {
+        return validate_integrity_schema(conn).map(|_| ());
+    }
+    if version != 1 {
+        return Err("unsupported M integrity migration source version".into());
+    }
+    let tx = conn.transaction().map_err(err)?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS integrity_revision (
+            singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+            revision INTEGER NOT NULL CHECK(revision>=0));
+         INSERT OR IGNORE INTO integrity_revision(singleton,revision) VALUES(1,0);",
+    )
+    .map_err(err)?;
+    for (name, operation, table) in INTEGRITY_TRIGGERS {
+        let sql = integrity_trigger_sql(name, operation, table);
+        let stored: Option<String> = tx
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1",
+                [name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?;
+        match stored {
+            Some(stored) if stored.trim_end_matches(';') == sql => {}
+            Some(_) => return Err("M integrity trigger changed".into()),
+            None => tx.execute_batch(&sql).map_err(err)?,
+        }
+    }
+    tx.pragma_update(None, "user_version", 2).map_err(err)?;
+    tx.commit().map_err(err)?;
+    validate_integrity_schema(conn).map(|_| ())
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -187,7 +268,7 @@ impl EvidenceDb {
         bind_network(&mut self.conn, network)
     }
     pub fn open(path: &Path, quota: u64) -> Result<Self> {
-        let conn = open(path, quota)?;
+        let mut conn = open(path, quota, 2)?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS observations (
             store_seq INTEGER PRIMARY KEY AUTOINCREMENT,
             node TEXT NOT NULL, scope TEXT NOT NULL, process_epoch TEXT NOT NULL,
@@ -211,6 +292,7 @@ impl EvidenceDb {
             endpoint TEXT PRIMARY KEY,plan_revision TEXT NOT NULL,plan_hash TEXT NOT NULL,observer_epoch TEXT NOT NULL,
             source_epoch TEXT NOT NULL,highest_generation TEXT,source_hash TEXT,metadata_hash TEXT,
             quarantined INTEGER NOT NULL DEFAULT 0);").map_err(err)?;
+        install_integrity_schema(&mut conn)?;
         Ok(Self { conn, path: path.into(), quota, current_tracks: BTreeMap::new() })
     }
     /// Activate the explicit startup plan's current source epochs. Historical
@@ -701,7 +783,7 @@ impl ControlDb {
         if max_incidents == 0 || max_outbox == 0 || max_incidents > 10000 || max_outbox > 10000 {
             return Err("invalid control capacity".into());
         }
-        let conn = open(path, quota)?;
+        let conn = open(path, quota, 1)?;
         conn.execute_batch("CREATE TABLE IF NOT EXISTS incidents(node TEXT,scope TEXT,rule TEXT,body TEXT NOT NULL,PRIMARY KEY(node,scope,rule));
         CREATE TABLE IF NOT EXISTS outbox(id INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT NOT NULL UNIQUE,body TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,
             receiver_alias TEXT NOT NULL DEFAULT '',payload_hash TEXT NOT NULL DEFAULT '',attempts INTEGER NOT NULL DEFAULT 0,next_due_ms INTEGER NOT NULL DEFAULT 0);
