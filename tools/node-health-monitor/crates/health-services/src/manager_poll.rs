@@ -20,6 +20,10 @@ pub struct ProbeConfig {
     pub identity_file: PathBuf,
     pub edge_token_file: PathBuf,
     pub manager_token_file: PathBuf,
+    /// Separate client identity for the manager ingest lane; the edge reader
+    /// role must not carry ingest rights. Defaults to `identity_file`.
+    #[serde(default)]
+    pub manager_identity_file: Option<PathBuf>,
 }
 fn fixed(url: &str, path: &str) -> bool {
     reqwest::Url::parse(url).is_ok_and(|u| {
@@ -214,6 +218,10 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         return Err("invalid fixed native poll configuration".into());
     }
     let client = crate::client(&config.ca_file, &config.identity_file)?;
+    let manager_client = match &config.manager_identity_file {
+        Some(identity) => crate::client(&config.ca_file, identity)?,
+        None => crate::client(&config.ca_file, &config.identity_file)?,
+    };
     let edge =
         String::from_utf8(crate::secret(&config.edge_token_file)?).map_err(|e| e.to_string())?;
     let manager =
@@ -227,34 +235,65 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     loop {
         timer.tick().await;
         let started = Instant::now();
-        let Ok(response) = client.get(&config.edge_url).bearer_auth(&edge).send().await else {
-            continue;
+        // Each skipped tick names its reason once; the loop never invents a
+        // zero fact for a source it could not read.
+        let response = match client.get(&config.edge_url).bearer_auth(&edge).send().await {
+            Ok(response) if response.status().is_success() => response,
+            Ok(response) => {
+                eprintln!("native poll: edge status {}", response.status());
+                continue;
+            }
+            Err(e) => {
+                eprintln!("native poll: edge request failed: {e}");
+                continue;
+            }
         };
-        if !response.status().is_success() {
-            continue;
-        }
         let Ok(bytes) = crate::bounded_body(response, 262_144).await else {
+            eprintln!("native poll: edge body exceeded bound");
             continue;
         };
-        let Ok(snapshot) =
-            serde_json::from_slice::<tos_health_core::edge_snapshot::EdgeSnapshot>(&bytes)
-        else {
-            continue;
-        };
-        if snapshot.validate(&config.node_id, &config.network_id).is_err() {
+        let snapshot =
+            match serde_json::from_slice::<tos_health_core::edge_snapshot::EdgeSnapshot>(&bytes) {
+                Ok(snapshot) => snapshot,
+                Err(e) => {
+                    eprintln!("native poll: edge snapshot invalid: {e}");
+                    continue;
+                }
+            };
+        if let Err(e) = snapshot.validate(&config.node_id, &config.network_id) {
+            eprintln!("native poll: edge snapshot refused: {e}");
             continue;
         }
         let elapsed = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         let Some(record) = snapshot.native_record() else {
+            eprintln!("native poll: no native source in edge snapshot");
             continue;
         };
-        let Ok(frame) = native_fact_frame(&record, elapsed, &mut state) else {
-            continue;
+        let frame = match native_fact_frame(&record, elapsed, &mut state) {
+            Ok(frame) => frame,
+            Err(e) => {
+                eprintln!("native poll: fact frame refused: {e}");
+                continue;
+            }
         };
-        if let Ok(response) =
-            client.post(&config.manager_url).bearer_auth(&manager).json(&frame).send().await
+        match manager_client
+            .post(&config.manager_url)
+            .bearer_auth(&manager)
+            .json(&frame)
+            .send()
+            .await
         {
-            let _ = crate::bounded_body(response, 4096).await;
+            Ok(response) => {
+                let status = response.status();
+                let body = crate::bounded_body(response, 4096).await.unwrap_or_default();
+                if !status.is_success() {
+                    eprintln!(
+                        "native poll: manager refused facts: {status} {}",
+                        String::from_utf8_lossy(&body)
+                    );
+                }
+            }
+            Err(e) => eprintln!("native poll: manager request failed: {e}"),
         }
     }
 }

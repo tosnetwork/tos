@@ -1057,6 +1057,7 @@ async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
             identity_file: t.0.join("identity.pem"),
             edge_token_file: t.0.join("edge.token"),
             manager_token_file: t.0.join("manager.token"),
+            manager_identity_file: None,
         };
         let task = tokio::spawn(run(probe));
         let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
@@ -1172,6 +1173,7 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
             identity_file: t.0.join("identity.pem"),
             edge_token_file: t.0.join("edge.token"),
             manager_token_file: t.0.join("manager.token"),
+            manager_identity_file: None,
         };
         let task = tokio::spawn(run(probe));
         if mismatch {
