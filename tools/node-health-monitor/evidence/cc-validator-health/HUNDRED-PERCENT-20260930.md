@@ -207,6 +207,47 @@ Results:
   Q kept serving throughout (retained parents inside the 2 h floor).
 - **Soak**: running to 00:33 UTC; final numbers in §11.
 
-## 11. Final state
+## 11. Owner decision: rotating rebuild and a key block fact (evening)
 
-(appended when the rollout, rounds and soak complete)
+Asked whether the missing key block was an operational or a design problem,
+the answer was both: upstream TON has the identical code (persistent state
+only at a key block, GC only up to the last key block, key blocks only on a
+configuration change) and relies on elections to keep changing the
+configuration; its zero state gives the bootstrap set 3000 s. Our local
+generator gives it 30 days unless `--rotate` is passed, and this morning's
+rebuild was not rotating, so nothing ever changed. Design gap worth keeping:
+a chain whose configuration legitimately never changes never checkpoints.
+
+Owner chose plan 1 (rebuild with `--rotate`) plus a `key_block_age` fact.
+
+- **Engine** (`7178a25d7`): the chain anchor carries the last known key
+  block (seqno, time); `test-health-native-snapshot` covers present, null and
+  malformed clocks. Engine `validator-engine-nhm-cc-77a7010af929ce40`.
+- **Monitor**: `KeyBlockAgeMs` fact, source `native_key_block`, rule
+  `key_block_stale` (Above; 19-rule catalog now), manager pair, poller frame,
+  parse compatibility with publishers that lack the field (the exact-bytes
+  hash holds for a missing and for a null anchor; tests in
+  `native_v3_chain.rs`).
+- **Network**: old network stopped at 22:00 UTC (soak record closed at 7.7 h,
+  445 samples, retention had deleted 36,506 rows); `setup-testnet.sh --clean
+  --rotate` finished at 22:05 with validators 1,2,3,4,7, two observers and
+  `tos-pq-elections`; monitoring rebound to network
+  `99599bf0ef8f…` with validator7 added to every lane and inventory
+  revision `development-native-facts-7`.
+- **Two deploy-half misses, both caught live and fixed within minutes**: the
+  edges were still the previous build and refused every snapshot (503) until
+  rebuilt and recreated (`health-edge-cc-f63aed6541cfd6b7`); the judge units
+  carried the old network id in their command line (rebind rewrites JSON
+  configs only) so the AI fact was refused until the units were rewritten.
+  Both are now in the deploy README.
+- **Result**: the first election ran on schedule; **key block 1434 at
+  22:15:44 UTC**, seen by all seven nodes within a poll; `key_block_stale`
+  good ×7, verdict healthy ×7 at 22:17:06, doctor 13 pass / 1 transient
+  fail / 3 not_run at 22:17. The elections service had exited once (HTTP 500
+  while the rebind restarted its node); restarted, `Restart=no` noted.
+- **Soak**: owner capped development soaks at 2 hours; a 2-hour soak on the
+  rotating network started 22:17 UTC. Final numbers below.
+
+## 12. Final state
+
+(appended when the 2-hour soak completes)

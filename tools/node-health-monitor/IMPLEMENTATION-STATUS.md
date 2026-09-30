@@ -22,7 +22,11 @@ doctor, run-bound derived epochs, and an engine fix that keeps the chain
 anchor attached during a halt. Performance is measured by three 30-minute
 edge-toggle rounds (a node restart on this network replays from genesis:
 no key block has ever been produced) and a 10-hour soak crossing a deleting
-retention pass; the R4 72-hour production soak remains deferred.
+retention pass; the R4 72-hour production soak remains deferred. In the
+evening the owner had the network rebuilt with rotating elections
+(`--rotate`, key block every ~10 minutes) and a `key_block_age` fact added
+(`native_key_block` source, rule `key_block_stale`, 19-rule catalog); the
+first key block landed on schedule and all seven nodes judge healthy.
 A checked item means only its named implementation and evidence exist, never
 a main merge or production approval.
 

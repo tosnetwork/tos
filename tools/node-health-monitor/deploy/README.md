@@ -195,13 +195,47 @@ publishes `tos_health_storage_write_stopped` (0/1), `_total` and
 the gauge the frame is incomplete, the rule is unknown and
 `telemetry_unavailable` says so; nothing is assumed good.
 
-## Rolling an engine on the local network
+## Key blocks: the `native_key_block` source
 
-The local development network has produced no key block since genesis (its
-validator set is fixed for 30 days and nothing changes the config), so no
-persistent state exists and **every node restart replays the chain from
-genesis** (about 6 blocks/s here against about 2.5 blocks/s produced). The
-cost grows with the chain and a restart is never cheap. Rules that follow:
+Persistent states and state garbage collection follow key blocks, and a key
+block exists only when the configuration changes (in practice: when elections
+rotate the validator set). The validator manager therefore publishes the last
+known key block (`chain.key_block = {seqno, unix_seconds}`, null before one
+is resolved) with the v3 chain anchor; the poller derives `key_block_age_ms`
+(observation clock minus the key block's own clock) into its own one-fact
+source `native_key_block`, and the rule `key_block_stale` (Above threshold)
+says how long the chain has gone without a checkpoint. A publisher without
+the field is accepted and yields no fact, never zero. The development
+inventory binds the rule at one hour (revision `development-native-facts-7`);
+a production threshold follows the election period plus margin.
+
+Any change to the v3 anchor is a change to the **edge's** contract too: the
+edge parses the native record with the same strict types and answers 503
+until it is rebuilt and recreated. On 2026-09-30 the rebuilt network came up
+with every edge refusing for four minutes for exactly this reason.
+
+## The rotating development network
+
+`setup-testnet.sh --clean --rotate` creates the network with a bootstrap
+validator set valid for 600 s, stage-A elections every 600 s
+(`tos-pq-elections.service`, rosters 1,2,3,7 and 1,2,3,4 alternating) and a
+fifth validator node 7. Every election is a configuration change and hence a
+key block about every ten minutes; the first persistent state follows the
+first key block after a 2^17 s boundary, after which restarts stop replaying
+from genesis and garbage collection runs. Monitoring covers node 7 like the
+others (edge, ingress, probe, collector, poller, `judge-nodes.json` for the
+judgement's node list); the election service restarts nothing itself, but a
+node restart during its RPC turn makes it exit and it has `Restart=no`, so
+check it after any node restart.
+
+## Rolling an engine on a network without persistent state
+
+Before the rotating rebuild the development network had produced no key
+block since genesis (validator set fixed for 30 days, nothing changed the
+config), so no persistent state existed and **every node restart replayed
+the chain from genesis** (about 6 blocks/s here against about 2.5 blocks/s
+produced), and validator memory grew about 1.4 GiB/h with nothing collected.
+The rules below still hold on any network without a recent persistent state:
 
 1. One node at a time. Restart a validator only while the chain is live and
    all four validators are at the head; move on only after the restarted node
