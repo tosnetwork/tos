@@ -1,0 +1,118 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.36s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=16
+grant_during_catchup=503
+page=2 rows=0 retained=0 global_m_seq=512 elapsed_ms=4 concurrent_grant_ms=Some(2)
+page=3 rows=0 retained=0 global_m_seq=768 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=4 rows=0 retained=0 global_m_seq=1024 elapsed_ms=3 concurrent_grant_ms=Some(1)
+page=5 rows=0 retained=0 global_m_seq=1280 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=6 rows=0 retained=0 global_m_seq=1536 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=7 rows=0 retained=0 global_m_seq=1792 elapsed_ms=3 concurrent_grant_ms=Some(1)
+page=8 rows=0 retained=0 global_m_seq=2048 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=9 rows=0 retained=0 global_m_seq=2304 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=10 rows=0 retained=0 global_m_seq=2560 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=11 rows=0 retained=0 global_m_seq=2816 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=12 rows=0 retained=0 global_m_seq=3072 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=13 rows=0 retained=0 global_m_seq=3328 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=14 rows=0 retained=0 global_m_seq=3584 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=15 rows=0 retained=0 global_m_seq=3840 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=16 rows=0 retained=0 global_m_seq=4096 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=17 rows=0 retained=0 global_m_seq=4352 elapsed_ms=3 concurrent_grant_ms=Some(0)
+page=18 rows=24 retained=24 global_m_seq=4608 elapsed_ms=35 concurrent_grant_ms=Some(0)
+page=19 rows=33 retained=57 global_m_seq=4864 elapsed_ms=54 concurrent_grant_ms=Some(1)
+page=20 rows=80 retained=137 global_m_seq=5120 elapsed_ms=120 concurrent_grant_ms=Some(2)
+page=21 rows=79 retained=216 global_m_seq=5376 elapsed_ms=135 concurrent_grant_ms=Some(2)
+page=22 rows=78 retained=294 global_m_seq=5632 elapsed_ms=148 concurrent_grant_ms=Some(2)
+page=23 rows=78 retained=372 global_m_seq=5888 elapsed_ms=165 concurrent_grant_ms=Some(2)
+page=24 rows=78 retained=450 global_m_seq=6144 elapsed_ms=177 concurrent_grant_ms=Some(2)
+page=25 rows=77 retained=527 global_m_seq=6400 elapsed_ms=193 concurrent_grant_ms=Some(2)
+page=26 rows=76 retained=603 global_m_seq=6656 elapsed_ms=203 concurrent_grant_ms=Some(2)
+page=27 rows=78 retained=681 global_m_seq=6912 elapsed_ms=230 concurrent_grant_ms=Some(2)
+page=28 rows=77 retained=758 global_m_seq=7168 elapsed_ms=236 concurrent_grant_ms=Some(1)
+page=29 rows=78 retained=836 global_m_seq=7424 elapsed_ms=266 concurrent_grant_ms=Some(2)
+page=30 rows=79 retained=915 global_m_seq=7680 elapsed_ms=286 concurrent_grant_ms=Some(2)
+page=31 rows=78 retained=993 global_m_seq=7936 elapsed_ms=281 concurrent_grant_ms=Some(2)
+page=32 rows=77 retained=1070 global_m_seq=8192 elapsed_ms=298 concurrent_grant_ms=Some(2)
+page=33 rows=78 retained=1148 global_m_seq=8448 elapsed_ms=315 concurrent_grant_ms=Some(3)
+page=34 rows=78 retained=1226 global_m_seq=8704 elapsed_ms=361 concurrent_grant_ms=Some(2)
+page=35 rows=76 retained=1302 global_m_seq=8960 elapsed_ms=340 concurrent_grant_ms=Some(2)
+page=36 rows=77 retained=1379 global_m_seq=9216 elapsed_ms=381 concurrent_grant_ms=Some(2)
+page=37 rows=79 retained=1458 global_m_seq=9472 elapsed_ms=382 concurrent_grant_ms=Some(2)
+page=38 rows=78 retained=1536 global_m_seq=9728 elapsed_ms=385 concurrent_grant_ms=Some(2)
+page=39 rows=77 retained=1613 global_m_seq=9984 elapsed_ms=404 concurrent_grant_ms=Some(2)
+page=40 rows=75 retained=1688 global_m_seq=10240 elapsed_ms=419 concurrent_grant_ms=Some(2)
+page=41 rows=76 retained=1764 global_m_seq=10496 elapsed_ms=436 concurrent_grant_ms=Some(2)
+page=42 rows=78 retained=1842 global_m_seq=10752 elapsed_ms=448 concurrent_grant_ms=Some(2)
+page=43 rows=77 retained=1919 global_m_seq=11008 elapsed_ms=503 concurrent_grant_ms=Some(2)
+page=44 rows=76 retained=1995 global_m_seq=11264 elapsed_ms=489 concurrent_grant_ms=Some(2)
+page=45 rows=79 retained=2074 global_m_seq=11520 elapsed_ms=295 concurrent_grant_ms=Some(2)
+page=46 rows=77 retained=2151 global_m_seq=11776 elapsed_ms=404 concurrent_grant_ms=Some(2)
+page=47 rows=76 retained=2227 global_m_seq=12032 elapsed_ms=301 concurrent_grant_ms=Some(2)
+page=48 rows=77 retained=2304 global_m_seq=12288 elapsed_ms=313 concurrent_grant_ms=Some(2)
+page=49 rows=77 retained=2381 global_m_seq=12544 elapsed_ms=318 concurrent_grant_ms=Some(2)
+page=50 rows=77 retained=2458 global_m_seq=12800 elapsed_ms=336 concurrent_grant_ms=Some(2)
+page=51 rows=78 retained=2479 global_m_seq=13056 elapsed_ms=345 concurrent_grant_ms=Some(2)
+page=52 rows=78 retained=2479 global_m_seq=13312 elapsed_ms=370 concurrent_grant_ms=Some(2)
+page=53 rows=80 retained=2479 global_m_seq=13568 elapsed_ms=368 concurrent_grant_ms=Some(2)
+page=54 rows=77 retained=2479 global_m_seq=13824 elapsed_ms=377 concurrent_grant_ms=Some(2)
+page=55 rows=80 retained=2479 global_m_seq=14080 elapsed_ms=377 concurrent_grant_ms=Some(1)
+page=56 rows=78 retained=2479 global_m_seq=14336 elapsed_ms=370 concurrent_grant_ms=Some(2)
+page=57 rows=79 retained=2479 global_m_seq=14592 elapsed_ms=365 concurrent_grant_ms=Some(2)
+page=58 rows=79 retained=2479 global_m_seq=14848 elapsed_ms=368 concurrent_grant_ms=Some(2)
+page=59 rows=78 retained=2479 global_m_seq=15104 elapsed_ms=367 concurrent_grant_ms=Some(2)
+page=60 rows=79 retained=2479 global_m_seq=15360 elapsed_ms=381 concurrent_grant_ms=Some(1)
+page=61 rows=78 retained=2479 global_m_seq=15616 elapsed_ms=352 concurrent_grant_ms=Some(1)
+page=62 rows=77 retained=2479 global_m_seq=15872 elapsed_ms=383 concurrent_grant_ms=Some(2)
+page=63 rows=80 retained=2479 global_m_seq=16128 elapsed_ms=366 concurrent_grant_ms=Some(2)
+page=64 rows=78 retained=2479 global_m_seq=16384 elapsed_ms=372 concurrent_grant_ms=Some(2)
+page=65 rows=78 retained=2479 global_m_seq=16640 elapsed_ms=362 concurrent_grant_ms=Some(1)
+page=66 rows=78 retained=2478 global_m_seq=16896 elapsed_ms=364 concurrent_grant_ms=Some(2)
+page=67 rows=79 retained=2478 global_m_seq=17152 elapsed_ms=379 concurrent_grant_ms=Some(2)
+page=68 rows=81 retained=2478 global_m_seq=17408 elapsed_ms=383 concurrent_grant_ms=Some(2)
+page=69 rows=78 retained=2478 global_m_seq=17664 elapsed_ms=367 concurrent_grant_ms=Some(1)
+page=70 rows=79 retained=2478 global_m_seq=17920 elapsed_ms=461 concurrent_grant_ms=Some(2)
+page=71 rows=78 retained=2478 global_m_seq=18176 elapsed_ms=365 concurrent_grant_ms=Some(0)
+page=72 rows=79 retained=2478 global_m_seq=18432 elapsed_ms=457 concurrent_grant_ms=Some(1)
+page=73 rows=78 retained=2478 global_m_seq=18688 elapsed_ms=650 concurrent_grant_ms=Some(0)
+page=74 rows=78 retained=2478 global_m_seq=18944 elapsed_ms=461 concurrent_grant_ms=Some(2)
+page=75 rows=78 retained=2478 global_m_seq=19200 elapsed_ms=502 concurrent_grant_ms=Some(0)
+page=76 rows=78 retained=2478 global_m_seq=19456 elapsed_ms=459 concurrent_grant_ms=Some(2)
+page=77 rows=80 retained=2478 global_m_seq=19712 elapsed_ms=371 concurrent_grant_ms=Some(2)
+page=78 rows=78 retained=2478 global_m_seq=19968 elapsed_ms=366 concurrent_grant_ms=Some(2)
+page=79 rows=79 retained=2478 global_m_seq=20224 elapsed_ms=375 concurrent_grant_ms=Some(2)
+page=80 rows=79 retained=2478 global_m_seq=20480 elapsed_ms=370 concurrent_grant_ms=Some(2)
+page=81 rows=78 retained=2478 global_m_seq=20736 elapsed_ms=371 concurrent_grant_ms=Some(2)
+page=82 rows=77 retained=2478 global_m_seq=20992 elapsed_ms=359 concurrent_grant_ms=Some(2)
+page=83 rows=79 retained=2478 global_m_seq=21248 elapsed_ms=368 concurrent_grant_ms=Some(2)
+page=84 rows=78 retained=2477 global_m_seq=21504 elapsed_ms=379 concurrent_grant_ms=Some(2)
+page=85 rows=78 retained=2477 global_m_seq=21760 elapsed_ms=373 concurrent_grant_ms=Some(2)
+page=86 rows=80 retained=2477 global_m_seq=22016 elapsed_ms=400 concurrent_grant_ms=Some(1)
+page=87 rows=76 retained=2477 global_m_seq=22272 elapsed_ms=362 concurrent_grant_ms=Some(2)
+page=88 rows=79 retained=2477 global_m_seq=22528 elapsed_ms=375 concurrent_grant_ms=Some(1)
+page=89 rows=79 retained=2477 global_m_seq=22784 elapsed_ms=373 concurrent_grant_ms=Some(2)
+page=90 rows=79 retained=2477 global_m_seq=23040 elapsed_ms=376 concurrent_grant_ms=Some(1)
+page=91 rows=80 retained=2477 global_m_seq=23296 elapsed_ms=371 concurrent_grant_ms=Some(2)
+page=92 rows=79 retained=2477 global_m_seq=23552 elapsed_ms=368 concurrent_grant_ms=Some(1)
+page=93 rows=78 retained=2477 global_m_seq=23808 elapsed_ms=375 concurrent_grant_ms=Some(0)
+page=94 rows=77 retained=2477 global_m_seq=24064 elapsed_ms=454 concurrent_grant_ms=Some(1)
+page=95 rows=5 retained=2477 global_m_seq=24081 elapsed_ms=293 concurrent_grant_ms=Some(2)
+peak_retained=2479 slowest_page_ms=650 slowest_concurrent_grant_ms=3
+
+thread 'live_read_only_projection_cost_witness' (4037940) panicked at crates/health-services/tests/manager_query_source.rs:157:5:
+assertion `left == right` failed
+  left: 503
+ right: 200
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test live_read_only_projection_cost_witness ... FAILED
+
+failures:
+
+failures:
+    live_read_only_projection_cost_witness
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 35.08s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`

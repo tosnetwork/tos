@@ -76,20 +76,99 @@ async fn live_read_only_projection_cost_witness() {
     assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert!(!state.data.lock().unwrap().manager_conflicted);
     println!("grant_during_catchup=503");
-    // Startup imports one page; the refused grant attempts exactly one more.
-    let mut pages = 2;
-    while !state.data.lock().unwrap().manager_caught_up && pages < 32 {
+    // Startup imports one page. Grants never import another page; each
+    // background page below races an actual control-router request while M
+    // and Q are separate from the running services' writable databases.
+    let mut pages = 1;
+    let mut concurrent_peak = false;
+    let mut peak_retained = 0usize;
+    let mut slowest_page = std::time::Duration::ZERO;
+    let mut slowest_grant = std::time::Duration::ZERO;
+    while !state.data.lock().unwrap().manager_caught_up && pages < 128 {
+        let prior_reads = state.manager_projection_reads.load(std::sync::atomic::Ordering::Relaxed);
+        let importing = state.clone();
         let started = std::time::Instant::now();
-        let (watermark, count) = import_manager(&state).unwrap();
+        let task = tokio::task::spawn_blocking(move || import_manager(&importing));
+        let observe_until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut overlapping = false;
+        while !task.is_finished() && std::time::Instant::now() < observe_until {
+            if state.manager_projection_reads.load(std::sync::atomic::Ordering::Relaxed)
+                > prior_reads
+                && state.manager_import_gate.try_lock().is_err()
+                && state.manager_source_read_active.load(std::sync::atomic::Ordering::Acquire)
+                && state.data.try_lock().is_ok()
+            {
+                overlapping = true;
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let grant_elapsed = if overlapping {
+            let grant_started = std::time::Instant::now();
+            let concurrent = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                control_router(state.clone()).oneshot(request()),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(concurrent.status(), StatusCode::SERVICE_UNAVAILABLE);
+            Some(grant_started.elapsed())
+        } else {
+            None
+        };
+        let (watermark, count) = task.await.unwrap().unwrap();
+        let import_elapsed = started.elapsed();
+        let retained = state
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .retained_origin_rows()
+            .unwrap()
+            .len();
+        peak_retained = peak_retained.max(retained);
+        slowest_page = slowest_page.max(import_elapsed);
+        if let Some(elapsed) = grant_elapsed {
+            assert!(elapsed < std::time::Duration::from_secs(5));
+            slowest_grant = slowest_grant.max(elapsed);
+            concurrent_peak |= retained >= 2_000;
+        }
         pages += 1;
         println!(
-            "page={pages} rows={count} global_m_seq={watermark} elapsed_ms={}",
-            started.elapsed().as_millis()
+            "page={pages} rows={count} retained={retained} global_m_seq={watermark} elapsed_ms={} concurrent_grant_ms={:?}",
+            import_elapsed.as_millis(),
+            grant_elapsed.map(|elapsed| elapsed.as_millis())
         );
     }
+    assert!(
+        concurrent_peak,
+        "live M run did not witness a concurrent grant at >=2000 retained parents"
+    );
+    println!(
+        "peak_retained={peak_retained} slowest_page_ms={} slowest_concurrent_grant_ms={}",
+        slowest_page.as_millis(),
+        slowest_grant.as_millis()
+    );
     assert!(state.data.lock().unwrap().manager_caught_up);
     let caught_up_ms = started.elapsed().as_millis();
-    let granted = control_router(state.clone()).oneshot(request()).await.unwrap();
+    // The running collectors can advance M between the last page and the
+    // grant. A 503 in that interval is correct; revalidate one bounded page
+    // and retry without changing the five-second control deadline.
+    let mut granted = None;
+    let mut raced_updates = 0usize;
+    for _ in 0..8 {
+        let response = control_router(state.clone()).oneshot(request()).await.unwrap();
+        if response.status() == StatusCode::OK {
+            granted = Some(response);
+            break;
+        }
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        raced_updates += 1;
+        import_manager(&state).unwrap();
+    }
+    let granted = granted.expect("fresh M row race prevented eight bounded grant attempts");
     assert_eq!(granted.status(), StatusCode::OK);
     let granted = body(granted).await;
     let run = granted["run_id"].as_str().unwrap();
@@ -105,7 +184,9 @@ async fn live_read_only_projection_cost_witness() {
         .await
         .unwrap();
     assert_eq!(revoked.status(), StatusCode::OK);
-    println!("caught_up_ms={caught_up_ms} grant_after_catchup=200 revoked=200");
+    println!(
+        "caught_up_ms={caught_up_ms} grant_after_catchup=200 revoked=200 raced_updates={raced_updates}"
+    );
     let started = std::time::Instant::now();
     let (watermark, count) = import_manager(&state).unwrap();
     println!(
@@ -1025,7 +1106,7 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
     let directory = std::env::temp_dir().join(format!(
         "nhm-m-query-migrate-{}-{}",
@@ -1202,6 +1283,64 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
         "grant waited on importer Data lock for {elapsed:?}"
     );
     eprintln!("retained={retained_at_pause} contended_grant={elapsed:?}");
+    // This is an actual import of the next M page with 2,561 retained
+    // parents, not a mutex-only stand-in. The slow source read must leave
+    // Data available to already-fixed queries and let a new grant fail
+    // promptly while its cursor is behind the same M snapshot.
+    let prior_reads = restored.manager_projection_reads.load(std::sync::atomic::Ordering::Relaxed);
+    let importing = restored.clone();
+    let import_started = std::time::Instant::now();
+    let import = std::thread::spawn(move || import_manager(&importing));
+    let observe_until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let began = restored.manager_projection_reads.load(std::sync::atomic::Ordering::Relaxed)
+            > prior_reads;
+        if began
+            && restored.manager_import_gate.try_lock().is_err()
+            && restored.manager_source_read_active.load(std::sync::atomic::Ordering::Acquire)
+            && restored.data.try_lock().is_ok()
+        {
+            break;
+        }
+        assert!(
+            !import.is_finished() && std::time::Instant::now() < observe_until,
+            "peak M importer never released Data during its real source read"
+        );
+        tokio::task::yield_now().await;
+    }
+    let concurrent_started = std::time::Instant::now();
+    let during_import = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        control_router(restored.clone()).oneshot(request()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let concurrent_elapsed = concurrent_started.elapsed();
+    assert_eq!(during_import.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(concurrent_elapsed < std::time::Duration::from_secs(2));
+    let health_started = std::time::Instant::now();
+    let health = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        control_router(restored.clone()).oneshot(
+            Request::builder()
+                .uri("/v1/control/projection-health")
+                .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let health_elapsed = health_started.elapsed();
+    assert!(matches!(health.status(), StatusCode::OK | StatusCode::SERVICE_UNAVAILABLE));
+    assert!(health_elapsed < std::time::Duration::from_secs(2));
+    assert_eq!(import.join().unwrap().unwrap_err(), "active grant evidence retention");
+    eprintln!(
+        "real_peak_import={:?} concurrent_grant={concurrent_elapsed:?} control_health={health_elapsed:?}",
+        import_started.elapsed()
+    );
     let old_at_capacity = query_router(restored.clone())
         .oneshot(
             Request::builder()
@@ -1574,6 +1713,20 @@ async fn grant_refuses_quarantine_without_new_m_row_until_background_validation(
         StatusCode::SERVICE_UNAVAILABLE,
         "same-W quarantine cannot issue a new grant from stale validation"
     );
+    let health = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/v1/control/projection-health")
+                .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    let health = body(health).await;
+    assert_eq!(health["projection_status"], "lagging");
+    assert_eq!(health["lag_global_m_seq"], "0");
     assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before);
     assert_eq!(
         state

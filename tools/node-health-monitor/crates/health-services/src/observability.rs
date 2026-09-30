@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::Instant,
@@ -47,6 +47,12 @@ pub struct ObservabilityState {
     /// One stable read-only SQLite connection observes changes to M even when
     /// its global row watermark does not move (for example, quarantine).
     pub manager_change_witness: Option<Arc<Mutex<Connection>>>,
+    /// Serializes background imports without holding the query Data mutex
+    /// across M's retained-parent validation and bounded page read.
+    pub manager_import_gate: Arc<Mutex<()>>,
+    /// Precise source-I/O phase witness: a control test can distinguish the
+    /// slow M read from the short publication window without sleeping.
+    pub manager_source_read_active: Arc<AtomicBool>,
     /// Counts actual broker-side M archive read attempts. Query handlers must
     /// not increment this witness even under a call storm or cache miss.
     pub manager_projection_reads: Arc<AtomicU64>,
@@ -80,6 +86,8 @@ impl ObservabilityState {
             query_ledger: None,
             manager_evidence_db: None,
             manager_change_witness: None,
+            manager_import_gate: Arc::new(Mutex::new(())),
+            manager_source_read_active: Arc::new(AtomicBool::new(false)),
             manager_projection_reads: Arc::new(AtomicU64::new(0)),
             started: Instant::now(),
             epoch: hex(&random_token()?),
@@ -169,22 +177,38 @@ fn manager_data_version(state: &ObservabilityState, wait: bool) -> Result<u64, S
         .map_err(|error| error.to_string())?;
     u64::try_from(version).map_err(|error| error.to_string())
 }
-fn import_manager_into(
-    state: &ObservabilityState,
-    data: &mut Data,
-) -> Result<(u64, usize), String> {
+fn block_import_error(state: &ObservabilityState, error: String) -> Result<(u64, usize), String> {
+    let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
+    block_manager_queries(state, &mut data)?;
+    Err(error)
+}
+struct SourceReadPhase(Arc<AtomicBool>);
+impl SourceReadPhase {
+    fn begin(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::Release);
+        Self(flag.clone())
+    }
+}
+impl Drop for SourceReadPhase {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+/// This is a broker-control operation, not a query handler fallback. The M
+/// snapshot and retained-parent read can take longer than the control socket's
+/// deadline at peak retention, so neither Data nor QueryLedger is held across
+/// that read. Only the short publication/commit phase takes both locks.
+pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String> {
+    let _import_gate = state.manager_import_gate.lock().map_err(|_| "M importer unavailable")?;
     let Some(path) = &state.manager_evidence_db else {
         return Ok((0, 0));
     };
-    if data.manager_conflicted {
+    if state.data.lock().map_err(|_| "query state unavailable")?.manager_conflicted {
         return Err("M projection conflict requires operator review".into());
     }
     let version_before = match manager_data_version(state, true) {
         Ok(value) => value,
-        Err(error) => {
-            block_manager_queries(state, data)?;
-            return Err(error);
-        }
+        Err(error) => return block_import_error(state, error),
     };
     let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
     state.manager_projection_reads.fetch_add(1, Ordering::Relaxed);
@@ -196,36 +220,35 @@ fn import_manager_into(
     };
     let (previous, retained) = match cursor_and_retained {
         Ok(value) => value,
-        Err(error) => {
-            block_manager_queries(state, data)?;
-            return Err(error);
-        }
+        Err(error) => return block_import_error(state, error),
     };
-    let source = crate::manager_query_source::read_process_projection_page(
-        path,
-        &state.inventory.network_id,
-        previous.as_ref(),
-        &retained,
-    );
+    let source = {
+        let _source_read = SourceReadPhase::begin(&state.manager_source_read_active);
+        crate::manager_query_source::read_process_projection_page(
+            path,
+            &state.inventory.network_id,
+            previous.as_ref(),
+            &retained,
+        )
+    };
     let page = match source {
         Ok(value) => value,
-        Err(error) => {
-            block_manager_queries(state, data)?;
-            return Err(error);
-        }
+        Err(error) => return block_import_error(state, error),
     };
     if !page.quarantined_retained.is_empty() {
-        block_manager_queries(state, data)?;
-        return Err("retained M parent was quarantined".into());
+        return block_import_error(state, "retained M parent was quarantined".into());
     }
     let count = page.records.len();
     for (_, record) in &page.records {
         if !state.inventory.nodes.contains(&record.node_id)
             || !state.inventory.scopes.contains(&record.scope_id)
         {
-            block_manager_queries(state, data)?;
-            return Err("M projection outside inventory".into());
+            return block_import_error(state, "M projection outside inventory".into());
         }
+    }
+    let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
+    if data.manager_conflicted {
+        return Err("M projection conflict requires operator review".into());
     }
     let inserted = ledger
         .lock()
@@ -237,7 +260,7 @@ fn import_manager_into(
             // retain their fixed W, while new grants wait for catch-up.
             data.manager_caught_up = false;
         } else {
-            block_manager_queries(state, data)?;
+            block_manager_queries(state, &mut data)?;
         }
         return Err(error);
     }
@@ -249,24 +272,19 @@ fn import_manager_into(
     if let Err(error) = committed {
         // A failed cursor commit can be an invariant or SQLite integrity
         // failure. Do not infer recoverability from an unknown error string.
-        block_manager_queries(state, data)?;
+        block_manager_queries(state, &mut data)?;
         return Err(error);
     }
     let version_after = match manager_data_version(state, true) {
         Ok(value) => value,
         Err(error) => {
-            block_manager_queries(state, data)?;
+            block_manager_queries(state, &mut data)?;
             return Err(error);
         }
     };
     data.manager_caught_up = page.caught_up && version_before == version_after;
     data.manager_validated_data_version = data.manager_caught_up.then_some(version_after);
     Ok((page.cursor.watermark, count))
-}
-/// This is a broker-control operation, not a query handler fallback.
-pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String> {
-    let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
-    import_manager_into(state, &mut data)
 }
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers.get("authorization").and_then(|v| v.to_str().ok())
@@ -297,18 +315,36 @@ async fn projection_health(
     }
     let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let path = state.manager_evidence_db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    // Import holds Data while reading Q and M and while latching a conflict.
-    // Keep the same lock through all three probe reads so the response cannot
-    // combine a pre-conflict flag with a post-conflict cursor or source head.
-    let data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let (manager_conflicted, caught_up_at_last_import, query_watermark) =
-        (data.manager_conflicted, data.manager_caught_up, data.store.watermark());
-    let cursor = ledger
-        .lock()
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-        .manager_cursor()
-        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    let head = crate::manager_query_source::read_projection_head(path, &state.inventory.network_id);
+    // Never park a control-socket Tokio worker behind a slow importer. Take
+    // the flags and durable cursor together under non-waiting locks, then do
+    // the SQLite source-head I/O on the blocking pool without either lock.
+    let (manager_conflicted, caught_up_at_last_import, validated_version, query_watermark, cursor) = {
+        let data = state.data.try_lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        let cursor = ledger
+            .try_lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .manager_cursor()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        (
+            data.manager_conflicted,
+            data.manager_caught_up,
+            data.manager_validated_data_version,
+            data.store.watermark(),
+            cursor,
+        )
+    };
+    let path = path.clone();
+    let network = state.inventory.network_id.clone();
+    let head = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        tokio::task::spawn_blocking(move || {
+            crate::manager_query_source::read_projection_head(&path, &network)
+        }),
+    )
+    .await
+    .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+    .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let current_version = manager_data_version(&state, false);
     let (source_global_m_seq, source_identity_match, lag_global_m_seq) = match (&head, &cursor) {
         (Ok(head), Some(cursor)) => (
             Some(head.global_m_seq.to_string()),
@@ -324,13 +360,16 @@ async fn projection_health(
     };
     let status = if manager_conflicted {
         "conflict"
-    } else if head.is_err() {
+    } else if head.is_err() || current_version.is_err() {
         "source_unavailable"
     } else if cursor.is_none() {
         "uninitialized"
     } else if source_identity_match != Some(true) || lag_global_m_seq.is_none() {
         "identity_or_watermark_mismatch"
-    } else if !caught_up_at_last_import || lag_global_m_seq.as_deref() != Some("0") {
+    } else if !caught_up_at_last_import
+        || validated_version != current_version.ok()
+        || lag_global_m_seq.as_deref() != Some("0")
+    {
         "lagging"
     } else {
         "caught_up"
@@ -356,7 +395,6 @@ async fn projection_health(
         })),
     )
         .into_response();
-    drop(data);
     Ok(response)
 }
 async fn ingest(
@@ -511,10 +549,10 @@ async fn revoke(
     if !authorized(bearer(&headers), &state.operator_token) {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut data = state.data.try_lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     if let Some(ledger) = &state.query_ledger {
         ledger
-            .lock()
+            .try_lock()
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .revoke(&run)
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
@@ -534,7 +572,7 @@ async fn ledger_view(
     }
     let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let row = ledger
-        .lock()
+        .try_lock()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
         .inspect(&run)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
