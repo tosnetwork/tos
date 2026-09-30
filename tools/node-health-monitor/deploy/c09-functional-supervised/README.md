@@ -61,25 +61,28 @@ sample log, Q ledger, and any inflight marker. Repeated timer activations, if
 systemd performs them, remain fail-closed and cannot create grants.
 
 After investigation, the operator must verify that any uncertain grant is
-revoked or expired and manually remove an inflight marker. To release a
-previous failed JSONL row, the operator creates a same-UID, mode-0600
+revoked or expired. To release a previous failed JSONL row or inflight marker,
+the operator creates a same-UID, mode-0600
 `review.private.json` in that directory with exactly:
 
 ```json
 {
   "schema_version": 1,
-  "failed_row_sha256": "SHA256_OF_EXACT_FAILED_JSON_LINE_WITHOUT_NEWLINE",
+  "failed_row_sha256": "SHA256_OF_EXACT_PREVIOUS_JSON_LINE_WITHOUT_NEWLINE_OR_NULL",
+  "inflight_sha256": "SHA256_OF_EXACT_INFLIGHT_FILE_OR_NULL",
   "slot_highwater": 0,
   "reviewer": "operator-id",
   "reviewed_at_utc": "2026-09-30T00:00:00Z"
 }
 ```
 
-`slot_highwater` must equal the failed row's highwater and the review time
-must follow that row's `wall_utc`. The next sample records the acknowledgement
-file SHA-256, preserves the highwater, and will not reuse the same review file
-for a later failure. Editing, rotating, or truncating the sample log is not
-the reset procedure.
+`slot_highwater` must equal the maximum of the preceding row's highwater and
+the inflight marker's slot. The review time must follow each present row's
+`wall_utc` and marker's `created_at_utc`. A valid acknowledgement removes and
+fsyncs the old marker before a new grant. The next sample records the
+acknowledgement file SHA-256, preserves the highwater, and will not reuse the
+same review file for a later failure. Manually deleting the marker or editing,
+rotating, or truncating the sample log is not the reset procedure.
 
 ## Review boundary
 

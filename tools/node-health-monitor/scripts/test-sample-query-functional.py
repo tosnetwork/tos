@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import sqlite3
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -462,6 +463,38 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual(row["error_kind"], "cleanup_unconfirmed")
         self.assertFalse(row["cleanup_confirmed"])
 
+    def test_failed_journal_append_keeps_inflight_across_restart(self):
+        log = Path(self.temporary.name) / "append-failure.jsonl"
+        args = SimpleNamespace(log_file=str(log), operator_token_file="operator", service_token_file="service",
+                               query_unit="query", expected_query_sha256="a" * 64, control_socket="control",
+                               mcp_socket="mcp", m_db=self.db, q_ledger="q",
+                               baseline_file="baseline", expected_baseline_sha256="c" * 64)
+        with patch.object(witness, "private_token", return_value="secret"), \
+             patch.object(witness, "bound_service", return_value=123), \
+             patch.object(witness, "frozen_baseline", return_value={}), \
+             patch.object(witness, "ledger_growth", return_value=1), \
+             patch.object(witness, "projection_head", return_value="caught_up"), \
+             patch.object(witness, "issue", side_effect=witness.WitnessError("injected")), \
+             patch.object(witness, "append_log", side_effect=OSError("injected")):
+            with self.assertRaisesRegex(OSError, "injected"):
+                witness.run(args)
+        marker = Path(witness.inflight_path(str(log)))
+        self.assertTrue(marker.exists())
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "inflight_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
+        restarted = subprocess.run(["/usr/bin/python3", str(SOURCE), "--control-socket", "absent-control",
+                                    "--mcp-socket", "absent-mcp", "--operator-token-file", "absent-token",
+                                    "--service-token-file", "absent-token", "--m-db", "absent-m",
+                                    "--q-ledger", "absent-q", "--log-file", str(log), "--query-unit", "absent",
+                                    "--expected-query-sha256", "a" * 64, "--baseline-file", "absent-baseline",
+                                    "--expected-baseline-sha256", "b" * 64], capture_output=True, text=True,
+                                   timeout=5)
+        self.assertEqual(restarted.returncode, 1)
+        self.assertEqual(json.loads(restarted.stdout)["instrument_error"], "inflight_review_required")
+        self.assertEqual(log.stat().st_size, 0)
+
     def test_boottime_spacing_refuses_new_grant(self):
         log = Path(self.temporary.name) / "spacing.jsonl"
         boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
@@ -514,6 +547,7 @@ class FunctionalWitnessTests(unittest.TestCase):
         issue.assert_not_called()
         self.assertEqual(log.read_bytes(), raw)
         ack = {"schema_version": 1, "failed_row_sha256": hashlib.sha256(raw.strip()).hexdigest(),
+               "inflight_sha256": None,
                "slot_highwater": slot - 1, "reviewer": "operator", "reviewed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
         review.write_text(json.dumps({**ack, "failed_row_sha256": "0" * 64}))
         review.chmod(0o600)
@@ -559,6 +593,60 @@ class FunctionalWitnessTests(unittest.TestCase):
                 witness.run(SimpleNamespace(log_file=str(log)))
         issue.assert_not_called()
         self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_orphan_inflight_requires_exact_review_before_new_grant(self):
+        log = Path(self.temporary.name) / "orphan.jsonl"
+        review = Path(self.temporary.name) / "review.json"
+        slot = int(time.time()) // witness.SLOT_SECONDS
+        prior = {"slot": slot - 1, "slot_highwater": slot - 1, "status": "pass",
+                 "cleanup_confirmed": True, "boot_id": "previous-boot", "boottime_ns": 0,
+                 "wall_utc": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=6)).isoformat()}
+        log.write_text(json.dumps(prior) + "\n")
+        log.chmod(0o600)
+        marker = Path(witness.inflight_path(str(log)))
+        marker.write_text(json.dumps({"schema_version": 1, "slot": slot - 1,
+                                      "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                                      "created_at_utc": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=2)).isoformat()}))
+        marker.chmod(0o600)
+        raw_row = log.read_bytes().strip()
+        raw_marker = marker.read_bytes()
+        args = SimpleNamespace(log_file=str(log), review_file=str(review), operator_token_file="operator",
+                               service_token_file="service", baseline_file="baseline",
+                               expected_baseline_sha256="a" * 64, expected_query_sha256="b" * 64,
+                               query_unit="isolated", control_socket="control", mcp_socket="mcp",
+                               m_db="m", q_ledger="q")
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "inflight_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
+        self.assertEqual(log.read_bytes().strip(), raw_row)
+        ack = {"schema_version": 1, "failed_row_sha256": hashlib.sha256(raw_row).hexdigest(),
+               "inflight_sha256": "0" * 64, "slot_highwater": slot - 1,
+               "reviewer": "operator", "reviewed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
+        review.write_text(json.dumps(ack))
+        review.chmod(0o600)
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "inflight_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
+        self.assertEqual(marker.read_bytes(), raw_marker)
+        ack["inflight_sha256"] = hashlib.sha256(raw_marker).hexdigest()
+        review.write_text(json.dumps(ack))
+        with (patch.object(witness, "private_token", return_value="a" * 64),
+              patch.object(witness, "frozen_baseline", return_value={}),
+              patch.object(witness, "bound_service", return_value=123),
+              patch.object(witness, "ledger_growth", return_value=0),
+              patch.object(witness, "projection_head", return_value="caught_up"),
+              patch.object(witness, "issue", side_effect=witness.WitnessError("stopped_after_review")) as issue):
+            self.assertEqual(witness.run(args), 1)
+        issue.assert_called_once()
+        self.assertNotEqual(marker.read_bytes(), raw_marker)
+        self.assertEqual(json.loads(log.read_text().splitlines()[-1])["review_ack_sha256"],
+                         hashlib.sha256(review.read_bytes()).hexdigest())
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "inflight_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
 
     def test_closed_window_refuses_before_grant(self):
         near_end = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=40)).isoformat()

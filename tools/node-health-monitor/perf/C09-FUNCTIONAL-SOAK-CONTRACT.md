@@ -90,9 +90,12 @@ is fsynced and every grant is durably revoked. A previous row whose
 marker, blocks every later grant. A blocked tick exits nonzero without
 appending a new JSONL row, preserving the failed row and slot highwater.
 Operator review is recorded by a private 0600 acknowledgement file naming
-the exact failed-row SHA-256 and highwater; it cannot clear a later failure.
-An orphaned inflight marker must be inspected and manually removed after
-grant-state review. A log near its 4 MiB cap refuses before issuing a grant.
+the exact preceding row SHA-256 (null if none), inflight-marker SHA-256 (null
+if none), and maximum slot highwater. The review timestamp must follow both
+present artifacts. A valid review removes and fsyncs the old marker before
+another grant; manual deletion is not the reset procedure. The receipt cannot
+clear a later failure or a changed marker. A log near its 4 MiB cap refuses
+before issuing a grant.
 
 The candidate timer waits five minutes after service deactivation, the
 script preserves its 300-second same-boot spacing, and a separate stop timer
