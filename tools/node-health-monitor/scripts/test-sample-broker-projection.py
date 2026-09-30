@@ -42,6 +42,7 @@ class ProjectionProbeTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def run_probe(self, document, code=200):
+        expected_token = self.token.read_text().strip()
         server = socketserver.UnixStreamServer(str(self.sock), Handler)
         server.payload = document if isinstance(document, bytes) else json.dumps(document).encode()
         server.code = code
@@ -57,8 +58,8 @@ class ProjectionProbeTest(unittest.TestCase):
             )
             worker.join(timeout=1)
             self.assertIn(b"GET /v1/control/projection-health HTTP/1.1", server.request_bytes)
-            self.assertIn(("Authorization: Bearer " + TOKEN).encode(), server.request_bytes)
-            self.assertNotIn(TOKEN, result.stdout + result.stderr)
+            self.assertIn(("Authorization: Bearer " + expected_token).encode(), server.request_bytes)
+            self.assertNotIn(expected_token, result.stdout + result.stderr)
             return result, json.loads(result.stdout)
         finally:
             server.server_close()
@@ -119,6 +120,23 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(json.loads(result.stdout)["error_kind"], "ValueError")
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
+
+    def test_service_token_rotation_matches_running_broker_parser(self):
+        # The Rust service trims surrounding whitespace, accepts ASCII graphic
+        # bytes, and caps the raw private file at 4096 bytes.
+        rotated = "Z" * 300 + "-._~!"
+        self.token.write_text(rotated + "\n")
+        result, output = self.run_probe(self.document())
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(output["projection_status"], "caught_up")
+        self.sock.unlink()
+        self.token.write_text("a" * 4097)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--socket", str(self.sock), "--token-file", str(self.token)],
+            capture_output=True, text=True, timeout=5, check=False,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout)["error_kind"], "ValueError")
 
 
 if __name__ == "__main__":

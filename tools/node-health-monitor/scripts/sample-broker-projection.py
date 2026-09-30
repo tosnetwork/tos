@@ -34,11 +34,14 @@ def private_token(path):
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != os.getuid()
             or info.st_mode & 0o077
-            or not 32 <= info.st_size <= 256
+            or info.st_size > 4096
         ):
             raise ValueError("private token file rejected")
-        value = os.read(fd, 257).decode("ascii")
-        if len(value) != info.st_size or not value.isascii() or not value.isalnum():
+        raw = os.read(fd, 4097)
+        if len(raw) != info.st_size:
+            raise ValueError("private token file changed")
+        value = raw.decode("utf-8").strip()
+        if len(value) < 32 or not all(33 <= ord(char) <= 126 for char in value):
             raise ValueError("private token format rejected")
         return value
     finally:

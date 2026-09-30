@@ -252,10 +252,12 @@ async fn projection_health(
     }
     let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let path = state.manager_evidence_db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-    let (manager_conflicted, caught_up_at_last_import, query_watermark) = {
-        let data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-        (data.manager_conflicted, data.manager_caught_up, data.store.watermark())
-    };
+    // Import holds Data while reading Q and M and while latching a conflict.
+    // Keep the same lock through all three probe reads so the response cannot
+    // combine a pre-conflict flag with a post-conflict cursor or source head.
+    let data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let (manager_conflicted, caught_up_at_last_import, query_watermark) =
+        (data.manager_conflicted, data.manager_caught_up, data.store.watermark());
     let cursor = ledger
         .lock()
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
@@ -294,7 +296,7 @@ async fn projection_health(
         } else {
             StatusCode::OK
         };
-    Ok((
+    let response = (
         code,
         Json(json!({
             "schema_version":1,
@@ -308,7 +310,9 @@ async fn projection_health(
             "source_identity_match":source_identity_match,
         })),
     )
-        .into_response())
+        .into_response();
+    drop(data);
+    Ok(response)
 }
 async fn ingest(
     State(state): State<ObservabilityState>,
