@@ -62,5 +62,13 @@ deterministic verdict and citing delivered evidence ids only: 11:42 UTC
 (observer6 unhealthy during its drill) and 12:05 UTC (validator4 degraded
 during an A round, "archived zero failure counters do not establish current
 health"). Eight timer runs were `unavailable`: the unit lacked a `PATH` for
-the spawned app-server (fixed) and a reused thread grew past the timeout
-(fixed by one thread per turn, `9599bd14b`).
+the spawned app-server (fixed), a reused thread grew past the timeout (fixed
+by one thread per turn, `9599bd14b`), and the unit's `TasksMax=64` /
+`MemoryMax=1G` starved the spawned `codex app-server` so every turn hit the
+300-second deadline while the identical command took 25 s from a shell
+(fixed: 512 tasks, 2 GiB, `deploy/local-judge/`). After the fix the timer's
+first run returned `analysis` in 25 s: all six nodes healthy, "assessment is
+limited by incomplete instrumentation on every node".
+
+Final state at 12:41 UTC, after validator4 returned to profile C: the
+deterministic verdict is **6/6 healthy** (validator4 native age 19 s).
