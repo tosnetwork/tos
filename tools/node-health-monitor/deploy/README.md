@@ -121,3 +121,26 @@ The development native poll/state examples add only PQ signing failure facts.
 Duties, storage, host and witness facts are still absent, and performance/host
 acceptance remains not_run. Do not treat a reachable endpoint or zero observed PQ
 failures as proof of healthy consensus.
+
+## Native facts, judgement and the six-tool sample
+
+`health-native-poll CONFIG_JSON` reads the typed `/v1/edge/snapshot` every 15
+seconds with the edge-reader identity and posts a `native_core` FactFrame to
+`/v1/manager/facts` with the separate manager-ingest identity
+(`manager_identity_file`). The facts are derived deterministically from the
+native record (`health-core::native_facts`): chain progress age (v3 anchors,
+else the finalized masterchain slot), local execution failures, oldest pending
+action, PQ signing failures, storage ack failures/usability and session stop
+pending. A fact the sample cannot support stays absent and the frame is marked
+incomplete; legitimate refusals are never failures. The manager inventory must
+list exactly the seven catalog facts for the `native_core` source.
+
+The manager ingress that aggregates many lanes sets `rate_per_second` /
+`burst` in its ingress config (defaults 1 / 4 are the node-entry contract).
+
+`scripts/judge-validator-health.py` reads M's rule state and the latest
+archived native snapshot per node and prints one verdict record (healthy,
+degraded, unhealthy, unknown) with the archive parent hashes as evidence IDs.
+Run it from a timer with `--journal`; exit status 3 means at least one node is
+unhealthy. `scripts/sample-validator-health-tools.py` issues one short grant on
+the private control socket and reads a node through the six MCP tools.
