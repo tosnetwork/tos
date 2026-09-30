@@ -196,6 +196,10 @@ fn unusable_vote_journal_opens_storage_ack_failure_immediately() {
         cap.enabled = false;
         cap.reason = Some("observation_incomplete".into());
     }
+    // Votes were requested since the previous sample and none was committed.
+    let live = finalize_live(&mut record);
+    let requested = live.phases.get("requested").unwrap().0;
+    live.phases.insert("requested".into(), U64(requested + 3));
     engine.ingest(frame(&record, 15_000, 2, &mut state), 15_000).unwrap();
     assert_eq!(signal(&signals(&mut engine, 15_000), "storage_ack_failure"), Signal::Bad);
 }

@@ -34,6 +34,7 @@ pub const CATALOG: [FactId; 8] = [
 const LOCAL_FAILURES: [&str; 5] =
     ["missing_signer", "sign_backend", "intent_storage", "signed_storage", "journal_unusable"];
 const STORAGE_FAILURES: [&str; 3] = ["intent_storage", "signed_storage", "journal_unusable"];
+const STORAGE_COMMIT_PHASES: [&str; 2] = ["intent_committed", "signed_committed"];
 
 /// A node whose applied chain advanced within this window counts as initialized.
 pub const INITIALIZED_CHAIN_AGE_MS: u64 = 60_000;
@@ -58,6 +59,11 @@ pub struct NativeFactState {
     pub first_seen_ms: Option<u64>,
     /// Bounded trailing window of (observed_ms, anon_bytes) process samples.
     pub anon_samples: Vec<(u64, u64)>,
+    /// Vote storage requests and commit acknowledgements at the previous sample.
+    #[serde(default)]
+    pub storage_requested: Option<u64>,
+    #[serde(default)]
+    pub storage_committed: Option<u64>,
 }
 
 /// Derived facts plus the reasons a fact is missing. `complete` is true only
@@ -113,6 +119,39 @@ fn oldest_ms(consensus: &Consensus) -> Option<u64> {
         }
     }
     Some(oldest)
+}
+/// Commit acknowledgements the node recorded for its vote storage writes.
+fn committed(consensus: &Consensus) -> u64 {
+    consensus
+        .actions
+        .iter()
+        .flat_map(|a| STORAGE_COMMIT_PHASES.iter().filter_map(|k| live(a).phases.get(*k)))
+        .fold(0u64, |acc, v| acc.saturating_add(v.0))
+}
+/// Storage usability from what the node did, not from whether the publisher's
+/// bounded observation stream stayed gap-free. A proven commit-ack capability
+/// or an idle node is usable. Otherwise, within one epoch, new vote storage
+/// requests with no new commit acknowledgement since the previous sample mean
+/// the journal is not acknowledging (0); acknowledged commits mean it is (1).
+/// The first sample of an epoch is usable only if commits were ever
+/// acknowledged. A replay that overflowed the observation ledger therefore no
+/// longer reads as an unusable journal for the rest of the process lifetime.
+fn storage_usable(state: &mut NativeFactState, consensus: &Consensus) -> u64 {
+    let ack = consensus.capabilities.get("storage_commit_ack").is_some_and(|cap| cap.supported);
+    let requests = requested(consensus);
+    let commits = committed(consensus);
+    let previous = state.storage_requested.zip(state.storage_committed);
+    state.storage_requested = Some(requests);
+    state.storage_committed = Some(commits);
+    if ack || requests == 0 {
+        return 1;
+    }
+    match previous {
+        Some((old_requests, old_commits)) => {
+            u64::from(!(requests > old_requests && commits <= old_commits))
+        }
+        None => u64::from(commits > 0),
+    }
 }
 fn requested(consensus: &Consensus) -> u64 {
     consensus
@@ -252,13 +291,11 @@ pub fn derive(
         "no_consensus_actions",
     );
     // Storage is unusable only when votes were requested and no commit
-    // acknowledgement was ever observed; an idle node is not unusable.
+    // acknowledgement followed; an idle node is not unusable, and neither is a
+    // node whose publisher merely lost observation events during a replay.
     push(
         FactId::StorageUsable,
-        consensus.map(|c| {
-            let ack = c.capabilities.get("storage_commit_ack").is_some_and(|cap| cap.supported);
-            u64::from(ack || requested(c) == 0)
-        }),
+        consensus.map(|c| storage_usable(state, c)),
         "no_consensus_actions",
     );
     let stop_pending = consensus.map(|c| {

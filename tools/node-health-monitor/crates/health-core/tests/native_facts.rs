@@ -1,5 +1,6 @@
 //! Native fact derivation against real validator1/observer5 loopback samples.
 use tos_health_core::{
+    consensus_v2::Action,
     native::{parse_native, NativeRecord},
     native_facts::{derive, NativeFactState, CATALOG},
     rules::FactId,
@@ -136,18 +137,77 @@ fn pending_age_and_stop_pending_are_reported() {
     assert_eq!(value(&done.facts, FactId::SessionStopPendingMs), Some(0));
 }
 
+fn unprove_commit_ack(record: &mut NativeRecord) {
+    let c = consensus_mut(record);
+    let cap = c.capabilities.get_mut("storage_commit_ack").unwrap();
+    cap.supported = false;
+    cap.enabled = false;
+    cap.reason = Some("observation_incomplete".into());
+}
+fn add_phase(record: &mut NativeRecord, phase: &str, amount: u64) {
+    for action in &mut consensus_mut(record).actions {
+        let live = match action {
+            Action::Proposal { live, .. }
+            | Action::NotarizeVote { live, .. }
+            | Action::FinalizeVote { live, .. }
+            | Action::SkipVote { live, .. } => live,
+        };
+        if let Some(v) = live.phases.get_mut(phase) {
+            *v = U64(v.0 + amount);
+        }
+    }
+}
+fn zero_phase(record: &mut NativeRecord, phase: &str) {
+    for action in &mut consensus_mut(record).actions {
+        let live = match action {
+            Action::Proposal { live, .. }
+            | Action::NotarizeVote { live, .. }
+            | Action::FinalizeVote { live, .. }
+            | Action::SkipVote { live, .. } => live,
+        };
+        if let Some(v) = live.phases.get_mut(phase) {
+            *v = U64(0);
+        }
+    }
+}
+
 #[test]
 fn storage_unusable_when_votes_requested_without_any_commit_ack() {
     let mut record = fixture("native-core-v2.validator1.live.json");
-    {
-        let c = consensus_mut(&mut record);
-        let cap = c.capabilities.get_mut("storage_commit_ack").unwrap();
-        cap.supported = false;
-        cap.enabled = false;
-        cap.reason = Some("observation_incomplete".into());
-    }
+    unprove_commit_ack(&mut record);
+    zero_phase(&mut record, "intent_committed");
+    zero_phase(&mut record, "signed_committed");
     let derived = derive(&record, 1, &mut NativeFactState::default()).unwrap();
     assert_eq!(value(&derived.facts, FactId::StorageUsable), Some(0));
+}
+
+#[test]
+fn storage_stays_usable_when_only_the_observation_stream_lost_events() {
+    // A replay overflowed the publisher's observation ledger: the commit-ack
+    // capability is unproven for the rest of the process, but commits keep
+    // being acknowledged. That is a coverage gap, not an unusable journal.
+    let mut record = fixture("native-core-v2.validator1.live.json");
+    unprove_commit_ack(&mut record);
+    let mut state = NativeFactState::default();
+    let first = derive(&record, 1, &mut state).unwrap();
+    assert_eq!(value(&first.facts, FactId::StorageUsable), Some(1));
+    add_phase(&mut record, "requested", 7);
+    add_phase(&mut record, "intent_committed", 7);
+    add_phase(&mut record, "signed_committed", 7);
+    let acked = derive(&record, 15_001, &mut state).unwrap();
+    assert_eq!(value(&acked.facts, FactId::StorageUsable), Some(1));
+    // New requests and not one further acknowledgement: the journal stopped.
+    add_phase(&mut record, "requested", 9);
+    let stalled = derive(&record, 30_001, &mut state).unwrap();
+    assert_eq!(value(&stalled.facts, FactId::StorageUsable), Some(0));
+    // Nothing new requested: idle, not unusable.
+    let idle = derive(&record, 45_001, &mut state).unwrap();
+    assert_eq!(value(&idle.facts, FactId::StorageUsable), Some(1));
+    // Acknowledgements resume.
+    add_phase(&mut record, "requested", 2);
+    add_phase(&mut record, "signed_committed", 2);
+    let resumed = derive(&record, 60_001, &mut state).unwrap();
+    assert_eq!(value(&resumed.facts, FactId::StorageUsable), Some(1));
 }
 
 #[test]
