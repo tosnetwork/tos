@@ -1,0 +1,27 @@
+[Unit]
+Description=One bounded AURA and local Codex analysis of six process sources
+After=nhm-local-manager.service nhm-local-query.service
+
+[Service]
+Type=oneshot
+UMask=0077
+NoNewPrivileges=yes
+TimeoutStartSec=90s
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/tomi/nhm-c07-contract-venv/bin/python /home/tomi/tos-node-health-impl/tools/node-health-monitor/scripts/run-aura-process-watch.py \
+  --test-binary /home/tomi/nhm-aura-build/debug/deps/nhm_c09_live_process-91c96421d130c431 \
+  --test-sha256 c3b0b59beab178bf9cb682c094d99bd64970e20af8c7722b7febdfde2740f652 \
+  --adapter-binary /home/tomi/nhm-c08-mcp-evidence/c09-aura-adapter-pinned \
+  --adapter-sha256 cb8417e29d6190260807312e10217180f934cbce1ce6ea53fdb7443a1960aa2d \
+  --manifest /home/tomi/nhm-supervision/c09-local/runtime/deployment-public.json \
+  --manager-db /home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db \
+  --manager-unit nhm-local-manager.service \
+  --broker-unit nhm-local-query.service \
+  --control-socket /run/user/1000/nhm-local-query/control.sock \
+  --mcp-socket /run/user/1000/nhm-local-query/mcp.sock \
+  --operator-token-file /home/tomi/nhm-supervision/c09-local/runtime/config/query-operator.token \
+  --service-token-file /home/tomi/nhm-supervision/c09-local/runtime/config/query-service.token \
+  --codex-bin /home/tomi/tos-aura-codex/target/debug/aura \
+  --codex-socket /home/tomi/.codex/app-server-control/app-server-control.sock \
+  --codex-thread-file /home/tomi/.local/state/nhm-aura-codex/validator.thread \
+  --diagnosis-schema /home/tomi/tos-node-health-impl/tools/node-health-monitor/contracts/diagnosis.schema.json

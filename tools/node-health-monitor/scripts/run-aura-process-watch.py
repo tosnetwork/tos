@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 
 NODES = frozenset(("validator1", "validator2", "validator3", "validator4", "observer5", "observer6"))
@@ -44,15 +45,15 @@ def unit_pid(unit):
 
 
 def evaluate(output):
-    seen = set()
+    seen = {}
     for line in output.splitlines():
         match = PROCESS_LINE.fullmatch(line)
         if match:
             node = match.group(1)
             if node in seen:
                 raise ValueError("duplicate_node")
-            seen.add(node)
-    if seen != NODES:
+            seen[node] = {"pid": int(match.group(2)), "evidence_id": match.group(3)}
+    if set(seen) != NODES:
         raise ValueError("missing_node")
     if (output.count("C09_GRANT_REVOKED group=0") != 1
             or output.count("C09_GRANT_REVOKED group=1") != 1
@@ -60,7 +61,7 @@ def evaluate(output):
             or output.count("AURA_C09_REAL_SCOPE cross_run=error") != 1
             or f"test {TEST_NAME} ... ok" not in output):
         raise ValueError("missing_control")
-    return sorted(seen)
+    return seen
 
 
 def run(args):
@@ -100,6 +101,63 @@ def run(args):
     return evaluate(output.decode("utf-8", errors="replace"))
 
 
+def analyze(args, sources, checked_at):
+    from jsonschema import Draft202012Validator
+
+    schema = json.loads(Path(args.diagnosis_schema).read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    evidence_ids = {item["evidence_id"] for item in sources.values()}
+    prompt = {
+        "instruction": (
+            "Analyze only this AURA process-source receipt. Return one JSON object matching "
+            "the diagnosis contract. The six process snapshots are partial; consensus, duty, "
+            "persistence and whole-validator health are unknown. Use status "
+            "insufficient_evidence. Do not infer healthy or safe. Cite only supplied "
+            "evidence IDs for observed findings. Do not request tools or remediation."
+        ),
+        "checked_at": checked_at,
+        "source": "pinned_aura_mcp",
+        "consensus": "unknown",
+        "process_sources": [
+            {"node_id": node, **sources[node]} for node in sorted(sources)
+        ],
+    }
+    # The app-server accepts a subset of JSON Schema. It constrains the shape;
+    # the complete repository contract is checked after the turn.
+    unsupported = {"$schema", "$defs", "maxItems", "minItems", "maxLength",
+                   "minLength", "uniqueItems"}
+
+    def output_schema(value):
+        if isinstance(value, dict):
+            return {key: output_schema(item) for key, item in value.items()
+                    if key not in unsupported}
+        if isinstance(value, list):
+            return [output_schema(item) for item in value]
+        return value
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as wire:
+        json.dump(output_schema(schema), wire)
+        wire.flush()
+        command = [args.codex_bin, "codex", "--socket", args.codex_socket,
+                   "--thread-file", args.codex_thread_file,
+                   "--output-schema", wire.name, "--timeout-seconds", "35"]
+        result = subprocess.run(command, input=json.dumps(prompt).encode(),
+                                capture_output=True, timeout=40)
+    if result.returncode != 0 or len(result.stdout) > 16384:
+        raise ValueError("codex_turn_failed")
+    diagnosis = json.loads(result.stdout)
+    if next(Draft202012Validator(schema).iter_errors(diagnosis), None) is not None:
+        raise ValueError("diagnosis_schema_invalid")
+    if diagnosis["status"] != "insufficient_evidence":
+        raise ValueError("unsupported_health_conclusion")
+    for finding in diagnosis["findings"]:
+        if set(finding["evidence_ids"]) - evidence_ids:
+            raise ValueError("unbound_evidence_id")
+        if finding["basis"] == "observed" and not finding["evidence_ids"]:
+            raise ValueError("observed_without_evidence")
+    return diagnosis
+
+
 def main():
     parser = argparse.ArgumentParser()
     for name in (
@@ -108,13 +166,32 @@ def main():
         "control-socket", "mcp-socket", "operator-token-file", "service-token-file",
     ):
         parser.add_argument("--" + name, required=True)
+    for name in ("codex-bin", "codex-socket", "codex-thread-file", "diagnosis-schema"):
+        parser.add_argument("--" + name)
     args = parser.parse_args()
+    codex_options = (args.codex_bin, args.codex_socket, args.codex_thread_file,
+                     args.diagnosis_schema)
+    if any(codex_options) and not all(codex_options):
+        parser.error("all Codex options are required together")
     status = {"schema_version": 1, "checked_at": dt.datetime.now(dt.timezone.utc).isoformat(),
               "source": "pinned_aura_mcp", "scope": "process_source_only"}
     try:
-        status["nodes"] = run(args)
+        sources = run(args)
+        status["nodes"] = sorted(sources)
         status["result"] = "observed_partial"
-        code = 0
+        if args.codex_bin:
+            try:
+                status["diagnosis"] = analyze(args, sources, status["checked_at"])
+                status["ai_result"] = "insufficient_evidence"
+            except (ImportError, OSError, ValueError, subprocess.SubprocessError) as error:
+                status["ai_result"] = "unavailable"
+                status["ai_error_kind"] = (str(error) if isinstance(error, ValueError)
+                                           else type(error).__name__)
+                code = 1
+            else:
+                code = 0
+        else:
+            code = 0
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         status["result"] = "unavailable"
         status["error_kind"] = str(error) if isinstance(error, ValueError) else type(error).__name__

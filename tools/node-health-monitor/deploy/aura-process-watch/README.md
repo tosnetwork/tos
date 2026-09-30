@@ -19,6 +19,21 @@ capacity gate; a retention or grant-lifecycle fix is required for permanent
 operation. The compiled AURA test and stdio adapter hashes are pinned in the
 unit; rebuild and review the unit when either binary changes.
 
+The optional `nhm-aura-codex-check.timer` runs a separate bounded AURA read
+every thirty minutes and submits its six verified process parent IDs to the
+local, signed-in Codex app-server through AURA's CLI bridge. The complete
+diagnosis contract is validated after the model turn. An unknown consensus or
+partial process snapshot cannot become a healthy-validator verdict; invented
+evidence IDs and model failures produce an unavailable AI result. The five
+minute process watch continues independently. This is a local development
+analysis, not automatic remediation or a full consensus-health judgment.
+
+This optional unit uses the local `nhm-c07-contract-venv` for `jsonschema` and
+the private Codex socket. Prepare `/home/tomi/.local/state/nhm-aura-codex`
+with mode 0700 before starting it. The Codex thread file is private and reused
+across turns; no API token is passed. The timer adds two short-lived QueryService
+grants per run, so the finite Q ledger limit still applies.
+
 Inspect with `systemctl --user status nhm-aura-process-watch.timer` and
 `journalctl --user -u nhm-aura-process-watch.service`. Disable with
 `systemctl --user disable --now nhm-aura-process-watch.timer`.
