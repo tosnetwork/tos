@@ -384,6 +384,8 @@ async fn local_c09_edge_snapshot_is_accepted_by_isolated_manager() {
                     (v.source_id.as_str(), v.process_epoch.as_str()),
                 tos_health_core::edge_snapshot::EdgeSource::NativeV2(v) =>
                     (v.source_id.as_str(), v.process_epoch.as_str()),
+                tos_health_core::edge_snapshot::EdgeSource::NativeV3(v) =>
+                    (v.source_id.as_str(), v.process_epoch.as_str()),
                 tos_health_core::edge_snapshot::EdgeSource::Process(v) =>
                     (v.source_id.as_str(), v.process_epoch.as_str()),
                 tos_health_core::edge_snapshot::EdgeSource::Cgroup(v) =>
