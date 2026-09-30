@@ -57,6 +57,14 @@ def main():
         for component in (envelope.get("data") or {}).get("components", []):
             summary = {"kind": component.get("kind"), "sources": component.get("sources"),
                        "quality": component.get("quality")}
+            # M's read-only verdict copy rides on the consensus component.
+            if component.get("health") is not None:
+                health = component["health"]
+                summary["health"] = {"evaluation_sequence": health.get("evaluation_sequence"),
+                                     "rules_evaluated": health.get("rules_evaluated"),
+                                     "active_incidents": health.get("active_incidents"),
+                                     "observed_at": health.get("observed_at"),
+                                     "evidence_id": health.get("evidence_id")}
             value = component.get("value")
             if isinstance(value, dict):
                 summary["keys"] = sorted(value.keys())[:16]

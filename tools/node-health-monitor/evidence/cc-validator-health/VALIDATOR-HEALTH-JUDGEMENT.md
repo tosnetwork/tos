@@ -127,10 +127,10 @@ restarting the node**; never let two edges sample one process epoch.
   boundary (~2026-10-01 00:02 UTC) replays from genesis; cheap on a young
   chain, hours on an old one. This is a node property, recorded here for
   operators.
-- The health-state verdict copy is imported into the query cache (210 rows in
-  the first hour, source `health_state`, component `health`); the six-tool
-  sample in this note requested process/consensus/chain/storage and did not
-  ask for that component, so its delivery through `tos_get_node_snapshot` is
-  not shown here.
+- The health-state verdict copy is delivered: at 11:25:24 UTC the six-tool
+  sample for validator1 returned the consensus component with
+  `health.rules_evaluated = 8`, `active_incidents = []`, evaluation sequence
+  363 and its own evidence id. The verdict's `since` is the query import time
+  (`since_basis: query_import`); M's health state carries no wall time yet.
 - `memory_growth_unexplained` still has no adapter; the cgroup pressure that
   caused today's OOM would have been caught by it.
