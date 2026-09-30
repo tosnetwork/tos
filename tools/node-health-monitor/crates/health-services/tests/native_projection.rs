@@ -686,3 +686,161 @@ async fn fresh_native_sample_and_verdict_share_one_snapshot() {
     drop(state);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// Four nodes of native v3 samples do not fit the 16 KiB package: items are
+/// dropped from the last node backwards (storage, chain, then consensus),
+/// each drop is listed, verdict copies survive, and the frozen bytes are a
+/// pure function of the fixed watermark.
+#[tokio::test]
+async fn package_v2_fixes_native_and_verdicts_and_truncates_deterministically() {
+    use tos_health_core::diagnosis::Diagnosis;
+    use tos_health_services::fixed_package::{
+        freeze_process_package, package_evidence_ids, truncated_components, PACKAGE_MAX_BYTES,
+    };
+    let directory = temp("package");
+    let nodes: Vec<String> = (1..=4).map(|index| format!("validator{index}")).collect();
+    let now = chrono::Utc::now().timestamp_millis();
+    let manager_path = directory.join("manager.sqlite");
+    let mut parents = Vec::new();
+    {
+        let mut manager = EvidenceDb::open(&manager_path, 64 * 1024 * 1024).unwrap();
+        manager.bind_network(NETWORK).unwrap();
+        for (index, node) in nodes.iter().enumerate() {
+            let observed = now - 30_000 + i64::try_from(index).unwrap() * 1_000;
+            let mut row = native_row(5000 + index as u64, observed, |source| {
+                to_v3(source, observed, 200_000, 199_998);
+            });
+            row.record.node_id = node.clone();
+            row.record.payload["source"]["node_id"] = json!(node);
+            row.record.payload["source"]["content_hash"] =
+                json!(canonical_hash(&row.record.payload["source"]["payload"]).unwrap());
+            parents.push(manager.insert(row).unwrap());
+        }
+    }
+    let control_path = directory.join("control.sqlite");
+    {
+        let mut control = ControlDb::open(&control_path, 1024 * 1024, 100, 100).unwrap();
+        control.bind_network(NETWORK).unwrap();
+        control
+            .evaluate(
+                &RuleKey {
+                    node: "validator1".into(),
+                    scope: "node".into(),
+                    rule: "pq_signing".into(),
+                },
+                Evaluation::Bad { severity: "critical".into() },
+                1_000,
+                &[],
+                0,
+            )
+            .unwrap();
+    }
+    let inventory = Inventory {
+        network_id: NETWORK.into(),
+        nodes: nodes.iter().cloned().collect(),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&directory.join("query.sqlite"))
+        .unwrap()
+        .with_manager_evidence(manager_path)
+        .unwrap()
+        .with_manager_control(control_path)
+        .unwrap();
+    let response = control_router(state.clone())
+        .oneshot(request(
+            "/v1/control/grants",
+            'o',
+            json!({"node_ids":nodes,"scope_ids":["node"],"start":rfc(now - 600_000),"end":rfc(now)}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let run = body(response).await["run_id"].as_str().unwrap().to_owned();
+    let frozen = freeze_process_package(&state, &run).unwrap();
+    assert!(frozen.bytes.len() <= PACKAGE_MAX_BYTES, "{}", frozen.bytes.len());
+    let package: Value = serde_json::from_slice(&frozen.bytes).unwrap();
+    assert_eq!(package["schema_version"], 2);
+    assert_eq!(package["source_profile"], "development_native_process_v2");
+    assert_eq!(package["health"].as_array().unwrap().len(), 4, "verdict copies are never dropped");
+    let first_health = &package["health"][0];
+    assert_eq!(first_health["node_id"], "validator1");
+    assert_eq!(first_health["verdicts"][0]["rule"], "pq_signing");
+    assert_eq!(first_health["verdicts"][0]["active"], true);
+    assert_eq!(package["missing_process"].as_array().unwrap().len(), 4);
+    let truncated = package["truncated"].as_array().unwrap();
+    assert!(
+        !truncated.is_empty(),
+        "four native v3 samples must exceed 16 KiB: {}",
+        frozen.bytes.len()
+    );
+    assert!(truncated.iter().all(|cut| cut["reason"] == "package_budget_16kib"));
+    // Four v3 samples with their verdict copies are about 18 KiB. Every chain
+    // and storage view goes first (storage before chain, last node first),
+    // then exactly the last node's consensus sample; the first three samples,
+    // their parents and all four verdict copies survive. Nothing is silent.
+    assert_eq!(package["native"].as_array().unwrap().len(), 3, "{}", frozen.bytes.len());
+    assert_eq!(package["native"][0]["node_id"], "validator1");
+    assert_eq!(package["native"][0]["consensus"]["kind"], "native_consensus");
+    assert_eq!(package["native"][0]["parent_evidence_id"], parents[0].evidence_id);
+    assert_eq!(package["native"][2]["node_id"], "validator3");
+    assert_eq!(package["native"][2]["consensus"]["contexts"].as_array().unwrap().len(), 4);
+    let order = truncated_components(&frozen.bytes).unwrap();
+    let rank = |component: &str| match component {
+        "process" => 0,
+        "storage" => 1,
+        "chain" => 2,
+        _ => 3,
+    };
+    assert!(order.windows(2).all(|pair| rank(&pair[0].1) <= rank(&pair[1].1)), "{order:?}");
+    assert_eq!(order[0], ("validator4".to_owned(), "storage".to_owned()));
+    assert_eq!(order.last().unwrap(), &("validator4".to_owned(), "consensus".to_owned()));
+    assert_eq!(order.iter().filter(|(_, component)| component == "consensus").count(), 1);
+    for (node, component) in order.iter().filter(|(_, component)| component != "consensus") {
+        if let Some(item) =
+            package["native"].as_array().unwrap().iter().find(|item| item["node_id"] == *node)
+        {
+            assert!(item[component].is_null(), "{node} {component} listed as dropped but present");
+        }
+    }
+    for item in package["native"].as_array().unwrap() {
+        for component in ["chain", "storage"] {
+            let node = item["node_id"].as_str().unwrap();
+            let listed = order.iter().any(|(n, c)| n == node && c == component);
+            assert_eq!(item[component].is_null(), listed, "{node} {component}");
+        }
+    }
+    // Determinism and durable single write.
+    assert_eq!(freeze_process_package(&state, &run).unwrap().sha256, frozen.sha256);
+    let ledger = state.query_ledger.as_ref().unwrap().lock().unwrap();
+    let stored = ledger
+        .load_active_package(&run, tos_health_services::query_ledger::boot_millis().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.1, frozen.bytes);
+    drop(ledger);
+    // The package ids are the delivered set for a summary-only run.
+    let delivered = package_evidence_ids(&frozen.bytes).unwrap();
+    let native_id = package["native"][0]["evidence_id"].as_str().unwrap();
+    assert!(delivered.contains(native_id));
+    assert!(delivered.contains(first_health["evidence_id"].as_str().unwrap()));
+    let diagnosis = |id: &str| {
+        json!({"status":"analysis","summary":"validator1 has an open critical pq_signing incident.",
+            "findings":[{"claim":"pq_signing incident open","basis":"observed","evidence_ids":[id]}],
+            "missing_evidence":[],"recommended_runbooks":["inspect_duty_accounting"]})
+        .to_string()
+    };
+    assert!(Diagnosis::parse(diagnosis(native_id).as_bytes(), &delivered).is_ok());
+    assert_eq!(
+        Diagnosis::parse(diagnosis(&parents[0].evidence_id).as_bytes(), &delivered),
+        Err("evidence not delivered in run"),
+        "the M parent id is retained, not delivered"
+    );
+    assert_eq!(
+        Diagnosis::parse(diagnosis(&"9".repeat(64)).as_bytes(), &delivered),
+        Err("evidence not delivered in run")
+    );
+    drop(state);
+    std::fs::remove_dir_all(directory).unwrap();
+}
