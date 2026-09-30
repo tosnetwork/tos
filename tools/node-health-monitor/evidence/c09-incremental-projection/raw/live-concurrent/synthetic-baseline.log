@@ -1,0 +1,12 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+retained=2561 contended_grant=2.09677ms
+real_peak_import=548.506542ms concurrent_grant=1.326976ms control_health=132.017µs
+retained_peak_grant=2.512669ms
+test pre_cursor_ledger_with_active_grant_catches_up_over_4096_history ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 9.29s
+

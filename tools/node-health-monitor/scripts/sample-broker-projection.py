@@ -13,6 +13,7 @@ import signal
 import socket
 import stat
 import sys
+import time
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -141,6 +142,7 @@ def sample(sock_path, token_path):
         return {
             "probe_ok": True,
             "projection_caught_up": status == "caught_up",
+            "sample_boottime_ms": str(time.clock_gettime_ns(time.CLOCK_BOOTTIME) // 1_000_000),
             "http_status": reply.status,
             "projection_status": status,
             "manager_conflicted": conflicted,

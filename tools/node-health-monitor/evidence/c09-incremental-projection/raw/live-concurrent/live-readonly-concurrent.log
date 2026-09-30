@@ -1,0 +1,52 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.25s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=20
+grant_during_catchup=503
+page=2 rows=0 global_m_seq=512 elapsed_ms=5 concurrent_grant_ms=Some(3)
+page=3 rows=0 global_m_seq=768 elapsed_ms=5 concurrent_grant_ms=Some(1)
+page=4 rows=0 global_m_seq=1024 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=5 rows=0 global_m_seq=1280 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=6 rows=0 global_m_seq=1536 elapsed_ms=5 concurrent_grant_ms=Some(1)
+page=7 rows=0 global_m_seq=1792 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=8 rows=0 global_m_seq=2048 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=9 rows=0 global_m_seq=2304 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=10 rows=0 global_m_seq=2560 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=11 rows=0 global_m_seq=2816 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=12 rows=0 global_m_seq=3072 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=13 rows=0 global_m_seq=3328 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=14 rows=0 global_m_seq=3584 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=15 rows=0 global_m_seq=3840 elapsed_ms=4 concurrent_grant_ms=Some(1)
+page=16 rows=0 global_m_seq=4096 elapsed_ms=9 concurrent_grant_ms=Some(1)
+page=17 rows=0 global_m_seq=4352 elapsed_ms=5 concurrent_grant_ms=Some(1)
+page=18 rows=24 global_m_seq=4608 elapsed_ms=40 concurrent_grant_ms=Some(1)
+page=19 rows=33 global_m_seq=4864 elapsed_ms=57 concurrent_grant_ms=Some(2)
+page=20 rows=80 global_m_seq=5120 elapsed_ms=128 concurrent_grant_ms=Some(2)
+page=21 rows=79 global_m_seq=5376 elapsed_ms=143 concurrent_grant_ms=Some(2)
+page=22 rows=78 global_m_seq=5632 elapsed_ms=152 concurrent_grant_ms=Some(2)
+page=23 rows=78 global_m_seq=5888 elapsed_ms=167 concurrent_grant_ms=Some(2)
+page=24 rows=78 global_m_seq=6144 elapsed_ms=184 concurrent_grant_ms=Some(2)
+page=25 rows=77 global_m_seq=6400 elapsed_ms=203 concurrent_grant_ms=Some(2)
+page=26 rows=76 global_m_seq=6656 elapsed_ms=213 concurrent_grant_ms=Some(2)
+page=27 rows=78 global_m_seq=6912 elapsed_ms=244 concurrent_grant_ms=Some(2)
+page=28 rows=77 global_m_seq=7168 elapsed_ms=245 concurrent_grant_ms=Some(3)
+page=29 rows=78 global_m_seq=7424 elapsed_ms=290 concurrent_grant_ms=Some(2)
+page=30 rows=79 global_m_seq=7680 elapsed_ms=288 concurrent_grant_ms=Some(5)
+page=31 rows=78 global_m_seq=7936 elapsed_ms=297 concurrent_grant_ms=Some(2)
+page=32 rows=77 global_m_seq=8192 elapsed_ms=311 concurrent_grant_ms=Some(2)
+
+thread 'live_read_only_projection_cost_witness' (3683879) panicked at crates/health-services/tests/manager_query_source.rs:129:5:
+live M run did not witness a concurrent grant during a >=5s page
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test live_read_only_projection_cost_witness ... FAILED
+
+failures:
+
+failures:
+    live_read_only_projection_cost_witness
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 3.10s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`

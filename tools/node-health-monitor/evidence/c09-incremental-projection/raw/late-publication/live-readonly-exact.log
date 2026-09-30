@@ -1,0 +1,114 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.99s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=16
+grant_during_catchup=503
+page=2 rows=0 retained=0 global_m_seq=512 elapsed_ms=5 concurrent_grant_ms=Some(2) late_control_ms=None
+page=3 rows=0 retained=0 global_m_seq=768 elapsed_ms=3 concurrent_grant_ms=Some(1) late_control_ms=None
+page=4 rows=0 retained=0 global_m_seq=1024 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=5 rows=0 retained=0 global_m_seq=1280 elapsed_ms=6 concurrent_grant_ms=Some(0) late_control_ms=None
+page=6 rows=0 retained=0 global_m_seq=1536 elapsed_ms=6 concurrent_grant_ms=Some(1) late_control_ms=None
+page=7 rows=0 retained=0 global_m_seq=1792 elapsed_ms=3 concurrent_grant_ms=Some(1) late_control_ms=None
+page=8 rows=0 retained=0 global_m_seq=2048 elapsed_ms=4 concurrent_grant_ms=Some(0) late_control_ms=None
+page=9 rows=0 retained=0 global_m_seq=2304 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=10 rows=0 retained=0 global_m_seq=2560 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=11 rows=0 retained=0 global_m_seq=2816 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=12 rows=0 retained=0 global_m_seq=3072 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=13 rows=0 retained=0 global_m_seq=3328 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=14 rows=0 retained=0 global_m_seq=3584 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=15 rows=0 retained=0 global_m_seq=3840 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=16 rows=0 retained=0 global_m_seq=4096 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=17 rows=0 retained=0 global_m_seq=4352 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=18 rows=24 retained=24 global_m_seq=4608 elapsed_ms=37 concurrent_grant_ms=Some(0) late_control_ms=None
+page=19 rows=33 retained=57 global_m_seq=4864 elapsed_ms=55 concurrent_grant_ms=Some(1) late_control_ms=None
+page=20 rows=80 retained=137 global_m_seq=5120 elapsed_ms=120 concurrent_grant_ms=Some(1) late_control_ms=None
+page=21 rows=79 retained=216 global_m_seq=5376 elapsed_ms=135 concurrent_grant_ms=Some(2) late_control_ms=None
+page=22 rows=78 retained=294 global_m_seq=5632 elapsed_ms=150 concurrent_grant_ms=Some(2) late_control_ms=None
+page=23 rows=78 retained=372 global_m_seq=5888 elapsed_ms=162 concurrent_grant_ms=Some(2) late_control_ms=None
+page=24 rows=78 retained=450 global_m_seq=6144 elapsed_ms=139 concurrent_grant_ms=Some(2) late_control_ms=None
+page=25 rows=77 retained=527 global_m_seq=6400 elapsed_ms=189 concurrent_grant_ms=Some(1) late_control_ms=None
+page=26 rows=76 retained=603 global_m_seq=6656 elapsed_ms=112 concurrent_grant_ms=Some(2) late_control_ms=None
+page=27 rows=78 retained=681 global_m_seq=6912 elapsed_ms=237 concurrent_grant_ms=Some(1) late_control_ms=None
+page=28 rows=77 retained=758 global_m_seq=7168 elapsed_ms=135 concurrent_grant_ms=Some(2) late_control_ms=None
+page=29 rows=78 retained=836 global_m_seq=7424 elapsed_ms=261 concurrent_grant_ms=Some(1) late_control_ms=None
+page=30 rows=79 retained=915 global_m_seq=7680 elapsed_ms=280 concurrent_grant_ms=Some(2) late_control_ms=None
+page=31 rows=78 retained=993 global_m_seq=7936 elapsed_ms=299 concurrent_grant_ms=Some(2) late_control_ms=None
+page=32 rows=77 retained=1070 global_m_seq=8192 elapsed_ms=296 concurrent_grant_ms=Some(1) late_control_ms=None
+page=33 rows=78 retained=1148 global_m_seq=8448 elapsed_ms=313 concurrent_grant_ms=Some(3) late_control_ms=None
+page=34 rows=78 retained=1226 global_m_seq=8704 elapsed_ms=338 concurrent_grant_ms=Some(1) late_control_ms=None
+page=35 rows=76 retained=1302 global_m_seq=8960 elapsed_ms=354 concurrent_grant_ms=Some(2) late_control_ms=None
+page=36 rows=77 retained=1379 global_m_seq=9216 elapsed_ms=370 concurrent_grant_ms=Some(3) late_control_ms=None
+page=37 rows=79 retained=1458 global_m_seq=9472 elapsed_ms=376 concurrent_grant_ms=Some(2) late_control_ms=None
+page=38 rows=78 retained=1536 global_m_seq=9728 elapsed_ms=386 concurrent_grant_ms=Some(2) late_control_ms=None
+page=39 rows=77 retained=1613 global_m_seq=9984 elapsed_ms=399 concurrent_grant_ms=Some(2) late_control_ms=None
+page=40 rows=75 retained=1688 global_m_seq=10240 elapsed_ms=401 concurrent_grant_ms=Some(2) late_control_ms=None
+page=41 rows=76 retained=1764 global_m_seq=10496 elapsed_ms=435 concurrent_grant_ms=Some(2) late_control_ms=None
+page=42 rows=78 retained=1842 global_m_seq=10752 elapsed_ms=259 concurrent_grant_ms=Some(2) late_control_ms=None
+page=43 rows=77 retained=1919 global_m_seq=11008 elapsed_ms=461 concurrent_grant_ms=Some(2) late_control_ms=None
+page=44 rows=76 retained=1995 global_m_seq=11264 elapsed_ms=263 concurrent_grant_ms=Some(2) late_control_ms=None
+page=45 rows=79 retained=2074 global_m_seq=11520 elapsed_ms=498 concurrent_grant_ms=Some(2) late_control_ms=None
+page=46 rows=77 retained=2151 global_m_seq=11776 elapsed_ms=285 concurrent_grant_ms=Some(3) late_control_ms=Some(2)
+page=47 rows=76 retained=2227 global_m_seq=12032 elapsed_ms=513 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=48 rows=77 retained=2304 global_m_seq=12288 elapsed_ms=307 concurrent_grant_ms=Some(1) late_control_ms=Some(1)
+page=49 rows=77 retained=2381 global_m_seq=12544 elapsed_ms=315 concurrent_grant_ms=Some(1) late_control_ms=Some(2)
+page=50 rows=77 retained=2458 global_m_seq=12800 elapsed_ms=327 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=51 rows=78 retained=2479 global_m_seq=13056 elapsed_ms=358 concurrent_grant_ms=Some(1) late_control_ms=Some(2)
+page=52 rows=78 retained=2479 global_m_seq=13312 elapsed_ms=359 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=53 rows=80 retained=2479 global_m_seq=13568 elapsed_ms=367 concurrent_grant_ms=Some(1) late_control_ms=Some(2)
+page=54 rows=77 retained=2479 global_m_seq=13824 elapsed_ms=359 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=55 rows=80 retained=2479 global_m_seq=14080 elapsed_ms=375 concurrent_grant_ms=Some(1) late_control_ms=Some(1)
+page=56 rows=78 retained=2479 global_m_seq=14336 elapsed_ms=363 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=57 rows=79 retained=2479 global_m_seq=14592 elapsed_ms=362 concurrent_grant_ms=Some(1) late_control_ms=Some(2)
+page=58 rows=79 retained=2479 global_m_seq=14848 elapsed_ms=644 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=59 rows=78 retained=2479 global_m_seq=15104 elapsed_ms=368 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=60 rows=79 retained=2479 global_m_seq=15360 elapsed_ms=618 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=61 rows=78 retained=2479 global_m_seq=15616 elapsed_ms=361 concurrent_grant_ms=Some(1) late_control_ms=Some(1)
+page=62 rows=77 retained=2479 global_m_seq=15872 elapsed_ms=372 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=63 rows=80 retained=2479 global_m_seq=16128 elapsed_ms=375 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=64 rows=78 retained=2479 global_m_seq=16384 elapsed_ms=373 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=65 rows=78 retained=2479 global_m_seq=16640 elapsed_ms=368 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=66 rows=78 retained=2478 global_m_seq=16896 elapsed_ms=376 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=67 rows=79 retained=2478 global_m_seq=17152 elapsed_ms=385 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=68 rows=81 retained=2478 global_m_seq=17408 elapsed_ms=377 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=69 rows=78 retained=2478 global_m_seq=17664 elapsed_ms=362 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=70 rows=79 retained=2478 global_m_seq=17920 elapsed_ms=373 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=71 rows=78 retained=2478 global_m_seq=18176 elapsed_ms=378 concurrent_grant_ms=Some(1) late_control_ms=Some(2)
+page=72 rows=79 retained=2478 global_m_seq=18432 elapsed_ms=366 concurrent_grant_ms=Some(1) late_control_ms=Some(1)
+page=73 rows=78 retained=2478 global_m_seq=18688 elapsed_ms=366 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=74 rows=78 retained=2478 global_m_seq=18944 elapsed_ms=370 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=75 rows=78 retained=2478 global_m_seq=19200 elapsed_ms=364 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=76 rows=78 retained=2478 global_m_seq=19456 elapsed_ms=369 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=77 rows=80 retained=2478 global_m_seq=19712 elapsed_ms=370 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=78 rows=78 retained=2478 global_m_seq=19968 elapsed_ms=367 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=79 rows=79 retained=2478 global_m_seq=20224 elapsed_ms=642 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=80 rows=79 retained=2478 global_m_seq=20480 elapsed_ms=366 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=81 rows=78 retained=2478 global_m_seq=20736 elapsed_ms=639 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=82 rows=77 retained=2478 global_m_seq=20992 elapsed_ms=365 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=83 rows=79 retained=2478 global_m_seq=21248 elapsed_ms=642 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=84 rows=78 retained=2477 global_m_seq=21504 elapsed_ms=355 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=85 rows=78 retained=2477 global_m_seq=21760 elapsed_ms=542 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=86 rows=80 retained=2477 global_m_seq=22016 elapsed_ms=364 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=87 rows=76 retained=2477 global_m_seq=22272 elapsed_ms=351 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=88 rows=79 retained=2477 global_m_seq=22528 elapsed_ms=571 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=89 rows=79 retained=2477 global_m_seq=22784 elapsed_ms=372 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=90 rows=79 retained=2477 global_m_seq=23040 elapsed_ms=668 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=91 rows=80 retained=2477 global_m_seq=23296 elapsed_ms=366 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=92 rows=79 retained=2477 global_m_seq=23552 elapsed_ms=639 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=93 rows=78 retained=2477 global_m_seq=23808 elapsed_ms=368 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=94 rows=77 retained=2477 global_m_seq=24064 elapsed_ms=593 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=95 rows=79 retained=2477 global_m_seq=24320 elapsed_ms=368 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=96 rows=80 retained=2477 global_m_seq=24576 elapsed_ms=370 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=97 rows=78 retained=2477 global_m_seq=24832 elapsed_ms=368 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=98 rows=78 retained=2477 global_m_seq=25088 elapsed_ms=357 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=99 rows=78 retained=2477 global_m_seq=25344 elapsed_ms=358 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+page=100 rows=77 retained=2477 global_m_seq=25600 elapsed_ms=380 concurrent_grant_ms=Some(2) late_control_ms=Some(2)
+page=101 rows=35 retained=2477 global_m_seq=25714 elapsed_ms=319 concurrent_grant_ms=Some(2) late_control_ms=Some(1)
+peak_retained=2479 slowest_page_ms=668 slowest_concurrent_grant_ms=3 slowest_late_grant_ms=2 slowest_late_health_ms=2
+caught_up_ms=39329 grant_after_catchup=200 revoked=200 raced_updates=0
+steady_rows=0 global_m_seq=25714 elapsed_ms=248
+test live_read_only_projection_cost_witness ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 39.61s
+
