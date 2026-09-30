@@ -258,9 +258,11 @@ def run_codex(args, prompt, schema):
         # dedicated socket; never the operator's own Codex session.
         endpoint = (["--spawn-app-server", "--codex-home", args.codex_home] if args.codex_home
                     else ["--socket", args.codex_socket])
+        # One turn per thread: a reused thread accumulates every earlier
+        # evidence package and its turns grew from ~2 to over 5 minutes.
         command = [args.codex_bin, "codex", *endpoint, "--workdir", args.codex_workdir,
-                   "--thread-file", args.codex_thread_file, "--output-schema", wire.name,
-                   "--timeout-seconds", str(args.model_timeout)]
+                   "--thread-file", args.codex_thread_file, "--max-thread-turns", "1",
+                   "--output-schema", wire.name, "--timeout-seconds", str(args.model_timeout)]
         result = subprocess.run(command, input=json.dumps(prompt).encode(), capture_output=True,
                                 timeout=args.model_timeout + 10)
     if result.returncode != 0 or len(result.stdout) > MAX_MODEL_OUTPUT_BYTES:
