@@ -1,8 +1,10 @@
 # C09 supervised functional sampler — prepared, not installed
 
 These are candidate **user** systemd units. The owner controls installation and
-enablement. No unit in this directory has been copied to the user manager or
-enabled by this branch. The service executes a checksum-pinned Python copy in
+enablement. At the source-review snapshot these units had not been installed;
+the supervisor's later owner-controlled rollout is recorded separately and
+current state must be checked with `systemctl --user show`. The service
+executes a checksum-pinned Python copy in
 `/home/tomi/nhm-supervision/c09-local/runtime/functional/`, outside the
 disposable Git worktree, against the existing private local Q/M sockets. It
 does not launch or restart QueryService, collectors, business nodes, or a model
@@ -146,7 +148,8 @@ operator creates a same-UID, mode-0600 `review.private.json` with exactly:
 
 `slot_highwater` must equal the failed row's highwater, and the review time
 must follow that row's `wall_utc`. A valid acknowledgement does not clear an
-inflight marker. The next sample records the acknowledgement file SHA-256,
+inflight marker and has no inflight SHA field. The next sample records the
+acknowledgement file SHA-256,
 preserves the row highwater, and will not reuse the same review file for a
 later failure. Editing, rotating, or truncating the sample log is not the
 reset procedure.

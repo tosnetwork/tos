@@ -103,7 +103,8 @@ copy and digest of the marker and log, establish the exact Q ledger identity,
 and confirm all possibly created grants are durably revoked or expired before
 manually removing and fsyncing the marker. If a failed row remains, its
 separate 0600 receipt must bind the exact failed-row SHA-256 and slot
-highwater. The failed row and archived marker are never edited. If the Q
+highwater. The receipt has no inflight SHA field and cannot clear a marker.
+The failed row and archived marker are never edited. If the Q
 identity, candidate grants, or clock domain cannot be established, the marker
 stays and the timer stays stopped. A log near its 4 MiB cap refuses before
 issuing a grant.

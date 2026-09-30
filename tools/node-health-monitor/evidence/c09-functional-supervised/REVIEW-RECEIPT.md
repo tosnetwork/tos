@@ -1,6 +1,8 @@
 # C09 supervised functional sampler — review receipt
 
-Candidate only; no user unit installed or enabled. `nhm-c09-functional.timer` and `nhm-c09-functional-stop.timer` both showed `LoadState=not-found`, `ActiveState=inactive` during this review. The exact mode-0700 /home/tomi/nhm-supervision/c09-local/runtime/functional/ directory was prepared with frozen script copies, manifest, and private baseline; no sample rows or tokens were copied there. No live grant, QueryService restart, model call, or business-node change was made for this successor.
+At this source-review snapshot, `nhm-c09-functional.timer` and `nhm-c09-functional-stop.timer` both showed `LoadState=not-found`, `ActiveState=inactive`. The exact mode-0700 /home/tomi/nhm-supervision/c09-local/runtime/functional/ directory was prepared with frozen script copies, manifest, and private baseline; no sample rows or tokens were copied there. No live grant, QueryService restart, model call, or business-node change was made for this source successor.
+
+After this source review, the supervisor's owner-controlled rollout installed and enabled both timers at approximately 2026-09-30 02:50 UTC. The private rollout receipt is `/home/tomi/nhm-supervision/c09-local/functional-rollout-20260930T025014Z.json`. This later state does not change the historical checks above or establish a 72-hour result; inspect the user manager and private runtime journal for current operational status.
 
 ## Validation
 
@@ -19,14 +21,14 @@ The proposed first successful functional sample cutoff is 2026-09-30 06:55 UTC a
 - `scripts/write-c09-functional-stop-receipt.py` SHA-256 `8ed8d24d1c5b68222a4251be161f5ef82e5883195affe9a53986b43edfc37267`
 - `scripts/test-write-c09-functional-stop-receipt.py` SHA-256 `793f36b3dcb415f3fc1ed3a7fa502fa3133e0a0597a54424a2259302ef694ec3`
 - `scripts/test-sample-query-functional-socket.py` SHA-256 `8ee4646b3f84e45127920bd94937a9236bbf209cc735736891a5faafa62c39a1`
-- `perf/C09-FUNCTIONAL-SOAK-CONTRACT.md` SHA-256 `027a9047d542775ff67ca826410cddf4c79760fb8b245fee5404f62dccded4cf`
+- `perf/C09-FUNCTIONAL-SOAK-CONTRACT.md` SHA-256 `80bd0fc50e2a3f777468e11cc2d4c5cf767395099f3fda75bf8cfe96c338cebb`
 - `deploy/c09-functional-supervised/nhm-c09-functional-alert.service` SHA-256 `a2cf97198ae1664382f315852a9719d22e6d1e09e194ba2d4a9c80811235c195`
 - `deploy/c09-functional-supervised/nhm-c09-functional-stop.service` SHA-256 `06bc464577b9f0cfa1a14b6b5215cf33944c76f0e72ffac3b169682db26ede85`
 - `deploy/c09-functional-supervised/nhm-c09-functional.service` SHA-256 `cfca82c15e40ddd1242a09261ebb5d9c2f2c097f1e3bef4baffe1dfdabf1454c`
 - `deploy/c09-functional-supervised/nhm-c09-functional-stop.timer` SHA-256 `b7d076879dad39921caafda7e409721d3ced52fc23ad8a2adb4638fe28e17557`
 - `deploy/c09-functional-supervised/nhm-c09-functional.timer` SHA-256 `47cba79a77747dc1523bdb3f9a5f803c233bd521583c924bf467628b05eacdfe`
 - `deploy/c09-functional-supervised/SCRIPT.sha256` SHA-256 `df818b8c1a26df209ce5cddede1e90a3ffe6625b74a5ac5cf58564e0d4e86605`
-- `deploy/c09-functional-supervised/README.md` SHA-256 `fb0fd35f5cf355ab379ad94c646661bb1aa197033cb2aacb2b00c78376b302c9`
+- `deploy/c09-functional-supervised/README.md` SHA-256 `eb4989d25916d3eed11db80b0829129b4595a5dc704207469f158557fef684cc`
 
 ## Raw output retained locally
 
