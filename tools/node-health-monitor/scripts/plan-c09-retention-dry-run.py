@@ -12,6 +12,7 @@ import time
 
 PAGE_ROWS = 64
 PAGE_BYTES = 1024 * 1024
+MAX_SOURCE_BYTES = 128
 MAX_Q_ORIGINS = 4096
 MAX_CONTROL_REFS = 2304
 DEADLINE_SECONDS = 5
@@ -31,12 +32,15 @@ def identity(path):
 
 def reader(path, deadline):
     before = identity(path)
-    db = sqlite3.connect("file:" + str(Path(path).resolve()) + "?mode=ro", uri=True, timeout=0.1)
+    db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.1)
     try:
         db.execute("PRAGMA query_only=ON")
         db.execute("PRAGMA busy_timeout=100")
         db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         db.execute("BEGIN TRANSACTION")
+        opened = db.execute("PRAGMA database_list").fetchall()
+        if len(opened) != 1 or opened[0][1] != "main" or identity(opened[0][2]) != before:
+            raise Refused("file_replaced")
         if identity(path) != before:
             raise Refused("file_replaced")
         return db, before
@@ -97,13 +101,18 @@ def inspect(m_path, q_path, control_path, network, after_seq=0):
         pending = control.execute("SELECT count(*) FROM outbox WHERE delivered=0").fetchone()[0]
         if bounded_int(unresolved, MAX_CONTROL_REFS) > MAX_CONTROL_REFS or bounded_int(pending, 4096) > 4096:
             raise Refused("control_bound")
-        rows = m.execute("SELECT store_seq,source,length(CAST(body AS BLOB)) FROM observations "
+        rows = m.execute("SELECT store_seq,length(CAST(source AS BLOB)),"
+                         "CASE WHEN length(CAST(source AS BLOB))<=128 THEN source ELSE NULL END,"
+                         "length(CAST(body AS BLOB)) FROM observations "
                          "WHERE store_seq>? ORDER BY store_seq LIMIT ?", (after_seq, PAGE_ROWS + 1)).fetchall()
         page = rows[:PAGE_ROWS]
         bytes_seen = 0
         process = unclassified = q_pinned = control_pinned = 0
-        for seq, source, length in page:
+        for seq, source_len, source, length in page:
             bounded_int(seq, highwater)
+            if (type(source_len) is not int or not 0 <= source_len <= MAX_SOURCE_BYTES
+                    or not isinstance(source, str)):
+                raise Refused("source_size")
             if type(length) is not int or not 0 <= length <= 32768:
                 raise Refused("row_size")
             bytes_seen += length
@@ -126,7 +135,8 @@ def inspect(m_path, q_path, control_path, network, after_seq=0):
                 "raw_witness_ttl": "undecided", "m_highwater": str(highwater),
                 "q_cursor_watermark": str(q_watermark), "page_after_seq": str(after_seq),
                 "page_last_seq": str(page[-1][0]) if page else None,
-                "page_rows": len(page), "page_bytes": bytes_seen, "page_has_more": len(rows) > PAGE_ROWS,
+                "page_rows": len(page), "page_body_bytes": bytes_seen,
+                "page_has_more": len(rows) > PAGE_ROWS,
                 "page_process_rows": process, "page_unclassified_rows": unclassified,
                 "page_q_pinned_rows": q_pinned,
                 "page_control_pinned_rows": control_pinned, "q_retained_origin_count": len(origins),

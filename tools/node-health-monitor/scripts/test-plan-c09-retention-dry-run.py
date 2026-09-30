@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable SQLite controls for the advisory retention inventory."""
 
+from contextlib import closing
 import hashlib
 import importlib.util
 import json
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import sqlite3
 import tempfile
+import time
 import unittest
 
 SOURCE = Path(__file__).with_name("plan-c09-retention-dry-run.py")
@@ -23,7 +25,7 @@ class DryRunTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.m, self.q, self.control = (root / name for name in ("m.db", "q.db", "control.db"))
         self.network = "a" * 64
-        with sqlite3.connect(self.m) as db:
+        with closing(sqlite3.connect(self.m)) as db, db:
             db.executescript("CREATE TABLE database_identity(singleton INTEGER PRIMARY KEY,network TEXT);"
                              "CREATE TABLE observations(store_seq INTEGER PRIMARY KEY AUTOINCREMENT,"
                              "source TEXT,content_hash TEXT,body TEXT);")
@@ -33,7 +35,7 @@ class DryRunTests(unittest.TestCase):
                            (source, "b" * 64, "{}"))
         self.m.chmod(0o600)
         meta = self.m.stat()
-        with sqlite3.connect(self.q) as db:
+        with closing(sqlite3.connect(self.q)) as db, db:
             db.executescript("CREATE TABLE query_manager_cursor(singleton INTEGER PRIMARY KEY,network TEXT,"
                              "device TEXT,inode TEXT,watermark INTEGER,anchor_seq INTEGER,anchor_hash TEXT);"
                              "CREATE TABLE query_origins(origin_id TEXT PRIMARY KEY,manager_seq INTEGER);")
@@ -41,7 +43,7 @@ class DryRunTests(unittest.TestCase):
                        (self.network, str(meta.st_dev), str(meta.st_ino), 3, 3, "b" * 64))
             db.execute("INSERT INTO query_origins VALUES(?,?)", ("c" * 64, 2))
         self.q.chmod(0o600)
-        with sqlite3.connect(self.control) as db:
+        with closing(sqlite3.connect(self.control)) as db, db:
             db.executescript("CREATE TABLE database_identity(singleton INTEGER PRIMARY KEY,network TEXT);"
                              "CREATE TABLE source_state(store_seq INTEGER);"
                              "CREATE TABLE incidents(body TEXT);"
@@ -74,13 +76,13 @@ class DryRunTests(unittest.TestCase):
         self.assertEqual(self.inspect(2)["page_last_seq"], "3")
 
     def test_missing_or_mutated_anchor_refuses(self):
-        with sqlite3.connect(self.m) as db:
+        with closing(sqlite3.connect(self.m)) as db, db:
             db.execute("UPDATE observations SET content_hash=? WHERE store_seq=3", ("d" * 64,))
         with self.assertRaisesRegex(planner.Refused, "q_anchor_missing"):
             self.inspect()
 
     def test_old_anchor_below_global_watermark_refuses(self):
-        with sqlite3.connect(self.q) as db:
+        with closing(sqlite3.connect(self.q)) as db, db:
             db.execute("UPDATE query_manager_cursor SET anchor_seq=1,anchor_hash=?", ("b" * 64,))
         before = [hashlib.sha256(path.read_bytes()).digest() for path in (self.m, self.q, self.control)]
         with self.assertRaisesRegex(planner.Refused, "q_anchor"):
@@ -89,11 +91,11 @@ class DryRunTests(unittest.TestCase):
                                   for path in (self.m, self.q, self.control)])
 
     def test_replaced_q_identity_and_excess_origins_refuse(self):
-        with sqlite3.connect(self.q) as db:
+        with closing(sqlite3.connect(self.q)) as db, db:
             db.execute("UPDATE query_manager_cursor SET inode='1'")
         with self.assertRaisesRegex(planner.Refused, "q_cursor_identity"):
             self.inspect()
-        with sqlite3.connect(self.q) as db:
+        with closing(sqlite3.connect(self.q)) as db, db:
             db.execute("UPDATE query_manager_cursor SET inode=?", (str(self.m.stat().st_ino),))
             db.executemany("INSERT INTO query_origins VALUES(?,2)",
                            ((f"{i:064x}",) for i in range(4097)))
@@ -106,6 +108,34 @@ class DryRunTests(unittest.TestCase):
             self.inspect()
         self.assertNotIn("DELETE FROM", SOURCE.read_text().upper())
         self.assertNotIn("UPDATE ", SOURCE.read_text().upper())
+
+    def test_oversized_source_is_rejected_before_classification(self):
+        with closing(sqlite3.connect(self.m)) as db, db:
+            db.execute("UPDATE observations SET source=? WHERE store_seq=2", ("x" * 100_000,))
+        before = [hashlib.sha256(path.read_bytes()).digest() for path in (self.m, self.q, self.control)]
+        with self.assertRaisesRegex(planner.Refused, "source_size"):
+            self.inspect()
+        self.assertEqual(before, [hashlib.sha256(path.read_bytes()).digest()
+                                  for path in (self.m, self.q, self.control)])
+
+    def test_reserved_uri_filename_opens_exact_private_database_without_writes(self):
+        self.m = self.m.rename(self.m.with_name("m#?.db"))
+        self.q = self.q.rename(self.q.with_name("q#?.db"))
+        self.control = self.control.rename(self.control.with_name("control#?.db"))
+        paths = (self.m, self.q, self.control)
+        before = [hashlib.sha256(path.read_bytes()).digest() for path in paths]
+        for path in paths:
+            db, expected = planner.reader(path, time.monotonic() + 5)
+            try:
+                opened = db.execute("PRAGMA database_list").fetchall()
+                self.assertEqual(len(opened), 1)
+                self.assertEqual(opened[0][1], "main")
+                self.assertEqual(os.stat(opened[0][2]).st_ino, expected[1])
+                self.assertEqual(Path(opened[0][2]), path)
+            finally:
+                db.close()
+        self.assertEqual(self.inspect()["deletion_candidates"], 0)
+        self.assertEqual(before, [hashlib.sha256(path.read_bytes()).digest() for path in paths])
 
 
 if __name__ == "__main__":
