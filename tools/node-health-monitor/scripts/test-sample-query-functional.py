@@ -3,6 +3,7 @@
 
 import importlib.util
 from contextlib import closing
+import datetime as dt
 import hashlib
 import json
 import os
@@ -171,6 +172,13 @@ class FunctionalWitnessTests(unittest.TestCase):
             self.assertEqual((row["status"], row["error_kind"], row["grants_created"],
                               row["cleanup_confirmed"]),
                              ("failed", "cleanup_unconfirmed", 1, False))
+            self.assertTrue(Path(witness.inflight_path(log)).exists())
+            with patch.object(witness, "issue") as issue:
+                with self.assertRaisesRegex(witness.WitnessError, "inflight_review_required"):
+                    witness.run(args)
+            issue.assert_not_called()
+            with closing(sqlite3.connect(side_effect_db)) as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM issued").fetchone(), (1,))
         finally:
             listener.close()
             server.join(timeout=1)
@@ -388,6 +396,7 @@ class FunctionalWitnessTests(unittest.TestCase):
              patch.object(witness, "ledger_revoked", return_value=True), \
              patch.object(witness, "revoke", return_value=True):
             self.assertEqual(witness.run(args), 0)
+            self.assertFalse(Path(witness.inflight_path(str(log))).exists())
             args.log_file = str(Path(self.temporary.name) / "probe-timeout.jsonl")
             head_probe.side_effect = TimeoutError("head call deadline")
             self.assertEqual(witness.run(args), 1)
@@ -423,6 +432,12 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual(row["status"], "failed")
         self.assertEqual(row["error_kind"], "TimeoutError")
         self.assertTrue(row["cleanup_confirmed"])
+        self.assertTrue(Path(witness.inflight_path(str(log))).exists())
+        Path(witness.inflight_path(str(log))).unlink()
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "operator_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
         self.assertNotIn(run, log.read_text())
 
     def test_unconfirmed_cleanup_is_failed(self):
@@ -451,7 +466,7 @@ class FunctionalWitnessTests(unittest.TestCase):
         log = Path(self.temporary.name) / "spacing.jsonl"
         boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         slot = int(time.time()) // witness.SLOT_SECONDS
-        log.write_text(json.dumps({"slot": slot - 1, "boot_id": boot,
+        log.write_text(json.dumps({"slot": slot - 1, "status": "pass", "cleanup_confirmed": True, "boot_id": boot,
                                    "boottime_ns": time.clock_gettime_ns(time.CLOCK_BOOTTIME) - 100_000_000_000}) + "\n")
         log.chmod(0o600)
         args = SimpleNamespace(log_file=str(log), control_socket="control")
@@ -463,7 +478,8 @@ class FunctionalWitnessTests(unittest.TestCase):
     def test_wall_slot_rollback_refuses_new_grant(self):
         log = Path(self.temporary.name) / "rollback.jsonl"
         slot = int(time.time()) // witness.SLOT_SECONDS
-        log.write_text(json.dumps({"slot": slot + 1, "boot_id": "previous-boot", "boottime_ns": 0}) + "\n")
+        log.write_text(json.dumps({"slot": slot + 1, "status": "pass", "cleanup_confirmed": True,
+                                   "boot_id": "previous-boot", "boottime_ns": 0}) + "\n")
         log.chmod(0o600)
         with patch.object(witness, "issue") as issue:
             self.assertEqual(witness.run(SimpleNamespace(log_file=str(log))), 1)
@@ -471,9 +487,99 @@ class FunctionalWitnessTests(unittest.TestCase):
         first = json.loads(log.read_text().splitlines()[-1])
         self.assertEqual((first["error_kind"], first["slot_highwater"]), ("slot_not_advanced", slot + 1))
         with patch.object(witness, "issue") as issue:
-            self.assertEqual(witness.run(SimpleNamespace(log_file=str(log))), 1)
+            with self.assertRaisesRegex(witness.WitnessError, "operator_review_required"):
+                witness.run(SimpleNamespace(log_file=str(log)))
         issue.assert_not_called()
         self.assertEqual(json.loads(log.read_text().splitlines()[-1])["slot_highwater"], slot + 1)
+
+    def test_failure_latch_requires_exact_private_review(self):
+        log = Path(self.temporary.name) / "latched.jsonl"
+        review = Path(self.temporary.name) / "review.json"
+        slot = int(time.time()) // witness.SLOT_SECONDS
+        failed = {"schema_version": 1, "slot": slot - 1, "slot_highwater": slot - 1,
+                  "boot_id": "previous-boot", "boottime_ns": 0,
+                  "wall_utc": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=6)).isoformat(),
+                  "status": "failed", "cleanup_confirmed": False}
+        raw = (json.dumps(failed, separators=(",", ":")) + "\n").encode()
+        log.write_bytes(raw)
+        log.chmod(0o600)
+        args = SimpleNamespace(log_file=str(log), review_file=str(review), operator_token_file="operator",
+                               service_token_file="service", baseline_file="baseline",
+                               expected_baseline_sha256="a" * 64, expected_query_sha256="b" * 64,
+                               query_unit="isolated", control_socket="control", mcp_socket="mcp",
+                               m_db="m", q_ledger="q")
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "operator_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
+        self.assertEqual(log.read_bytes(), raw)
+        ack = {"schema_version": 1, "failed_row_sha256": hashlib.sha256(raw.strip()).hexdigest(),
+               "slot_highwater": slot - 1, "reviewer": "operator", "reviewed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
+        review.write_text(json.dumps({**ack, "failed_row_sha256": "0" * 64}))
+        review.chmod(0o600)
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "operator_review_required"):
+                witness.run(args)
+        issue.assert_not_called()
+        self.assertEqual(log.read_bytes(), raw)
+        review.write_text(json.dumps(ack))
+        with (patch.object(witness, "private_token", return_value="a" * 64),
+              patch.object(witness, "frozen_baseline", return_value={}),
+              patch.object(witness, "bound_service", return_value=123),
+              patch.object(witness, "ledger_growth", return_value=0),
+              patch.object(witness, "projection_head", return_value="caught_up"),
+              patch.object(witness, "issue", side_effect=witness.WitnessError("stopped_after_review")) as issue):
+            self.assertEqual(witness.run(args), 1)
+        issue.assert_called_once()
+        self.assertEqual(json.loads(log.read_text().splitlines()[-1])["review_ack_sha256"],
+                         hashlib.sha256(review.read_bytes()).hexdigest())
+        self.assertTrue(Path(witness.inflight_path(str(log))).exists())
+        Path(witness.inflight_path(str(log))).unlink()
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "operator_review_required"):
+                witness.run(args)
+        issue.assert_not_called()  # The old acknowledgement cannot clear the new failure.
+
+    def test_pass_with_unconfirmed_cleanup_and_orphan_inflight_both_latch(self):
+        log = Path(self.temporary.name) / "cleanup-latched.jsonl"
+        slot = int(time.time()) // witness.SLOT_SECONDS
+        old = {"slot": slot - 1, "slot_highwater": slot - 1, "status": "pass",
+               "cleanup_confirmed": False, "boot_id": "previous-boot", "boottime_ns": 0}
+        log.write_text(json.dumps(old) + "\n")
+        log.chmod(0o600)
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "operator_review_required"):
+                witness.run(SimpleNamespace(log_file=str(log)))
+        issue.assert_not_called()
+        old["cleanup_confirmed"] = True
+        log.write_text(json.dumps(old) + "\n")
+        Path(witness.inflight_path(str(log))).write_text("orphan")
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "inflight_review_required"):
+                witness.run(SimpleNamespace(log_file=str(log)))
+        issue.assert_not_called()
+        self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_closed_window_refuses_before_grant(self):
+        near_end = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=40)).isoformat()
+        for index, end in enumerate(("2026-09-30T00:00:00Z", near_end)):
+            log = Path(self.temporary.name) / ("closed-window-" + str(index) + ".jsonl")
+            args = SimpleNamespace(log_file=str(log), not_after_utc=end)
+            with patch.object(witness, "issue") as issue:
+                self.assertEqual(witness.run(args), 1)
+            issue.assert_not_called()
+            self.assertEqual(json.loads(log.read_text().strip())["error_kind"], "window_closed")
+
+    def test_near_full_log_refuses_before_grant(self):
+        log = Path(self.temporary.name) / "near-full.jsonl"
+        with open(log, "wb") as handle:
+            handle.truncate(witness.LOG_LIMIT - witness.MAX_LOG_ROW_BYTES + 1)
+        log.chmod(0o600)
+        with patch.object(witness, "issue") as issue:
+            with self.assertRaisesRegex(witness.WitnessError, "log_full"):
+                witness.run(SimpleNamespace(log_file=str(log)))
+        issue.assert_not_called()
+        self.assertFalse(Path(witness.inflight_path(str(log))).exists())
 
 
 if __name__ == "__main__":

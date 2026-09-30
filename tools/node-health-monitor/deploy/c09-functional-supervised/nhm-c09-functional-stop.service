@@ -1,0 +1,6 @@
+[Unit]
+Description=Stop C09 functional sampler at Q-aware window end
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --user stop nhm-c09-functional.timer

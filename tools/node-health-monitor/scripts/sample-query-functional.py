@@ -29,6 +29,7 @@ MAX_REQUEST_BYTES = 4096
 MAX_CONTROL_BYTES = 4096
 LIMIT = 32768
 MAX_LOG_ROW_BYTES = 1024
+MAX_REVIEW_BYTES = 1024
 SLOT_SECONDS = 300
 LOG_LIMIT = 4 * 1024 * 1024
 MAX_NEW_GRANTS = 1024
@@ -488,7 +489,10 @@ def bound_service(unit, expected_sha, control_path, mcp_path, m_path, q_path):
     if pid <= 1:
         raise WitnessError("query_pid")
     with open(f"/proc/{pid}/exe", "rb") as executable:
-        digest = hashlib.file_digest(executable, "sha256").hexdigest()
+        digest_state = hashlib.sha256()
+        for block in iter(lambda: executable.read(1024 * 1024), b""):
+            digest_state.update(block)
+        digest = digest_state.hexdigest()
     if digest != expected_sha:
         raise WitnessError("query_binary")
     args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
@@ -509,10 +513,85 @@ def open_log(path):
         os.close(fd)
         raise WitnessError("log_file")
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    if meta.st_size > LOG_LIMIT:
+    # Leave room for a complete failure row before any grant can be issued.
+    if meta.st_size + MAX_LOG_ROW_BYTES > LOG_LIMIT:
         os.close(fd)
         raise WitnessError("log_full")
     return fd
+
+
+def reviewed_failure(path, failed_row, highwater):
+    if not path:
+        return None
+    directory = os.stat(Path(path).parent, follow_symlinks=False)
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != os.getuid() or directory.st_mode & 0o077:
+        raise WitnessError("review_directory")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    try:
+        meta = os.fstat(fd)
+        if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != os.getuid()
+                or meta.st_mode & 0o077 or meta.st_nlink != 1 or meta.st_size > MAX_REVIEW_BYTES):
+            raise WitnessError("review_file")
+        raw = os.read(fd, MAX_REVIEW_BYTES + 1)
+        if len(raw) != meta.st_size:
+            raise WitnessError("review_file")
+    finally:
+        os.close(fd)
+    value = checked_json(raw, MAX_REVIEW_BYTES)
+    if (set(value) != {"schema_version", "failed_row_sha256", "slot_highwater", "reviewer", "reviewed_at_utc"}
+            or type(value["schema_version"]) is not int or value["schema_version"] != 1
+            or type(value["slot_highwater"]) is not int
+            or value["slot_highwater"] != highwater
+            or value["failed_row_sha256"] != hashlib.sha256(failed_row).hexdigest()
+            or not isinstance(value["reviewer"], str)
+            or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value["reviewer"]) is None):
+        raise WitnessError("review_mismatch")
+    try:
+        reviewed = dt.datetime.fromisoformat(value["reviewed_at_utc"].replace("Z", "+00:00"))
+        failed = dt.datetime.fromisoformat(checked_json(failed_row, MAX_LOG_ROW_BYTES)["wall_utc"].replace("Z", "+00:00"))
+        if (reviewed.utcoffset() != dt.timedelta(0) or failed.utcoffset() != dt.timedelta(0)
+                or reviewed <= failed or reviewed > dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60)):
+            raise ValueError("review time")
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        raise WitnessError("review_time") from exc
+    return hashlib.sha256(raw).hexdigest()
+
+
+def inflight_path(log_path):
+    return log_path + ".inflight"
+
+
+def sync_parent(path):
+    fd = os.open(str(Path(path).parent), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def start_inflight(log_path, slot, boot_id):
+    path = inflight_path(log_path)
+    raw = json.dumps({"schema_version": 1, "slot": slot, "boot_id": boot_id}, separators=(",", ":")).encode()
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    except FileExistsError as exc:
+        raise WitnessError("inflight_review_required") from exc
+    try:
+        if os.write(fd, raw) != len(raw):
+            raise WitnessError("inflight_write")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    sync_parent(path)
+
+
+def finish_inflight(log_path):
+    path = inflight_path(log_path)
+    os.unlink(path)
+    sync_parent(path)
 
 
 def append_log(fd, sample):
@@ -541,8 +620,14 @@ def run(args):
     fixed_grant_query_status = "not_run"
     head_status = "not_run"
     head_probe_error = None
+    review_ack_sha256 = None
+    latch_refused = False
+    inflight_started = False
     started = time.monotonic_ns()
     try:
+        if os.path.lexists(inflight_path(args.log_file)):
+            latch_refused = True
+            raise WitnessError("inflight_review_required")
         size = os.fstat(fd).st_size
         if size:
             os.lseek(fd, max(0, size - 2048), os.SEEK_SET)
@@ -554,12 +639,29 @@ def run(args):
                     or prior_highwater < prior_slot):
                 raise WitnessError("log_slot_invalid")
             slot_highwater = max(slot, prior_highwater)
+            if previous.get("status") != "pass" or previous.get("cleanup_confirmed") is not True:
+                try:
+                    review_ack_sha256 = reviewed_failure(getattr(args, "review_file", None), last, prior_highwater)
+                except (OSError, WitnessError):
+                    review_ack_sha256 = None
+                if review_ack_sha256 is None:
+                    latch_refused = True
+                    raise WitnessError("operator_review_required")
             if slot <= prior_highwater:
                 raise WitnessError("slot_not_advanced")
             if previous.get("boot_id") == boot_id:
                 prior = previous.get("boottime_ns")
                 if type(prior) is not int or boottime_ns < prior or boottime_ns - prior < SLOT_SECONDS * 1_000_000_000:
                     raise WitnessError("sample_too_soon")
+        if getattr(args, "not_after_utc", None):
+            try:
+                end_of_window = dt.datetime.fromisoformat(args.not_after_utc.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise WitnessError("window_config") from exc
+            if end_of_window.utcoffset() != dt.timedelta(0):
+                raise WitnessError("window_config")
+            if dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=45) >= end_of_window:
+                raise WitnessError("window_closed")
         operator = private_token(args.operator_token_file)
         service = private_token(args.service_token_file)
         baseline = frozen_baseline(args.baseline_file, args.expected_baseline_sha256, args.expected_query_sha256)
@@ -583,6 +685,8 @@ def run(args):
         start = (now - dt.timedelta(minutes=4)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         node = NODES[slot % len(NODES)]
         phase = "grant"
+        start_inflight(args.log_file, slot, boot_id)
+        inflight_started = True
         run_id, run_token = issue(args.control_socket, operator, node, start, end, leases)
         phase = "process"
         session = McpSession(args.mcp_socket, service, run_id, run_token)
@@ -612,6 +716,8 @@ def run(args):
         if head_probe_error is not None:
             error_kind = "projection_probe_failed"
     except WitnessError as exc:
+        if latch_refused:
+            raise
         error_kind = exc.kind
     except Exception as exc:
         error_kind = type(exc).__name__
@@ -627,17 +733,23 @@ def run(args):
         if not cleanup_ok:
             status = "failed"
             error_kind = "cleanup_unconfirmed"
-        sample = {"schema_version": 1, "slot": slot, "slot_highwater": slot_highwater,
-                  "boot_id": boot_id, "boottime_ns": boottime_ns,
-                  "wall_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
-                  "status": status, "phase": phase, "error_kind": error_kind,
-                  "negative_controls": slot % 12 == 0, "grants_created": len(leases),
-                  "cleanup_confirmed": cleanup_ok, "q_grants_since_baseline": ledger_delta,
-                  "fixed_grant_query_status": fixed_grant_query_status,
-                  "projection_head_status": head_status, "projection_probe_error": head_probe_error,
-                  "elapsed_ms": (time.monotonic_ns() - started) // 1_000_000}
-        append_log(fd, sample)
-        os.close(fd)
+        try:
+            if not latch_refused:
+                sample = {"schema_version": 1, "slot": slot, "slot_highwater": slot_highwater,
+                          "boot_id": boot_id, "boottime_ns": boottime_ns,
+                          "wall_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+                          "status": status, "phase": phase, "error_kind": error_kind,
+                          "negative_controls": slot % 12 == 0, "grants_created": len(leases),
+                          "cleanup_confirmed": cleanup_ok, "q_grants_since_baseline": ledger_delta,
+                          "fixed_grant_query_status": fixed_grant_query_status,
+                          "projection_head_status": head_status, "projection_probe_error": head_probe_error,
+                          "review_ack_sha256": review_ack_sha256,
+                          "elapsed_ms": (time.monotonic_ns() - started) // 1_000_000}
+                append_log(fd, sample)
+                if status == "pass" and inflight_started:
+                    finish_inflight(args.log_file)
+        finally:
+            os.close(fd)
     return 0 if status == "pass" else 1
 
 
@@ -647,6 +759,8 @@ def main():
                  "q-ledger", "log-file", "query-unit", "expected-query-sha256", "baseline-file",
                  "expected-baseline-sha256"):
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--review-file")
+    parser.add_argument("--not-after-utc")
     args = parser.parse_args()
     if (re.fullmatch(r"[0-9a-f]{64}", args.expected_query_sha256) is None
             or re.fullmatch(r"[0-9a-f]{64}", args.expected_baseline_sha256) is None):

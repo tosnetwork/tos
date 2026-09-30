@@ -1,9 +1,10 @@
 # C09 private QueryService functional soak witness — review candidate
 
 Base: `node-health-monitor@afdd738eadc62cd6d3960aa86c475816a96d8555`.
-Branch: `nhm/c09-functional-soak-starbridge`. This branch contains only this
-contract, `scripts/sample-query-functional.py`, and its offline test. It is
-not deployed, scheduled, or counted toward the running 72-hour gate.
+Branch: `nhm/c09-functional-soak-starbridge`. Source, offline tests, the
+one-shot evidence index, and candidate user systemd units are confined to
+this separate branch. The sampler timer is not installed or enabled and is
+not counted toward the running 72-hour gate.
 
 ## Instrument and cadence
 
@@ -79,6 +80,26 @@ The baseline JSON has exactly `schema_version=1`, `q_device`, `q_inode`,
 The baseline and Q file identity must both survive every sample. A replaced Q
 database or lower ledger count is an explicit failure.
 
+## Supervised failure latch
+
+The candidate service and timer are in `deploy/c09-functional-supervised/`.
+Before a grant POST the script fsyncs a same-UID 0600 `.inflight` marker and
+its private parent directory. It removes that marker only after a `pass` row
+is fsynced and every grant is durably revoked. A previous row whose
+`status != pass` or `cleanup_confirmed != true`, or any orphaned inflight
+marker, blocks every later grant. A blocked tick exits nonzero without
+appending a new JSONL row, preserving the failed row and slot highwater.
+Operator review is recorded by a private 0600 acknowledgement file naming
+the exact failed-row SHA-256 and highwater; it cannot clear a later failure.
+An orphaned inflight marker must be inspected and manually removed after
+grant-state review. A log near its 4 MiB cap refuses before issuing a grant.
+
+The candidate timer waits five minutes after service deactivation, the
+script preserves its 300-second same-boot spacing, and a separate stop timer
+targets 2026-10-03 01:10 UTC. The script also refuses a grant within 45
+seconds of that boundary. A failed unit triggers only a fixed local-journal
+alert; external paging and timer enablement remain the owner's decisions.
+
 Each JSONL row separately records `fixed_grant_query_status` and
 `projection_head_status`. The latter is a separate, read-only private control
 probe: `lagging` does not erase a successful fixed-grant query, while an
@@ -114,9 +135,12 @@ and a frozen empty Q baseline. The actual private control/MCP sockets passed
 one hourly-slot run (process, unknown consensus, cross-run denial): 2 grants,
 2 durable revocations, 335 ms. A fault-injected process-query timeout returned
 failure and left its one durable grant revoked. No live Q/M database was
-written. An independent source review remains required before scheduling. A live
-read-only dry run is **not** part of this branch's implementation. Deployment,
-timer wiring, and interpretation of a new 72-hour window remain separate
+written in that isolated test. A subsequent authorized live one-shot is
+indexed at `evidence/c09-functional-live-one-shot-20260930T014805Z/INDEX.md`:
+the fixed process query passed and its grant was durably revoked, while the
+independent head probe reported `lagging`. The new failure latch and candidate
+units require independent source review before owner-controlled enablement.
+Timer wiring and interpretation of a new 72-hour window remain separate
 operator decisions. This witness supplements the existing one-minute
 projection sampler; it does not by itself satisfy C09 A–F performance,
 rotation/restore, or 72-hour acceptance.
