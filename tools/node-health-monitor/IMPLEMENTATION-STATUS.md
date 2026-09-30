@@ -40,8 +40,8 @@ remain open.
 
 C09 functional sampling started on the local private QueryService without a
 business-node, M, collector, or Q restart. The installed user units and frozen
-runtime scripts use isolated source `0bed1489785450d5d057f62fd3fea13986b718e5`;
-the functional and Q-aware stop timers both target `2026-10-03T07:10:00Z`.
+runtime scripts used isolated source `0bed1489785450d5d057f62fd3fea13986b718e5`;
+the original functional and Q-aware stop timers targeted `2026-10-03T07:10:00Z`.
 The first actual functional tick at `2026-09-30T02:55:09Z` returned `pass` for
 the fixed-grant process query, durably revoked its one new grant, and left no
 inflight marker. Its projection-head status was `lagging`, so this receipt is
@@ -58,6 +58,20 @@ log and marker are frozen under the private C09 review directory. This
 interruption invalidates the current continuous functional window; any new
 window requires separate manual review and a new first-pass anchor. Retention,
 model diagnosis, performance, and the 72-hour C09 gate remain open.
+
+The original functional and stop timers are now disabled; the failed log and
+inflight marker remain byte-for-byte preserved. A same-Q manual review created
+an independent private `functional-window-2` baseline. Source merged at
+`2836e2bb2991d2cd559d9bbcb46bfb3027ad2bfb`, and the separate v2 functional
+timer began on `2026-09-30`. Its first actual tick at `03:32:01Z` passed the
+fixed-grant process query, durably revoked grant row 28, and left no inflight
+marker; projection health was `lagging`. The v2 first-pass deadline is
+`2026-09-30T04:00:00Z`, its stop timer is `2026-10-03T04:15:00Z`, and the
+Q-aware stop timer remains `2026-10-03T07:10:00Z`. Private render, deployment,
+and first-sample receipts are under
+`/home/tomi/nhm-supervision/c09-local/reviews/fresh-window-render/`. This one
+successful tick starts a new observation interval; it does not establish
+continuous availability or satisfy the 72-hour gate.
 
 ## Evidence mapping
 
