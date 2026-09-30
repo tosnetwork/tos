@@ -38,6 +38,20 @@ availability. The projection-health route entered the one-minute sampler at
 `2026-09-30T00:38:14Z`; rollback/restore and the new Q-aware 72-hour gate
 remain open.
 
+C09 functional sampling started on the local private QueryService without a
+business-node, M, collector, or Q restart. The installed user units and frozen
+runtime scripts use isolated source `0bed1489785450d5d057f62fd3fea13986b718e5`;
+the functional and Q-aware stop timers both target `2026-10-03T07:10:00Z`.
+The first actual functional tick at `2026-09-30T02:55:09Z` returned `pass` for
+the fixed-grant process query, durably revoked its one new grant, and left no
+inflight marker. Its projection-head status was `lagging`, so this receipt is
+not a caught-up or continuous-availability pass. Private owner rollout and
+first-sample receipts are under `/home/tomi/nhm-supervision/c09-local/`.
+The running Q binary remains the pinned `31fc2f615` rollout; later isolated
+projection-health changes are not deployed during this frozen functional
+window. Retention, model diagnosis, performance, and the 72-hour C09 gate
+remain open.
+
 ## Evidence mapping
 
 - `crates/health-core/tests/contracts.rs`: prior 30 deterministic behavior tests.
