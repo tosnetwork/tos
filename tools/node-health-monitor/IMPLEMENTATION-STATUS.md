@@ -73,6 +73,15 @@ and first-sample receipts are under
 successful tick starts a new observation interval; it does not establish
 continuous availability or satisfy the 72-hour gate.
 
+Source-only successor `23429522d` requires a nonzero Q projection cursor's
+anchor sequence to equal its global M watermark; the M reader also checks the
+exact boundary row in one read transaction. Integrated tests cover an older
+valid process anchor followed by a diagnostic boundary. The running Q binary
+remains the earlier `31fc2f615` build. The retention inventory added through
+`0c66aaf83` reads bounded M/Q/control pages and always reports zero deletion
+candidates; it has been tested only with disposable databases. No TTL, live
+pruning, or 72-hour retention result follows from that inventory.
+
 ## Evidence mapping
 
 - `crates/health-core/tests/contracts.rs`: prior 30 deterministic behavior tests.
