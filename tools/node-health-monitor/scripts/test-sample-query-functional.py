@@ -263,6 +263,10 @@ class FunctionalWitnessTests(unittest.TestCase):
                 witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
             q.execute("UPDATE query_evidence SET store_seq=1")
             q.commit()
+            with closing(sqlite3.connect(self.db)) as m_above:
+                m_above.execute("INSERT INTO observations SELECT 2,content_hash,node,scope,process_epoch,"
+                                "source_epoch,source,body FROM observations WHERE store_seq=1")
+                m_above.commit()
             q.execute("UPDATE query_origins SET manager_seq=2")
             q.execute("UPDATE query_manager_cursor SET watermark=2")
             q.commit()
