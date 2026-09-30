@@ -56,3 +56,30 @@ The locked `manager_query_source` target on the shared successor exited 0:
 mixed-boundary rewrite test. The shared test binary was freshly compiled under
 `/home/tomi/nhm-c09-shared-global-boundary-build`; a prior reused-target run
 that executed tests absent from its source was discarded as invalid evidence.
+
+The shared production validator already required `anchor.seq == watermark`
+at `23429522d5`, so no production line from isolated `514d70c29` was copied.
+The additional restored-ledger control forges `W=2` while retaining the valid
+diagnostic row-1 hash as an older anchor. Startup must refuse this syntactically
+valid but stale anchor, without requiring a process anchor for a genuinely
+diagnostic-only boundary. This remains a cursor test, not an 8 MiB parent-cap
+progression or 72-hour acceptance claim. The control first checks the durable
+cursor decoder directly, then checks manager startup, so an independent M
+reader guard cannot mask the cursor-validator sensitivity.
+
+On this shared successor, `manager_query_source.rs` SHA-256 is
+`197da5c50ad783264e6d27e728c3fe15030102ffe2e2409b8b753930b13f5048`,
+unchanged `query_ledger.rs` SHA-256 is
+`2152491e042fa50920f9b5d821e3884b8e0d338b301aabce6f2ad310d497b288`,
+and the restored test binary SHA-256 is
+`dcceeae8b8657698508eec92d632f0e5d6427b7d8107d9b6479fb3c1e2003233`.
+In a detached worktree of this exact successor, changing only the ledger
+validator from `anchor.seq != watermark` to the old `anchor.seq > watermark`
+produced source SHA-256
+`7657c9f3ae9321edea6470b78a8bf02add1f979b682b5b4e226453c1f683392b`.
+It compiled and the exact target exited 101 at the intended direct decoder
+assertion (`manager_query_source.rs:255`, `unwrap_err()` received `Ok`). After
+restoration, the same target exited 0 and the ledger hash matched above. The
+full locked `tos-health-services` package, fmt, strict Clippy and diff-check
+also exited 0 on the final shared source; the `manager_query_source` file had
+22 passed and 1 opt-in local-M witness ignored. No live service was changed.
