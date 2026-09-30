@@ -107,6 +107,18 @@ void unit() {
   CHECK(!publisher.prepare(1, 10, 1700000000, std::string(2097153, 'x'), true, sign, verify));
   auto disabled = publisher.prepare(1, 10, 1700000000, "# EOF\n", false, sign, verify);
   CHECK(disabled && disabled->read(10)->find("\"pq_sign\":null") != std::string::npos);
+  // v3 without a published chain anchor still publishes a partial snapshot.
+  ConsensusPublication consensus{"{\"synthetic\":true}", true};
+  auto v3 = publisher.prepare(1, 10, 1700000000, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(v3);
+  auto v3_body = v3->read(10);
+  CHECK(v3_body);
+  std::cout << "V3_BODY " << *v3_body << std::endl;
+  CHECK(v3_body->find("\"source_version\":\"native-core-v3\"") != std::string::npos);
+  CHECK(v3_body->find("\"chain\":null") != std::string::npos);
+  CHECK(v3_body->find("\"instrumentation_complete\":false") != std::string::npos);
+  CHECK(v3_body->find("\"chain_anchors\"") != std::string::npos);
+  CHECK(!publisher.prepare(1, 10, 1700000000, "# EOF\n", true, sign, verify, false, nullptr, true));
   std::cout << "native_snapshot_unit_passed" << std::endl;
 }
 }  // namespace
