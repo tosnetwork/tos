@@ -2234,10 +2234,11 @@ async fn grant_refuses_quarantine_without_new_m_row_until_background_validation(
             ))
             .unwrap()
     };
-    assert_eq!(
-        control_router(state.clone()).oneshot(request()).await.unwrap().status(),
-        StatusCode::OK
-    );
+    let first_grant = control_router(state.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(first_grant.status(), StatusCode::OK);
+    let first_grant = body(first_grant).await;
+    let run = first_grant["run_id"].as_str().unwrap();
+    let token = first_grant["run_token"].as_str().unwrap();
     let before = state.manager_projection_reads.load(Ordering::Relaxed);
     let sql = rusqlite::Connection::open(&manager_path).unwrap();
     sql.execute(
@@ -2247,6 +2248,29 @@ async fn grant_refuses_quarantine_without_new_m_row_until_background_validation(
     )
     .unwrap();
     drop(sql);
+    // Characterization, not a safety claim: quarantine can arrive after the
+    // retained-parent validation. Until the next importer pass, the existing
+    // fixed-W grant still serves its cached process parent.
+    let old_grant_query = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/query/node-snapshot")
+            .header("authorization", format!("Bearer {}", "a".repeat(32)))
+            .header("x-tos-run-token", token)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"run_id":run,"node_id":"v1",
+                "as_of":"2026-09-29T00:00:02Z","max_age_seconds":30,
+                "components":["process"]})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    let exposed = query_router(state.clone()).oneshot(old_grant_query()).await.unwrap();
+    assert_eq!(exposed.status(), StatusCode::OK);
+    let exposed = body(exposed).await;
+    assert_eq!(exposed["data"]["components"][0]["value"]["rss_bytes"], "4096");
+    assert_eq!(exposed["evidence"][0]["parent_evidence_ids"][0], original.evidence_id);
     assert_eq!(
         control_router(state.clone()).oneshot(request()).await.unwrap().status(),
         StatusCode::SERVICE_UNAVAILABLE,
@@ -2282,6 +2306,11 @@ async fn grant_refuses_quarantine_without_new_m_row_until_background_validation(
     );
     assert!(import_manager(&state).unwrap_err().contains("quarantined"));
     assert!(state.data.lock().unwrap().manager_conflicted);
+    assert_eq!(
+        query_router(state.clone()).oneshot(old_grant_query()).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "importer detection must stop the old fixed-W grant"
+    );
     drop(state);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();

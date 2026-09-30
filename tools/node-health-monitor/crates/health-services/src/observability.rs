@@ -753,13 +753,91 @@ pub fn import_cache(state: &ObservabilityState, path: PathBuf) -> Result<usize, 
 #[cfg(test)]
 mod grant_cursor_interleaving_tests {
     use super::*;
-    use crate::durable::EvidenceDb;
+    use crate::durable::{DurableEvidence, EvidenceDb};
     use axum::{body::Body, http::Request};
     use std::sync::atomic::AtomicBool;
+    use tos_health_core::{
+        edge_snapshot::{ProcessEnvelope, ProcessPayload},
+        native::{canonical_hash, Coverage as NativeCoverage, Quality, SourceEnvelope},
+        source::{Availability, Coverage, SourceQuality},
+        wire::U64,
+    };
     use tower::ServiceExt;
+
+    static GRANT_HOOK_TEST_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn process_row() -> DurableEvidence {
+        let at = "2026-09-29T00:00:01.000Z";
+        let timestamp = chrono::DateTime::parse_from_rfc3339(at).unwrap().timestamp_millis();
+        let payload = ProcessPayload {
+            kind: "process".into(),
+            pid: 4242,
+            rss_bytes: Some(U64(4096)),
+            anon_bytes: None,
+            file_bytes: None,
+            swap_bytes: None,
+            cpu_user_ticks: Some(U64(7)),
+            cpu_system_ticks: Some(U64(3)),
+        };
+        let source: ProcessEnvelope = SourceEnvelope {
+            schema_version: 1,
+            source_id: "process".into(),
+            node_id: "v1".into(),
+            scope_id: "node".into(),
+            process_epoch: "boot:4242:100".into(),
+            source_epoch: "edge-epoch-1".into(),
+            source_version: "proc-v1".into(),
+            generation: U64(1),
+            availability: "available".into(),
+            observed_at: Some(at.into()),
+            last_success_at: Some(at.into()),
+            received_at: None,
+            source_age_ms: None,
+            clock_quality: "valid".into(),
+            coverage: NativeCoverage {
+                status: "partial".into(),
+                missing_fields: vec!["host_pressure".into()],
+                gaps: vec![],
+                sampling_policy: "fixed_15s".into(),
+            },
+            content_hash: canonical_hash(&payload).unwrap(),
+            payload,
+            quality: Quality {
+                instrumentation_complete: false,
+                producer_dropped: U64(0),
+                relay_dropped: U64(0),
+                parse_errors: U64(0),
+                shed_reason: None,
+            },
+        };
+        DurableEvidence {
+            source_epoch: "edge-epoch-1".into(),
+            record: Evidence {
+                node_id: "v1".into(),
+                scope_id: "node".into(),
+                source_id: "process".into(),
+                source_record_id: "edge-epoch-1:1".into(),
+                process_epoch: "boot:4242:100".into(),
+                observed_at_ms: timestamp,
+                received_at_ms: timestamp + 1000,
+                quality: SourceQuality {
+                    availability: Availability::Available,
+                    coverage: Coverage::Partial,
+                    observed_at_ms: Some(timestamp),
+                    last_success_at_ms: Some(timestamp),
+                    clock_valid: true,
+                    process_epoch: "boot:4242:100".into(),
+                    source_sequence: "1".into(),
+                },
+                payload: json!({"component":"process","source":source}),
+                redacted: true,
+            },
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cursor_guard_survives_competing_q_acquisition_until_durable_create() {
+        let _serial = GRANT_HOOK_TEST_SERIAL.lock().await;
         let directory = std::env::temp_dir().join(format!(
             "nhm-q-after-cursor-{}-{}",
             std::process::id(),
@@ -837,6 +915,91 @@ mod grant_cursor_interleaving_tests {
             .unwrap();
         assert_eq!(durable, 1);
         eprintln!("post-cursor competing Q acquisition refused; grant_elapsed={elapsed:?}");
+        drop(state);
+        drop(manager);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn quarantine_after_version_and_cursor_checks_can_precede_grant_commit() {
+        let _serial = GRANT_HOOK_TEST_SERIAL.lock().await;
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-q-late-quarantine-{}-{}",
+            std::process::id(),
+            hex(&random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let manager_path = directory.join("manager.sqlite");
+        let query_path = directory.join("query.sqlite");
+        let network = "a".repeat(64);
+        let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+        manager.bind_network(&network).unwrap();
+        let original = manager.insert(process_row()).unwrap();
+        let state = ObservabilityState::new(
+            Inventory {
+                network_id: network,
+                nodes: BTreeSet::from(["v1".into()]),
+                scopes: BTreeSet::from(["node".into()]),
+            },
+            vec![b'o'; 32],
+            vec![b'i'; 32],
+            vec![b'a'; 32],
+        )
+        .unwrap()
+        .with_query_ledger(&query_path)
+        .unwrap()
+        .with_manager_evidence(manager_path.clone())
+        .unwrap();
+        let validated_version = state.data.lock().unwrap().manager_validated_data_version.unwrap();
+        let committed_quarantine = Arc::new(AtomicBool::new(false));
+        let in_hook = committed_quarantine.clone();
+        *GRANT_AFTER_CURSOR_HOOK.lock().unwrap() = Some(Box::new(move || {
+            let sql = rusqlite::Connection::open(&manager_path).unwrap();
+            sql.execute(
+                "INSERT INTO quarantined(node,scope,process_epoch,source_epoch,source)
+                 VALUES('v1','node','boot:4242:100','edge-epoch-1','process')",
+                [],
+            )
+            .unwrap();
+            in_hook.store(true, Ordering::SeqCst);
+        }));
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"node_ids":["v1"],"scope_ids":["node"],
+                "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                .to_string(),
+            ))
+            .unwrap();
+        let response = control_router(state.clone()).oneshot(request).await.unwrap();
+        assert!(committed_quarantine.load(Ordering::SeqCst));
+        assert_ne!(manager_data_version(&state, false).unwrap(), validated_version);
+        assert_eq!(response.status(), StatusCode::OK, "late quarantine reached durable grant");
+        let durable: i64 = rusqlite::Connection::open(&query_path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM query_grants WHERE revoked=0", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(durable, 1);
+        assert_eq!(
+            state
+                .query_ledger
+                .as_ref()
+                .unwrap()
+                .lock()
+                .unwrap()
+                .manager_cursor()
+                .unwrap()
+                .unwrap()
+                .watermark,
+            original.store_seq.0
+        );
+        assert!(import_manager(&state).unwrap_err().contains("quarantined"));
+        assert!(state.data.lock().unwrap().manager_conflicted);
         drop(state);
         drop(manager);
         std::fs::remove_dir_all(directory).unwrap();
