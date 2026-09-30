@@ -299,13 +299,17 @@ pub fn read_process_projection_page(
     drop(parent);
     let mut query = conn
         .prepare(
-            "SELECT store_seq,content_hash,length(CAST(body AS BLOB)),
-         CASE WHEN length(CAST(body AS BLOB))<=32768 THEN body ELSE NULL END
-         FROM observations WHERE store_seq>?1 AND store_seq<=?2 AND source='process'
-         AND NOT EXISTS(SELECT 1 FROM quarantined q WHERE q.node=observations.node
-         AND q.scope=observations.scope AND q.process_epoch=observations.process_epoch
-         AND q.source_epoch=observations.source_epoch AND q.source=observations.source)
-         ORDER BY store_seq LIMIT ?3",
+            "SELECT o.store_seq,
+             CASE WHEN length(CAST(o.content_hash AS BLOB))=64 THEN o.content_hash ELSE NULL END,
+             CASE WHEN o.source='process' AND q.source IS NULL THEN 1 ELSE 0 END,
+             CASE WHEN o.source='process' AND q.source IS NULL THEN length(CAST(o.body AS BLOB)) ELSE 0 END,
+             CASE WHEN o.source='process' AND q.source IS NULL
+                  AND length(CAST(o.body AS BLOB))<=32768 THEN o.body ELSE NULL END
+             FROM observations o LEFT JOIN quarantined q
+             ON q.node=o.node AND q.scope=o.scope AND q.process_epoch=o.process_epoch
+             AND q.source_epoch=o.source_epoch AND q.source=o.source
+             WHERE o.store_seq>?1 AND o.store_seq<=?2
+             ORDER BY o.store_seq LIMIT ?3",
         )
         .map_err(failure)?;
     let rows = query
@@ -318,44 +322,59 @@ pub fn read_process_projection_page(
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         )
         .map_err(failure)?;
     let mut records = Vec::new();
-    let mut bytes = 0usize;
+    let mut process_bytes = 0usize;
     let mut last = after;
     let mut anchor = previous.and_then(|old| old.anchor.clone());
+    let mut last_was_projected = false;
     let mut caught_up = true;
     for (count, row) in rows.enumerate() {
         if count == PAGE_ROWS {
             caught_up = false;
             break;
         }
-        let (seq, id, length, body) = row.map_err(failure)?;
+        let (seq, id, eligible, length, body) = row.map_err(failure)?;
+        let id = id.ok_or("M projection global row hash malformed")?;
+        if !tos_health_core::wire::hash(&id) {
+            return Err("M projection global row hash malformed".into());
+        }
+        last = u64::try_from(seq).map_err(failure)?;
+        anchor = Some((last, id.clone()));
+        last_was_projected = false;
+        if eligible == 0 {
+            continue;
+        }
+        if eligible != 1 {
+            return Err("M projection eligibility malformed".into());
+        }
         let length = usize::try_from(length).map_err(failure)?;
-        bytes = bytes.checked_add(length).ok_or("M scan overflow")?;
-        if bytes > MAX_BYTES || length > 32_768 {
+        process_bytes = process_bytes.checked_add(length).ok_or("M scan overflow")?;
+        if process_bytes > MAX_BYTES || length > 32_768 {
             return Err("M projection page bound exceeded".into());
         }
         let row = EvidenceRow {
-            store_seq: U64(u64::try_from(seq).map_err(failure)?),
+            store_seq: U64(last),
             evidence_id: id,
             evidence: serde_json::from_str::<DurableEvidence>(
                 &body.ok_or("M projection body unavailable")?,
             )
             .map_err(failure)?,
         };
-        last = row.store_seq.0;
-        anchor = Some((last, row.evidence_id.clone()));
         let projected = project_process(&row)?.ok_or("M process row payload not process")?;
         records.push((row, projected));
+        last_was_projected = true;
     }
     drop(query);
-    let mut boundary_witness = None;
+    let mut boundary_witness =
+        if last > after && !last_was_projected { anchor.clone() } else { None };
     if caught_up && watermark > 0 {
         let boundary: Option<String> = conn
             .query_row(

@@ -1,0 +1,22 @@
+   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.01s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+test unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap ... FAILED
+
+failures:
+
+---- unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap stdout ----
+
+thread 'unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap' (1523127) panicked at crates/health-services/tests/manager_query_source.rs:1426:9:
+assertion failed: page.cursor.watermark - prior <= 256
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.71s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`
