@@ -491,18 +491,22 @@ async fn grant(
     if data.grants.len() >= 32 {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
+    // Keep this one non-waiting ledger guard through both cursor validation
+    // and durable creation. Dropping it between the two admits an importer
+    // that can turn a fast refusal into a blocking Tokio-worker mutex wait.
+    let mut ledger = match &state.query_ledger {
+        Some(ledger) => Some(ledger.try_lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?),
+        None => None,
+    };
     let manager_watermark = if let Some(head) = source_head {
         let current_version =
             manager_data_version(&state, false).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         if !data.manager_caught_up || data.manager_validated_data_version != Some(current_version) {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
-        let cursor = state
-            .query_ledger
-            .as_ref()
+        let cursor = ledger
+            .as_mut()
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
-            .try_lock()
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .manager_cursor()
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
@@ -531,12 +535,8 @@ async fn grant(
     )
     .map_err(|_| StatusCode::BAD_REQUEST)?;
     g.manager_watermark = manager_watermark;
-    if let Some(ledger) = &state.query_ledger {
-        ledger
-            .lock()
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-            .create(&g, state.now())
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if let Some(ledger) = ledger.as_mut() {
+        ledger.create(&g, state.now()).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     }
     data.grants.insert(run.clone(), g);
     Ok(Json(json!({"run_id":run,"run_token":hex(&token),"expires_in_seconds":200})))

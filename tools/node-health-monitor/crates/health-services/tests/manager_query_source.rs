@@ -331,6 +331,146 @@ async fn body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn held_query_ledger_refuses_grant_and_revoke_without_side_effects() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-q-ledger-contention-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let query_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("edge-epoch-1")).unwrap();
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&query_path)
+    .unwrap()
+    .with_manager_evidence(manager_path)
+    .unwrap();
+    assert!(state.data.lock().unwrap().manager_caught_up);
+    let end = chrono::Utc::now() - chrono::Duration::minutes(1);
+    let start = end - chrono::Duration::minutes(1);
+    let grant_request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    "end":end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    let hold = |state: &ObservabilityState| {
+        let ledger = state.query_ledger.as_ref().unwrap().clone();
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _guard = ledger.lock().unwrap();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv_timeout(std::time::Duration::from_secs(2));
+        });
+        held_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+        (release_tx, thread)
+    };
+    let (release, holder) = hold(&state);
+    let started = std::time::Instant::now();
+    let denied = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        control_router(state.clone()).oneshot(grant_request()),
+    )
+    .await
+    .expect("grant waited for the held Q ledger")
+    .unwrap();
+    let grant_refusal = started.elapsed();
+    assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(grant_refusal < std::time::Duration::from_millis(500));
+    assert!(state.data.lock().unwrap().grants.is_empty());
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    let query = rusqlite::Connection::open(&query_path).unwrap();
+    let grant_rows: i64 =
+        query.query_row("SELECT COUNT(*) FROM query_grants", [], |r| r.get(0)).unwrap();
+    assert_eq!(grant_rows, 0, "refused grant created a durable side effect");
+
+    let started = std::time::Instant::now();
+    let granted = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        control_router(state.clone()).oneshot(grant_request()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let create_elapsed = started.elapsed();
+    assert_eq!(granted.status(), StatusCode::OK);
+    let run = body(granted).await["run_id"].as_str().unwrap().to_owned();
+    let revoke_request = || {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/v1/control/grants/{run}/revoke"))
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .body(Body::empty())
+            .unwrap()
+    };
+    let (release, holder) = hold(&state);
+    let started = std::time::Instant::now();
+    let denied = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        control_router(state.clone()).oneshot(revoke_request()),
+    )
+    .await
+    .expect("revoke waited for the held Q ledger")
+    .unwrap();
+    let revoke_refusal = started.elapsed();
+    assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(revoke_refusal < std::time::Duration::from_millis(500));
+    assert!(state.data.lock().unwrap().grants.contains_key(&run));
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    let revoked: i64 = query
+        .query_row("SELECT revoked FROM query_grants WHERE run_id=?1", [&run], |r| r.get(0))
+        .unwrap();
+    assert_eq!(revoked, 0, "refused revoke changed the durable grant");
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        control_router(state.clone()).oneshot(revoke_request()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let revoke_elapsed = started.elapsed();
+    assert_eq!(result.status(), StatusCode::OK);
+    assert!(!state.data.lock().unwrap().grants.contains_key(&run));
+    let revoked: i64 = query
+        .query_row("SELECT revoked FROM query_grants WHERE run_id=?1", [&run], |r| r.get(0))
+        .unwrap();
+    assert_eq!(revoked, 1);
+    eprintln!(
+        "Q ledger held grant_refusal={grant_refusal:?} revoke_refusal={revoke_refusal:?}; uncontended create={create_elapsed:?} revoke={revoke_elapsed:?}"
+    );
+    drop(query);
+    drop(state);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
     let directory = std::env::temp_dir().join(format!(
