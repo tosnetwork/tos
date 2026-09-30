@@ -124,14 +124,18 @@ class NativeCorePublisher {
       }
       return true;
     };
+    // The anchor stays attached while the publisher keeps refreshing it (the
+    // validator manager re-observes it every second). A chain that stopped
+    // advancing is still a fact: the sample carries the applied-advance clock,
+    // and consumers derive the stall age from it. Dropping the anchor on a
+    // stall would blind exactly the checks (fork, isolation, applied/served
+    // gap) that must keep working during a halt.
     if (anchors && (anchors->observed_unix_seconds > wall_seconds + 1 ||
                     !network_matches() ||
                     anchors->applied_advanced_unix_seconds == 0 ||
-                    anchors->applied_advanced_unix_seconds > wall_seconds + 1 ||
+                    anchors->applied_advanced_unix_seconds > anchors->observed_unix_seconds ||
                     (wall_seconds > anchors->observed_unix_seconds &&
-                     wall_seconds - anchors->observed_unix_seconds > 30) ||
-                    (wall_seconds > anchors->applied_advanced_unix_seconds &&
-                     wall_seconds - anchors->applied_advanced_unix_seconds > 30))) anchors.reset();
+                     wall_seconds - anchors->observed_unix_seconds > 30))) anchors.reset();
     auto anchor_json = [&](const ChainAnchorSnapshot::Block &block, const char *point) {
       constexpr char digits[] = "0123456789abcdef";
       auto hex = [&](const std::array<std::uint8_t, 32> &bytes) {

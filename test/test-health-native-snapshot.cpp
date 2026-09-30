@@ -143,6 +143,35 @@ void unit() {
   CHECK(anchored_body->find("\"seqno\":17166") != std::string::npos);
   CHECK(anchored_body->find("\"instrumentation_complete\":true") != std::string::npos);
   CHECK(anchored_body->find("\"missing_fields\":[\"local_duties\"") != std::string::npos);
+  // A halted chain keeps its anchor: the sample is still refreshed by the
+  // publisher, only the applied-advance clock is old. Consumers derive the
+  // stall age from the two clocks, so the anchor must stay attached.
+  anchor.applied_advanced_unix_seconds = 1700000000 - 600;
+  anchor.observed_unix_seconds = 1700000000;
+  chain_anchor_state.publish(anchor);
+  auto halted = publisher.prepare(3, 10, 1700000005, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(halted);
+  auto halted_body = halted->read(10);
+  CHECK(halted_body);
+  CHECK(halted_body->find("\"applied_advanced_unix_seconds\":\"1699999400\",\"observed_unix_seconds\":\"1700000000\"") !=
+        std::string::npos);
+  CHECK(halted_body->find("\"instrumentation_complete\":true") != std::string::npos);
+  // A sample nobody refreshed for more than 30 s is not evidence about the
+  // present: the anchor is dropped and the snapshot is partial again.
+  auto stale = publisher.prepare(4, 10, 1700000031, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(stale);
+  auto stale_body = stale->read(10);
+  CHECK(stale_body);
+  CHECK(stale_body->find("\"chain\":null") != std::string::npos);
+  CHECK(stale_body->find("\"instrumentation_complete\":false") != std::string::npos);
+  // An applied-advance clock ahead of its own observation is malformed.
+  anchor.applied_advanced_unix_seconds = 1700000001;
+  chain_anchor_state.publish(anchor);
+  auto malformed = publisher.prepare(5, 10, 1700000002, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(malformed);
+  auto malformed_body = malformed->read(10);
+  CHECK(malformed_body);
+  CHECK(malformed_body->find("\"chain\":null") != std::string::npos);
   std::cout << "native_snapshot_unit_passed" << std::endl;
 }
 }  // namespace

@@ -101,8 +101,12 @@ std::optional<health::ChainAnchorSnapshot::Block> health_block_anchor(const Bloc
   result.seqno = id.seqno();
   return result;
 }
+std::uint64_t health_block_unix_seconds(const BlockHandle &handle) noexcept {
+  if (!handle || !handle->inited_unix_time()) return 0;
+  return static_cast<std::uint64_t>(handle->unix_time());
+}
 void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdExt &applied, td::Ref<MasterchainState> served,
-                                  bool applied_advanced) noexcept {
+                                  bool applied_advanced, std::uint64_t applied_block_unix_seconds) noexcept {
   if (!network_zero.is_masterchain_ext() || !network_zero.is_valid_full() ||
       !applied.is_masterchain_ext() || !applied.is_valid_full()) return;
   health::ChainAnchorSnapshot snapshot;
@@ -129,6 +133,14 @@ void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdE
              previous->applied.root_hash == snapshot.applied.root_hash &&
              previous->applied.file_hash == snapshot.applied.file_hash) {
     snapshot.applied_advanced_unix_seconds = previous->applied_advanced_unix_seconds;
+  } else {
+    // First observation of an already-applied block (startup, or a resume
+    // onto a halted chain): the block's own time is the latest moment the
+    // chain is known to have advanced, so the stall clock starts there.
+    snapshot.applied_advanced_unix_seconds =
+        applied_block_unix_seconds != 0 && applied_block_unix_seconds <= snapshot.observed_unix_seconds
+            ? applied_block_unix_seconds
+            : snapshot.observed_unix_seconds;
   }
   health::chain_anchor_state.publish(snapshot);
 }
@@ -2150,7 +2162,8 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
       last_masterchain_block_handle_->set_processed();
 
       new_masterchain_block();
-      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true);
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
+                                   health_block_unix_seconds(last_masterchain_block_handle_));
 
       promise.set_value(td::Unit());
 
@@ -2171,7 +2184,8 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
           pending_masterchain_states_.erase(it);
 
           new_masterchain_block();
-          publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true);
+          publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
+                                   health_block_unix_seconds(last_masterchain_block_handle_));
 
           for (auto &p : l_promise) {
             p.set_value(td::Unit());
@@ -2680,7 +2694,8 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   last_known_key_block_handle_ = last_key_block_handle_;
 
   CHECK(last_masterchain_block_handle_->is_applied());
-  publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false);
+  publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                 health_block_unix_seconds(last_masterchain_block_handle_));
   if (last_known_key_block_handle_->inited_is_key_block()) {
     callback_->new_key_block(last_key_block_handle_);
   }
@@ -4049,7 +4064,8 @@ void ValidatorManagerImpl::update_shard_client_block_handle(BlockHandle handle, 
       last_liteserver_state_ = std::move(state);
     }
     if (last_masterchain_state_.not_null())
-      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false);
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                 health_block_unix_seconds(last_masterchain_block_handle_));
   }
   if (!db_event_publisher_.empty()) {
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockApplied " << shard_client_handle_->id().to_str();
@@ -4093,6 +4109,14 @@ void ValidatorManagerImpl::alarm() {
   try_advance_gc_masterchain_block();
   handles_.sweep_expired(handle_sweep_alarm_budget_);
   alarm_timestamp() = td::Timestamp::in(1.0);
+  // Re-observe the chain anchor every tick so a halted chain keeps a fresh,
+  // truthful anchor (same block, older applied-advance clock) instead of
+  // vanishing from the health snapshot.
+  if (last_masterchain_block_handle_ && last_masterchain_block_handle_->is_applied() &&
+      last_masterchain_state_.not_null()) {
+    publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                 health_block_unix_seconds(last_masterchain_block_handle_));
+  }
   if (shard_client_state_.not_null() && gc_masterchain_handle_) {
     td::actor::send_closure(db_, &Db::run_gc, shard_client_state_, gc_masterchain_handle_->unix_time(),
                             opts_->archive_ttl());

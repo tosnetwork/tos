@@ -16,19 +16,10 @@ const PREDECODE_BYTES: u32 = 4 * 1024 * 1024;
 const TOTAL_BYTES: usize = 8 * 1024 * 1024;
 const MAX_BATCHES: usize = 32;
 const FIXED_BYTES: usize = 132 * 1024;
+// Evaluated at compile time; saturation cannot occur for these bounds and the
+// assertion below refuses any edit that pushes the sum past the pre-decode cap.
 const fn maximum_batch_bytes() -> usize {
-    let rows = match MAX_RECORDS.checked_mul(ROW_BYTES) {
-        Some(value) => value,
-        None => panic!("diagnostic bound overflow"),
-    };
-    let raw = match rows.checked_add(MAX_BODY) {
-        Some(value) => value,
-        None => panic!("diagnostic bound overflow"),
-    };
-    match raw.checked_add(FIXED_BYTES) {
-        Some(value) => value,
-        None => panic!("diagnostic bound overflow"),
-    }
+    MAX_RECORDS.saturating_mul(ROW_BYTES).saturating_add(MAX_BODY).saturating_add(FIXED_BYTES)
 }
 const MAX_BATCH_BYTES: usize = maximum_batch_bytes();
 const _: () = assert!(MAX_BATCH_BYTES <= PREDECODE_BYTES as usize);

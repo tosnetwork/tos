@@ -38,6 +38,16 @@ struct Heartbeat {
     sequence: String,
     process_epoch: String,
 }
+/// Await an optional lane; an absent lane never completes, so it can never
+/// win the select on its own.
+async fn optional_exit<T>(
+    handle: &mut Option<tokio::task::JoinHandle<T>>,
+) -> Result<T, tokio::task::JoinError> {
+    match handle.as_mut() {
+        Some(handle) => handle.await,
+        None => std::future::pending().await,
+    }
+}
 /// An O lane exiting (Err, panic, or unexpected Ok) preempts even a slow
 /// monitor request or notice delivery. The process then fails nonzero; it
 /// never reports a V fault or claims remote witness cancellation.
@@ -56,11 +66,11 @@ where
             eprintln!("watchdog pipeline listener stopped: {result:?}");
             Err("watchdog pipeline listener unavailable".into())
         }
-        result = async { cache.as_mut().unwrap().await }, if cache.is_some() => {
+        result = optional_exit(cache), if cache.is_some() => {
             eprintln!("witness cache listener stopped: {result:?}");
             Err("witness cache listener unavailable".into())
         }
-        result = async { source.as_mut().unwrap().await }, if source.is_some() => {
+        result = optional_exit(source), if source.is_some() => {
             eprintln!("witness source owner stopped: {result:?}; remote completion remains unknown");
             Err("witness source owner unavailable".into())
         }
