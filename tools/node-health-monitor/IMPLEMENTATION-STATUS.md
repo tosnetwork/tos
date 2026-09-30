@@ -91,10 +91,16 @@ AURA's real `McpManager` against the private Q broker. Its first supervised
 run at 2026-09-30 04:51 UTC observed six `partial` process sources, checked
 unknown consensus and scope refusal, and revoked both temporary grants. A
 failed run records an unavailable result in the local journal. This is a
-process-source availability watch, not a healthy-validator verdict: no model
-provider is configured, no external notification is delivered, and revoked
-grants still consume the finite Q ledger. Those are the next minimal
-integration steps. Additional consensus, long-soak, and broad performance
+process-source availability watch, not a healthy-validator verdict. A separate
+30-minute development timer now passes those six verified process parent IDs
+to the local signed-in Codex app-server through AURA's CLI bridge. The first
+supervised turn succeeded and returned `insufficient_evidence`: process sources
+were partial, while consensus, duty, persistence, and whole-validator health
+remained unknown. The caller validates the repository diagnosis schema and
+rejects evidence IDs outside the six verified parents. The AURA fork bridge is
+still an open pull request and the timer uses its local build. There is no
+external notification or automatic remediation; revoked grants still consume
+the finite Q ledger. Additional consensus, long-soak, and broad performance
 work is deferred from this development milestone.
 
 Source-only successor `23429522d` requires a nonzero Q projection cursor's
