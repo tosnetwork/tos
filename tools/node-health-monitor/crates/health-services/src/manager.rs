@@ -648,7 +648,9 @@ impl Manager {
                     | ("applied_served_gap", "native_chain")
                     | ("diagnostic_coverage_reduced", "diagnostic")
                     | ("memory_growth_unexplained", "process_facts")
-                    | ("quic_pressure", "native_gauges") => {}
+                    | ("quic_pressure" | "rocksdb_write_stopped", "native_gauges")
+                    | ("observer_disagreement", "witness")
+                    | ("ai_unavailable", "ai_optional") => {}
                     _ => return Err(format!("rule adapter unavailable: {}", rule.id)),
                 }
             }

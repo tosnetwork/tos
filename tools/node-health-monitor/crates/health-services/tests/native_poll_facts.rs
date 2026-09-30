@@ -1,7 +1,7 @@
 //! Secondary fact frames of the native poll: fixed gauge parsing and frame identity.
 use tos_health_core::{native::parse_native, native_facts::NativeFactState, rules::FactId};
 use tos_health_services::manager_poll::{
-    native_fact_frame, quic_backlog_bytes, secondary_frame, stagger_ms,
+    native_fact_frame, quic_backlog_bytes, secondary_frame, stagger_ms, storage_write_stopped,
 };
 
 const METRICS: &str = "# TYPE tos_quic_summary_unsent_bytes gauge\n\
@@ -63,4 +63,13 @@ fn stagger_offsets_are_deterministic_and_spread_the_local_nodes() {
     sorted.sort_unstable();
     sorted.dedup();
     assert!(sorted.len() >= 5, "offsets collide: {offsets:?}");
+}
+
+#[test]
+fn storage_write_stopped_is_a_strict_zero_or_one_gauge_or_absent() {
+    assert_eq!(storage_write_stopped("tos_health_storage_write_stopped 0\n"), Some(0));
+    assert_eq!(storage_write_stopped("tos_health_storage_write_stopped 1\n"), Some(1));
+    assert_eq!(storage_write_stopped("tos_health_storage_write_stopped 2\n"), None);
+    assert_eq!(storage_write_stopped("tos_health_storage_write_stopped_total 5\n"), None);
+    assert_eq!(storage_write_stopped(METRICS), None);
 }

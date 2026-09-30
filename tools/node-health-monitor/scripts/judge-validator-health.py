@@ -384,6 +384,52 @@ def validate_diagnosis(schema, diagnosis, report):
     return {"result": "accepted", "diagnosis": diagnosis}
 
 
+AI_FACT_EPOCH_MAX = 128
+
+
+def post_ai_fact(args, available):
+    """One `ai_optional` fact frame per run: 1 when the model turn was accepted,
+    0 otherwise. Epoch and generation persist in a private state file so the
+    rule engine sees a monotonic source; a lost state file starts a new epoch."""
+    import secrets
+    state_path = Path(args.ai_fact_state)
+    state = {"epoch": None, "generation": 0}
+    try:
+        loaded = json.loads(state_path.read_text())
+        if isinstance(loaded.get("epoch"), str) and 0 < len(loaded["epoch"]) <= AI_FACT_EPOCH_MAX \
+                and isinstance(loaded.get("generation"), int) and loaded["generation"] >= 0:
+            state = loaded
+    except (OSError, ValueError):
+        pass
+    if not state["epoch"]:
+        state["epoch"] = secrets.token_hex(16)
+    state["generation"] += 1
+    state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = os.open(state_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as stream:
+        json.dump(state, stream)
+    frame = {
+        "schema_version": 1, "network_id": args.network_id, "node_id": args.ai_fact_node, "scope_id": "node",
+        "source_id": "ai_optional", "process_epoch": state["epoch"], "source_epoch": state["epoch"],
+        "generation": str(state["generation"]), "source_age_ms": "0", "request_duration_ms": "0",
+        "observed_at": utc_now().isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+        "clock_valid": True, "complete": True,
+        "facts": [{"id": "ai_available", "value": "1" if available else "0"}],
+    }
+    token = read_secret(args.ai_fact_token_file)
+    request = urllib.request.Request(args.ai_fact_url, data=json.dumps(frame).encode(), method="POST",
+                                     headers={"content-type": "application/json",
+                                              "authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.build_opener(NoRedirect).open(request, timeout=5) as response:
+            return {"posted": True, "status": response.status, "available": available,
+                    "generation": state["generation"]}
+    except urllib.error.HTTPError as error:
+        return {"posted": False, "status": error.code, "available": available}
+    except (urllib.error.URLError, OSError) as error:
+        return {"posted": False, "error": str(error)[:120], "available": available}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--network-id", required=True)
@@ -404,6 +450,10 @@ def main():
     parser.add_argument("--model", default="claude-sonnet-5-5")
     parser.add_argument("--egress-host", default="api.anthropic.com",
                         help="the only host the model request may go to")
+    parser.add_argument("--ai-fact-url", help="M facts ingest URL for the ai_optional availability fact")
+    parser.add_argument("--ai-fact-token-file", help="M ingest token for --ai-fact-url")
+    parser.add_argument("--ai-fact-state", help="private file holding the ai_optional epoch and generation")
+    parser.add_argument("--ai-fact-node", default="monitor", help="node alias the ai_optional fact is filed under")
     args = parser.parse_args()
     if not HEX.match(args.network_id):
         parser.error("network id must be 64 lowercase hex characters")
@@ -414,9 +464,14 @@ def main():
                       args.codex_thread_file, args.diagnosis_schema)
     if any(model_args) and not all(model_args):
         parser.error("model options must be given together")
+    ai_args = (args.ai_fact_url, args.ai_fact_token_file, args.ai_fact_state)
+    if any(ai_args) and not all(ai_args):
+        parser.error("--ai-fact-url, --ai-fact-token-file and --ai-fact-state go together")
     report = judge(args)
     if all(model_args):
         report["model"] = model_explanation(args, report)
+        if args.ai_fact_url:
+            report["ai_fact"] = post_ai_fact(args, report["model"].get("result") == "accepted")
     line = canonical(report)
     if args.journal:
         path = Path(args.journal)

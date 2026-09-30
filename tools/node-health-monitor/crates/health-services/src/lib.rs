@@ -13,6 +13,7 @@ pub mod provider;
 pub mod query_ledger;
 pub mod transit;
 pub mod witness;
+pub mod witness_compare;
 
 pub fn secret(path: &Path) -> Result<Vec<u8>, String> {
     use std::os::unix::fs::PermissionsExt;

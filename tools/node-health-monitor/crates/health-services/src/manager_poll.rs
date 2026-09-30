@@ -266,6 +266,23 @@ pub fn process_frame(
 /// backlog is unsent plus unacknowledged bytes. Only these two exact metric
 /// names are read; any other line is ignored and a missing line yields no
 /// fact rather than zero.
+/// Storage write-stop gauge published by the engine (`1` while RocksDB reports
+/// `rocksdb.is-write-stopped` on its last committed write). Absent on engines
+/// that predate the gauge: then no fact, never zero.
+pub fn storage_write_stopped(openmetrics: &str) -> Option<u64> {
+    for line in openmetrics.lines() {
+        let mut parts = line.split_whitespace();
+        if let (Some("tos_health_storage_write_stopped"), Some(v)) = (parts.next(), parts.next()) {
+            return match v {
+                "0" | "0.0" => Some(0),
+                "1" | "1.0" => Some(1),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
 pub fn quic_backlog_bytes(openmetrics: &str) -> Option<u64> {
     let mut unsent = None;
     let mut unacked = None;
@@ -406,13 +423,24 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         if let Ok(response) = client.get(&metrics_url).bearer_auth(&edge).send().await {
             if response.status().is_success() {
                 if let Ok(body) = crate::bounded_body(response, 2_097_152).await {
-                    if let Some(backlog) = quic_backlog_bytes(&String::from_utf8_lossy(&body)) {
-                        let gauges = secondary_frame(
-                            &frame,
-                            "native_gauges",
-                            FactId::QuicBacklogBytes,
-                            backlog,
-                        );
+                    let text = String::from_utf8_lossy(&body);
+                    let mut facts = Vec::with_capacity(2);
+                    if let Some(backlog) = quic_backlog_bytes(&text) {
+                        facts.push(Fact { id: FactId::QuicBacklogBytes, value: U64(backlog) });
+                    }
+                    if let Some(stopped) = storage_write_stopped(&text) {
+                        facts.push(Fact { id: FactId::RocksdbWriteStopped, value: U64(stopped) });
+                    }
+                    if !facts.is_empty() {
+                        // Both catalog gauges present = complete; an engine
+                        // without the storage gauge yields an incomplete frame.
+                        let complete = facts.len() == 2;
+                        let gauges = FactFrame {
+                            source_id: "native_gauges".into(),
+                            complete,
+                            facts,
+                            ..frame.clone()
+                        };
                         post_frame(&manager_client, &config.manager_url, &manager, &gauges).await;
                     }
                 }

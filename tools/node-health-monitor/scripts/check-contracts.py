@@ -54,7 +54,7 @@ def check_rule_manifest(value):
   assert set(rule)==required and (rule['fact'],rule['predicate'])==implemented[rule['id']]
   assert all(rule[k] for k in ['source_class','role','adapter','bad','good','manual_clear','deadline_source'])
   if rule['source_class'] in {'witness','ai_optional'}:
-   assert rule['adapter'] in {'pending_C05','pending_C08'}
+   assert rule['adapter'] in {'pending_C05','pending_C08','implemented'}
   if rule['adapter'].startswith('pending_'):
    assert rule['adapter'] in {'pending_C04','pending_C05','pending_C08'}
  return True

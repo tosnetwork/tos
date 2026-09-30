@@ -7,6 +7,7 @@
 #include "diagnostic-ipc.h"
 #include "metrics-types.h"
 #include "prometheus-exporter.h"
+#include "td/utils/StorageHealth.h"
 
 namespace tos {
 
@@ -251,6 +252,16 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
     }
     set.families.push_back(std::move(operations));
     set.families.push_back(std::move(duration));
+    // Storage write-stop facts recorded by the RocksDB wrapper on each commit.
+    set.families.push_back(metrics::MetricFamily::make_scalar(
+        prefix_ + "_health_storage_write_stopped", "gauge",
+        static_cast<double>(td::storage_health.write_stopped_last.load(std::memory_order_relaxed))));
+    set.families.push_back(metrics::MetricFamily::make_scalar(
+        prefix_ + "_health_storage_write_stopped_total", "counter",
+        static_cast<double>(td::storage_health.write_stopped_total.load(std::memory_order_relaxed))));
+    set.families.push_back(metrics::MetricFamily::make_scalar(
+        prefix_ + "_health_storage_commits_observed_total", "counter",
+        static_cast<double>(td::storage_health.commits_observed.load(std::memory_order_relaxed))));
     set = std::move(set).join(health::core_registry.collect(native_v2_));
   }
   set.families.push_back(metrics::MetricFamily::make_scalar(
