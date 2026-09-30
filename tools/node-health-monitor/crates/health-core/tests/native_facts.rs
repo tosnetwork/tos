@@ -186,3 +186,44 @@ fn dropped_or_saturated_counters_are_not_complete() {
         .insert(0, tos_health_core::consensus_v2::IncompleteReason::ObservationGap);
     assert!(derive(&gapped, 1, &mut NativeFactState::default()).unwrap().complete);
 }
+
+#[test]
+fn initialization_pending_counts_from_first_sample_until_a_session_or_chain_advance() {
+    let mut record = fixture("native-core-v2.validator1.live.json");
+    consensus_mut(&mut record).sessions.active = U64(0);
+    let mut state = NativeFactState::default();
+    let first = derive(&record, 10_000, &mut state).unwrap();
+    assert_eq!(value(&first.facts, FactId::InitializationPendingMs), Some(0));
+    let later = derive(&record, 130_000, &mut state).unwrap();
+    assert_eq!(value(&later.facts, FactId::InitializationPendingMs), Some(120_000));
+    consensus_mut(&mut record).sessions.active = U64(1);
+    let joined = derive(&record, 145_000, &mut state).unwrap();
+    assert_eq!(value(&joined.facts, FactId::InitializationPendingMs), Some(0));
+    // The live sample already has active sessions: initialized from the start.
+    let live = fixture("native-core-v2.validator1.live.json");
+    let d = derive(&live, 1, &mut NativeFactState::default()).unwrap();
+    assert_eq!(value(&d.facts, FactId::InitializationPendingMs), Some(0));
+    assert!(d.complete);
+}
+
+#[test]
+fn secondary_facts_are_honest_about_support() {
+    use tos_health_core::native_facts::{chain_gap, diagnostic_drops, process_memory_growth};
+    let record = fixture("native-core-v2.validator1.live.json");
+    // v2 carries no anchors: no gap, never zero.
+    assert_eq!(chain_gap(&record), None);
+    assert_eq!(diagnostic_drops(&record), 0);
+    let mut dropped = record.clone();
+    if let NativeRecord::V2(v) = &mut dropped {
+        v.quality.producer_dropped = U64(2);
+        v.quality.parse_errors = U64(3);
+    }
+    assert_eq!(diagnostic_drops(&dropped), 5);
+    let mut state = NativeFactState::default();
+    assert_eq!(process_memory_growth(&mut state, 0, 1_000), 0);
+    assert_eq!(process_memory_growth(&mut state, 60_000, 1_500), 500);
+    assert_eq!(process_memory_growth(&mut state, 120_000, 1_200), 200);
+    // Samples older than the window fall out: the floor moves up.
+    assert_eq!(process_memory_growth(&mut state, 1_000_000, 1_300), 100);
+    assert!(state.anon_samples.len() <= 2);
+}

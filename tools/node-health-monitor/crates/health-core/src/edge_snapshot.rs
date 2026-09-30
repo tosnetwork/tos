@@ -199,6 +199,12 @@ impl EdgeSnapshot {
             _ => None,
         })
     }
+    pub fn process(&self) -> Option<&ProcessEnvelope> {
+        self.sources.iter().find_map(|source| match source {
+            EdgeSource::Process(value) => Some(value),
+            _ => None,
+        })
+    }
     pub fn native_v3(&self) -> Option<&NativeEnvelopeV3> {
         self.sources.iter().find_map(|source| match source {
             EdgeSource::NativeV3(value) => Some(value),

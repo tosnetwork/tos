@@ -15,7 +15,13 @@ use serde::{Deserialize, Serialize};
 
 /// Fixed catalog of facts this derivation produces for one native sample.
 /// The manager inventory must list exactly these facts for the native source.
-pub const CATALOG: [FactId; 7] = [
+/// Version of the derived fact catalog. It is appended to the fact frame's
+/// source epoch so that a catalog change starts a new source epoch instead of
+/// producing a second body for an already archived generation, which M would
+/// rightly quarantine as a source conflict.
+pub const CATALOG_VERSION: u32 = 2;
+pub const CATALOG: [FactId; 8] = [
+    FactId::InitializationPendingMs,
     FactId::ChainProgressAgeMs,
     FactId::ActionFailures,
     FactId::ActionOldestMs,
@@ -28,6 +34,12 @@ pub const CATALOG: [FactId; 7] = [
 const LOCAL_FAILURES: [&str; 5] =
     ["missing_signer", "sign_backend", "intent_storage", "signed_storage", "journal_unusable"];
 const STORAGE_FAILURES: [&str; 3] = ["intent_storage", "signed_storage", "journal_unusable"];
+
+/// A node whose applied chain advanced within this window counts as initialized.
+pub const INITIALIZED_CHAIN_AGE_MS: u64 = 60_000;
+/// Trailing window over which unexplained anonymous memory growth is measured.
+pub const MEMORY_GROWTH_WINDOW_MS: u64 = 900_000;
+const MEMORY_SAMPLES_MAX: usize = 128;
 
 /// Per-node state carried between consecutive samples of one process epoch.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,6 +54,10 @@ pub struct NativeFactState {
     pub applied_advanced_ms: Option<u64>,
     /// First observation of a session stop that has not completed.
     pub stopping_since_ms: Option<u64>,
+    /// First sample of this process epoch; initialization is measured from it.
+    pub first_seen_ms: Option<u64>,
+    /// Bounded trailing window of (observed_ms, anon_bytes) process samples.
+    pub anon_samples: Vec<(u64, u64)>,
 }
 
 /// Derived facts plus the reasons a fact is missing. `complete` is true only
@@ -206,6 +222,23 @@ pub fn derive(
     };
     push(FactId::ChainProgressAgeMs, chain_age, "no_masterchain_progress_source");
 
+    // Initialization: a validator is initialized once a consensus session is
+    // active; any node is initialized once its applied chain advanced within
+    // the last minute. Until then the pending time counts from the first
+    // sample of this process epoch.
+    let first_seen = *state.first_seen_ms.get_or_insert(observed_ms);
+    let session_active = consensus.is_some_and(|c| c.sessions.active.0 > 0);
+    let chain_recent =
+        chain.is_some() && chain_age.is_some_and(|age| age <= INITIALIZED_CHAIN_AGE_MS);
+    let initialization = if consensus.is_none() && chain.is_none() {
+        None
+    } else if session_active || chain_recent {
+        Some(0)
+    } else {
+        Some(observed_ms.saturating_sub(first_seen))
+    };
+    push(FactId::InitializationPendingMs, initialization, "no_initialization_source");
+
     push(
         FactId::ActionFailures,
         consensus.and_then(|c| sum(c, &LOCAL_FAILURES)),
@@ -246,4 +279,42 @@ pub fn derive(
         && pq_sign.is_none_or(|p| p.complete);
     let complete = intact && facts.len() == CATALOG.len();
     Ok(DerivedFacts { facts, complete, missing })
+}
+
+/// Gap between the applied masterchain block and the block served to lite
+/// clients (v3 anchors). `None` when the node serves no lite state, which is
+/// not a gap of zero.
+pub fn chain_gap(record: &NativeRecord) -> Option<u64> {
+    let NativeRecord::V3(v) = record else { return None };
+    let chain = v.payload.chain.as_ref()?;
+    let served = chain.served.as_ref()?;
+    Some(u64::from(chain.applied.seqno.saturating_sub(served.seqno)))
+}
+
+/// Diagnostic coverage counter: every record the native publisher or its
+/// relay dropped or failed to parse. Monotonic within a process epoch.
+pub fn diagnostic_drops(record: &NativeRecord) -> u64 {
+    let q = match record {
+        NativeRecord::V1(v) => &v.quality,
+        NativeRecord::V2(v) => &v.quality,
+        NativeRecord::V3(v) => &v.quality,
+    };
+    q.producer_dropped.0.saturating_add(q.relay_dropped.0).saturating_add(q.parse_errors.0)
+}
+
+/// Anonymous memory growth of the node process over the trailing window:
+/// current anon bytes minus the smallest anon sample still inside the window.
+/// The state is bounded and reset with the process epoch by `derive`.
+pub fn process_memory_growth(
+    state: &mut NativeFactState,
+    observed_ms: u64,
+    anon_bytes: u64,
+) -> u64 {
+    state.anon_samples.retain(|(at, _)| observed_ms.saturating_sub(*at) <= MEMORY_GROWTH_WINDOW_MS);
+    state.anon_samples.push((observed_ms, anon_bytes));
+    if state.anon_samples.len() > MEMORY_SAMPLES_MAX {
+        state.anon_samples.remove(0);
+    }
+    let floor = state.anon_samples.iter().map(|(_, b)| *b).min().unwrap_or(anon_bytes);
+    anon_bytes.saturating_sub(floor)
 }

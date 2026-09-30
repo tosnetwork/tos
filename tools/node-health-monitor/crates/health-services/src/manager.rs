@@ -641,9 +641,14 @@ impl Manager {
                         | "local_action_failure"
                         | "local_action_overdue"
                         | "storage_ack_failure"
-                        | "session_stop_pending",
-                        "native_core",
-                    ) => {}
+                        | "session_stop_pending"
+                        | "initialization_stalled",
+                        "native_core" | "native_facts",
+                    )
+                    | ("applied_served_gap", "native_chain")
+                    | ("diagnostic_coverage_reduced", "diagnostic")
+                    | ("memory_growth_unexplained", "process")
+                    | ("quic_pressure", "native_gauges") => {}
                     _ => return Err(format!("rule adapter unavailable: {}", rule.id)),
                 }
             }

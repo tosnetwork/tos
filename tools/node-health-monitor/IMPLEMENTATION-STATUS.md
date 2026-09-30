@@ -9,8 +9,9 @@ Status as of 2026-09-30 11:20 UTC: C00–C05 have scoped development acceptances
 stage acceptance (3 stages). The owner re-scoped the remaining work to one
 goal — the monitor must reliably judge validator health — and the
 deterministic path for that goal is now live on the rebuilt local development
-network: native consensus/chain/PQ/storage facts drive eight rules per
-validator, the six tools serve consensus/chain/storage components with
+network: native consensus/chain/PQ/storage/process/QUIC facts drive thirteen rules per
+validator (ten per observer; two rules remain unsupported by design, see
+`evidence/cc-validator-health/RULE-ADAPTERS-20260930.md`), the six tools serve consensus/chain/storage components with
 retained M parents, and `scripts/judge-validator-health.py` produces a per-node
 verdict every minute. See `evidence/cc-validator-health/VALIDATOR-HEALTH-JUDGEMENT.md`
 for the exact commits, the network rebuild and the fault exercise. Production

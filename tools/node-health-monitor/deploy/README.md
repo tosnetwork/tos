@@ -132,8 +132,14 @@ native record (`health-core::native_facts`): chain progress age (v3 anchors,
 else the finalized masterchain slot), local execution failures, oldest pending
 action, PQ signing failures, storage ack failures/usability and session stop
 pending. A fact the sample cannot support stays absent and the frame is marked
-incomplete; legitimate refusals are never failures. The manager inventory must
-list exactly the seven catalog facts for the `native_core` source.
+incomplete; legitimate refusals are never failures. The derived facts are posted
+under their own source id `native_facts` (source epoch suffixed with the
+catalog version) with exactly the eight catalog facts; the same tick also posts
+one-fact frames for `native_chain` (applied/served gap, only when the node
+serves lite state), `diagnostic` (publisher drops), `native_gauges` (QUIC
+backlog from two fixed OpenMetrics lines) and `process` (anonymous memory
+growth over 15 minutes). A catalog change must bump `CATALOG_VERSION` and the
+inventory revision; it never rewrites an archived generation.
 
 The manager ingress that aggregates many lanes sets `rate_per_second` /
 `burst` in its ingress config (defaults 1 / 4 are the node-entry contract).

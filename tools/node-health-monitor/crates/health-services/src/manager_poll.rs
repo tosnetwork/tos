@@ -194,9 +194,14 @@ pub fn native_fact_frame(
         network_id: record.network_id().to_owned(),
         node_id: record.node_id().to_owned(),
         scope_id: "node".into(),
-        source_id: "native_core".into(),
+        // Derived facts are their own source: a change in the derivation must
+        // never quarantine the archived native snapshots of the same epoch.
+        source_id: "native_facts".into(),
         process_epoch: record.process_epoch().to_owned(),
-        source_epoch: source_epoch.clone(),
+        source_epoch: format!(
+            "{source_epoch}:facts-v{}",
+            tos_health_core::native_facts::CATALOG_VERSION
+        ),
         generation: record.generation(),
         source_age_ms: U64(source_age.ok_or("missing source age")?),
         request_duration_ms: U64(duration),
@@ -205,6 +210,88 @@ pub fn native_fact_frame(
         complete: derived.complete,
         facts: derived.facts,
     })
+}
+
+/// A one-fact frame derived from the same native sample under its own source
+/// id (`native_chain`, `diagnostic`) so a fact that only some nodes can
+/// support never blocks the main native catalog.
+pub fn secondary_frame(native: &FactFrame, source_id: &str, fact: FactId, value: u64) -> FactFrame {
+    FactFrame {
+        source_id: source_id.into(),
+        complete: true,
+        facts: vec![Fact { id: fact, value: U64(value) }],
+        ..native.clone()
+    }
+}
+
+/// Process memory frame from the edge's process source: anonymous memory
+/// growth over the trailing window, bound to the process epoch.
+pub fn process_frame(
+    process: &tos_health_core::edge_snapshot::ProcessEnvelope,
+    network_id: &str,
+    duration: u64,
+    state: &mut tos_health_core::native_facts::NativeFactState,
+) -> Result<FactFrame, String> {
+    let observed_at = process.observed_at.clone().ok_or("missing process observation time")?;
+    let observed_ms = u64::try_from(tos_health_core::query::utc_ms(&observed_at)?)
+        .map_err(|_| "observation time before epoch")?;
+    let anon = process.payload.anon_bytes.ok_or("process anon bytes unavailable")?.0;
+    let growth = tos_health_core::native_facts::process_memory_growth(state, observed_ms, anon);
+    Ok(FactFrame {
+        schema_version: 1,
+        network_id: network_id.to_owned(),
+        node_id: process.node_id.clone(),
+        scope_id: "node".into(),
+        source_id: "process".into(),
+        process_epoch: process.process_epoch.clone(),
+        source_epoch: process.source_epoch.clone(),
+        generation: process.generation,
+        source_age_ms: U64(process.source_age_ms.ok_or("missing source age")?),
+        request_duration_ms: U64(duration),
+        observed_at,
+        clock_valid: process.quality.parse_errors.0 == 0,
+        complete: true,
+        facts: vec![Fact { id: FactId::UnexplainedMemoryBytes, value: U64(growth) }],
+    })
+}
+
+/// Fixed gauges read from the edge's cached OpenMetrics body: the QUIC
+/// backlog is unsent plus unacknowledged bytes. Only these two exact metric
+/// names are read; any other line is ignored and a missing line yields no
+/// fact rather than zero.
+pub fn quic_backlog_bytes(openmetrics: &str) -> Option<u64> {
+    let mut unsent = None;
+    let mut unacked = None;
+    for line in openmetrics.lines() {
+        let mut parts = line.split_whitespace();
+        match (parts.next(), parts.next()) {
+            (Some("tos_quic_summary_unsent_bytes"), Some(v)) => unsent = v.parse::<f64>().ok(),
+            (Some("tos_quic_summary_unacked_bytes"), Some(v)) => unacked = v.parse::<f64>().ok(),
+            _ => {}
+        }
+    }
+    let total = unsent? + unacked?;
+    if !total.is_finite() || !(0.0..=9_007_199_254_740_992.0).contains(&total) {
+        return None;
+    }
+    Some(total as u64)
+}
+
+async fn post_frame(client: &reqwest::Client, url: &str, token: &str, frame: &FactFrame) {
+    match client.post(url).bearer_auth(token).json(frame).send().await {
+        Ok(response) => {
+            let status = response.status();
+            let body = crate::bounded_body(response, 4096).await.unwrap_or_default();
+            if !status.is_success() {
+                eprintln!(
+                    "native poll: manager refused {} facts: {status} {}",
+                    frame.source_id,
+                    String::from_utf8_lossy(&body)
+                );
+            }
+        }
+        Err(e) => eprintln!("native poll: manager request failed: {e}"),
+    }
 }
 
 /// Scheduled native facts use the edge cache; a missing source never becomes a zero counter.
@@ -276,24 +363,40 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
                 continue;
             }
         };
-        match manager_client
-            .post(&config.manager_url)
-            .bearer_auth(&manager)
-            .json(&frame)
-            .send()
-            .await
-        {
-            Ok(response) => {
-                let status = response.status();
-                let body = crate::bounded_body(response, 4096).await.unwrap_or_default();
-                if !status.is_success() {
-                    eprintln!(
-                        "native poll: manager refused facts: {status} {}",
-                        String::from_utf8_lossy(&body)
-                    );
+        post_frame(&manager_client, &config.manager_url, &manager, &frame).await;
+        // Secondary sources from the same sample: only when the node supports them.
+        if let Some(gap) = tos_health_core::native_facts::chain_gap(&record) {
+            let chain = secondary_frame(&frame, "native_chain", FactId::AppliedServedGap, gap);
+            post_frame(&manager_client, &config.manager_url, &manager, &chain).await;
+        }
+        let drops = tos_health_core::native_facts::diagnostic_drops(&record);
+        let diagnostic = secondary_frame(&frame, "diagnostic", FactId::DiagnosticDrops, drops);
+        post_frame(&manager_client, &config.manager_url, &manager, &diagnostic).await;
+        // The edge serves the same completed generation's OpenMetrics from
+        // its cache; two fixed gauge lines become the QUIC backlog fact.
+        let metrics_url = config.edge_url.replace("/v1/edge/snapshot", "/metrics");
+        if let Ok(response) = client.get(&metrics_url).bearer_auth(&edge).send().await {
+            if response.status().is_success() {
+                if let Ok(body) = crate::bounded_body(response, 2_097_152).await {
+                    if let Some(backlog) = quic_backlog_bytes(&String::from_utf8_lossy(&body)) {
+                        let gauges = secondary_frame(
+                            &frame,
+                            "native_gauges",
+                            FactId::QuicBacklogBytes,
+                            backlog,
+                        );
+                        post_frame(&manager_client, &config.manager_url, &manager, &gauges).await;
+                    }
                 }
             }
-            Err(e) => eprintln!("native poll: manager request failed: {e}"),
+        }
+        if let Some(process) = snapshot.process() {
+            match process_frame(process, &config.network_id, elapsed, &mut state) {
+                Ok(memory) => {
+                    post_frame(&manager_client, &config.manager_url, &manager, &memory).await
+                }
+                Err(e) => eprintln!("native poll: process frame skipped: {e}"),
+            }
         }
     }
 }
