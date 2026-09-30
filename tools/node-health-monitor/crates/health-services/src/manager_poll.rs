@@ -432,32 +432,47 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         post_frame(&manager_client, &config.manager_url, &manager, &diagnostic).await;
         // The edge serves the same completed generation's OpenMetrics from
         // its cache; two fixed gauge lines become the QUIC backlog fact.
+        // A skipped gauges frame is named, never silent: the rule goes unknown
+        // and the operator can see why.
         let metrics_url = config.edge_url.replace("/v1/edge/snapshot", "/metrics");
-        if let Ok(response) = client.get(&metrics_url).bearer_auth(&edge).send().await {
-            if response.status().is_success() {
-                if let Ok(body) = crate::bounded_body(response, 2_097_152).await {
-                    let text = String::from_utf8_lossy(&body);
-                    let mut facts = Vec::with_capacity(2);
-                    if let Some(backlog) = quic_backlog_bytes(&text) {
-                        facts.push(Fact { id: FactId::QuicBacklogBytes, value: U64(backlog) });
+        match client.get(&metrics_url).bearer_auth(&edge).send().await {
+            Ok(response) if response.status().is_success() => {
+                match crate::bounded_body(response, 2_097_152).await {
+                    Ok(body) => {
+                        let text = String::from_utf8_lossy(&body);
+                        let mut facts = Vec::with_capacity(2);
+                        if let Some(backlog) = quic_backlog_bytes(&text) {
+                            facts.push(Fact { id: FactId::QuicBacklogBytes, value: U64(backlog) });
+                        }
+                        if let Some(stopped) = storage_write_stopped(&text) {
+                            facts.push(Fact {
+                                id: FactId::RocksdbWriteStopped,
+                                value: U64(stopped),
+                            });
+                        }
+                        if facts.is_empty() {
+                            eprintln!("native poll: gauges skipped: no catalog gauge line in edge metrics");
+                        } else {
+                            // Both catalog gauges present = complete; an engine
+                            // without the storage gauge yields an incomplete frame.
+                            let complete = facts.len() == 2;
+                            let gauges = FactFrame {
+                                source_id: "native_gauges".into(),
+                                complete,
+                                facts,
+                                ..frame.clone()
+                            };
+                            post_frame(&manager_client, &config.manager_url, &manager, &gauges)
+                                .await;
+                        }
                     }
-                    if let Some(stopped) = storage_write_stopped(&text) {
-                        facts.push(Fact { id: FactId::RocksdbWriteStopped, value: U64(stopped) });
-                    }
-                    if !facts.is_empty() {
-                        // Both catalog gauges present = complete; an engine
-                        // without the storage gauge yields an incomplete frame.
-                        let complete = facts.len() == 2;
-                        let gauges = FactFrame {
-                            source_id: "native_gauges".into(),
-                            complete,
-                            facts,
-                            ..frame.clone()
-                        };
-                        post_frame(&manager_client, &config.manager_url, &manager, &gauges).await;
-                    }
+                    Err(e) => eprintln!("native poll: gauges skipped: edge metrics body: {e}"),
                 }
             }
+            Ok(response) => {
+                eprintln!("native poll: gauges skipped: edge metrics status {}", response.status())
+            }
+            Err(e) => eprintln!("native poll: gauges skipped: edge metrics request: {e}"),
         }
         if let Some(process) = snapshot.process() {
             match process_frame(process, &config.network_id, elapsed, &mut state, &run) {

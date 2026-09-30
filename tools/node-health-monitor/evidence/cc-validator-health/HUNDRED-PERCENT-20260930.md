@@ -142,6 +142,20 @@ The seven stale rows were cleared by operator action with a receipt
 (`runtime/quarantine-clear-2026-09-30T142551Z.json`); after the deploy: 0
 refusals in 150 s, `quarantined_sources []`.
 
+## 10a. Third defect: a replay left two validators at "storage unusable" for good (commit `83a2d8f3d`)
+
+After validator1 and validator4 had caught up, both sat at critical
+`storage_ack_failure`. Cause: the publisher's bounded work-observation
+ledger (512 rows) overflows during a replay, latches the storage
+commit-ack capability to `observation_incomplete` for the rest of the
+process, and the `storage_usable` fact read that latch as "no
+acknowledgement ever" (0). The fact now follows the node's own counters
+within its epoch: new vote storage requests with no new commit acknowledgement
+since the previous sample → unusable; acknowledged commits → usable; idle →
+usable; proven capability → usable. Deployed to the six pollers at 15:33 UTC:
+`storage_ack_failure` good on all six within one hold. The publisher still
+reports its coverage gap; that is what `diagnostic_coverage_reduced` is for.
+
 ## 10. Performance rounds and soak
 
 Design re-frozen in `perf/CC-ONE-HOUR-GATE.md` ("Conclusive rounds,
