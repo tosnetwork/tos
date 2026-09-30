@@ -2,7 +2,7 @@
 Description=Analyze local AURA process evidence with Codex every thirty minutes
 
 [Timer]
-OnActiveSec=1min
+OnActiveSec=30min
 OnUnitInactiveSec=30min
 AccuracySec=1min
 Unit=nhm-aura-codex-check.service
