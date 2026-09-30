@@ -1,0 +1,35 @@
+{
+  "attempted": 8,
+  "capacity_bytes": 16777216,
+  "capacity_records": 100000,
+  "clock_domain": "linux:CLOCK_MONOTONIC_RAW",
+  "clock_resolution_ns": 1,
+  "dropped": 0,
+  "evidence_sha256": "5689e2eb5c7de6a8fce4e05b48602a70594598ac119fcc61e5bcdc7d79705dd8",
+  "invalid": 0,
+  "kind": "c09_raw_capture",
+  "population": "external_request_rtt",
+  "process_epoch": "b15e466ff77360f3cffdcc1cd1ade1f1bd56dab66ccbef3e7aa29b199aeb4c9a",
+  "requested": 8,
+  "resource_ledger": {
+    "A": {
+      "status": "not_run"
+    },
+    "M": {
+      "status": "not_run"
+    },
+    "O": {
+      "status": "not_run"
+    },
+    "V": {
+      "status": "not_run"
+    },
+    "edge": {
+      "status": "not_run"
+    }
+  },
+  "retained": 8,
+  "retained_bytes": 3546,
+  "schema_version": 1,
+  "stopped_early": false
+}
