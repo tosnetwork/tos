@@ -38,3 +38,25 @@ pass.
 - A vs C: reported as the mean CPU-second difference per 10-minute window
   with both rounds shown; conclusive only if the difference exceeds the
   between-round spread.
+
+## Conclusive rounds, re-frozen 2026-09-30 14:34 UTC (edge toggle)
+
+The three alternating 30-minute rounds the R4 bound asks for cannot be run by
+restarting validator4 any more: the local network has produced no key block
+since genesis, so there is no persistent state and every restart replays the
+whole chain (hours, growing daily). Restarting a validator six times would
+also leave the chain on three validators for most of a day.
+
+The rounds therefore toggle the *serving* side without a restart:
+profile C = the health edge attached and sampling every 15 s (node serves
+`/metrics` and `/health-snapshot`, M/O lanes live); profile A = the edge
+stopped, nothing scrapes the node. The in-process accumulators (a few relaxed
+atomics per block, per PQ operation and per storage commit) stay armed in
+both profiles; the only restart-based flags-off measurement is the two-round
+result above (inconclusive). Window: 30 minutes after a 2-minute settle,
+three rounds C/A/C/A/C/A, population `CPUUsageNSec` of the node cgroup, and a
+window counts only if validator4 stayed within 5 blocks of observer6's head
+on a live chain for all 30 minutes (`at_head_throughout`). Conclusive only if
+the mean difference exceeds the between-round spread; reported as measured.
+While the edge is stopped the monitor correctly reports validator4 as
+unobservable; that is a drill, not a fault.

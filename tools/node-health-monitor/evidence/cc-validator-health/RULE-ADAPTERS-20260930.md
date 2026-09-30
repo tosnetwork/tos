@@ -15,10 +15,10 @@ of the 18-rule catalog after this work, as evaluated on the six local nodes:
 | **memory_growth_unexplained** | UnexplainedMemoryBytes | process_facts | **implemented**: anonymous memory growth of the node process over a trailing 15-minute window from the edge's process source | good ×6 |
 | **quic_pressure** | QuicBacklogBytes | native_gauges | **implemented**: `tos_quic_summary_unsent_bytes + unacked_bytes` read from the edge's cached OpenMetrics (two exact metric names, nothing else parsed) | good ×6 |
 | queue_stall | QueueOldestMs | — | **unsupported**: the PQ signer is synchronous, there is no queue (`pq_queue: synchronous_signer_no_queue`); no value is invented | — |
-| rocksdb_write_stopped | RocksdbWriteStopped | — | **unsupported**: the engine gathers `rocksdb.is-write-stopped` into its console stats string only; nothing exports it and the edge RPC lane is off by contract | — |
-| observer_disagreement | witness | — | pending_C05 (unchanged) | — |
+| rocksdb_write_stopped | RocksdbWriteStopped | native_gauges | **implemented (later that afternoon)**: RocksDB records `rocksdb.is-write-stopped` after every synchronous commit into `td::storage_health`; the exporter publishes `tos_health_storage_write_stopped`; the poller adds it to the gauges frame. Needs engine `validator-engine-nhm-cc-3fd4164d7687edf3` or later | good on the nodes running that engine, unknown (frame incomplete) elsewhere |
+| observer_disagreement | ObserverDisagreement | witness | **implemented (later that afternoon)**: `health-witness-compare` reads M's archived v3 anchors and compares each node against the observers (fork at an equal seqno; lagging every fresh observer head by more than 150 blocks); no fresh anchor pair, no fact | good ×6 on a live chain; unknown while a node replays |
 | monitoring_unavailable | watchdog | — | direct notice only (unchanged) | — |
-| ai_unavailable | ai_optional | — | pending_C08 (unchanged) | — |
+| ai_unavailable | AiAvailable | ai_optional | **implemented (later that afternoon)**: the judgement posts an availability fact for the `monitor` target after every model turn | bad/open whenever the local Codex is at capacity; good after an accepted analysis |
 
 Thresholds in the local inventory (`development-native-facts-4`):
 initialization 600 s, applied/served gap 64 blocks, memory growth 4 GiB /

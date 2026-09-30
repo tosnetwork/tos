@@ -151,6 +151,68 @@ Run it from a timer with `--journal`; exit status 3 means at least one node is
 unhealthy. `scripts/sample-validator-health-tools.py` issues one short grant on
 the private control socket and reads a node through the six MCP tools.
 
+Derived source epochs carry the deriving run's identity
+(`…:facts-v2:<start-ms>-<pid>`, `…:witness-v1:<run>`): a restarted poller or
+comparer re-derives with fresh in-memory state and would otherwise collide
+with its own earlier frames under the same generation and quarantine the
+source. A restart is therefore a new epoch; the archived snapshot epochs are
+untouched.
+
+## External witness, receiver, AI availability and the storage gauge
+
+`health-witness-compare CONFIG_JSON` (unit `local-judge/nhm-local-witness-compare.service`)
+reads M's archived `native-core-v3` chain anchors read-only every 15 seconds
+and compares each node against the observers: the same masterchain seqno with
+a different root hash is a fork; lagging every fresh observer head by more than
+`lag_blocks` is isolation; being ahead of the observers is not a fault. The
+result is posted as the `observer_disagreement` fact under source `witness`,
+bound to the node's current native epoch. Without a fresh anchor from the node
+and from at least one observer no fact is posted, so the rule stays unknown
+rather than good. It never contacts a node, an edge or a model.
+
+`scripts/local-notification-receiver.py` (unit `nhm-local-receiver.service`)
+is an independent HTTPS receiver for M's outbox: bearer token, payload hash
+echoed as the receipt M verifies, every delivery appended to a private journal.
+M's `receiver` config points at it; the doctor's `notification_receiver` gate
+reads M's last accepted receipt.
+
+The judgement's model turn posts an `ai_optional` availability fact for the
+`monitor` node after every attempt (`--ai-fact-url`, `--ai-fact-token-file`,
+`--ai-fact-state`): `1` when a validated explanation was produced, `0`
+otherwise, epoch and generation persisted in the state file. A silent model
+lane therefore opens `ai_unavailable` on the `monitor` target instead of
+vanishing; the deterministic verdict never depends on it.
+
+The engine records `rocksdb.is-write-stopped` after every synchronous commit
+into a process-wide storage health (`td::storage_health`), the exporter
+publishes `tos_health_storage_write_stopped` (0/1), `_total` and
+`commits_observed_total`, and the poller turns the gauge into the
+`rocksdb_write_stopped` fact of the `native_gauges` frame. On an engine without
+the gauge the frame is incomplete, the rule is unknown and
+`telemetry_unavailable` says so; nothing is assumed good.
+
+## Rolling an engine on the local network
+
+The local development network has produced no key block since genesis (its
+validator set is fixed for 30 days and nothing changes the config), so no
+persistent state exists and **every node restart replays the chain from
+genesis** (about 6 blocks/s here against about 2.5 blocks/s produced). The
+cost grows with the chain and a restart is never cheap. Rules that follow:
+
+1. One node at a time. Restart a validator only while the chain is live and
+   all four validators are at the head; move on only after the restarted node
+   is back at the head. Two validators replaying at once halts the chain
+   (three of four are needed), as happened on 2026-09-30 13:50 UTC when a
+   rollout treated "ready" as "at the head".
+2. Stop the node's edge first, restart, wait for a `native-core-v3` snapshot,
+   then recreate the edge bound to the new PID.
+3. While a node replays, the monitor reports it honestly: applied/served gap
+   and initialization facts move, `observer_disagreement` sees it lagging the
+   observers, and the verdict is degraded or unhealthy. That is the correct
+   reading, not noise.
+4. Do not compare performance profiles by restarting a node on this network;
+   toggle the edge instead (see `perf/CC-ONE-HOUR-GATE.md`).
+
 ## Bounded evidence retention
 
 An evidence database that can only grow eventually reaches its quota, refuses

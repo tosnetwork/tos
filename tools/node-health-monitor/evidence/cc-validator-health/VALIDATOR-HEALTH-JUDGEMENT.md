@@ -123,10 +123,11 @@ restarting the node**; never let two edges sample one process epoch.
   chat-completions endpoint. Not done on my own; the deterministic verdict
   does not depend on it and the validator refuses any answer that upgrades a
   verdict or cites undelivered evidence.
-- Persistent state cadence (36 h) means a validator restart before the first
-  boundary (~2026-10-01 00:02 UTC) replays from genesis; cheap on a young
-  chain, hours on an old one. This is a node property, recorded here for
-  operators.
+- A validator restart replays from genesis: the network has produced no key
+  block since genesis, so no persistent state exists and the 2^17 s boundary
+  alone saves nothing (corrected on 2026-09-30 afternoon, see
+  `HUNDRED-PERCENT-20260930.md` §8). Cheap on a young chain, hours on an old
+  one. This is a node property, recorded here for operators.
 - The health-state verdict copy is delivered: at 11:25:24 UTC the six-tool
   sample for validator1 returned the consensus component with
   `health.rules_evaluated = 8`, `active_incidents = []`, evaluation sequence
