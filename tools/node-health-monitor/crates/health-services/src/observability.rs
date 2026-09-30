@@ -10,6 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use rusqlite::{Connection, OpenFlags};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -31,6 +32,7 @@ pub struct Data {
     pub grants: BTreeMap<String, Grant>,
     pub manager_conflicted: bool,
     pub manager_caught_up: bool,
+    pub manager_validated_data_version: Option<u64>,
 }
 #[derive(Clone)]
 pub struct ObservabilityState {
@@ -42,6 +44,9 @@ pub struct ObservabilityState {
     pub metrics: Arc<BTreeSet<String>>,
     pub query_ledger: Option<Arc<Mutex<QueryLedger>>>,
     pub manager_evidence_db: Option<PathBuf>,
+    /// One stable read-only SQLite connection observes changes to M even when
+    /// its global row watermark does not move (for example, quarantine).
+    pub manager_change_witness: Option<Arc<Mutex<Connection>>>,
     /// Counts actual broker-side M archive read attempts. Query handlers must
     /// not increment this witness even under a call storm or cache miss.
     pub manager_projection_reads: Arc<AtomicU64>,
@@ -65,6 +70,7 @@ impl ObservabilityState {
                 grants: BTreeMap::new(),
                 manager_conflicted: false,
                 manager_caught_up: true,
+                manager_validated_data_version: None,
             })),
             inventory: Arc::new(inventory),
             operator_token: Arc::new(operator),
@@ -73,6 +79,7 @@ impl ObservabilityState {
             metrics: Arc::new(BTreeSet::new()),
             query_ledger: None,
             manager_evidence_db: None,
+            manager_change_witness: None,
             manager_projection_reads: Arc::new(AtomicU64::new(0)),
             started: Instant::now(),
             epoch: hex(&random_token()?),
@@ -103,6 +110,16 @@ impl ObservabilityState {
         if self.query_ledger.is_none() {
             return Err("M projection requires durable query ledger".into());
         }
+        let witness = Connection::open_with_flags(
+            &path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| error.to_string())?;
+        witness
+            .busy_timeout(std::time::Duration::from_millis(100))
+            .map_err(|error| error.to_string())?;
+        witness.execute_batch("PRAGMA query_only=ON").map_err(|error| error.to_string())?;
+        self.manager_change_witness = Some(Arc::new(Mutex::new(witness)));
         self.manager_evidence_db = Some(path);
         match import_manager(&self) {
             Ok(_) => {}
@@ -140,6 +157,18 @@ fn projection_insert_can_pause(error: &str) -> bool {
     // are not evidence of a recoverable pause.
     matches!(error, "active grant evidence retention" | "M parent retention full")
 }
+fn manager_data_version(state: &ObservabilityState, wait: bool) -> Result<u64, String> {
+    let witness = state.manager_change_witness.as_ref().ok_or("M change witness unavailable")?;
+    let guard = if wait {
+        witness.lock().map_err(|_| "M change witness unavailable")?
+    } else {
+        witness.try_lock().map_err(|_| "M change witness busy")?
+    };
+    let version: i64 = guard
+        .query_row("PRAGMA data_version", [], |row| row.get(0))
+        .map_err(|error| error.to_string())?;
+    u64::try_from(version).map_err(|error| error.to_string())
+}
 fn import_manager_into(
     state: &ObservabilityState,
     data: &mut Data,
@@ -150,6 +179,13 @@ fn import_manager_into(
     if data.manager_conflicted {
         return Err("M projection conflict requires operator review".into());
     }
+    let version_before = match manager_data_version(state, true) {
+        Ok(value) => value,
+        Err(error) => {
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
+    };
     let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
     state.manager_projection_reads.fetch_add(1, Ordering::Relaxed);
     let cursor_and_retained = {
@@ -216,7 +252,15 @@ fn import_manager_into(
         block_manager_queries(state, data)?;
         return Err(error);
     }
-    data.manager_caught_up = page.caught_up;
+    let version_after = match manager_data_version(state, true) {
+        Ok(value) => value,
+        Err(error) => {
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
+    };
+    data.manager_caught_up = page.caught_up && version_before == version_after;
+    data.manager_validated_data_version = data.manager_caught_up.then_some(version_after);
     Ok((page.cursor.watermark, count))
 }
 /// This is a broker-control operation, not a query handler fallback.
@@ -381,7 +425,27 @@ async fn grant(
         &value[16..20],
         &value[20..]
     );
-    let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    // A grant must never run a projection page, nor wait on the projection's
+    // long-lived Data lock on a Tokio worker. This small source-head read is
+    // isolated on the blocking pool and bounded below the control deadline.
+    let source_head = if let Some(path) = state.manager_evidence_db.clone() {
+        let network = state.inventory.network_id.clone();
+        Some(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                tokio::task::spawn_blocking(move || {
+                    crate::manager_query_source::read_projection_head(&path, &network)
+                }),
+            )
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+        )
+    } else {
+        None
+    };
+    let mut data = state.data.try_lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     if data.manager_conflicted {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
@@ -389,11 +453,32 @@ async fn grant(
     if data.grants.len() >= 32 {
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
-    let (manager_watermark, _) =
-        import_manager_into(&state, &mut data).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    if !data.manager_caught_up {
-        return Err(StatusCode::SERVICE_UNAVAILABLE);
-    }
+    let manager_watermark = if let Some(head) = source_head {
+        let current_version =
+            manager_data_version(&state, false).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        if !data.manager_caught_up || data.manager_validated_data_version != Some(current_version) {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        let cursor = state
+            .query_ledger
+            .as_ref()
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?
+            .try_lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .manager_cursor()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+        if cursor.network != state.inventory.network_id
+            || cursor.device != head.device
+            || cursor.inode != head.inode
+            || cursor.watermark != head.global_m_seq
+        {
+            return Err(StatusCode::SERVICE_UNAVAILABLE);
+        }
+        Some(cursor.watermark)
+    } else {
+        None
+    };
     let mut g = Grant::new(
         run.clone(),
         "aura".into(),
@@ -407,9 +492,7 @@ async fn grant(
         data.store.watermark(),
     )
     .map_err(|_| StatusCode::BAD_REQUEST)?;
-    if state.manager_evidence_db.is_some() {
-        g.manager_watermark = Some(manager_watermark);
-    }
+    g.manager_watermark = manager_watermark;
     if let Some(ledger) = &state.query_ledger {
         ledger
             .lock()

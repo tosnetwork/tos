@@ -699,14 +699,29 @@ async fn partial_projection_restart_replays_cursor_and_refuses_uncaught_grant() 
             ))
             .unwrap()
     };
-    // Introduce one more page before grant creation; the route may consume
-    // only a single bounded page and must not issue a grant while behind.
+    // Introduce one more page before grant creation. The route does not
+    // import; only the background owner advances bounded pages.
     for index in 514..=769 {
         manager.insert(row(&format!("epoch-{index}"))).unwrap();
     }
     let refused = control_router(restored.clone()).oneshot(request()).await.unwrap();
     assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert!(!restored.data.lock().unwrap().manager_conflicted);
+    assert_eq!(
+        restored
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark,
+        512,
+        "a denied grant cannot import even one M row"
+    );
+    assert_eq!(import_manager(&restored).unwrap().0, 768);
     assert!(!restored.data.lock().unwrap().manager_caught_up);
     assert_eq!(import_manager(&restored).unwrap().0, 769);
     assert!(restored.data.lock().unwrap().manager_caught_up);
@@ -1093,7 +1108,8 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
         .unwrap()
         .unwrap()
         .watermark;
-    assert_eq!(cursor_after_two_pages, 513);
+    assert_eq!(cursor_after_two_pages, 257);
+    assert_eq!(import_manager(&restored).unwrap().0, 513);
     let old = query_router(restored.clone())
         .oneshot(
             Request::builder()
@@ -1148,6 +1164,44 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
         .unwrap()
         .unwrap()
         .watermark;
+    let retained_at_pause = restored
+        .query_ledger
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .retained_origin_rows()
+        .unwrap()
+        .len();
+    assert!(retained_at_pause > 1000, "latency control needs a substantial retained set");
+    // Simulate the background importer holding Data throughout a slow M/Q
+    // page. The grant route must return a bounded 503, not park a Tokio worker
+    // on std::Mutex or perform its own import under the 5-second connection
+    // deadline. The held lock is released only after measuring the route.
+    let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let held_data = restored.data.clone();
+    let holder = std::thread::spawn(move || {
+        let _guard = held_data.lock().unwrap();
+        locked_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(std::time::Duration::from_secs(3));
+    });
+    locked_rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    let started = std::time::Instant::now();
+    let contested = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        control_router(restored.clone()).oneshot(request()),
+    )
+    .await;
+    let elapsed = started.elapsed();
+    let _ = release_tx.send(());
+    holder.join().unwrap();
+    assert_eq!(contested.unwrap().unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "grant waited on importer Data lock for {elapsed:?}"
+    );
+    eprintln!("retained={retained_at_pause} contended_grant={elapsed:?}");
     let old_at_capacity = query_router(restored.clone())
         .oneshot(
             Request::builder()
@@ -1245,8 +1299,18 @@ async fn pre_cursor_ledger_with_active_grant_catches_up_over_4096_history() {
     drop(conn);
     assert_eq!(import_manager(&restored).unwrap(), (4098, 1));
     assert!(restored.data.lock().unwrap().manager_caught_up);
-    let fresh = control_router(restored.clone()).oneshot(request()).await.unwrap();
+    let started = std::time::Instant::now();
+    let fresh = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        control_router(restored.clone()).oneshot(request()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let grant_elapsed = started.elapsed();
     assert_eq!(fresh.status(), StatusCode::OK);
+    assert!(grant_elapsed < std::time::Duration::from_secs(5));
+    eprintln!("retained_peak_grant={grant_elapsed:?}");
     let granted = body(fresh).await;
     let run = granted["run_id"].as_str().unwrap();
     assert_eq!(restored.data.lock().unwrap().grants[run].manager_watermark, Some(4098));
@@ -1446,6 +1510,87 @@ fn unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine
     assert_eq!(records.len(), 1);
     assert!(quarantined.is_empty());
     drop(conn);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn grant_refuses_quarantine_without_new_m_row_until_background_validation() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-grant-change-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    let original = manager.insert(row("edge-epoch-1")).unwrap();
+    let state = ObservabilityState::new(
+        Inventory {
+            network_id: network,
+            nodes: BTreeSet::from(["v1".into()]),
+            scopes: BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(&ledger_path)
+    .unwrap()
+    .with_manager_evidence(manager_path.clone())
+    .unwrap();
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    assert_eq!(
+        control_router(state.clone()).oneshot(request()).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let before = state.manager_projection_reads.load(Ordering::Relaxed);
+    let sql = rusqlite::Connection::open(&manager_path).unwrap();
+    sql.execute(
+        "INSERT INTO quarantined(node,scope,process_epoch,source_epoch,source)
+         VALUES('v1','node','boot:4242:100','edge-epoch-1','process')",
+        [],
+    )
+    .unwrap();
+    drop(sql);
+    assert_eq!(
+        control_router(state.clone()).oneshot(request()).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "same-W quarantine cannot issue a new grant from stale validation"
+    );
+    assert_eq!(state.manager_projection_reads.load(Ordering::Relaxed), before);
+    assert_eq!(
+        state
+            .query_ledger
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .manager_cursor()
+            .unwrap()
+            .unwrap()
+            .watermark,
+        original.store_seq.0
+    );
+    assert!(import_manager(&state).unwrap_err().contains("quarantined"));
+    assert!(state.data.lock().unwrap().manager_conflicted);
+    drop(state);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
 }
@@ -1685,7 +1830,7 @@ async fn thousand_real_query_requests_do_not_read_manager_archive() {
     let run = granted["run_id"].as_str().unwrap();
     let token = granted["run_token"].as_str().unwrap();
     let before = state.manager_projection_reads.load(Ordering::Relaxed);
-    assert_eq!(before, 2, "startup and grant each perform one bounded broker import");
+    assert_eq!(before, 1, "grant and query routes must not import M");
     let mut accepted = 0;
     let mut refused = 0;
     for _ in 0..1000 {
@@ -1739,7 +1884,7 @@ async fn thousand_real_query_requests_do_not_read_manager_archive() {
     let second_run = second["run_id"].as_str().unwrap();
     let second_token = second["run_token"].as_str().unwrap();
     let after_second_grant = state.manager_projection_reads.load(Ordering::Relaxed);
-    assert_eq!(after_second_grant, before + 1);
+    assert_eq!(after_second_grant, before, "new grants must not import M history");
     let controls = [
         (
             "/v1/query/node-snapshot",

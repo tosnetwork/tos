@@ -313,12 +313,18 @@ async fn cached_synthetic_valid_clock(plan: Plan, raw: &[u8]) -> Vec<u8> {
 #[tokio::test]
 async fn synthetic_valid_clock_current_route_qualifies_context_without_proof() {
     let fixture = Fixture::new();
-    let plan = fixture.plan();
+    let mut plan = fixture.plan();
+    let now = chrono::Utc::now();
+    plan.targets[0].valid_from =
+        (now - chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    plan.targets[0].valid_until =
+        (now + chrono::Duration::hours(1)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    std::fs::write(fixture.0.join("plan.json"), serde_json::to_vec(&plan).unwrap()).unwrap();
     let mut config = fixture.config();
     config.witness_current_token_file = Some(fixture.0.join("current"));
     config.witness_current_trusted_same_host = true;
     let manager = Manager::start(&config).unwrap();
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut source_value: Value = serde_json::from_slice(&source('d')).unwrap();
     source_value["observed_at"] = json!(now);
     source_value["source_age_ms"] = json!("10");
