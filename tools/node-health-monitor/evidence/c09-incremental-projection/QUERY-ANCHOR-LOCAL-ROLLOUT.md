@@ -39,3 +39,11 @@ does not repeatedly exercise AURA grants or tool calls. Concurrent broker
 latency, failure and resource profiles, retention, rollback drill and 72-hour
 continuity remain unaccepted. This local rollout is not production health or
 C09 acceptance.
+
+The original transient stop timer targeted `2026-10-02T21:56:43Z`, before a
+full 72 hours of Q-aware samples. At `2026-09-30T00:53:50Z`, a replacement
+`nhm-c09-q-soak-stop.timer` was armed for `2026-10-03T01:10:00Z`, which is
+more than 72 hours after the first Q-aware row. The old
+`nhm-c09-soak-stop.timer` was stopped only after the replacement was active;
+`nhm-c09-soak.timer` remained active. This corrects the sampling window but
+does not establish its eventual continuity or acceptance.
