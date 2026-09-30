@@ -379,6 +379,75 @@ fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
 }
 
 #[test]
+fn page_eviction_keeps_last_process_anchor_and_reopen_refuses_tamper() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-page-anchor-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    for index in 0..16 {
+        manager.insert(row(&format!("edge-epoch-{index}"))).unwrap();
+    }
+    let page = read_process_projection_page(&manager_path, &network, None, &[]).unwrap();
+    assert!(page.caught_up);
+    assert_eq!(page.records.len(), 16);
+    assert!(page.boundary_witness.is_none(), "last global row is process");
+    let last = &page.records.last().unwrap().0;
+    assert_eq!(page.cursor.anchor, Some((last.store_seq.0, last.evidence_id.clone())));
+    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
+    // This tiny isolated Q cap forces earlier rows out during the same page.
+    // The newest process row cannot be evicted by preceding page rows.
+    let mut store = EvidenceStore::new(8_000);
+    ledger.insert_projection_page(&mut store, &page.records).unwrap();
+    assert!(store.entries().count() < page.records.len(), "control must actually evict");
+    let retained = ledger.retained_origin_rows().unwrap();
+    assert!(retained.iter().any(|origin| origin.evidence_id == last.evidence_id));
+    ledger.commit_manager_cursor(None, &page.cursor, None).unwrap();
+    drop(ledger);
+    let reopened = QueryLedger::open(&ledger_path).unwrap();
+    assert_eq!(reopened.manager_cursor().unwrap(), Some(page.cursor.clone()));
+    drop(reopened);
+    let sql = rusqlite::Connection::open(&ledger_path).unwrap();
+    sql.execute(
+        "UPDATE query_manager_cursor SET anchor_hash=?1 WHERE singleton=1",
+        ["c".repeat(64)],
+    )
+    .unwrap();
+    drop(sql);
+    let tampered = QueryLedger::open(&ledger_path).unwrap();
+    let forged = tampered.manager_cursor().unwrap().unwrap();
+    assert_ne!(forged, page.cursor);
+    drop(tampered);
+    // The source-bound reader, not just the parser, rejects a syntactically
+    // valid but false anchor after the Q ledger is reopened.
+    assert!(read_process_projection_page(&manager_path, &network, Some(&forged), &[])
+        .unwrap_err()
+        .contains("anchor changed"));
+    let inventory = Inventory {
+        network_id: network,
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap();
+    assert!(state
+        .with_manager_evidence(manager_path.clone())
+        .err()
+        .unwrap()
+        .contains("anchor changed"));
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup() {
     let directory = std::env::temp_dir().join(format!(
         "nhm-m-global-boundary-{}-{}",
