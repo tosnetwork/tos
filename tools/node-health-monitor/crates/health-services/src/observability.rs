@@ -34,6 +34,10 @@ pub struct Data {
     pub manager_caught_up: bool,
     pub manager_validated_data_version: Option<u64>,
 }
+// Unit-test-only interleaving point. Production builds contain neither this
+// hook nor a caller-supplied way to pause between cursor validation and grant.
+#[cfg(test)]
+static GRANT_AFTER_CURSOR_HOOK: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 #[derive(Clone)]
 pub struct ObservabilityState {
     pub data: Arc<Mutex<Data>>,
@@ -517,6 +521,10 @@ async fn grant(
         {
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
+        #[cfg(test)]
+        if let Some(hook) = GRANT_AFTER_CURSOR_HOOK.lock().ok().and_then(|mut slot| slot.take()) {
+            hook();
+        }
         Some(cursor.watermark)
     } else {
         None
@@ -740,4 +748,97 @@ pub fn import_cache(state: &ObservabilityState, path: PathBuf) -> Result<usize, 
         count += 1;
     }
     Ok(count)
+}
+
+#[cfg(test)]
+mod grant_cursor_interleaving_tests {
+    use super::*;
+    use crate::durable::EvidenceDb;
+    use axum::{body::Body, http::Request};
+    use std::sync::atomic::AtomicBool;
+    use tower::ServiceExt;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cursor_guard_survives_competing_q_acquisition_until_durable_create() {
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-q-after-cursor-{}-{}",
+            std::process::id(),
+            hex(&random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let manager_path = directory.join("manager.sqlite");
+        let query_path = directory.join("query.sqlite");
+        let network = "a".repeat(64);
+        let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+        manager.bind_network(&network).unwrap();
+        let state = ObservabilityState::new(
+            Inventory {
+                network_id: network,
+                nodes: BTreeSet::from(["v1".into()]),
+                scopes: BTreeSet::from(["node".into()]),
+            },
+            vec![b'o'; 32],
+            vec![b'i'; 32],
+            vec![b'a'; 32],
+        )
+        .unwrap()
+        .with_query_ledger(&query_path)
+        .unwrap()
+        .with_manager_evidence(manager_path)
+        .unwrap();
+        let q = state.query_ledger.as_ref().unwrap().clone();
+        let acquired = Arc::new(AtomicBool::new(false));
+        let acquired_in_hook = acquired.clone();
+        let holder = Arc::new(Mutex::new(None));
+        let holder_in_hook = holder.clone();
+        *GRANT_AFTER_CURSOR_HOOK.lock().unwrap() = Some(Box::new(move || {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let child = std::thread::spawn(move || {
+                if let Ok(_guard) = q.try_lock() {
+                    tx.send(true).unwrap();
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                } else {
+                    tx.send(false).unwrap();
+                }
+            });
+            acquired_in_hook.store(
+                rx.recv_timeout(std::time::Duration::from_secs(1)).unwrap(),
+                Ordering::SeqCst,
+            );
+            *holder_in_hook.lock().unwrap() = Some(child);
+        }));
+        let end = chrono::Utc::now() - chrono::Duration::minutes(1);
+        let start = end - chrono::Duration::minutes(1);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":start.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                    "end":end.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)})
+                .to_string(),
+            ))
+            .unwrap();
+        let started = Instant::now();
+        let response = control_router(state.clone()).oneshot(request).await.unwrap();
+        let elapsed = started.elapsed();
+        holder.lock().unwrap().take().unwrap().join().unwrap();
+        assert!(!acquired.load(Ordering::SeqCst), "Q was free after cursor validation");
+        assert!(elapsed < std::time::Duration::from_millis(500), "grant waited for Q after cursor");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.data.lock().unwrap().grants.len(), 1);
+        let durable: i64 = rusqlite::Connection::open(&query_path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM query_grants WHERE revoked=0", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(durable, 1);
+        eprintln!("post-cursor competing Q acquisition refused; grant_elapsed={elapsed:?}");
+        drop(state);
+        drop(manager);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }
