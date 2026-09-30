@@ -72,7 +72,7 @@ fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-/// Only SQLite's typed BUSY/LOCKED/FULL/IOERR write failures may pause an
+/// Only SQLite's typed BUSY/LOCKED/FULL write failures may pause an
 /// import without treating its already-verified fixed-W parents as changed.
 /// Trigger/constraint errors and all non-SQLite failures remain untagged.
 #[derive(Debug)]
@@ -117,7 +117,6 @@ fn projection_sql_failure(error: rusqlite::Error) -> ProjectionWriteError {
             rusqlite::ErrorCode::DatabaseBusy
                 | rusqlite::ErrorCode::DatabaseLocked
                 | rusqlite::ErrorCode::DiskFull
-                | rusqlite::ErrorCode::SystemIoFailure
         ) {
             return ProjectionWriteError::RecoverableSqlite(error.to_string());
         }
@@ -1161,12 +1160,16 @@ mod projection_error_tests {
     use super::{projection_sql_failure, ProjectionWriteError};
 
     #[test]
-    fn sqlite_full_is_typed_recoverable_but_matching_text_is_not() {
+    fn sqlite_full_is_typed_recoverable_but_io_and_matching_text_are_not() {
         let full = rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_FULL),
             None,
         );
         assert!(projection_sql_failure(full).is_proven_recoverable());
+        for code in [rusqlite::ffi::SQLITE_IOERR_DATA, rusqlite::ffi::SQLITE_IOERR_CORRUPTFS] {
+            let io = rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None);
+            assert!(!projection_sql_failure(io).is_proven_recoverable());
+        }
         assert!(!ProjectionWriteError::Refused("Q_SQLITE_RETRYABLE: database is locked".into())
             .is_proven_recoverable());
         assert!(!ProjectionWriteError::Refused("M parent retention full".into())
