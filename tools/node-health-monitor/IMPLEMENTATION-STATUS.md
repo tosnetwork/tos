@@ -4,13 +4,13 @@ Design: R4, current design blob `c28a6b2506c98fc728f868081a8192f7d0cd0d0a`
 from memo `main@6c0536c042405e857bdced8e327b6f018c816526`.
 Reviewed recovery checkpoint: `628d2967b1bccdab752e9fbe4b66087df68d18b4`.
 The branch includes main commit `b9d8bc433c760f104a81cd1256581a4537923218`.
-Status as of 2026-09-30 03:05 UTC: C00–C05 have scoped development acceptances
+Status as of 2026-09-30 04:36 UTC: C00–C05 have scoped development acceptances
 (6 of 10 stages). C06–C08 have bounded development implementations, but not
-stage acceptance (3 stages). C09 is RED/open (1 stage): local observability and
-a scoped live-data receipt exist, but continuous AURA availability, production
-performance, and the 72-hour gate have not passed. A checked item means only
-its named implementation and evidence exist, never a main merge or production
-approval.
+stage acceptance (3 stages). C09 has passed its user-directed local 30-minute
+development observation gate; broader integration remains open. Production
+performance and the R4 72-hour soak are deferred for a later production stage.
+A checked item means only its named implementation and evidence exist, never
+a main merge or production approval.
 
 | Work order | Delivered and locally tested | Still required before stage completion |
 |---|---|---|
@@ -23,7 +23,7 @@ approval.
 | C06 — integrated development implementation | ✅ Gated native diagnostic producer and bounded catalog-8 scalar payload, private authenticated native-to-Edge IPC, bounded relay, distinct M diagnostic ingest identity and single-writer durable batch/atomic idempotent ACK were integrated and tested. The catalog-7 fixture remains separate. | Business-node hook rollout and production cost/consumer-drain gates remain open; unknown diagnostic observation times remain null. M-to-Query diagnostic projection is unsupported, not a process fact. |
 | C07 — bounded development package | ✅ Deterministic 16-KiB process-only package from verified retained M parents at fixed grant watermarks, durable private QueryLedger with 8-MiB cap, restart/late-row/conflict/missing/tamper controls and a closed diagnosis parser. No model/provider is enabled. | Actual model token accounting, semantic entailment, approved model/provider configuration, retention cleanup, private egress and resource-isolation acceptance remain open. The test-side deterministic judgment is not AURA model diagnosis. |
 | C08 — gated transport implemented | ✅ Durable grants/cursors and six-tool private Unix MCP, a pinned AURA 0.12 stdio adapter, one-use credential handoff, bounded calls/body/session, child cancellation/reap and disconnect controls were exercised. Six real tool calls through AURA establish transport/error propagation; unavailable fixture tools did not become business successes. | Complete source adapters, production broker authorization/rotation and sustained resource/zero-upstream evidence remain open. External model calls remain disabled; transport success is not model judgment or production acceptance. |
-| C09 — RED/open: local observability running, 72-hour continuity unproven | ✅ Six role-split 15-second supervised collectors and the private MCP query broker archive distinct live `process` sources without relabelling `edge_probe`. The local query-only rollout now runs source `31fc2f615ec3325d0e6bfe69f37f692068786bc0`, binary SHA-256 `e37f9c4353bb80f5ae8acd3a941d7eeb21b5f116a448448adb79588fb94cf8ee`, with the bounded importer, global M boundary anchor and authenticated projection-health route. Pinned AURA 0.12 read six `partial` process payloads with retained M parents under fixed 4+2 grants; consensus remained unknown, cross-run access was denied, and both grants were revoked. Only QueryService restarted; business nodes, M and collectors retained their PIDs. | No production or 72-hour pass. The one-minute sampler first included a Q projection probe at `2026-09-30T00:38:14Z`; it measured lag 16, then lag 3, then caught up with lag 0. The preceding 153 M-only rows do not count toward Q continuity, and the sampler does not continuously call AURA. M's local 2-GiB evidence quota is a temporary capacity bridge, not retention. Concurrent broker latency, A–F resource/performance and failure-domain profiles, credential/receiver rotation, retention, rollback drill and 72-hour soak remain open. A partial process snapshot is not whole-node health or model diagnosis. |
+| C09 — local 30-minute development observation passed; integration open | ✅ Six role-split 15-second supervised collectors and the private MCP query broker archive distinct live `process` sources without relabelling `edge_probe`. The local query-only rollout now runs source `31fc2f615ec3325d0e6bfe69f37f692068786bc0`, binary SHA-256 `e37f9c4353bb80f5ae8acd3a941d7eeb21b5f116a448448adb79588fb94cf8ee`, with the bounded importer, global M boundary anchor and authenticated projection-health route. Pinned AURA 0.12 read six `partial` process payloads with retained M parents under fixed 4+2 grants; consensus remained unknown, cross-run access was denied, and both grants were revoked. Only QueryService restarted; business nodes, M and collectors retained their PIDs. | The local 30-minute development observation passed; production 72-hour soak is deferred by user direction. The one-minute sampler first included a Q projection probe at `2026-09-30T00:38:14Z`; it measured lag 16, then lag 3, then caught up with lag 0. The preceding 153 M-only rows do not count toward Q continuity, and the sampler does not continuously call AURA. M's local 2-GiB evidence quota is a temporary capacity bridge, not retention. Concurrent broker latency, A–F resource/performance and failure-domain profiles, credential/receiver rotation, retention and rollback drill remain open for later integration or production review. A partial process snapshot is not whole-node health or model diagnosis. |
 
 C09 rollout checkpoint: the initial `9a6a79519b84fdfb79eef7f7036a644bd4af12e3`
 incremental candidate measured late read-only M catch-up pages at 5.735 and
@@ -35,8 +35,8 @@ installed `31fc2f615` with a durable global M boundary anchor and the private
 projection-health route; the scoped live trial and six-node pinned-AURA check
 passed. These samples do not prove concurrent broker latency or sustained
 availability. The projection-health route entered the one-minute sampler at
-`2026-09-30T00:38:14Z`; rollback/restore and the new Q-aware 72-hour gate
-remain open.
+`2026-09-30T00:38:14Z`; rollback/restore remains open. The Q-aware 30-minute
+development gate passed later; the 72-hour production gate is deferred.
 
 C09 functional sampling started on the local private QueryService without a
 business-node, M, collector, or Q restart. The installed user units and frozen
@@ -55,9 +55,10 @@ stopped the functional timer. A read-only audit found the one new durable Q
 grant from that tick revoked, but the sampler retained its inflight marker
 because the second grant request had an unconfirmed side effect. The failed
 log and marker are frozen under the private C09 review directory. This
-interruption invalidates the current continuous functional window; any new
-window requires separate manual review and a new first-pass anchor. Retention,
-model diagnosis, performance, and the 72-hour C09 gate remain open.
+interruption invalidated that original functional window. A separate manual
+review and first-pass anchor started the v2 window below. Retention, model
+diagnosis and production performance remain open; the 72-hour production gate
+is deferred for this development stage.
 
 The original functional and stop timers are now disabled; the failed log and
 inflight marker remain byte-for-byte preserved. A same-Q manual review created
@@ -72,6 +73,17 @@ and first-sample receipts are under
 `/home/tomi/nhm-supervision/c09-local/reviews/fresh-window-render/`. This one
 successful tick starts a new observation interval; it does not establish
 continuous availability or satisfy the 72-hour gate.
+
+The user subsequently set a **30-minute** continuous sampling requirement for
+this development stage. The frozen v2 window passed that gate: 13 functional
+samples over 60 minutes 14.991 seconds and 57 Q-aware samples over 59 minutes
+17.113 seconds, with no failed rows, six fresh process sources, maximum gaps
+301.993 seconds and 70.017 seconds respectively, and confirmed grant cleanup.
+The exact local verifier and input hashes are indexed in
+`evidence/c09-dev-30m/DEV-30M-STATUS.md`. The 72-hour test timers were stopped
+after the inputs were frozen; M, Q and six collectors remain running. Q's
+projection status sometimes reported bounded lag, so the receipt does not
+claim continuous caught-up status, model diagnosis, or production acceptance.
 
 Source-only successor `23429522d` requires a nonzero Q projection cursor's
 anchor sequence to equal its global M watermark; the M reader also checks the
