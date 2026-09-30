@@ -41,6 +41,12 @@ fn validate_manager_cursor(cursor: &ManagerCursor) -> Result<(), String> {
     Ok(())
 }
 
+fn cursor_storage(error: impl std::fmt::Display) -> String {
+    // Keep SQLite availability distinct from a verified M source/cursor
+    // inconsistency. A failed Q write does not invalidate an older fixed W.
+    format!("M cursor storage: {error}")
+}
+
 /// Linux BOOTTIME includes suspend and keeps the same origin across process
 /// restarts in one time namespace. Instant::elapsed would renew old grants.
 pub fn boot_millis() -> Result<u64, String> {
@@ -279,13 +285,15 @@ impl QueryLedger {
         }) {
             return Err("invalid M projection cursor advancement".into());
         }
-        let tx =
-            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(cursor_storage)?;
         let actual: Option<CursorSqlRow> = tx.query_row(
             "SELECT network,device,inode,watermark,anchor_seq,anchor_hash FROM query_manager_cursor WHERE singleton=1",
             [],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
-        ).optional().map_err(failure)?;
+        ).optional().map_err(cursor_storage)?;
         let expected = previous
             .map(|old| -> Result<_, String> {
                 Ok((
@@ -318,7 +326,7 @@ impl QueryLedger {
                     params![hash, i64::try_from(*seq).map_err(failure)?],
                     |row| row.get(0),
                 )
-                .map_err(failure)?;
+                .map_err(cursor_storage)?;
             let witnessed_boundary = boundary_witness.is_some_and(|boundary| {
                 boundary == &(next.watermark, hash.clone()) && *seq == next.watermark
             });
@@ -336,8 +344,8 @@ impl QueryLedger {
                 i64::try_from(next.watermark).map_err(failure)?,
                 next.anchor.as_ref().map(|(seq,_)| i64::try_from(*seq).map_err(failure)).transpose()?,
                 next.anchor.as_ref().map(|(_,hash)| hash)],
-        ).map_err(failure)?;
-        tx.commit().map_err(failure)
+        ).map_err(cursor_storage)?;
+        tx.commit().map_err(cursor_storage)
     }
 
     pub fn create(&mut self, grant: &Grant, now_ms: u64) -> Result<(), String> {

@@ -211,9 +211,14 @@ fn import_manager_into(
         page.boundary_witness.as_ref(),
     );
     if let Err(error) = committed {
-        // A failed cursor commit can be an invariant or SQLite integrity
-        // failure. Do not infer recoverability from an unknown error string.
-        block_manager_queries(state, data)?;
+        if error.starts_with("M cursor storage: ") {
+            // Projection rows committed before the cursor. Replay at the old
+            // cursor is idempotent; Q storage failure alone does not change
+            // an older grant's fixed evidence or source identity.
+            data.manager_caught_up = false;
+        } else {
+            block_manager_queries(state, data)?;
+        }
         return Err(error);
     }
     data.manager_caught_up = page.caught_up;
