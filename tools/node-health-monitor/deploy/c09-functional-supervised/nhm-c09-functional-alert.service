@@ -3,4 +3,8 @@ Description=Local journal alert for failed C09 functional sample
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/logger -p user.err -t nhm-c09-functional C09-functional-sample-failed-review-private-log-and-inflight-before-next-grant
+UMask=0077
+NoNewPrivileges=yes
+TimeoutStartSec=10s
+ExecStart=/usr/bin/systemctl --user stop nhm-c09-functional.timer
+ExecStartPost=/usr/bin/logger -p user.err -t nhm-c09-functional C09-functional-sample-failed-timer-stopped-review-private-log-and-inflight

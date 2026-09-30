@@ -3,14 +3,14 @@
 These are candidate **user** systemd units. The owner controls installation and
 enablement. No unit in this directory has been copied to the user manager or
 enabled by this branch. The service executes a checksum-pinned Python copy in
-`/home/tomi/nhm-supervision/c09-local/runtime/functional-soak/`, outside the
+`/home/tomi/nhm-supervision/c09-local/runtime/functional/`, outside the
 disposable Git worktree, against the existing private local Q/M sockets. It
 does not launch or restart QueryService, collectors, business nodes, or a model
 API.
 
 ## Private runtime setup and ownership
 
-The dedicated `functional-soak/` directory is owned by `tomi:tomi` and mode
+The dedicated `functional/` directory is owned by `tomi:tomi` and mode
 0700. It currently contains mode-0500 copies of the exact candidate sampler
 and stop-receipt scripts, a mode-0400 `SCRIPT.sha256` manifest, and a mode-0600
 copy of the pinned one-shot Q baseline. Both script hashes in the manifest
@@ -70,7 +70,7 @@ match the pinned files. The script refuses growth above 1,024 grants, 32 MiB
 grant bodies, or 3,072 attempts from that baseline, reserving the next slot's
 worst-case cost before issuing a grant.
 
-The private sample log directory is the dedicated runtime `functional-soak/`
+The private sample log directory is the dedicated runtime `functional/`
 directory (same UID, mode 0700). Each JSONL row is
 at most 1,024 bytes; the file stops at 4 MiB. A full 72 hours at five-minute
 cadence has at most 864 ticks and 936 grants including hourly controls, before
@@ -93,12 +93,14 @@ grant. A previous JSONL row with `status != pass` or
 appending another sample, preserving the failed row and slot highwater.
 
 `nhm-c09-functional.service` has `Restart=no`. A nonzero exit leaves the unit
-failed and triggers `nhm-c09-functional-alert.service`, which writes one
-fixed, token-free error message to the **local journal**. The service stdout
+failed and triggers `nhm-c09-functional-alert.service`, which stops the
+functional timer before writing one fixed, token-free message to the **local
+journal**. If stopping the timer fails, the alert unit fails visibly and the
+sampler's durable latch still prevents a new grant. The service stdout
 contains only the bounded instrument result/category. No external paging is
 configured in this candidate; the owner must inspect the failed unit, private
-sample log, Q ledger, and any inflight marker. Repeated timer activations, if
-systemd performs them, remain fail-closed and cannot create grants.
+sample log, Q ledger, and any inflight marker. A subsequent tick, if systemd
+has already queued one, remains fail-closed and cannot create a grant.
 
 An existing `.inflight` is checked before any review receipt. No receipt can
 remove it or allow the next tick to issue a grant. For an orphaned marker,

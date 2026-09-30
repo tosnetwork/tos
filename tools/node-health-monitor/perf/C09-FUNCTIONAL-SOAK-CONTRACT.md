@@ -85,7 +85,7 @@ database or lower ledger count is an explicit failure.
 The candidate service and timer are in `deploy/c09-functional-supervised/`.
 They execute checksum-pinned copies of the sampler and stop-receipt scripts
 from the dedicated same-UID 0700
-`/home/tomi/nhm-supervision/c09-local/runtime/functional-soak/` directory.
+`/home/tomi/nhm-supervision/c09-local/runtime/functional/` directory.
 The 72-hour sample log, review receipt, inflight marker, frozen baseline and
 private stop receipt reside there, outside Git. A runtime `SCRIPT.sha256`
 pins both script copies and is checked before either service runs. The owner
@@ -121,8 +121,9 @@ grant within 45 seconds of its stop boundary. The stop service stops any
 active functional service and writes a private, one-time receipt with actual
 first/last sample times, same-boot `CLOCK_BOOTTIME` elapsed gate, timer/service states, Q ledger
 identity and log/marker digests; it does not assert 72-hour acceptance. A
-failed sampling unit triggers only a fixed local-journal alert; external
-paging and timer enablement remain the owner's decisions.
+failed sampling unit stops the functional timer and writes one fixed local
+journal alert; external paging and timer enablement remain the owner's
+decisions.
 
 Each JSONL row separately records `fixed_grant_query_status` and
 `projection_head_status`. The latter is a separate, read-only private control
