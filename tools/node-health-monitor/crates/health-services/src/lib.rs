@@ -11,6 +11,7 @@ pub mod mcp_bridge;
 pub mod observability;
 pub mod provider;
 pub mod query_ledger;
+pub mod retention;
 pub mod transit;
 pub mod witness;
 pub mod witness_compare;

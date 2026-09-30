@@ -162,6 +162,15 @@ pub(crate) fn insert(conn: &mut Connection, batch: &DiagnosticBatch) -> Result<A
             }
             duplicates = duplicates.checked_add(1).ok_or("duplicate overflow")?;
             insert_flags.push(false);
+        } else if crate::durable::observation_sealed(
+            &tx,
+            [&batch.node_id, "node", &batch.process_epoch, &batch.process_epoch, &batch.source_id],
+            &value.record.source_record_id,
+        )? {
+            // Archived earlier and since expired by retention: acknowledge as a
+            // duplicate so the producer stops resending, but mint no new row.
+            duplicates = duplicates.checked_add(1).ok_or("duplicate overflow")?;
+            insert_flags.push(false);
         } else {
             insert_flags.push(true);
         }
@@ -299,7 +308,7 @@ mod tests {
     use super::*;
     fn database() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE observations(store_seq INTEGER PRIMARY KEY AUTOINCREMENT,node TEXT,scope TEXT,process_epoch TEXT,source_epoch TEXT,source TEXT,source_record TEXT,content_hash TEXT,body TEXT,UNIQUE(node,scope,process_epoch,source_epoch,source,source_record));CREATE TABLE quarantined(node TEXT,scope TEXT,process_epoch TEXT,source_epoch TEXT,source TEXT,PRIMARY KEY(node,scope,process_epoch,source_epoch,source));").unwrap();
+        conn.execute_batch("CREATE TABLE observations(store_seq INTEGER PRIMARY KEY AUTOINCREMENT,node TEXT,scope TEXT,process_epoch TEXT,source_epoch TEXT,source TEXT,source_record TEXT,content_hash TEXT,body TEXT,UNIQUE(node,scope,process_epoch,source_epoch,source,source_record));CREATE TABLE quarantined(node TEXT,scope TEXT,process_epoch TEXT,source_epoch TEXT,source TEXT,PRIMARY KEY(node,scope,process_epoch,source_epoch,source));CREATE TABLE retention_seals(node TEXT,scope TEXT,process_epoch TEXT,source_epoch TEXT,source TEXT,max_generation TEXT,deleted_rows INTEGER,last_deleted_seq INTEGER,PRIMARY KEY(node,scope,process_epoch,source_epoch,source));").unwrap();
         conn
     }
     fn batch(sequences: &[u64]) -> DiagnosticBatch {

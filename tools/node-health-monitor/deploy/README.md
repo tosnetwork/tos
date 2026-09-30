@@ -150,3 +150,71 @@ degraded, unhealthy, unknown) with the archive parent hashes as evidence IDs.
 Run it from a timer with `--journal`; exit status 3 means at least one node is
 unhealthy. `scripts/sample-validator-health-tools.py` issues one short grant on
 the private control socket and reads a node through the six MCP tools.
+
+## Bounded evidence retention
+
+An evidence database that can only grow eventually reaches its quota, refuses
+ingest and leaves the monitor blind. `health-state` therefore accepts two
+optional keys, both decimal-string milliseconds between one hour and ninety
+days; absent keys keep the store unbounded exactly as before:
+
+```json
+"evidence_retention_ms": "604800000",
+"witness_retention_ms": "2592000000"
+```
+
+The single evidence writer runs one bounded pass every five minutes (at most
+16 pages of 512 scanned rows or one second per pass) and one extra pass after
+a write is refused for space, then retries that write once. A pass deletes
+ordinary observations whose `record.received_at_ms` is older than the window
+and historical witness rows whose receipt `first_received_at` is older than
+the witness window. It never deletes a row younger than two hours (the fixed
+floor keeps the query service's retained parents and fixed-watermark grants
+valid), never the newest eight rows of a (node, scope, source) or witness
+endpoint, never anything in `quarantined`, `witness_quarantined`,
+`witness_current_activation`, `database_identity` or any control-database
+table. Incidents and the outbox live in the control database and are not
+touched. Sequence numbers are never reused and no VACUUM runs; a passive WAL
+checkpoint follows each pass.
+
+Deleting a row also removes the unique-identity witness that refused a replay
+of that record, so each pass commits a per-source seal (the highest deleted
+generation) in the same transaction. A later insert at or below that seal is
+refused with `EVIDENCE_EXPIRED` (a diagnostic batch is acknowledged as a
+duplicate) rather than minting a fresh sequence number for old evidence.
+Records without a canonical generation are never deleted. Seals are small and
+are kept for the life of the database.
+
+The query service revalidates every retained parent on each projection and
+blocks all manager queries when one is missing. Set the evidence window at or
+above the longest period a query row may stay resident in Q; the two-hour
+floor is a minimum, not that guarantee.
+
+The state endpoint reports `retention` (configured windows, pass counts, rows
+deleted, last pass age and error, oldest retained receipt), `inventory` (the
+bound revision and rule bindings), `quarantined_sources` and `notification`
+(receiver configured, last accepted delivery receipt in this process). The
+metrics endpoint adds `tos_health_evidence_retention_*` counters and ages.
+
+## Production doctor
+
+`scripts/doctor.py` prints one table of gates, each `pass`, `fail` or
+`not_run`, and exits 1 when any gate fails (2 on a usage error). It reads only
+the manager state endpoint (`--manager-state-url` with
+`--manager-read-token-file`, or a saved copy via `--manager-state-file`), the
+evidence database read-only (`--evidence-db`) and a receipts file
+(`--evidence-file`, see `config/doctor-evidence.example.json`) for gates that
+are established outside the running process. It never prints `pass` without a
+concrete check; what it cannot establish is `not_run`.
+
+Live gates: `manager_state`, `rule_inputs_usable` (every inventory rule on
+every node evaluated with a non-unknown input), `no_quarantined_sources`
+(live list and the durable quarantine tables), `evidence_retention`
+(configured, last pass within twice its period, no error),
+`notification_receiver` (configured and an accepted delivery within 24 hours,
+live or by receipt) and `ai_lane` (`ai_unavailable` bound and not active;
+`not_run` when unbound). Receipt gates: `physical_separation`,
+`performance_round_a` to `_f`, `soak_72h`, `token_rotation`,
+`cert_rotation`, `rollback_drill`. A `pass` receipt is honoured only with a
+valid RFC 3339 `at` younger than `--receipt-max-age-days` (default 90) and an
+evidence path that exists (`--no-check-evidence-paths` relaxes the latter).
