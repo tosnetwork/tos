@@ -85,6 +85,18 @@ after the inputs were frozen; M, Q and six collectors remain running. Q's
 projection status sometimes reported bounded lag, so the receipt does not
 claim continuous caught-up status, model diagnosis, or production acceptance.
 
+The development path now prioritizes the smallest AURA monitoring loop. The
+`nhm-aura-process-watch.timer` runs every five minutes and invokes pinned
+AURA's real `McpManager` against the private Q broker. Its first supervised
+run at 2026-09-30 04:51 UTC observed six `partial` process sources, checked
+unknown consensus and scope refusal, and revoked both temporary grants. A
+failed run records an unavailable result in the local journal. This is a
+process-source availability watch, not a healthy-validator verdict: no model
+provider is configured, no external notification is delivered, and revoked
+grants still consume the finite Q ledger. Those are the next minimal
+integration steps. Additional consensus, long-soak, and broad performance
+work is deferred from this development milestone.
+
 Source-only successor `23429522d` requires a nonzero Q projection cursor's
 anchor sequence to equal its global M watermark; the M reader also checks the
 exact boundary row in one read transaction. Integrated tests cover an older
