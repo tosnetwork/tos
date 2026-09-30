@@ -248,6 +248,35 @@ Owner chose plan 1 (rebuild with `--rotate`) plus a `key_block_age` fact.
 - **Soak**: owner capped development soaks at 2 hours; a 2-hour soak on the
   rotating network started 22:17 UTC. Final numbers below.
 
-## 12. Final state
+## 12. Owner request: duties, queues and storage as native observations (commit `bb721096d`)
 
-(appended when the 2-hour soak completes)
+The model explanation kept saying `local_duties`, `queue_state` and
+`storage_state` could not be assessed, which was true. The engine now
+publishes a `node_state` section once per second and the coverage reads
+`complete`:
+
+- **Duties**: membership (any validator group running) and the leader
+  windows the collator schedule assigned to this node (`is_expected_collator`
+  is the protocol's own assignment, so it is an honest denominator), with
+  the two protocol reasons an assigned window ends before production
+  (superseded, finality behind). `duty_windows_missed` = assigned − started
+  − superseded − suppressed; rule `duty_missed` (Increase), validators only.
+- **Queues**: the manager's three real waiter queues, counted in the sweep
+  that already checks their timers, each waiter now stamped at creation.
+  `queue_oldest_ms` drives `queue_stall` (Above 5 min); the PQ signer still
+  has no queue and none was invented (R4-04).
+- **Storage**: `statvfs` of the database root and the GC / persistent-state
+  seqnos. `disk_used_permille` → `storage_space_low` (Above 900 ‰);
+  `state_gc_lag_blocks` = applied − gc → `state_gc_lag` (Above 50,000).
+
+Contract: schemas name `key_block` and `node_state` as required members of
+the current v3 payload (the checker insists on closed schemas), the Rust
+parser still accepts older publishers (outer `None`, exact-bytes hash kept),
+22 rules, `check-contracts` PASS, C++ and Rust tests for present, null,
+stale, lying-coverage and malformed sections. Engine
+`validator-engine-nhm-cc-27a1496dee7a25ca`; deployed after the 2-hour soak
+so the soak record stays clean. Live result in §13.
+
+## 13. Final state
+
+(appended when the 2-hour soak completes and the node-state deploy is verified)
