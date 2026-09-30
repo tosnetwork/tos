@@ -11,7 +11,7 @@ unrelated cursor/evidence test expansion.
 ## Verified interfaces and exact dependencies
 
 - Pinned AURA source: `1000f119d38f4c4656ced0ae883c90f6f7610890`
-  (`/home/tomi/nhm-aura-source.dujJrk`). `McpServerConfig::Stdio` launches
+  (`$HOME/nhm-aura-source.dujJrk`). `McpServerConfig::Stdio` launches
   a child through `TokioChildProcess`; `McpManager::initialize_from_config`
   discovers tools and `execute_fallback_tool` calls them. Its URL-only
   `McpClient::new` cannot address a Unix socket. AURA's lock pins

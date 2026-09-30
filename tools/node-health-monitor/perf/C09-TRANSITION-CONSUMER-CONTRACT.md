@@ -3,7 +3,7 @@
 This branch starts from the frozen functional sampler at
 `nhm/c09-functional-soak-starbridge@7f9b82b4e3d166152d1086b8624afada4e0065e1`.
 It changes only a **future** consumer source and tests. It has not replaced
-`/home/tomi/nhm-supervision/c09-local/runtime/functional/sample-query-functional.py`,
+`$HOME/nhm-supervision/c09-local/runtime/functional/sample-query-functional.py`,
 its `SCRIPT.sha256`, the running Q binary, or any active timer. The current
 manifest intentionally still pins the running consumer, so copying this
 candidate script alone would fail the unit's checksum preflight.

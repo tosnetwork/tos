@@ -27,11 +27,15 @@ class CodexWatchTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         fake = Path(self.temp.name) / "fake-aura"
-        fake.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ['FAKE_ANSWER'])\n")
+        self.argv = Path(self.temp.name) / "argv.json"
+        fake.write_text("#!/usr/bin/env python3\nimport json, os, sys\n"
+                        f"open({str(self.argv)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+                        "print(os.environ['FAKE_ANSWER'])\n")
         fake.chmod(0o700)
         self.args = types.SimpleNamespace(
             diagnosis_schema=str(SCHEMA), codex_bin=str(fake),
-            codex_socket="/unused", codex_thread_file="/unused",
+            codex_socket=None, codex_home="/codex-home", codex_workdir="/codex-work",
+            codex_thread_file="/codex.thread",
         )
         self.sources = {
             node: {"pid": index + 1, "evidence_id": f"{index + 1:064x}"}
@@ -53,6 +57,40 @@ class CodexWatchTest(unittest.TestCase):
         with patch.dict(os.environ, {"FAKE_ANSWER": answer}):
             result = watch.analyze(self.args, self.sources, "2026-09-30T00:00:00+00:00")
         self.assertEqual(result["status"], "insufficient_evidence")
+
+    def test_bridge_receives_dedicated_home_and_workdir(self):
+        answer = json.dumps(self.answer(next(iter(self.sources.values()))["evidence_id"]))
+        with patch.dict(os.environ, {"FAKE_ANSWER": answer}):
+            watch.analyze(self.args, self.sources, "2026-09-30T00:00:00+00:00")
+        argv = json.loads(self.argv.read_text())
+        self.assertEqual(argv[:6], ["codex", "--spawn-app-server", "--codex-home", "/codex-home",
+                                    "--workdir", "/codex-work"])
+        self.assertNotIn("--socket", argv)
+        self.assertEqual(argv[argv.index("--thread-file") + 1], "/codex.thread")
+
+    def test_bridge_receives_socket_when_configured(self):
+        self.args.codex_socket, self.args.codex_home = "/codex.sock", None
+        command = watch.codex_command(self.args, "/schema.json")
+        self.assertEqual(command[1:6], ["codex", "--socket", "/codex.sock",
+                                        "--workdir", "/codex-work"])
+        self.assertNotIn("--spawn-app-server", command)
+
+    def test_codex_options_are_validated_together(self):
+        required = []
+        for name in ("test-binary", "test-sha256", "adapter-binary", "adapter-sha256",
+                     "manifest", "manager-db", "manager-unit", "broker-unit",
+                     "control-socket", "mcp-socket", "operator-token-file",
+                     "service-token-file"):
+            required += ["--" + name, "x"]
+        codex = ["--codex-bin", "a", "--codex-workdir", "w", "--codex-thread-file", "t",
+                 "--diagnosis-schema", "s"]
+        for extra in (codex,  # no endpoint
+                      codex + ["--codex-socket", "k", "--codex-home", "h"],  # both
+                      ["--codex-bin", "a", "--codex-socket", "k"]):  # no workdir
+            with patch("sys.argv", ["watch", *required, *extra]), \
+                    patch("sys.stderr"), self.assertRaises(SystemExit) as raised:
+                watch.main()
+            self.assertEqual(raised.exception.code, 2, extra)
 
     def test_fabricated_parent_and_healthy_status_refuse(self):
         for answer in (self.answer("f" * 64),

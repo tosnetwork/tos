@@ -13,12 +13,13 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-LIVE_M = Path('/home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db')
-BIN = Path('/home/tomi/nhm-supervision/c09-local/runtime/bin/tos-observability')
+RUNTIME = Path.home()/'nhm-supervision'/'c09-local'/'runtime'
+LIVE_M = RUNTIME/'evidence'/'evidence.db'
+BIN = RUNTIME/'bin'/'tos-observability'
 NODES = ('validator1', 'validator2', 'validator3', 'validator4', 'observer5', 'observer6')
-network = json.loads(Path('/home/tomi/nhm-supervision/c09-local/runtime/deployment-public.json').read_text())['network_id']
+network = json.loads((RUNTIME/'deployment-public.json').read_text())['network_id']
 
-with tempfile.TemporaryDirectory(prefix='c09-isolated-', dir='/home/tomi') as raw:
+with tempfile.TemporaryDirectory(prefix='c09-isolated-', dir=Path.home()) as raw:
     d = Path(raw)
     d.chmod(0o700)
     m, q = d/'m.db', d/'q.db'

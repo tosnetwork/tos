@@ -42,7 +42,7 @@ slow request. This is a C08 connection-budget control, not Unix peer identity
 or production broker isolation; deployment must enforce dedicated ownership
 and credentials separately.
 The scoped test's natural-exit-0 raw log is
-`/home/tomi/nhm-c07c08-build/edge-epoch-proof/control-socket.log`
+`$HOME/nhm-c07c08-build/edge-epoch-proof/control-socket.log`
 (SHA-256 `af4f7286500b9721aca7dcf229b9c906f458b83c62e920de2915ef99690d7806`);
 source `tos-observability.rs` SHA-256 is
 `6fd00293b04e2a4ac988d161269dcec9821666b2f1b126cf18f8ee89b1d6d93e`.
@@ -82,6 +82,6 @@ cache policy, not an increase in retention. The later cursor slice adds
 event/change pagination in the isolated query service, while M's main
 EvidenceDb import, MCP and whole-run accounting remain open C08 items.
 The focused 16 HTTP + 3 ledger test raw log is
-`/home/tomi/nhm-c07c08-build/edge-epoch-proof/query-pinning.log`
+`$HOME/nhm-c07c08-build/edge-epoch-proof/query-pinning.log`
 (SHA-256 `e4a25bc34af84c4e6655e9c3d38493b209fa617e1e112f93f5b4ed334a494157`);
 strict workspace clippy/fmt/diff checks also exited 0.
