@@ -25,3 +25,12 @@ requires `paused_for_grant == true`; it then verifies the old fixed-W grant
 remains usable and cursor does not advance on the capacity pause. The full
 `manager_query_source` suite passed 19 tests with two opt-in witnesses ignored.
 This is isolated test evidence, not deployment or 72-hour acceptance.
+
+The cursor's anchor is a **global M row**, not a process-row assertion. A
+nonzero diagnostic-only prefix is accepted with its diagnostic boundary row
+anchored. The test then inserts an actual process row and tampers the persisted
+cursor to skip it with paired NULL anchor columns; startup refuses. Removing
+the nonzero-watermark/global-anchor validation compiled but made that exact
+negative test fail at its startup-refusal assertion (exit 101); restoring it
+returned exit 0. This chose the global-row-anchor proof, rather than claiming
+that every nonzero M prefix contains a process observation.
