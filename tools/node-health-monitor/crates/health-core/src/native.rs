@@ -491,7 +491,9 @@ impl NativeEnvelopeV3 {
             || self.coverage.gaps.len() > 32
             || self.coverage.missing_fields.iter().any(|v| v.len() > 96)
             || self.coverage.gaps.iter().any(|v| v.len() > 256)
-            || self.quality.instrumentation_complete
+            // A complete v3 sample must carry its chain anchor; without one
+            // the publisher is required to declare the coverage gap.
+            || (self.quality.instrumentation_complete && self.payload.chain.is_none())
             || self.quality.shed_reason.as_ref().is_some_and(|v| v.len() > 96)
         {
             return Err("invalid native v3 snapshot contract".into());

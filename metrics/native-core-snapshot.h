@@ -148,7 +148,7 @@ class NativeCorePublisher {
     const auto chain = !anchors ? std::string("null") :
         "{\"applied\":" + anchor_json(anchors->applied, "applied") +
         ",\"applied_advanced_unix_seconds\":\"" + std::to_string(anchors->applied_advanced_unix_seconds) +
-        ",\"observed_unix_seconds\":\"" + std::to_string(anchors->observed_unix_seconds) +
+        "\",\"observed_unix_seconds\":\"" + std::to_string(anchors->observed_unix_seconds) +
         "\",\"served\":" + (anchors->have_served ? anchor_json(anchors->served, "served") : std::string("null")) + "}";
     // Keys are canonical lexical order; exact integers remain decimal strings.
     const auto payload = "{\"bytes\":" + std::to_string(openmetrics.size()) +

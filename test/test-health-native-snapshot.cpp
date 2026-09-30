@@ -7,6 +7,7 @@
 #include "metrics/prometheus-exporter.h"
 #include "td/actor/actor.h"
 #include "td/utils/check.h"
+#include "td/utils/JsonBuilder.h"
 namespace {
 class Fixture final : public td::actor::Actor, public tos::metrics::AsyncCollector {
  public:
@@ -119,6 +120,29 @@ void unit() {
   CHECK(v3_body->find("\"instrumentation_complete\":false") != std::string::npos);
   CHECK(v3_body->find("\"chain_anchors\"") != std::string::npos);
   CHECK(!publisher.prepare(1, 10, 1700000000, "# EOF\n", true, sign, verify, false, nullptr, true));
+  // v3 with a fresh published chain anchor: the body must be well-formed JSON
+  // carrying both anchor clocks, and the snapshot becomes complete.
+  ChainAnchorSnapshot anchor;
+  for (std::size_t i = 0; i < 32; ++i) {
+    anchor.network_hash[i] = 0xaa;
+    anchor.applied.file_hash[i] = static_cast<std::uint8_t>(i + 1);
+    anchor.applied.root_hash[i] = static_cast<std::uint8_t>(0x40 + i);
+  }
+  anchor.applied.seqno = 17166;
+  anchor.applied_advanced_unix_seconds = 1700000000;
+  anchor.observed_unix_seconds = 1700000000;
+  chain_anchor_state.publish(anchor);
+  auto anchored = publisher.prepare(2, 10, 1700000000, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(anchored);
+  auto anchored_body = anchored->read(10);
+  CHECK(anchored_body);
+  std::string parse_copy = *anchored_body;
+  CHECK(td::json_decode(td::MutableSlice(parse_copy)).is_ok());
+  CHECK(anchored_body->find("\"applied_advanced_unix_seconds\":\"1700000000\",\"observed_unix_seconds\":\"1700000000\"") !=
+        std::string::npos);
+  CHECK(anchored_body->find("\"seqno\":17166") != std::string::npos);
+  CHECK(anchored_body->find("\"instrumentation_complete\":true") != std::string::npos);
+  CHECK(anchored_body->find("\"missing_fields\":[\"local_duties\"") != std::string::npos);
   std::cout << "native_snapshot_unit_passed" << std::endl;
 }
 }  // namespace
