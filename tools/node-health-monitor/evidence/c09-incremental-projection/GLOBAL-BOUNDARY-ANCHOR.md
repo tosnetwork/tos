@@ -41,3 +41,23 @@ Restored source SHA-256:
 
 This controls the development projection cursor; it does not establish C09
 production or 72-hour availability, and it was not deployed.
+
+## Latest shared-source integration control
+
+The isolated change was cherry-picked without conflict onto shared-source
+`a1a833e3a61e6f196aad22da809e6abed18b6e98` as
+`621305c3f8be3240476177eddd884a627bfcaa6a` in a separate worktree.
+`cargo fmt --all --check` and the locked `manager_query_source` suite completed
+with exit 0 (18 passed, 1 ignored). The shared successor changed projection
+error classification; this check exercises the combined code, not an older
+test binary. Locked Clippy for `tos-health-services --all-targets -- -D warnings`
+also exited 0. No running service was updated.
+
+Combined-source SHA-256: `query_ledger.rs`
+`3b41bf7adb7131ef122af8b53949d8961f6886a311006ba7097fb6a96a995dfe`,
+`manager_query_source.rs`
+`0ebdd0f77612692f7c869c4912efa22cf1fef1e7cd5bef351fdf7eb3b0e9f8f3`,
+`observability.rs`
+`ee8097797892c1329ae0c4de258d103d52ef87a27c3eb1d16f39871cce847919`,
+`tests/manager_query_source.rs`
+`10f72a82ecd5053ce14995e76ebafb962a7794a447bf2e72e03c6e7466b9542e`.
