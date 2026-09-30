@@ -27,9 +27,9 @@ use tower::ServiceExt;
 
 /// Opt-in local cost witness. M is opened read-only; only a disposable Q ledger
 /// is written. It is not a performance acceptance threshold or an AURA call.
-#[test]
+#[tokio::test]
 #[ignore = "requires explicit read-only local M path and network"]
-fn live_read_only_projection_cost_witness() {
+async fn live_read_only_projection_cost_witness() {
     let manager_path = std::path::PathBuf::from(std::env::var("NHM_C09_READONLY_M_DB").unwrap());
     let network = std::env::var("NHM_C09_NETWORK").unwrap();
     let directory = std::env::temp_dir().join(format!(
@@ -59,7 +59,25 @@ fn live_read_only_projection_cost_witness() {
         .with_manager_evidence(manager_path)
         .unwrap();
     println!("initial_page_ms={}", started.elapsed().as_millis());
-    let mut pages = 1;
+    let request = || {
+        Request::builder()
+            .method("POST")
+            .uri("/v1/control/grants")
+            .header("authorization", format!("Bearer {}", "o".repeat(32)))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({"node_ids":["validator1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                .to_string(),
+            ))
+            .unwrap()
+    };
+    let denied = control_router(state.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!state.data.lock().unwrap().manager_conflicted);
+    println!("grant_during_catchup=503");
+    // Startup imports one page; the refused grant attempts exactly one more.
+    let mut pages = 2;
     while !state.data.lock().unwrap().manager_caught_up && pages < 32 {
         let started = std::time::Instant::now();
         let (watermark, count) = import_manager(&state).unwrap();
@@ -70,6 +88,24 @@ fn live_read_only_projection_cost_witness() {
         );
     }
     assert!(state.data.lock().unwrap().manager_caught_up);
+    let caught_up_ms = started.elapsed().as_millis();
+    let granted = control_router(state.clone()).oneshot(request()).await.unwrap();
+    assert_eq!(granted.status(), StatusCode::OK);
+    let granted = body(granted).await;
+    let run = granted["run_id"].as_str().unwrap();
+    let revoked = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/v1/control/grants/{run}/revoke"))
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    println!("caught_up_ms={caught_up_ms} grant_after_catchup=200 revoked=200");
     let started = std::time::Instant::now();
     let (watermark, count) = import_manager(&state).unwrap();
     println!(
