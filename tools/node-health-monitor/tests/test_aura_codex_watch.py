@@ -79,10 +79,14 @@ class CodexWatchTest(unittest.TestCase):
                           "availability": "available", "clock_quality": "valid", "source_age_ms": None,
                           "observed_at": "2026-09-30T00:00:00Z",
                           "quality": {"instrumentation_complete": False},
-                          "coverage": {"missing_fields": ["local_duties"]}, "payload": native_payload}
+                          "coverage": {"status": "partial", "missing_fields": ["local_duties"]},
+                          "payload": native_payload}
                 value = {"source_epoch": "epoch", "record": {
                     "node_id": node, "source_id": "native_core", "source_record_id": "epoch:1",
                     "process_epoch": "epoch", "received_at_ms": 1,
+                    "observed_at_ms": 1790726400000,
+                    "quality": {"observed_at_ms": 1790726400000, "availability": "available",
+                                "clock_valid": True, "coverage": "partial"},
                     "payload": {"source": native}}}
                 canonical = json.loads(json.dumps(value))
                 canonical["record"]["received_at_ms"] = 0
@@ -164,6 +168,18 @@ class CodexWatchTest(unittest.TestCase):
             watch.read_local_health(path, self.sources, network, database)
         with sqlite3.connect(database) as db:
             body["record"]["payload"]["source"]["clock_quality"] = "valid"
+            body["record"]["quality"]["clock_valid"] = False
+            canonical = json.loads(json.dumps(body))
+            canonical["record"]["received_at_ms"] = 0
+            parent = hashlib.sha256(json.dumps(
+                canonical, separators=(",", ":")
+            ).encode()).hexdigest()
+            db.execute("UPDATE observations SET body=?,content_hash=? WHERE node='validator1'",
+                       (json.dumps(body, separators=(",", ":")), parent))
+        with self.assertRaisesRegex(ValueError, "local_health_archive_mismatch"):
+            watch.read_local_health(path, self.sources, network, database)
+        with sqlite3.connect(database) as db:
+            body["record"]["quality"]["clock_valid"] = True
             canonical = json.loads(json.dumps(body))
             canonical["record"]["received_at_ms"] = 0
             parent = hashlib.sha256(json.dumps(

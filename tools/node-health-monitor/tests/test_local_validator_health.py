@@ -71,6 +71,21 @@ class LocalValidatorHealthTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "readiness_clock"):
             sampler.check_readiness_clock({"node_time": now - 31, "last_block_utime": now}, now)
 
+    def test_missing_native_source_stays_unknown(self):
+        manifest = {"network_id": "a" * 64,
+                    "nodes": {node: {} for node in sampler.NODES}}
+
+        def fetch(node, _manifest, _validator):
+            if node == "validator1":
+                raise ValueError("native_unavailable")
+            return sample()
+
+        result = sampler.run(manifest, {}, {}, fetch=fetch)
+        self.assertNotIn("validator1", result["samples"])
+        self.assertEqual(result["verdicts"]["validator1"],
+                         {"status": "unknown", "reasons": ["native_unavailable"], "facts": {}})
+        self.assertEqual(result["whole_validator_health"], "unknown")
+
     def test_epoch_change_and_counter_reset_do_not_fake_progress(self):
         old = sample()
         new = sample()

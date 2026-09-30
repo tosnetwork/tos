@@ -127,6 +127,10 @@ def archived_native_parents(manager_db, samples, network_id):
                     native = record["payload"]["source"]
                     if native["content_hash"] != sample["native_hash"]:
                         continue
+                    observed_at = native["observed_at"]
+                    if not isinstance(observed_at, str) or not observed_at.endswith("Z"):
+                        raise ValueError("local_health_archive_mismatch")
+                    observed_ms = int(dt.datetime.fromisoformat(observed_at).timestamp() * 1000)
                     canonical = json.loads(body)
                     canonical["record"]["received_at_ms"] = 0
                     if (re.fullmatch(r"[0-9a-f]{64}", parent_hash) is None
@@ -146,8 +150,12 @@ def archived_native_parents(manager_db, samples, network_id):
                             or native["generation"] != str(sample["native_generation"])
                             or native["availability"] != "available"
                             or native["clock_quality"] != "valid"
-                            or not isinstance(native["observed_at"], str)
-                            or type(native["quality"]["instrumentation_complete"]) is not bool
+                            or native["quality"]["instrumentation_complete"] != sample["native_complete"]
+                            or record["observed_at_ms"] != observed_ms
+                            or record["quality"]["observed_at_ms"] != observed_ms
+                            or record["quality"]["availability"] != native["availability"]
+                            or record["quality"]["clock_valid"] is not True
+                            or record["quality"]["coverage"] != native["coverage"]["status"]
                             or native["coverage"]["missing_fields"] != sample["native_missing"]
                             or native["payload"]["consensus"]["instrumentation_complete"]
                             != sample["native_complete"]
