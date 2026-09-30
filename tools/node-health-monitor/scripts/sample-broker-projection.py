@@ -33,7 +33,6 @@ def private_token(path):
         info = os.fstat(fd)
         if (
             not stat.S_ISREG(info.st_mode)
-            or info.st_uid != os.getuid()
             or info.st_mode & 0o077
             or info.st_size > 4096
         ):

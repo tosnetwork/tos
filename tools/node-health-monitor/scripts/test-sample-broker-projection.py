@@ -145,6 +145,13 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(output["projection_status"], "caught_up")
         self.sock.unlink()
+        # The raw-file cap is inclusive. A trailing newline is trimmed by
+        # Rust secret(path), leaving 4095 valid graphic bytes.
+        self.token.write_text("-" * 4095 + "\n")
+        result, output = self.run_probe(self.document())
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(output["projection_status"], "caught_up")
+        self.sock.unlink()
         self.token.write_text("a" * 4097)
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--socket", str(self.sock), "--token-file", str(self.token)],
