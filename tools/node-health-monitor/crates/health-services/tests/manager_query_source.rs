@@ -84,6 +84,9 @@ async fn live_read_only_projection_cost_witness() {
     let mut peak_retained = 0usize;
     let mut slowest_page = std::time::Duration::ZERO;
     let mut slowest_grant = std::time::Duration::ZERO;
+    let mut late_publication_seen = false;
+    let mut slowest_late_grant = std::time::Duration::ZERO;
+    let mut slowest_late_health = std::time::Duration::ZERO;
     while !state.data.lock().unwrap().manager_caught_up && pages < 128 {
         let prior_reads = state.manager_projection_reads.load(std::sync::atomic::Ordering::Relaxed);
         let importing = state.clone();
@@ -117,6 +120,44 @@ async fn live_read_only_projection_cost_witness() {
         } else {
             None
         };
+        // Source reading has finished; observe the real importer's later
+        // publication phase holding Data, not a lock acquired by this test.
+        // Both control endpoints must answer within the unchanged deadline.
+        let mut late_elapsed = None;
+        if peak_retained >= 2_000 {
+            let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while !task.is_finished() && std::time::Instant::now() < until {
+                if !state.manager_source_read_active.load(Ordering::Acquire)
+                    && state.manager_import_gate.try_lock().is_err()
+                    && state.data.try_lock().is_err()
+                {
+                    let health = Request::builder()
+                        .uri("/v1/control/projection-health")
+                        .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                        .body(Body::empty())
+                        .unwrap();
+                    let health_started = std::time::Instant::now();
+                    let (health_response, grant_response) =
+                        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                            tokio::join!(
+                                control_router(state.clone()).oneshot(health),
+                                control_router(state.clone()).oneshot(request())
+                            )
+                        })
+                        .await
+                        .expect("late publication blocked control past five seconds");
+                    let elapsed = health_started.elapsed();
+                    assert_eq!(health_response.unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
+                    assert_eq!(grant_response.unwrap().status(), StatusCode::SERVICE_UNAVAILABLE);
+                    slowest_late_health = slowest_late_health.max(elapsed);
+                    slowest_late_grant = slowest_late_grant.max(elapsed);
+                    late_publication_seen = true;
+                    late_elapsed = Some(elapsed.as_millis());
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        }
         let (watermark, count) = task.await.unwrap().unwrap();
         let import_elapsed = started.elapsed();
         let retained = state
@@ -137,7 +178,7 @@ async fn live_read_only_projection_cost_witness() {
         }
         pages += 1;
         println!(
-            "page={pages} rows={count} retained={retained} global_m_seq={watermark} elapsed_ms={} concurrent_grant_ms={:?}",
+            "page={pages} rows={count} retained={retained} global_m_seq={watermark} elapsed_ms={} concurrent_grant_ms={:?} late_control_ms={late_elapsed:?}",
             import_elapsed.as_millis(),
             grant_elapsed.map(|elapsed| elapsed.as_millis())
         );
@@ -146,10 +187,16 @@ async fn live_read_only_projection_cost_witness() {
         concurrent_peak,
         "live M run did not witness a concurrent grant at >=2000 retained parents"
     );
+    assert!(
+        late_publication_seen,
+        "no late page Data-lock/control overlap at >=2000 retained parents"
+    );
     println!(
-        "peak_retained={peak_retained} slowest_page_ms={} slowest_concurrent_grant_ms={}",
+        "peak_retained={peak_retained} slowest_page_ms={} slowest_concurrent_grant_ms={} slowest_late_grant_ms={} slowest_late_health_ms={}",
         slowest_page.as_millis(),
-        slowest_grant.as_millis()
+        slowest_grant.as_millis(),
+        slowest_late_grant.as_millis(),
+        slowest_late_health.as_millis()
     );
     assert!(state.data.lock().unwrap().manager_caught_up);
     let caught_up_ms = started.elapsed().as_millis();
