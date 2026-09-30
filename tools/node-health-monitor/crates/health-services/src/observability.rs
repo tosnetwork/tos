@@ -313,6 +313,10 @@ struct ProjectionStateSample {
     cursor: Option<crate::query_ledger::ManagerCursor>,
 }
 
+#[cfg(test)]
+static PROJECTION_AFTER_FIRST_SAMPLE_HOOK: Mutex<Option<Box<dyn FnOnce() + Send>>> =
+    Mutex::new(None);
+
 fn projection_state_sample(
     state: &ObservabilityState,
 ) -> Result<ProjectionStateSample, StatusCode> {
@@ -366,8 +370,73 @@ fn projection_status(
 }
 #[cfg(test)]
 mod projection_state_tests {
-    use super::{projection_status, ProjectionStateSample};
+    use super::{
+        control_router, projection_status, ObservabilityState, ProjectionStateSample,
+        PROJECTION_AFTER_FIRST_SAMPLE_HOOK,
+    };
     use crate::query_ledger::ManagerCursor;
+    use crate::{durable::EvidenceDb, random_token, Inventory};
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use std::collections::BTreeSet;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn private_route_transition_is_a_503_not_a_caught_up_sample() {
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-projection-transition-{}-{}",
+            std::process::id(),
+            crate::hex(&random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let manager_path = directory.join("manager.sqlite");
+        let ledger_path = directory.join("query.sqlite");
+        let network = "a".repeat(64);
+        let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+        manager.bind_network(&network).unwrap();
+        let state = ObservabilityState::new(
+            Inventory {
+                network_id: network,
+                nodes: BTreeSet::from(["v1".into()]),
+                scopes: BTreeSet::from(["node".into()]),
+            },
+            vec![b'o'; 32],
+            vec![b'i'; 32],
+            vec![b'a'; 32],
+        )
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap()
+        .with_manager_evidence(manager_path)
+        .unwrap();
+        let changed = state.data.clone();
+        *PROJECTION_AFTER_FIRST_SAMPLE_HOOK.lock().unwrap() = Some(Box::new(move || {
+            changed.lock().unwrap().manager_caught_up = false;
+        }));
+        let request = Request::builder()
+            .uri("/v1/control/projection-health")
+            .header("authorization", format!("Bearer {}", "a".repeat(32)))
+            .body(Body::empty())
+            .unwrap();
+        let response = control_router(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["projection_status"], "transition");
+        assert_eq!(value["manager_conflicted"], false);
+        assert_eq!(value["caught_up_at_last_import"], false);
+        assert_eq!(value["cursor_global_m_seq"], "0");
+        assert_eq!(value["source_global_m_seq"], "0");
+        assert_eq!(value["lag_global_m_seq"], "0");
+        assert_eq!(value["source_identity_match"], true);
+        println!("TRANSITION_HTTP_STATUS=503 TRANSITION_BODY={value}");
+        drop(state);
+        drop(manager);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn concurrent_import_or_conflict_cannot_publish_caught_up() {
@@ -438,6 +507,10 @@ async fn projection_health(
     // the flags and durable cursor together under non-waiting locks, then do
     // the SQLite source-head I/O on the blocking pool without either lock.
     let before = projection_state_sample(&state)?;
+    #[cfg(test)]
+    if let Some(hook) = PROJECTION_AFTER_FIRST_SAMPLE_HOOK.lock().unwrap().take() {
+        hook();
+    }
     let path = path.clone();
     let network = state.inventory.network_id.clone();
     let head = tokio::time::timeout(
