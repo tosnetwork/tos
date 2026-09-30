@@ -27,7 +27,7 @@ Raw SHA-256:
 | `raw/late-publication/active-w-retention.log` | `05acbc2ef6b3f03789b628b389d9510771c2e45c3ff379a34982eeeb5c6c4b4c` |
 | `raw/late-publication/third-row-and-cursor-failure.log` | `9c708fe3ce84aa36e711f9dc4e1d9fe102aff25db0dd0a75d7e037d7fb6c3938` |
 
-This is a cost and lock-overlap witness, not C09 acceptance. Cursor/global-W integrity and underlying global-row scan work are separate open review items; no production deployment or 72-hour claim follows from these timings.
+This is a cost and lock-overlap witness, not C09 acceptance. Cursor/global-W integrity and bounded global-row paging now have the isolated controls below; shared-branch integration, deployed behavior, full socket/import overlap, and the 72-hour gate remain open. No production deployment claim follows from these timings.
 
 ## Source-bound companion controls
 
