@@ -121,6 +121,31 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)["error_kind"], "ValueError")
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
 
+    def test_transition_503_is_explicit_unavailable(self):
+        transition = self.document(projection_status="transition", source_global_m_seq="26", lag_global_m_seq="1")
+        result, output = self.run_probe(transition, 503)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(output["probe_ok"])
+        self.assertFalse(output["projection_caught_up"])
+        self.assertEqual(output["projection_status"], "transition")
+        self.assertEqual(output["http_status"], 503)
+        self.sock.unlink()
+        result, output = self.run_probe(transition, 200)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(output["error_kind"], "ValueError")
+        self.sock.unlink()
+        result, output = self.run_probe(self.document(projection_status="caught_up"), 503)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(output["error_kind"], "ValueError")
+        self.sock.unlink()
+        result, output = self.run_probe({**transition, "manager_conflicted": True}, 503)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(output["error_kind"], "ValueError")
+        self.sock.unlink()
+        result, output = self.run_probe({**transition, "source_global_m_seq": None}, 503)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(output["error_kind"], "ValueError")
+
     def test_service_token_rotation_matches_running_broker_parser(self):
         # The Rust service trims surrounding whitespace, accepts ASCII graphic
         # bytes, and caps the raw private file at 4096 bytes.

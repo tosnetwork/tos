@@ -89,7 +89,7 @@ def sample(sock_path, token_path):
         status = value.get("projection_status")
         if status not in {
             "caught_up", "lagging", "conflict", "source_unavailable",
-            "uninitialized", "identity_or_watermark_mismatch",
+            "uninitialized", "identity_or_watermark_mismatch", "transition",
         }:
             raise ValueError("projection status rejected")
         conflicted = value.get("manager_conflicted")
@@ -122,12 +122,25 @@ def sample(sock_path, token_path):
             raise ValueError("false lagging projection")
         if status == "source_unavailable" and not (reply.status == 503 and source is None):
             raise ValueError("false unavailable projection")
+        if status == "transition":
+            # Q changed during the producer's before/after snapshot. The M
+            # head was available, but this mixed generation is unavailable.
+            if reply.status != 503 or conflicted or source is None:
+                raise ValueError("false transition projection")
+            if cursor is None:
+                if identity is not None or lag is not None:
+                    raise ValueError("false transition projection")
+            elif type(identity) is not bool or lag != (
+                str(int(source) - int(cursor)) if int(source) >= int(cursor) else None
+            ):
+                raise ValueError("false transition projection")
         if status == "identity_or_watermark_mismatch" and not (
             reply.status == 503 and identity is False or reply.status == 503 and lag is None
         ):
             raise ValueError("false identity projection")
         return {
             "probe_ok": True,
+            "projection_caught_up": status == "caught_up",
             "http_status": reply.status,
             "projection_status": status,
             "manager_conflicted": conflicted,
