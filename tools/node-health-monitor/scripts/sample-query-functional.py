@@ -389,6 +389,8 @@ def process_owns_db(pid, path):
 
 
 def verify_retained_binding(envelope, run, q_path, m_path, baseline, pid):
+    if envelope.get("run_id") != run:
+        raise WitnessError("frozen_grant_binding")
     evidence = envelope["evidence"][0]
     query_id = evidence.get("evidence_id")
     parent_id = evidence["parent_evidence_ids"][0]

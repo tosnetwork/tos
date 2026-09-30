@@ -252,6 +252,9 @@ class FunctionalWitnessTests(unittest.TestCase):
         baseline = {"q_device": str(q_meta.st_dev), "q_inode": str(q_meta.st_ino)}
         with patch.object(witness, "process_owns_db"):
             witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
+            wrong_run = {**self.envelope, "run_id": "different-run"}
+            with self.assertRaisesRegex(witness.WitnessError, "frozen_grant_binding"):
+                witness.verify_retained_binding(wrong_run, "run", qpath, self.db, baseline, 123)
             q.execute("UPDATE query_grants SET body=json_set(body,'$.manager_watermark',0)")
             q.commit()
             with self.assertRaisesRegex(witness.WitnessError, "frozen_grant_binding"):
