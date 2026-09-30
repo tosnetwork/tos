@@ -21,7 +21,10 @@ recomputes its original hash, and checks node, process epoch, full process
 payload, positive PID, valid clock, and parent age in `[0, 180000]` ms. It also
 requires the running Q process to hold the exact Q ledger inode, Q's durable
 M cursor to identify the currently opened M inode/network, and Q's retained
-origin binding to contain the exact M parent sequence and serialized body.
+origin binding to contain the exact M parent sequence and serialized body. The
+same Q snapshot reads the grant's frozen Q and M watermarks from its durable
+body, and requires the selected Q evidence and retained M parent sequences to
+be no greater than those respective grant watermarks.
 The M lookup uses that retained sequence against `observations.store_seq`
 (`INTEGER PRIMARY KEY`) and checks the resulting hash and quarantine tuple;
 it does not scan historical M rows by content hash.
@@ -44,10 +47,17 @@ used.
 | Tokens | Operator and service tokens read from same-UID regular files with no group/other access, `O_NOFOLLOW`; never logged or written to a handoff file |
 | Binding | Running systemd Q PID, exact executable SHA-256, command-line M/Q/control/MCP paths, Q's open ledger inode, M cursor device/inode/network, and exact retained parent bytes must match |
 | Grant expiry | Q's returned `expires_in_seconds` must be exactly its existing 200-second maximum; the witness cannot request an extension |
-| Deadlines | Control connection and each revoke 3 s; MCP connection/each request 5 s; SQLite busy 0.5 s; functional phase 22 s, then at most two independently bounded revoke attempts (28 s total ceiling under responsive cancellation) |
+| Deadlines | Control connection and each revoke 3 s; MCP connection/each request 5 s; SQLite busy 0.5 s; functional phase 22 s, then at most two independently bounded revoke attempts (6 s) and the durable revocation read |
 | Bytes | 4096-byte request/control response, 32768-byte MCP/parent response, 1024-byte JSONL sample |
 | Log | Same-UID private directory and 0600 non-linked regular file; exclusive nonblocking lock, `fsync` per record, 4 MiB hard cap; only status/category/phase/elapsed/node slot/count, no token, payload or evidence ID |
 | Ledger | Before any isolated socket test, freeze a 0600 baseline file containing Q device/inode, starting grant count/body bytes/attempts, Q binary SHA and the three exact caps; pin that file's SHA-256 in invocation. Refuse new grants if growth exceeds 1024 grants, 32 MiB grant bodies or 3072 attempts |
+
+Preflight reserves the entire next slot's worst-case cost before issuing any
+grant: one or two grant rows, 32768 bytes per row (Q's `encoded` limit), and
+one or three attempts. Concurrent unrelated writers can still consume the
+reserved budget after preflight; this instrument is not a global quota
+enforcer. Such growth is a separate Q ledger gate, not evidence of successful
+functional sampling.
 
 At exactly five-minute cadence a 72-hour window creates at most 864 primary
 grants and 72 second negative-control grants, or 936 total. It makes at most
@@ -79,16 +89,24 @@ transport timeout that may have occurred after Q committed a grant. On timeout o
 other failure the script cancels the functional alarm, tries every known
 revoke through a new bounded control connection, and marks the sample failed
 if any revoke is not acknowledged. An unconfirmed grant must be inspected by
-the operator; grant expiry is not reported as a successful revoke.
+the operator; grant expiry is not reported as a successful revoke. Even after
+the control endpoint acknowledges revocation, the witness requires every
+known run ID to have `revoked=1` in the same pinned Q ledger inode.
 
 ## Review and acceptance boundary
 
 Offline tests cover exact parent/payload/age rejection, source hash mismatch,
-Q retained-binding and M inode rejection, negative-envelope validation,
-malformed grant cleanup registration, frozen baseline digest, and ledger budget
-refusal. Before scheduling, independently review interface
-facts and run an isolated Q/M socket integration with disposable databases,
-including a fault-injected query timeout and revoke acknowledgement. A live
+grant-frozen W, Q retained-binding and M inode rejection, negative-envelope
+validation, malformed grant cleanup registration, frozen baseline digest,
+reserved ledger budget, durable revocation, and the whole-run timeout at the
+head probe. An isolated one-shot control on 2026-09-30 used a disposable
+private M/Q directory, six archived process source envelopes refreshed only
+inside that disposable M, a separate Q process with generated private tokens,
+and a frozen empty Q baseline. The actual private control/MCP sockets passed
+one hourly-slot run (process, unknown consensus, cross-run denial): 2 grants,
+2 durable revocations, 335 ms. A fault-injected process-query timeout returned
+failure and left its one durable grant revoked. No live Q/M database was
+written. An independent source review remains required before scheduling. A live
 read-only dry run is **not** part of this branch's implementation. Deployment,
 timer wiring, and interpretation of a new 72-hour window remain separate
 operator decisions. This witness supplements the existing one-minute

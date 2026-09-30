@@ -42,6 +42,10 @@ class WitnessError(Exception):
         self.kind = kind
 
 
+class WholeRunTimeout(TimeoutError):
+    pass
+
+
 @contextmanager
 def call_deadline(seconds):
     """Preserve the shorter whole-run alarm around one blocking socket call."""
@@ -326,7 +330,7 @@ def frozen_baseline(path, expected_digest, expected_query_sha):
     return value
 
 
-def ledger_growth(path, baseline):
+def ledger_growth(path, baseline, reserve_grants=0, reserve_attempts=0):
     meta = os.stat(path, follow_symlinks=False)
     if not stat.S_ISREG(meta.st_mode) or str(meta.st_dev) != baseline["q_device"] or str(meta.st_ino) != baseline["q_inode"]:
         raise WitnessError("q_ledger_identity")
@@ -343,11 +347,27 @@ def ledger_growth(path, baseline):
         raise WitnessError("q_ledger_identity")
     if count < baseline["grants"] or body < baseline["grant_body_bytes"] or attempts < baseline["attempts"]:
         raise WitnessError("ledger_regression")
-    if (count > baseline["grants"] + MAX_NEW_GRANTS
-            or body > baseline["grant_body_bytes"] + MAX_NEW_GRANT_BODY_BYTES
-            or attempts > baseline["attempts"] + MAX_NEW_ATTEMPTS):
+    if (count + reserve_grants > baseline["grants"] + MAX_NEW_GRANTS
+            or body + reserve_grants * 32768 > baseline["grant_body_bytes"] + MAX_NEW_GRANT_BODY_BYTES
+            or attempts + reserve_attempts > baseline["attempts"] + MAX_NEW_ATTEMPTS):
         raise WitnessError("ledger_growth")
     return count - baseline["grants"]
+
+
+def ledger_revoked(path, baseline, runs):
+    meta = os.stat(path, follow_symlinks=False)
+    if str(meta.st_dev) != baseline["q_device"] or str(meta.st_ino) != baseline["q_inode"]:
+        return False
+    conn = sqlite3.connect("file:" + str(Path(path).resolve()) + "?mode=ro", uri=True, timeout=SQLITE_TIMEOUT_S)
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        for run in runs:
+            if conn.execute("SELECT revoked FROM query_grants WHERE run_id=?", (run,)).fetchone() != (1,):
+                return False
+    finally:
+        conn.close()
+    end = os.stat(path, follow_symlinks=False)
+    return (end.st_dev, end.st_ino) == (meta.st_dev, meta.st_ino)
 
 
 def process_owns_db(pid, path):
@@ -367,7 +387,7 @@ def process_owns_db(pid, path):
     raise WitnessError("query_ledger_not_open")
 
 
-def verify_retained_binding(envelope, q_path, m_path, baseline, pid):
+def verify_retained_binding(envelope, run, q_path, m_path, baseline, pid):
     evidence = envelope["evidence"][0]
     query_id = evidence.get("evidence_id")
     parent_id = evidence["parent_evidence_ids"][0]
@@ -391,15 +411,29 @@ def verify_retained_binding(envelope, q_path, m_path, baseline, pid):
         m.execute("BEGIN TRANSACTION")
         q.execute("BEGIN TRANSACTION")
         cursor = q.execute("SELECT network,device,inode,watermark FROM query_manager_cursor WHERE singleton=1").fetchone()
-        binding = q.execute("SELECT o.manager_seq,o.body FROM query_projection_origin p "
+        if not cursor:
+            raise WitnessError("retained_binding_missing")
+        frozen = q.execute("SELECT body FROM query_grants WHERE run_id=?", (run,)).fetchone()
+        if not frozen:
+            raise WitnessError("frozen_grant_missing")
+        grant = checked_json(frozen[0], 32768)
+        q_limit, m_limit = grant.get("watermark"), grant.get("manager_watermark")
+        if (grant.get("run_id") != run or grant.get("network_id") != cursor[0]
+                or type(q_limit) is not int or type(m_limit) is not int
+                or q_limit <= 0 or m_limit <= 0
+                or envelope["data"]["node_id"] not in grant.get("nodes", [])
+                or "node" not in grant.get("scopes", [])):
+            raise WitnessError("frozen_grant_binding")
+        binding = q.execute("SELECT o.manager_seq,o.body,e.store_seq FROM query_projection_origin p "
                             "JOIN query_origins o ON o.origin_id=p.origin_id "
                             "JOIN query_evidence e ON e.evidence_id=p.query_evidence_id "
                             "WHERE p.query_evidence_id=? AND p.origin_id=? LIMIT 2",
                             (query_id, parent_id)).fetchall()
         if not cursor or len(binding) != 1:
             raise WitnessError("retained_binding_missing")
-        manager_seq, q_body = binding[0]
-        if type(manager_seq) is not int or manager_seq <= 0:
+        manager_seq, q_body, q_seq = binding[0]
+        if (type(manager_seq) is not int or manager_seq <= 0 or manager_seq > m_limit
+                or type(q_seq) is not int or q_seq <= 0 or q_seq > q_limit):
             raise WitnessError("retained_source_identity")
         network = m.execute("SELECT network FROM database_identity WHERE singleton=1").fetchone()
         source = m.execute("SELECT content_hash,node,scope,process_epoch,source_epoch,source,body "
@@ -499,6 +533,7 @@ def run(args):
     error_kind = None
     cleanup_ok = True
     ledger_delta = None
+    baseline = None
     fixed_grant_query_status = "not_run"
     head_status = "not_run"
     head_probe_error = None
@@ -519,9 +554,17 @@ def run(args):
         service = private_token(args.service_token_file)
         baseline = frozen_baseline(args.baseline_file, args.expected_baseline_sha256, args.expected_query_sha256)
         pid = bound_service(args.query_unit, args.expected_query_sha256, args.control_socket, args.mcp_socket, args.m_db, args.q_ledger)
-        ledger_delta = ledger_growth(args.q_ledger, baseline)
+        hourly = slot % 12 == 0
+        # Reserve the full worst-case cost before any side-effect: each grant
+        # body is capped at 32768 bytes by QueryLedger::encoded.
+        ledger_delta = ledger_growth(args.q_ledger, baseline, 2 if hourly else 1,
+                                     3 if hourly else 1)
         try:
             head_status = projection_head(args.control_socket, service)
+        except WholeRunTimeout:
+            # The outer 22-second alarm is a whole-run failure, even when it
+            # fires during the independent head probe. Never issue a grant.
+            raise
         except Exception as exc:
             head_probe_error = exc.kind if isinstance(exc, WitnessError) else type(exc).__name__
             head_status = "probe_failed"
@@ -536,15 +579,15 @@ def run(args):
         try:
             session.initialize()
             envelope = session.snapshot(run_id, node, end, "process")
-            parent = verify_retained_binding(envelope, args.q_ledger, args.m_db, baseline, pid)
+            parent = verify_retained_binding(envelope, run_id, args.q_ledger, args.m_db, baseline, pid)
             validate_process(envelope, run_id, node, int(now.timestamp() * 1000), parent)
             fixed_grant_query_status = "pass"
-            if slot % 12 == 0:
+            if hourly:
                 phase = "consensus_negative"
                 validate_negative(session.snapshot(run_id, node, end, "consensus"), "CACHE_MISS", run_id)
         finally:
             session.close()
-        if slot % 12 == 0:
+        if hourly:
             phase = "scope_grant"
             other = NODES[(slot + 1) % len(NODES)]
             other_run, other_token = issue(args.control_socket, operator, other, start, end, leases)
@@ -566,6 +609,11 @@ def run(args):
         signal.setitimer(signal.ITIMER_REAL, 0)
         for run_id in reversed(leases):
             cleanup_ok = bool(operator and run_id) and revoke(args.control_socket, operator, run_id) and cleanup_ok
+        if cleanup_ok and leases:
+            try:
+                cleanup_ok = baseline is not None and ledger_revoked(args.q_ledger, baseline, leases)
+            except (OSError, sqlite3.Error, WitnessError):
+                cleanup_ok = False
         if not cleanup_ok:
             status = "failed"
             error_kind = "cleanup_unconfirmed"
@@ -593,7 +641,7 @@ def main():
             or re.fullmatch(r"[0-9a-f]{64}", args.expected_baseline_sha256) is None):
         parser.error("invalid pinned baseline or binary digest")
     def expired(_signum, _frame):
-        raise TimeoutError("functional witness deadline")
+        raise WholeRunTimeout("functional witness deadline")
     signal.signal(signal.SIGALRM, expired)
     signal.setitimer(signal.ITIMER_REAL, WHOLE_RUN_TIMEOUT_S)
     try:

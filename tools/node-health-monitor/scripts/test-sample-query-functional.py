@@ -91,6 +91,24 @@ class FunctionalWitnessTests(unittest.TestCase):
                 witness.issue("socket", "token", "validator1", "start", "end", leases)
             self.assertEqual(leases, [None])
 
+    def test_whole_run_timeout_in_head_probe_never_issues_grant(self):
+        log = str(Path(self.temporary.name) / "sample.jsonl")
+        args = SimpleNamespace(log_file=log, operator_token_file="operator", service_token_file="service",
+                               baseline_file="baseline", expected_baseline_sha256="a" * 64,
+                               expected_query_sha256="b" * 64, query_unit="isolated-query",
+                               control_socket="control", mcp_socket="mcp", m_db="m", q_ledger="q")
+        with (patch.object(witness, "private_token", return_value="a" * 64),
+              patch.object(witness, "frozen_baseline", return_value={}),
+              patch.object(witness, "bound_service", return_value=123),
+              patch.object(witness, "ledger_growth", return_value=0),
+              patch.object(witness, "projection_head", side_effect=witness.WholeRunTimeout("whole run")),
+              patch.object(witness, "issue") as issue):
+            self.assertEqual(witness.run(args), 1)
+            issue.assert_not_called()
+        row = json.loads(Path(log).read_text().strip())
+        self.assertEqual((row["status"], row["error_kind"], row["grants_created"]),
+                         ("failed", "WholeRunTimeout", 0))
+
     def test_ledger_growth_refuses_before_next_grant(self):
         path = str(Path(self.temporary.name) / "q.db")
         conn = sqlite3.connect(path)
@@ -104,6 +122,27 @@ class FunctionalWitnessTests(unittest.TestCase):
         self.assertEqual(witness.ledger_growth(path, baseline), 1)
         with self.assertRaisesRegex(witness.WitnessError, "ledger_growth"):
             witness.ledger_growth(path, {**baseline, "attempts": -4000})
+        with patch.object(witness, "MAX_NEW_GRANTS", 2):
+            with self.assertRaisesRegex(witness.WitnessError, "ledger_growth"):
+                witness.ledger_growth(path, baseline, reserve_grants=2)
+        with patch.object(witness, "MAX_NEW_GRANT_BODY_BYTES", 32768):
+            with self.assertRaisesRegex(witness.WitnessError, "ledger_growth"):
+                witness.ledger_growth(path, baseline, reserve_grants=1)
+
+    def test_cleanup_requires_durable_revoked_row(self):
+        path = str(Path(self.temporary.name) / "revocation.db")
+        conn = sqlite3.connect(path)
+        conn.execute("CREATE TABLE query_grants(run_id TEXT,revoked INTEGER)")
+        conn.execute("INSERT INTO query_grants VALUES('run',0)")
+        conn.commit()
+        meta = os.stat(path)
+        baseline = {"q_device": str(meta.st_dev), "q_inode": str(meta.st_ino)}
+        self.assertFalse(witness.ledger_revoked(path, baseline, ["run"]))
+        conn.execute("UPDATE query_grants SET revoked=1")
+        conn.commit()
+        self.assertTrue(witness.ledger_revoked(path, baseline, ["run"]))
+        self.assertFalse(witness.ledger_revoked(path, baseline, ["missing"]))
+        conn.close()
 
     def test_mcp_session_initializes_before_call_and_binds_run(self):
         calls = []
@@ -130,14 +169,18 @@ class FunctionalWitnessTests(unittest.TestCase):
         qpath = str(Path(self.temporary.name) / "q-binding.db")
         q = sqlite3.connect(qpath)
         q.executescript("CREATE TABLE query_manager_cursor(singleton INTEGER,network TEXT,device TEXT,inode TEXT,watermark INTEGER);"
-                        "CREATE TABLE query_evidence(evidence_id TEXT);"
+                        "CREATE TABLE query_evidence(evidence_id TEXT,store_seq INTEGER);"
+                        "CREATE TABLE query_grants(run_id TEXT,body BLOB);"
                         "CREATE TABLE query_origins(origin_id TEXT,manager_seq INTEGER,body BLOB);"
                         "CREATE TABLE query_projection_origin(query_evidence_id TEXT,origin_id TEXT);")
         m_meta = os.stat(self.db)
         q_meta = os.stat(qpath)
         q.execute("INSERT INTO query_manager_cursor VALUES(1,?,?,?,1)",
                   ("network", str(m_meta.st_dev), str(m_meta.st_ino)))
-        q.execute("INSERT INTO query_evidence VALUES(?)", ("b" * 64,))
+        q.execute("INSERT INTO query_evidence VALUES(?,1)", ("b" * 64,))
+        q.execute("INSERT INTO query_grants VALUES(?,?)", ("run", json.dumps({
+            "run_id": "run", "network_id": "network", "nodes": ["validator1"],
+            "scopes": ["node"], "watermark": 1, "manager_watermark": 1}).encode()))
         q.execute("INSERT INTO query_origins VALUES(?,?,?)", (self.parent_id, 1, json.dumps({
             "store_seq": "1", "evidence_id": self.parent_id, "evidence": self.parent},
             separators=(",", ":")).encode()))
@@ -145,11 +188,22 @@ class FunctionalWitnessTests(unittest.TestCase):
         q.commit()
         baseline = {"q_device": str(q_meta.st_dev), "q_inode": str(q_meta.st_ino)}
         with patch.object(witness, "process_owns_db"):
-            witness.verify_retained_binding(self.envelope, qpath, self.db, baseline, 123)
+            witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
+            q.execute("UPDATE query_grants SET body=json_set(body,'$.manager_watermark',0)")
+            q.commit()
+            with self.assertRaisesRegex(witness.WitnessError, "frozen_grant_binding"):
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
+            q.execute("UPDATE query_grants SET body=json_set(body,'$.manager_watermark',1)")
+            q.execute("UPDATE query_evidence SET store_seq=2")
+            q.commit()
+            with self.assertRaisesRegex(witness.WitnessError, "retained_source_identity"):
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
+            q.execute("UPDATE query_evidence SET store_seq=1")
+            q.commit()
             q.execute("UPDATE query_origins SET body=?", (b"{}",))
             q.commit()
             with self.assertRaisesRegex(witness.WitnessError, "retained_parent_changed"):
-                witness.verify_retained_binding(self.envelope, qpath, self.db, baseline, 123)
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
             q.execute("UPDATE query_origins SET body=?", (json.dumps({
                 "store_seq": "1", "evidence_id": self.parent_id, "evidence": self.parent},
                 separators=(",", ":")).encode(),))
@@ -158,27 +212,27 @@ class FunctionalWitnessTests(unittest.TestCase):
             m.execute("UPDATE observations SET process_epoch='other'")
             m.commit()
             with self.assertRaisesRegex(witness.WitnessError, "retained_source_tuple"):
-                witness.verify_retained_binding(self.envelope, qpath, self.db, baseline, 123)
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
             m.execute("UPDATE observations SET process_epoch='epoch-1'")
             changed = json.loads(json.dumps(self.parent))
             changed["record"]["payload"]["source"]["payload"]["pid"] = 43
             m.execute("UPDATE observations SET body=?", (json.dumps(changed),))
             m.commit()
             with self.assertRaisesRegex(witness.WitnessError, "parent_hash"):
-                witness.verify_retained_binding(self.envelope, qpath, self.db, baseline, 123)
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
             m.execute("UPDATE observations SET body=?", (json.dumps(self.parent),))
             m.execute("INSERT INTO quarantined VALUES(?,?,?,?,?)",
                       ("validator1", "node", "epoch-1", "source-1", "process"))
             m.commit()
             with self.assertRaisesRegex(witness.WitnessError, "retained_parent_quarantined"):
-                witness.verify_retained_binding(self.envelope, qpath, self.db, baseline, 123)
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
             m.execute("DELETE FROM quarantined")
             m.commit()
             m.close()
             q.execute("UPDATE query_manager_cursor SET inode='0'")
             q.commit()
             with self.assertRaisesRegex(witness.WitnessError, "retained_source_identity"):
-                witness.verify_retained_binding(self.envelope, qpath, self.db, baseline, 123)
+                witness.verify_retained_binding(self.envelope, "run", qpath, self.db, baseline, 123)
         q.close()
 
     def test_frozen_baseline_digest_and_budget(self):
@@ -231,13 +285,20 @@ class FunctionalWitnessTests(unittest.TestCase):
              patch.object(witness, "bound_service", return_value=123), \
              patch.object(witness, "frozen_baseline", return_value={}), \
              patch.object(witness, "ledger_growth", return_value=1), \
-             patch.object(witness, "projection_head", return_value="lagging"), \
+             patch.object(witness, "projection_head", return_value="lagging") as head_probe, \
              patch.object(witness, "issue", side_effect=fake_issue), \
              patch.object(witness, "McpSession", FakeSession), \
              patch.object(witness, "validate_process"), \
              patch.object(witness, "verify_retained_binding"), \
+             patch.object(witness, "ledger_revoked", return_value=True), \
              patch.object(witness, "revoke", return_value=True):
             self.assertEqual(witness.run(args), 0)
+            args.log_file = str(Path(self.temporary.name) / "probe-timeout.jsonl")
+            head_probe.side_effect = TimeoutError("head call deadline")
+            self.assertEqual(witness.run(args), 1)
+        timeout_row = json.loads(Path(args.log_file).read_text().strip())
+        self.assertEqual(timeout_row["fixed_grant_query_status"], "pass")
+        self.assertEqual(timeout_row["projection_head_status"], "probe_failed")
         row = json.loads(log.read_text().strip())
         self.assertEqual(row["fixed_grant_query_status"], "pass")
         self.assertEqual(row["projection_head_status"], "lagging")
@@ -259,6 +320,7 @@ class FunctionalWitnessTests(unittest.TestCase):
              patch.object(witness, "ledger_growth", return_value=1), \
              patch.object(witness, "projection_head", return_value="caught_up"), \
              patch.object(witness, "issue", side_effect=timeout_issue), \
+             patch.object(witness, "ledger_revoked", return_value=True), \
              patch.object(witness, "revoke", return_value=True) as revoke:
             self.assertEqual(witness.run(args), 1)
         revoke.assert_called_once_with("control", "secret", run)
