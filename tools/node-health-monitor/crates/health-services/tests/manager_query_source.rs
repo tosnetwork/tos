@@ -302,6 +302,29 @@ fn diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup() {
     .unwrap();
     drop(sql);
     let inventory = Inventory {
+        network_id: network.clone(),
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap();
+    assert!(state
+        .with_manager_evidence(manager_path.clone())
+        .err()
+        .unwrap()
+        .contains("invalid persisted M projection cursor"));
+    // A syntactically valid old diagnostic anchor is equally insufficient:
+    // W=2 would otherwise skip the process row at seq 2 on restart.
+    let sql = rusqlite::Connection::open(&ledger_path).unwrap();
+    sql.execute(
+        "UPDATE query_manager_cursor SET anchor_seq=1,anchor_hash=?1 WHERE singleton=1",
+        ["d".repeat(64)],
+    )
+    .unwrap();
+    drop(sql);
+    let inventory = Inventory {
         network_id: network,
         nodes: BTreeSet::from(["v1".into()]),
         scopes: BTreeSet::from(["node".into()]),

@@ -31,13 +31,14 @@ fn validate_manager_cursor(cursor: &ManagerCursor) -> Result<(), String> {
     if !tos_health_core::wire::hash(&cursor.network)
         || (cursor.watermark == 0) != cursor.anchor.is_none()
         || cursor.anchor.as_ref().is_some_and(|(seq, hash)| {
-            *seq == 0 || *seq > cursor.watermark || !tos_health_core::wire::hash(hash)
+            *seq != cursor.watermark || !tos_health_core::wire::hash(hash)
         })
     {
         return Err("invalid persisted M projection cursor".into());
     }
-    // A nonzero global boundary always anchors an actual M observation. It
-    // may be a non-process row when no process row exists at that sequence.
+    // The anchor identifies the exact global M watermark row, including when
+    // that row is non-process. An older valid hash cannot justify skipping
+    // later process rows before the persisted watermark.
     Ok(())
 }
 
@@ -309,9 +310,9 @@ impl QueryLedger {
             .as_ref()
             .filter(|anchor| previous.and_then(|old| old.anchor.as_ref()) != Some(*anchor))
         {
-            // A changed anchor is justified only by a process row already
-            // projected and retained in Q. The M page reader witnessed the
-            // original row; this check prevents a direct cursor-only jump.
+            // A changed anchor is justified by a retained projected process
+            // row or the M reader's exact global-boundary witness (which may
+            // be diagnostic). This prevents a direct cursor-only jump.
             let witnessed: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM query_origins WHERE origin_id=?1 AND manager_seq=?2)",

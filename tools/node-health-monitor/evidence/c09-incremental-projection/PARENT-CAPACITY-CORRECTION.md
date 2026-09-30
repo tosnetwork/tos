@@ -34,3 +34,12 @@ the nonzero-watermark/global-anchor validation compiled but made that exact
 negative test fail at its startup-refusal assertion (exit 101); restoring it
 returned exit 0. This chose the global-row-anchor proof, rather than claiming
 that every nonzero M prefix contains a process observation.
+
+A further restored-ledger control forges `W=2` while retaining the valid
+diagnostic row-1 hash as an older anchor. The cursor validator now requires
+`anchor.seq == W`; the M reader also checks that hash against M's indexed
+`store_seq=W` row. Replacing the equality check with the old `anchor.seq <= W`
+behavior compiled, but failed the new startup-refusal assertion (exit 101).
+The restored focused test and full relevant suite passed (19 passed, two
+opt-in tests ignored). No claim is made that a nonzero W requires a *process*
+anchor: the actual global W row may be diagnostic.
