@@ -24,6 +24,8 @@ type RetainedSqlRow = (String, String, String, String, String, String, String, S
 #[derive(Debug)]
 pub struct ProjectionPage {
     pub cursor: crate::query_ledger::ManagerCursor,
+    /// Same-snapshot global boundary that is not a projected process parent.
+    pub boundary_witness: Option<(u64, String)>,
     pub records: Vec<(EvidenceRow, Evidence)>,
     pub quarantined_retained: BTreeSet<String>,
     pub caught_up: bool,
@@ -224,7 +226,7 @@ pub fn read_process_projection_page(
     if let Some((seq, expected)) = previous.and_then(|old| old.anchor.as_ref()) {
         let actual: Option<String> = conn
             .query_row(
-                "SELECT content_hash FROM observations WHERE store_seq=?1 AND source='process'",
+                "SELECT content_hash FROM observations WHERE store_seq=?1",
                 [i64::try_from(*seq).map_err(failure)?],
                 |row| row.get(0),
             )
@@ -353,6 +355,26 @@ pub fn read_process_projection_page(
         records.push((row, projected));
     }
     drop(query);
+    let mut boundary_witness = None;
+    if caught_up && watermark > 0 {
+        let boundary: Option<String> = conn
+            .query_row(
+                "SELECT content_hash FROM observations WHERE store_seq=?1",
+                [i64::try_from(watermark).map_err(failure)?],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(failure)?;
+        let digest = boundary.ok_or("M projection global boundary missing")?;
+        if !tos_health_core::wire::hash(&digest) {
+            return Err("M projection global boundary malformed".into());
+        }
+        let global = (watermark, digest);
+        if anchor.as_ref() != Some(&global) {
+            boundary_witness = Some(global.clone());
+            anchor = Some(global);
+        }
+    }
     let end_meta = std::fs::symlink_metadata(path).map_err(failure)?;
     if end_meta.dev() != meta.dev() || end_meta.ino() != meta.ino() {
         return Err("M projection database replaced during read".into());
@@ -365,6 +387,7 @@ pub fn read_process_projection_page(
             watermark: if caught_up { watermark } else { last },
             anchor,
         },
+        boundary_witness,
         records,
         quarantined_retained,
         caught_up,

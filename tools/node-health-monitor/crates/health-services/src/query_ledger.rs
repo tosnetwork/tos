@@ -29,15 +29,15 @@ type CursorSqlRow = (String, String, String, i64, Option<i64>, Option<String>);
 
 fn validate_manager_cursor(cursor: &ManagerCursor) -> Result<(), String> {
     if !tos_health_core::wire::hash(&cursor.network)
+        || (cursor.watermark == 0) != cursor.anchor.is_none()
         || cursor.anchor.as_ref().is_some_and(|(seq, hash)| {
             *seq == 0 || *seq > cursor.watermark || !tos_health_core::wire::hash(hash)
         })
     {
         return Err("invalid persisted M projection cursor".into());
     }
-    // A nonzero watermark can have no process anchor when the source snapshot
-    // contains only other observation classes. The page reader, not this Q
-    // ledger, witnesses that absence before the cursor is committed.
+    // A nonzero global boundary always anchors an actual M observation. It
+    // may be a non-process row when no process row exists at that sequence.
     Ok(())
 }
 
@@ -263,6 +263,7 @@ impl QueryLedger {
         &mut self,
         previous: Option<&ManagerCursor>,
         next: &ManagerCursor,
+        boundary_witness: Option<&(u64, String)>,
     ) -> Result<(), String> {
         validate_manager_cursor(next)?;
         if previous.is_some_and(|old| {
@@ -318,7 +319,10 @@ impl QueryLedger {
                     |row| row.get(0),
                 )
                 .map_err(failure)?;
-            if !witnessed {
+            let witnessed_boundary = boundary_witness.is_some_and(|boundary| {
+                boundary == &(next.watermark, hash.clone()) && *seq == next.watermark
+            });
+            if !witnessed && !witnessed_boundary {
                 return Err("M cursor anchor has no retained source row".into());
             }
         }
