@@ -105,6 +105,7 @@ fn persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor() {
     assert!(ledger
         .commit_manager_cursor(Some(&previous), &cursor, None)
         .unwrap_err()
+        .to_string()
         .contains("no retained source row"));
     let sql = rusqlite::Connection::open(&path).unwrap();
     sql.execute("UPDATE query_manager_cursor SET network='bad' WHERE singleton=1", []).unwrap();
@@ -736,8 +737,8 @@ fn non_anchor_retained_parent_body_change_is_refused_by_sequence_lookup() {
 }
 
 #[tokio::test]
-async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart() {
-    for mode in ["projection_insert", "cursor_commit"] {
+async fn unknown_projection_or_cursor_commit_failure_revokes_old_grant() {
+    for mode in ["projection_insert", "cursor_commit", "spoofed_retryable"] {
         let directory = std::env::temp_dir().join(format!(
             "nhm-m-query-failure-{mode}-{}-{}",
             std::process::id(),
@@ -800,11 +801,18 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
                  BEGIN SELECT RAISE(FAIL,'injected cursor commit'); END;",
                 )
                 .unwrap(),
+            "spoofed_retryable" => conn
+                .execute_batch(
+                    "CREATE TRIGGER c09_inject BEFORE INSERT ON query_evidence
+                 WHEN NEW.store_seq=3 BEGIN SELECT RAISE(FAIL,'Q_SQLITE_RETRYABLE: database is locked injected'); END;",
+                )
+                .unwrap(),
             _ => unreachable!(),
         }
         assert!(import_manager(&state).unwrap_err().contains("injected"));
         assert!(state.data.lock().unwrap().manager_conflicted);
-        if mode == "projection_insert" {
+        assert!(!state.data.lock().unwrap().manager_caught_up);
+        if mode != "cursor_commit" {
             // The third row failed inside one page transaction. Neither the
             // first new row nor the in-memory candidate may escape it.
             assert_eq!(state.data.lock().unwrap().store.watermark(), 1);
@@ -843,10 +851,37 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
             )
             .await
             .unwrap();
-        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
-        drop(state);
+        assert_eq!(
+            refused.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unknown Q failure revokes {mode}"
+        );
+        let request_new_grant = || {
+            Request::builder()
+                .method("POST")
+                .uri("/v1/control/grants")
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                    "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                    .to_string(),
+                ))
+                .unwrap()
+        };
+        assert_eq!(
+            control_router(state.clone()).oneshot(request_new_grant()).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "lagging import must not publish a new fixed W"
+        );
         conn.execute_batch("DROP TRIGGER c09_inject").unwrap();
         drop(conn);
+        assert!(import_manager(&state).unwrap_err().contains("operator review"));
+        assert_eq!(
+            control_router(state.clone()).oneshot(request_new_grant()).await.unwrap().status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        drop(state);
         let restored =
             ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
                 .unwrap()
@@ -872,14 +907,90 @@ async fn projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_re
             3,
             "committed parents must replay without another query row"
         );
-        assert!(
-            restored.data.lock().unwrap().grants.is_empty(),
-            "revoked grant must not renew across restart"
-        );
+        assert!(!restored
+            .data
+            .lock()
+            .unwrap()
+            .grants
+            .contains_key(grant["run_id"].as_str().unwrap()));
         drop(restored);
         drop(manager);
         std::fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[tokio::test]
+async fn sqlite_busy_projection_pause_keeps_verified_fixed_grant() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-busy-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&"a".repeat(64)).unwrap();
+    manager.insert(row("edge-epoch-1")).unwrap();
+    let inventory = Inventory {
+        network_id: "a".repeat(64),
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let state = ObservabilityState::new(inventory, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&ledger_path)
+        .unwrap()
+        .with_manager_evidence(manager_path.clone())
+        .unwrap();
+    let grant = control_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/control/grants")
+                .header("authorization", format!("Bearer {}", "o".repeat(32)))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],
+                        "start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:01:00Z"})
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(grant.status(), StatusCode::OK);
+    let grant = body(grant).await;
+    manager.insert(row("edge-epoch-2")).unwrap();
+    let lock = rusqlite::Connection::open(&ledger_path).unwrap();
+    lock.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let error = import_manager(&state).unwrap_err();
+    assert!(error.contains("database is locked"), "{error}");
+    assert!(!state.data.lock().unwrap().manager_conflicted);
+    assert!(!state.data.lock().unwrap().manager_caught_up);
+    // A concurrent SQLite writer also blocks attempt accounting. Release it
+    // before proving the old grant is usable; this is not a 5-second route
+    // latency claim while the database itself is still locked.
+    lock.execute_batch("ROLLBACK").unwrap();
+    let old = query_router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/query/capabilities")
+                .header("authorization", format!("Bearer {}", "a".repeat(32)))
+                .header("x-tos-run-token", grant["run_token"].as_str().unwrap())
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({"run_id":grant["run_id"]}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(old.status(), StatusCode::OK);
+    assert_eq!(import_manager(&state).unwrap(), (2, 1));
+    drop(state);
+    drop(lock);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[tokio::test]

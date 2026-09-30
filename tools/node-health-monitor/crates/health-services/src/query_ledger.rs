@@ -72,6 +72,59 @@ fn failure(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+/// Only SQLite's typed BUSY/LOCKED/FULL/IOERR write failures may pause an
+/// import without treating its already-verified fixed-W parents as changed.
+/// Trigger/constraint errors and all non-SQLite failures remain untagged.
+#[derive(Debug)]
+pub enum ProjectionWriteError {
+    RecoverableSqlite(String),
+    Capacity(&'static str),
+    Refused(String),
+}
+
+impl ProjectionWriteError {
+    pub fn is_proven_recoverable(&self) -> bool {
+        matches!(self, Self::RecoverableSqlite(_) | Self::Capacity(_))
+    }
+}
+
+impl std::fmt::Display for ProjectionWriteError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let message = match self {
+            Self::RecoverableSqlite(message) | Self::Refused(message) => message.as_str(),
+            Self::Capacity(message) => message,
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl From<String> for ProjectionWriteError {
+    fn from(message: String) -> Self {
+        Self::Refused(message)
+    }
+}
+
+impl From<&str> for ProjectionWriteError {
+    fn from(message: &str) -> Self {
+        Self::Refused(message.to_owned())
+    }
+}
+
+fn projection_sql_failure(error: rusqlite::Error) -> ProjectionWriteError {
+    if let rusqlite::Error::SqliteFailure(details, _) = &error {
+        if matches!(
+            details.code,
+            rusqlite::ErrorCode::DatabaseBusy
+                | rusqlite::ErrorCode::DatabaseLocked
+                | rusqlite::ErrorCode::DiskFull
+                | rusqlite::ErrorCode::SystemIoFailure
+        ) {
+            return ProjectionWriteError::RecoverableSqlite(error.to_string());
+        }
+    }
+    ProjectionWriteError::Refused(error.to_string())
+}
+
 fn encoded(grant: &Grant) -> Result<Vec<u8>, String> {
     let body = serde_json::to_vec(grant).map_err(failure)?;
     if body.len() > 32_768 {
@@ -264,7 +317,7 @@ impl QueryLedger {
         previous: Option<&ManagerCursor>,
         next: &ManagerCursor,
         boundary_witness: Option<&(u64, String)>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ProjectionWriteError> {
         validate_manager_cursor(next)?;
         if previous.is_some_and(|old| {
             old.network != next.network
@@ -279,13 +332,15 @@ impl QueryLedger {
         }) {
             return Err("invalid M projection cursor advancement".into());
         }
-        let tx =
-            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(projection_sql_failure)?;
         let actual: Option<CursorSqlRow> = tx.query_row(
             "SELECT network,device,inode,watermark,anchor_seq,anchor_hash FROM query_manager_cursor WHERE singleton=1",
             [],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?)),
-        ).optional().map_err(failure)?;
+        ).optional().map_err(projection_sql_failure)?;
         let expected = previous
             .map(|old| -> Result<_, String> {
                 Ok((
@@ -318,7 +373,7 @@ impl QueryLedger {
                     params![hash, i64::try_from(*seq).map_err(failure)?],
                     |row| row.get(0),
                 )
-                .map_err(failure)?;
+                .map_err(projection_sql_failure)?;
             let witnessed_boundary = boundary_witness.is_some_and(|boundary| {
                 boundary == &(next.watermark, hash.clone()) && *seq == next.watermark
             });
@@ -336,8 +391,8 @@ impl QueryLedger {
                 i64::try_from(next.watermark).map_err(failure)?,
                 next.anchor.as_ref().map(|(seq,_)| i64::try_from(*seq).map_err(failure)).transpose()?,
                 next.anchor.as_ref().map(|(_,hash)| hash)],
-        ).map_err(failure)?;
-        tx.commit().map_err(failure)
+        ).map_err(projection_sql_failure)?;
+        tx.commit().map_err(projection_sql_failure)
     }
 
     pub fn create(&mut self, grant: &Grant, now_ms: u64) -> Result<(), String> {
@@ -666,7 +721,7 @@ impl QueryLedger {
         &mut self,
         store: &mut EvidenceStore,
         page: &[(EvidenceRow, Evidence)],
-    ) -> Result<(), String> {
+    ) -> Result<(), ProjectionWriteError> {
         if page.len() > 256 {
             return Err("M projection page too large".into());
         }
@@ -707,7 +762,7 @@ impl QueryLedger {
                             |row| row.get(0),
                         )
                         .optional()
-                        .map_err(failure)?
+                        .map_err(projection_sql_failure)?
                 };
                 if retained.as_deref()
                     != Some(serde_json::to_vec(origin).map_err(failure)?.as_slice())
@@ -720,7 +775,7 @@ impl QueryLedger {
                 watermark <= pinned_w
                     && candidate.entries().next().is_none_or(|next| next.watermark > watermark)
             }) {
-                return Err("active grant evidence retention".into());
+                return Err(ProjectionWriteError::Capacity("active grant evidence retention"));
             }
             let entry = candidate.entries().last().ok_or("missing inserted evidence")?;
             if entry.watermark != candidate.watermark() || entry.evidence_id != id {
@@ -733,13 +788,15 @@ impl QueryLedger {
             .next()
             .map(|entry| entry.watermark)
             .unwrap_or(candidate.watermark());
-        let tx =
-            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(projection_sql_failure)?;
         let disk_sequence: i64 = tx
             .query_row("SELECT sequence FROM query_evidence_meta WHERE singleton=1", [], |row| {
                 row.get(0)
             })
-            .map_err(failure)?;
+            .map_err(projection_sql_failure)?;
         if u64::try_from(disk_sequence).map_err(failure)? > previous {
             return Err("evidence watermark conflict".into());
         }
@@ -747,11 +804,11 @@ impl QueryLedger {
             "DELETE FROM query_evidence WHERE store_seq<?1",
             [i64::try_from(first_live).map_err(failure)?],
         )
-        .map_err(failure)?;
+        .map_err(projection_sql_failure)?;
         tx.execute("DELETE FROM query_projection_origin WHERE query_evidence_id NOT IN (SELECT evidence_id FROM query_evidence)", [])
-            .map_err(failure)?;
+            .map_err(projection_sql_failure)?;
         tx.execute("DELETE FROM query_origins WHERE origin_id NOT IN (SELECT origin_id FROM query_projection_origin)", [])
-            .map_err(failure)?;
+            .map_err(projection_sql_failure)?;
         // Drop evicted rows before adding this page. The transaction still
         // rolls back as one unit, while the temporary Q index never needs a
         // second page's worth of retained bodies.
@@ -765,7 +822,7 @@ impl QueryLedger {
                         serde_json::to_vec(entry).map_err(failure)?
                     ],
                 )
-                .map_err(failure)?;
+                .map_err(projection_sql_failure)?;
             }
         }
         let (mut count, mut bytes): (i64, i64) = tx
@@ -774,7 +831,7 @@ impl QueryLedger {
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(failure)?;
+            .map_err(projection_sql_failure)?;
         for (origin, entry) in &staged {
             if entry.watermark < first_live {
                 continue;
@@ -790,7 +847,7 @@ impl QueryLedger {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
                 .optional()
-                .map_err(failure)?;
+                .map_err(projection_sql_failure)?;
             if let Some((seq, body)) = existing {
                 if u64::try_from(seq).map_err(failure)? != origin.store_seq.0 || body != parent {
                     return Err("M parent identity conflict".into());
@@ -799,7 +856,7 @@ impl QueryLedger {
                 let size = i64::try_from(parent.len()).map_err(failure)?;
                 if count >= 4096 || bytes.checked_add(size).is_none_or(|sum| sum > 8 * 1024 * 1024)
                 {
-                    return Err("M parent retention full".into());
+                    return Err(ProjectionWriteError::Capacity("M parent retention full"));
                 }
                 tx.execute(
                     "INSERT INTO query_origins(origin_id,manager_seq,body) VALUES(?1,?2,?3)",
@@ -809,7 +866,7 @@ impl QueryLedger {
                         parent
                     ],
                 )
-                .map_err(failure)?;
+                .map_err(projection_sql_failure)?;
                 count += 1;
                 bytes += size;
             }
@@ -817,14 +874,14 @@ impl QueryLedger {
                 "INSERT INTO query_projection_origin(query_evidence_id,origin_id) VALUES(?1,?2)",
                 params![entry.evidence_id, origin.evidence_id],
             )
-            .map_err(failure)?;
+            .map_err(projection_sql_failure)?;
         }
         tx.execute(
             "UPDATE query_evidence_meta SET sequence=?1 WHERE singleton=1",
             [i64::try_from(candidate.watermark()).map_err(failure)?],
         )
-        .map_err(failure)?;
-        tx.commit().map_err(failure)?;
+        .map_err(projection_sql_failure)?;
+        tx.commit().map_err(projection_sql_failure)?;
         *store = candidate;
         Ok(())
     }
@@ -1096,5 +1153,23 @@ impl QueryLedger {
             "revoked":revoked != 0 || grant.revoked(),
             "clock_domain_current":clock_domain == self.clock_domain,
         })))
+    }
+}
+
+#[cfg(test)]
+mod projection_error_tests {
+    use super::{projection_sql_failure, ProjectionWriteError};
+
+    #[test]
+    fn sqlite_full_is_typed_recoverable_but_matching_text_is_not() {
+        let full = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_FULL),
+            None,
+        );
+        assert!(projection_sql_failure(full).is_proven_recoverable());
+        assert!(!ProjectionWriteError::Refused("Q_SQLITE_RETRYABLE: database is locked".into())
+            .is_proven_recoverable());
+        assert!(!ProjectionWriteError::Refused("M parent retention full".into())
+            .is_proven_recoverable());
     }
 }

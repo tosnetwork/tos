@@ -124,6 +124,7 @@ fn block_manager_queries(state: &ObservabilityState, data: &mut Data) -> Result<
     // Set the in-memory refusal before touching SQLite. A partial I/O failure
     // must never leave an apparently usable run in this process.
     data.manager_conflicted = true;
+    data.manager_caught_up = false;
     let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
     let mut ledger = ledger.lock().map_err(|_| "query ledger unavailable")?;
     for run in data.grants.keys() {
@@ -133,12 +134,6 @@ fn block_manager_queries(state: &ObservabilityState, data: &mut Data) -> Result<
         grant.revoke();
     }
     Ok(())
-}
-fn projection_insert_can_pause(error: &str) -> bool {
-    // Only these bounded-capacity refusals prove that already-retained evidence
-    // and its fixed-W grants remain intact. Unknown source or SQLite failures
-    // are not evidence of a recoverable pause.
-    matches!(error, "active grant evidence retention" | "M parent retention full")
 }
 fn import_manager_into(
     state: &ObservabilityState,
@@ -196,14 +191,16 @@ fn import_manager_into(
         .map_err(|_| "query ledger unavailable")?
         .insert_projection_page(&mut data.store, &page.records);
     if let Err(error) = inserted {
-        if projection_insert_can_pause(&error) {
-            // The bounded page was refused before publication. Existing grants
-            // retain their fixed W, while new grants wait for catch-up.
+        if error.is_proven_recoverable() {
+            // Capacity or Q storage availability is not evidence that an
+            // earlier fixed-W source changed. No page/cursor is published.
             data.manager_caught_up = false;
         } else {
+            // Unknown errors include malformed metadata, Q corruption, and
+            // constraint violations. Never keep grants usable by default.
             block_manager_queries(state, data)?;
         }
-        return Err(error);
+        return Err(error.to_string());
     }
     let committed = ledger.lock().map_err(|_| "query ledger unavailable")?.commit_manager_cursor(
         previous.as_ref(),
@@ -211,10 +208,14 @@ fn import_manager_into(
         page.boundary_witness.as_ref(),
     );
     if let Err(error) = committed {
-        // A failed cursor commit can be an invariant or SQLite integrity
-        // failure. Do not infer recoverability from an unknown error string.
-        block_manager_queries(state, data)?;
-        return Err(error);
+        if error.is_proven_recoverable() {
+            // The page is already durable; replay at the old cursor is
+            // idempotent. Existing grants still see only their fixed W.
+            data.manager_caught_up = false;
+        } else {
+            block_manager_queries(state, data)?;
+        }
+        return Err(error.to_string());
     }
     data.manager_caught_up = page.caught_up;
     Ok((page.cursor.watermark, count))
