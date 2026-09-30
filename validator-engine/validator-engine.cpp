@@ -5852,6 +5852,9 @@ void ValidatorEngine::run() {
 void ValidatorEngine::set_health_native_v2() {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_native_v2);
 }
+void ValidatorEngine::set_health_native_v3() {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_native_v3);
+}
 void ValidatorEngine::set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling) {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_diagnostic,
                           std::move(path),peer_pid,sampling);
@@ -6543,6 +6546,10 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "health-native-core-v2", "select the bounded C04 typed native snapshot (requires health-core-metrics)", [&]() {
     tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v2); });
+  });
+  p.add_option('\0', "health-native-core-v3", "select bounded typed native snapshot with partial cached chain anchors (requires health-core-metrics)", [&]() {
+    tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
+    acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v3); });
   });
   p.add_option('\0', "health-core-metrics",
                "enable bounded consensus PQ operation metrics (requires performance acceptance)",

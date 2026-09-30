@@ -20,6 +20,7 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   void set_health_node(std::string value);
   void set_health_network(std::string value);
   void set_health_native_v2();
+  void set_health_native_v3();
   void set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling);
   void tear_down() override;
 
@@ -62,6 +63,7 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   std::optional<td::Promise<HttpReturn>> waiter_;
   bool loopback_ = false;
   bool native_v2_ = false;
+  bool native_v3_ = false;
 
   metrics::SourceAdmission admission_;
   std::string snapshot_;

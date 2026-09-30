@@ -210,6 +210,7 @@ impl NativeCache {
         match self.read_record()? {
             NativeRecord::V1(v) => Some(v),
             NativeRecord::V2(_) => None,
+            NativeRecord::V3(_) => None,
         }
     }
     pub fn read_record(&self) -> Option<NativeRecord> {
@@ -276,6 +277,7 @@ impl NativeCache {
                 match &value {
                     NativeRecord::V1(v) => &v.source_epoch,
                     NativeRecord::V2(v) => &v.source_epoch,
+                    NativeRecord::V3(v) => &v.source_epoch,
                 },
                 value.generation().0,
                 &value.immutable_hash()?,

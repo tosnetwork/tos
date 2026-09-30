@@ -94,6 +94,74 @@ pub struct NativePayloadV2 {
 }
 pub type NativeEnvelopeV2 = SourceEnvelope<NativePayloadV2>;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockAnchor {
+    pub file_hash: String,
+    pub kind: String,
+    pub network_id: String,
+    pub point: String,
+    pub root_hash: String,
+    pub scope_id: String,
+    pub seqno: u32,
+    pub shard: U64,
+    pub workchain: i32,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChainAnchors {
+    pub applied: BlockAnchor,
+    pub applied_advanced_unix_seconds: U64,
+    pub observed_unix_seconds: U64,
+    #[serde(deserialize_with = "required_nullable")]
+    pub served: Option<BlockAnchor>,
+}
+impl ChainAnchors {
+    fn validate(&self, network: &str) -> Result<(), String> {
+        let valid = |a: &BlockAnchor, point: &str| {
+            a.kind == "block"
+                && a.network_id == network
+                && a.scope_id == "masterchain"
+                && a.point == point
+                && a.workchain == -1
+                && a.shard.0 == (1u64 << 63)
+                && hash(&a.root_hash)
+                && hash(&a.file_hash)
+                && a.root_hash.bytes().any(|b| b != b'0')
+                && a.file_hash.bytes().any(|b| b != b'0')
+        };
+        if !valid(&self.applied, "applied")
+            || self.observed_unix_seconds.0 == 0
+            || self.applied_advanced_unix_seconds.0 > self.observed_unix_seconds.0
+            || self
+                .served
+                .as_ref()
+                .is_some_and(|s| !valid(s, "served") || s.seqno > self.applied.seqno)
+        {
+            return Err("invalid chain anchors".into());
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePayloadV3 {
+    pub bytes: u32,
+    #[serde(deserialize_with = "required_nullable")]
+    pub chain: Option<ChainAnchors>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub consensus: Option<Consensus>,
+    pub generation: U64,
+    pub kind: String,
+    pub network_id: String,
+    pub openmetrics_hash: String,
+    #[serde(deserialize_with = "required_nullable")]
+    pub pq_sign: Option<PqSnapshot>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub pq_verify: Option<PqSnapshot>,
+}
+pub type NativeEnvelopeV3 = SourceEnvelope<NativePayloadV3>;
+
 pub fn parse_native(bytes: &[u8]) -> Result<NativeRecord, String> {
     if bytes.len() > 262_144 {
         return Err("native typed snapshot exceeds fixed bound".into());
@@ -108,6 +176,9 @@ pub fn parse_native(bytes: &[u8]) -> Result<NativeRecord, String> {
         Some("native-core-v2") => serde_json::from_slice::<NativeEnvelopeV2>(bytes)
             .map(NativeRecord::V2)
             .map_err(|e| e.to_string()),
+        Some("native-core-v3") => serde_json::from_slice::<NativeEnvelopeV3>(bytes)
+            .map(NativeRecord::V3)
+            .map_err(|e| e.to_string()),
         _ => Err("unsupported native source version".into()),
     }
 }
@@ -115,48 +186,56 @@ pub fn parse_native(bytes: &[u8]) -> Result<NativeRecord, String> {
 pub enum NativeRecord {
     V1(NativeEnvelope),
     V2(NativeEnvelopeV2),
+    V3(NativeEnvelopeV3),
 }
 impl NativeRecord {
     pub fn node_id(&self) -> &str {
         match self {
             Self::V1(v) => &v.node_id,
             Self::V2(v) => &v.node_id,
+            Self::V3(v) => &v.node_id,
         }
     }
     pub fn network_id(&self) -> &str {
         match self {
             Self::V1(v) => &v.payload.network_id,
             Self::V2(v) => &v.payload.network_id,
+            Self::V3(v) => &v.payload.network_id,
         }
     }
     pub fn process_epoch(&self) -> &str {
         match self {
             Self::V1(v) => &v.process_epoch,
             Self::V2(v) => &v.process_epoch,
+            Self::V3(v) => &v.process_epoch,
         }
     }
     pub fn generation(&self) -> U64 {
         match self {
             Self::V1(v) => v.generation,
             Self::V2(v) => v.generation,
+            Self::V3(v) => v.generation,
         }
     }
     pub fn source_age_ms(&self) -> Option<u64> {
         match self {
             Self::V1(v) => v.source_age_ms,
             Self::V2(v) => v.source_age_ms,
+            Self::V3(v) => v.source_age_ms,
         }
     }
     pub fn set_source_age_ms(&mut self, age: Option<u64>) {
         match self {
             Self::V1(v) => v.source_age_ms = age,
             Self::V2(v) => v.source_age_ms = age,
+            Self::V3(v) => v.source_age_ms = age,
         }
     }
     pub fn set_received_at(&mut self, time: Option<String>) {
         match self {
             Self::V1(v) => v.received_at = time,
             Self::V2(v) => v.received_at = time,
+            Self::V3(v) => v.received_at = time,
         }
     }
     pub fn paired(
@@ -170,12 +249,14 @@ impl NativeRecord {
         match self {
             Self::V1(v) => v.paired(node, network, generation, epoch, body),
             Self::V2(v) => v.paired(node, network, generation, epoch, body),
+            Self::V3(v) => v.paired(node, network, generation, epoch, body),
         }
     }
     pub fn immutable_hash(&self) -> Result<String, String> {
         match self {
             Self::V1(v) => v.immutable_hash(),
             Self::V2(v) => v.immutable_hash(),
+            Self::V3(v) => v.immutable_hash(),
         }
     }
 }
@@ -370,6 +451,118 @@ impl NativeEnvelopeV2 {
             || format!("{:x}", Sha256::digest(body.as_bytes())) != self.payload.openmetrics_hash
         {
             return Err("native v2 OpenMetrics pairing mismatch".into());
+        }
+        Ok(())
+    }
+    pub fn immutable_hash(&self) -> Result<String, String> {
+        let mut value = self.clone();
+        value.source_age_ms = Some(0);
+        value.received_at = None;
+        canonical_hash(&value)
+    }
+}
+
+impl NativeEnvelopeV3 {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != 1
+            || self.source_id != "native_core"
+            || !alias(&self.node_id)
+            || self.scope_id != "node"
+            || self.source_version != "native-core-v3"
+            || self.availability != "available"
+            || self.clock_quality != "valid"
+            || self.process_epoch.is_empty()
+            || self.process_epoch.len() > 128
+            || self.source_epoch != self.process_epoch
+            || self.generation.0 == 0
+            || self.payload.generation != self.generation
+            || self.payload.kind != "native_core"
+            || !hash(&self.payload.network_id)
+            || !hash(&self.payload.openmetrics_hash)
+            || self.payload.bytes > 2_097_152
+            || self.source_age_ms.is_none_or(|age| age > 30_000)
+            || !hash(&self.content_hash)
+            || self.coverage.status != "partial"
+            || self.coverage.sampling_policy != "native-core-v3-chain-partial"
+            || self.coverage.missing_fields.len() > 64
+            || self.coverage.gaps.len() > 32
+            || self.coverage.missing_fields.iter().any(|v| v.len() > 96)
+            || self.coverage.gaps.iter().any(|v| v.len() > 256)
+            || self.quality.instrumentation_complete
+            || self.quality.shed_reason.as_ref().is_some_and(|v| v.len() > 96)
+        {
+            return Err("invalid native v3 snapshot contract".into());
+        }
+        for time in [&self.observed_at, &self.last_success_at] {
+            let time = time.as_ref().ok_or("missing native v3 timestamp")?;
+            if !time.ends_with('Z') {
+                return Err("UTC timestamp required".into());
+            }
+            crate::query::utc_ms(time).map_err(str::to_owned)?;
+        }
+        if let Some(time) = &self.received_at {
+            if !time.ends_with('Z') {
+                return Err("UTC timestamp required".into());
+            }
+            crate::query::utc_ms(time).map_err(str::to_owned)?;
+        }
+        if let Some(chain) = &self.payload.chain {
+            chain.validate(&self.payload.network_id)?;
+            let sampled_ms = crate::query::utc_ms(
+                self.observed_at.as_deref().ok_or("missing native v3 timestamp")?,
+            )?;
+            let anchor_ms =
+                chain.observed_unix_seconds.0.checked_mul(1000).ok_or("chain time overflow")?;
+            let advanced_ms = chain
+                .applied_advanced_unix_seconds
+                .0
+                .checked_mul(1000)
+                .ok_or("chain time overflow")?;
+            let sampled_ms = sampled_ms.max(0) as u64;
+            if advanced_ms == 0
+                || anchor_ms > sampled_ms + 1000
+                || advanced_ms > sampled_ms + 1000
+                || sampled_ms.saturating_sub(anchor_ms) > 31_000
+                || sampled_ms.saturating_sub(advanced_ms) > 31_000
+            {
+                return Err("stale or future chain anchor".into());
+            }
+            if self.coverage.missing_fields.iter().any(|field| field == "chain_anchors") {
+                return Err("present chain marked missing".into());
+            }
+        } else if !self.coverage.missing_fields.iter().any(|field| field == "chain_anchors") {
+            return Err("missing chain not covered".into());
+        }
+        if let Some(consensus) = &self.payload.consensus {
+            consensus.validate(&self.payload.network_id)?;
+        }
+        if canonical_hash(&self.payload)? != self.content_hash {
+            return Err("native v3 content hash mismatch".into());
+        }
+        Ok(())
+    }
+    pub fn paired(
+        &self,
+        node: &str,
+        network: &str,
+        generation: &str,
+        epoch: &str,
+        body: &str,
+    ) -> Result<(), String> {
+        self.validate()?;
+        if self.node_id != node
+            || self.payload.network_id != network
+            || self.process_epoch != epoch
+            || self.generation.0 != exact_u64(generation).map_err(str::to_owned)?
+        {
+            return Err("native v3 identity or generation mismatch".into());
+        }
+        if body.len() > 2_097_152
+            || !body.ends_with("# EOF\n")
+            || body.len() != self.payload.bytes as usize
+            || format!("{:x}", Sha256::digest(body.as_bytes())) != self.payload.openmetrics_hash
+        {
+            return Err("native v3 OpenMetrics pairing mismatch".into());
         }
         Ok(())
     }

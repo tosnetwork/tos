@@ -6,6 +6,7 @@
 #include <string>
 
 #include "consensus-snapshot.h"
+#include "chain-anchor-snapshot.h"
 #include "td/utils/Random.h"
 #include "td/utils/crypto.h"
 #include "td/utils/misc.h"
@@ -93,8 +94,8 @@ class NativeCorePublisher {
   std::optional<NativeCoreSnapshot> prepare(std::uint64_t generation, double sampled_at, double wall,
                                             const std::string &openmetrics, bool pq_enabled,
                                             const OperationSnapshot &sign, const OperationSnapshot &verify, bool v2 = false,
-                                            const ConsensusPublication *consensus = nullptr) const {
-    if ((v2 && consensus != nullptr && consensus->json.size() > 32 * 1024) ||
+                                            const ConsensusPublication *consensus = nullptr, bool v3 = false) const {
+    if ((v3 && !v2) || (v2 && consensus != nullptr && consensus->json.size() > 32 * 1024) ||
         (v2 && openmetrics.size() > 1048576) || openmetrics.size() > 2097152 || !configured() || generation == 0 || !std::isfinite(sampled_at) ||
         !std::isfinite(wall) || wall < 0 || wall > 4102444800.)
       return std::nullopt;
@@ -111,27 +112,67 @@ class NativeCorePublisher {
     if (std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &utc) == 0)
       return std::nullopt;
     const auto g = std::to_string(generation);
+    auto anchors = v3 ? chain_anchor_state.read() : std::nullopt;
+    const auto wall_seconds = static_cast<std::uint64_t>(wall);
+    constexpr char network_digits[] = "0123456789abcdef";
+    auto network_matches = [&] {
+      if (!anchors) return false;
+      for (std::size_t i = 0; i < 32; ++i) {
+        const auto byte = anchors->network_hash[i];
+        if (network_[2 * i] != network_digits[byte >> 4] ||
+            network_[2 * i + 1] != network_digits[byte & 15]) return false;
+      }
+      return true;
+    };
+    if (anchors && (anchors->observed_unix_seconds > wall_seconds + 1 ||
+                    !network_matches() ||
+                    anchors->applied_advanced_unix_seconds == 0 ||
+                    anchors->applied_advanced_unix_seconds > wall_seconds + 1 ||
+                    (wall_seconds > anchors->observed_unix_seconds &&
+                     wall_seconds - anchors->observed_unix_seconds > 30) ||
+                    (wall_seconds > anchors->applied_advanced_unix_seconds &&
+                     wall_seconds - anchors->applied_advanced_unix_seconds > 30))) anchors.reset();
+    auto anchor_json = [&](const ChainAnchorSnapshot::Block &block, const char *point) {
+      constexpr char digits[] = "0123456789abcdef";
+      auto hex = [&](const std::array<std::uint8_t, 32> &bytes) {
+        std::string out;
+        out.reserve(64);
+        for (auto byte : bytes) { out += digits[byte >> 4]; out += digits[byte & 15]; }
+        return out;
+      };
+      return "{\"file_hash\":\"" + hex(block.file_hash) + "\",\"kind\":\"block\",\"network_id\":\"" + network_ +
+             "\",\"point\":\"" + point + "\",\"root_hash\":\"" + hex(block.root_hash) +
+             "\",\"scope_id\":\"masterchain\",\"seqno\":" + std::to_string(block.seqno) +
+             ",\"shard\":\"9223372036854775808\",\"workchain\":-1}";
+    };
+    const auto chain = !anchors ? std::string("null") :
+        "{\"applied\":" + anchor_json(anchors->applied, "applied") +
+        ",\"applied_advanced_unix_seconds\":\"" + std::to_string(anchors->applied_advanced_unix_seconds) +
+        ",\"observed_unix_seconds\":\"" + std::to_string(anchors->observed_unix_seconds) +
+        "\",\"served\":" + (anchors->have_served ? anchor_json(anchors->served, "served") : std::string("null")) + "}";
     // Keys are canonical lexical order; exact integers remain decimal strings.
     const auto payload = "{\"bytes\":" + std::to_string(openmetrics.size()) +
+                         (v3 ? ",\"chain\":" + chain : std::string{}) +
                          (v2 ? ",\"consensus\":" + (consensus == nullptr ? std::string("null") : consensus->json) : std::string{}) +
                          ",\"generation\":\"" + g +
                          "\",\"kind\":\"native_core\",\"network_id\":\"" + network_ + "\",\"openmetrics_hash\":\"" +
                          digest(openmetrics) + "\",\"pq_sign\":" + (pq_enabled ? sign.json() : "null") +
                          ",\"pq_verify\":" + (pq_enabled ? verify.json() : "null") + "}";
-    const bool complete = pq_enabled && sign.complete && verify.complete &&
+    const bool complete = !v3 && pq_enabled && sign.complete && verify.complete &&
                           (!v2 || (consensus != nullptr && consensus->complete));
     NativeCoreSnapshot result;
     result.sampled_at = sampled_at;
     result.publication_limit = v2 ? 64 * 1024 : NativeCoreSnapshot::max_bytes;
     result.prefix = "{\"schema_version\":1,\"source_id\":\"native_core\",\"node_id\":\"" + node_ +
                     "\",\"scope_id\":\"node\",\"process_epoch\":\"" + epoch_ + "\",\"source_epoch\":\"" + epoch_ +
-                    "\",\"source_version\":\"" + (v2 ? "native-core-v2" : "native-core-v1") + "\",\"generation\":\"" + g +
+                    "\",\"source_version\":\"" + (v3 ? "native-core-v3" : v2 ? "native-core-v2" : "native-core-v1") + "\",\"generation\":\"" + g +
                     "\",\"availability\":\"available\",\"observed_at\":\"" + timestamp + "\",\"last_success_at\":\"" +
                     timestamp + "\",\"received_at\":null,\"source_age_ms\":";
     result.suffix = std::string(
-                        ",\"clock_quality\":\"valid\",\"coverage\":{\"status\":\"partial\",\"missing_fields\":[\"chain_"
-                        "anchors\",\"local_duties\",\"queue_state\",\"storage_state\"],\"gaps\":[],\"sampling_policy\":"
-                        "\"") + (v2 ? "native-core-v2-concurrent-bounded" : "native_generation_approximate_pq") + "\"},\"content_hash\":\"" +
+                        ",\"clock_quality\":\"valid\",\"coverage\":{\"status\":\"partial\",\"missing_fields\":[") +
+                    ((v3 && anchors) ? "" : "\"chain_anchors\",") +
+                    "\"local_duties\",\"queue_state\",\"storage_state\"],\"gaps\":[],\"sampling_policy\":\"" +
+                    (v3 ? "native-core-v3-chain-partial" : v2 ? "native-core-v2-concurrent-bounded" : "native_generation_approximate_pq") + "\"},\"content_hash\":\"" +
                     digest(payload) + "\",\"payload\":" + payload +
                     ",\"quality\":{\"instrumentation_complete\":" + (complete ? "true" : "false") +
                     ",\"producer_dropped\":\"0\",\"relay_dropped\":\"0\",\"parse_errors\":\"0\",\"shed_reason\":" +

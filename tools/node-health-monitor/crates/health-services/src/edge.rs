@@ -787,6 +787,7 @@ pub fn r4_snapshot(state: &EdgeState) -> Result<Value, String> {
     sources.push(match native {
         tos_health_core::native::NativeRecord::V1(v) => EdgeSource::Native(v),
         tos_health_core::native::NativeRecord::V2(v) => EdgeSource::NativeV2(v),
+        tos_health_core::native::NativeRecord::V3(v) => EdgeSource::NativeV3(v),
     });
     drop(cache);
     let cgroup_required =

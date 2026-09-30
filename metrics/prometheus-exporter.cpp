@@ -56,6 +56,10 @@ void PrometheusExporter::set_health_native_v2() {
   for (std::size_t i=0; i<values.size(); ++i)
     if (!health::core_registry.register_fixed(142+i,values[i])) d.complete.store(0);
 }
+void PrometheusExporter::set_health_native_v3() {
+  set_health_native_v2();
+  native_v3_ = true;
+}
 void PrometheusExporter::set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling) {
   if (health::diagnostic_ipc || !health::enabled.load() || !health::consensus_enabled.load()) {
     LOG(ERROR) << "Diagnostic setup requires enabled core metrics and a single producer"; return;
@@ -283,7 +287,8 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
   }
   std::optional<health::NativeCoreSnapshot> typed;
   if (core_publisher_.configured()) {
-    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered, pq_enabled, sign, verify, native_v2_, consensus ? &*consensus : nullptr);
+    typed = core_publisher_.prepare(admission_.generation() + 1, sampled_at, wall, rendered, pq_enabled, sign, verify,
+                                    native_v2_, consensus ? &*consensus : nullptr, native_v3_);
   }
   now = td::Timestamp::now().at();
   if (admission_.finish(now, !core_publisher_.configured() || typed.has_value(), rendered.size())) {

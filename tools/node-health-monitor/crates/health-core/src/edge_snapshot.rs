@@ -1,6 +1,9 @@
 //! Closed initial edge snapshot subset. Unsupported anchors cannot be fabricated.
 use crate::{
-    native::{canonical_hash, required_nullable, NativeEnvelope, NativeEnvelopeV2, SourceEnvelope},
+    native::{
+        canonical_hash, required_nullable, NativeEnvelope, NativeEnvelopeV2, NativeEnvelopeV3,
+        SourceEnvelope,
+    },
     wire::U64,
 };
 use serde::{Deserialize, Serialize};
@@ -40,6 +43,7 @@ pub type CgroupEnvelope = SourceEnvelope<CgroupPayload>;
 pub enum EdgeSource {
     Native(NativeEnvelope),
     NativeV2(NativeEnvelopeV2),
+    NativeV3(NativeEnvelopeV3),
     Process(ProcessEnvelope),
     Cgroup(CgroupEnvelope),
 }
@@ -215,6 +219,14 @@ impl EdgeSnapshot {
                     (value.source_id.as_str(), None)
                 }
                 EdgeSource::NativeV2(value) => {
+                    value.validate()?;
+                    if value.node_id != node || value.payload.network_id != network {
+                        return Err("native inventory mismatch".into());
+                    }
+                    native_epoch = Some(&value.process_epoch);
+                    (value.source_id.as_str(), None)
+                }
+                EdgeSource::NativeV3(value) => {
                     value.validate()?;
                     if value.node_id != node || value.payload.network_id != network {
                         return Err("native inventory mismatch".into());

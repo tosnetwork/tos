@@ -1009,6 +1009,7 @@ impl Manager {
             .find_map(|source| match source {
                 EdgeSource::Native(value) => Some(value.node_id.as_str()),
                 EdgeSource::NativeV2(value) => Some(value.node_id.as_str()),
+                EdgeSource::NativeV3(value) => Some(value.node_id.as_str()),
                 _ => None,
             })
             .ok_or("native source absent")?;

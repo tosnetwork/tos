@@ -43,6 +43,7 @@
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
+#include "metrics/chain-anchor-snapshot.h"
 #include "lite-client/lite-ext-query-failure.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
@@ -82,6 +83,56 @@
 namespace tos {
 
 namespace validator {
+
+namespace {
+std::optional<health::ChainAnchorSnapshot::Block> health_block_anchor(const BlockIdExt &id) noexcept {
+  health::ChainAnchorSnapshot::Block result;
+  const auto file = id.file_hash.as_slice();
+  const auto root = id.root_hash.as_slice();
+  if (file.size() != 32 || root.size() != 32) return std::nullopt;
+  bool file_nonzero = false, root_nonzero = false;
+  for (std::size_t i = 0; i < 32; ++i) {
+    result.file_hash[i] = static_cast<std::uint8_t>(file[i]);
+    result.root_hash[i] = static_cast<std::uint8_t>(root[i]);
+    file_nonzero |= result.file_hash[i] != 0;
+    root_nonzero |= result.root_hash[i] != 0;
+  }
+  if (!file_nonzero || !root_nonzero) return std::nullopt;
+  result.seqno = id.seqno();
+  return result;
+}
+void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdExt &applied, td::Ref<MasterchainState> served,
+                                  bool applied_advanced) noexcept {
+  if (!network_zero.is_masterchain_ext() || !network_zero.is_valid_full() ||
+      !applied.is_masterchain_ext() || !applied.is_valid_full()) return;
+  health::ChainAnchorSnapshot snapshot;
+  const auto network = network_zero.root_hash.as_slice();
+  if (network.size() != 32) return;
+  for (std::size_t i = 0; i < 32; ++i)
+    snapshot.network_hash[i] = static_cast<std::uint8_t>(network[i]);
+  auto applied_block = health_block_anchor(applied);
+  if (!applied_block) return;
+  snapshot.applied = *applied_block;
+  if (served.not_null() && served->get_block_id().is_masterchain_ext() &&
+      served->get_block_id().is_valid_full() && served->get_block_id().seqno() <= applied.seqno()) {
+    if (auto served_block = health_block_anchor(served->get_block_id())) {
+      snapshot.served = *served_block;
+      snapshot.have_served = true;
+    }
+  }
+  snapshot.observed_unix_seconds = static_cast<std::uint64_t>(td::Clocks::system());
+  if (applied_advanced) {
+    snapshot.applied_advanced_unix_seconds = snapshot.observed_unix_seconds;
+  } else if (auto previous = health::chain_anchor_state.read(); previous &&
+             previous->network_hash == snapshot.network_hash &&
+             previous->applied.seqno == snapshot.applied.seqno &&
+             previous->applied.root_hash == snapshot.applied.root_hash &&
+             previous->applied.file_hash == snapshot.applied.file_hash) {
+    snapshot.applied_advanced_unix_seconds = previous->applied_advanced_unix_seconds;
+  }
+  health::chain_anchor_state.publish(snapshot);
+}
+}  // namespace
 
 void ValidatorManagerImpl::validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id,
                                                         td::BufferSlice proof, td::Promise<td::Unit> promise) {
@@ -2099,6 +2150,7 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
       last_masterchain_block_handle_->set_processed();
 
       new_masterchain_block();
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true);
 
       promise.set_value(td::Unit());
 
@@ -2119,6 +2171,7 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
           pending_masterchain_states_.erase(it);
 
           new_masterchain_block();
+          publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true);
 
           for (auto &p : l_promise) {
             p.set_value(td::Unit());
@@ -2627,6 +2680,7 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   last_known_key_block_handle_ = last_key_block_handle_;
 
   CHECK(last_masterchain_block_handle_->is_applied());
+  publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false);
   if (last_known_key_block_handle_->inited_is_key_block()) {
     callback_->new_key_block(last_key_block_handle_);
   }
@@ -3994,6 +4048,8 @@ void ValidatorManagerImpl::update_shard_client_block_handle(BlockHandle handle, 
     if (last_liteserver_state_.is_null() || last_liteserver_state_->get_block_id().seqno() < seqno) {
       last_liteserver_state_ = std::move(state);
     }
+    if (last_masterchain_state_.not_null())
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false);
   }
   if (!db_event_publisher_.empty()) {
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockApplied " << shard_client_handle_->id().to_str();
