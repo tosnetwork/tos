@@ -33,6 +33,23 @@ enum class Outcome : std::uint8_t { ok, error, cancelled };
 constexpr std::uint32_t clock_domain = 1;  // Linux CLOCK_MONOTONIC_RAW only.
 constexpr std::uint64_t max_duration_ns = 60ULL * 60 * 1000 * 1000 * 1000;
 
+namespace detail {
+inline bool checked_raw_ns(const timespec& value, std::int64_t& result) noexcept {
+  constexpr auto max = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+  constexpr std::uint64_t billion = 1000000000ULL;
+  if (value.tv_sec < 0 || value.tv_nsec < 0 || value.tv_nsec >= static_cast<long>(billion)) {
+    return false;
+  }
+  const auto seconds = static_cast<std::uint64_t>(value.tv_sec);
+  const auto nanos = static_cast<std::uint64_t>(value.tv_nsec);
+  if (seconds > max / billion || (seconds == max / billion && nanos > max % billion)) {
+    return false;
+  }
+  result = static_cast<std::int64_t>(seconds * billion + nanos);
+  return true;
+}
+}  // namespace detail
+
 struct Point {
   std::uint64_t process_nonce = 0;
   std::int64_t monotonic_ns = 0;
@@ -111,12 +128,12 @@ class Capture final {
       return false;
     }
     if (!mutex_.try_lock()) {
-      add(dropped_contention_);
+      drop(dropped_contention_);
       return false;
     }
     const std::lock_guard<std::mutex> guard(mutex_, std::adopt_lock);
     if (size_ == Capacity) {
-      add(dropped_full_);
+      drop(dropped_full_);
       return false;
     }
     records_[size_++] = {point, end, static_cast<std::uint64_t>(end - point.monotonic_ns), outcome};
@@ -146,14 +163,12 @@ class Capture final {
  private:
   static bool raw_now(std::int64_t& result) noexcept {
     timespec value{};
-    if (clock_gettime(CLOCK_MONOTONIC_RAW, &value) != 0 || value.tv_sec < 0 || value.tv_nsec < 0 ||
-        value.tv_nsec >= 1000 * 1000 * 1000 ||
-        static_cast<std::uint64_t>(value.tv_sec) >
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) / 1000000000ULL) {
-      return false;
-    }
-    result = static_cast<std::int64_t>(value.tv_sec) * 1000000000LL + value.tv_nsec;
-    return true;
+    return clock_gettime(CLOCK_MONOTONIC_RAW, &value) == 0 && detail::checked_raw_ns(value, result);
+  }
+
+  void drop(std::atomic<std::uint64_t>& counter) noexcept {
+    complete_.store(false, std::memory_order_relaxed);
+    add(counter);
   }
 
   void add(std::atomic<std::uint64_t>& counter) noexcept {

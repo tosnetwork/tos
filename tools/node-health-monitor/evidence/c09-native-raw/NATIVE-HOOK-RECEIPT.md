@@ -20,7 +20,8 @@ The earlier external RTT capture and soak audit files are unchanged.
 - Capacity is at most 1,024 records per `Capture`; `sizeof(Capture<1024>)`
   compiled to 57,480 bytes. No dynamic record allocation, file/network write
   or blocking lock occurs on `start`/`finish`; full/contended records are
-  dropped and counted. Counter saturation/failed finite CAS sets
+  dropped and counted, and either drop sets `complete=false` for the entire
+  timing population. Counter saturation/failed finite CAS also sets
   `complete=false`. A caller-provided span receives a snapshot outside the
   hot path. Construction obtains a nonce once; failure disables capture.
 - The primitive is intentionally **not wired** into `simplex/pool.cpp`,
@@ -48,18 +49,28 @@ c++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -pthread -I. \
 ```
 
 Natural exit 0:
-`C09_NATIVE_RAW_OK retained=2 full=1 identity=3 time=1 resident_bytes=57480`.
+`C09_NATIVE_RAW_OK retained=2 full=1 identity=3 time=1 complete=0 resident_bytes=57480`.
 The test exercises a real same-process span, wrong PID, wrong nonce, wrong
 domain, future point, inherited point after `fork`, capacity loss and counters.
+It also checks a no-loss population remains complete; exactly
+`INT64_MAX` nanoseconds converts, while one nanosecond more and the next
+whole second are rejected without signed overflow.
 An isolated temporary header copy replaced only the domain guard with `false`:
 the mutant compiled with exit 0 and the unchanged test exited 6 at its
 wrong-domain assertion. The original header was not edited by the mutation.
 
+The feedback corrections were verified with two further isolated compiled
+mutants against the final test: replacing the shared full/contention drop
+helper's `complete=false` with `true` exited 13; removing the equality-case
+nanosecond remainder check compiled and exited 15. Both original paths
+compiled and exited 0. `raw_now` now delegates its conversion to the tested
+checked function, so the boundary assertion exercises production conversion.
+
 | Artifact | SHA-256 |
 |---|---|
-| `validator/measurement/c09-raw-monotonic.h` | `a214ad18ed59e74b8f7ddf80044f22ca17f51b8062025ea8c699245f068af8a6` |
-| `test/pq-native/c09-raw-monotonic-test.cpp` | `da04fbccb1b769d568c11b072388c588d813f301133a19decd635015e1dbaefe` |
-| compiled temporary test binary | `a63c7da5e3f622ae360fbb0e3392ad215eb32bf321eaa77c5654cc40ce7818aa` |
+| `validator/measurement/c09-raw-monotonic.h` | `23a05e2c83d9f8a43b0f3adbb7130d7d59fca591fba758342e00f6182d4b18af` |
+| `test/pq-native/c09-raw-monotonic-test.cpp` | `281c80ca527efa89ebc03972af1e0c7fb710a787e078c237331164c1d914d500` |
+| compiled temporary test binary | `97de751b0e8151f638358e6307838c67016c5e046aa52f09fe70e17a5eec2661` |
 
 No broad rebuild, live node test, restart, deploy or model API call occurred.
 The next step that needs actual native call-site coverage would edit consensus

@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -15,8 +16,29 @@ using tos::validator::measurement::c09::Record;
 using tos::validator::measurement::c09::Stage;
 using tos::validator::measurement::c09::clock_domain;
 using tos::validator::measurement::c09::max_duration_ns;
+using tos::validator::measurement::c09::detail::checked_raw_ns;
 
 int main() {
+  constexpr auto max = std::numeric_limits<std::int64_t>::max();
+  constexpr auto billion = 1000000000LL;
+  std::int64_t converted = 0;
+  const timespec limit{static_cast<time_t>(max / billion), static_cast<long>(max % billion)};
+  if (!checked_raw_ns(limit, converted) || converted != max) return 14;
+  const timespec overflow{limit.tv_sec, limit.tv_nsec + 1};
+  if (checked_raw_ns(overflow, converted)) return 15;
+  const timespec next_second{limit.tv_sec + 1, 0};
+  if (checked_raw_ns(next_second, converted)) return 16;
+
+  Capture<1> clean;
+  Point clean_start;
+  std::array<Record, 1> clean_rows{};
+  Counters clean_counts{};
+  std::size_t clean_size = 0;
+  if (!clean.ready() || !clean.start(Stage::vote_sign, clean_start) ||
+      !clean.finish(clean_start, Outcome::ok) ||
+      !clean.snapshot(clean_rows, clean_size, clean_counts) || clean_size != 1 ||
+      !clean_counts.complete || clean_counts.dropped_full != 0 || clean_counts.dropped_contention != 0) return 17;
+
   Capture<2> capture;
   if (!capture.ready() || sizeof(Capture<1024>) > 128 * 1024) return 1;
   Point first;
@@ -55,10 +77,10 @@ int main() {
   std::size_t size = 0;
   if (!capture.snapshot(rows, size, counts) || size != 2 || counts.retained != 2 ||
       counts.dropped_full != 1 || counts.rejected_identity != 3 || counts.rejected_time != 1 ||
-      !counts.complete || rows[0].start.pid != getpid() || rows[0].start.domain != clock_domain ||
+      counts.complete || rows[0].start.pid != getpid() || rows[0].start.domain != clock_domain ||
       rows[0].duration_ns > max_duration_ns) return 13;
   std::cout << "C09_NATIVE_RAW_OK retained=" << counts.retained << " full=" << counts.dropped_full
             << " identity=" << counts.rejected_identity << " time=" << counts.rejected_time
-            << " resident_bytes=" << sizeof(Capture<1024>) << '\n';
+            << " complete=" << counts.complete << " resident_bytes=" << sizeof(Capture<1024>) << '\n';
   return 0;
 }
