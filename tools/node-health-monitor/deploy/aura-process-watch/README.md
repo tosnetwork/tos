@@ -28,11 +28,28 @@ evidence IDs and model failures produce an unavailable AI result. The five
 minute process watch continues independently. This is a local development
 analysis, not automatic remediation or a full consensus-health judgment.
 
-This optional unit uses the local `nhm-c07-contract-venv` for `jsonschema` and
-the private Codex socket. Prepare `/home/tomi/.local/state/nhm-aura-codex`
-with mode 0700 before starting it. The Codex thread file is private and reused
-across turns; no API token is passed. The timer adds two short-lived QueryService
-grants per run, so the finite Q ledger limit still applies.
+This optional unit uses the local `nhm-c07-contract-venv` for `jsonschema`.
+The AURA bridge launches a private `codex app-server` child per run with a
+dedicated `CODEX_HOME`, and refuses an app-server that has MCP servers, loads
+instruction files, or does not apply a read-only, no-network, no-approval
+thread. The operator's resident app-server is therefore not usable here. The
+bridge binary must include the hardened `aura codex` arguments
+(`--workdir`, `--spawn-app-server`/`--codex-home`). Prepare once:
+
+```sh
+install -d -m 700 $HOME/.local/state/nhm-aura-codex \
+  $HOME/.local/state/nhm-aura-codex/codex-home \
+  $HOME/.local/state/nhm-aura-codex/work
+CODEX_HOME=$HOME/.local/state/nhm-aura-codex/codex-home codex login
+```
+
+Keep that `CODEX_HOME` free of MCP servers and connectors, and keep `work`
+empty. Running under the operator's own OS account still lets Codex read that
+account's files; a separate OS account with access only to intended evidence is
+the complete isolation. The Codex thread file is private; the bridge starts a
+new thread after eight completed turns, and replaces a thread file holding only
+a bare thread ID. No API token is passed. The timer adds two short-lived
+QueryService grants per run, so the finite Q ledger limit still applies.
 
 The separate `nhm-local-validator-health.timer` samples the six approved
 loopback `/readyz` and native snapshot routes every minute. It validates the
