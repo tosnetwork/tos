@@ -75,15 +75,25 @@ def incidents_by_node(state, nodes):
 def latest_native(db_path, node, now_ms):
     """Latest archived native row for a node with its exact parent hash."""
     with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2) as db:
+        # The native source has two row kinds in M: archived edge snapshots
+        # (payload.component/source) and rule fact frames. Only the archived
+        # snapshot is evidence for the judgement; fact frames are skipped.
         rows = db.execute(
             "SELECT store_seq, process_epoch, source_epoch, source_record, content_hash, body "
             "FROM observations WHERE node=? AND scope='node' AND source='native_core' "
-            "ORDER BY store_seq DESC LIMIT 1", (node,)).fetchall()
-        if not rows:
+            "ORDER BY store_seq DESC LIMIT 16", (node,)).fetchall()
+        chosen = None
+        for row in rows:
+            body = row[5]
+            if len(body) > MAX_ARCHIVE_BODY or HEX.match(row[4]) is None:
+                raise ValueError("archive row out of contract")
+            payload = json.loads(body).get("record", {}).get("payload")
+            if isinstance(payload, dict) and "source" in payload:
+                chosen = row
+                break
+        if chosen is None:
             return None
-        store_seq, process_epoch, source_epoch, source_record, parent_hash, body = rows[0]
-        if len(body) > MAX_ARCHIVE_BODY or HEX.match(parent_hash) is None:
-            raise ValueError("archive row out of contract")
+        store_seq, process_epoch, source_epoch, source_record, parent_hash, body = chosen
         quarantined = db.execute(
             "SELECT 1 FROM quarantined WHERE node=? AND scope='node' AND source='native_core' "
             "AND process_epoch=? AND source_epoch=? LIMIT 1", (node, process_epoch, source_epoch)).fetchone()

@@ -98,11 +98,30 @@ def fresh_native(observed_ms):
     return native
 
 
+def fact_frame_row(native, observed_ms):
+    """A rule fact frame archived under the same source id; it is not snapshot evidence."""
+    body = {"source_epoch": native["source_epoch"], "record": {
+        "node_id": native["node_id"], "scope_id": "node", "source_id": "native_core",
+        "source_record_id": f"{native['process_epoch']}:999", "process_epoch": native["process_epoch"],
+        "observed_at_ms": observed_ms, "received_at_ms": observed_ms,
+        "quality": {"availability": "available", "coverage": "complete", "observed_at_ms": observed_ms,
+                    "last_success_at_ms": observed_ms, "clock_valid": True,
+                    "process_epoch": native["process_epoch"], "source_sequence": "999"},
+        "payload": {"facts": [{"id": "pq_signing_failures", "value": "0"}]}, "redacted": True}}
+    hashed = json.loads(json.dumps(body))
+    hashed["record"]["received_at_ms"] = 0
+    parent = hashlib.sha256(json.dumps(hashed, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    return json.dumps(body, separators=(",", ":")), parent
+
+
 def test_all_rules_good_and_fresh_native_is_healthy(tmp_path, monkeypatch):
     now_ms = int(judge.utc_now().timestamp() * 1000)
     native = fresh_native(now_ms - 10_000)
     body, parent = archive_row(native, now_ms - 10_000, now_ms - 9_000)
-    report = run_judge(tmp_path, all_good("validator1"), [("validator1", native, body, parent)], monkeypatch)
+    frame_body, frame_parent = fact_frame_row(native, now_ms - 5_000)
+    # The newer fact-frame row must be skipped in favour of the archived snapshot.
+    report = run_judge(tmp_path, all_good("validator1"),
+                       [("validator1", native, body, parent), ("validator1", native, frame_body, frame_parent)], monkeypatch)
     node = report["nodes"]["validator1"]
     assert node["verdict"] == "healthy", node["reasons"]
     assert node["native"]["archive_parent"] == parent
