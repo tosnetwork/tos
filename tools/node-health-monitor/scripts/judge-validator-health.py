@@ -19,6 +19,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -230,11 +231,18 @@ DIAGNOSIS_INSTRUCTION = (
 )
 
 
-def model_explanation(args, report):
-    """Optional AURA turn through the Codex bridge. Output is validated and never changes verdicts."""
-    from jsonschema import Draft202012Validator
-    schema = json.loads(Path(args.diagnosis_schema).read_text())
-    Draft202012Validator.check_schema(schema)
+MAX_MODEL_OUTPUT_BYTES = 16384
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect would move the evidence to a host that was never approved."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
+
+
+def run_codex(args, prompt, schema):
+    """One turn through the local Codex bridge; returns raw output bytes or an error dict."""
     unsupported = {"$schema", "$defs", "maxItems", "minItems", "maxLength", "minLength", "uniqueItems"}
 
     def strip(value):
@@ -243,7 +251,6 @@ def model_explanation(args, report):
         if isinstance(value, list):
             return [strip(v) for v in value]
         return value
-    prompt = {"instruction": DIAGNOSIS_INSTRUCTION, "verdict": report}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json") as wire:
         json.dump(strip(schema), wire)
         wire.flush()
@@ -252,12 +259,102 @@ def model_explanation(args, report):
                    "--timeout-seconds", str(args.model_timeout)]
         result = subprocess.run(command, input=json.dumps(prompt).encode(), capture_output=True,
                                 timeout=args.model_timeout + 10)
-    if result.returncode != 0 or len(result.stdout) > 16384:
+    if result.returncode != 0 or len(result.stdout) > MAX_MODEL_OUTPUT_BYTES:
         return {"result": "unavailable", "error": result.stderr.decode(errors="replace")[-400:]}
+    return result.stdout
+
+
+def run_anthropic(args, prompt, schema):
+    """One Messages API turn. The key is read at call time, sent only in the
+    request header to the configured host, and never written anywhere."""
+    host = args.egress_host
+    if not re.fullmatch(r"[a-z0-9.-]{1,253}", host):
+        return {"result": "unavailable", "error": "egress_host_invalid"}
+    key_path = Path(args.api_key_file)
+    if key_path.stat().st_mode & 0o077:
+        return {"result": "unavailable", "error": "api_key_file_permissions"}
+    key = key_path.read_text().strip()
+    if not key or any(c.isspace() for c in key):
+        return {"result": "unavailable", "error": "api_key_file_shape"}
+    body = {
+        "model": args.model,
+        "max_tokens": 1536,
+        "system": DIAGNOSIS_INSTRUCTION + " The JSON schema of the required answer is: "
+                  + json.dumps(schema, separators=(",", ":"))
+                  + " Output only the JSON object, no prose, no code fences.",
+        "messages": [{"role": "user", "content": json.dumps(prompt, separators=(",", ":"))}],
+    }
+    encoded = json.dumps(body).encode()
+    if len(encoded) > 65536:
+        return {"result": "unavailable", "error": "prompt_oversize"}
+    request = urllib.request.Request(
+        f"https://{host}/v1/messages", data=encoded, method="POST",
+        headers={"content-type": "application/json", "anthropic-version": "2023-06-01",
+                 "x-api-key": key, "accept": "application/json"})
+    del key
+    opener = urllib.request.build_opener(NoRedirect)
     try:
-        diagnosis = json.loads(result.stdout)
+        with opener.open(request, timeout=args.model_timeout) as response:
+            raw = response.read(MAX_MODEL_OUTPUT_BYTES * 4 + 1)
+    except urllib.error.HTTPError as error:
+        # The provider's error body names the refused field; it never echoes
+        # the credential. Bounded, and only for non-redirect statuses.
+        detail = ""
+        if error.code not in (301, 302, 303, 307, 308) and error.fp is not None:
+            detail = error.fp.read(512).decode(errors="replace")
+        return {"result": "unavailable", "error": f"http_{error.code}", "detail": detail}
+    except (urllib.error.URLError, TimeoutError, OSError) as error:
+        return {"result": "unavailable", "error": f"transport: {str(error)[:120]}"}
+    if len(raw) > MAX_MODEL_OUTPUT_BYTES * 4:
+        return {"result": "unavailable", "error": "response_oversize"}
+    try:
+        envelope = json.loads(raw)
+        text = "".join(block.get("text", "") for block in envelope.get("content", [])
+                       if isinstance(block, dict) and block.get("type") == "text")
+    except (json.JSONDecodeError, AttributeError):
+        return {"result": "unavailable", "error": "provider_envelope_invalid"}
+    if envelope.get("stop_reason") not in ("end_turn", "stop_sequence"):
+        return {"result": "unavailable", "error": f"stop_reason_{envelope.get('stop_reason')}"}
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.find("{"):text.rfind("}") + 1]
+    usage = envelope.get("usage") or {}
+    return {"text": text.encode(), "usage": {"input_tokens": usage.get("input_tokens"),
+                                              "output_tokens": usage.get("output_tokens")},
+            "model": envelope.get("model")}
+
+
+def model_explanation(args, report):
+    """Optional model turn. Output is validated and never changes verdicts."""
+    from jsonschema import Draft202012Validator
+    schema = json.loads(Path(args.diagnosis_schema).read_text())
+    Draft202012Validator.check_schema(schema)
+    prompt = {"instruction": DIAGNOSIS_INSTRUCTION, "verdict": report}
+    provider_meta = {"provider": args.provider}
+    if args.provider == "anthropic":
+        outcome = run_anthropic(args, prompt, schema)
+        if isinstance(outcome, dict) and "text" in outcome:
+            provider_meta.update({"model": outcome["model"], "usage": outcome["usage"]})
+            outcome = outcome["text"]
+    else:
+        outcome = run_codex(args, prompt, schema)
+    if isinstance(outcome, dict):
+        return {**outcome, **provider_meta}
+    if len(outcome) > MAX_MODEL_OUTPUT_BYTES:
+        return {"result": "unavailable", "error": "model_output_oversize", **provider_meta}
+    try:
+        diagnosis = json.loads(outcome)
     except json.JSONDecodeError:
-        return {"result": "unavailable", "error": "model_output_not_json"}
+        return {"result": "unavailable", "error": "model_output_not_json", **provider_meta}
+    verdict = validate_diagnosis(schema, diagnosis, report)
+    return {**verdict, **provider_meta}
+
+
+def validate_diagnosis(schema, diagnosis, report):
+    from jsonschema import Draft202012Validator
+    if not isinstance(diagnosis, dict):
+        return {"result": "rejected", "error": "schema: not an object"}
     error = next(Draft202012Validator(schema).iter_errors(diagnosis), None)
     if error is not None:
         return {"result": "rejected", "error": f"schema: {error.message[:200]}"}
@@ -295,10 +392,19 @@ def main():
     parser.add_argument("--codex-thread-file")
     parser.add_argument("--diagnosis-schema")
     parser.add_argument("--model-timeout", type=int, default=90)
+    parser.add_argument("--provider", choices=("codex", "anthropic"), default="codex")
+    parser.add_argument("--api-key-file", help="private file holding the provider API key (never logged)")
+    parser.add_argument("--model", default="claude-sonnet-5-5")
+    parser.add_argument("--egress-host", default="api.anthropic.com",
+                        help="the only host the model request may go to")
     args = parser.parse_args()
     if not HEX.match(args.network_id):
         parser.error("network id must be 64 lowercase hex characters")
-    model_args = (args.codex_bin, args.codex_socket, args.codex_workdir, args.codex_thread_file, args.diagnosis_schema)
+    if args.provider == "anthropic":
+        model_args = (args.api_key_file, args.diagnosis_schema)
+    else:
+        model_args = (args.codex_bin, args.codex_socket, args.codex_workdir, args.codex_thread_file,
+                      args.diagnosis_schema)
     if any(model_args) and not all(model_args):
         parser.error("model options must be given together")
     report = judge(args)

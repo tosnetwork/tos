@@ -246,6 +246,7 @@ def test_model_answer_cannot_upgrade_a_verdict(tmp_path, monkeypatch):
     monkeypatch.setattr(judge.subprocess, "run", fake_run)
 
     class Args:
+        provider = "codex"
         diagnosis_schema = str(schema)
         codex_bin = "aura"
         codex_socket = "sock"
@@ -278,3 +279,60 @@ def test_model_answer_cannot_upgrade_a_verdict(tmp_path, monkeypatch):
         return R()
     monkeypatch.setattr(judge.subprocess, "run", fake_run_foreign)
     assert judge.model_explanation(Args, report)["error"] == "unbound_evidence_id"
+
+
+def test_anthropic_provider_sends_key_only_in_header_and_refuses_redirects(tmp_path, monkeypatch):
+    now_ms = int(judge.utc_now().timestamp() * 1000)
+    native = fresh_native(now_ms - 10_000)
+    body, parent = archive_row(native, now_ms - 10_000, now_ms - 9_000)
+    report = run_judge(tmp_path, all_good("validator1"), [("validator1", native, body, parent)], monkeypatch)
+    key_file = tmp_path / "key"
+    key_file.write_text("sk-test-secret-value\n")
+    key_file.chmod(0o600)
+    seen = {}
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+        def read(self, n):
+            return self.payload
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    class Opener:
+        def open(self, request, timeout):
+            seen["url"] = request.full_url
+            seen["headers"] = dict(request.header_items())
+            seen["body"] = request.data.decode()
+            answer = {"status": "analysis", "summary": "all six healthy", "findings": [
+                {"claim": "validator1 rules good", "basis": "observed", "evidence_ids": [parent]}],
+                "missing_evidence": [], "recommended_runbooks": []}
+            return Response(json.dumps({"content": [{"type": "text", "text": json.dumps(answer)}],
+                                        "stop_reason": "end_turn", "model": "m", "usage": {"input_tokens": 1, "output_tokens": 2}}).encode())
+    monkeypatch.setattr(judge.urllib.request, "build_opener", lambda *handlers: Opener())
+
+    class Args:
+        provider = "anthropic"
+        diagnosis_schema = str(ROOT / "contracts/diagnosis.schema.json")
+        api_key_file = str(key_file)
+        model = "m"
+        egress_host = "api.anthropic.com"
+        model_timeout = 5
+    outcome = judge.model_explanation(Args, report)
+    assert outcome["result"] == "accepted", outcome
+    assert seen["url"] == "https://api.anthropic.com/v1/messages"
+    assert seen["headers"]["X-api-key"] == "sk-test-secret-value"
+    assert "sk-test-secret-value" not in seen["body"]
+    assert "sk-test-secret-value" not in json.dumps(outcome)
+    # A world-readable key file is refused before any request.
+    key_file.chmod(0o644)
+    assert judge.model_explanation(Args, report)["error"] == "api_key_file_permissions"
+    key_file.chmod(0o600)
+    # A redirect from the approved host is refused, never followed.
+    class Redirecting:
+        def open(self, request, timeout):
+            raise judge.urllib.error.HTTPError(request.full_url, 302, "redirect refused", {}, None)
+    monkeypatch.setattr(judge.urllib.request, "build_opener", lambda *handlers: Redirecting())
+    assert judge.model_explanation(Args, report)["error"] == "http_302"
