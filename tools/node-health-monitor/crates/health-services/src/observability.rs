@@ -31,6 +31,9 @@ pub struct Data {
     pub grants: BTreeMap<String, Grant>,
     pub manager_conflicted: bool,
     pub manager_caught_up: bool,
+    /// Last failure of the read-only verdict copy, if any. A failed verdict
+    /// read never revokes grants; the snapshot reports the verdict as missing.
+    pub verdict_import_error: Option<String>,
 }
 #[derive(Clone)]
 pub struct ObservabilityState {
@@ -42,6 +45,9 @@ pub struct ObservabilityState {
     pub metrics: Arc<BTreeSet<String>>,
     pub query_ledger: Option<Arc<Mutex<QueryLedger>>>,
     pub manager_evidence_db: Option<PathBuf>,
+    /// M's control database, opened read-only only by broker-side imports to
+    /// copy the deterministic health-state verdict per node.
+    pub manager_control_db: Option<PathBuf>,
     /// Counts actual broker-side M archive read attempts. Query handlers must
     /// not increment this witness even under a call storm or cache miss.
     pub manager_projection_reads: Arc<AtomicU64>,
@@ -65,14 +71,20 @@ impl ObservabilityState {
                 grants: BTreeMap::new(),
                 manager_conflicted: false,
                 manager_caught_up: true,
+                verdict_import_error: None,
             })),
             inventory: Arc::new(inventory),
             operator_token: Arc::new(operator),
             ingest_token: Arc::new(ingest),
             service_token: Arc::new(service),
-            metrics: Arc::new(BTreeSet::new()),
+            // The only metric ids are the fixed native catalog; nothing here
+            // accepts PromQL, SQL or an operator-supplied series name.
+            metrics: Arc::new(
+                tos_health_core::native_metrics::catalog_ids().map(str::to_owned).collect(),
+            ),
             query_ledger: None,
             manager_evidence_db: None,
+            manager_control_db: None,
             manager_projection_reads: Arc::new(AtomicU64::new(0)),
             started: Instant::now(),
             epoch: hex(&random_token()?),
@@ -119,6 +131,62 @@ impl ObservabilityState {
         }
         Ok(self)
     }
+    /// Copy M's deterministic verdicts read-only at each broker import. The
+    /// query layer never evaluates a rule; it only carries the verdict row.
+    pub fn with_manager_control(mut self, path: PathBuf) -> Result<Self, String> {
+        if self.query_ledger.is_none() {
+            return Err("verdict projection requires durable query ledger".into());
+        }
+        self.manager_control_db = Some(path);
+        let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
+        import_verdicts_into(&self, &mut data);
+        if let Some(error) = &data.verdict_import_error {
+            return Err(format!("M control verdict read failed at startup: {error}"));
+        }
+        drop(data);
+        Ok(self)
+    }
+}
+/// Refresh the per-node verdict rows when M's evaluation sequence moved or the
+/// newest copy is older than two minutes. Failures are recorded, never fatal,
+/// and never touch grants: a stale or missing verdict is reported as missing
+/// evidence by the snapshot handler rather than hidden behind a refusal.
+fn import_verdicts_into(state: &ObservabilityState, data: &mut Data) {
+    const REFRESH_MS: i64 = 120_000;
+    let Some(path) = &state.manager_control_db else { return };
+    let result = (|| -> Result<(), String> {
+        let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+        let (sequence, nodes) = crate::manager_query_source::read_health_verdicts(
+            path,
+            &state.inventory.network_id,
+            &state.inventory.nodes,
+        )?;
+        let import_ms = chrono::Utc::now().timestamp_millis();
+        for node in nodes {
+            let newest = data
+                .store
+                .entries()
+                .filter(|e| {
+                    e.record.node_id == node.node_id
+                        && e.record.source_id == crate::manager_query_source::VERDICT_SOURCE
+                })
+                .max_by_key(|e| (e.record.observed_at_ms, e.watermark))
+                .map(|e| (e.record.quality.source_sequence.clone(), e.record.observed_at_ms));
+            let fresh = newest.is_some_and(|(seq, at)| {
+                seq == sequence.to_string() && import_ms.saturating_sub(at) < REFRESH_MS
+            });
+            if fresh {
+                continue;
+            }
+            let record = crate::manager_query_source::verdict_evidence(sequence, &node, import_ms);
+            ledger
+                .lock()
+                .map_err(|_| "query ledger unavailable")?
+                .insert_evidence(&mut data.store, record)?;
+        }
+        Ok(())
+    })();
+    data.verdict_import_error = result.err();
 }
 fn block_manager_queries(state: &ObservabilityState, data: &mut Data) -> Result<(), String> {
     // Set the in-memory refusal before touching SQLite. A partial I/O failure
@@ -223,7 +291,9 @@ fn import_manager_into(
 /// This is a broker-control operation, not a query handler fallback.
 pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String> {
     let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
-    import_manager_into(state, &mut data)
+    let imported = import_manager_into(state, &mut data);
+    import_verdicts_into(state, &mut data);
+    imported
 }
 fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers.get("authorization").and_then(|v| v.to_str().ok())
@@ -310,6 +380,8 @@ async fn projection_health(
             "source_global_m_seq":source_global_m_seq,
             "lag_global_m_seq":lag_global_m_seq,
             "source_identity_match":source_identity_match,
+            "verdict_source_configured":state.manager_control_db.is_some(),
+            "verdict_import_error":data.verdict_import_error,
         })),
     )
         .into_response();
@@ -395,6 +467,9 @@ async fn grant(
     if !data.manager_caught_up {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
+    // The verdict copy is fixed under this grant's W together with the
+    // evidence page; a failed copy leaves the verdict missing, not stale.
+    import_verdicts_into(&state, &mut data);
     let mut g = Grant::new(
         run.clone(),
         "aura".into(),

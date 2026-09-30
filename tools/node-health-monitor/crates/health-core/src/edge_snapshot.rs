@@ -38,6 +38,9 @@ pub struct CgroupPayload {
     pub oom_events: U64,
 }
 pub type CgroupEnvelope = SourceEnvelope<CgroupPayload>;
+// The v3 envelope carries chain anchors; boxing it would ripple through every
+// edge/collector/manager consumer for a transient wire value.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EdgeSource {

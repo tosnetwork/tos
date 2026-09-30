@@ -204,9 +204,11 @@ async fn serve_control(
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    let max_args = if cfg!(feature = "mcp") { 11 } else { 10 };
-    if !(8..=max_args).contains(&args.len()) {
-        return Err("usage: tos-observability INVENTORY_JSON LOOPBACK_LISTEN OPERATOR_TOKEN INGEST_TOKEN SERVICE_TOKEN PRIVATE_QUERY_LEDGER_DB PRIVATE_CONTROL_SOCKET [CACHE_JSONL_OR_DASH] [MANAGER_EVIDENCE_DB] [PRIVATE_MCP_SOCKET_WITH_MCP_FEATURE]".into());
+    if !(8..=12).contains(&args.len()) {
+        return Err("usage: tos-observability INVENTORY_JSON LOOPBACK_LISTEN OPERATOR_TOKEN INGEST_TOKEN SERVICE_TOKEN PRIVATE_QUERY_LEDGER_DB PRIVATE_CONTROL_SOCKET [CACHE_JSONL_OR_DASH] [MANAGER_EVIDENCE_DB_OR_DASH] [PRIVATE_MCP_SOCKET_OR_DASH] [MANAGER_CONTROL_DB_OR_DASH]".into());
+    }
+    if !cfg!(feature = "mcp") && args.get(10).is_some_and(|path| path.as_str() != "-") {
+        return Err("MCP socket requires the mcp feature; pass - to omit it".into());
     }
     let raw = std::fs::read(&args[1])?;
     if raw.len() > 262_144 {
@@ -223,6 +225,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(path) = args.get(9).filter(|path| path.as_str() != "-") {
         state = state.with_manager_evidence(path.into())?;
     }
+    if let Some(path) = args.get(11).filter(|path| path.as_str() != "-") {
+        state = state.with_manager_control(path.into())?;
+    }
     if let Some(path) = args.get(8).filter(|path| path.as_str() != "-") {
         tos_health_services::observability::import_cache(&state, path.into())?;
     }
@@ -233,7 +238,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("control socket parent must be a private directory".into());
     }
     #[cfg(feature = "mcp")]
-    let mcp_listener = if let Some(path) = args.get(10) {
+    let mcp_listener = if let Some(path) = args.get(10).filter(|path| path.as_str() != "-") {
         let path = Path::new(path);
         let parent = path.parent().ok_or("MCP socket must have a private parent")?;
         let metadata = std::fs::symlink_metadata(parent)?;

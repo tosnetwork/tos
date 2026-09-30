@@ -457,18 +457,29 @@ impl QueryService<'_> {
         let calls_before = grant.calls;
         let result = self.execute(grant, principal, token, now, tool, input);
         let (mut response, delivered) = match result {
-            Ok((_legacy_data, ids, pagination)) => {
-                let response = match crate::query_output::success(
-                    tool,
-                    &saved_input,
-                    grant,
-                    now,
-                    generated_ms,
-                    &ids,
-                    self.store,
-                    self.metrics,
-                    pagination,
-                ) {
+            Ok((data, ids, pagination)) => {
+                // Catalog metric series are derived in `execute` from the
+                // delivered native rows; the response layer only formats them.
+                let precomputed = data
+                    .get("precomputed_series")
+                    .cloned()
+                    .map(serde_json::from_value::<Vec<crate::query_output::MetricSeriesDto>>)
+                    .transpose()
+                    .map_err(|_| "SCHEMA_MISMATCH");
+                let response = match precomputed.and_then(|precomputed| {
+                    crate::query_output::success_with(
+                        tool,
+                        &saved_input,
+                        grant,
+                        now,
+                        generated_ms,
+                        &ids,
+                        self.store,
+                        self.metrics,
+                        pagination,
+                        precomputed,
+                    )
+                }) {
                     Ok(response) => response,
                     Err(code) => crate::query_output::error(code, grant, now, generated_ms),
                 };
@@ -482,7 +493,13 @@ impl QueryService<'_> {
         } else {
             serde_json::to_vec(&response).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
         };
-        if size > 32_768 || grant.bytes.checked_add(size).is_none_or(|n| n > 131_072) {
+        if size > 32_768 {
+            // One response over the per-call ceiling is refused explicitly; it
+            // is not silently trimmed and not misreported as run exhaustion.
+            response = crate::query_output::error("RESULT_TOO_LARGE", grant, now, generated_ms);
+            size = finalize_remaining_bytes(&mut response, grant.bytes);
+        }
+        if grant.bytes.checked_add(size).is_none_or(|n| n > 131_072) {
             response = crate::query_output::error("RUN_BUDGET_EXHAUSTED", grant, now, generated_ms);
             size = finalize_remaining_bytes(&mut response, grant.bytes);
         }
@@ -561,26 +578,49 @@ impl QueryService<'_> {
                 if at < grant.window_start_ms || at > grant.window_end_ms {
                     return Err("OUT_OF_SCOPE");
                 }
+                let max_age_ms = i64::from(q.max_age_seconds).saturating_mul(1000);
+                let newest = |predicate: &dyn Fn(&crate::evidence::StoredEvidence) -> bool| {
+                    visible()
+                        .filter(|e| {
+                            e.record.node_id == q.node_id
+                                && predicate(e)
+                                && e.record.quality.usable(at, max_age_ms, false)
+                        })
+                        .max_by_key(|e| (e.record.observed_at_ms, e.watermark))
+                };
                 let mut values = BTreeMap::new();
                 let mut ids = vec![];
-                for component in q.components {
-                    let entry = visible()
+                for component in &q.components {
+                    let Some(entry) =
+                        newest(&|e| crate::query_output::serves_component(e, component))
+                    else {
+                        return Err("CACHE_MISS");
+                    };
+                    values.insert(component.clone(), json!(entry));
+                    if !ids.contains(&entry.evidence_id) {
+                        ids.push(entry.evidence_id.clone());
+                    }
+                }
+                // The health verdict is supplementary to the consensus
+                // component: its absence is reported, never a cache miss.
+                // Its copy is stamped when the broker read M (at or after the
+                // grant window end), so freshness is measured against the
+                // response clock, still bounded by max_age and fixed under W.
+                if q.components.iter().any(|c| c == "consensus") {
+                    let wall = chrono::Utc::now().timestamp_millis();
+                    let verdict = visible()
                         .filter(|e| {
                             e.record.node_id == q.node_id
                                 && e.record.payload.get("component").and_then(Value::as_str)
-                                    == Some(component.as_str())
-                                && e.record.quality.usable(
-                                    at,
-                                    i64::from(q.max_age_seconds) * 1000,
-                                    false,
-                                )
+                                    == Some("health")
+                                && e.record.quality.usable(wall, max_age_ms, true)
                         })
-                        .max_by_key(|e| e.record.observed_at_ms);
-                    let Some(entry) = entry else {
-                        return Err("CACHE_MISS");
-                    };
-                    values.insert(component, json!(entry));
-                    ids.push(entry.evidence_id.clone());
+                        .max_by_key(|e| (e.record.observed_at_ms, e.watermark));
+                    if let Some(entry) = verdict {
+                        if !ids.contains(&entry.evidence_id) {
+                            ids.push(entry.evidence_id.clone());
+                        }
+                    }
                 }
                 Ok((json!(values), ids, complete_page()))
             }
@@ -600,6 +640,16 @@ impl QueryService<'_> {
                 }
                 if q.metric_ids.iter().any(|id| !self.metrics.contains(id)) {
                     return Err("UNKNOWN_METRIC");
+                }
+                let catalog: Vec<_> =
+                    q.metric_ids.iter().filter_map(|id| crate::native_metrics::spec(id)).collect();
+                if !catalog.is_empty() {
+                    if catalog.len() != q.metric_ids.len() {
+                        // Native catalog series and raw scalar rows have
+                        // different populations; one request serves one kind.
+                        return Err("INVALID_ARGUMENT");
+                    }
+                    return self.native_metric_window(grant, &q, &catalog, start, end);
                 }
                 // No interpolated zeros and no percentile calculations over raw values.
                 let mut series: BTreeMap<String, Vec<Value>> = BTreeMap::new();
@@ -835,6 +885,76 @@ impl QueryService<'_> {
             }
             _ => Err("INVALID_ARGUMENT"),
         }
+    }
+
+    /// Catalog metrics over already delivered native consensus rows. Points
+    /// are derived per node from consecutive archived samples; the newest
+    /// contributing sample per node is delivered as citable evidence and
+    /// every contributing sample id is listed on its series.
+    fn native_metric_window(
+        &self,
+        grant: &Grant,
+        q: &MetricRequest,
+        catalog: &[&'static crate::native_metrics::MetricSpec],
+        start: i64,
+        end: i64,
+    ) -> Result<(Value, Vec<String>, PaginationDto), &'static str> {
+        use crate::native_metrics::{derive, parse_row, Sample};
+        let mut series = Vec::new();
+        let mut delivered = Vec::new();
+        let mut total_points = 0usize;
+        for node in &q.node_ids {
+            let mut rows: Vec<_> = self
+                .store
+                .entries()
+                .filter(|e| {
+                    e.watermark <= grant.watermark
+                        && grant.scopes.contains(&e.record.scope_id)
+                        && e.record.node_id == *node
+                        && e.record.scope_id == q.scope_id
+                        && e.record.source_id == "native_core"
+                        && e.record.observed_at_ms >= grant.window_start_ms
+                        && e.record.observed_at_ms < end
+                })
+                .collect();
+            rows.sort_by_key(|e| (e.record.observed_at_ms, e.watermark));
+            let mut samples = Vec::with_capacity(rows.len());
+            for entry in rows {
+                if let Some(native) = parse_row(entry)? {
+                    samples.push(Sample { entry, native });
+                }
+            }
+            let mut newest_cited: Option<usize> = None;
+            for spec in catalog {
+                let derived = derive(spec, node, &q.scope_id, &samples, start, end)?;
+                let count = derived.points.as_ref().map_or(0, Vec::len);
+                if count > q.max_points_per_series as usize {
+                    return Err("SERIES_LIMIT");
+                }
+                total_points = total_points.checked_add(count).ok_or("SERIES_LIMIT")?;
+                if total_points > 4096 || series.len() >= 32 {
+                    return Err("SERIES_LIMIT");
+                }
+                if let Some(position) = derived.source_evidence_ids.last().and_then(|last| {
+                    samples.iter().position(|sample| &sample.entry.evidence_id == last)
+                }) {
+                    newest_cited = Some(newest_cited.map_or(position, |n| n.max(position)));
+                }
+                series.push(derived);
+            }
+            if let Some(sample) = newest_cited.and_then(|position| samples.get(position)) {
+                if !delivered.contains(&sample.entry.evidence_id) {
+                    delivered.push(sample.entry.evidence_id.clone());
+                }
+            }
+        }
+        if series.iter().all(|s| s.points.as_ref().is_none_or(Vec::is_empty)) {
+            return Err("CACHE_MISS");
+        }
+        if q.mode == "summary" {
+            return Err("CAPABILITY_UNSUPPORTED");
+        }
+        Ok((json!({ "precomputed_series": series }), delivered, complete_page()))
     }
 }
 

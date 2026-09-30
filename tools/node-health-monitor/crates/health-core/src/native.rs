@@ -182,6 +182,9 @@ pub fn parse_native(bytes: &[u8]) -> Result<NativeRecord, String> {
         _ => Err("unsupported native source version".into()),
     }
 }
+// The v3 envelope carries chain anchors; the size gap is inherent to the
+// versioned wire contract and this value is transient.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum NativeRecord {
     V1(NativeEnvelope),
