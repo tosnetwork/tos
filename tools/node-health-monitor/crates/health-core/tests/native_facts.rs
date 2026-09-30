@@ -177,7 +177,12 @@ fn dropped_or_saturated_counters_are_not_complete() {
     let derived = derive(&record, 1, &mut NativeFactState::default()).unwrap();
     assert!(!derived.complete);
     // Capability gaps alone (scope/lifecycle, present in the live sample) keep
-    // the counters complete.
+    // the counters complete, and so does a latched observation gap.
     let live = fixture("native-core-v2.validator1.live.json");
     assert!(derive(&live, 1, &mut NativeFactState::default()).unwrap().complete);
+    let mut gapped = fixture("native-core-v2.validator1.live.json");
+    consensus_mut(&mut gapped)
+        .incomplete_reasons
+        .insert(0, tos_health_core::consensus_v2::IncompleteReason::ObservationGap);
+    assert!(derive(&gapped, 1, &mut NativeFactState::default()).unwrap().complete);
 }

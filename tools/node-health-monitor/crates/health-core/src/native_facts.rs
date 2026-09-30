@@ -105,8 +105,11 @@ fn requested(consensus: &Consensus) -> u64 {
         .filter_map(|a| live(a).phases.get("requested").map(|v| v.0))
         .fold(0u64, |acc, v| acc.saturating_add(v))
 }
-/// Counter integrity reasons. Scope approval and lifecycle verification are
-/// capability gaps, not evidence that counters were dropped or saturated.
+/// Counter integrity reasons. Scope approval, lifecycle verification and an
+/// observation gap (a bounded publication that once missed a diagnostic
+/// observation, latched for the process lifetime) are coverage gaps; they do
+/// not mean the cumulative action, storage or PQ counters were dropped or
+/// saturated, so the facts derived from those counters stay usable.
 fn counters_intact(consensus: &Consensus) -> bool {
     use crate::consensus_v2::IncompleteReason::*;
     !consensus.incomplete_reasons.iter().any(|r| {
@@ -116,7 +119,6 @@ fn counters_intact(consensus: &Consensus) -> bool {
                 | ContextCapacity
                 | CounterSaturation
                 | LedgerCapacity
-                | ObservationGap
                 | PendingCapacity
                 | SnapshotContention
         )
