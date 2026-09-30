@@ -12,6 +12,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -101,7 +102,60 @@ def run(args):
     return evaluate(output.decode("utf-8", errors="replace"))
 
 
-def read_local_health(path, sources, network_id):
+def archived_native_parents(manager_db, samples, network_id):
+    """Bind each transient native sample to an exact, unquarantined M row."""
+    parents = {}
+    try:
+        with sqlite3.connect(f"file:{Path(manager_db)}?mode=ro", uri=True, timeout=1) as db:
+            db.execute("BEGIN")
+            for node in sorted(NODES):
+                sample = samples[node]
+                for _store_seq, parent_hash, body in db.execute(
+                "SELECT store_seq,content_hash,body FROM observations "
+                "WHERE node=? AND scope='node' AND source='native_core' "
+                "ORDER BY store_seq DESC LIMIT 32", (node,)
+                ):
+                    if len(body) > 32_768:
+                        raise ValueError("local_health_archive_oversize")
+                    value = json.loads(body)
+                    record = value["record"]
+                    native = record["payload"]["source"]
+                    if native["content_hash"] != sample["native_hash"]:
+                        continue
+                    canonical = json.loads(body)
+                    canonical["record"]["received_at_ms"] = 0
+                    if (re.fullmatch(r"[0-9a-f]{64}", parent_hash) is None
+                            or hashlib.sha256(json.dumps(canonical, separators=(",", ":"),
+                                                         ensure_ascii=False).encode()).hexdigest() != parent_hash
+                            or record["node_id"] != node
+                            or record["source_id"] != "native_core"
+                            or record["source_record_id"] != f"{sample['native_epoch']}:{sample['native_generation']}"
+                            or record["process_epoch"] != sample["native_epoch"]
+                            or value["source_epoch"] != sample["native_epoch"]
+                            or native["source_epoch"] != sample["native_epoch"]
+                            or native["generation"] != str(sample["native_generation"])
+                            or native["payload"]["network_id"] != network_id
+                            or hashlib.sha256(json.dumps(native["payload"], sort_keys=True,
+                                                         separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+                            != sample["native_hash"]):
+                        raise ValueError("local_health_archive_mismatch")
+                    quarantined = db.execute(
+                        "SELECT 1 FROM quarantined WHERE node=? AND scope='node' "
+                        "AND process_epoch=? AND source_epoch=? AND source='native_core' LIMIT 1",
+                        (node, sample["native_epoch"], sample["native_epoch"]),
+                    ).fetchone()
+                    if quarantined:
+                        raise ValueError("local_health_archive_quarantined")
+                    parents[node] = parent_hash
+                    break
+                if node not in parents:
+                    raise ValueError("local_health_archive_missing")
+    except (KeyError, TypeError, sqlite3.DatabaseError, json.JSONDecodeError) as error:
+        raise ValueError("local_health_archive_invalid") from error
+    return parents
+
+
+def read_local_health(path, sources, network_id, manager_db):
     """Read the independent local sampler cache; never contact a node here."""
     import os
     import stat
@@ -136,12 +190,17 @@ def read_local_health(path, sources, network_id):
         if (sample.get("pid") != sources[node]["pid"]
                 or not isinstance(native_hash, str)
                 or re.fullmatch(r"[0-9a-f]{64}", native_hash) is None
+                or not isinstance(sample.get("native_epoch"), str)
+                or type(sample.get("native_generation")) is not int
                 or verdict.get("status") not in ("unknown", "degraded")
                 or verdict.get("facts", {}).get("native_hash") != native_hash):
             raise ValueError("local_health_identity")
         compact[node] = {"status": verdict["status"],
                          "reasons": verdict["reasons"],
                          "facts": verdict["facts"]}
+    parents = archived_native_parents(manager_db, value["samples"], network_id)
+    for node, parent in parents.items():
+        compact[node]["native_archive_parent"] = parent
     return compact
 
 
@@ -152,7 +211,7 @@ def analyze(args, sources, checked_at, local_health=None):
     Draft202012Validator.check_schema(schema)
     evidence_ids = {item["evidence_id"] for item in sources.values()}
     if local_health:
-        evidence_ids.update(item["facts"]["native_hash"] for item in local_health.values())
+        evidence_ids.update(item["native_archive_parent"] for item in local_health.values())
     prompt = {
         "instruction": (
             "Analyze only this AURA process-source receipt. Return one JSON object matching "
@@ -161,7 +220,7 @@ def analyze(args, sources, checked_at, local_health=None):
             "facts, if present, may show sync or local action progress or degradation; "
             "they do not prove full duty or finality health. Use status "
             "insufficient_evidence. Do not infer healthy or safe. Cite only supplied "
-            "process parent IDs or native source hashes for observed findings. "
+            "M process parent IDs or M native archive parent IDs for observed findings. "
             "Do not request tools or remediation."
         ),
         "checked_at": checked_at,
@@ -190,11 +249,12 @@ def analyze(args, sources, checked_at, local_health=None):
         wire.flush()
         command = [args.codex_bin, "codex", "--socket", args.codex_socket,
                    "--thread-file", args.codex_thread_file,
-                   "--output-schema", wire.name, "--timeout-seconds", "35"]
+                   "--output-schema", wire.name, "--timeout-seconds", "60"]
         result = subprocess.run(command, input=json.dumps(prompt).encode(),
-                                capture_output=True, timeout=40)
+                                capture_output=True, timeout=65)
     if result.returncode != 0 or len(result.stdout) > 16384:
-        raise ValueError("codex_turn_failed")
+        kind = "codex_turn_timeout" if b"timed out" in result.stderr else "codex_turn_failed"
+        raise ValueError(kind)
     diagnosis = json.loads(result.stdout)
     if next(Draft202012Validator(schema).iter_errors(diagnosis), None) is not None:
         raise ValueError("diagnosis_schema_invalid")
@@ -236,7 +296,7 @@ def main():
                 if args.local_health_file:
                     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
                     local_health = read_local_health(
-                        args.local_health_file, sources, manifest["network_id"]
+                        args.local_health_file, sources, manifest["network_id"], args.manager_db
                     )
                     status["local_validator_facts"] = local_health
                 status["diagnosis"] = analyze(args, sources, status["checked_at"], local_health)

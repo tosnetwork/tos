@@ -39,7 +39,9 @@ loopback `/readyz` and native snapshot routes every minute. It validates the
 source schema/hash, manifest PID and network, and two samples in one Linux boot
 and time namespace. It writes a private bounded summary; AURA reads only that
 cache and never contacts validator endpoints. Sync and local action progress
-can be reported as development facts. The native source currently declares
+can be reported as development facts. Before a Codex turn, the runner binds
+each native sample hash, generation, and epoch to an unquarantined M archive
+row and allows the model to cite only that durable parent ID. The native source currently declares
 missing chain anchors, duties and storage state, so whole-validator health
 remains `unknown` even when these limited signals progress. A non-ready node,
 new signing failure or new local action failure is reported as `degraded`.

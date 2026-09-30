@@ -97,11 +97,20 @@ to the local signed-in Codex app-server through AURA's CLI bridge. The first
 supervised turn succeeded and returned `insufficient_evidence`: process sources
 were partial, while consensus, duty, persistence, and whole-validator health
 remained unknown. The caller validates the repository diagnosis schema and
-rejects evidence IDs outside the six verified parents. The AURA fork bridge is
+rejects evidence IDs outside verified M process and native parents. The AURA fork bridge is
 still an open pull request and the timer uses its local build. There is no
 external notification or automatic remediation; revoked grants still consume
 the finite Q ledger. Additional consensus, long-soak, and broad performance
 work is deferred from this development milestone.
+
+A separate one-minute, bounded loopback sampler now captures six local native
+and readiness sources. The AURA runner binds each native sample to an exact,
+unquarantined M archive parent before the resident Codex turn. A supervised
+turn at 2026-09-30 07:41 UTC cited six process and six native M parents and
+returned `insufficient_evidence`; local sync and action progress were present,
+while the native source still declared chain anchors, duties, queue, and
+storage coverage incomplete. Thus this path detects some demonstrated faults
+and reports observed progress, but it cannot yet certify a validator healthy.
 
 Source-only successor `23429522d` requires a nonzero Q projection cursor's
 anchor sequence to equal its global M watermark; the M reader also checks the
