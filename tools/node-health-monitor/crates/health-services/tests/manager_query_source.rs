@@ -1175,6 +1175,40 @@ fn m_integrity_revision_distinguishes_append_from_quarantine_and_rewrite() {
     let original = manager.insert(row("edge-epoch-1")).unwrap();
     assert_eq!(revision(), 0, "ordinary immutable append must not invalidate a fixed W");
     let sql = rusqlite::Connection::open(&path).unwrap();
+    let recursive_triggers: i64 =
+        sql.pragma_query_value(None, "recursive_triggers", |row| row.get(0)).unwrap();
+    assert_eq!(recursive_triggers, 0, "exercise SQLite's default REPLACE behavior");
+    let original_body: String = sql
+        .query_row(
+            "SELECT body FROM observations WHERE store_seq=?1",
+            [i64::try_from(original.store_seq.0).unwrap()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    for replacement in [
+        "INSERT OR REPLACE INTO observations SELECT store_seq,node,scope,process_epoch,source_epoch,source,source_record,content_hash,'{}' FROM observations WHERE store_seq=?1",
+        "INSERT OR REPLACE INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body) SELECT node,scope,process_epoch,source_epoch,source,source_record,content_hash,'{}' FROM observations WHERE store_seq=?1",
+    ] {
+        assert!(
+            sql.execute(replacement, [i64::try_from(original.store_seq.0).unwrap()]).is_err(),
+            "REPLACE must not bypass immutable M parent identity"
+        );
+        let retained: String = sql
+            .query_row(
+                "SELECT body FROM observations WHERE store_seq=?1",
+                [i64::try_from(original.store_seq.0).unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, original_body);
+        assert_eq!(revision(), 0);
+        assert_eq!(
+            tos_health_services::manager_query_source::read_projection_head(&path, &network)
+                .unwrap()
+                .global_m_seq,
+            original.store_seq.0,
+        );
+    }
     let quarantine =
         "INSERT OR IGNORE INTO quarantined(node,scope,process_epoch,source_epoch,source)
         VALUES('v1','node','boot:4242:100','edge-epoch-1','process')";
@@ -1208,6 +1242,20 @@ fn m_integrity_revision_distinguishes_append_from_quarantine_and_rewrite() {
     let quarantined: i64 =
         sql.query_row("SELECT COUNT(*) FROM quarantined", [], |row| row.get(0)).unwrap();
     assert_eq!(quarantined, 0, "overflow refuses the entire source mutation");
+    let immutable_sql: String = sql
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='nhm_observation_immutable_insert'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    sql.execute("DROP TRIGGER nhm_observation_immutable_insert", []).unwrap();
+    assert!(
+        tos_health_services::manager_query_source::read_projection_head(&path, &network).is_err(),
+        "read-only Q head must refuse a missing immutable-insert guard"
+    );
+    assert!(EvidenceDb::open(&path, 4 * 1024 * 1024).is_err());
+    sql.execute_batch(&immutable_sql).unwrap();
     sql.execute("DROP TRIGGER nhm_quarantine_insert_revision", []).unwrap();
     assert!(
         tos_health_services::manager_query_source::read_projection_head(&path, &network).is_err()
@@ -1242,6 +1290,7 @@ fn legacy_m_evidence_migrates_revision_without_changing_observation_identity() {
          DROP TRIGGER nhm_quarantine_delete_revision;
          DROP TRIGGER nhm_observation_update_revision;
          DROP TRIGGER nhm_observation_delete_revision;
+         DROP TRIGGER nhm_observation_immutable_insert;
          DROP TABLE integrity_revision;
          PRAGMA user_version=1;",
     )

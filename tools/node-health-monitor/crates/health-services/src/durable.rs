@@ -79,6 +79,13 @@ const INTEGRITY_TRIGGERS: [(&str, &str, &str); 5] = [
     ("nhm_observation_delete_revision", "DELETE", "observations"),
 ];
 
+const IMMUTABLE_OBSERVATION_INSERT_TRIGGER: &str =
+    "CREATE TRIGGER nhm_observation_immutable_insert BEFORE INSERT ON observations BEGIN \
+     SELECT CASE WHEN EXISTS(SELECT 1 FROM observations WHERE store_seq=NEW.store_seq \
+     OR (node=NEW.node AND scope=NEW.scope AND process_epoch=NEW.process_epoch \
+     AND source_epoch=NEW.source_epoch AND source=NEW.source AND source_record=NEW.source_record)) \
+     THEN RAISE(ABORT,'immutable observation identity') END; END";
+
 pub(crate) fn integrity_trigger_sql(name: &str, operation: &str, table: &str) -> String {
     format!(
         "CREATE TRIGGER {name} AFTER {operation} ON {table} BEGIN \
@@ -104,6 +111,16 @@ pub(crate) fn validate_integrity_schema(conn: &Connection) -> Result<u64> {
         if stored.trim_end_matches(';') != integrity_trigger_sql(name, operation, table) {
             return Err("M integrity trigger changed".into());
         }
+    }
+    let immutable_insert: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='nhm_observation_immutable_insert'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    if immutable_insert.trim_end_matches(';') != IMMUTABLE_OBSERVATION_INSERT_TRIGGER {
+        return Err("M immutable observation trigger changed".into());
     }
     let revision: i64 = conn
         .query_row("SELECT revision FROM integrity_revision WHERE singleton=1", [], |row| {
@@ -144,6 +161,19 @@ fn install_integrity_schema(conn: &mut Connection) -> Result<()> {
             Some(_) => return Err("M integrity trigger changed".into()),
             None => tx.execute_batch(&sql).map_err(err)?,
         }
+    }
+    let stored: Option<String> = tx
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='nhm_observation_immutable_insert'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    match stored {
+        Some(stored) if stored.trim_end_matches(';') == IMMUTABLE_OBSERVATION_INSERT_TRIGGER => {}
+        Some(_) => return Err("M immutable observation trigger changed".into()),
+        None => tx.execute_batch(IMMUTABLE_OBSERVATION_INSERT_TRIGGER).map_err(err)?,
     }
     tx.pragma_update(None, "user_version", 2).map_err(err)?;
     tx.commit().map_err(err)?;
