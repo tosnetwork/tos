@@ -125,9 +125,9 @@
       "id": "queue_stall",
       "fact": "QueueOldestMs",
       "predicate": "Above",
-      "source_class": "native_core",
-      "role": "validator",
-      "adapter": "unsupported_synchronous_signer_no_queue",
+      "source_class": "native_queues",
+      "role": "all",
+      "adapter": "implemented",
       "bad": "value>threshold",
       "good": "value<=threshold",
       "manual_clear": "not_required",
@@ -240,6 +240,42 @@
       "good": "value=1",
       "manual_clear": "not_required",
       "deadline_source": "ai_service"
+    },
+    {
+      "id": "duty_missed",
+      "fact": "DutyWindowsMissed",
+      "predicate": "Increase",
+      "source_class": "native_duties",
+      "role": "validator",
+      "adapter": "implemented",
+      "bad": "same_epoch_counter_increase",
+      "good": "same_epoch_counter_stable",
+      "manual_clear": "not_required",
+      "deadline_source": "source_observation"
+    },
+    {
+      "id": "storage_space_low",
+      "fact": "DiskUsedPermille",
+      "predicate": "Above",
+      "source_class": "native_storage",
+      "role": "all",
+      "adapter": "implemented",
+      "bad": "value>threshold",
+      "good": "value<=threshold",
+      "manual_clear": "not_required",
+      "deadline_source": "source_observation"
+    },
+    {
+      "id": "state_gc_lag",
+      "fact": "StateGcLagBlocks",
+      "predicate": "Above",
+      "source_class": "native_storage",
+      "role": "all",
+      "adapter": "implemented",
+      "bad": "value>threshold",
+      "good": "value<=threshold",
+      "manual_clear": "not_required",
+      "deadline_source": "source_observation"
     }
   ]
 }

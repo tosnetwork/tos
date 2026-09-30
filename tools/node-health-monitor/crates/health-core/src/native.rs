@@ -174,6 +174,74 @@ impl ChainAnchors {
         Ok(())
     }
 }
+/// Leader-window duty counters: the collator schedule's own assignment is the
+/// denominator; started, superseded and suppressed-behind are how assigned
+/// windows ended before or at production.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeaderWindows {
+    pub assigned: U64,
+    pub started: U64,
+    pub superseded: U64,
+    pub suppressed_behind: U64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Duties {
+    pub leader_windows: LeaderWindows,
+    pub member: bool,
+}
+/// One real waiter queue of the validator manager: unfinished waits and the
+/// age of the oldest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueueGauge {
+    pub depth: u64,
+    pub oldest_age_ms: U64,
+    pub queue: String,
+}
+/// Storage position: disk space under the database root and the seqnos
+/// garbage collection and the persistent-state serializer have reached.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoragePosition {
+    pub db_free_bytes: U64,
+    pub db_total_bytes: U64,
+    pub gc_seqno: u32,
+    pub persistent_state_seqno: u32,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NodeState {
+    pub duties: Duties,
+    pub observed_unix_seconds: U64,
+    pub queues: Vec<QueueGauge>,
+    pub storage: StoragePosition,
+}
+impl NodeState {
+    fn validate(&self) -> Result<(), String> {
+        let w = &self.duties.leader_windows;
+        let ended = w
+            .started
+            .0
+            .checked_add(w.superseded.0)
+            .and_then(|v| v.checked_add(w.suppressed_behind.0))
+            .ok_or("leader window counters overflow")?;
+        if self.observed_unix_seconds.0 == 0
+            || ended > w.assigned.0
+            || self.queues.is_empty()
+            || self.queues.len() > 8
+            || self.queues.iter().any(|q| !alias(&q.queue) || q.depth > 1_000_000)
+            || self.queues.iter().map(|q| &q.queue).collect::<std::collections::BTreeSet<_>>().len()
+                != self.queues.len()
+            || self.storage.db_total_bytes.0 == 0
+            || self.storage.db_free_bytes.0 > self.storage.db_total_bytes.0
+        {
+            return Err("invalid node state".into());
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativePayloadV3 {
@@ -185,6 +253,14 @@ pub struct NativePayloadV3 {
     pub generation: U64,
     pub kind: String,
     pub network_id: String,
+    /// Absent on publishers older than the node-state section (outer `None`,
+    /// not re-serialized); null while the manager has not published one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present_nullable"
+    )]
+    pub node_state: Option<Option<NodeState>>,
     pub openmetrics_hash: String,
     #[serde(deserialize_with = "required_nullable")]
     pub pq_sign: Option<PqSnapshot>,
@@ -516,7 +592,8 @@ impl NativeEnvelopeV3 {
             || self.payload.bytes > 2_097_152
             || self.source_age_ms.is_none_or(|age| age > 30_000)
             || !hash(&self.content_hash)
-            || self.coverage.status != "partial"
+            || !matches!(self.coverage.status.as_str(), "partial" | "complete")
+            || (self.coverage.status == "complete") != self.coverage.missing_fields.is_empty()
             || self.coverage.sampling_policy != "native-core-v3-chain-partial"
             || self.coverage.missing_fields.len() > 64
             || self.coverage.gaps.len() > 32
@@ -571,6 +648,28 @@ impl NativeEnvelopeV3 {
         }
         if let Some(consensus) = &self.payload.consensus {
             consensus.validate(&self.payload.network_id)?;
+        }
+        let state_fields = ["local_duties", "queue_state", "storage_state"];
+        let marked_missing = |field: &str| self.coverage.missing_fields.iter().any(|f| f == field);
+        if let Some(Some(state)) = &self.payload.node_state {
+            state.validate()?;
+            let sampled_ms = crate::query::utc_ms(
+                self.observed_at.as_deref().ok_or("missing native v3 timestamp")?,
+            )?
+            .max(0) as u64;
+            let state_ms = state
+                .observed_unix_seconds
+                .0
+                .checked_mul(1000)
+                .ok_or("node state time overflow")?;
+            if state_ms > sampled_ms + 1000 || sampled_ms.saturating_sub(state_ms) > 31_000 {
+                return Err("stale or future node state".into());
+            }
+            if state_fields.iter().any(|f| marked_missing(f)) {
+                return Err("present node state marked missing".into());
+            }
+        } else if !state_fields.iter().all(|f| marked_missing(f)) {
+            return Err("missing node state not covered".into());
         }
         if canonical_hash(&self.payload)? != self.content_hash {
             return Err("native v3 content hash mismatch".into());

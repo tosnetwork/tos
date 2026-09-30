@@ -132,6 +132,8 @@ fn scalar_rules_use_only_their_frozen_facts() {
         ("local_chain_stalled", FactId::ChainProgressAgeMs, 11),
         ("applied_served_gap", FactId::AppliedServedGap, 11),
         ("key_block_stale", FactId::KeyBlockAgeMs, 11),
+        ("storage_space_low", FactId::DiskUsedPermille, 11),
+        ("state_gc_lag", FactId::StateGcLagBlocks, 11),
         ("local_action_overdue", FactId::ActionOldestMs, 11),
         ("queue_stall", FactId::QueueOldestMs, 11),
         ("session_stop_pending", FactId::SessionStopPendingMs, 11),

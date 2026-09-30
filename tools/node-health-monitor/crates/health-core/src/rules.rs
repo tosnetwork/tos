@@ -29,6 +29,11 @@ pub enum FactId {
     MonitorAvailable,
     DiagnosticDrops,
     AiAvailable,
+    DutyMember,
+    DutyWindowsMissed,
+    QueueDepth,
+    DiskUsedPermille,
+    StateGcLagBlocks,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -77,6 +82,7 @@ impl FactFrame {
                     | FactId::ObserverDisagreement
                     | FactId::MonitorAvailable
                     | FactId::AiAvailable
+                    | FactId::DutyMember
             ) && f.value.0 > 1
             {
                 return Err("boolean fact out of range");
@@ -174,6 +180,9 @@ fn definition(id: &str) -> Option<(Option<FactId>, Predicate)> {
         "monitoring_unavailable" => (Some(MonitorAvailable), Zero),
         "diagnostic_coverage_reduced" => (Some(DiagnosticDrops), Increase),
         "ai_unavailable" => (Some(AiAvailable), Zero),
+        "duty_missed" => (Some(DutyWindowsMissed), Increase),
+        "storage_space_low" => (Some(DiskUsedPermille), Above),
+        "state_gc_lag" => (Some(StateGcLagBlocks), Above),
         _ => return None,
     })
 }

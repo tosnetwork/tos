@@ -214,6 +214,40 @@ edge parses the native record with the same strict types and answers 503
 until it is rebuilt and recreated. On 2026-09-30 the rebuilt network came up
 with every edge refusing for four minutes for exactly this reason.
 
+## Node state: duties, real queues and the storage position
+
+The v3 payload carries a `node_state` section the validator manager refreshes
+once per second (null until the first refresh, dropped when unrefreshed for
+30 s), and the three coverage fields `local_duties`, `queue_state` and
+`storage_state` disappear when it is present; the snapshot's coverage then
+reads `complete`. Each part is its own one-frame source in the poller:
+
+- `native_duties` (`duty_member`, `duty_windows_missed`): membership is
+  whether the manager runs any validator group; the duty denominator is the
+  collator schedule's own leader-window assignment
+  (`is_expected_collator`), and a missed window is one that neither started
+  nor ended for a protocol reason (superseded by a newer window while the
+  parent resolved, or suppressed because finality was behind). Rule
+  `duty_missed` (Increase) is bound for validators only; observers are never
+  assigned and report zero.
+- `native_queues` (`queue_depth`, `queue_oldest_ms`): the manager's three real
+  waiter queues (`wait_block_data_`, `wait_state_` incl. preliminary waits,
+  `shard_client_waiters_`), counted in the same one-second sweep that checks
+  their timers; each waiter now records its creation time. Rule `queue_stall`
+  (Above) fires on the oldest unfinished wait. The PQ signer still has no
+  queue and none is invented.
+- `native_storage` (`disk_used_permille`, `state_gc_lag_blocks`): `statvfs`
+  of the database root once per second, and the applied seqno minus the
+  garbage-collection seqno (the persistent-state seqno is published beside
+  it). Rules `storage_space_low` (Above 900 ‰) and `state_gc_lag` (Above a
+  block count; GC trails by `state_ttl` plus at most one key-block interval on
+  a healthy network).
+
+All of it is a handful of relaxed atomics in the engine; nothing scans the
+database or reads private material. The edge, collector, query broker and
+poller all parse the section with strict types, so every one of them must be
+rebuilt and redeployed with the engine.
+
 ## The rotating development network
 
 `setup-testnet.sh --clean --rotate` creates the network with a bootstrap

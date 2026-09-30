@@ -108,6 +108,8 @@ class ValidatorManagerImpl : public ValidatorManager {
     td::Timestamp timeout;
     td::uint32 priority;
     td::Promise<ResType> promise;
+    // When the wait was registered; the health gauges report the oldest one.
+    td::Timestamp created = td::Timestamp::now();
 
     Waiter() {
     }
@@ -351,6 +353,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void got_next_gc_masterchain_state(BlockHandle handle, td::Ref<MasterchainState> state);
   void advance_gc(BlockHandle handle, td::Ref<MasterchainState> state);
   void try_advance_gc_masterchain_block();
+  void publish_health_node_state();
   void update_gc_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
   void update_shard_client_block_handle(BlockHandle handle, td::Ref<MasterchainState> state,
                                         td::Promise<td::Unit> promise) override;

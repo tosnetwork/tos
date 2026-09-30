@@ -144,7 +144,8 @@ void unit() {
   CHECK(anchored_body->find(",\"observed_unix_seconds\":\"1700000000\",\"served\":") != std::string::npos);
   CHECK(anchored_body->find("\"seqno\":17166") != std::string::npos);
   CHECK(anchored_body->find("\"key_block\":{\"seqno\":17000,\"unix_seconds\":\"1699990000\"}") != std::string::npos);
-  CHECK(anchored_body->find("\"instrumentation_complete\":true") != std::string::npos);
+  // Anchored but without node state: still partial, the three fields named.
+  CHECK(anchored_body->find("\"instrumentation_complete\":false") != std::string::npos);
   CHECK(anchored_body->find("\"missing_fields\":[\"local_duties\"") != std::string::npos);
   // A halted chain keeps its anchor: the sample is still refreshed by the
   // publisher, only the applied-advance clock is old. Consumers derive the
@@ -158,7 +159,7 @@ void unit() {
   CHECK(halted_body);
   CHECK(halted_body->find("\"applied_advanced_unix_seconds\":\"1699999400\",\"key_block\":") != std::string::npos);
   CHECK(halted_body->find(",\"observed_unix_seconds\":\"1700000000\",\"served\":") != std::string::npos);
-  CHECK(halted_body->find("\"instrumentation_complete\":true") != std::string::npos);
+  CHECK(halted_body->find("\"instrumentation_complete\":false") != std::string::npos);
   // A sample nobody refreshed for more than 30 s is not evidence about the
   // present: the anchor is dropped and the snapshot is partial again.
   auto stale = publisher.prepare(4, 10, 1700000031, "# EOF\n", true, sign, verify, true, &consensus, true);
@@ -193,6 +194,51 @@ void unit() {
   auto malformed_body = malformed->read(10);
   CHECK(malformed_body);
   CHECK(malformed_body->find("\"chain\":null") != std::string::npos);
+  // Node state (duties, real queues, storage position) attached: the three
+  // coverage fields disappear, the snapshot becomes complete, and the JSON is
+  // well-formed with the exact key order the consumers hash.
+  anchor.applied_advanced_unix_seconds = 1700000000;
+  anchor.observed_unix_seconds = 1700000000;
+  chain_anchor_state.publish(anchor);
+  node_state.validator_member.store(true);
+  node_state.leader_windows_assigned.store(12);
+  node_state.leader_windows_superseded.store(1);
+  node_state.leader_windows_suppressed_behind.store(2);
+  node_state.block_data_waiters.depth.store(3);
+  node_state.block_data_waiters.oldest_age_ms.store(4500);
+  node_state.db_total_bytes.store(1000000000000ULL);
+  node_state.db_free_bytes.store(250000000000ULL);
+  node_state.gc_seqno.store(17000);
+  node_state.persistent_state_seqno.store(16500);
+  node_state.storage_valid.store(true);
+  node_state.observed_unix_seconds.store(1700000000);
+  auto full = publisher.prepare(8, 10, 1700000001, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(full);
+  auto full_body = full->read(10);
+  CHECK(full_body);
+  std::string full_copy = *full_body;
+  CHECK(td::json_decode(td::MutableSlice(full_copy)).is_ok());
+  CHECK(full_body->find("\"node_state\":{\"duties\":{\"leader_windows\":{\"assigned\":\"12\",\"started\":\"") != std::string::npos);
+  CHECK(full_body->find("\"superseded\":\"1\",\"suppressed_behind\":\"2\"},\"member\":true}") != std::string::npos);
+  CHECK(full_body->find("{\"depth\":3,\"oldest_age_ms\":\"4500\",\"queue\":\"block_data_waiters\"}") != std::string::npos);
+  CHECK(full_body->find("\"storage\":{\"db_free_bytes\":\"250000000000\",\"db_total_bytes\":\"1000000000000\",\"gc_seqno\":17000,\"persistent_state_seqno\":16500}") != std::string::npos);
+  CHECK(full_body->find("\"coverage\":{\"status\":\"complete\",\"missing_fields\":[]") != std::string::npos);
+  CHECK(full_body->find("\"instrumentation_complete\":true") != std::string::npos);
+  // A node-state sample nobody refreshed for more than 30 s is dropped again.
+  auto ns_stale = publisher.prepare(9, 10, 1700000031, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(ns_stale);
+  auto ns_stale_body = ns_stale->read(10);
+  CHECK(ns_stale_body);
+  CHECK(ns_stale_body->find("\"node_state\":null") != std::string::npos);
+  CHECK(ns_stale_body->find("\"local_duties\",\"queue_state\",\"storage_state\"]") != std::string::npos);
+  // Without a valid disk sample the storage position is not claimed.
+  node_state.observed_unix_seconds.store(1700000031);
+  node_state.storage_valid.store(false);
+  auto no_disk = publisher.prepare(10, 10, 1700000031, "# EOF\n", true, sign, verify, true, &consensus, true);
+  CHECK(no_disk);
+  auto no_disk_body = no_disk->read(10);
+  CHECK(no_disk_body);
+  CHECK(no_disk_body->find("\"node_state\":null") != std::string::npos);
   std::cout << "native_snapshot_unit_passed" << std::endl;
 }
 }  // namespace

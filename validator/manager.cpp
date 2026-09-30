@@ -44,6 +44,9 @@
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
 #include "metrics/chain-anchor-snapshot.h"
+#include "metrics/node-state-snapshot.h"
+
+#include <sys/statvfs.h>
 #include "lite-client/lite-ext-query-failure.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
@@ -3968,6 +3971,64 @@ BlockHandle ValidatorManagerImpl::get_handle_from_lru(BlockIdExt id) {
   }
 }
 
+// Node-state gauges for the health snapshot: membership, duty counters live in
+// the consensus group, the three real waiter queues of this actor, and the
+// storage position. One pass over the waiter maps per second, which the timer
+// sweep already does; one statvfs of the database root.
+void ValidatorManagerImpl::publish_health_node_state() {
+  auto &g = health::node_state;
+  const auto now = td::Timestamp::now();
+  auto oldest_ms = [&](double created_at) -> std::uint64_t {
+    const double age = now.at() - created_at;
+    return age > 0 ? static_cast<std::uint64_t>(age * 1000.0) : 0;
+  };
+  std::uint64_t depth = 0, oldest = 0;
+  for (auto &w : wait_block_data_) {
+    for (auto &x : w.second.waiting_) {
+      ++depth;
+      oldest = std::max(oldest, oldest_ms(x.created.at()));
+    }
+  }
+  g.block_data_waiters.depth.store(depth, std::memory_order_relaxed);
+  g.block_data_waiters.oldest_age_ms.store(oldest, std::memory_order_relaxed);
+  depth = 0;
+  oldest = 0;
+  for (auto &w : wait_state_) {
+    for (auto &x : w.second.waiting_) {
+      ++depth;
+      oldest = std::max(oldest, oldest_ms(x.created.at()));
+    }
+    for (auto &x : w.second.waiting_preliminary_) {
+      ++depth;
+      oldest = std::max(oldest, oldest_ms(x.created.at()));
+    }
+  }
+  g.state_waiters.depth.store(depth, std::memory_order_relaxed);
+  g.state_waiters.oldest_age_ms.store(oldest, std::memory_order_relaxed);
+  depth = 0;
+  oldest = 0;
+  for (auto &w : shard_client_waiters_) {
+    for (auto &x : w.second.waiting_) {
+      ++depth;
+      oldest = std::max(oldest, oldest_ms(x.created.at()));
+    }
+  }
+  g.shard_client_waiters.depth.store(depth, std::memory_order_relaxed);
+  g.shard_client_waiters.oldest_age_ms.store(oldest, std::memory_order_relaxed);
+  g.validator_member.store(!validator_groups_.empty(), std::memory_order_relaxed);
+  g.gc_seqno.store(gc_masterchain_handle_ ? gc_masterchain_handle_->id().id.seqno : 0, std::memory_order_relaxed);
+  g.persistent_state_seqno.store(state_serializer_masterchain_seqno_, std::memory_order_relaxed);
+  struct statvfs st;
+  if (statvfs(db_root_.c_str(), &st) == 0 && st.f_frsize > 0) {
+    g.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize, std::memory_order_relaxed);
+    g.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize, std::memory_order_relaxed);
+    g.storage_valid.store(true, std::memory_order_relaxed);
+  } else {
+    g.storage_valid.store(false, std::memory_order_relaxed);
+  }
+  g.observed_unix_seconds.store(static_cast<std::uint64_t>(td::Clocks::system()), std::memory_order_release);
+}
+
 void ValidatorManagerImpl::try_advance_gc_masterchain_block() {
   if (gc_masterchain_handle_ && last_masterchain_seqno_ > 0 && !gc_advancing_ &&
       gc_masterchain_handle_->inited_next_left() &&
@@ -4151,6 +4212,7 @@ void ValidatorManagerImpl::alarm() {
     }
   }
   alarm_timestamp().relax(resend_shard_blocks_at_);
+  publish_health_node_state();
   if (check_waiters_at_.is_in_past()) {
     check_waiters_at_ = td::Timestamp::in(1.0);
     for (auto &w : wait_block_data_) {

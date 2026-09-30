@@ -48,7 +48,7 @@ def check_rule_manifest(value):
  implemented={id:(None if fact=='None' else fact[5:-1],predicate)
   for id,fact,predicate in re.findall(r'"([a-z_]+)"\s*=>\s*\((Some\([A-Za-z]+\)|None),\s*([A-Za-z]+)\)',source)}
  rules=value['rules'];ids=[r['id'] for r in rules]
- assert len(ids)==len(set(ids))==19 and set(ids)==set(implemented)
+ assert len(ids)==len(set(ids))==22 and set(ids)==set(implemented)
  required={'id','fact','predicate','source_class','role','adapter','bad','good','manual_clear','deadline_source'}
  for rule in rules:
   assert set(rule)==required and (rule['fact'],rule['predicate'])==implemented[rule['id']]

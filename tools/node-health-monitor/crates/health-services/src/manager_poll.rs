@@ -227,12 +227,13 @@ pub fn native_fact_frame(
 /// id (`native_chain`, `diagnostic`) so a fact that only some nodes can
 /// support never blocks the main native catalog.
 pub fn secondary_frame(native: &FactFrame, source_id: &str, fact: FactId, value: u64) -> FactFrame {
-    FactFrame {
-        source_id: source_id.into(),
-        complete: true,
-        facts: vec![Fact { id: fact, value: U64(value) }],
-        ..native.clone()
-    }
+    facts_frame(native, source_id, vec![Fact { id: fact, value: U64(value) }])
+}
+
+/// A fixed frame of several facts derived from the same native sample under
+/// its own source id (`native_duties`, `native_queues`, `native_storage`).
+pub fn facts_frame(native: &FactFrame, source_id: &str, facts: Vec<Fact>) -> FactFrame {
+    FactFrame { source_id: source_id.into(), complete: true, facts, ..native.clone() }
 }
 
 /// Process memory frame from the edge's process source: anonymous memory
@@ -430,6 +431,18 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         if let Some(age) = tos_health_core::native_facts::key_block_age_ms(&record) {
             let key = secondary_frame(&frame, "native_key_block", FactId::KeyBlockAgeMs, age);
             post_frame(&manager_client, &config.manager_url, &manager, &key).await;
+        }
+        // Node state: duties, the manager's real queues and the storage
+        // position, each its own source; absent sections post nothing.
+        for (source, facts) in [
+            ("native_duties", tos_health_core::native_facts::duty_facts(&record)),
+            ("native_queues", tos_health_core::native_facts::queue_facts(&record)),
+            ("native_storage", tos_health_core::native_facts::storage_facts(&record)),
+        ] {
+            if let Some(facts) = facts {
+                let f = facts_frame(&frame, source, facts);
+                post_frame(&manager_client, &config.manager_url, &manager, &f).await;
+            }
         }
         let drops = tos_health_core::native_facts::diagnostic_drops(&record);
         let diagnostic = secondary_frame(&frame, "diagnostic", FactId::DiagnosticDrops, drops);

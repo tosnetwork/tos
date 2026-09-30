@@ -115,3 +115,93 @@ fn key_block_anchor_is_optional_bounded_and_yields_an_age_fact() {
     rehash(&mut extra);
     assert!(!accepts(&extra));
 }
+
+fn node_state_value() -> serde_json::Value {
+    serde_json::json!({
+        "duties": {"leader_windows": {"assigned": "12", "started": "9", "superseded": "1", "suppressed_behind": "1"}, "member": true},
+        "observed_unix_seconds": "1790668064",
+        "queues": [
+            {"depth": 3, "oldest_age_ms": "4500", "queue": "block_data_waiters"},
+            {"depth": 0, "oldest_age_ms": "0", "queue": "shard_client_waiters"},
+            {"depth": 1, "oldest_age_ms": "120000", "queue": "state_waiters"}
+        ],
+        "storage": {"db_free_bytes": "250000000000", "db_total_bytes": "1000000000000", "gc_seqno": 5, "persistent_state_seqno": 3}
+    })
+}
+
+#[test]
+fn node_state_is_optional_covered_and_yields_duty_queue_and_storage_facts() {
+    use tos_health_core::native_facts::{duty_facts, queue_facts, storage_facts};
+    use tos_health_core::rules::FactId;
+    let parse = |value: &serde_json::Value| parse_native(&serde_json::to_vec(value).unwrap());
+    let get = |facts: &[tos_health_core::rules::Fact], id: FactId| {
+        facts.iter().find(|f| f.id == id).map(|f| f.value.0)
+    };
+    // Older publisher: no section, coverage still names the three fields, no facts.
+    let value = fixture();
+    assert!(accepts(&value));
+    let record = parse(&value).unwrap();
+    assert!(duty_facts(&record).is_none());
+    assert!(queue_facts(&record).is_none());
+    assert!(storage_facts(&record).is_none());
+    // Null section (manager has not published yet): accepted, same coverage.
+    let mut none = value.clone();
+    none["payload"]["node_state"] = serde_json::Value::Null;
+    rehash(&mut none);
+    assert!(accepts(&none));
+    // Full section: coverage becomes complete and the facts follow.
+    let mut full = value.clone();
+    full["payload"]["node_state"] = node_state_value();
+    full["coverage"]["missing_fields"] = serde_json::json!([]);
+    full["coverage"]["status"] = "complete".into();
+    rehash(&mut full);
+    assert!(accepts(&full));
+    let record = parse(&full).unwrap();
+    let duties = duty_facts(&record).unwrap();
+    assert_eq!(get(&duties, FactId::DutyMember), Some(1));
+    assert_eq!(get(&duties, FactId::DutyWindowsMissed), Some(1)); // 12 - 9 - 1 - 1
+    let queues = queue_facts(&record).unwrap();
+    assert_eq!(get(&queues, FactId::QueueDepth), Some(4));
+    assert_eq!(get(&queues, FactId::QueueOldestMs), Some(120_000));
+    let storage = storage_facts(&record).unwrap();
+    assert_eq!(get(&storage, FactId::DiskUsedPermille), Some(750));
+    assert_eq!(get(&storage, FactId::StateGcLagBlocks), Some(12)); // applied 17 - gc 5
+                                                                   // A present section still marked missing, or a complete status with a
+                                                                   // non-empty missing list, is a lying envelope.
+    let mut lying = full.clone();
+    lying["coverage"]["missing_fields"] =
+        serde_json::json!(["local_duties", "queue_state", "storage_state"]);
+    lying["coverage"]["status"] = "partial".into();
+    assert!(!accepts(&lying));
+    let mut half = full.clone();
+    half["coverage"]["missing_fields"] = serde_json::json!(["queue_state"]);
+    half["coverage"]["status"] = "complete".into();
+    assert!(!accepts(&half));
+    // Stale section, free space above total, a duplicate queue name, and more
+    // ended windows than assigned are all refused.
+    for (path, bad) in [
+        ("observed_unix_seconds", serde_json::json!("1790668000")),
+        (
+            "storage",
+            serde_json::json!({"db_free_bytes": "2", "db_total_bytes": "1", "gc_seqno": 5, "persistent_state_seqno": 3}),
+        ),
+        (
+            "queues",
+            serde_json::json!([{"depth": 1, "oldest_age_ms": "1", "queue": "a"}, {"depth": 1, "oldest_age_ms": "1", "queue": "a"}]),
+        ),
+        (
+            "duties",
+            serde_json::json!({"leader_windows": {"assigned": "1", "started": "1", "superseded": "1", "suppressed_behind": "0"}, "member": false}),
+        ),
+    ] {
+        let mut wrong = full.clone();
+        wrong["payload"]["node_state"][path] = bad;
+        rehash(&mut wrong);
+        assert!(!accepts(&wrong), "{path}");
+    }
+    // An unknown key inside the section is refused.
+    let mut extra = full.clone();
+    extra["payload"]["node_state"]["fd_count"] = 5.into();
+    rehash(&mut extra);
+    assert!(!accepts(&extra));
+}

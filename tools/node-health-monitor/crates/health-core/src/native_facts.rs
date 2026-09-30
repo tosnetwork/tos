@@ -338,6 +338,58 @@ pub fn key_block_age_ms(record: &NativeRecord) -> Option<u64> {
     chain.observed_unix_seconds.0.checked_sub(key.unix_seconds.0)?.checked_mul(1000)
 }
 
+/// Duty facts from the node-state section: validator-set membership and the
+/// assigned leader windows that neither started nor ended for a protocol
+/// reason (superseded, finality behind). Absent without the section.
+pub fn duty_facts(record: &NativeRecord) -> Option<Vec<Fact>> {
+    let NativeRecord::V3(v) = record else { return None };
+    let state = v.payload.node_state.as_ref()?.as_ref()?;
+    let w = &state.duties.leader_windows;
+    let missed = w
+        .assigned
+        .0
+        .saturating_sub(w.started.0)
+        .saturating_sub(w.superseded.0)
+        .saturating_sub(w.suppressed_behind.0);
+    Some(vec![
+        Fact { id: FactId::DutyMember, value: U64(u64::from(state.duties.member)) },
+        Fact { id: FactId::DutyWindowsMissed, value: U64(missed) },
+    ])
+}
+
+/// Queue facts from the manager's real waiter queues: total unfinished waits
+/// and the oldest wait across queues. Absent without the section.
+pub fn queue_facts(record: &NativeRecord) -> Option<Vec<Fact>> {
+    let NativeRecord::V3(v) = record else { return None };
+    let state = v.payload.node_state.as_ref()?.as_ref()?;
+    let depth = state.queues.iter().fold(0u64, |acc, q| acc.saturating_add(q.depth));
+    let oldest = state.queues.iter().map(|q| q.oldest_age_ms.0).max().unwrap_or(0);
+    Some(vec![
+        Fact { id: FactId::QueueDepth, value: U64(depth) },
+        Fact { id: FactId::QueueOldestMs, value: U64(oldest) },
+    ])
+}
+
+/// Storage facts: disk used under the database root in permille, and how far
+/// garbage collection trails the applied masterchain block. GC lag needs the
+/// applied anchor; without it only the disk fact is produced.
+pub fn storage_facts(record: &NativeRecord) -> Option<Vec<Fact>> {
+    let NativeRecord::V3(v) = record else { return None };
+    let state = v.payload.node_state.as_ref()?.as_ref()?;
+    let total = state.storage.db_total_bytes.0;
+    let used = total.saturating_sub(state.storage.db_free_bytes.0);
+    let permille = u128::from(used)
+        .checked_mul(1000)
+        .and_then(|u| u.checked_div(u128::from(total)))
+        .and_then(|u| u64::try_from(u).ok())?;
+    let mut facts = vec![Fact { id: FactId::DiskUsedPermille, value: U64(permille) }];
+    if let Some(chain) = v.payload.chain.as_ref() {
+        let lag = u64::from(chain.applied.seqno.saturating_sub(state.storage.gc_seqno));
+        facts.push(Fact { id: FactId::StateGcLagBlocks, value: U64(lag) });
+    }
+    Some(facts)
+}
+
 /// Diagnostic coverage counter: every record the native publisher or its
 /// relay dropped or failed to parse. Monotonic within a process epoch.
 pub fn diagnostic_drops(record: &NativeRecord) -> u64 {
