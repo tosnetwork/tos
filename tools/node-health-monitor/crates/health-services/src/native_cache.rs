@@ -493,9 +493,20 @@ impl NativeSampler {
         )
     }
     pub async fn run(mut self) {
+        // A refused native sample is named on stderr, at most once a minute per
+        // distinct reason, so an unusable native source is never silent.
+        let mut last_report: Option<(String, Instant)> = None;
         loop {
             tokio::time::sleep_until(tokio::time::Instant::from_std(self.next_due)).await;
-            let _ = self.collect().await;
+            if let Err(error) = self.collect().await {
+                let repeat = last_report
+                    .as_ref()
+                    .is_some_and(|(e, at)| *e == error && at.elapsed() < Duration::from_secs(60));
+                if !repeat {
+                    eprintln!("native sample refused: {error}");
+                    last_report = Some((error, Instant::now()));
+                }
+            }
             self.next_due = next_due_after_completion(self.next_due, Instant::now());
         }
     }
