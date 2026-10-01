@@ -361,3 +361,18 @@ def test_ai_availability_from_the_model_journal(tmp_path):
     future = {"checked_at": "2026-09-30T18:05:00+00:00", "model": {"result": "accepted"}}
     journal.write_text(json.dumps(future) + "\n")
     assert judge.ai_available_from_journal(journal, 900, now) is False  # a future clock is not fresh
+
+
+def test_journal_rotates_once_before_the_size_cap(tmp_path):
+    judge = load_module()
+    path = tmp_path / "verdicts.jsonl"
+    judge.append_journal(path, "a" * 40, 100)
+    judge.append_journal(path, "b" * 40, 100)
+    assert not (tmp_path / "verdicts.jsonl.1").exists()
+    judge.append_journal(path, "c" * 40, 100)  # 82 + 41 > 100 -> rotate first
+    assert (tmp_path / "verdicts.jsonl.1").read_text() == "a" * 40 + "\n" + "b" * 40 + "\n"
+    assert path.read_text() == "c" * 40 + "\n"
+    judge.append_journal(path, "d" * 70, 100)  # 41 + 71 > 100 -> rotate again, one generation kept
+    assert (tmp_path / "verdicts.jsonl.1").read_text() == "c" * 40 + "\n"
+    judge.append_journal(path, "e", 0)  # 0 disables rotation
+    assert path.read_text().endswith("e\n")

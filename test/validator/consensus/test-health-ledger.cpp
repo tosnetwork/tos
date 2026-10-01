@@ -122,5 +122,15 @@ int main() {
   session.close();
   require(consensus_stats.sessions_drained.load() == 1 && consensus_stats.sessions_stopped.load() == 1,
           "observation close is idempotent before destructor");
+  require(lifecycle_verified.load(), "a session observed through stop and close verifies the lifecycle");
+  // A session that closes without a requested stop (teardown without drain)
+  // does not count as a verified boundary.
+  lifecycle_verified.store(false);
+  {
+    SessionObservation torn;
+    torn.start();
+    torn.close();
+  }
+  require(!lifecycle_verified.load(), "close without begin_stop does not verify the lifecycle");
   std::printf("C04_LEDGER_PASS capacity, pending age, cancellation, retirement, repeated phases, saturation\n");
 }

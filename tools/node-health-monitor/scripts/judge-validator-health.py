@@ -466,6 +466,8 @@ def main():
     parser.add_argument("--evidence-db", required=True)
     parser.add_argument("--nodes-file", help="JSON object node -> role (validator|observer)")
     parser.add_argument("--journal", help="append one JSON line per run to this private file")
+    parser.add_argument("--journal-max-bytes", type=int, default=JOURNAL_MAX_BYTES_DEFAULT,
+                        help="rotate the journal to <name>.1 before it passes this size (0 = never)")
     parser.add_argument("--codex-bin")
     parser.add_argument("--codex-socket")
     parser.add_argument("--codex-home", help="private CODEX_HOME for a spawned app-server")
@@ -512,13 +514,33 @@ def main():
         report["ai_fact"] = post_ai_fact(args, available)
     line = canonical(report)
     if args.journal:
-        path = Path(args.journal)
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "a") as stream:
-            stream.write(line + "\n")
-    print(line)
+        append_journal(Path(args.journal), line, args.journal_max_bytes)
+        # The journal holds the record; stdout (and so journald) gets one line.
+        print(canonical({"checked_at": report["checked_at"], "summary": report["summary"],
+                         "model": (report.get("model") or {}).get("result"),
+                         "ai_fact": (report.get("ai_fact") or {}).get("posted")}))
+    else:
+        print(line)
     return 0 if report["summary"]["unhealthy"] == [] else 3
+
+
+JOURNAL_MAX_BYTES_DEFAULT = 64 * 1024 * 1024
+
+
+def append_journal(path, line, max_bytes):
+    """Append one record; when the file would pass `max_bytes`, rotate it to
+    `<name>.1` first (one generation kept), so a minute timer cannot grow a
+    journal without bound."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        size = 0
+    if max_bytes > 0 and size + len(line) + 1 > max_bytes:
+        os.replace(path, path.with_name(path.name + ".1"))
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as stream:
+        stream.write(line + "\n")
 
 
 if __name__ == "__main__":

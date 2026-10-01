@@ -148,14 +148,14 @@ class ActionLedger {
   };
   struct Admission { Entry *entry = nullptr; bool fresh = false; };
   Admission begin(const Key &key, ConsensusStats &stats) noexcept {
-    if (bank_ != nullptr) {
-      if (key.slot < bank_->retired_floor) {
+    if (auto *bank = bank_.load(std::memory_order_acquire); bank != nullptr) {
+      if (key.slot < bank->retired_floor) {
         stats.add(stats.retired_requests);
         return {};
       }
       Entry *free = nullptr;
-      for (auto &entry : bank_->entries) {
-        if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank_->retired_floor)
+      for (auto &entry : bank->entries) {
+        if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor)
           entry.occupied = false;
         if (!entry.occupied) { if (free == nullptr) free = &entry; continue; }
         if (entry.key == key) {
@@ -176,26 +176,26 @@ class ActionLedger {
   // The caller supplies the actual finalization rejection boundary, never a
   // scrape time or guessed deadline. Pending entries are never evicted.
   void retire_before(std::uint64_t floor) noexcept {
-    if (bank_ == nullptr) return;
-    if (floor > bank_->retired_floor) bank_->retired_floor = floor;
-    for (auto &entry : bank_->entries)
-      if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank_->retired_floor) entry.occupied = false;
+    auto *bank = bank_.load(std::memory_order_acquire);
+    if (bank == nullptr) return;
+    if (floor > bank->retired_floor) bank->retired_floor = floor;
+    for (auto &entry : bank->entries)
+      if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor) entry.occupied = false;
   }
   bool reserve(std::size_t index) noexcept {
-    if (bank_ != nullptr) return true;
+    if (bank_.load(std::memory_order_acquire) != nullptr) return true;
     if (index >= max_banks) return false;
     auto &bank = banks_[index];
     bool free = false;
     if (!bank.leased.compare_exchange_strong(free, true, std::memory_order_acquire)) return false;
-    bank_ = &bank;
-    for (auto &entry : bank_->entries) entry = {};
-    bank_->retired_floor = 0;
+    for (auto &entry : bank.entries) entry = {};
+    bank.retired_floor = 0;
+    bank_.store(&bank, std::memory_order_release);
     return true;
   }
   void reset() noexcept {
-    if (bank_ != nullptr) {
-      bank_->leased.store(false, std::memory_order_release);
-      bank_ = nullptr;
+    if (auto *bank = bank_.exchange(nullptr, std::memory_order_acq_rel); bank != nullptr) {
+      bank->leased.store(false, std::memory_order_release);
     }
   }
   ~ActionLedger() { reset(); }
@@ -204,7 +204,7 @@ class ActionLedger {
   ActionLedger &operator=(const ActionLedger &) = delete;
  private:
   static std::array<Bank, max_banks> banks_;
-  Bank *bank_ = nullptr;
+  std::atomic<Bank *> bank_{nullptr};
 };
 inline std::array<ActionLedger::Bank, ActionLedger::max_banks> ActionLedger::banks_{};
 static_assert(sizeof(ActionLedger::Bank) * ActionLedger::max_banks < 512 * 1024);
@@ -321,6 +321,13 @@ class ActionObservation {
   std::size_t pending_slot_ = ConsensusStats::max_pending;
 };
 
+// True once at least one validator session has been observed through the
+// whole drain boundary since process start: stop requested, consensus database
+// closed, bus released, observation closed. Until then the session counters
+// are published but the lifecycle is reported unverified. A node whose
+// sessions never rotate keeps it false truthfully.
+inline std::atomic<bool> lifecycle_verified{false};
+
 // Attached to the existing bus lifetime, never used as a reason to retain it.
 class SessionObservation {
  public:
@@ -338,7 +345,7 @@ class SessionObservation {
       for (std::size_t i = 0; i < context_rows.size(); ++i) {
         bool free = false;
         if (context_rows[i].leased.compare_exchange_strong(free, true, std::memory_order_acquire)) {
-          context_ = i;
+          context_.store(i, std::memory_order_release);
           auto &row = context_rows[i];
           row.sequence.store(0, std::memory_order_release);
           for (std::size_t byte = 0; byte < 32; ++byte)
@@ -357,7 +364,7 @@ class SessionObservation {
           break;
         }
       }
-      if (context_ == context_rows.size()) {
+      if (context_.load(std::memory_order_acquire) == context_rows.size()) {
         for (std::size_t a = 0; a < action_count; ++a) consensus_stats.incomplete(static_cast<Action>(a), IncompleteReason::ContextCapacity);
       }
       consensus_stats.add(consensus_stats.sessions_started);
@@ -369,7 +376,8 @@ class SessionObservation {
   void begin_stop() noexcept {
     stop_requested_.store(true, std::memory_order_release);
     if (active_.load(std::memory_order_acquire) && !stopping_.exchange(true, std::memory_order_acq_rel)) {
-      if (context_ < context_rows.size()) context_rows[context_].stop_started.store(ConsensusStats::now_ns(), std::memory_order_release);
+      const auto context = context_.load(std::memory_order_acquire);
+      if (context < context_rows.size()) context_rows[context].stop_started.store(ConsensusStats::now_ns(), std::memory_order_release);
       consensus_stats.add(consensus_stats.sessions_stop_started);
       stopping_recorded_ = consensus_stats.add(consensus_stats.sessions_stopping);
     }
@@ -390,27 +398,31 @@ class SessionObservation {
     stop();
     vote_ledger.reset();
     proposal_ledger.reset();
-    if (context_ < context_rows.size()) {
-      context_rows[context_].sequence.store(0, std::memory_order_release);
-      context_rows[context_].leased.store(false, std::memory_order_release);
-      context_ = context_rows.size();
+    const auto context = context_.exchange(context_rows.size(), std::memory_order_acq_rel);
+    if (context < context_rows.size()) {
+      context_rows[context].sequence.store(0, std::memory_order_release);
+      context_rows[context].leased.store(false, std::memory_order_release);
     }
     if (was_active && !consensus_stats.add(consensus_stats.sessions_drained))
       consensus_stats.global_incomplete(IncompleteReason::CounterSaturation);
+    // The drain boundary was observed end to end: stop requested, then closed.
+    if (was_active && stopping_.load(std::memory_order_acquire)) lifecycle_verified.store(true, std::memory_order_release);
   }
   ~SessionObservation() { close(); }
   void current_slot(std::uint32_t slot) noexcept {
-    if (context_ < context_rows.size()) context_rows[context_].current_slot.store(slot, std::memory_order_relaxed);
+    const auto context = context_.load(std::memory_order_acquire);
+    if (context < context_rows.size()) context_rows[context].current_slot.store(slot, std::memory_order_relaxed);
   }
   void finalized_slot(std::uint32_t slot) noexcept {
-    if (context_ < context_rows.size()) context_rows[context_].finalized_slot.store(slot, std::memory_order_relaxed);
+    const auto context = context_.load(std::memory_order_acquire);
+    if (context < context_rows.size()) context_rows[context].finalized_slot.store(slot, std::memory_order_relaxed);
   }
   ActionLedger vote_ledger, proposal_ledger;
   SessionObservation() = default;
   SessionObservation(const SessionObservation &) = delete;
   SessionObservation &operator=(const SessionObservation &) = delete;
  private:
-  std::size_t context_ = context_rows.size();
+  std::atomic<std::size_t> context_{context_rows.size()};
   std::atomic<bool> active_{false}, stopping_{false}, stop_requested_{false};
   bool recorded_ = false, stopping_recorded_ = false;
   bool closed_ = false;

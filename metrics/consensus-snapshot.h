@@ -15,9 +15,6 @@ inline std::array<ConsensusStats::Counter, work_count> work_age_ns{};
 inline std::array<std::atomic<bool>, work_count> work_age_available{};
 inline std::array<ConsensusStats::Counter, 2> masterchain_slots{};
 inline std::array<std::atomic<bool>, 2> masterchain_slot_available{};
-// Ownership release is measured separately. Actor drain is deliberately not
-// claimed by the publisher until its production boundary has been established.
-inline std::atomic<bool> lifecycle_verified{false};
 
 #include "consensus-metric-bindings.inc"
 
