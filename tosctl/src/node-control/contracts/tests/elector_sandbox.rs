@@ -637,6 +637,157 @@ fn a_finished_election_is_kept_without_any_key_material() {
 }
 
 // ---------------------------------------------------------------------------
+// An election that cannot be conducted
+//
+// Nobody can join an election after it closes, so one that closed without enough stake
+// can never gather it. Postponing it is right only while the set it was meant to replace
+// is still in office: until then the configuration can still change what the placed
+// stake is worth. From the moment that set's term ends, waiting is a deadlock -- no
+// election, no next set, no key block -- and the election has to be given up and a new
+// one opened.
+// ---------------------------------------------------------------------------
+
+fn tick(chain: &mut Chain) -> tos_sandbox::SendResult {
+    let result =
+        chain.blockchain.tick_tock(&chain.elector, TransactionTickTock::Tick).expect("tick runs");
+    result.expect_success();
+    result
+}
+
+/// The owner a test member's money belongs to, distinct from its identity.
+fn refund_owner(index: u16) -> [u8; 32] {
+    let mut owner = [0xEEu8; 32];
+    owner[30..32].copy_from_slice(&(index + 1).to_be_bytes());
+    owner
+}
+
+#[test]
+fn a_closed_election_with_no_stake_is_given_up_once_the_term_it_would_follow_ends() {
+    let (mut chain, _treasury, election) = open_election("empty-election", 200_000 * TOS);
+
+    // Closed but the current set is still in office: postponed, not given up.
+    chain.blockchain.set_now(election - chain.elect_end_before);
+    tick(&mut chain);
+    assert_eq!(
+        active_election_id(&chain) as u32,
+        election,
+        "an election was dropped while the set it would replace was still in office"
+    );
+    chain.blockchain.set_now(election - 1);
+    tick(&mut chain);
+    assert_eq!(active_election_id(&chain) as u32, election, "dropped a second early");
+
+    // The term is over. Nobody can stake into this election any more, so it ends.
+    chain.blockchain.set_now(election);
+    tick(&mut chain);
+    assert_eq!(
+        active_election_id(&chain),
+        0,
+        "an empty, closed election outlived the term it was meant to follow"
+    );
+
+    // And the next tick opens a fresh one with a window nobody has missed yet.
+    tick(&mut chain);
+    let fresh = active_election_id(&chain) as u32;
+    assert_ne!(fresh, 0, "no new election opened after the dead one was dropped");
+    assert_eq!(
+        fresh,
+        election + chain.elect_begin_before,
+        "the new election does not give stakers the full window"
+    );
+    assert!(
+        fresh - chain.elect_end_before > chain.blockchain.now(),
+        "the new election opened already closed"
+    );
+}
+
+#[test]
+fn a_closed_election_below_the_minimum_returns_every_stake_to_its_owner() {
+    let (mut chain, _treasury, election) = open_election("short-election", 200_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    // Two members at 11 000 each: below the forty thousand the configuration requires.
+    let stake = 11_000 * TOS;
+    install_synthetic_book_owned(&mut chain, 2, stake, 1, &|index, _| refund_owner(index));
+
+    chain.blockchain.set_now(election - chain.elect_end_before);
+    tick(&mut chain);
+    assert_eq!(active_election_id(&chain) as u32, election, "postponed, not given up");
+    for index in 0..2 {
+        assert_eq!(owed(&chain, &refund_owner(index)), 0, "money left a standing election");
+    }
+
+    chain.blockchain.set_now(election);
+    tick(&mut chain);
+    assert_eq!(active_election_id(&chain), 0, "the short election was never given up");
+    for index in 0..2 {
+        assert_eq!(
+            owed(&chain, &refund_owner(index)),
+            stake as u128,
+            "member {index}'s stake did not come back to the account that put it up"
+        );
+    }
+    assert!(
+        !parameter_present(&configuration_from_contract(&chain), 36),
+        "a set was installed from an election that was given up"
+    );
+}
+
+#[test]
+fn a_failed_election_is_given_up_and_each_stake_comes_back_exactly_once() {
+    let (mut chain, _treasury, election) = open_election("failed-election", 400_000 * TOS);
+    raise_to_post_quantum_version(&mut chain);
+    // Enough admitted money to pass the total, too few members to seat a set: the attempt
+    // runs and fails. Member 1 sits under a profile retired after it staked, which is the
+    // one stake the selection itself credits back before failing -- so a cancellation
+    // that kept those credits would pay member 1 twice.
+    let stake = 30_000 * TOS;
+    install_synthetic_book_owned(&mut chain, 3, stake, 2, &|index, _| refund_owner(index));
+    let mut kept = chain_block::HashmapE::with_bit_len(256);
+    kept.set(
+        chain_block::SliceData::load_builder(
+            chain_block::BuilderData::with_raw(
+                vec![0x7cu8; 30].into_iter().chain([0, 0]).collect::<Vec<u8>>(),
+                256,
+            )
+            .expect("a key"),
+        )
+        .expect("a key slice"),
+        &chain_block::SliceData::default(),
+    )
+    .expect("insert");
+    let mut policy = chain_block::BuilderData::new();
+    chain_block::IBitstring::append_bit_one(&mut policy).expect("a non-empty policy");
+    policy
+        .checked_append_reference(chain_block::HashmapType::data(&kept).expect("one code").clone())
+        .expect("the codes");
+    set_contract_parameter(&mut chain, 47, policy.into_cell().expect("a controller policy"));
+
+    chain.blockchain.set_now(election - chain.elect_end_before);
+    let result = tick(&mut chain);
+    assert!(
+        !replies(&result).contains(&VALIDATOR_SET_INSTALLED),
+        "two members were seated as a set"
+    );
+    assert_eq!(active_election_id(&chain) as u32, election, "postponed, not given up");
+    for index in 0..3 {
+        assert_eq!(owed(&chain, &refund_owner(index)), 0, "money left a standing election");
+    }
+
+    // Further ticks inside the term do not refund again.
+    tick(&mut chain);
+    chain.blockchain.set_now(election);
+    tick(&mut chain);
+    assert_eq!(active_election_id(&chain), 0, "the failed election was never given up");
+    for index in 0..3 {
+        assert_eq!(
+            owed(&chain, &refund_owner(index)),
+            stake as u128,
+            "member {index} was not refunded exactly once"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Rotation
 //
 // The configuration contract moves the next set into place on a tock, and keeps the set

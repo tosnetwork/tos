@@ -307,6 +307,9 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   ;; `conduct_elections` itself uses. Admitting a stake until the tick that happens to
   ;; run afterwards would make membership depend on when that tick lands rather than on
   ;; the election's own boundary, and a rotation is a membership change like any other.
+  ;; This refusal is what makes a closed election unable to recover by itself: the
+  ;; inherited rule postponed an under-staked election until new stake arrived, and none
+  ;; can arrive now. `postpone_or_cancel` is the other half of this rule.
   if (now() >= elect_close) {
     return return_stake(owner_addr, query_id, 0);
   }
@@ -829,6 +832,40 @@ int postpone_elections() impure {
   return false;
 }
 
+;; A closed election that cannot be conducted is postponed only while the validator set
+;; it was meant to replace is still in office. Nobody can join it after `elect_close`,
+;; but the configuration can still change what the placed stake is worth -- a controller
+;; profile retired after its stake arrived may be admitted again -- so until `elect_at`
+;; every tick tries once more. From `elect_at` on, postponing costs the chain: the
+;; previous set runs past its `utime_until`, no key block is produced, state garbage
+;; collection stops behind the last one, and no message can end that, because no stake
+;; can arrive any more. The election is therefore cancelled: every member's stake goes
+;; back to its owner as credit, the record is dropped, and the next tick announces a
+;; fresh election with a fresh window. Nothing was frozen: freezing happens only when an
+;; election is conducted.
+;;
+;; `credits` must not already carry refunds for these members, or they would be paid
+;; twice.
+int postpone_or_cancel(ds, elect_at, credits, pq_members) impure {
+  if (now() < elect_at) {
+    return postpone_elections();
+  }
+  var validator_id = -1;
+  do {
+    (validator_id, var ms, var f) = pq_members.udict_get_next?(256, validator_id);
+    if (f) {
+      var (stake, _, _, _, _, _, _, stake_owner, _) = pq::unpack_member(ms);
+      credits~credit_to(stake_owner, stake);
+    }
+  } until (~ f);
+  set_data(begin_cell()
+    .store_int(false, 1)   ;; no election
+    .store_dict(credits)
+    .store_slice(ds)
+  .end_cell());
+  return true;
+}
+
 ;; computes the total stake out of the first n entries of list l
 _ compute_total_stake(l, n, m_stake) inline_ref {
   int tot_stake = 0;
@@ -979,22 +1016,26 @@ int conduct_elections(ds, elect, credits) impure {
   ;; money placed under controller codes the configuration admits today. A profile
   ;; retired since the stake arrived keeps its money and carries no weight here, and an
   ;; absent policy admits nobody, so authority fails closed rather than open.
+  if (finished) {
+    ;; elections finished; the set is with the configuration contract and the stakes
+    ;; are frozen, so nothing below may run against this record
+    return false;
+  }
   (cell admitted_codes, int have_policy) = pq::controller_policy();
   ifnot (have_policy) {
-    return postpone_elections();
+    return postpone_or_cancel(ds, elect_at, credits, pq_members);
   }
   if (pq::effective_stake(pq_by_code, admitted_codes) < min_total_stake) {
     ;; insufficient effective stake, postpone elections
-    return postpone_elections();
+    return postpone_or_cancel(ds, elect_at, credits, pq_members);
   }
   if (failed) {
-    ;; do not retry failed elections until new stakes arrive
-    return postpone_elections();
+    ;; a failed attempt is not repeated: no stake can arrive to change its outcome
+    return postpone_or_cancel(ds, elect_at, credits, pq_members);
   }
-  if (finished) {
-    ;; elections finished
-    return false;
-  }
+  ;; The refunds a failed attempt credits are not kept. Nothing leaves an election that is
+  ;; still standing, and when it is cancelled every member's stake goes back at once.
+  var placed_credits = credits;
   (credits, var vdict, var total_weight, var frozen, var total_stakes, var cnt) = try_elect_pq(
       credits, pq_members, admitted_codes, min_stake, max_stake, min_total_stake, max_stake_factor);
   ;; pack elections; if cnt==0, set failed=true, finished=false.
@@ -1002,9 +1043,12 @@ int conduct_elections(ds, elect, credits) impure {
   finished = ~ failed;
   elect = pack_elect(elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code);
   ifnot (cnt) {
+    if (postpone_or_cancel(ds, elect_at, placed_credits, pq_members)) {
+      return true;
+    }
     ;; elections failed, set elect_failed to true
-    set_data(begin_cell().store_dict(elect).store_dict(credits).store_slice(ds).end_cell());
-    return postpone_elections();
+    set_data(begin_cell().store_dict(elect).store_dict(placed_credits).store_slice(ds).end_cell());
+    return false;
   }
   ;; serialize a query to the configuration smart contract
   ;; to install the computed validator set as the next validator set

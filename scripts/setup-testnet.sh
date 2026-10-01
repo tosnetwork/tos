@@ -198,7 +198,11 @@ UMask=0077
 WorkingDirectory=$REPO
 Environment=PYTHONPATH=$REPO/test/tostester/src:$REPO/scripts
 ExecStart=$REPO/.venv/bin/python $REPO/scripts/local-pq-elections.py
-Restart=no
+# The driver re-reads the elector on every pass, so a restart loses nothing.
+# Left dead after one transient lite-server error it misses a whole election
+# window, and an election nobody staked into closes empty.
+Restart=on-failure
+RestartSec=30
 CPUQuota=100%
 MemoryMax=1G
 KillMode=control-group
