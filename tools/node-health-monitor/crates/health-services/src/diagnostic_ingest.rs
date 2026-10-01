@@ -527,12 +527,23 @@ mod tests {
         wal.insert_diagnostic(&batch(&[0])).unwrap();
         let wal_path = std::path::PathBuf::from(format!("{}-wal", path.display()));
         let file = std::fs::OpenOptions::new().write(true).open(&wal_path).unwrap();
-        let original = file.metadata().unwrap().len();
+        // An oversized WAL nobody reads is reclaimable: the gate truncates it
+        // without waiting and the write proceeds under the quota.
         file.set_len(1048577).unwrap();
-        assert_eq!(wal.insert_diagnostic(&batch(&[1])).unwrap_err(), "WAL quota exceeded");
-        file.set_len(original).unwrap();
-        drop(file);
         assert!(wal.insert_diagnostic(&batch(&[1])).is_ok());
+        assert!(std::fs::metadata(&wal_path).unwrap().len() <= 1048576);
+        // A reader holding a snapshot pins the WAL: the same oversize cannot be
+        // reclaimed and the write is refused for space; once the reader lets
+        // go the next write reclaims and proceeds.
+        let reader = Connection::open(&path).unwrap();
+        reader.execute_batch("BEGIN; SELECT count(*) FROM observations;").unwrap();
+        file.set_len(1048577).unwrap();
+        assert_eq!(wal.insert_diagnostic(&batch(&[2])).unwrap_err(), "WAL quota exceeded");
+        reader.execute_batch("COMMIT;").unwrap();
+        drop(reader);
+        assert!(wal.insert_diagnostic(&batch(&[2])).is_ok());
+        assert!(std::fs::metadata(&wal_path).unwrap().len() <= 1048576);
+        drop(file);
         drop(wal);
         std::fs::remove_dir_all(directory).unwrap();
     }
