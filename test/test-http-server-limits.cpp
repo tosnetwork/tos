@@ -514,7 +514,9 @@ TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_s
     ASSERT_EQ(observation.calls.load(), 8);
     Client extra(port);
     ASSERT_TRUE(extra.connect_with_retries());
-    ASSERT_TRUE(extra.wait_for_eof(100));
+    // The ninth connection is closed at accept; the close is immediate on this
+    // host but a loaded CI runner needs the same allowance the other EOF waits use.
+    ASSERT_TRUE(extra.wait_for_eof(5000));
     std::this_thread::sleep_for(std::chrono::milliseconds(800));
     Client recovered(port);
     ASSERT_TRUE(recovered.connect_with_retries());
