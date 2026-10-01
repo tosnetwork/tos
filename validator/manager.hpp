@@ -127,8 +127,10 @@ class ValidatorManagerImpl : public ValidatorManager {
     std::pair<td::Timestamp, td::uint32> get_timeout() const {
       return get_timeout_impl(waiting_);
     }
-    void check_timers() {
-      check_timers_impl(waiting_);
+    // One pass: expire timed-out waiters and, when asked, count the survivors
+    // and find the earliest creation time among them for the health sample.
+    void check_timers(std::uint64_t *depth = nullptr, double *oldest_created = nullptr) {
+      check_timers_impl(waiting_, depth, oldest_created);
     }
 
    protected:
@@ -145,7 +147,8 @@ class ValidatorManagerImpl : public ValidatorManager {
       }
       return {td::Timestamp::at(t.at() + 10.0), prio};
     }
-    static void check_timers_impl(std::vector<Waiter<ResType>> &waiting) {
+    static void check_timers_impl(std::vector<Waiter<ResType>> &waiting, std::uint64_t *depth = nullptr,
+                                  double *oldest_created = nullptr) {
       td::uint32 j = 0;
       auto f = waiting.begin();
       auto t = waiting.end();
@@ -155,6 +158,10 @@ class ValidatorManagerImpl : public ValidatorManager {
           t--;
           std::swap(*f, *t);
         } else {
+          if (depth != nullptr) {
+            ++*depth;
+            *oldest_created = std::min(*oldest_created, f->created.at());
+          }
           f++;
           j++;
         }
@@ -173,9 +180,9 @@ class ValidatorManagerImpl : public ValidatorManager {
       auto t2 = WaitList<ActorT, ResType>::get_timeout_impl(waiting_preliminary_);
       return {std::max(t1.first, t2.first), std::max(t1.second, t2.second)};
     }
-    void check_timers() {
-      WaitList<ActorT, ResType>::check_timers_impl(this->waiting_);
-      WaitList<ActorT, ResType>::check_timers_impl(waiting_preliminary_);
+    void check_timers(std::uint64_t *depth = nullptr, double *oldest_created = nullptr) {
+      WaitList<ActorT, ResType>::check_timers_impl(this->waiting_, depth, oldest_created);
+      WaitList<ActorT, ResType>::check_timers_impl(waiting_preliminary_, depth, oldest_created);
     }
   };
   std::map<BlockIdExt, WaitListPreliminary<WaitBlockState, td::Ref<ShardState>>> wait_state_;

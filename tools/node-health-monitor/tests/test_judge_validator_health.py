@@ -498,3 +498,31 @@ def test_bounded_child_chunked_stdin_delivers_every_byte():
                              payload, 10, stdout_cap=2_000_000)
     assert echo is not None and echo.returncode == 0
     assert _hashlib.sha256(echo.stdout).hexdigest() == _hashlib.sha256(payload).hexdigest()
+
+
+def test_run_bounded_small_pipe_still_meets_its_deadline_and_delivers_all_input(monkeypatch):
+    """The independent review's control: with a 4 KiB pipe a child that never
+    reads stdin must not hold the loop past the deadline (a blocking write of
+    one 64 KiB chunk would), and a child that reads everything must still get
+    every byte through the small pipe."""
+    import hashlib
+    import subprocess
+    import sys
+    import time
+    real_popen = judge.subprocess.Popen
+
+    def small_pipe_popen(*args, **kwargs):
+        kwargs["pipesize"] = 4096
+        return real_popen(*args, **kwargs)
+    monkeypatch.setattr(judge.subprocess, "Popen", small_pipe_popen)
+    payload = bytes(range(256)) * 4096  # 1 MiB
+    started = time.monotonic()
+    result = judge.run_bounded([sys.executable, "-c", "import time; time.sleep(10)"], payload, 0.3)
+    elapsed = time.monotonic() - started
+    assert result is None, "a child that never reads must time out"
+    assert elapsed < 1.5, f"deadline overrun: {elapsed:.3f}s"
+    echo = judge.run_bounded(
+        [sys.executable, "-c", "import sys, hashlib; sys.stdout.write(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())"],
+        payload, 20)
+    assert echo is not None and echo.returncode == 0
+    assert echo.stdout.decode() == hashlib.sha256(payload).hexdigest(), "every byte must reach the child"

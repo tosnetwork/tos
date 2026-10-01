@@ -34,12 +34,13 @@ class HttpInboundConnection : public HttpConnection {
  public:
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
                         HttpServer::AllMetrics metrics, double request_header_timeout = 0,
-                        double request_body_timeout = 0)
+                        double request_body_timeout = 0, bool reject_request_bodies = false)
       : HttpConnection(std::move(fd), nullptr, false)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
       , request_header_timeout_(request_header_timeout)
-      , request_body_timeout_(request_body_timeout) {
+      , request_body_timeout_(request_body_timeout)
+      , reject_request_bodies_(reject_request_bodies) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -110,6 +111,7 @@ class HttpInboundConnection : public HttpConnection {
   }
 
   void send_client_error();
+  void send_payload_refused();
   void send_server_error();
   void send_proxy_error(td::Status error);
 
@@ -198,6 +200,7 @@ class HttpInboundConnection : public HttpConnection {
   HttpServer::AllMetrics metrics_;
   double request_header_timeout_ = 0;
   double request_body_timeout_ = 0;
+  bool reject_request_bodies_ = false;
   td::Timestamp request_header_deadline_;
   // Set when the handler answers a CONNECT with a 2xx response; only then
   // is the tunnel payload exempt from the request deadline.

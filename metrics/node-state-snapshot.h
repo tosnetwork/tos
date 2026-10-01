@@ -25,6 +25,9 @@ struct NodeStateGauges {
     std::atomic<std::uint64_t> oldest_age_ms{0};
   } block_data_waiters, state_waiters, shard_client_waiters;
   std::atomic<bool> storage_valid{false};
+  // Steady-clock time of the last successful disk sample; the publisher
+  // turns storage_valid off when it is older than the sample TTL.
+  std::atomic<std::uint64_t> storage_sampled_steady_ms{0};
   std::atomic<std::uint64_t> db_total_bytes{0};
   std::atomic<std::uint64_t> db_free_bytes{0};
   std::atomic<std::uint32_t> gc_seqno{0};

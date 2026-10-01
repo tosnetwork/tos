@@ -121,6 +121,19 @@ def check(mode,padding=None):
     status,_,raw=request('/health-snapshot');assert status==200
     current=json.loads(raw);assert current.pop('source_age_ms')>=initial_age;assert current==value
    assert request('/health-snapshot?force=true')[0]==404;assert request('/health-snapshot','POST')[0]==405
+   # An announced body is refused by the transport at header time and the connection closed,
+   # before any body byte is sent: the client never gets to hold the body window.
+   with socket.create_connection(('127.0.0.1',port),timeout=2) as announced:
+    announced.sendall(b'GET /metrics HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\n')
+    refused=b''
+    while b'\r\n\r\n' not in refused:refused+=announced.recv(4096)
+    assert refused.startswith(b'HTTP/1.1 413 '),refused[:60]
+    assert b'connection: close' in refused.lower(),refused
+    closed_at=time.monotonic()+2
+    while True:
+     tail=announced.recv(4096)
+     if tail==b'':break
+     assert time.monotonic()<closed_at,'server kept the connection open to read the body'
    for _ in range(50):
     status,repeated_headers,repeated_body=request('/metrics');assert status==200
     assert repeated_body==body and repeated_headers['X-TOS-Snapshot-Generation']=='1'

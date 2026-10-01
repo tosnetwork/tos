@@ -36,6 +36,19 @@ void HttpInboundConnection::send_client_error() {
   loop();
 }
 
+// The listener accepts no request bodies: answer at header time and close,
+// so no payload reader is created and no body byte is ever read or drained.
+void HttpInboundConnection::send_payload_refused() {
+  static const auto s =
+      "HTTP/1.1 413 Payload Too Large\r\n"
+      "Connection: close\r\n"
+      "Content-length: 0\r\n"
+      "\r\n";
+  buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+  close_after_write_ = true;
+  loop();
+}
+
 void HttpInboundConnection::send_server_error() {
   static const auto s =
       "HTTP/1.1 502 Bad Gateway\r\n"
@@ -88,6 +101,13 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   }
 
   metrics_.requests_total->add(1);
+
+  if (reject_request_bodies_ && cur_request_->announces_body()) {
+    cur_request_ = nullptr;
+    read_next_request_ = false;
+    send_payload_refused();
+    return td::Status::OK();
+  }
 
   // Stamp the cached TCP peer IP on the parsed request so the
   // JSON-RPC server can attribute the per-IP rate-limit bucket to the

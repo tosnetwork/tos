@@ -49,6 +49,8 @@
 #include "td/utils/port/thread.h"
 
 #include <atomic>
+#include <chrono>
+#include <limits>
 
 #include <sys/statvfs.h>
 #include "lite-client/lite-ext-query-failure.h"
@@ -3983,6 +3985,8 @@ BlockHandle ValidatorManagerImpl::get_handle_from_lru(BlockIdExt id) {
 // actor: a stalled disk must not stall block processing, so statvfs runs on a
 // short-lived thread at most every ten seconds, one in flight at a time, and
 // only writes lock-free gauges this actor publishes.
+// Three missed ten-second disk samples make the storage position unknown.
+constexpr std::uint64_t kStorageSampleTtlMs = 30'000;
 void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &block_data,
                                                      const HealthWaiterSample &state,
                                                      const HealthWaiterSample &shard_client) {
@@ -3996,6 +4000,18 @@ void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &b
   g.validator_member.store(!validator_groups_.empty(), std::memory_order_relaxed);
   g.gc_seqno.store(gc_masterchain_handle_ ? gc_masterchain_handle_->id().id.seqno : 0, std::memory_order_relaxed);
   g.persistent_state_seqno.store(state_serializer_masterchain_seqno_, std::memory_order_relaxed);
+  // A disk sample that the worker has not refreshed within its TTL is not a
+  // current fact: report storage unknown rather than an old value under a
+  // fresh observation clock.
+  {
+    const auto sampled = g.storage_sampled_steady_ms.load(std::memory_order_acquire);
+    const auto now_steady_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    if (sampled == 0 || now_steady_ms - sampled > kStorageSampleTtlMs) {
+      g.storage_valid.store(false, std::memory_order_relaxed);
+    }
+  }
   if (health_statvfs_at_.is_in_past()) {
     health_statvfs_at_ = td::Timestamp::in(10.0);
     static std::atomic<bool> statvfs_inflight{false};
@@ -4009,6 +4025,11 @@ void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &b
                                       std::memory_order_relaxed);
           gauges.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize,
                                      std::memory_order_relaxed);
+          gauges.storage_sampled_steady_ms.store(
+              static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count()),
+              std::memory_order_release);
           gauges.storage_valid.store(true, std::memory_order_relaxed);
         } else {
           gauges.storage_valid.store(false, std::memory_order_relaxed);
@@ -4205,39 +4226,34 @@ void ValidatorManagerImpl::alarm() {
   alarm_timestamp().relax(resend_shard_blocks_at_);
   if (check_waiters_at_.is_in_past()) {
     check_waiters_at_ = td::Timestamp::in(1.0);
-    // The health sample rides on this one-second sweep, which already walks
-    // every waiter map: no second traversal, and nothing per alarm wake-up.
+    // The health sample is taken inside the timer sweep's own pass over each
+    // waiter vector: survivors are counted and their earliest creation time
+    // kept while timed-out waiters are expired, so no waiter is visited a
+    // second time, and nothing runs per alarm wake-up.
     const bool health_on = health::enabled.load(std::memory_order_relaxed);
     const auto sweep_now = td::Timestamp::now();
-    HealthWaiterSample block_data_sample, state_sample, shard_client_sample;
-    auto sample = [&](const auto &waiting, HealthWaiterSample &into) {
-      for (const auto &x : waiting) {
-        ++into.depth;
-        const double age = sweep_now.at() - x.created.at();
-        into.oldest_age_ms = std::max(into.oldest_age_ms, age > 0 ? static_cast<std::uint64_t>(age * 1000.0) : 0);
-      }
-    };
+    constexpr double kNoWaiter = std::numeric_limits<double>::infinity();
+    std::uint64_t block_data_depth = 0, state_depth = 0, shard_client_depth = 0;
+    double block_data_oldest = kNoWaiter, state_oldest = kNoWaiter, shard_client_oldest = kNoWaiter;
     for (auto &w : wait_block_data_) {
-      w.second.check_timers();
-      if (health_on) {
-        sample(w.second.waiting_, block_data_sample);
-      }
+      w.second.check_timers(health_on ? &block_data_depth : nullptr, &block_data_oldest);
     }
     for (auto &w : wait_state_) {
-      w.second.check_timers();
-      if (health_on) {
-        sample(w.second.waiting_, state_sample);
-        sample(w.second.waiting_preliminary_, state_sample);
-      }
+      w.second.check_timers(health_on ? &state_depth : nullptr, &state_oldest);
     }
     for (auto &w : shard_client_waiters_) {
-      w.second.check_timers();
-      if (health_on) {
-        sample(w.second.waiting_, shard_client_sample);
-      }
+      w.second.check_timers(health_on ? &shard_client_depth : nullptr, &shard_client_oldest);
     }
     if (health_on) {
-      publish_health_node_state(block_data_sample, state_sample, shard_client_sample);
+      auto sample = [&](std::uint64_t depth, double oldest_created) {
+        HealthWaiterSample into;
+        into.depth = depth;
+        const double age = depth == 0 ? 0 : sweep_now.at() - oldest_created;
+        into.oldest_age_ms = age > 0 ? static_cast<std::uint64_t>(age * 1000.0) : 0;
+        return into;
+      };
+      publish_health_node_state(sample(block_data_depth, block_data_oldest), sample(state_depth, state_oldest),
+                                sample(shard_client_depth, shard_client_oldest));
     }
     for (auto it = block_state_cache_.begin(); it != block_state_cache_.end();) {
       bool del = it->second.ttl_.is_in_past();

@@ -332,11 +332,13 @@ def run_bounded(command, stdin_bytes, timeout_s, stdout_cap=MAX_MODEL_OUTPUT_BYT
     selector = selectors.DefaultSelector()
     for stream in caps:
         selector.register(stream, selectors.EVENT_READ)
-    stdin_open = True
     if pending.nbytes == 0:
         child.stdin.close()
-        stdin_open = False
     else:
+        # The pipe is non-blocking: "writable" only promises some room, and a
+        # blocking write of one chunk into a 4 KiB pipe a child never drains
+        # would hold this loop past the deadline.
+        os.set_blocking(child.stdin.fileno(), False)
         selector.register(child.stdin, selectors.EVENT_WRITE)
     overflow = False
     while caps and not overflow:
@@ -351,7 +353,12 @@ def run_bounded(command, stdin_bytes, timeout_s, stdout_cap=MAX_MODEL_OUTPUT_BYT
                 try:
                     written = os.write(child.stdin.fileno(), pending[:65536])
                     pending = pending[written:]
+                except BlockingIOError:
+                    # No room right now; the rest stays pending for the next
+                    # writable wake-up within the deadline.
+                    continue
                 except (BrokenPipeError, OSError):
+                    # The child closed its input: nothing more to deliver.
                     pending = pending[:0]
                 if pending.nbytes == 0:
                     selector.unregister(child.stdin)
@@ -359,7 +366,6 @@ def run_bounded(command, stdin_bytes, timeout_s, stdout_cap=MAX_MODEL_OUTPUT_BYT
                         child.stdin.close()
                     except OSError:
                         pass
-                    stdin_open = False
                 continue
             chunk = os.read(key.fileobj.fileno(), 65536)
             buffer, cap = caps[key.fileobj]

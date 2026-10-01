@@ -250,6 +250,11 @@ class HttpRequest {
   td::Status add_header(HttpHeader header);
   td::Result<std::shared_ptr<HttpPayload>> create_empty_payload();
   bool need_payload() const;
+  // A body is announced by a non-zero Content-Length or any Transfer-Encoding;
+  // "Content-Length: 0" announces nothing and is not a body.
+  bool announces_body() const {
+    return found_transfer_encoding_ || (found_content_length_ && content_length_ > 0);
+  }
 
   const auto &method() const {
     return method_;
