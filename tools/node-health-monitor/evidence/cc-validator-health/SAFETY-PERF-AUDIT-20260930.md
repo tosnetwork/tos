@@ -99,7 +99,24 @@ timestamp per registered waiter. No syscalls, no locks, no allocation.
 
 ## 4. Findings and fixes
 
-(consolidated after §2 and §5)
+Consolidated across §2 (engine reader), §3 (host) and §5 (Codex). Every
+item below is either fixed with a test that was shown red against the
+audited behaviour, or listed as a residual with its bound.
+
+| Area | Finding | Status |
+| --- | --- | --- |
+| Validator hot path | M1/SEC-02 node-state publication ungated on the manager actor; M2/SEC-01 RocksDB probe on every commit | fixed: both behind `health::enabled`, node state on the one-second waiter gate, `statvfs` every ten seconds, probe at most once a second per instance |
+| Validator correctness | M3 lifecycle never verified; M4 teardown ordering; L1 fences; L2 plain fields across actors; L4 counter destroyed on contention | fixed (M4 reviewed and accepted with its fault test) |
+| Validator residual | L3 bounded per-vote scans with `compare_exchange` | accepted as bounded (≤ 1024 rows, no allocation); not changed |
+| Monitor memory | SEC-03 Q charged JSON length but kept decoded trees | fixed: resident charge is the larger of bytes and decoded footprint, payloads over 4096 nodes refused |
+| Monitor disk | SEC-05 retention stopped at the first page without candidates; SEC-06 grant ledger capped forever and never compacted; SEC-07 Q ledger without page quota or WAL checkpoint; §3 judge and receiver journals unbounded | fixed (§6, `360657385`, `e261f3f87`) |
+| Monitor availability | SEC-04 M's retention could delete a parent Q retains and lock Q; a deleted cursor anchor stopped Q at start; a Q outage was visible to nobody | fixed (§6): seal-aware expiry, seal-aware re-anchor, doctor gate `query_broker` |
+| Monitor ingress | SEC-08 body window before the budget check | partly fixed: health GET routes refuse any body with 413 up front; the collector's pre-allocation bound is a residual |
+| Model lane | the diagnosis contract held at most six findings while the judge demands one observed finding per non-healthy node | fixed (`d913d30f6`): cap follows the 32-target inventory bound; a too-small contract is refused as `diagnosis_contract_capacity` before the model runs |
+
+Growth attribution stands as in §1: the validators' anonymous memory and
+disk growth is the absence of state garbage collection before the first
+persistent state, measured identical with the instrumentation off.
 
 ## 5. Codex agent review (received 2026-10-01, baseline `371a2ae4f`)
 
@@ -122,6 +139,66 @@ Codex's boundary statement agrees with §1: nothing attributes the validator
 RSS growth to the monitor; with SEC-01/02 fixed the flags-off comparison is
 now a clean one.
 
-## 6. M/Q ledger fixes (SEC-04/05/06/07)
+## 6. M/Q ledger fixes (SEC-04/05/06/07) and what deploying them exposed
 
-(appended when landed)
+Landed in `86032a5a4` (05:47 UTC), each with a test shown red first:
+
+- **SEC-04**: a retained parent that M's retention deleted no longer locks Q
+  as `manager_conflicted`. When the missing parent's generation is covered by
+  M's retention seal for that identity, Q evicts the dependent rows from its
+  ledger and memory and continues; no seal, or a generation above the seal,
+  still refuses, because then the row vanished for a reason retention does
+  not account for.
+- **SEC-05**: a retention pass scans past pages without candidates and stops
+  only at the tail, the page limit or the time budget; it resumes from its
+  cursor on the next pass and reports `complete` only at the tail. Live after
+  deploy: 1,937 rows deleted in the first pass of the 6-hour window.
+- **SEC-06**: the grant ledger's resident bound counts only grants that still
+  carry a body; terminal compaction runs on Q's own 15-second tick (with or
+  without a manager database) and prunes compacted rows older than 30 days.
+- **SEC-07**: Q's ledger opens with the same page quota and WAL
+  autocheckpoint as M's evidence store.
+
+Deploying them found three more defects, all on the Q side (`776e42f13`):
+
+1. **Q had been down since 00:19 UTC and nothing said so.** The release
+   binary copied into the runtime was built without the `mcp` feature while
+   the unit passes an MCP socket, so Q exited at start 1,985 times over five
+   and a half hours. Every live gate stayed green because none looked at Q.
+   The deploy script now refuses a binary without the feature, and the doctor
+   has a `query_broker` gate that fails when the broker's ledger (main file
+   or WAL) has not been written for longer than its import period allows
+   (`--query-ledger-db`, `--query-max-idle-seconds`, default 300 s).
+2. With the right build, Q refused its own ledger as `invalid restored
+   evidence`: rows written under the earlier resident charge now exceeded the
+   SEC-03 bound. Restore evicts the oldest rows or skips a payload over the
+   node bound instead of refusing to start, so the watermark stays continuous.
+3. Then `M projection anchor changed`: during the outage M's retention had
+   swept the row at Q's cursor anchor. A missing anchor is now accepted as
+   an expiry only when a retention seal records deletions at or beyond its
+   sequence; a present anchor with another hash, or a missing anchor without
+   such a seal, is still a rewrite and refused (`M projection anchor missing`).
+
+Q restarted at 05:57:58 UTC, imported to the current watermark within a
+minute, 76 MiB resident, ledger 7.9 MB, and the doctor's new gate reads
+`query ledger written 14 s ago`.
+
+The doctor also surfaced a fourth defect that is not in either audit: from
+03:41 UTC, when `state_gc_lag` degraded all seven nodes, every model turn was
+rejected on schema. The diagnosis contract capped `findings` at six while the
+judge requires an observed finding for every non-healthy node, so a correct
+answer for seven nodes could not exist; `ai_unavailable` opened and the
+`ai_lane` gate failed. Fixed in `d913d30f6` (cap 32 = inventory target bound,
+capacity refusal before the model runs, the model may group nodes sharing a
+cause); the next turn was accepted with three grouped findings and the
+incident closed as recovered.
+
+### Residuals (bounded, not fixed)
+
+| Residual | Bound today | Why it waits |
+| --- | --- | --- |
+| M's WAL has no explicit size gate of its own | `wal_autocheckpoint` plus a passive checkpoint after every retention pass; page quota covers the main file | needs a declared total budget for main + WAL + logs per process, a config change rather than a code fix |
+| Retention seals are kept for the life of the database | one row per (identity, pass) that deleted something; a few hundred bytes each | pruning a seal reopens the replay window it closed; needs a rule for when a seal is provably unreachable |
+| Collector pre-allocates before the budget check (SEC-08) | per-connection body window, bounded connections, GET routes already refuse bodies | the remaining window is the connection count times the window size; small on this host, to be bounded by a shared counter |
+| L3 per-vote scans | ≤ 1024 rows, no allocation, microseconds | accepted |
+| Validator memory before the first persistent state | 16 GiB ceiling on validators, 8 GiB on observers | the node's own behaviour; `state_gc_lag` reports it and should clear after 06:38:56 UTC |

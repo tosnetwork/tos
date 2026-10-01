@@ -350,3 +350,23 @@ explanation may keep calling diagnostic coverage incomplete even though the
 three fields it named are now present.
 
 Branch head `6d0df8ba2`, pushed; memo updated.
+
+## 16. Codex audit mapped and closed out (02:00–06:10 UTC)
+
+- Codex's nine findings (`SAFETY-PERF-AUDIT-20261001.md` in the memo) mapped
+  onto the audit note §5; SEC-01/02/03/08/09 were already fixed or fixed in
+  `360657385`; SEC-04/05/06/07 landed in `86032a5a4`.
+- Deploying them exposed that Q had been crash-looping since 00:19 UTC on a
+  build without the `mcp` feature, unseen by every live gate. Fixed the build
+  rule, the restore, the swept-anchor case and added the doctor's
+  `query_broker` gate (`776e42f13`). Q back at 05:57:58 UTC, caught up.
+- The doctor then failed `ai_lane`: since 03:41 UTC every model turn was
+  rejected because the diagnosis contract held six findings and seven nodes
+  were degraded. Cap now follows the inventory bound, a too-small contract
+  is refused before the model runs (`d913d30f6`); the next turn was accepted
+  and the incident closed as recovered.
+- Final doctor (06:0x UTC): 15 pass, 0 fail, 3 not_run (`physical_separation`,
+  `soak_72h`, `cert_rotation`: all honestly not established on one host).
+- Live: 7 nodes, key block seqno 71743 at age ≈ 60–80 s, applied age 0 s,
+  every rule good except `state_gc_lag` (warning, true: GC seqno 0 until the
+  first persistent state after 06:38:56 UTC). Audit note §4 and §6 written.

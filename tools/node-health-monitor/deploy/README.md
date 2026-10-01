@@ -352,10 +352,21 @@ duplicate) rather than minting a fresh sequence number for old evidence.
 Records without a canonical generation are never deleted. Seals are small and
 are kept for the life of the database.
 
-The query service revalidates every retained parent on each projection and
-blocks all manager queries when one is missing. Set the evidence window at or
-above the longest period a query row may stay resident in Q; the two-hour
-floor is a minimum, not that guarantee.
+The query service revalidates every retained parent on each projection. A
+missing parent whose generation is covered by M's retention seal for that
+identity is an expiry: Q evicts the dependent rows and continues. A missing
+parent above the seal, or with no seal, blocks all manager queries as a
+manager conflict. The same rule applies to Q's import cursor: an anchor row
+that retention swept (a seal records deletions at or beyond its sequence)
+re-anchors at the current boundary; a present anchor with another hash, or a
+missing anchor without such a seal, is refused as a rewrite. Set the evidence
+window at or above the longest period a query row may stay resident in Q;
+the two-hour floor is a minimum, not that guarantee.
+
+Build `tos-observability` with `--features mcp` whenever its unit passes an
+MCP socket path; a binary without the feature exits at start, and a restart
+loop that nobody watches is an outage. The doctor's `query_broker` gate
+(below) exists for exactly that case.
 
 The state endpoint reports `retention` (configured windows, pass counts, rows
 deleted, last pass age and error, oldest retained receipt), `inventory` (the
@@ -379,8 +390,11 @@ every node evaluated with a non-unknown input), `no_quarantined_sources`
 (live list and the durable quarantine tables), `evidence_retention`
 (configured, last pass within twice its period, no error),
 `notification_receiver` (configured and an accepted delivery within 24 hours,
-live or by receipt) and `ai_lane` (`ai_unavailable` bound and not active;
-`not_run` when unbound). Receipt gates: `physical_separation`,
+live or by receipt), `ai_lane` (`ai_unavailable` bound and not active;
+`not_run` when unbound) and `query_broker` (with `--query-ledger-db`: the
+broker's ledger or its WAL was written within `--query-max-idle-seconds`,
+default 300; `not_run` without the flag, `fail` when the file is missing).
+Receipt gates: `physical_separation`,
 `performance_round_a` to `_f`, `soak_72h`, `token_rotation`,
 `cert_rotation`, `rollback_drill`. A `pass` receipt is honoured only with a
 valid RFC 3339 `at` younger than `--receipt-max-age-days` (default 90) and an
