@@ -81,4 +81,5 @@ jobs:
           build-health/test-health-publisher-bench
           build-health/test-metrics-label-bound
           build-health/crypto/pq/test-pq-consensus
-          build-health/crypto/pq/test-pq-mldsa44-wrapper
+          python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+          build-health/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
