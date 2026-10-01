@@ -60,6 +60,8 @@ against source, not against memory.
 
 ## Conventions
 
+- Keep documentation in this repository in English. Store Chinese plans,
+  design notes, and audit reports in the `memo` repository.
 - For node-health-monitor work, use the existing `node-health-monitor` branch
   when the shared tree is available. If concurrent changes require an isolated
   worktree, make one short-lived branch, merge only reviewed changes into

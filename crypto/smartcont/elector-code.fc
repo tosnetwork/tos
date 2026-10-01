@@ -35,7 +35,7 @@
 ;; `total_stake` is what has been placed; what an election is judged on is the stake
 ;; standing behind codes the configuration still admits, which is derived from
 ;; `pq_by_code` at the point of decision rather than carried here.
-_ unpack_elect(elect) inline_ref {
+_ unpack_elect_with_retry(elect) inline_ref {
   var es = elect.begin_parse();
   var (elect_at, elect_close, min_stake, total_stake, failed, finished) =
     (es~load_uint(32), es~load_uint(32), es~load_tomis(), es~load_tomis(), es~load_int(1), es~load_int(1));
@@ -52,9 +52,30 @@ _ unpack_elect(elect) inline_ref {
     pq_key_owner = es~load_dict();
     pq_by_code = es~load_dict();
   }
+  ;; Old records have no cache. A failed record stores the inputs of its last attempt.
+  int failed_inputs = -1;
+  ifnot (es.slice_empty?()) {
+    failed_inputs = es~load_uint(256);
+  }
   es.end_parse();
   return (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
+          pq_key_owner, pq_by_code, failed_inputs);
+}
+
+_ unpack_elect(elect) inline_ref {
+  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
+       pq_key_owner, pq_by_code, _) = unpack_elect_with_retry(elect);
+  return (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
           pq_key_owner, pq_by_code);
+}
+
+;; Selection depends on the member book, code totals and configuration 16/17/47.
+;; Nullable cell references preserve the difference between missing and empty policy.
+int election_inputs_hash(cell pq_members, cell pq_by_code) inline_ref {
+  return begin_cell().store_uint(0x50514649, 32)
+    .store_ref(begin_cell().store_dict(pq_members).store_dict(pq_by_code).end_cell())
+    .store_dict(config_param(16)).store_dict(config_param(17)).store_dict(config_param(47))
+  .end_cell().cell_hash();
 }
 
 cell pack_elect(elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
@@ -894,6 +915,8 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
   cs.end_parse();
   min_validators = max(min_validators, 1);
   int n = 0;
+  int total_placed = 0;
+  int total_refunded = 0;
   var sdict = new_dict();
   var validator_id = -1;
   do {
@@ -901,10 +924,12 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
     if (f) {
       var (stake, registered_at, max_factor, algorithm_id, key_id, public_key, adnl_addr,
            stake_owner, code_hash) = pq::unpack_member(ms);
+      total_placed += stake;
       ifnot (pq::controller_admitted?(admitted_codes, code_hash)) {
         ;; A retired profile: out of the election entirely, and its money goes home to
         ;; whoever put it up rather than to the identity that could no longer use it.
         credits~credit_to(stake_owner, stake);
+        total_refunded += stake;
       } else {
         var key = begin_cell()
           .store_uint(stake, 128)
@@ -965,10 +990,12 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
     ;; sort, the way the classical path looks its source address up again.
     var (ms, found) = pq_members.udict_get?(256, id);
     throw_unless(61, found);
-    var (_, _, _, algorithm_id, _, public_key, adnl_addr, stake_owner, _) = pq::unpack_member(ms);
+    var (original_stake, _, _, algorithm_id, _, public_key, adnl_addr, stake_owner, _) = pq::unpack_member(ms);
+    ;; Selection caps the effective stake, never the principal owed to its owner.
+    int refund = original_stake;
     if (i < m) {
       var true_stake = min(stake, (max_f * m_stake) >> 16);
-      stake -= true_stake;
+      refund -= true_stake;
       var weight = (true_stake << 60) / best_stake;
       tot_stake += true_stake;
       tot_weight += weight;
@@ -986,18 +1013,22 @@ _ compute_total_stake(l, n, m_stake) inline_ref {
         .store_tomis(true_stake)
         .store_int(false, 1));
     }
-    if (stake) {
-      ;; The part of a stake the election did not take, back to whoever put it up.
-      credits~credit_to(stake_owner, stake);
+    throw_unless(62, refund >= 0);
+    if (refund) {
+      credits~credit_to(stake_owner, refund);
+      total_refunded += refund;
     }
     i += 1;
   } until (l.null?());
   throw_unless(49, tot_stake == best_stake);
+  ;; Only this selection's credits are counted; previously owed money is separate.
+  throw_unless(63, total_placed == tot_stake + total_refunded);
   return (credits, vset, tot_weight, frozen, tot_stake, m);
 }
 
 int conduct_elections(ds, elect, credits) impure {
-  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members, pq_key_owner, pq_by_code) = elect.unpack_elect();
+  var (elect_at, elect_close, min_stake, total_stake, failed, finished, pq_members,
+       pq_key_owner, pq_by_code, failed_inputs) = unpack_elect_with_retry(elect);
   if (now() < elect_close) {
     ;; elections not finished yet
     return false;
@@ -1029,8 +1060,9 @@ int conduct_elections(ds, elect, credits) impure {
     ;; insufficient effective stake, postpone elections
     return postpone_or_cancel(ds, elect_at, credits, pq_members);
   }
-  if (failed) {
-    ;; a failed attempt is not repeated: no stake can arrive to change its outcome
+  int inputs_hash = election_inputs_hash(pq_members, pq_by_code);
+  if (failed & (failed_inputs == inputs_hash)) {
+    ;; An unchanged failure stays cached; governance changes permit a new attempt.
     return postpone_or_cancel(ds, elect_at, credits, pq_members);
   }
   ;; The refunds a failed attempt credits are not kept. Nothing leaves an election that is
@@ -1046,7 +1078,8 @@ int conduct_elections(ds, elect, credits) impure {
     if (postpone_or_cancel(ds, elect_at, placed_credits, pq_members)) {
       return true;
     }
-    ;; elections failed, set elect_failed to true
+    ;; Tentative refunds are discarded. Cache only an actual unsuccessful selection.
+    elect = begin_cell().store_slice(elect.begin_parse()).store_uint(inputs_hash, 256).end_cell();
     set_data(begin_cell().store_dict(elect).store_dict(placed_credits).store_slice(ds).end_cell());
     return false;
   }

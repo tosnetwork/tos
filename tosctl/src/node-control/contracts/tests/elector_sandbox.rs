@@ -20,6 +20,9 @@
 use chain_block::{Account, ConfigParams, MsgAddressInt, ShardStateUnsplit, TransactionTickTock};
 use tos_sandbox::{Blockchain, generate_zerostate_state};
 
+#[path = "elector_security_audit/mod.rs"]
+mod security_audit;
+
 /// The zerostate is generated rather than fixtured, so these tests run against the
 /// contracts and the configuration the chain would actually launch with.
 fn zerostate() -> ShardStateUnsplit {
