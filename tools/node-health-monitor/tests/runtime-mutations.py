@@ -6,11 +6,11 @@ import pathlib
 import subprocess
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CASES = [
-    ('queue-residence-age', 'health-services', 'manager', 'manager.rs', '.checked_add(elapsed)', '.checked_add(0)', 'queued_observation_cannot_be_rejuvenated'),
+    ('queue-residence-age', 'health-services', 'manager', 'manager.rs', 'frame.request_duration_ms.0.checked_add(elapsed)', 'frame.request_duration_ms.0.checked_add(0)', 'queued_observation_cannot_be_rejuvenated'),
     ('database-network', 'health-services', 'manager', 'durable.rs', 'if stored != network {', 'if false {', 'database_aliases_cannot_defeat_isolation'),
     ('multiple-quarantines', 'health-services', 'manager', 'manager.rs', 'entry.epochs.insert(epoch);', 'entry.epochs.clear(); entry.epochs.insert(epoch);', 'conflict_quarantines_live_rule_and_receipt_controls_outbox'),
     ('complete-facts', 'health-core', 'rules', 'rules.rs', 'frame.complete && frame.facts.len() != source.facts.len()', 'false', 'facts_cannot_escape_catalog_or_network'),
-    ('probe-node-binding', 'health-services', 'ingress', 'manager_poll.rs', '&& v["node_id"].as_str() == Some(&config.node_id)', '&& true', 'scheduled_probe_uses_mtls_and_never_claims_consensus_health'),
+    ('probe-node-binding', 'health-services', 'ingress', 'manager_poll.rs', '.is_ok_and(|v| v.validate(&config.node_id).is_ok());', '.is_ok();', 'scheduled_probe_uses_mtls_and_never_claims_consensus_health'),
     ('receiver-https', 'health-services', 'ingress', 'manager.rs', 'url.scheme() != "https"', 'false', 'scheduled_probe_uses_mtls_and_never_claims_consensus_health'),
     ('rule-conflict', 'health-core', 'rules', 'freshness.rs', '&& !self.conflicted', '&& true', 'missing_and_conflicting_sources_are_unknown'),
     ('rule-cache-age', 'health-core', 'rules', 'freshness.rs', 'return Ok(false);', 'self.accepted_ms = now; return Ok(false);', 'cache_duplicates_do_not_renew_rule_quality'),
