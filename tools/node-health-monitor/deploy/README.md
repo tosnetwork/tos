@@ -212,7 +212,11 @@ a production threshold follows the election period plus margin.
 Any change to the v3 anchor is a change to the **edge's** contract too: the
 edge parses the native record with the same strict types and answers 503
 until it is rebuilt and recreated. On 2026-09-30 the rebuilt network came up
-with every edge refusing for four minutes for exactly this reason.
+with every edge refusing for four minutes for exactly this reason. An edge is
+also bound to the **network id** it was started with: after a rebuild, every
+edge must be recreated with the new zero-state root (read it from the
+network's own file, never from a constant in a script), or it refuses every
+native sample. The refusal reason is now logged by the edge once a minute.
 
 ## Node state: duties, real queues and the storage position
 

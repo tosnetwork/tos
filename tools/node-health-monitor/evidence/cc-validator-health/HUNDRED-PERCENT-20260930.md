@@ -306,8 +306,35 @@ and fixed on the spot:
    by a test against the manifest (`2509f40aa`).
 2. The edges recreated by the rollout answered 503 for eight minutes with
    nothing in the journal; the native sampler discarded its error. It now
-   names each refusal (`6d0df8ba2`); the recreated edges came up usable at
-   once ("process cache cold" for one tick, then usable).
+   names each refusal (`6d0df8ba2`). Root cause, found on the second
+   occurrence at 01:40: the rollout script carried the **old network id** as
+   a constant and bound every recreated edge to it, so each edge refused its
+   node's samples (network mismatch). The script now reads the zero-state root
+   from the network's own file and the newest installed edge build; the deploy
+   README records the rule.
+
+## 15. Owner delegation: decide by first principles (01:40–02:00 UTC)
+
+- **M3 fixed**: `lifecycle_verified` is earned by observation (first session
+  seen through stop → close) and reported in the present tense instead of
+  latched; validators now show `incomplete_reasons: ["scope_unapproved"]`
+  only (they validate shard 0, whose typed progress is by contract not an
+  approved input), observers `["session_lifecycle_unverified"]` truthfully
+  (they run no session). The judgement passes the reasons to the model with
+  a glossary, so an explanation names the reason instead of calling coverage
+  unspecified (`e261f3f87`, `cb2fd7a6e`).
+- **M4 accepted**: the teardown change is safer than its predecessor and its
+  fault-injection test already exists (`test-health-actions close-error`),
+  all 18 modes green.
+- **L2 fixed**: observation context index and ledger bank pointer are atomics.
+- **Q**: the evidence projection was already bounded (fixed row window); the
+  audit's earlier "unbounded" reading was wrong and is corrected.
+- **Judge journals** rotate at 64 MiB; a journaled run prints one summary
+  line to journald instead of the whole report.
+- Ten stale `nhm-c09-functional*` unit files (pointing at deleted worktrees,
+  all inactive) removed.
+- Engine `validator-engine-nhm-cc-3bcffe6990d82400` rolled onto all seven
+  nodes at 01:5x UTC with the corrected script; verdict healthy ×7 at 02:00.
 
 Live after the deploy: coverage `complete` with no missing field on every
 node; 20 rules per validator, 16 per observer, **every input good, verdict
