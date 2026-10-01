@@ -6,14 +6,14 @@
 #include <optional>
 #include <string>
 
+#include "auto/tl/lite_api.h"
+#include "auto/tl/tos_api.h"
 #include "metrics/metrics-collectors.h"
 #include "metrics/tl-traffic-bucket.h"
-#include "auto/tl/tos_api.h"
-#include "auto/tl/lite_api.h"
 #include "quic/health-metrics-policy.h"
-#include "td/utils/logging.h"
 #include "td/actor/actor.h"
 #include "td/utils/check.h"
+#include "td/utils/logging.h"
 
 namespace {
 using tos::metrics::CollectionBudget;
@@ -116,7 +116,7 @@ class OverlayStandIn final : public td::actor::Actor, public tos::metrics::Async
     // A realistic spread of cells: a handful of named schemas plus the
     // shared unknown cell, in both directions.
     for (td::int32 magic : {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_message::ID,
-                           tos::tos_api::overlay_query::ID, tos::lite_api::liteServer_query::ID}) {
+                            tos::tos_api::overlay_query::ID, tos::lite_api::liteServer_query::ID}) {
       in_.account(magic, 100);
       out_.account(magic, 100);
     }
@@ -154,10 +154,11 @@ class JsonRpcStandIn final : public td::actor::Actor, public tos::metrics::Async
   }
   void collect(tos::metrics::MetricsPromise promise) override {
     MetricSet set{};
-    for (const char *name : {"jsonrpc_requests_total", "jsonrpc_errors_total", "jsonrpc_active_requests",
-                             "jsonrpc_cache_hits_total", "jsonrpc_cache_misses_total", "jsonrpc_cache_entries",
-                             "jsonrpc_uptime_seconds"}) {
-      set.families.push_back(MetricFamily::make_scalar(name, "counter", 1, "JSON-RPC requests that resulted in errors"));
+    for (const char *name :
+         {"jsonrpc_requests_total", "jsonrpc_errors_total", "jsonrpc_active_requests", "jsonrpc_cache_hits_total",
+          "jsonrpc_cache_misses_total", "jsonrpc_cache_entries", "jsonrpc_uptime_seconds"}) {
+      set.families.push_back(
+          MetricFamily::make_scalar(name, "counter", 1, "JSON-RPC requests that resulted in errors"));
     }
     set = std::move(set).join(requests_->collect());
     set = std::move(set).join(errors_->collect());
@@ -190,7 +191,8 @@ void check_declaration_covers_result(const char *what) {
 const MetricFamily *find(const MetricSet &set, const char *suffix) {
   const std::string want = suffix;
   for (const auto &family : set.families) {
-    if (family.name.size() >= want.size() && family.name.compare(family.name.size() - want.size(), want.size(), want) == 0) {
+    if (family.name.size() >= want.size() &&
+        family.name.compare(family.name.size() - want.size(), want.size(), want) == 0) {
       return &family;
     }
   }
@@ -227,15 +229,13 @@ class Driver final : public td::actor::Actor {
                             std::make_shared<SyncChild>(1, false, &counts_.undeclared_sync));
     td::actor::send_closure(root_.get(), &tos::metrics::MultiCollector::add_async_collector<LegacyAsync>, "legacy",
                             legacy_.get());
-    td::actor::send_closure(root_.get(), &tos::metrics::MultiCollector::add_async_collector<DeclaringAsync>,
-                            "declared", declared_.get());
+    td::actor::send_closure(root_.get(), &tos::metrics::MultiCollector::add_async_collector<DeclaringAsync>, "declared",
+                            declared_.get());
     // Bounded, with room for four families: the eight-family sync child does
     // not fit, the undeclared sync child and the legacy async child cannot be
     // bounded, only the declaring async child may run.
-    CollectionBudget bounded{.bounded = true,
-                             .deadline = td::Timestamp::now().at() + 5,
-                             .max_resident_bytes = 1 << 20,
-                             .max_families = 4};
+    CollectionBudget bounded{
+        .bounded = true, .deadline = td::Timestamp::now().at() + 5, .max_resident_bytes = 1 << 20, .max_families = 4};
     td::actor::send_closure(root_.get(), &tos::metrics::MultiCollector::collect_with_budget,
                             td::make_promise([self = actor_id(this)](td::Result<MetricSet> result) {
                               td::actor::send_closure(self, &Driver::bounded_done, std::move(result));
@@ -294,10 +294,8 @@ class Driver final : public td::actor::Actor {
     // Bounded with room for everything that can declare itself: the two
     // declared children run and the two that cannot are still refused, so the
     // result is honest about being partial.
-    CollectionBudget roomy{.bounded = true,
-                           .deadline = td::Timestamp::now().at() + 5,
-                           .max_resident_bytes = 1 << 20,
-                           .max_families = 64};
+    CollectionBudget roomy{
+        .bounded = true, .deadline = td::Timestamp::now().at() + 5, .max_resident_bytes = 1 << 20, .max_families = 64};
     td::actor::send_closure(root_.get(), &tos::metrics::MultiCollector::collect_with_budget,
                             td::make_promise([self = actor_id(this)](td::Result<MetricSet> result) {
                               td::actor::send_closure(self, &Driver::roomy_done, std::move(result));
@@ -328,9 +326,8 @@ class Driver final : public td::actor::Actor {
                             "overlays", overlays_.get());
     td::actor::send_closure(production_.get(), &tos::metrics::MultiCollector::add_async_collector<JsonRpcStandIn>,
                             "jsonrpc", jsonrpc_.get());
-    CollectionBudget exporter_like{.bounded = true,
-                                   .deadline = td::Timestamp::now().at() + 5,
-                                   .max_resident_bytes = 320 * 1024};
+    CollectionBudget exporter_like{
+        .bounded = true, .deadline = td::Timestamp::now().at() + 5, .max_resident_bytes = 320 * 1024};
     td::actor::send_closure(production_.get(), &tos::metrics::MultiCollector::collect_with_budget,
                             td::make_promise([self = actor_id(this)](td::Result<MetricSet> result) {
                               td::actor::send_closure(self, &Driver::production_done, std::move(result));
@@ -368,13 +365,16 @@ void check_traffic_growth_before_render() {
   tos::metrics::TlTrafficBucket in, out;
   const auto initial = tos::metrics::traffic_collection_reservation(in.cells() + out.cells(), 0);
   CHECK(initial.has_value());
-  CollectionBudget budget{.bounded = true, .deadline = td::Timestamp::now().at() + 5,
-                         .max_resident_bytes = initial->resident_bytes, .max_families = 4};
+  CollectionBudget budget{.bounded = true,
+                          .deadline = td::Timestamp::now().at() + 5,
+                          .max_resident_bytes = initial->resident_bytes,
+                          .max_families = 4};
   CHECK(tos::metrics::collect_traffic_with_budget(in, out, 0, budget).is_ok());
-  for (const auto magic : {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_broadcastFec::ID,
-                           tos::tos_api::overlay_message::ID, tos::tos_api::overlay_query::ID,
-                           tos::tos_api::overlay_certificate::ID, tos::lite_api::liteServer_query::ID}) {
-    in.account(magic, 100); out.account(magic, 100);
+  for (const auto magic :
+       {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_broadcastFec::ID, tos::tos_api::overlay_message::ID,
+        tos::tos_api::overlay_query::ID, tos::tos_api::overlay_certificate::ID, tos::lite_api::liteServer_query::ID}) {
+    in.account(magic, 100);
+    out.account(magic, 100);
   }
   auto refused = tos::metrics::collect_traffic_with_budget(in, out, 0, budget);
   CHECK(refused.is_error());

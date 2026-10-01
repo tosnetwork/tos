@@ -704,7 +704,8 @@ void OverlayManager::collect(metrics::MetricsPromise promise) {
 std::optional<metrics::CollectionReservation> OverlayManager::reservation() const {
   std::size_t drains = 0;
   for (const auto &[_, by_overlay] : overlays_) {
-    if (by_overlay.size() > metrics::kTrafficDrainLimit - drains) return std::nullopt;
+    if (by_overlay.size() > metrics::kTrafficDrainLimit - drains)
+      return std::nullopt;
     drains += by_overlay.size();
   }
   return metrics::traffic_collection_reservation(
@@ -731,7 +732,8 @@ td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro(metrics::Collec
       co_return metrics::shed_status(metrics::kShedOverBudget);
   }
   std::vector<td::actor::StartedTask<td::Unit>> drains;
-  if (budget.bounded) drains.reserve(count);
+  if (budget.bounded)
+    drains.reserve(count);
   for (const auto &[_, by_overlay] : overlays_) {
     for (const auto &[__, desc] : by_overlay) {
       drains.push_back(td::actor::ask(desc.overlay.get(), &Overlay::collect_metrics));

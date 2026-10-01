@@ -123,8 +123,8 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     for (td::uint32 slot = event->start_slot; current_leader_window_ == window && slot < event->end_slot; ++slot) {
       if (!observation) {
         const tos::health::ActionLedger::Key key{tos::health::Action::Proposal, tos::health::Origin::Live, slot, {}};
-        observation.emplace(tos::health::Action::Proposal, tos::health::Origin::Live,
-            tos::health::consensus_stats, &bus.health_session.proposal_ledger, &key);
+        observation.emplace(tos::health::Action::Proposal, tos::health::Origin::Live, tos::health::consensus_stats,
+                            &bus.health_session.proposal_ledger, &key);
       }
       if (finality_behind_) {
         observation->finish(tos::health::Phase::FinalitySuppressed);

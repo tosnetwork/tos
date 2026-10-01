@@ -8,13 +8,13 @@
 
 #include "consensus/utils.h"
 #include "crypto/block/block.h"
+#include "metrics/consensus-work.h"
 #include "td/actor/SharedFuture.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/memory-tracker.h"
 
 #include "bus.h"
-#include "metrics/consensus-work.h"
 #include "completed-lru.h"
 
 namespace tos::validator::consensus::simplex {
@@ -190,7 +190,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
   void tear_down() override {
     closing_ = true;
-    if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+    if (tos::health::enabled.load(std::memory_order_relaxed) &&
+        tos::health::consensus_enabled.load(std::memory_order_relaxed))
       tos::health::consensus_stats.add(tos::health::consensus_stats.resolver_stopped);
     genesis_promise_.set_error(td::Status::Error(ErrorCode::cancelled, "cancelled"));
     // Failing a waiter resumes its coroutine right here, and that coroutine may try to
@@ -338,9 +339,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       }
     }
     auto outcome = co_await std::move(task).wrap();
-    waiter.finish(outcome.is_ok() ? tos::health::WorkResult::Success
-                                : outcome.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
-                                                                                : tos::health::WorkResult::Failure);
+    waiter.finish(outcome.is_ok()                                  ? tos::health::WorkResult::Success
+                  : outcome.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                   : tos::health::WorkResult::Failure);
     co_return outcome;
   }
 
@@ -392,9 +393,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       // must not read it as "not finalized yet" and go on to start new work. The guard
       // above ran before this coroutine suspended, so it has to be re-checked here.
       auto waited = co_await std::move(task).wrap();
-      waiter.finish(waited.is_ok() ? tos::health::WorkResult::Success
-                                  : waited.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
-                                                                                 : tos::health::WorkResult::Failure);
+      waiter.finish(waited.is_ok()                                  ? tos::health::WorkResult::Success
+                    : waited.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                    : tos::health::WorkResult::Failure);
       if (closing_) {
         co_return closing_error();
       }
@@ -746,9 +747,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
           it->second.waiters.push_back(std::move(promise));
           tos::health::WorkObservation waiter(tos::health::Work::FinalizationWait);
           auto outcome = co_await std::move(task).wrap();
-          waiter.finish(outcome.is_ok() ? tos::health::WorkResult::Success
-                                      : outcome.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
-                                                                                     : tos::health::WorkResult::Failure);
+          waiter.finish(outcome.is_ok()                                  ? tos::health::WorkResult::Success
+                        : outcome.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                         : tos::health::WorkResult::Failure);
           co_return outcome;
         }
         case Finalization::Idle:

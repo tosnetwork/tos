@@ -12,13 +12,16 @@ namespace tos::metrics {
 namespace {
 td::Result<MetricSet> join_with_budget(MetricSet whole, MetricSet child, const CollectionBudget &budget) {
   if (budget.bounded) {
-    if (budget.expired()) return td::Status::Error("Native collection total deadline expired");
+    if (budget.expired())
+      return td::Status::Error("Native collection total deadline expired");
     auto remaining = budget.max_resident_bytes;
     for (const auto resident : {whole.resident_bytes(), child.resident_bytes()}) {
-      if (resident > remaining) return td::Status::Error("Native collection resident budget exceeded");
+      if (resident > remaining)
+        return td::Status::Error("Native collection resident budget exceeded");
       remaining -= resident;
     }
-    if (whole.families.size() > budget.max_families || child.families.size() > budget.max_families - whole.families.size())
+    if (whole.families.size() > budget.max_families ||
+        child.families.size() > budget.max_families - whole.families.size())
       return td::Status::Error("Native collection family capacity exceeded");
   }
   auto result = std::move(whole).join(std::move(child));
@@ -34,10 +37,11 @@ struct TimedMetricResult {
 }  // namespace
 
 MetricSet shed_families(const std::vector<CollectionShed> &sheds) {
-  auto shed = MetricFamily{.name = kShedFamily,
-                           .type = "gauge",
-                           .help = "One per collector refused before it ran in this bounded collection; the result is partial.",
-                           .metrics = {}};
+  auto shed =
+      MetricFamily{.name = kShedFamily,
+                   .type = "gauge",
+                   .help = "One per collector refused before it ran in this bounded collection; the result is partial.",
+                   .metrics = {}};
   for (const auto &item : sheds) {
     auto scalar = MetricFamily::make_scalar("unused", "gauge", 1)
                       .label(LabelSet{{{"source", item.source}, {"reason", item.reason}}});
@@ -50,7 +54,9 @@ MetricSet shed_families(const std::vector<CollectionShed> &sheds) {
   return set;
 }
 
-void CollectorWrapper::collect(MetricsPromise P) { collect_with_budget(std::move(P), {}); }
+void CollectorWrapper::collect(MetricsPromise P) {
+  collect_with_budget(std::move(P), {});
+}
 
 void CollectorWrapper::collect_with_budget(MetricsPromise P, CollectionBudget budget) {
   if (registration_overflow_) {
@@ -77,7 +83,8 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
   const auto count = source_collectors_.size();
   const size_t batch = budget.bounded ? 1 : 8;
   for (size_t base = 0; base < count; base += batch) {
-    if (budget.expired()) co_return td::Status::Error("Native collection total deadline expired before child start");
+    if (budget.expired())
+      co_return td::Status::Error("Native collection total deadline expired before child start");
     std::vector<td::actor::StartedTask<TimedMetricResult>> futures;
     futures.reserve(8);
     for (size_t i = base; i < std::min(base + batch, count); ++i) {
@@ -90,12 +97,14 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
         child_budget.max_families -= whole_set.families.size();
       }
       auto [future, promise] = td::actor::StartedTask<TimedMetricResult>::make_bridge();
-      source_collectors_[i].collect(td::PromiseCreator::lambda(
-          [promise = std::move(promise), publish_source_metadata](td::Result<MetricSet> result) mutable {
-            promise.set_value(
-                TimedMetricResult{.callback_completed_at = publish_source_metadata ? td::Timestamp::now().at_unix() : 0,
-                                  .result = std::move(result)});
-          }), child_budget);
+      source_collectors_[i].collect(
+          td::PromiseCreator::lambda(
+              [promise = std::move(promise), publish_source_metadata](td::Result<MetricSet> result) mutable {
+                promise.set_value(TimedMetricResult{
+                    .callback_completed_at = publish_source_metadata ? td::Timestamp::now().at_unix() : 0,
+                    .result = std::move(result)});
+              }),
+          child_budget);
       futures.push_back(std::move(future));
     }
     // Drain the entire started batch, including on error. Dropping siblings would
@@ -126,9 +135,15 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
         }
         auto joined = join_with_budget(std::move(whole_set), result.move_as_ok(), budget);
         if (joined.is_error()) {
-          if (error.is_ok()) error = joined.move_as_error();
-          if (publish_source_metadata) { ++source.failures; source.last_result_ok = false; }
-        } else { whole_set = joined.move_as_ok(); }
+          if (error.is_ok())
+            error = joined.move_as_error();
+          if (publish_source_metadata) {
+            ++source.failures;
+            source.last_result_ok = false;
+          }
+        } else {
+          whole_set = joined.move_as_ok();
+        }
       }
     }
     if (error.is_error()) {
@@ -170,20 +185,25 @@ td::actor::Task<MetricSet> CollectorWrapper::collect_coro(CollectionBudget budge
     MetricSet metadata{.families = {std::move(completed), std::move(succeeded), std::move(usable), std::move(failures),
                                     std::move(observed)}};
     auto joined = join_with_budget(std::move(whole_set), std::move(metadata), budget);
-    if (joined.is_error()) co_return joined.move_as_error();
+    if (joined.is_error())
+      co_return joined.move_as_error();
     whole_set = joined.move_as_ok();
   }
   if (!sheds.empty()) {
     auto joined = join_with_budget(std::move(whole_set), shed_families(sheds), budget);
-    if (joined.is_error()) co_return joined.move_as_error();
+    if (joined.is_error())
+      co_return joined.move_as_error();
     whole_set = joined.move_as_ok();
   }
   co_return whole_set;
 }
 
 LambdaGauge::LambdaGauge(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help,
-        std::optional<CollectionReservation> reservation)
-    : metric_name_(std::move(metric_name)), lambda_(std::move(lambda)), help_(std::move(help)), reservation_(reservation) {
+                         std::optional<CollectionReservation> reservation)
+    : metric_name_(std::move(metric_name))
+    , lambda_(std::move(lambda))
+    , help_(std::move(help))
+    , reservation_(reservation) {
 }
 
 MetricSet LambdaGauge::collect() {
@@ -193,8 +213,11 @@ MetricSet LambdaGauge::collect() {
 }
 
 LambdaCounter::LambdaCounter(std::string metric_name, SamplerLambda lambda, std::optional<std::string> help,
-        std::optional<CollectionReservation> reservation)
-    : metric_name_(std::move(metric_name)), lambda_(std::move(lambda)), help_(std::move(help)), reservation_(reservation) {
+                             std::optional<CollectionReservation> reservation)
+    : metric_name_(std::move(metric_name))
+    , lambda_(std::move(lambda))
+    , help_(std::move(help))
+    , reservation_(reservation) {
 }
 
 MetricSet LambdaCounter::collect() {
@@ -215,7 +238,9 @@ MetricSet LambdaCollector::collect() {
 MultiCollector::MultiCollector(std::string prefix) : prefix_(std::move(prefix)) {
 }
 
-void MultiCollector::collect(MetricsPromise P) { collect_with_budget(std::move(P), {}); }
+void MultiCollector::collect(MetricsPromise P) {
+  collect_with_budget(std::move(P), {});
+}
 
 void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budget) {
   if (collection_inflight_ || registration_overflow_) {
@@ -227,7 +252,11 @@ void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budg
   std::vector<CollectionShed> sheds;
   for (std::size_t index = 0; index < sync_collectors_.size(); ++index) {
     auto &c = sync_collectors_[index];
-    if (budget.expired()) { collection_inflight_ = false; P.set_error(td::Status::Error("Native total deadline expired before sync child")); return; }
+    if (budget.expired()) {
+      collection_inflight_ = false;
+      P.set_error(td::Status::Error("Native total deadline expired before sync child"));
+      return;
+    }
     if (budget.bounded) {
       // Budget before allocation: the child declares what it will build and
       // is refused, not run, when it cannot or when it does not fit what
@@ -239,9 +268,13 @@ void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budg
       } else {
         auto remaining = budget;
         const auto parent = whole_set.resident_bytes();
-        remaining.max_resident_bytes = parent >= remaining.max_resident_bytes ? 0 : remaining.max_resident_bytes - parent;
-        remaining.max_families = whole_set.families.size() >= remaining.max_families ? 0 : remaining.max_families - whole_set.families.size();
-        if (!remaining.admits(*declared)) reason = kShedOverBudget;
+        remaining.max_resident_bytes =
+            parent >= remaining.max_resident_bytes ? 0 : remaining.max_resident_bytes - parent;
+        remaining.max_families = whole_set.families.size() >= remaining.max_families
+                                     ? 0
+                                     : remaining.max_families - whole_set.families.size();
+        if (!remaining.admits(*declared))
+          reason = kShedOverBudget;
       }
       if (reason != nullptr) {
         sheds.push_back({PSTRING() << "sync_collector_" << index, reason});
@@ -250,14 +283,20 @@ void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budg
     }
     auto metric_set = c->collect();
     auto joined = join_with_budget(std::move(whole_set), std::move(metric_set), budget);
-    if (joined.is_error()) { collection_inflight_ = false; P.set_error(joined.move_as_error()); return; }
+    if (joined.is_error()) {
+      collection_inflight_ = false;
+      P.set_error(joined.move_as_error());
+      return;
+    }
     whole_set = joined.move_as_ok();
   }
   auto child_budget = budget;
   if (budget.bounded) {
     const auto parent = whole_set.resident_bytes();
     if (parent > child_budget.max_resident_bytes || whole_set.families.size() > child_budget.max_families) {
-      collection_inflight_ = false; P.set_error(td::Status::Error("Native parent resident budget exceeded")); return;
+      collection_inflight_ = false;
+      P.set_error(td::Status::Error("Native parent resident budget exceeded"));
+      return;
     }
     child_budget.max_resident_bytes -= parent;
     child_budget.max_families -= whole_set.families.size();
@@ -267,7 +306,8 @@ void MultiCollector::collect_with_budget(MetricsPromise P, CollectionBudget budg
        sheds = std::move(sheds)](td::Result<MetricSet> R) mutable {
         td::actor::send_closure(self, &MultiCollector::collection_completed, std::move(whole_set), std::move(P),
                                 std::move(R), budget, std::move(sheds));
-      }, child_budget);
+      },
+      child_budget);
 }
 
 void MultiCollector::collection_completed(MetricSet whole_set, MetricsPromise promise, td::Result<MetricSet> result,
@@ -278,7 +318,10 @@ void MultiCollector::collection_completed(MetricSet whole_set, MetricsPromise pr
     return;
   }
   auto joined = join_with_budget(std::move(whole_set), result.move_as_ok(), budget);
-  if (joined.is_error()) { promise.set_error(joined.move_as_error()); return; }
+  if (joined.is_error()) {
+    promise.set_error(joined.move_as_error());
+    return;
+  }
   if (budget.bounded) {
     // Publish the sync-side sheds and one completeness gauge: the result is
     // complete only when neither this level nor any child level shed a
@@ -291,11 +334,15 @@ void MultiCollector::collection_completed(MetricSet whole_set, MetricsPromise pr
         kCompleteFamily, "gauge", sheds.empty() && !child_shed ? 1 : 0,
         "One when every collector of this bounded collection ran; zero when any was refused."));
     joined = join_with_budget(std::move(set), std::move(marker), budget);
-    if (joined.is_error()) { promise.set_error(joined.move_as_error()); return; }
+    if (joined.is_error()) {
+      promise.set_error(joined.move_as_error());
+      return;
+    }
   }
   auto wrapped = std::move(joined.move_as_ok()).wrap(prefix_);
   if (budget.bounded && wrapped.resident_bytes() > budget.max_resident_bytes) {
-    promise.set_error(td::Status::Error("Native wrapped resident budget exceeded")); return;
+    promise.set_error(td::Status::Error("Native wrapped resident budget exceeded"));
+    return;
   }
   promise.set_value(std::move(wrapped));
 }
@@ -313,10 +360,10 @@ td::actor::ActorOwn<MultiCollector> MultiCollector::create(std::string prefix) {
 }
 
 td::Result<MetricSet> collect_traffic_with_budget(const TlTrafficBucket &in, const TlTrafficBucket &out,
-                                               std::size_t drains, CollectionBudget budget) {
+                                                  std::size_t drains, CollectionBudget budget) {
   if (budget.bounded) {
     const auto final = traffic_collection_reservation(in.cells() + out.cells(), drains,
-                                                       std::max(in.label_capacity(), out.label_capacity()));
+                                                      std::max(in.label_capacity(), out.label_capacity()));
     if (!final || !budget.admits(*final) || budget.expired())
       return shed_status(kShedOverBudget);
   }

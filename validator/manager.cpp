@@ -18,11 +18,14 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <sys/statvfs.h>
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
@@ -43,17 +46,10 @@
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
+#include "lite-client/lite-ext-query-failure.h"
 #include "metrics/chain-anchor-snapshot.h"
 #include "metrics/core-health.h"
 #include "metrics/node-state-snapshot.h"
-#include "td/utils/port/thread.h"
-
-#include <atomic>
-#include <chrono>
-#include <limits>
-
-#include <sys/statvfs.h>
-#include "lite-client/lite-ext-query-failure.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
 #include "td/db/RocksDb.h"
@@ -64,6 +60,7 @@
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/thread.h"
 #include "tl-utils/lite-utils.hpp"
 #include "tl/tl_json.h"
 #include "tos/lite-tl.hpp"
@@ -98,7 +95,8 @@ std::optional<health::ChainAnchorSnapshot::Block> health_block_anchor(const Bloc
   health::ChainAnchorSnapshot::Block result;
   const auto file = id.file_hash.as_slice();
   const auto root = id.root_hash.as_slice();
-  if (file.size() != 32 || root.size() != 32) return std::nullopt;
+  if (file.size() != 32 || root.size() != 32)
+    return std::nullopt;
   bool file_nonzero = false, root_nonzero = false;
   for (std::size_t i = 0; i < 32; ++i) {
     result.file_hash[i] = static_cast<std::uint8_t>(file[i]);
@@ -106,29 +104,34 @@ std::optional<health::ChainAnchorSnapshot::Block> health_block_anchor(const Bloc
     file_nonzero |= result.file_hash[i] != 0;
     root_nonzero |= result.root_hash[i] != 0;
   }
-  if (!file_nonzero || !root_nonzero) return std::nullopt;
+  if (!file_nonzero || !root_nonzero)
+    return std::nullopt;
   result.seqno = id.seqno();
   return result;
 }
 std::uint64_t health_block_unix_seconds(const BlockHandle &handle) noexcept {
-  if (!handle || !handle->inited_unix_time()) return 0;
+  if (!handle || !handle->inited_unix_time())
+    return 0;
   return static_cast<std::uint64_t>(handle->unix_time());
 }
-void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdExt &applied, td::Ref<MasterchainState> served,
-                                  bool applied_advanced, std::uint64_t applied_block_unix_seconds,
-                                  const BlockHandle &key_block) noexcept {
-  if (!network_zero.is_masterchain_ext() || !network_zero.is_valid_full() ||
-      !applied.is_masterchain_ext() || !applied.is_valid_full()) return;
+void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdExt &applied,
+                                  td::Ref<MasterchainState> served, bool applied_advanced,
+                                  std::uint64_t applied_block_unix_seconds, const BlockHandle &key_block) noexcept {
+  if (!network_zero.is_masterchain_ext() || !network_zero.is_valid_full() || !applied.is_masterchain_ext() ||
+      !applied.is_valid_full())
+    return;
   health::ChainAnchorSnapshot snapshot;
   const auto network = network_zero.root_hash.as_slice();
-  if (network.size() != 32) return;
+  if (network.size() != 32)
+    return;
   for (std::size_t i = 0; i < 32; ++i)
     snapshot.network_hash[i] = static_cast<std::uint8_t>(network[i]);
   auto applied_block = health_block_anchor(applied);
-  if (!applied_block) return;
+  if (!applied_block)
+    return;
   snapshot.applied = *applied_block;
-  if (served.not_null() && served->get_block_id().is_masterchain_ext() &&
-      served->get_block_id().is_valid_full() && served->get_block_id().seqno() <= applied.seqno()) {
+  if (served.not_null() && served->get_block_id().is_masterchain_ext() && served->get_block_id().is_valid_full() &&
+      served->get_block_id().seqno() <= applied.seqno()) {
     if (auto served_block = health_block_anchor(served->get_block_id())) {
       snapshot.served = *served_block;
       snapshot.have_served = true;
@@ -141,8 +144,8 @@ void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdE
   }
   if (applied_advanced) {
     snapshot.applied_advanced_unix_seconds = snapshot.observed_unix_seconds;
-  } else if (auto previous = health::chain_anchor_state.read(); previous &&
-             previous->network_hash == snapshot.network_hash &&
+  } else if (auto previous = health::chain_anchor_state.read();
+             previous && previous->network_hash == snapshot.network_hash &&
              previous->applied.seqno == snapshot.applied.seqno &&
              previous->applied.root_hash == snapshot.applied.root_hash &&
              previous->applied.file_hash == snapshot.applied.file_hash) {
@@ -2177,7 +2180,8 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
 
       new_masterchain_block();
       publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
-                                   health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
+                                   health_block_unix_seconds(last_masterchain_block_handle_),
+                                   last_known_key_block_handle_);
 
       promise.set_value(td::Unit());
 
@@ -2199,7 +2203,8 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
 
           new_masterchain_block();
           publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
-                                   health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
+                                       health_block_unix_seconds(last_masterchain_block_handle_),
+                                       last_known_key_block_handle_);
 
           for (auto &p : l_promise) {
             p.set_value(td::Unit());
@@ -2709,7 +2714,7 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
 
   CHECK(last_masterchain_block_handle_->is_applied());
   publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
-                                 health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
+                               health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
   if (last_known_key_block_handle_->inited_is_key_block()) {
     callback_->new_key_block(last_key_block_handle_);
   }
@@ -4021,10 +4026,8 @@ void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &b
         auto &gauges = health::node_state;
         struct statvfs st;
         if (statvfs(root.c_str(), &st) == 0 && st.f_frsize > 0) {
-          gauges.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize,
-                                      std::memory_order_relaxed);
-          gauges.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize,
-                                     std::memory_order_relaxed);
+          gauges.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize, std::memory_order_relaxed);
+          gauges.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize, std::memory_order_relaxed);
           gauges.storage_sampled_steady_ms.store(
               static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                              std::chrono::steady_clock::now().time_since_epoch())
@@ -4143,7 +4146,8 @@ void ValidatorManagerImpl::update_shard_client_block_handle(BlockHandle handle, 
     }
     if (last_masterchain_state_.not_null())
       publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
-                                 health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
+                                   health_block_unix_seconds(last_masterchain_block_handle_),
+                                   last_known_key_block_handle_);
   }
   if (!db_event_publisher_.empty()) {
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockApplied " << shard_client_handle_->id().to_str();
@@ -4193,7 +4197,8 @@ void ValidatorManagerImpl::alarm() {
   if (last_masterchain_block_handle_ && last_masterchain_block_handle_->is_applied() &&
       last_masterchain_state_.not_null()) {
     publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
-                                 health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
+                                 health_block_unix_seconds(last_masterchain_block_handle_),
+                                 last_known_key_block_handle_);
   }
   if (shard_client_state_.not_null() && gc_masterchain_handle_) {
     td::actor::send_closure(db_, &Db::run_gc, shard_client_state_, gc_masterchain_handle_->unix_time(),

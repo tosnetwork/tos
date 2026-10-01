@@ -2,8 +2,8 @@
 
 #include <array>
 #include <atomic>
-#include <cstdint>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 
@@ -17,17 +17,54 @@ namespace tos::health {
 enum class Action : std::uint8_t { Proposal, Notarize, Finalize, Skip, Count };
 enum class Origin : std::uint8_t { Live, ReplaySigned, ReplayIntent, Count };
 enum class Phase : std::uint8_t {
-  Requested, IntentCommitted, Signed, SignedCommitted, RestoredSigned,
-  LocalApplied, BroadcastEnqueued, CandidatePublished, Retry, Empty,
-  IntentFailure, SignFailure, SignedCommitFailure, ApplyFalse, MissingSigner,
-  IntentCancelled, SignedCommitCancelled,
-  FinalitySuppressed, JournalSuppressed, Superseded, Cancelled, Completed, Count
+  Requested,
+  IntentCommitted,
+  Signed,
+  SignedCommitted,
+  RestoredSigned,
+  LocalApplied,
+  BroadcastEnqueued,
+  CandidatePublished,
+  Retry,
+  Empty,
+  IntentFailure,
+  SignFailure,
+  SignedCommitFailure,
+  ApplyFalse,
+  MissingSigner,
+  IntentCancelled,
+  SignedCommitCancelled,
+  FinalitySuppressed,
+  JournalSuppressed,
+  Superseded,
+  Cancelled,
+  Completed,
+  Count
 };
 enum class Outcome : std::uint8_t { Enqueued, Failed, Cancelled, Suppressed, Unknown, Count };
-enum class FailureReason : std::uint8_t { IntentStorage, MissingSigner, SignBackend, SignedStorage, DuplicateOrStale,
-                                         FinalityBehind, JournalUnusable, Superseded, Cancelled, Count };
-enum class IncompleteReason : std::uint8_t { ContextCapacity, LedgerCapacity, PendingCapacity, CounterSaturation,
-    CasExhaustion, ObservationGap, SessionLifecycleUnverified, ScopeUnapproved, SnapshotContention };
+enum class FailureReason : std::uint8_t {
+  IntentStorage,
+  MissingSigner,
+  SignBackend,
+  SignedStorage,
+  DuplicateOrStale,
+  FinalityBehind,
+  JournalUnusable,
+  Superseded,
+  Cancelled,
+  Count
+};
+enum class IncompleteReason : std::uint8_t {
+  ContextCapacity,
+  LedgerCapacity,
+  PendingCapacity,
+  CounterSaturation,
+  CasExhaustion,
+  ObservationGap,
+  SessionLifecycleUnverified,
+  ScopeUnapproved,
+  SnapshotContention
+};
 constexpr auto action_count = static_cast<std::size_t>(Action::Count);
 constexpr auto origin_count = static_cast<std::size_t>(Origin::Count);
 constexpr auto phase_count = static_cast<std::size_t>(Phase::Count);
@@ -55,8 +92,8 @@ struct ConsensusStats {
   std::array<Pending, max_pending> pending_rows{};
 
   static std::uint64_t now_ns() noexcept {
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
   }
   std::size_t track_pending(Action action, Origin origin) noexcept {
     for (std::size_t i = 0; i < max_pending; ++i) {
@@ -75,12 +112,14 @@ struct ConsensusStats {
     std::uint64_t oldest = UINT64_MAX;
     for (const auto &row : pending_rows) {
       auto started = row.started_ns.load(std::memory_order_acquire);
-      if (started == 0 || started == UINT64_MAX) continue;
+      if (started == 0 || started == UINT64_MAX)
+        continue;
       const auto row_action = row.action.load(std::memory_order_relaxed);
       const auto row_origin = row.origin.load(std::memory_order_relaxed);
       std::atomic_thread_fence(std::memory_order_acquire);
       if (row_action == action && row_origin == origin && started == row.started_ns.load(std::memory_order_relaxed) &&
-          started < oldest) oldest = started;
+          started < oldest)
+        oldest = started;
     }
     return oldest == UINT64_MAX ? 0 : oldest;
   }
@@ -91,8 +130,8 @@ struct ConsensusStats {
     instrumentation_complete.store(false, std::memory_order_relaxed);
   }
   void incomplete(Action action, IncompleteReason reason = IncompleteReason::ObservationGap) noexcept {
-    action_reasons[static_cast<std::size_t>(action)].fetch_or(
-        std::uint32_t{1} << static_cast<unsigned>(reason), std::memory_order_relaxed);
+    action_reasons[static_cast<std::size_t>(action)].fetch_or(std::uint32_t{1} << static_cast<unsigned>(reason),
+                                                              std::memory_order_relaxed);
     global_incomplete(reason);
     action_complete[static_cast<std::size_t>(action)].store(false, std::memory_order_relaxed);
     instrumentation_complete.store(false, std::memory_order_relaxed);
@@ -100,10 +139,11 @@ struct ConsensusStats {
 
   bool add(Counter &counter, std::uint64_t amount = 1) noexcept {
     const auto result = CoreRegistry::bounded_add(counter, amount);
-    if (result == CoreRegistry::UpdateResult::Updated) return true;
+    if (result == CoreRegistry::UpdateResult::Updated)
+      return true;
     core_registry.note_update_failure();
     global_incomplete(result == CoreRegistry::UpdateResult::Saturated ? IncompleteReason::CounterSaturation
-                                                                    : IncompleteReason::CasExhaustion);
+                                                                      : IncompleteReason::CasExhaustion);
     return false;
   }
   void subtract(Counter &counter) noexcept {
@@ -146,7 +186,10 @@ class ActionLedger {
     std::array<Entry, max_rows> entries{};
     std::uint64_t retired_floor = 0;
   };
-  struct Admission { Entry *entry = nullptr; bool fresh = false; };
+  struct Admission {
+    Entry *entry = nullptr;
+    bool fresh = false;
+  };
   Admission begin(const Key &key, ConsensusStats &stats) noexcept {
     if (auto *bank = bank_.load(std::memory_order_acquire); bank != nullptr) {
       if (key.slot < bank->retired_floor) {
@@ -157,10 +200,17 @@ class ActionLedger {
       for (auto &entry : bank->entries) {
         if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor)
           entry.occupied = false;
-        if (!entry.occupied) { if (free == nullptr) free = &entry; continue; }
+        if (!entry.occupied) {
+          if (free == nullptr)
+            free = &entry;
+          continue;
+        }
         if (entry.key == key) {
           stats.add(stats.repeated_requests);
-          if (entry.holders == UINT32_MAX) { stats.incomplete(key.action); return {}; }
+          if (entry.holders == UINT32_MAX) {
+            stats.incomplete(key.action);
+            return {};
+          }
           ++entry.holders;
           return {&entry, false};
         }
@@ -177,18 +227,25 @@ class ActionLedger {
   // scrape time or guessed deadline. Pending entries are never evicted.
   void retire_before(std::uint64_t floor) noexcept {
     auto *bank = bank_.load(std::memory_order_acquire);
-    if (bank == nullptr) return;
-    if (floor > bank->retired_floor) bank->retired_floor = floor;
+    if (bank == nullptr)
+      return;
+    if (floor > bank->retired_floor)
+      bank->retired_floor = floor;
     for (auto &entry : bank->entries)
-      if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor) entry.occupied = false;
+      if (entry.occupied && entry.closed && entry.holders == 0 && entry.key.slot < bank->retired_floor)
+        entry.occupied = false;
   }
   bool reserve(std::size_t index) noexcept {
-    if (bank_.load(std::memory_order_acquire) != nullptr) return true;
-    if (index >= max_banks) return false;
+    if (bank_.load(std::memory_order_acquire) != nullptr)
+      return true;
+    if (index >= max_banks)
+      return false;
     auto &bank = banks_[index];
     bool free = false;
-    if (!bank.leased.compare_exchange_strong(free, true, std::memory_order_acquire)) return false;
-    for (auto &entry : bank.entries) entry = {};
+    if (!bank.leased.compare_exchange_strong(free, true, std::memory_order_acquire))
+      return false;
+    for (auto &entry : bank.entries)
+      entry = {};
     bank.retired_floor = 0;
     bank_.store(&bank, std::memory_order_release);
     return true;
@@ -198,10 +255,13 @@ class ActionLedger {
       bank->leased.store(false, std::memory_order_release);
     }
   }
-  ~ActionLedger() { reset(); }
+  ~ActionLedger() {
+    reset();
+  }
   ActionLedger() = default;
   ActionLedger(const ActionLedger &) = delete;
   ActionLedger &operator=(const ActionLedger &) = delete;
+
  private:
   static std::array<Bank, max_banks> banks_;
   std::atomic<Bank *> bank_{nullptr};
@@ -215,24 +275,30 @@ class ActionObservation {
  public:
   ActionObservation(Action action, Origin origin = Origin::Live, ConsensusStats &stats = consensus_stats,
                     ActionLedger *ledger = nullptr, const ActionLedger::Key *key = nullptr) noexcept
-      : stats_(stats), action_(action), origin_(origin), active_(enabled.load(std::memory_order_relaxed) && consensus_enabled.load(std::memory_order_relaxed)) {
+      : stats_(stats)
+      , action_(action)
+      , origin_(origin)
+      , active_(enabled.load(std::memory_order_relaxed) && consensus_enabled.load(std::memory_order_relaxed)) {
     if (active_ && ledger != nullptr && key != nullptr) {
       const auto admission = ledger->begin(*key, stats_);
       entry_ = admission.entry;
       active_ = entry_ != nullptr;
       duplicate_ = active_ && !admission.fresh;
-      if (entry_ != nullptr && entry_->tracking_declined) active_ = false;
+      if (entry_ != nullptr && entry_->tracking_declined)
+        active_ = false;
     }
     if (active_ && !duplicate_) {
       pending_slot_ = stats_.track_pending(action_, origin_);
       if (pending_slot_ == ConsensusStats::max_pending) {
         active_ = false;
-        if (entry_ != nullptr) entry_->tracking_declined = true;
+        if (entry_ != nullptr)
+          entry_->tracking_declined = true;
         return;
       }
       observe(Phase::Requested);
       pending_recorded_ = stats_.add(stats_.inflight(action_, origin_));
-      if (!pending_recorded_) stats_.incomplete(action_);
+      if (!pending_recorded_)
+        stats_.incomplete(action_);
     }
   }
   void observe(Phase phase) noexcept {
@@ -240,12 +306,13 @@ class ActionObservation {
       const auto bit = std::uint32_t{1} << static_cast<unsigned>(phase);
       auto &seen = entry_ != nullptr ? entry_->seen : seen_;
       if ((seen & bit) == 0) {
-        if (duplicate_ && entry_->terminal && phase != Phase::Completed &&
-            phase != Phase::IntentCancelled && phase != Phase::SignedCommitCancelled && phase != Phase::ApplyFalse) {
+        if (duplicate_ && entry_->terminal && phase != Phase::Completed && phase != Phase::IntentCancelled &&
+            phase != Phase::SignedCommitCancelled && phase != Phase::ApplyFalse) {
           stats_.add(stats_.post_terminal_progress);
           stats_.incomplete(action_);
         }
-        if (!stats_.add(stats_.phase(action_, origin_, phase))) stats_.incomplete(action_);
+        if (!stats_.add(stats_.phase(action_, origin_, phase)))
+          stats_.incomplete(action_);
         seen |= bit;
         diagnostic_phase(static_cast<std::uint8_t>(action_), static_cast<std::uint8_t>(origin_),
                          static_cast<std::uint8_t>(phase));
@@ -265,34 +332,74 @@ class ActionObservation {
         return;
       }
       observe(terminal);
-      if (entry_ != nullptr) { entry_->terminal = true; entry_->closed = true; }
+      if (entry_ != nullptr) {
+        entry_->terminal = true;
+        entry_->closed = true;
+      }
       Outcome outcome = Outcome::Unknown;
       FailureReason reason = FailureReason::Cancelled;
       bool failure = true;
       switch (terminal) {
-        case Phase::Completed: outcome = enqueued_ ? Outcome::Enqueued : Outcome::Unknown; failure = false; break;
-        case Phase::IntentFailure: outcome = Outcome::Failed; reason = FailureReason::IntentStorage; break;
-        case Phase::MissingSigner: outcome = Outcome::Failed; reason = FailureReason::MissingSigner; break;
-        case Phase::SignFailure: outcome = Outcome::Failed; reason = FailureReason::SignBackend; break;
-        case Phase::SignedCommitFailure: outcome = Outcome::Failed; reason = FailureReason::SignedStorage; break;
-        case Phase::ApplyFalse: outcome = Outcome::Suppressed; reason = FailureReason::DuplicateOrStale; break;
-        case Phase::FinalitySuppressed: outcome = Outcome::Suppressed; reason = FailureReason::FinalityBehind; break;
-        case Phase::JournalSuppressed: outcome = Outcome::Suppressed; reason = FailureReason::JournalUnusable; break;
-        case Phase::Superseded: outcome = Outcome::Cancelled; reason = FailureReason::Superseded; break;
-        case Phase::Cancelled: case Phase::IntentCancelled: case Phase::SignedCommitCancelled:
-          outcome = Outcome::Cancelled; break;
-        default: failure = false; break;
+        case Phase::Completed:
+          outcome = enqueued_ ? Outcome::Enqueued : Outcome::Unknown;
+          failure = false;
+          break;
+        case Phase::IntentFailure:
+          outcome = Outcome::Failed;
+          reason = FailureReason::IntentStorage;
+          break;
+        case Phase::MissingSigner:
+          outcome = Outcome::Failed;
+          reason = FailureReason::MissingSigner;
+          break;
+        case Phase::SignFailure:
+          outcome = Outcome::Failed;
+          reason = FailureReason::SignBackend;
+          break;
+        case Phase::SignedCommitFailure:
+          outcome = Outcome::Failed;
+          reason = FailureReason::SignedStorage;
+          break;
+        case Phase::ApplyFalse:
+          outcome = Outcome::Suppressed;
+          reason = FailureReason::DuplicateOrStale;
+          break;
+        case Phase::FinalitySuppressed:
+          outcome = Outcome::Suppressed;
+          reason = FailureReason::FinalityBehind;
+          break;
+        case Phase::JournalSuppressed:
+          outcome = Outcome::Suppressed;
+          reason = FailureReason::JournalUnusable;
+          break;
+        case Phase::Superseded:
+          outcome = Outcome::Cancelled;
+          reason = FailureReason::Superseded;
+          break;
+        case Phase::Cancelled:
+        case Phase::IntentCancelled:
+        case Phase::SignedCommitCancelled:
+          outcome = Outcome::Cancelled;
+          break;
+        default:
+          failure = false;
+          break;
       }
       if (origin_ != Origin::Live) {
         auto replay_outcome = outcome;
         if (terminal == Phase::Completed && ((entry_ != nullptr ? entry_->seen : seen_) &
-            (std::uint32_t{1} << static_cast<unsigned>(Phase::LocalApplied)))) replay_outcome = Outcome::Enqueued;
-        if (!stats_.add(stats_.replay_terminals[static_cast<std::size_t>(action_)][static_cast<std::size_t>(origin_) - 1]
-            [static_cast<std::size_t>(replay_outcome)])) stats_.incomplete(action_);
+                                             (std::uint32_t{1} << static_cast<unsigned>(Phase::LocalApplied))))
+          replay_outcome = Outcome::Enqueued;
+        if (!stats_.add(stats_.replay_terminals[static_cast<std::size_t>(
+                action_)][static_cast<std::size_t>(origin_) - 1][static_cast<std::size_t>(replay_outcome)]))
+          stats_.incomplete(action_);
       }
       if (origin_ == Origin::Live) {
-        if (!stats_.add(stats_.outcomes[static_cast<std::size_t>(action_)][static_cast<std::size_t>(outcome)])) stats_.incomplete(action_);
-        if (failure && !stats_.add(stats_.failures[static_cast<std::size_t>(action_)][static_cast<std::size_t>(reason)])) stats_.incomplete(action_);
+        if (!stats_.add(stats_.outcomes[static_cast<std::size_t>(action_)][static_cast<std::size_t>(outcome)]))
+          stats_.incomplete(action_);
+        if (failure &&
+            !stats_.add(stats_.failures[static_cast<std::size_t>(action_)][static_cast<std::size_t>(reason)]))
+          stats_.incomplete(action_);
       }
       if (pending_recorded_)
         stats_.subtract(stats_.inflight(action_, origin_));
@@ -302,13 +409,19 @@ class ActionObservation {
       active_ = false;
     }
   }
-  ~ActionObservation() { finish(Phase::Cancelled); }
+  ~ActionObservation() {
+    finish(Phase::Cancelled);
+  }
   ActionObservation(const ActionObservation &) = delete;
   ActionObservation &operator=(const ActionObservation &) = delete;
+
  private:
   void release_entry() noexcept {
     if (entry_ != nullptr) {
-      if (entry_->holders != 0) --entry_->holders; else stats_.incomplete(action_);
+      if (entry_->holders != 0)
+        --entry_->holders;
+      else
+        stats_.incomplete(action_);
       entry_ = nullptr;
     }
   }
@@ -356,26 +469,30 @@ class SessionObservation {
           row.current_slot.store(UINT64_MAX, std::memory_order_relaxed);
           row.finalized_slot.store(UINT64_MAX, std::memory_order_relaxed);
           row.stop_started.store(0, std::memory_order_relaxed);
-          row.sequence.store(registration_sequence.fetch_add(1, std::memory_order_relaxed) + 1, std::memory_order_release);
+          row.sequence.store(registration_sequence.fetch_add(1, std::memory_order_relaxed) + 1,
+                             std::memory_order_release);
           vote_ledger.reserve(i * 2);
           proposal_ledger.reserve(i * 2 + 1);
           break;
         }
       }
       if (context_.load(std::memory_order_acquire) == context_rows.size()) {
-        for (std::size_t a = 0; a < action_count; ++a) consensus_stats.incomplete(static_cast<Action>(a), IncompleteReason::ContextCapacity);
+        for (std::size_t a = 0; a < action_count; ++a)
+          consensus_stats.incomplete(static_cast<Action>(a), IncompleteReason::ContextCapacity);
       }
       consensus_stats.add(consensus_stats.sessions_started);
       recorded_ = consensus_stats.add(consensus_stats.sessions_active);
       active_.store(true, std::memory_order_release);
-      if (stop_requested_.load(std::memory_order_acquire)) begin_stop();
+      if (stop_requested_.load(std::memory_order_acquire))
+        begin_stop();
     }
   }
   void begin_stop() noexcept {
     stop_requested_.store(true, std::memory_order_release);
     if (active_.load(std::memory_order_acquire) && !stopping_.exchange(true, std::memory_order_acq_rel)) {
       const auto context = context_.load(std::memory_order_acquire);
-      if (context < context_rows.size()) context_rows[context].stop_started.store(ConsensusStats::now_ns(), std::memory_order_release);
+      if (context < context_rows.size())
+        context_rows[context].stop_started.store(ConsensusStats::now_ns(), std::memory_order_release);
       consensus_stats.add(consensus_stats.sessions_stop_started);
       stopping_recorded_ = consensus_stats.add(consensus_stats.sessions_stopping);
     }
@@ -385,12 +502,14 @@ class SessionObservation {
       consensus_stats.add(consensus_stats.sessions_stopped);
       if (recorded_)
         consensus_stats.subtract(consensus_stats.sessions_active);
-      if (stopping_recorded_) consensus_stats.subtract(consensus_stats.sessions_stopping);
+      if (stopping_recorded_)
+        consensus_stats.subtract(consensus_stats.sessions_stopping);
       active_ = false;
     }
   }
   void close() noexcept {
-    if (closed_) return;
+    if (closed_)
+      return;
     closed_ = true;
     const bool was_active = active_.load(std::memory_order_acquire);
     stop();
@@ -404,21 +523,27 @@ class SessionObservation {
     if (was_active && !consensus_stats.add(consensus_stats.sessions_drained))
       consensus_stats.global_incomplete(IncompleteReason::CounterSaturation);
     // The drain boundary was observed end to end: stop requested, then closed.
-    if (was_active && stopping_.load(std::memory_order_acquire)) lifecycle_verified.store(true, std::memory_order_release);
+    if (was_active && stopping_.load(std::memory_order_acquire))
+      lifecycle_verified.store(true, std::memory_order_release);
   }
-  ~SessionObservation() { close(); }
+  ~SessionObservation() {
+    close();
+  }
   void current_slot(std::uint32_t slot) noexcept {
     const auto context = context_.load(std::memory_order_acquire);
-    if (context < context_rows.size()) context_rows[context].current_slot.store(slot, std::memory_order_relaxed);
+    if (context < context_rows.size())
+      context_rows[context].current_slot.store(slot, std::memory_order_relaxed);
   }
   void finalized_slot(std::uint32_t slot) noexcept {
     const auto context = context_.load(std::memory_order_acquire);
-    if (context < context_rows.size()) context_rows[context].finalized_slot.store(slot, std::memory_order_relaxed);
+    if (context < context_rows.size())
+      context_rows[context].finalized_slot.store(slot, std::memory_order_relaxed);
   }
   ActionLedger vote_ledger, proposal_ledger;
   SessionObservation() = default;
   SessionObservation(const SessionObservation &) = delete;
   SessionObservation &operator=(const SessionObservation &) = delete;
+
  private:
   std::atomic<std::size_t> context_{context_rows.size()};
   std::atomic<bool> active_{false}, stopping_{false}, stop_requested_{false};

@@ -16,12 +16,12 @@
 #include "block/validator-set.h"
 #include "consensus/candidate-relay-policy.h"
 #include "consensus/simplex/bus.h"
-#include "metrics/consensus-work.h"
 #include "consensus/simplex/candidate-retention.h"
 #include "consensus/simplex/completed-lru.h"
 #include "consensus/simplex/finalized-slot-dedup.h"
 #include "consensus/simplex/votes.h"
 #include "consensus/utils.h"
+#include "metrics/consensus-work.h"
 #include "overlay/overlays.h"
 #include "td/actor/BusRuntime.h"
 #include "td/actor/coro_utils.h"
@@ -2679,7 +2679,9 @@ class TestConsensus : public td::actor::Actor {
     }
     if (C04_HEALTH_TEST) {
       using namespace tos::health;
-      auto phase = [&](Action action, Phase phase) { return consensus_stats.phase(action, Origin::Live, phase).load(); };
+      auto phase = [&](Action action, Phase phase) {
+        return consensus_stats.phase(action, Origin::Live, phase).load();
+      };
       CHECK(phase(Action::Proposal, Phase::CandidatePublished) > 0);
       CHECK(phase(Action::Proposal, Phase::Signed) >= phase(Action::Proposal, Phase::CandidatePublished));
       CHECK(phase(Action::Notarize, Phase::BroadcastEnqueued) > 0);
@@ -2691,10 +2693,12 @@ class TestConsensus : public td::actor::Actor {
       for (std::size_t action = 0; action < action_count; ++action) {
         CHECK(consensus_stats.pending[action][0] == 0);
         std::uint64_t terminals = 0;
-        for (const auto &value : consensus_stats.outcomes[action]) terminals += value.load();
+        for (const auto& value : consensus_stats.outcomes[action])
+          terminals += value.load();
         CHECK(terminals == consensus_stats.phases[action][0][static_cast<unsigned>(Phase::Requested)]);
       }
-      for (const auto &pending : work_stats.pending) CHECK(pending == 0);
+      for (const auto& pending : work_stats.pending)
+        CHECK(pending == 0);
       CHECK(consensus_stats.sessions_active == 0 && consensus_stats.sessions_stopping == 0);
       LOG(WARNING) << "C04_NATIVE_PIPELINE_PASS: actual proposal/votes/DB/resolver plus drained quiescent conservation";
     }

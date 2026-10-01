@@ -43,7 +43,9 @@ class HttpConnection : public td::actor::Actor, public td::ObserverBase {
   };
 
   HttpConnection(td::SocketFd fd, std::unique_ptr<Callback> callback, bool is_client, size_t io_buffer_bytes = 0)
-      : buffered_fd_(std::move(fd)), callback_(std::move(callback)), is_client_(is_client)
+      : buffered_fd_(std::move(fd))
+      , callback_(std::move(callback))
+      , is_client_(is_client)
       , io_buffer_bytes_(io_buffer_bytes) {
   }
   virtual td::Status receive(td::ChainBufferReader &input) = 0;

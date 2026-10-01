@@ -55,7 +55,8 @@ int main() {
   tos::health::NativeCorePublisher other_network;
   CHECK(other_network.set_node("other"));
   CHECK(other_network.set_network(std::string(64, 'c')));
-  auto mismatched = other_network.prepare(1, 1, 1700000000, "# EOF\n", true, operations, operations, true, &consensus, true);
+  auto mismatched =
+      other_network.prepare(1, 1, 1700000000, "# EOF\n", true, operations, operations, true, &consensus, true);
   CHECK(mismatched);
   const auto mismatch_body = mismatched->read(1);
   CHECK(mismatch_body && mismatch_body->find("\"chain\":null") != std::string::npos);

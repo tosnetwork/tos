@@ -34,8 +34,8 @@ class HttpInboundConnection : public HttpConnection {
  public:
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
                         HttpServer::AllMetrics metrics, double request_header_timeout = 0,
-                        double request_body_timeout = 0, bool reject_request_bodies = false,
-                        size_t io_buffer_bytes = 0, double response_timeout = 0)
+                        double request_body_timeout = 0, bool reject_request_bodies = false, size_t io_buffer_bytes = 0,
+                        double response_timeout = 0)
       : HttpConnection(std::move(fd), nullptr, false, io_buffer_bytes)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
@@ -181,7 +181,8 @@ class HttpInboundConnection : public HttpConnection {
     }
     request_header_deadline_ = td::Timestamp::in(request_header_timeout_);
     alarm_timestamp() = response_pending_ && response_deadline_.at() < request_header_deadline_.at()
-                            ? response_deadline_ : request_header_deadline_;
+                            ? response_deadline_
+                            : request_header_deadline_;
   }
 
  public:
@@ -196,11 +197,11 @@ class HttpInboundConnection : public HttpConnection {
     double timeout = request_body_timeout_ > 0 ? request_body_timeout_ : request_header_timeout_;
     request_header_deadline_ = td::Timestamp::in(timeout);
     alarm_timestamp() = response_pending_ && response_deadline_.at() < request_header_deadline_.at()
-                            ? response_deadline_ : request_header_deadline_;
+                            ? response_deadline_
+                            : request_header_deadline_;
   }
 
  private:
-
   void arm_response_deadline() {
     if (response_timeout_ > 0) {
       response_pending_ = true;

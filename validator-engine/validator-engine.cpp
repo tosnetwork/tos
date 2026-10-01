@@ -40,13 +40,13 @@
 #include "keys/keys.hpp"
 #include "memprof/memprof.h"
 #include "metrics/core-health.h"
-#include "td/utils/StorageHealth.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
+#include "td/utils/StorageHealth.h"
 #include "td/utils/ThreadSafeCounter.h"
 #include "td/utils/Time.h"
 #include "td/utils/TsFileLog.h"
@@ -2318,8 +2318,8 @@ void ValidatorEngine::start_rldp() {
   CHECK(!keyring_.empty());
   quic_ = td::actor::create_actor<tos::quic::QuicSender>("QuicSender", peer_table, keyring_.get());
   td::actor::send_closure(quic_.get(), &tos::quic::QuicSender::set_quic_options, quic_options_);
-  td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>,
-                          "quic", quic_.get());
+  td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>, "quic",
+                          quic_.get());
   td::actor::send_closure(rldp2_, &tos::rldp2::Rldp::set_default_mtu, 2048);
   started_rldp();
 }
@@ -5857,8 +5857,8 @@ void ValidatorEngine::set_health_native_v3() {
   td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_native_v3);
 }
 void ValidatorEngine::set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling) {
-  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_diagnostic,
-                          std::move(path),peer_pid,sampling);
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_diagnostic, std::move(path), peer_pid,
+                          sampling);
 }
 
 void ValidatorEngine::set_health_node_id(std::string value) {
@@ -6539,41 +6539,53 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "db-event-fifo", "path to FIFO pipe for publishing DB events", [&](td::Slice s) {
     acts.push_back([&x, s = s.str()]() { td::actor::send_closure(x, &ValidatorEngine::set_db_event_fifo_path, s); });
   });
-  p.add_checked_option('\0', "health-node-id", "approved node alias for loopback typed health snapshot", [&](td::Slice arg) {
-    if (!tos::health::node_alias(arg.str())) return td::Status::Error("invalid health node alias");
-    acts.push_back([&x, value = arg.str()] { td::actor::send_closure(x, &ValidatorEngine::set_health_node_id, value); });
-    return td::Status::OK();
-  });
-  p.add_option('\0', "health-native-core-v2", "select the bounded C04 typed native snapshot (requires health-core-metrics)", [&]() {
-    tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
-    acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v2); });
-  });
-  p.add_option('\0', "health-native-core-v3", "select bounded typed native snapshot with partial cached chain anchors (requires health-core-metrics)", [&]() {
-    tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
-    acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v3); });
-  });
+  p.add_checked_option(
+      '\0', "health-node-id", "approved node alias for loopback typed health snapshot", [&](td::Slice arg) {
+        if (!tos::health::node_alias(arg.str()))
+          return td::Status::Error("invalid health node alias");
+        acts.push_back(
+            [&x, value = arg.str()] { td::actor::send_closure(x, &ValidatorEngine::set_health_node_id, value); });
+        return td::Status::OK();
+      });
+  p.add_option('\0', "health-native-core-v2",
+               "select the bounded C04 typed native snapshot (requires health-core-metrics)", [&]() {
+                 tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
+                 acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v2); });
+               });
+  p.add_option('\0', "health-native-core-v3",
+               "select bounded typed native snapshot with partial cached chain anchors (requires health-core-metrics)",
+               [&]() {
+                 tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
+                 acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v3); });
+               });
   p.add_option('\0', "health-core-metrics",
-               "enable bounded consensus PQ operation metrics (requires performance acceptance)",
-               []() {
+               "enable bounded consensus PQ operation metrics (requires performance acceptance)", []() {
                  tos::health::enabled.store(true, std::memory_order_relaxed);
                  td::storage_health.enabled.store(true, std::memory_order_relaxed);
                });
-  p.add_checked_option('\0', "health-diagnostic", "private socket path,approved edge PID,sample every N (core metrics and v2 required)", [&](td::Slice arg) {
-    const auto value=arg.str();
-    const auto first=value.find(',');
-    const auto second=first==std::string::npos ? std::string::npos : value.find(',',first+1);
-    if (first==std::string::npos || second==std::string::npos || value.find(',',second+1)!=std::string::npos)
-      return td::Status::Error("invalid diagnostic startup mapping");
-    const auto path=value.substr(0,first);
-    auto pid=td::to_integer_safe<int>(value.substr(first+1,second-first-1));
-    auto every=td::to_integer_safe<std::uint32_t>(value.substr(second+1));
-    if (path.empty() || path[0]!='/' || path.size()>100 || pid.is_error() || every.is_error())
-      return td::Status::Error("invalid diagnostic startup mapping");
-    const auto peer=pid.move_as_ok(); const auto sample=every.move_as_ok();
-    if (peer<=0 || sample==0) return td::Status::Error("invalid diagnostic startup mapping");
-    acts.push_back([&x,path,peer,sample] { td::actor::send_closure(x,&ValidatorEngine::set_health_diagnostic,path,peer,sample); });
-    return td::Status::OK();
-  });
+  p.add_checked_option(
+      '\0', "health-diagnostic", "private socket path,approved edge PID,sample every N (core metrics and v2 required)",
+      [&](td::Slice arg) {
+        const auto value = arg.str();
+        const auto first = value.find(',');
+        const auto second = first == std::string::npos ? std::string::npos : value.find(',', first + 1);
+        if (first == std::string::npos || second == std::string::npos ||
+            value.find(',', second + 1) != std::string::npos)
+          return td::Status::Error("invalid diagnostic startup mapping");
+        const auto path = value.substr(0, first);
+        auto pid = td::to_integer_safe<int>(value.substr(first + 1, second - first - 1));
+        auto every = td::to_integer_safe<std::uint32_t>(value.substr(second + 1));
+        if (path.empty() || path[0] != '/' || path.size() > 100 || pid.is_error() || every.is_error())
+          return td::Status::Error("invalid diagnostic startup mapping");
+        const auto peer = pid.move_as_ok();
+        const auto sample = every.move_as_ok();
+        if (peer <= 0 || sample == 0)
+          return td::Status::Error("invalid diagnostic startup mapping");
+        acts.push_back([&x, path, peer, sample] {
+          td::actor::send_closure(x, &ValidatorEngine::set_health_diagnostic, path, peer, sample);
+        });
+        return td::Status::OK();
+      });
   p.add_checked_option('\0', "exporter-address", "address to bind for HTTP metrics exporter", [&](td::Slice arg) {
     td::BufferSlice buff{arg};
     td::IPAddress addr;

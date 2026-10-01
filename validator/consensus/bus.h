@@ -6,14 +6,13 @@
 
 #pragma once
 
-#include "metrics/consensus-health.h"
-
 #include <functional>
 #include <variant>
 
 #include "consensus/misbehavior.h"
 #include "crypto/pq/consensus-pq-signer.h"
 #include "keyring/keyring.hpp"
+#include "metrics/consensus-health.h"
 #include "overlay/overlays.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"

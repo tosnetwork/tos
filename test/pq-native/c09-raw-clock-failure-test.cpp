@@ -30,23 +30,29 @@ extern "C" int __wrap_clock_gettime(clockid_t domain, timespec* result) {
 
 int main() {
   Capture<1> start_failure;
-  if (!start_failure.ready()) return 1;
+  if (!start_failure.ready())
+    return 1;
   Point point;
   fail_next_clock.store(true);
-  if (start_failure.start(Stage::vote_sign, point)) return 2;
+  if (start_failure.start(Stage::vote_sign, point))
+    return 2;
   std::array<Record, 1> records{};
   std::size_t count = 0;
   Counters start_counts{};
-  if (!start_failure.snapshot(records, count, start_counts) || count != 0 ||
-      start_counts.clock_error != 1 || start_counts.complete) return 3;
+  if (!start_failure.snapshot(records, count, start_counts) || count != 0 || start_counts.clock_error != 1 ||
+      start_counts.complete)
+    return 3;
 
   Capture<1> finish_failure;
-  if (!finish_failure.ready() || !finish_failure.start(Stage::vote_sign, point)) return 4;
+  if (!finish_failure.ready() || !finish_failure.start(Stage::vote_sign, point))
+    return 4;
   fail_next_clock.store(true);
-  if (finish_failure.finish(point, Outcome::ok)) return 5;
+  if (finish_failure.finish(point, Outcome::ok))
+    return 5;
   Counters finish_counts{};
-  if (!finish_failure.snapshot(records, count, finish_counts) || count != 0 ||
-      finish_counts.started != 1 || finish_counts.clock_error != 1 || finish_counts.complete) return 6;
+  if (!finish_failure.snapshot(records, count, finish_counts) || count != 0 || finish_counts.started != 1 ||
+      finish_counts.clock_error != 1 || finish_counts.complete)
+    return 6;
   std::cout << "C09_NATIVE_CLOCK_FAILURE_OK start_error=" << start_counts.clock_error
             << " finish_error=" << finish_counts.clock_error << " complete=" << finish_counts.complete << '\n';
   return 0;

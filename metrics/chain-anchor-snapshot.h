@@ -53,7 +53,8 @@ struct ChainAnchorState {
     to.seqno = from.seqno.load(std::memory_order_relaxed);
   }
   void publish(const ChainAnchorSnapshot &value) noexcept {
-    if (writing.test_and_set(std::memory_order_acquire)) return;
+    if (writing.test_and_set(std::memory_order_acquire))
+      return;
     sequence.fetch_add(1, std::memory_order_acq_rel);
     for (std::size_t i = 0; i < 32; ++i)
       network_hash[i].store(value.network_hash[i], std::memory_order_relaxed);
@@ -70,7 +71,8 @@ struct ChainAnchorState {
   std::optional<ChainAnchorSnapshot> read() const noexcept {
     for (unsigned attempt = 0; attempt < 3; ++attempt) {
       const auto before = sequence.load(std::memory_order_acquire);
-      if (before == 0 || (before & 1)) continue;
+      if (before == 0 || (before & 1))
+        continue;
       ChainAnchorSnapshot value;
       for (std::size_t i = 0; i < 32; ++i)
         value.network_hash[i] = network_hash[i].load(std::memory_order_relaxed);
@@ -84,7 +86,8 @@ struct ChainAnchorState {
       // The fence keeps the relaxed field loads above from moving past the
       // re-read of the sequence; an acquire load alone would not.
       std::atomic_thread_fence(std::memory_order_acquire);
-      if (before == sequence.load(std::memory_order_relaxed)) return value;
+      if (before == sequence.load(std::memory_order_relaxed))
+        return value;
     }
     return std::nullopt;
   }

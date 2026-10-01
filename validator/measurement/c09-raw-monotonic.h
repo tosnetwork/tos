@@ -91,9 +91,15 @@ class Capture final {
   Capture(const Capture&) = delete;
   Capture& operator=(const Capture&) = delete;
 
-  bool ready() const noexcept { return ready_; }
-  pid_t pid() const noexcept { return pid_; }
-  std::uint64_t process_nonce() const noexcept { return nonce_; }
+  bool ready() const noexcept {
+    return ready_;
+  }
+  pid_t pid() const noexcept {
+    return pid_;
+  }
+  std::uint64_t process_nonce() const noexcept {
+    return nonce_;
+  }
 
   bool start(Stage stage, Point& point) noexcept {
     if (!ready_ || getpid() != pid_ || stage >= Stage::count) {
@@ -155,8 +161,8 @@ class Capture final {
       output[i] = records_[i];
     }
     count = size_;
-    counters = {started_.load(), retained_.load(), dropped_full_.load(), dropped_contention_.load(),
-                rejected_identity_.load(), rejected_time_.load(), clock_error_.load(), complete_.load()};
+    counters = {started_.load(),           retained_.load(),      dropped_full_.load(), dropped_contention_.load(),
+                rejected_identity_.load(), rejected_time_.load(), clock_error_.load(),  complete_.load()};
     return true;
   }
 

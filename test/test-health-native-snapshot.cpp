@@ -6,8 +6,8 @@
 #include "metrics/native-core-snapshot.h"
 #include "metrics/prometheus-exporter.h"
 #include "td/actor/actor.h"
-#include "td/utils/check.h"
 #include "td/utils/JsonBuilder.h"
+#include "td/utils/check.h"
 namespace {
 class Fixture final : public td::actor::Actor, public tos::metrics::AsyncCollector {
  public:
@@ -224,10 +224,13 @@ void unit() {
   CHECK(full_body);
   std::string full_copy = *full_body;
   CHECK(td::json_decode(td::MutableSlice(full_copy)).is_ok());
-  CHECK(full_body->find("\"node_state\":{\"duties\":{\"leader_windows\":{\"assigned\":\"12\",\"started\":\"") != std::string::npos);
+  CHECK(full_body->find("\"node_state\":{\"duties\":{\"leader_windows\":{\"assigned\":\"12\",\"started\":\"") !=
+        std::string::npos);
   CHECK(full_body->find("\"superseded\":\"1\",\"suppressed_behind\":\"2\"},\"member\":true}") != std::string::npos);
-  CHECK(full_body->find("{\"depth\":3,\"oldest_age_ms\":\"4500\",\"queue\":\"block_data_waiters\"}") != std::string::npos);
-  CHECK(full_body->find("\"storage\":{\"db_free_bytes\":\"250000000000\",\"db_total_bytes\":\"1000000000000\",\"gc_seqno\":17000,\"persistent_state_seqno\":16500}") != std::string::npos);
+  CHECK(full_body->find("{\"depth\":3,\"oldest_age_ms\":\"4500\",\"queue\":\"block_data_waiters\"}") !=
+        std::string::npos);
+  CHECK(full_body->find("\"storage\":{\"db_free_bytes\":\"250000000000\",\"db_total_bytes\":\"1000000000000\",\"gc_"
+                        "seqno\":17000,\"persistent_state_seqno\":16500}") != std::string::npos);
   CHECK(full_body->find("\"coverage\":{\"status\":\"complete\",\"missing_fields\":[]") != std::string::npos);
   CHECK(full_body->find("\"instrumentation_complete\":true") != std::string::npos);
   // A node-state sample nobody refreshed for more than 30 s is dropped again.
@@ -249,7 +252,8 @@ void unit() {
   CHECK(sharded);
   auto sharded_body = sharded->read(10);
   CHECK(sharded_body);
-  CHECK(sharded_body->find("\"coverage\":{\"status\":\"partial\",\"missing_fields\":[\"shard_consensus_progress\"]") != std::string::npos);
+  CHECK(sharded_body->find("\"coverage\":{\"status\":\"partial\",\"missing_fields\":[\"shard_consensus_progress\"]") !=
+        std::string::npos);
   CHECK(sharded_body->find("\"instrumentation_complete\":true") != std::string::npos);
   // Without a valid disk sample the storage position is not claimed.
   node_state.observed_unix_seconds.store(1700000031);

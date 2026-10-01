@@ -6,8 +6,8 @@
 
 #include "consensus/simplex/state.h"
 #include "consensus/stats.h"
-#include "metrics/node-state-snapshot.h"
 #include "consensus/utils.h"
+#include "metrics/node-state-snapshot.h"
 #include "td/actor/coro_utils.h"
 
 #include "bus.h"
@@ -133,7 +133,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   template <>
   void handle(BusHandle, std::shared_ptr<const LeaderWindowObserved> event) {
     auto& bus = *owning_bus();
-    if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+    if (tos::health::enabled.load(std::memory_order_relaxed) &&
+        tos::health::consensus_enabled.load(std::memory_order_relaxed))
       tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_observed);
     td::uint32 new_window = event->start_slot / slots_per_leader_window_;
     current_window_ = new_window;
@@ -151,7 +152,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
       if (bus.collator_schedule->is_expected_collator(bus.local_id->idx, event->start_slot)) {
         // The protocol assigned this window to us: the only honest duty denominator.
-        if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+        if (tos::health::enabled.load(std::memory_order_relaxed) &&
+            tos::health::consensus_enabled.load(std::memory_order_relaxed))
           tos::health::node_state.leader_windows_assigned.fetch_add(1, std::memory_order_relaxed);
         start_generation(event->base, event->start_slot).start().detach();
       }
@@ -239,7 +241,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     if (current_window_ != start_slot / slots_per_leader_window_ || finality_behind_) {
       // An assigned window that never started: superseded by a newer window
       // while the parent resolved, or suppressed because finality is behind.
-      if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed)) {
+      if (tos::health::enabled.load(std::memory_order_relaxed) &&
+          tos::health::consensus_enabled.load(std::memory_order_relaxed)) {
         if (finality_behind_)
           tos::health::node_state.leader_windows_suppressed_behind.fetch_add(1, std::memory_order_relaxed);
         else
@@ -250,7 +253,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
     owning_bus().publish<OurLeaderWindowStarted>(base, parent.state, start_slot, start_slot + slots_per_leader_window_,
                                                  start_time);
-    if (tos::health::enabled.load(std::memory_order_relaxed) && tos::health::consensus_enabled.load(std::memory_order_relaxed))
+    if (tos::health::enabled.load(std::memory_order_relaxed) &&
+        tos::health::consensus_enabled.load(std::memory_order_relaxed))
       tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_started);
     co_return td::Unit{};
   }

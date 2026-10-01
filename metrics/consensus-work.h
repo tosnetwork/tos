@@ -23,16 +23,19 @@ struct WorkStats {
     consensus_stats.global_incomplete(IncompleteReason::ObservationGap);
   }
   void result(Work work, WorkResult result) noexcept {
-    if (!consensus_stats.add(results[static_cast<unsigned>(work)][static_cast<unsigned>(result)])) incomplete(work);
+    if (!consensus_stats.add(results[static_cast<unsigned>(work)][static_cast<unsigned>(result)]))
+      incomplete(work);
   }
   std::uint64_t oldest_started_ns(Work work) const noexcept {
     std::uint64_t oldest = UINT64_MAX;
     for (const auto &row : rows) {
       const auto started = row.started_ns.load(std::memory_order_acquire);
-      if (started == 0 || started == UINT64_MAX) continue;
+      if (started == 0 || started == UINT64_MAX)
+        continue;
       const auto row_work = row.work.load(std::memory_order_relaxed);
       std::atomic_thread_fence(std::memory_order_acquire);
-      if (row_work == work && row.started_ns.load(std::memory_order_relaxed) == started && started < oldest) oldest = started;
+      if (row_work == work && row.started_ns.load(std::memory_order_relaxed) == started && started < oldest)
+        oldest = started;
     }
     return oldest == UINT64_MAX ? 0 : oldest;
   }
@@ -44,7 +47,8 @@ inline WorkStats work_stats;
 class WorkObservation {
  public:
   explicit WorkObservation(Work work) noexcept : work_(work) {
-    if (!enabled.load(std::memory_order_relaxed) || !consensus_enabled.load(std::memory_order_relaxed)) return;
+    if (!enabled.load(std::memory_order_relaxed) || !consensus_enabled.load(std::memory_order_relaxed))
+      return;
     for (std::size_t i = 0; i < WorkStats::max_rows; ++i) {
       std::uint64_t empty = 0;
       if (work_stats.rows[i].started_ns.compare_exchange_strong(empty, UINT64_MAX, std::memory_order_acquire)) {
@@ -53,14 +57,16 @@ class WorkObservation {
         work_stats.rows[i].work.store(work, std::memory_order_relaxed);
         work_stats.rows[i].started_ns.store(start_, std::memory_order_release);
         recorded_ = consensus_stats.add(work_stats.pending[static_cast<unsigned>(work)]);
-        if (!recorded_) work_stats.incomplete(work);
+        if (!recorded_)
+          work_stats.incomplete(work);
         return;
       }
     }
     work_stats.incomplete(work);
   }
   void finish(WorkResult result) noexcept {
-    if (slot_ == WorkStats::max_rows) return;
+    if (slot_ == WorkStats::max_rows)
+      return;
     const auto elapsed = ConsensusStats::now_ns() - start_;
     work_stats.result(work_, result);
     auto &duration = work_stats.duration[static_cast<unsigned>(work_)];
@@ -69,18 +75,24 @@ class WorkObservation {
     duration.observe(elapsed / 1000, result == WorkResult::Success);
     if (static_cast<unsigned>(work_) < 2) {
       auto &histogram = work_stats.histogram[static_cast<unsigned>(work_)][result == WorkResult::Success ? 0 : 1];
-      if (elapsed <= 1000000000) consensus_stats.add(histogram[0]);
+      if (elapsed <= 1000000000)
+        consensus_stats.add(histogram[0]);
       consensus_stats.add(histogram[1]);
       consensus_stats.add(histogram[2], elapsed / 1000);
     }
-    if (!duration.complete.load(std::memory_order_relaxed)) work_stats.incomplete(work_);
-    if (recorded_) consensus_stats.subtract(work_stats.pending[static_cast<unsigned>(work_)]);
+    if (!duration.complete.load(std::memory_order_relaxed))
+      work_stats.incomplete(work_);
+    if (recorded_)
+      consensus_stats.subtract(work_stats.pending[static_cast<unsigned>(work_)]);
     work_stats.rows[slot_].started_ns.store(0, std::memory_order_release);
     slot_ = WorkStats::max_rows;
   }
-  ~WorkObservation() { finish(WorkResult::Cancelled); }
+  ~WorkObservation() {
+    finish(WorkResult::Cancelled);
+  }
   WorkObservation(const WorkObservation &) = delete;
   WorkObservation &operator=(const WorkObservation &) = delete;
+
  private:
   Work work_;
   std::size_t slot_ = WorkStats::max_rows;

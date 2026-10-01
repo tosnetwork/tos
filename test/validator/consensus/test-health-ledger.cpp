@@ -16,7 +16,7 @@ static void require(bool condition, const char *message) {
 
 int main() {
   enabled.store(true);
-    consensus_enabled.store(true);
+  consensus_enabled.store(true);
   ConsensusStats stats;
   SessionObservation session;
   session.start();
@@ -73,7 +73,7 @@ int main() {
   require(stats.phase(key.action, key.origin, Phase::Requested) == requested + 1,
           "retirement makes room without resetting cumulative counters");
   require(stats.phase(key.action, key.origin, Phase::Signed) == 1 &&
-          stats.phase(key.action, key.origin, Phase::SignedCommitted) == 1 && stats.post_terminal_progress == 2,
+              stats.phase(key.action, key.origin, Phase::SignedCommitted) == 1 && stats.post_terminal_progress == 2,
           "post-terminal new phases remain visible exactly once");
   require(stats.outcomes[1][static_cast<unsigned>(Outcome::Failed)] == 1,
           "post-terminal progress cannot add a second outcome");

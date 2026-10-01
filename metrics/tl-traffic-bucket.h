@@ -6,10 +6,10 @@
 #include <string>
 
 #include "td/utils/Slice.h"
+#include "td/utils/Status.h"
 #include "td/utils/int_types.h"
 
 #include "metrics-types.h"
-#include "td/utils/Status.h"
 
 namespace tos::metrics {
 // Routing envelopes are unwrapped with bounded reads; malformed envelopes keep
@@ -25,7 +25,8 @@ class TlTrafficBucket {
   MetricSet collect(const std::string &direction) const;
   std::size_t label_capacity() const {
     std::size_t bound = 72;
-    for (const auto &[_, cell] : cells_) bound = std::max(bound, cell.name.capacity() + 16);
+    for (const auto &[_, cell] : cells_)
+      bound = std::max(bound, cell.name.capacity() + 16);
     return bound;
   }
   std::size_t cells() const {
@@ -43,5 +44,5 @@ class TlTrafficBucket {
 };
 struct CollectionBudget;
 td::Result<MetricSet> collect_traffic_with_budget(const TlTrafficBucket &in, const TlTrafficBucket &out,
-                                               std::size_t drains, CollectionBudget budget);
+                                                  std::size_t drains, CollectionBudget budget);
 }  // namespace tos::metrics

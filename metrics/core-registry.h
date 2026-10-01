@@ -1,16 +1,16 @@
 #pragma once
 
-#include <array>
 #include <algorithm>
-#include <iterator>
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <string>
 
-#include "metrics-types.h"
 #include "consensus-metric-catalog.h"
+#include "metrics-types.h"
 
 namespace tos::health {
 
@@ -68,7 +68,9 @@ class CoreRegistry {
     return {static_cast<std::uint16_t>(index), kind};
   }
 
-  void note_update_failure() noexcept { refuse_update(); }
+  void note_update_failure() noexcept {
+    refuse_update();
+  }
 
   enum class UpdateResult : std::uint8_t { Updated, Saturated, Contended };
   static UpdateResult bounded_add(std::atomic<std::uint64_t> &counter, std::uint64_t amount = 1) noexcept {
@@ -87,11 +89,17 @@ class CoreRegistry {
   bool register_fixed(std::size_t id, std::atomic<std::uint64_t> *source,
                       const std::atomic<bool> *available = nullptr) {
     std::lock_guard guard(registration_mutex_);
-    if (id >= consensus_metric_catalog.size() || source == nullptr) { refuse_update(); return false; }
+    if (id >= consensus_metric_catalog.size() || source == nullptr) {
+      refuse_update();
+      return false;
+    }
     auto &slot = fixed_[id];
     const auto existing = slot.source.load(std::memory_order_acquire);
     if (existing != nullptr) {
-      if (existing != source || slot.available != available) { refuse_update(); return false; }
+      if (existing != source || slot.available != available) {
+        refuse_update();
+        return false;
+      }
       return true;
     }
     slot.available = available;
@@ -106,7 +114,8 @@ class CoreRegistry {
       return false;
     }
     const auto updated = bounded_add(slot->value, amount);
-    if (updated == UpdateResult::Updated) return true;
+    if (updated == UpdateResult::Updated)
+      return true;
     refuse_update();
     return false;
   }
@@ -185,20 +194,26 @@ class CoreRegistry {
     for (std::size_t id = 0; include_fixed && id < fixed_.size(); ++id) {
       const auto &slot = fixed_[id];
       const auto source = slot.source.load(std::memory_order_acquire);
-      if (source == nullptr || (slot.available != nullptr && !slot.available->load(std::memory_order_relaxed))) continue;
+      if (source == nullptr || (slot.available != nullptr && !slot.available->load(std::memory_order_relaxed)))
+        continue;
       const auto &descriptor = consensus_metric_catalog[id];
       auto family = std::find_if(result.families.begin(), result.families.end(),
-          [&](const auto &item) { return item.name == descriptor.name; });
+                                 [&](const auto &item) { return item.name == descriptor.name; });
       if (family == result.families.end()) {
-        result.families.push_back({.name = descriptor.name, .type = descriptor.type,
-            .help = "Fixed C04 native observations; concurrent bounded snapshot.", .metrics = {}});
+        result.families.push_back({.name = descriptor.name,
+                                   .type = descriptor.type,
+                                   .help = "Fixed C04 native observations; concurrent bounded snapshot.",
+                                   .metrics = {}});
         family = std::prev(result.families.end());
       }
       metrics::LabelSet labels;
       for (std::size_t label = 0; label < descriptor.label_count; ++label)
         labels.labels.push_back({descriptor.labels[label][0], descriptor.labels[label][1]});
-      family->metrics.push_back({.suffix = descriptor.suffix, .label_set = std::move(labels),
-          .samples = {{.label_set = {}, .value = static_cast<double>(source->load(std::memory_order_relaxed)) * descriptor.scale}}});
+      family->metrics.push_back(
+          {.suffix = descriptor.suffix,
+           .label_set = std::move(labels),
+           .samples = {{.label_set = {},
+                        .value = static_cast<double>(source->load(std::memory_order_relaxed)) * descriptor.scale}}});
     }
     result.families.push_back(metrics::MetricFamily::make_scalar("tos_health_core_registry_instrumentation_complete",
                                                                  "gauge",
