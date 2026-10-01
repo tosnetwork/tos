@@ -66,7 +66,7 @@ jobs:
       - name: Build affected native boundaries
         run: |
           cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
-          cmake --build build-health --target test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
+          cmake --build build-health --target test-http-server-limits test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
       - name: Run native behavior tests
         run: |
           python3 tools/node-health-monitor/tests/native-snapshot-http.py build-health/test-health-native-snapshot
@@ -76,6 +76,7 @@ jobs:
           build-health/test-health-collector-completion
           build-health/test-health-collector-timestamps
           build-health/test-health-collector-budget
+          build-health/test-http-server-limits
           build-health/test-health-core-registry
           build-health/test-health-source-policy
           build-health/test-health-publisher-bench
