@@ -105,20 +105,22 @@ impl McpBridge {
         })
     }
 
-    fn tool(index: usize) -> Tool {
-        let schema: JsonObject =
-            serde_json::from_str(INPUT_SCHEMAS[index]).expect("checked closed tool schema");
+    /// A tool whose frozen input contract does not parse is not offered at
+    /// all, rather than offered with a guessed schema; the contract check
+    /// keeps that from ever being the case in a shipped build.
+    fn tool(index: usize) -> Option<Tool> {
+        let schema: JsonObject = serde_json::from_str(INPUT_SCHEMAS[index]).ok()?;
         let mut tool = Tool::new(
             TOOLS[index],
             "Read only bounded retained TOS health evidence; no on-demand upstream reads",
             Arc::new(schema),
         );
         tool.annotations = Some(ToolAnnotations::new().read_only(true).open_world(false));
-        tool
+        Some(tool)
     }
 
     pub fn tools() -> Vec<Tool> {
-        (0..TOOLS.len()).map(Self::tool).collect()
+        (0..TOOLS.len()).filter_map(Self::tool).collect()
     }
 
     /// Execute the exact HTTP route, then return one JSON text representation.
@@ -218,7 +220,7 @@ impl ServerHandler for McpBridge {
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        TOOLS.iter().position(|tool| *tool == name).map(Self::tool)
+        TOOLS.iter().position(|tool| *tool == name).and_then(Self::tool)
     }
 
     async fn call_tool(

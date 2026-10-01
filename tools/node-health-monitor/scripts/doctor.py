@@ -320,6 +320,7 @@ def run(args):
     gates.append(gate_query_broker(args.query_control_socket, args.query_service_token_file,
                                    args.query_max_lag_rows, args.timeout))
     gates.append(gate_query_ledger_activity(args.query_ledger_db, args.query_max_idle_seconds, now))
+    gates.append(gate_mcp_lane(args.mcp_journal, args.mcp_max_age_hours, now))
     for gate_id, title in RECEIPT_GATES:
         gates.append(gate_receipt(gate_id, title, receipts, base_dir or Path.cwd(), now,
                                   not args.no_check_evidence_paths, args.receipt_max_age_days))
@@ -411,6 +412,40 @@ def gate_query_broker(socket_path, token_file, max_lag_rows, timeout):
     return Gate("query_broker", FAIL, detail)
 
 
+def gate_mcp_lane(journal, max_age_hours, now):
+    """The MCP lane's newest record must be an accepted model answer younger
+    than the allowance. A refused newest answer fails (the binding caught
+    something), a stale or unreadable journal fails, no flag is not run."""
+    if not journal:
+        return Gate("mcp_lane", NOT_RUN, "no --mcp-journal")
+    try:
+        with open(journal, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 262144))
+            lines = [line for line in stream.read().splitlines() if line.strip()]
+    except OSError:
+        return Gate("mcp_lane", FAIL, f"mcp journal {journal} unreadable")
+    if not lines:
+        return Gate("mcp_lane", FAIL, "mcp journal empty")
+    try:
+        record = json.loads(lines[-1])
+        checked = parse_time(record["checked_at"])
+        result = record["model"]["result"]
+        provider = record.get("provider")
+    except (ValueError, KeyError, TypeError):
+        return Gate("mcp_lane", FAIL, "mcp journal newest record malformed")
+    if checked is None:
+        return Gate("mcp_lane", FAIL, "mcp journal newest record has no valid time")
+    age_hours = (now - checked).total_seconds() / 3600
+    detail = f"newest {provider} answer {result} {age_hours:.1f} h ago (allowance {max_age_hours} h)"
+    if result != "accepted":
+        return Gate("mcp_lane", FAIL, detail + f": {record['model'].get('error')}")
+    if age_hours < 0 or age_hours > max_age_hours:
+        return Gate("mcp_lane", FAIL, detail)
+    return Gate("mcp_lane", PASS, detail)
+
+
 def render(gates):
     width = max(len(g.id) for g in gates)
     lines = [f"{'gate'.ljust(width)}  status   detail", f"{'-' * width}  -------  ------"]
@@ -434,6 +469,8 @@ def build_parser():
     parser.add_argument("--query-max-lag-rows", type=int, default=1024,
                         help="rows behind M the broker may be while still passing (default 1024, four import pages)")
     parser.add_argument("--query-ledger-db", help="query broker ledger SQLite file; its write activity is a liveness signal only")
+    parser.add_argument("--mcp-journal", help="MCP-lane judgement journal; its newest record must be an accepted answer")
+    parser.add_argument("--mcp-max-age-hours", type=float, default=2.0)
     parser.add_argument("--query-max-idle-seconds", type=int, default=300,
                         help="the query broker imports every 15 s; longer silence fails the gate")
     parser.add_argument("--evidence-file", help="gate-evidence JSON of receipts")

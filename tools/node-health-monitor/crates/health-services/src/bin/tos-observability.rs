@@ -54,12 +54,13 @@ async fn serve_mcp(
                 let state = state.clone();
                 let config = config.clone();
                 async move {
-                    let refuse = || {
-                        hyper::Response::builder()
-                            .status(hyper::StatusCode::UNAUTHORIZED)
-                            .body(Full::new(axum::body::Bytes::new()).boxed())
-                            .expect("fixed refusal response")
+                    let fixed = |status: hyper::StatusCode| {
+                        let mut response =
+                            hyper::Response::new(Full::new(axum::body::Bytes::new()).boxed());
+                        *response.status_mut() = status;
+                        response
                     };
+                    let refuse = || fixed(hyper::StatusCode::UNAUTHORIZED);
                     let header = |name| request.headers().get(name).and_then(|v| v.to_str().ok());
                     let service_header = header("authorization");
                     if !tos_health_services::authorized(service_header, &state.service_token)
@@ -69,7 +70,8 @@ async fn serve_mcp(
                         return Ok::<_, std::convert::Infallible>(refuse());
                     }
                     let service = {
-                        let mut bound = binding.lock().expect("MCP connection binding");
+                        // A poisoned binding is a refused connection, not a panic.
+                        let Ok(mut bound) = binding.lock() else { return Ok(refuse()) };
                         match bound.as_ref() {
                             Some((run, token, service)) => {
                                 if header("x-tos-run-id").is_some_and(|value| value != run)
@@ -94,8 +96,11 @@ async fn serve_mcp(
                                     token_text,
                                 ) {
                                     Ok(bridge) => {
-                                        let token = tos_health_services::decode_token(token_text)
-                                            .expect("admitted token");
+                                        let Some(token) =
+                                            tos_health_services::decode_token(token_text)
+                                        else {
+                                            return Ok(refuse());
+                                        };
                                         let service = StreamableHttpService::new(
                                             move || Ok(bridge.clone()),
                                             LocalSessionManager::default().into(),
@@ -116,26 +121,18 @@ async fn serve_mcp(
                     // response cannot leak a partial uncharged result.
                     let (parts, body) = response.into_parts();
                     let Ok(bytes) = bounded_mcp_body(body).await else {
-                        return Ok(hyper::Response::builder()
-                            .status(hyper::StatusCode::PAYLOAD_TOO_LARGE)
-                            .body(Full::new(axum::body::Bytes::new()).boxed())
-                            .expect("fixed MCP size refusal"));
+                        return Ok(fixed(hyper::StatusCode::PAYLOAD_TOO_LARGE));
                     };
                     let now = tos_health_services::query_ledger::boot_millis();
                     let charged = state.query_ledger.as_ref().is_some_and(|ledger| {
                         now.as_ref().is_ok_and(|now| {
-                            ledger
-                                .lock()
-                                .expect("query ledger")
-                                .charge_mcp_wire(&run, bytes.len(), *now)
-                                .is_ok()
+                            ledger.lock().is_ok_and(|mut ledger| {
+                                ledger.charge_mcp_wire(&run, bytes.len(), *now).is_ok()
+                            })
                         })
                     });
                     if !charged {
-                        return Ok(hyper::Response::builder()
-                            .status(hyper::StatusCode::TOO_MANY_REQUESTS)
-                            .body(Full::new(axum::body::Bytes::new()).boxed())
-                            .expect("fixed MCP budget refusal"));
+                        return Ok(fixed(hyper::StatusCode::TOO_MANY_REQUESTS));
                     }
                     Ok(hyper::Response::from_parts(parts, Full::new(bytes).boxed()))
                 }

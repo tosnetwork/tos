@@ -1,0 +1,21 @@
+[Unit]
+Description=Validator health judgement through the private MCP lane with model %i
+After=nhm-local-manager.service nhm-local-query.service
+
+[Service]
+Type=oneshot
+CPUQuota=200%
+MemoryMax=2147483648
+# The model client, two adapters and the orchestrator each run a tokio or
+# Python runtime; on a many-core host 512 threads is too few to spawn them.
+TasksMax=4096
+NoNewPrivileges=yes
+UMask=0077
+TimeoutStartSec=420s
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Development host paths; a production unit points at installed binaries and
+# its own runtime directory. The provider instance is claude or codex.
+ExecStart=%h/nhm-c07-contract-venv/bin/python %h/tos/.claude/worktrees/cc-nhm/tools/node-health-monitor/scripts/mcp-judge.py --network-id NETWORK_ID --manager-state-url http://127.0.0.1:19490/v1/manager/state --manager-read-token-file READ_TOKEN_FILE --evidence-db %h/nhm-supervision/c09-local/runtime/evidence/evidence.db --nodes-file %h/nhm-supervision/c09-local/runtime/config/judge-nodes.json --control-socket %t/nhm-local-query/control.sock --mcp-socket %t/nhm-local-query/mcp.sock --operator-token-file %h/nhm-supervision/c09-local/runtime/config/query-operator.token --service-token-file %h/nhm-supervision/c09-local/runtime/config/query-service.token --adapter-bin %h/tos/.claude/worktrees/cc-nhm/tools/node-health-monitor/target/release/tos-nhm-aura-stdio --diagnosis-schema %h/tos/.claude/worktrees/cc-nhm/tools/node-health-monitor/contracts/diagnosis.schema.json --run-dir %h/.local/state/nhm-cc-judge/mcp --journal %h/.local/state/nhm-cc-judge/mcp-verdicts.jsonl --provider %i --codex-home %h/.local/state/nhm-cc-aura/codex-home-mcp --codex-auth-source %h/.local/state/nhm-cc-aura/codex-home/auth.json --codex-workdir %h/.local/state/nhm-cc-aura/work-mcp --model sonnet
+# 1 = the model's answer was refused by the binding validator; that is a
+# recorded outcome, not a unit failure.
+SuccessExitStatus=0 1

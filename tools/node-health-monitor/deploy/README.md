@@ -460,6 +460,63 @@ WAL refusals. The doctor's `query_broker` gate sees a refused broker as
 Readers keep their scope short on purpose: one M read transaction covers
 exactly one projection page and ends when the page is read.
 
+## The MCP lane: Claude or Codex judging through the six tools
+
+The push lane (the minute judge and the ten-minute model explanation) hands
+the model a frozen package. The MCP lane lets the model read for itself,
+under the same authority model: `scripts/mcp-judge.py` computes the
+deterministic verdict, issues one grant per group of at most four nodes on
+the broker's control socket (operator token), writes a one-use 0600
+credential file per grant in a fresh 0700 run directory, and starts the model
+session with no tool but the stdio adapter (`tos-nhm-aura-stdio`, one instance
+per grant, named `nhm_a`, `nhm_b`, ...). The adapter relays JSON-RPC to the
+broker's private Unix MCP endpoint, consumes its credential on start,
+answers client probes the endpoint does not serve (`server/discover`,
+resource and prompt listings) with method-not-found instead of dying,
+negotiates a protocol version the endpoint serves, and appends one line per
+tool call to an evidence log (tool, request id, status, error code, the
+argument names used, and the id/node/parent/hash of every evidence item
+returned; never a token or payload).
+
+Providers: `--provider claude` runs Claude Code in print mode with
+`--strict-mcp-config`, `--restricted` (no built-in tools), only the adapter
+servers allowed, and the diagnosis contract as `--json-schema`;
+`--provider codex` runs `codex exec` in a private Codex home
+(`--codex-home`, sign-in copied once from the owner's existing private copy)
+whose configuration names exactly the adapter servers, read-only sandbox,
+ephemeral thread, `--output-schema` the contract. The AURA bridge is not
+used for this lane: it refuses any app-server with MCP servers, by design,
+because the push lane must stay tool-free.
+
+The answer is accepted only when it validates against the diagnosis
+contract, every cited id was returned by a tool (evidence id, parent id or
+content hash), every degraded or unhealthy node is explained by an observed
+finding whose evidence belongs to that node, and an `insufficient_evidence`
+answer is not hiding a failed session (known verdicts with nothing
+retrieved is `no_evidence_retrieved`). Grants are revoked when the session
+ends; the run directory is removed unless `--keep-run-dir`. One JSON line
+per run goes to `--journal` (rotating at 64 MiB). The unit template
+`deploy/local-judge/nhm-local-mcp-judge@.service` with its timer runs one
+provider instance every thirty minutes; exit 1 (answer refused) is a
+recorded outcome, not a unit failure.
+
+First real runs (2026-10-01, seven nodes, two grants): Claude
+(claude-sonnet-5-5) made 7 snapshot calls, received 21 evidence items and
+was accepted with 7 observed findings, each bound to that node's evidence;
+Codex made 14 calls, received 28 items and was accepted with 7 observed
+findings. Two earlier Codex answers were refused honestly: one cited nothing
+for a node whose tool output its client had truncated
+(`observed_without_evidence`), one had retrieved nothing because the
+orchestrator had handed it a timestamp the tools reject
+(`no_evidence_retrieved`). Both refusals are what the binding is for.
+
+Known boundaries: a grant pins its watermark, so a session that outlives
+the resident window pauses the broker's import until the grant expires
+(200 s); sessions are short, and two lanes should not run concurrently. A
+model client that truncates long tool output must re-query with a smaller
+component set to read ids; the instruction says so. The model still cannot
+change a verdict, issue a grant, or see a token.
+
 ## Production doctor
 
 `scripts/doctor.py` prints one table of gates, each `pass`, `fail` or
@@ -482,7 +539,10 @@ live or by receipt), `ai_lane` (`ai_unavailable` bound and not active;
 control socket; `caught_up`, or `lagging` within `--query-max-lag-rows`
 (default 1024, four import pages), passes; a conflict, an unavailable source,
 an identity mismatch, a larger lag, a refused token or an unreachable socket
-fails; `not_run` without the flag) and `query_ledger_activity` (with
+fails; `not_run` without the flag) `mcp_lane` (with `--mcp-journal`: the newest MCP-lane
+record is an accepted answer younger than `--mcp-max-age-hours`, default 2;
+a refused newest answer or a stale journal fails; `not_run` without the
+flag) and `query_ledger_activity` (with
 `--query-ledger-db`: the ledger or its WAL was written within
 `--query-max-idle-seconds`, default 300). The second is a liveness signal
 only: the compaction tick writes the ledger whether or not imports progress,

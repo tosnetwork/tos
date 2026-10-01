@@ -104,11 +104,11 @@ def test_all_live_gates_pass_and_receipt_gates_pass_with_valid_receipts(tmp_path
     gates = run_doctor(tmp_path, healthy_state(), "--evidence-file", str(evidence),
                        "--evidence-db", str(evidence_db(tmp_path)), "--query-ledger-db", str(ledger))
     assert gates["ai_lane"].status == doctor.NOT_RUN, "ai_unavailable is not bound in this inventory"
-    assert {g.status for g in gates.values() if g.id not in ("ai_lane", "query_broker")} == {doctor.PASS}
-    assert gates["query_broker"].status == doctor.NOT_RUN
+    assert {g.status for g in gates.values() if g.id not in ("ai_lane", "query_broker", "mcp_lane")} == {doctor.PASS}
+    assert gates["query_broker"].status == doctor.NOT_RUN and gates["mcp_lane"].status == doctor.NOT_RUN
     assert gates["rule_inputs_usable"].detail.startswith("4 rule bindings")
     assert "evidence db quarantined+witness_quarantined empty" in gates["no_quarantined_sources"].detail
-    assert len(gates) == 1 + 5 + 2 + len(doctor.RECEIPT_GATES)
+    assert len(gates) == 1 + 5 + 3 + len(doctor.RECEIPT_GATES)
 
 
 def test_unknown_input_and_missing_evaluation_fail_rule_gate(tmp_path):
@@ -426,3 +426,26 @@ def test_query_broker_gate_reads_projection_health_over_the_control_socket(tmp_p
     # Without the socket flag the gate is honestly not run.
     gates = run_doctor(tmp_path, healthy_state())
     assert gates["query_broker"].status == doctor.NOT_RUN
+
+
+def test_mcp_lane_gate_reads_the_newest_journal_record(tmp_path):
+    journal = tmp_path / "mcp-verdicts.jsonl"
+    now = doctor.parse_time(NOW)
+    fresh = (now - dt.timedelta(minutes=20)).isoformat()
+    stale = (now - dt.timedelta(hours=5)).isoformat()
+    accepted = {"checked_at": fresh, "provider": "codex", "model": {"result": "accepted"}}
+    refused = {"checked_at": fresh, "provider": "claude", "model": {"result": "rejected", "error": "observed_without_evidence"}}
+    journal.write_text(json.dumps(accepted) + "\n")
+    gates = run_doctor(tmp_path, healthy_state(), "--mcp-journal", str(journal))
+    assert gates["mcp_lane"].status == doctor.PASS and "codex answer accepted" in gates["mcp_lane"].detail
+    journal.write_text(json.dumps(accepted) + "\n" + json.dumps(refused) + "\n")
+    gates = run_doctor(tmp_path, healthy_state(), "--mcp-journal", str(journal))
+    assert gates["mcp_lane"].status == doctor.FAIL and "observed_without_evidence" in gates["mcp_lane"].detail
+    journal.write_text(json.dumps({**accepted, "checked_at": stale}) + "\n")
+    gates = run_doctor(tmp_path, healthy_state(), "--mcp-journal", str(journal))
+    assert gates["mcp_lane"].status == doctor.FAIL and "5.0 h ago" in gates["mcp_lane"].detail
+    journal.write_text("")
+    assert run_doctor(tmp_path, healthy_state(), "--mcp-journal", str(journal))["mcp_lane"].status == doctor.FAIL
+    assert run_doctor(tmp_path, healthy_state())["mcp_lane"].status == doctor.NOT_RUN
+    missing = run_doctor(tmp_path, healthy_state(), "--mcp-journal", str(tmp_path / "absent.jsonl"))
+    assert missing["mcp_lane"].status == doctor.FAIL

@@ -26,6 +26,83 @@ use tos_health_core::query::TOOLS;
 
 const MAX_INPUT: usize = 16_384;
 const MAX_OUTPUT: usize = 32_768;
+/// Evidence-log bound: a run that returns more than this has left the
+/// bounded six-tool budget behind, and the relay stops rather than drop lines.
+const MAX_EVIDENCE_LOG: usize = 4 * 1024 * 1024;
+
+/// One line per relayed `tools/call`, written for the orchestrator that must
+/// bind a model's cited evidence to what the tools actually returned. It
+/// carries ids and identity fields only: no token, no payload.
+struct EvidenceLog {
+    file: fs::File,
+    written: usize,
+}
+
+impl EvidenceLog {
+    fn record(&mut self, request: &Value, response: &Value) -> Result<(), ()> {
+        use std::io::Write;
+        let tool = request["params"]["name"].as_str().ok_or(())?;
+        let result = &response["result"];
+        let is_error = result["isError"].as_bool().unwrap_or(false);
+        let envelope: Option<Value> =
+            result["content"][0]["text"].as_str().and_then(|text| serde_json::from_str(text).ok());
+        let envelope = envelope.unwrap_or(Value::Null);
+        let evidence: Vec<Value> = if is_error {
+            Vec::new()
+        } else {
+            envelope["evidence"]
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|item| {
+                            serde_json::json!({
+                                "evidence_id": item["evidence_id"],
+                                "node_id": item["node_id"],
+                                "source_id": item["source_id"],
+                                "kind": item["kind"],
+                                "content_hash": item["content_hash"],
+                                "parent_evidence_ids": item["parent_evidence_ids"],
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        // Why a call failed and which argument names the model used (never
+        // their values): enough to tell a model's misuse from an endpoint fault.
+        let error_code = envelope["error"]["code"]
+            .as_str()
+            .map(|code| code.chars().take(96).collect::<String>());
+        let error_message = envelope["error"]["message"]
+            .as_str()
+            .map(|message| message.chars().take(200).collect::<String>());
+        let argument_keys: Vec<&str> = request["params"]["arguments"]
+            .as_object()
+            .map(|arguments| arguments.keys().map(String::as_str).collect())
+            .unwrap_or_default();
+        let mut line = serde_json::to_vec(&serde_json::json!({
+            "tool": tool,
+            "request_id": envelope["request_id"],
+            "status": envelope["status"],
+            "error": is_error,
+            "error_code": error_code,
+            "error_message": error_message,
+            "argument_keys": argument_keys,
+            "evidence": evidence,
+        }))
+        .map_err(|_| ())?;
+        line.push(b'\n');
+        let total = self.written.checked_add(line.len()).ok_or(())?;
+        if total > MAX_EVIDENCE_LOG {
+            return Err(());
+        }
+        self.file.write_all(&line).map_err(|_| ())?;
+        self.file.flush().map_err(|_| ())?;
+        self.written = total;
+        Ok(())
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,7 +146,9 @@ fn remove_owned_entry(
     Ok(())
 }
 
-fn private_file(path: &Path) -> Result<Credentials, ()> {
+/// Open the private parent directory of `path` without following links and
+/// verify it belongs to this user with no group or other bits.
+fn private_parent(path: &Path) -> Result<(fs::File, CString, libc::uid_t), ()> {
     let parent = path.parent().ok_or(())?;
     let parent_meta = fs::symlink_metadata(parent).map_err(|_| ())?;
     let uid = unsafe { libc::geteuid() };
@@ -93,6 +172,40 @@ fn private_file(path: &Path) -> Result<Credentials, ()> {
         return Err(());
     }
     let name = CString::new(path.file_name().ok_or(())?.as_bytes()).map_err(|_| ())?;
+    Ok((dir, name, uid))
+}
+
+/// Create the evidence log inside a private directory, exclusively (a file
+/// already there is refused, so a stale log is never taken for this run's),
+/// mode 0600, no link following.
+fn private_log(path: &Path) -> Result<EvidenceLog, ()> {
+    let (dir, name, uid) = private_parent(path)?;
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_WRONLY
+                | libc::O_CREAT
+                | libc::O_EXCL
+                | libc::O_APPEND
+                | libc::O_NOFOLLOW
+                | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    if fd < 0 {
+        return Err(());
+    }
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    let opened = file.metadata().map_err(|_| ())?;
+    if !opened.is_file() || opened.uid() != uid || opened.mode() & 0o177 != 0 {
+        return Err(());
+    }
+    Ok(EvidenceLog { file, written: 0 })
+}
+
+fn private_file(path: &Path) -> Result<Credentials, ()> {
+    let (dir, name, uid) = private_parent(path)?;
     let entry = entry_stat(&dir, &name)?;
     if entry.st_uid != uid || entry.st_mode & libc::S_IFMT != libc::S_IFREG {
         // Only remove a same-owner symlink inside the verified private
@@ -153,34 +266,69 @@ fn private_file(path: &Path) -> Result<Credentials, ()> {
     Ok(credentials)
 }
 
-fn allowed(request: &Value) -> Result<bool, ()> {
+/// Where a client frame goes. Only the MCP methods the private endpoint
+/// serves are forwarded; a request for anything else (clients probe
+/// `server/discover`, `resources/list`, `prompts/list` and the like) is
+/// answered here with a JSON-RPC method-not-found so the session survives,
+/// and such a notification is dropped. A frame that is not JSON-RPC 2.0 with
+/// a method is still fatal.
+enum Route {
+    Forward { response_expected: bool },
+    LocalError { id: Value, code: i64, message: &'static str },
+    Drop,
+}
+
+fn route(request: &Value) -> Result<Route, ()> {
     let object = request.as_object().ok_or(())?;
     if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
         return Err(());
     }
     let method = object.get("method").and_then(Value::as_str).ok_or(())?;
+    let id = object.get("id").cloned();
     match method {
         "initialize"
         | "notifications/initialized"
         | "notifications/cancelled"
         | "ping"
-        | "tools/list" => {}
+        | "tools/list" => Ok(Route::Forward { response_expected: id.is_some() }),
         "tools/call" => {
-            let name = object
-                .get("params")
-                .and_then(|params| params.get("name"))
-                .and_then(Value::as_str)
-                .ok_or(())?;
-            if !TOOLS.contains(&name) {
-                return Err(());
+            let name =
+                object.get("params").and_then(|params| params.get("name")).and_then(Value::as_str);
+            match (name, id) {
+                (Some(name), Some(id)) if !TOOLS.contains(&name) => {
+                    Ok(Route::LocalError { id, code: -32602, message: "unknown tool" })
+                }
+                (Some(_), id) => Ok(Route::Forward { response_expected: id.is_some() }),
+                (None, Some(id)) => {
+                    Ok(Route::LocalError { id, code: -32602, message: "tool name required" })
+                }
+                (None, None) => Ok(Route::Drop),
             }
         }
-        _ => return Err(()),
+        _ => match id {
+            Some(id) => Ok(Route::LocalError { id, code: -32601, message: "method not found" }),
+            None => Ok(Route::Drop),
+        },
     }
-    Ok(object.contains_key("id"))
 }
 
-async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
+/// The protocol version carried to the private endpoint. A client asking for
+/// a version this endpoint does not serve is offered the newest it does; the
+/// client then accepts that version or disconnects, as the protocol says.
+fn negotiated_version(requested: Option<&str>) -> &'static str {
+    match requested {
+        Some("2025-03-26") => "2025-03-26",
+        _ => "2025-06-18",
+    }
+}
+
+const SERVED_VERSIONS: [&str; 2] = ["2025-03-26", "2025-06-18"];
+
+async fn relay(
+    socket: &Path,
+    credentials: Credentials,
+    mut evidence_log: Option<EvidenceLog>,
+) -> Result<(), ()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
     let metadata = fs::symlink_metadata(socket).map_err(|_| ())?;
     if !metadata.file_type().is_socket() {
@@ -223,16 +371,42 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                     continue;
                 }
                 let rpc_request: Value = serde_json::from_slice(&line).map_err(|_| ())?;
-                let response_expected = allowed(&rpc_request)?;
+                let response_expected = match route(&rpc_request)? {
+                    Route::Forward { response_expected } => response_expected,
+                    Route::LocalError { id, code, message } => {
+                        let reply = serde_json::json!({
+                            "jsonrpc": "2.0", "id": id,
+                            "error": {"code": code, "message": message}
+                        });
+                        let bytes = serde_json::to_vec(&reply).map_err(|_| ())?;
+                        stdout.write_all(&bytes).await.map_err(|_| ())?;
+                        stdout.write_all(b"\n").await.map_err(|_| ())?;
+                        stdout.flush().await.map_err(|_| ())?;
+                        line.clear();
+                        continue;
+                    }
+                    Route::Drop => {
+                        line.clear();
+                        continue;
+                    }
+                };
+                let mut rpc_request = rpc_request;
                 if rpc_request["method"] == "initialize" {
                     if protocol.is_some() {
                         return Err(());
                     }
-                    protocol = Some(match rpc_request["params"]["protocolVersion"].as_str() {
-                        Some("2025-03-26") => "2025-03-26",
-                        Some("2025-06-18") => "2025-06-18",
-                        _ => return Err(()),
-                    });
+                    let negotiated =
+                        negotiated_version(rpc_request["params"]["protocolVersion"].as_str());
+                    // The endpoint refuses a version it does not serve; carry
+                    // the negotiated one in the handshake body as well as the
+                    // header, and relay the endpoint's answer unchanged so the
+                    // client sees the version it will actually get.
+                    if rpc_request["params"]["protocolVersion"] != negotiated {
+                        rpc_request["params"]["protocolVersion"] =
+                            Value::String(negotiated.to_owned());
+                        line = serde_json::to_vec(&rpc_request).map_err(|_| ())?;
+                    }
+                    protocol = Some(negotiated);
                 }
                 let version = protocol.ok_or(())?;
                 let mut builder = Request::builder()
@@ -304,10 +478,22 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
                             .map_err(|_| ())?
                             .to_bytes();
                         let result: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
-                        if rpc_request["method"] == "initialize"
-                            && result["result"]["protocolVersion"] != version
-                        {
-                            return Err(());
+                        if rpc_request["method"] == "initialize" {
+                            // The endpoint may answer with another version it
+                            // serves; anything outside that set is refused.
+                            let served = result["result"]["protocolVersion"]
+                                .as_str()
+                                .and_then(|value| {
+                                    SERVED_VERSIONS.iter().find(|known| **known == value)
+                                })
+                                .copied()
+                                .ok_or(())?;
+                            protocol = Some(served);
+                        }
+                        if rpc_request["method"] == "tools/call" {
+                            if let Some(log) = evidence_log.as_mut() {
+                                log.record(&rpc_request, &result)?;
+                            }
                         }
                         stdout.write_all(&bytes).await.map_err(|_| ())?;
                         stdout.write_all(b"\n").await.map_err(|_| ())?;
@@ -342,11 +528,21 @@ async fn relay(socket: &Path, credentials: Credentials) -> Result<(), ()> {
 #[tokio::main]
 async fn main() {
     let args: Vec<_> = std::env::args_os().collect();
-    let result = if args.len() == 3 {
+    let result = if args.len() == 3 || args.len() == 4 {
         let socket = Path::new(&args[1]);
         let file = Path::new(&args[2]);
-        match private_file(file) {
-            Ok(credentials) => relay(socket, credentials).await,
+        // The optional fourth argument names an evidence log; it is created
+        // before the one-use credential is consumed so a refused log never
+        // costs the handoff.
+        let log = match args.get(3) {
+            Some(path) => private_log(Path::new(path)).map(Some),
+            None => Ok(None),
+        };
+        match log {
+            Ok(log) => match private_file(file) {
+                Ok(credentials) => relay(socket, credentials, log).await,
+                Err(()) => Err(()),
+            },
             Err(()) => Err(()),
         }
     } else {
