@@ -702,26 +702,44 @@ void OverlayManager::collect(metrics::MetricsPromise promise) {
 }
 
 std::optional<metrics::CollectionReservation> OverlayManager::reservation() const {
-  // `TlTrafficBucket::collect` emits two families (bytes, messages) with one
-  // labelled metric per cell (direction, tl); the two directions join into at
-  // most four families. Cells are bounded by the TL schema names plus one
-  // shared unknown cell, and `cells()` is the live count under that bound.
-  const auto metrics = 2 * (broadcasts_in_.cells() + broadcasts_out_.cells());
-  // "overlay_broadcast_messages_total" + its help is under 128 bytes; a tl
-  // label value is a schema name, under 64 bytes with its key.
-  return metrics::labelled_metrics_reservation(4, metrics, 2, 72, 160);
+  std::size_t drains = 0;
+  for (const auto &[_, by_overlay] : overlays_) {
+    if (by_overlay.size() > metrics::kTrafficDrainLimit - drains) return std::nullopt;
+    drains += by_overlay.size();
+  }
+  return metrics::traffic_collection_reservation(
+      broadcasts_in_.cells() + broadcasts_out_.cells(), drains,
+      std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()));
 }
 
-td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro() {
+void OverlayManager::collect_with_budget(metrics::MetricsPromise promise, metrics::CollectionBudget budget) {
+  connect(std::move(promise), collect_coro(budget));
+}
+
+td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro(metrics::CollectionBudget budget) {
+  std::size_t count = 0;
+  if (budget.bounded) {
+    for (const auto &[_, by_overlay] : overlays_) {
+      if (by_overlay.size() > metrics::kTrafficDrainLimit - count)
+        co_return metrics::shed_status("collector_drain_limit");
+      count += by_overlay.size();
+    }
+    const auto declared = metrics::traffic_collection_reservation(
+        broadcasts_in_.cells() + broadcasts_out_.cells(), count,
+        std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()));
+    if (!declared || !budget.admits(*declared) || budget.expired())
+      co_return metrics::shed_status(metrics::kShedOverBudget);
+  }
   std::vector<td::actor::StartedTask<td::Unit>> drains;
+  if (budget.bounded) drains.reserve(count);
   for (const auto &[_, by_overlay] : overlays_) {
     for (const auto &[__, desc] : by_overlay) {
       drains.push_back(td::actor::ask(desc.overlay.get(), &Overlay::collect_metrics));
     }
   }
-  // A dying overlay flushes its remaining delta in tear_down before its ask fails.
+  // Child deltas may add named cells while this actor awaits their drains.
   co_await td::actor::all_wrap(std::move(drains));
-  co_return std::move(broadcasts_in_.collect("in")).join(broadcasts_out_.collect("out"));
+  co_return metrics::collect_traffic_with_budget(broadcasts_in_, broadcasts_out_, count, budget);
 }
 
 void OverlayManager::absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) {

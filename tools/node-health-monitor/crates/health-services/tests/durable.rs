@@ -333,3 +333,48 @@ fn both_databases_verify_wal_full_and_passive_checkpoint_is_bounded_by_reader() 
     assert!(control.state(&key()).unwrap().unwrap().active());
     assert_eq!(control.sequence().unwrap(), 1);
 }
+
+#[test]
+fn wal_quota_recovers_after_reader_release_even_without_expired_rows() {
+    let temp = Temp::new();
+    let file = temp.0.join("wal-recovery.sqlite");
+    let quota = 4 * 1024 * 1024;
+    let mut database = EvidenceDb::open(&file, quota).unwrap();
+    let reader = rusqlite::Connection::open(&file).unwrap();
+    reader
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); BEGIN; SELECT COUNT(*) FROM observations;")
+        .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut refused_at = None;
+    for sequence in 1..1000 {
+        let mut value = record(sequence);
+        value.record.received_at_ms = now;
+        value.record.payload = serde_json::json!({"data":"x".repeat(600)});
+        match database.insert(value) {
+            Ok(_) => (),
+            Err(error) => {
+                assert_eq!(error, "WAL quota exceeded");
+                refused_at = Some(sequence);
+                break;
+            }
+        }
+    }
+    let sequence = refused_at.expect("held reader must reach the actual WAL quota");
+    assert!(database.disk_usage().unwrap().wal_bytes > quota);
+    reader.execute_batch("COMMIT").unwrap();
+    drop(reader);
+    let retained = database
+        .retain(
+            &tos_health_services::retention::RetentionPolicy {
+                evidence_retention_ms: Some(tos_health_services::retention::RETENTION_MIN_MS),
+                witness_retention_ms: None,
+            },
+            now,
+        )
+        .unwrap();
+    assert_eq!(retained.observations_deleted, 0, "new evidence must survive recovery");
+    database
+        .insert(record(sequence))
+        .expect("reset must recover without deleting fresh evidence or reopening M");
+    assert!(database.disk_usage().unwrap().wal_bytes < quota);
+}

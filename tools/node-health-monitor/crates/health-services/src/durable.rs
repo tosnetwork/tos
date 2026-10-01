@@ -33,9 +33,8 @@ fn open(path: &Path, max_bytes: u64) -> Result<Connection> {
     conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
     conn.pragma_update(None, "synchronous", "FULL").map_err(err)?;
     conn.pragma_update(None, "wal_autocheckpoint", 64).map_err(err)?;
-    // The pre-write WAL gate measures the file; a checkpointed WAL keeps its
-    // size until the next write resets it, and this truncates it then, so a
-    // long-reader episode cannot leave the gate refusing forever.
+    // Retained WAL space is reclaimed by the pre-write gate once readers leave.
+    // The size limit is a reuse policy, not a hard physical WAL quota.
     conn.pragma_update(None, "journal_size_limit", i64::try_from(max_bytes).map_err(err)?)
         .map_err(err)?;
     let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0)).map_err(err)?;
@@ -68,14 +67,22 @@ fn bind_network(conn: &mut Connection, network: &str) -> Result<()> {
     }
     tx.commit().map_err(err)
 }
-fn wal_budget(path: &Path, quota: u64) -> Result<()> {
-    let wal = std::ffi::OsString::from(format!("{}-wal", path.display()));
-    match std::fs::metadata(wal) {
-        Ok(m) if m.len() > quota => Err("WAL quota exceeded".into()),
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+fn wal_budget(conn: &Connection, path: &Path, quota: u64) -> Result<()> {
+    let wal = path.as_os_str().to_owned();
+    let mut wal = wal;
+    wal.push("-wal");
+    let length = || match std::fs::metadata(&wal) {
+        Ok(m) => Ok(m.len()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(0),
         Err(e) => Err(err(e)),
+    };
+    if length()? > quota {
+        crate::wal::try_truncate(conn).map_err(err)?;
+        if length()? > quota {
+            return Err("WAL quota exceeded".into());
+        }
     }
+    Ok(())
 }
 /// A write refused for space, not for content: page quota, WAL budget or a
 /// full filesystem. Only these justify an out-of-schedule retention pass.
@@ -674,7 +681,7 @@ impl EvidenceDb {
     /// global 16-entry bound, so repeated revisions cannot grow this index.
     pub fn activate_witness_current(&mut self, plan: &Plan) -> Result<()> {
         plan.validate().map_err(str::to_owned)?;
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         let plan_hash = canonical_plan_hash(plan).map_err(str::to_owned)?;
         let tx = self.conn.transaction().map_err(err)?;
         let reused_revision: bool = tx
@@ -759,7 +766,7 @@ impl EvidenceDb {
         measured_extra_ms: Option<u64>,
         received_at: Option<crate::transit::Stamp>,
     ) -> Result<Vec<RowQualification>> {
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         let endpoint = &response.receipt.endpoint_id;
         let body = serde_json::to_vec(response).map_err(err)?;
         let (validated, source) =
@@ -910,7 +917,7 @@ impl EvidenceDb {
         Ok(qualified)
     }
     pub fn insert(&mut self, value: DurableEvidence) -> Result<EvidenceRow> {
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         if value.source_epoch.is_empty() || value.source_epoch.len() > 128 {
             return Err("invalid source epoch".into());
         }
@@ -976,7 +983,7 @@ impl EvidenceDb {
         &mut self,
         batch: &tos_health_core::contracts::DiagnosticBatch,
     ) -> Result<crate::diagnostic_ingest::Ack> {
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         crate::diagnostic_ingest::insert(&mut self.conn, batch)
     }
     pub fn insert_witness(
@@ -984,7 +991,7 @@ impl EvidenceDb {
         response: CacheResponse,
         plan: &Plan,
     ) -> Result<WitnessArchiveRow> {
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         let body = serde_json::to_vec(&response).map_err(err)?;
         let endpoint = &response.receipt.endpoint_id;
         let _source = CacheResponse::decode(&body, plan, endpoint).map_err(str::to_owned)?;
@@ -1141,7 +1148,7 @@ impl EvidenceDb {
     }
     /// Main file bytes, WAL bytes and the configured quota, read from the
     /// filesystem. The quota bounds the main file (page quota) and is also
-    /// the WAL gate's limit, so main + WAL ≤ 2 × quota is the declared peak.
+    /// the WAL gate's limit, with one admitted transaction of possible WAL overshoot; this is not a hard total filesystem quota.
     pub fn disk_usage(&self) -> Result<DiskUsage> {
         let len = |path: &Path| match std::fs::metadata(path) {
             Ok(meta) => Ok(meta.len()),
@@ -1300,7 +1307,7 @@ impl ControlDb {
         {
             return Err("evidence reference mismatch".into());
         }
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         let tx = self.conn.transaction().map_err(err)?;
         tx.execute("INSERT INTO source_state(node,scope,source,process_epoch,source_epoch,generation,content_hash,evidence_id,store_seq,clock_valid,complete)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
@@ -1344,7 +1351,7 @@ impl ControlDb {
                 return Err("invalid or duplicate rule key".into());
             }
         }
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         let tx = self.conn.transaction().map_err(err)?;
         let sequence: i64 = tx
             .query_row("SELECT sequence FROM evaluation WHERE singleton=1", [], |r| r.get(0))
@@ -1497,7 +1504,7 @@ impl ControlDb {
         if !crate::alias(alias) || now_ms < 0 {
             return Err("invalid receiver attempt".into());
         }
-        wal_budget(&self.path, self.quota)?;
+        wal_budget(&self.conn, &self.path, self.quota)?;
         let tx = self.conn.transaction().map_err(err)?;
         let row: Option<(String, String, String, i64, i64)> = tx.query_row(
             "SELECT receiver_alias,payload_hash,body,attempts,next_due_ms FROM outbox WHERE id=?1",

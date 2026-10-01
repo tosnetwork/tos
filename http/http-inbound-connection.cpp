@@ -26,6 +26,7 @@ namespace tos {
 namespace http {
 
 void HttpInboundConnection::send_client_error() {
+  arm_response_deadline();
   static const auto s =
       "HTTP/1.0 400 Bad Request\r\n"
       "Connection: Close\r\n"
@@ -37,8 +38,9 @@ void HttpInboundConnection::send_client_error() {
 }
 
 // The listener accepts no request bodies: answer at header time and close,
-// so no payload reader is created and no body byte is ever read or drained.
+// so no payload reader is created and no body is parsed or drained.
 void HttpInboundConnection::send_payload_refused() {
+  arm_response_deadline();
   static const auto s =
       "HTTP/1.1 413 Payload Too Large\r\n"
       "Connection: close\r\n"
@@ -50,6 +52,7 @@ void HttpInboundConnection::send_payload_refused() {
 }
 
 void HttpInboundConnection::send_server_error() {
+  arm_response_deadline();
   static const auto s =
       "HTTP/1.1 502 Bad Gateway\r\n"
       "Connection: keep-alive\r\n"
@@ -60,6 +63,7 @@ void HttpInboundConnection::send_server_error() {
 }
 
 void HttpInboundConnection::send_proxy_error(td::Status error) {
+  arm_response_deadline();
   if (error.code() == ErrorCode::timeout) {
     static const auto s =
         "HTTP/1.1 504 Gateway Timeout\r\n"
@@ -153,6 +157,7 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
 
   metrics_.responses_total->label(response->code())->add(1);
 
+  arm_response_deadline();
   write_payload(std::move(payload));
   loop();
 }

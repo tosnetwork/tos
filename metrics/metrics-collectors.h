@@ -49,6 +49,24 @@ inline CollectionReservation labelled_metrics_reservation(std::size_t families, 
                                families};
 }
 
+// A bounded drain fan-out and its temporary task storage are charged together
+// with the traffic result. Rechecked after awaiting drains, before rendering.
+inline constexpr std::size_t kTrafficDrainLimit = 64;
+inline std::optional<CollectionReservation> traffic_collection_reservation(std::size_t cells,
+                                                                          std::size_t drains, std::size_t label_capacity = 72) {
+  if (drains > kTrafficDrainLimit || label_capacity > 1024 * 1024 ||
+      cells > (std::numeric_limits<std::size_t>::max() - 65536) / (16 * label_capacity + 2048)) {
+    return std::nullopt;
+  }
+  // Both directions' sets coexist during join; reserve twice the logical
+  // metric count for retained vector slots and temporary joined containers.
+  auto result = labelled_metrics_reservation(4, 4 * cells, 2, label_capacity, 160);
+  const auto scratch = drains * (sizeof(td::actor::StartedTask<td::Unit>) + 256) + 1024;
+  if (result.resident_bytes > std::numeric_limits<std::size_t>::max() - scratch) return std::nullopt;
+  result.resident_bytes += scratch;
+  return result;
+}
+
 class Collector {
  public:
   virtual MetricSet collect() = 0;

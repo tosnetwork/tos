@@ -13,6 +13,7 @@ pub mod provider;
 pub mod query_ledger;
 pub mod retention;
 pub mod transit;
+mod wal;
 pub mod witness;
 pub mod witness_compare;
 

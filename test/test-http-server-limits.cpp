@@ -22,6 +22,7 @@
 // headers (which also covers idle keep-alive connections).
 
 #include "http/http-server.h"
+#include "http/http-inbound-connection.h"
 #include "http/http.h"
 #include "td/actor/actor.h"
 #include "td/utils/port/IPAddress.h"
@@ -65,7 +66,7 @@ class OkCallback : public tos::http::HttpServer::Callback {
 
 class Client {
  public:
-  explicit Client(int port) : port_(port) {
+  explicit Client(int port, int receive_window = 0) : port_(port), receive_window_(receive_window) {
   }
   ~Client() {
     close();
@@ -76,6 +77,9 @@ class Client {
       fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
       if (fd_ < 0) {
         return false;
+      }
+      if (receive_window_ > 0) {
+        CHECK(::setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &receive_window_, sizeof(receive_window_)) == 0);
       }
       sockaddr_in addr{};
       addr.sin_family = AF_INET;
@@ -166,6 +170,7 @@ class Client {
 
  private:
   int port_;
+  int receive_window_ = 0;
   int fd_ = -1;
 };
 
@@ -186,7 +191,9 @@ int find_free_port() {
 
 // Runs `scenario` on a client thread against a server started with `limits`,
 // pumping the actor scheduler on the current thread until the scenario ends.
-void with_server(tos::http::HttpServer::Limits limits, std::function<void(int port)> scenario) {
+void with_server(tos::http::HttpServer::Limits limits, std::function<void(int port)> scenario,
+                 std::shared_ptr<tos::http::HttpServer::Callback> callback = nullptr) {
+  if (!callback) callback = std::make_shared<OkCallback>();
   int port = find_free_port();
   td::IPAddress addr;
   addr.init_ipv4_port("127.0.0.1", port).ensure();
@@ -194,7 +201,7 @@ void with_server(tos::http::HttpServer::Limits limits, std::function<void(int po
   td::actor::Scheduler scheduler({2});
   td::actor::ActorOwn<tos::http::HttpServer> server;
   scheduler.run_in_context([&] {
-    server = td::actor::create_actor<tos::http::HttpServer>("httpserver", addr, std::make_shared<OkCallback>(),
+    server = td::actor::create_actor<tos::http::HttpServer>("httpserver", addr, callback,
                                                             limits);
   });
 
@@ -368,4 +375,150 @@ TEST(HttpServerLimits, default_connection_limit_is_finite) {
   tos::http::HttpServer::Limits limits;
   ASSERT_TRUE(limits.max_connections != 0);
   ASSERT_TRUE(limits.max_connections <= (static_cast<size_t>(1) << 20));
+}
+
+namespace {
+struct TransportObservation {
+  std::atomic<size_t> peak{0};
+  std::atomic<size_t> output_peak{0};
+  std::atomic<int> closed{0};
+  std::atomic<int> calls{0};
+};
+class LargeResponseCallback final : public tos::http::HttpServer::Callback {
+ public:
+  explicit LargeResponseCallback(TransportObservation *observation, size_t response_bytes = 1024 * 1024)
+      : observation_(observation), response_bytes_(response_bytes) {}
+  void receive_request(std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
+      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise) override {
+    ++observation_->calls;
+    auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+    response->add_header({"Transfer-Encoding", "Chunked"});
+    response->complete_parse_header();
+    auto payload = response->create_empty_payload().move_as_ok();
+    payload->add_chunk(td::BufferSlice(std::string(response_bytes_, 'x')));
+    payload->complete_parse();
+    promise.set_value({std::move(response), std::move(payload)});
+  }
+ private:
+  TransportObservation *observation_;
+  size_t response_bytes_;
+};
+class ObservedInbound final : public tos::http::HttpInboundConnection {
+ public:
+  ObservedInbound(td::SocketFd fd, TransportObservation *observation)
+      : HttpInboundConnection(std::move(fd), std::make_shared<LargeResponseCallback>(observation),
+                              tos::http::HttpServer::AllMetrics{}, 5, 5, true, 4096, 0.15), observation_(observation) {}
+  ~ObservedInbound() override { ++observation_->closed; }
+  void alarm() override {
+    observation_->output_peak.store(std::max(observation_->output_peak.load(), buffered_fd_.ready_for_flush_write()));
+    HttpInboundConnection::alarm();
+  }
+  void payload_written() override {
+    observation_->output_peak.store(std::max(observation_->output_peak.load(), buffered_fd_.ready_for_flush_write()));
+    HttpInboundConnection::payload_written();
+  }
+  td::Status receive(td::ChainBufferReader &input) override {
+    observation_->peak.store(std::max(observation_->peak.load(), input.size()));
+    return HttpInboundConnection::receive(input);
+  }
+ private:
+  TransportObservation *observation_;
+};
+
+void with_observed_inbound(const std::string &request, std::function<void(int, TransportObservation &)> scenario) {
+  int pair[2];
+  int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(listener >= 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  CHECK(::bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  socklen_t size = sizeof(address);
+  CHECK(::getsockname(listener, reinterpret_cast<sockaddr *>(&address), &size) == 0);
+  CHECK(::listen(listener, 1) == 0);
+  pair[1] = ::socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(pair[1] >= 0);
+  int receive_window = 4096;
+  CHECK(::setsockopt(pair[1], SOL_SOCKET, SO_RCVBUF, &receive_window, sizeof(receive_window)) == 0);
+  CHECK(::connect(pair[1], reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  pair[0] = ::accept(listener, nullptr, nullptr);
+  CHECK(pair[0] >= 0);
+  ::close(listener);
+  int small = 4096;
+  CHECK(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0);
+  // Queue headers+body before the transport starts, to prove the actual socket
+  // preparse window rather than only the header rejection policy.
+  CHECK(::send(pair[1], request.data(), request.size(), MSG_NOSIGNAL) == static_cast<ssize_t>(request.size()));
+  TransportObservation observation;
+  td::actor::Scheduler scheduler({2});
+  scheduler.run_in_context([&] {
+    auto fd = td::SocketFd::from_native_fd(td::NativeFd(pair[0])).move_as_ok();
+    td::actor::create_actor<ObservedInbound>(td::actor::ActorOptions().with_name("observed-inbound").with_poll(),
+                                            std::move(fd), &observation).release();
+  });
+  std::atomic<bool> done{false};
+  std::thread client([&] { scenario(pair[1], observation); done = true; });
+  while (!done) scheduler.run(0.01);
+  client.join();
+  ::close(pair[1]);
+  scheduler.run_in_context([&] { td::actor::SchedulerContext::get().stop(); });
+  while (scheduler.run(1)) {}
+}
+}  // namespace
+
+TEST(HttpServerLimits, bodiless_listener_limits_socket_read_before_body_refusal) {
+  const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 65536\r\n\r\n" + std::string(65536, 'x');
+  with_observed_inbound(request, [](int fd, TransportObservation &observation) {
+    pollfd poller{fd, POLLIN, 0};
+    ASSERT_TRUE(::poll(&poller, 1, 2000) > 0);
+    char reply[1024];
+    auto n = ::recv(fd, reply, sizeof(reply), 0);
+    ASSERT_TRUE(n > 0);
+    ASSERT_TRUE(std::string(reply, static_cast<size_t>(n)).find("HTTP/1.1 413 ") == 0);
+    ASSERT_TRUE(observation.peak > 0 && observation.peak <= 4096);
+    ASSERT_EQ(observation.calls.load(), 0);
+  });
+}
+
+TEST(HttpServerLimits, response_deadline_releases_a_nonreading_client) {
+  with_observed_inbound("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", [](int, TransportObservation &observation) {
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (observation.calls == 0 && std::chrono::steady_clock::now() < until)
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    ASSERT_EQ(observation.calls.load(), 1);
+    // No read: the small send buffer forces the actual payload writer to stall.
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    ASSERT_EQ(observation.closed.load(), 1);
+    ASSERT_TRUE(observation.output_peak > 0 && observation.output_peak <= 4096 + 1024 + 128);
+  });
+}
+
+TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_slots) {
+  tos::http::HttpServer::Limits limits;
+  limits.max_connections = 8;
+  limits.io_buffer_bytes = 4096;
+  limits.request_header_timeout = 5;
+  limits.response_timeout = 0.5;
+  TransportObservation observation;
+  with_server(limits, [&](int port) {
+    std::vector<std::unique_ptr<Client>> held;
+    for (int i = 0; i < 8; ++i) {
+      auto client = std::make_unique<Client>(port, 4096);
+      ASSERT_TRUE(client->connect_with_retries());
+      ASSERT_TRUE(client->send_all("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+      held.push_back(std::move(client));
+    }
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (observation.calls < 8 && std::chrono::steady_clock::now() < until)
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    ASSERT_EQ(observation.calls.load(), 8);
+    Client extra(port);
+    ASSERT_TRUE(extra.connect_with_retries());
+    ASSERT_TRUE(extra.wait_for_eof(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
+    Client recovered(port);
+    ASSERT_TRUE(recovered.connect_with_retries());
+    ASSERT_TRUE(recovered.request_ok(1000));
+    ASSERT_EQ(observation.calls.load(), 9);
+  }, std::make_shared<LargeResponseCallback>(&observation, 4 * 1024 * 1024));
 }

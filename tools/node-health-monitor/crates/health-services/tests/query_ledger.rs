@@ -854,3 +854,60 @@ fn a_long_reader_pins_the_wal_and_writes_are_refused_as_backpressure_until_it_le
     drop(ledger);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn moving_readers_cannot_accumulate_checkpointed_wal_above_the_water_mark() {
+    let (file, directory) = temporary();
+    let mark = 256 * 1024;
+    let mut ledger =
+        QueryLedger::open_for_boot(&file, BOOT_A).unwrap().with_wal_high_water(mark).unwrap();
+    let mut store = EvidenceStore::new(32 * 1024 * 1024);
+    ledger.insert_evidence(&mut store, evidence(1)).unwrap();
+    let readers =
+        [rusqlite::Connection::open(&file).unwrap(), rusqlite::Connection::open(&file).unwrap()];
+    readers[0]
+        .execute_batch(
+            "PRAGMA wal_checkpoint(TRUNCATE); BEGIN; SELECT COUNT(*) FROM query_evidence;",
+        )
+        .unwrap();
+    let mut current = 0;
+    let mut sequence = 1;
+    let mut refused = false;
+    for _ in 0..40 {
+        for _ in 0..4 {
+            sequence += 1;
+            let before = store.watermark();
+            let started = std::time::Instant::now();
+            match ledger.insert_evidence(&mut store, evidence(sequence)) {
+                Ok(_) => (),
+                Err(error) => {
+                    assert!(error.contains("disk_backpressure"), "{error}");
+                    assert_eq!(store.watermark(), before);
+                    assert!(
+                        started.elapsed() < std::time::Duration::from_millis(100),
+                        "reader reset must not wait"
+                    );
+                    refused = true;
+                    break;
+                }
+            }
+        }
+        if refused {
+            break;
+        }
+        let next = 1 - current;
+        readers[next].execute_batch("BEGIN; SELECT COUNT(*) FROM query_evidence;").unwrap();
+        readers[current].execute_batch("COMMIT").unwrap();
+        current = next;
+    }
+    assert!(refused, "checkpointed WAL prefixes must still count against the physical water mark");
+    let held = ledger.disk_usage().unwrap();
+    assert!(held.backpressure && held.wal_bytes > mark);
+    readers[current].execute_batch("COMMIT").unwrap();
+    drop(readers);
+    ledger.insert_evidence(&mut store, evidence(sequence)).unwrap();
+    let recovered = ledger.disk_usage().unwrap();
+    assert!(!recovered.backpressure && recovered.wal_bytes < mark, "{recovered:?}");
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}

@@ -15,13 +15,12 @@ pub struct QueryLedger {
     conn: Connection,
     clock_domain: String,
     path: std::path::PathBuf,
-    page_size: u64,
     /// WAL bytes above which a write is refused with `disk_backpressure`
-    /// after one passive checkpoint failed to bring it back down.
+    /// after a reader-free, nonwaiting reset failed to reclaim it.
     wal_high_water: u64,
-    /// Passive checkpoints a concurrent writer or checkpointer blocked.
+    /// Reset attempts a concurrent reader/writer or checkpointer blocked.
     checkpoint_busy: u64,
-    /// Passive checkpoints that left frames pinned by an open reader.
+    /// Reset attempts that left frames pinned by an open reader.
     checkpoint_pinned: u64,
     /// Writes refused by the WAL water mark since the ledger was opened.
     backpressure_refusals: u64,
@@ -36,10 +35,11 @@ pub const WAL_AUTOCHECKPOINT_PAGES: i64 = 64;
 /// WAL high-water mark (64 MiB). `wal_autocheckpoint` only bounds the WAL
 /// while no reader holds frames; a long reader keeps every later frame alive
 /// and the file grows without limit. Above this mark a write first tries one
-/// passive checkpoint and is otherwise refused with `disk_backpressure`:
+/// nonwaiting WAL reset and is otherwise refused with `disk_backpressure`:
 /// imports pause (no cursor advances), grants are not issued, nothing is
 /// deleted to make room. The page quota bounds the main file; this bounds
-/// the WAL beside it, so main + WAL is the declared ledger peak.
+/// WAL growth, with admitted transaction/ungated safety-write overshoot.
+/// A filesystem quota is required for a hard combined disk bound.
 pub const LEDGER_WAL_HIGH_WATER_BYTES: u64 = 64 * 1024 * 1024;
 
 /// On-disk footprint of the ledger and the state of its WAL gate.
@@ -450,7 +450,6 @@ impl QueryLedger {
             conn,
             clock_domain: format!("{boot_id}|{namespace}"),
             path: path.to_path_buf(),
-            page_size: page,
             wal_high_water: LEDGER_WAL_HIGH_WATER_BYTES,
             checkpoint_busy: 0,
             checkpoint_pinned: 0,
@@ -501,39 +500,23 @@ impl QueryLedger {
         })
     }
 
-    /// The WAL water-mark gate every growing write passes first. The file
-    /// size is only the trigger: a checkpointed WAL keeps its size until the
-    /// next write resets it, so refusing on size alone would never recover.
-    /// Above the mark the gate runs one passive checkpoint (never RESTART or
-    /// TRUNCATE on this path: those wait on readers) and reads back how many
-    /// frames it could not move into the main file. Those are the frames a
-    /// reader still pins; when they exceed the mark the write is refused as
-    /// `disk_backpressure`, a capacity condition that changes nothing
-    /// committed and is retried later. When every frame is backed up the
-    /// next write resets the WAL and `journal_size_limit` truncates the file.
+    /// Gate physical WAL growth, including checkpointed frames whose file
+    /// cannot reset while readers survive. Reclaim without waiting, or pause.
+    /// Revocation and a previously admitted page's cursor commit stay ungated.
     fn wal_gate(&mut self) -> Result<(), ProjectionWriteError> {
         let wal = self.wal_path();
         if Self::file_len(&wal)? <= self.wal_high_water {
             self.backpressure = false;
             return Ok(());
         }
-        let (busy, log, checkpointed): (i64, i64, i64) = self
-            .conn
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
-            .map_err(failure)?;
+        let (busy, log, checkpointed) = crate::wal::try_truncate(&self.conn).map_err(failure)?;
         if busy != 0 {
             self.checkpoint_busy = self.checkpoint_busy.saturating_add(1);
         }
-        // A reader does not make the checkpoint "busy"; it shows as frames
-        // the checkpoint could not back up.
-        let pinned_frames = u64::try_from(log.saturating_sub(checkpointed).max(0)).unwrap_or(0);
-        if pinned_frames > 0 {
+        if log > checkpointed {
             self.checkpoint_pinned = self.checkpoint_pinned.saturating_add(1);
         }
-        let pinned_bytes = pinned_frames.saturating_mul(self.page_size);
-        if pinned_bytes <= self.wal_high_water {
+        if Self::file_len(&wal)? <= self.wal_high_water {
             self.backpressure = false;
             return Ok(());
         }

@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <algorithm>
+
 #include "common/errorcode.h"
 #include "td/actor/actor.h"
 #include "td/utils/BufferedFd.h"
@@ -40,8 +42,9 @@ class HttpConnection : public td::actor::Actor, public td::ObserverBase {
     virtual void on_ready(td::actor::ActorId<HttpConnection> conn) = 0;
   };
 
-  HttpConnection(td::SocketFd fd, std::unique_ptr<Callback> callback, bool is_client)
-      : buffered_fd_(std::move(fd)), callback_(std::move(callback)), is_client_(is_client) {
+  HttpConnection(td::SocketFd fd, std::unique_ptr<Callback> callback, bool is_client, size_t io_buffer_bytes = 0)
+      : buffered_fd_(std::move(fd)), callback_(std::move(callback)), is_client_(is_client)
+      , io_buffer_bytes_(io_buffer_bytes) {
   }
   virtual td::Status receive(td::ChainBufferReader &input) = 0;
   virtual td::Status receive_eof() = 0;
@@ -110,19 +113,20 @@ class HttpConnection : public td::actor::Actor, public td::ObserverBase {
   void loop() override;
 
  private:
-  static constexpr size_t fd_low_watermark() {
-    return 1 << 16;  // 64 KiB
+  size_t io_buffer_bytes_ = 0;
+  size_t fd_low_watermark() const {
+    return std::min<size_t>(1 << 16, fd_high_watermark() / 2);
   }
-  // Socket reader pauses above this. Must be ≥ HttpRequest::max_payload_size
+  // Normal RPC socket windows must be >= HttpRequest::max_payload_size
   // or else continue_payload_read() in http-connection.cpp:252 returns
   // early and the BodyWaiter in json-rpc-server.cpp never sees the full
   // body on requests that exceed fd_high_watermark.  Round 152 HIGH fix:
   // bumped from 1 MiB to 4 MiB to match HttpRequest::max_payload_size /
   // kJsonRpcMaxRequestBodyBytes.  An oversize Content-Length is now
   // rejected in HttpRequest::add_header so the buffer-up-to-watermark
-  // case won't pin a connection.
-  static constexpr size_t fd_high_watermark() {
-    return 4 << 20;  // 4 MiB
+  // case won't pin a connection. Bodiless listeners override the window.
+  size_t fd_high_watermark() const {
+    return io_buffer_bytes_ == 0 ? 4 << 20 : io_buffer_bytes_;
   }
   static constexpr size_t chunk_size() {
     return 1 << 10;

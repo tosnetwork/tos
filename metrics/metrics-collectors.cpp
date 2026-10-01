@@ -5,6 +5,7 @@
 
 #include "core-health.h"
 #include "metrics-collectors.h"
+#include "tl-traffic-bucket.h"
 
 namespace tos::metrics {
 
@@ -309,6 +310,17 @@ void MultiCollector::add_sync_collector(std::shared_ptr<Collector> collector) {
 
 td::actor::ActorOwn<MultiCollector> MultiCollector::create(std::string prefix) {
   return td::actor::create_actor<MultiCollector>(PSTRING() << "MultiCollector:" << prefix, std::move(prefix));
+}
+
+td::Result<MetricSet> collect_traffic_with_budget(const TlTrafficBucket &in, const TlTrafficBucket &out,
+                                               std::size_t drains, CollectionBudget budget) {
+  if (budget.bounded) {
+    const auto final = traffic_collection_reservation(in.cells() + out.cells(), drains,
+                                                       std::max(in.label_capacity(), out.label_capacity()));
+    if (!final || !budget.admits(*final) || budget.expired())
+      return shed_status(kShedOverBudget);
+  }
+  return std::move(in.collect("in")).join(out.collect("out"));
 }
 
 }  // namespace tos::metrics

@@ -8,6 +8,8 @@
 
 #include "metrics/metrics-collectors.h"
 #include "metrics/tl-traffic-bucket.h"
+#include "auto/tl/tos_api.h"
+#include "auto/tl/lite_api.h"
 #include "quic/health-metrics-policy.h"
 #include "td/utils/logging.h"
 #include "td/actor/actor.h"
@@ -113,14 +115,15 @@ class OverlayStandIn final : public td::actor::Actor, public tos::metrics::Async
   OverlayStandIn() {
     // A realistic spread of cells: a handful of named schemas plus the
     // shared unknown cell, in both directions.
-    for (td::int32 magic : {0x1, 0x2, 0x3, 0x4, 0x5}) {
+    for (td::int32 magic : {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_message::ID,
+                           tos::tos_api::overlay_query::ID, tos::lite_api::liteServer_query::ID}) {
       in_.account(magic, 100);
       out_.account(magic, 100);
     }
   }
   std::optional<CollectionReservation> reservation() const override {
     const auto metrics = 2 * (in_.cells() + out_.cells());
-    return tos::metrics::labelled_metrics_reservation(4, metrics, 2, 72, 160);
+    return tos::metrics::traffic_collection_reservation(metrics / 2, 0);
   }
   void collect(tos::metrics::MetricsPromise promise) override {
     promise.set_value(std::move(in_.collect("in")).join(out_.collect("out")));
@@ -361,7 +364,33 @@ class Driver final : public td::actor::Actor {
 };
 }  // namespace
 
+void check_traffic_growth_before_render() {
+  tos::metrics::TlTrafficBucket in, out;
+  const auto initial = tos::metrics::traffic_collection_reservation(in.cells() + out.cells(), 0);
+  CHECK(initial.has_value());
+  CollectionBudget budget{.bounded = true, .deadline = td::Timestamp::now().at() + 5,
+                         .max_resident_bytes = initial->resident_bytes, .max_families = 4};
+  CHECK(tos::metrics::collect_traffic_with_budget(in, out, 0, budget).is_ok());
+  for (const auto magic : {tos::tos_api::overlay_broadcast::ID, tos::tos_api::overlay_broadcastFec::ID,
+                           tos::tos_api::overlay_message::ID, tos::tos_api::overlay_query::ID,
+                           tos::tos_api::overlay_certificate::ID, tos::lite_api::liteServer_query::ID}) {
+    in.account(magic, 100); out.account(magic, 100);
+  }
+  auto refused = tos::metrics::collect_traffic_with_budget(in, out, 0, budget);
+  CHECK(refused.is_error());
+  CHECK(tos::metrics::shed_reason_of(refused.error()) == tos::metrics::kShedOverBudget);
+  budget.max_resident_bytes = 1024 * 1024;
+  auto result = tos::metrics::collect_traffic_with_budget(in, out, 0, budget);
+  CHECK(result.is_ok());
+  CHECK(result.ok().resident_bytes() > initial->resident_bytes);
+  auto fanout = tos::metrics::collect_traffic_with_budget(in, out, tos::metrics::kTrafficDrainLimit + 1, budget);
+  CHECK(fanout.is_error());
+  budget.bounded = false;
+  CHECK(tos::metrics::collect_traffic_with_budget(in, out, tos::metrics::kTrafficDrainLimit + 1, budget).is_ok());
+}
+
 int main() {
+  check_traffic_growth_before_render();
   check_declaration_covers_result<QuicStandIn>("quic");
   check_declaration_covers_result<OverlayStandIn>("overlays");
   check_declaration_covers_result<JsonRpcStandIn>("jsonrpc");

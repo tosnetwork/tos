@@ -39,6 +39,9 @@ void PrometheusExporter::listen(td::IPAddress addr) {
   // Every health route is bodiless: the transport refuses an announced body
   // at header time and closes, before any payload reader exists.
   limits.reject_request_bodies = true;
+  limits.io_buffer_bytes = 16 * 1024;
+  limits.request_header_timeout = 5.0;
+  limits.response_timeout = 5.0;
   const auto ip = addr.get_ip_str().str();
   loopback_ = ip.starts_with("127.") || ip == "::1";
   http_ = td::actor::create_actor<http::HttpServer>(PSTRING() << "HTTP@" << addr, addr, std::move(callback), limits);
@@ -100,6 +103,13 @@ void PrometheusExporter::start_up() {
 
 void PrometheusExporter::respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body,
                                  const char *content_type) {
+  // Eight connection slots cap simultaneous response copies. Include the
+  // typed envelope allowance above the 2 MiB publication body cap.
+  if (body.size() > 2 * 1024 * 1024 + 4096) {
+    body.clear();
+    code = 503;
+    reason = "Service Unavailable";
+  }
   auto response = http::HttpResponse::create("HTTP/1.1", code, reason, false, false).move_as_ok();
   response->add_header({"Transfer-Encoding", "Chunked"});
   response->add_header({"Content-Type", content_type});

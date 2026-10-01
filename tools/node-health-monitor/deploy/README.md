@@ -418,33 +418,39 @@ a rollback.
 | File set | Bound | Enforced by |
 | --- | --- | --- |
 | M evidence database, main file | `evidence_quota_bytes` (development: 2 GiB) | SQLite `max_page_count`; retention frees space, a refused insert gets one recovery pass |
-| M evidence WAL | `evidence_quota_bytes` | `wal_budget` pre-write gate (refuses `WAL quota exceeded`, counted as `retention.disk.wal_refusals`), `wal_autocheckpoint` 64 pages, a passive checkpoint after every retention pass, `journal_size_limit` truncates the file when the WAL resets |
-| M evidence shm | one index page set | SQLite |
+| M evidence WAL | `evidence_quota_bytes` | `wal_budget` pre-write gate (refuses `WAL quota exceeded`, counted as `retention.disk.wal_refusals`), `wal_autocheckpoint` 64 pages, a passive checkpoint after every retention pass; above the physical mark a zero-busy-timeout TRUNCATE attempt either reclaims the WAL or refuses the write |
+| M/Q/control shm | WAL index, accounted separately from main/WAL | SQLite; reserve WAL-index space in the filesystem budget |
 | M control database (incidents, outbox, verdicts), main and WAL | `control_quota_bytes` (development: 64 MiB) | same page quota, pre-write gate and size limit |
 | Q ledger, main file | `LEDGER_QUOTA_BYTES` 256 MiB | SQLite `max_page_count` |
-| Q ledger WAL | `LEDGER_WAL_HIGH_WATER_BYTES` 64 MiB | the water-mark gate below: one passive checkpoint, then `disk_backpressure`; `journal_size_limit` truncates at reset |
+| Q ledger WAL | `LEDGER_WAL_HIGH_WATER_BYTES` 64 MiB | physical-file water mark; nonwaiting reset or `disk_backpressure` (checkpointed prefixes count too) |
 | Judge journals (`verdicts.jsonl`, model journal), receiver journal | 64 MiB current plus one kept generation each (`--journal-max-bytes`, `JOURNAL_MAX_BYTES`) | the writing script rotates before the cap |
 | Runtime archives (`runtime-archive-*`) from network rebuilds and ledger resets | unbounded | operator; delete after the evidence they hold is recorded |
 | Private Codex home for the model turn | its own lifecycle | Codex; the monitor never deletes an active session |
 
-Declared peak for one development host with these values: M 2 GiB main +
+Nominal database/journal budget for one development host with these values: M 2 GiB main +
 2 GiB WAL, control 64 + 64 MiB, Q 256 + 64 MiB, three journals at 128 MiB
-each, about 4.8 GiB before archives. A production profile sets the two
-quotas lower; the formula is the same.
+each, about 4.8 GiB before shm, admitted transaction overshoot, safety writes,
+archives, backups and Codex storage. This is not a hard combined peak. Keep
+explicit reserve for those overlaps below a filesystem/project quota; current
+free space is not that reserve. A production profile sets the quotas lower.
 
-**The WAL water-mark gate.** `wal_autocheckpoint` only bounds a WAL while no
-reader holds frames. One long read transaction keeps every later frame
-alive and the file grows without limit, and M's pre-write gate is a file
-size check that cannot promise the next transaction stays under it. Q
-therefore gates every growing write (grants, bindings, packages, attempts,
-evidence and projection pages, compaction) on its WAL: above the mark it
-runs one passive checkpoint, reads back how many frames a reader still
-pins, and if those exceed the mark refuses the write as
-`disk_backpressure`. The refusal is a capacity condition: nothing committed
-changes, the import pauses with `caught_up=false` and no cursor advances,
-no grant is issued, and nothing is deleted to make room. Revocation is never
-gated. When the reader is gone the gate's own checkpoint backs every frame,
-the next write resets the WAL and `journal_size_limit` shrinks the file.
+**The WAL water-mark gate.** Every growing Q write is gated on the physical
+WAL length, including prefixes a checkpoint has backed up but a reader still
+prevents from being reset. Above the mark the writer tries TRUNCATE with busy
+waiting temporarily disabled, restoring its original busy timeout afterwards.
+An open reader causes an immediate reset refusal; if the file remains above
+the mark, `disk_backpressure` refuses the growing write. After readers leave,
+the same gate reclaims the file and writing resumes without deleting evidence
+or reopening the service. M evidence/control use the same nonwaiting reclaim
+at their physical WAL gate, including when retention has no expired rows.
+
+The refused operation changes no committed records or cursor; Q import pauses,
+new grants are unavailable and existing grants stay intact. Revocation and an
+already admitted page's cursor commit remain available. A pre-write mark can
+be crossed by the admitted transaction and those safety writes, so it is a
+software pressure gate, not a hard combined filesystem quota. The reset does
+not wait for readers; the actual checkpoint/filesystem I/O is not preemptible.
+Do not describe `journal_size_limit` or an elapsed-time check as a hard deadline.
 `projection-health` reports `disk_backpressure`, `ledger_main_bytes`,
 `ledger_wal_bytes`, the refusal count and how often a checkpoint found
 pinned frames; M's state reports `retention.disk` with main, WAL, quota and
@@ -486,3 +492,27 @@ timestamp. Receipt gates: `physical_separation`,
 `cert_rotation`, `rollback_drill`. A `pass` receipt is honoured only with a
 valid RFC 3339 `at` younger than `--receipt-max-age-days` (default 90) and an
 evidence path that exists (`--no-check-evidence-paths` relaxes the latter).
+
+## Health HTTP and collector memory boundaries
+
+The health listener retains at most eight connection slots. Each uses a 16 KiB
+socket input/output window (output adds at most a 1 KiB serialization chunk
+and framing), the existing 16 KiB header limit, and a 5 s response deadline.
+A nonreading client is closed and its slot/buffers released. Body announcements
+are refused before payload parsing; the small socket window can already
+contain some bytes beyond the headers. Other RPC listeners keep their original
+4 MiB windows and body policy.
+
+Each health response is capped at 2 MiB + 4 KiB envelope allowance. Eight
+retained payloads therefore have an explicit aggregate logical ceiling of
+16 MiB + 32 KiB, separate from the publisher/collector budget. Add header/I/O
+buffers, allocator overhead, cached snapshots and temporary body copies:
+`respond` runs serially on the exporter actor, but body/BufferSlice/payload
+copies coexist while it builds one response. Neither the 8 MiB publication
+budget nor the Q 32 MiB evidence budget is a validator/process RSS cap.
+
+Bounded overlay collection limits drain fan-out to 64 tasks, reserves task
+scratch and result container capacity, and rechecks the updated buckets after
+awaiting deltas, before constructing MetricSet. A growth or drain-limit refusal
+is published as shed/partial. Budgets also include existing label string capacity
+and join container headroom. Unbounded legacy collection remains separate.

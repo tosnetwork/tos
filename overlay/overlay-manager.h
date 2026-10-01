@@ -123,6 +123,7 @@ class OverlayManager : public Overlays {
   void forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay, adnl::AdnlNodeIdShort peer_id) override;
 
   void collect(metrics::MetricsPromise promise) override;
+  void collect_with_budget(metrics::MetricsPromise promise, metrics::CollectionBudget budget) override;
   // Declared before collection: two traffic buckets, each two families with
   // one metric per cell; a bucket's cells are bounded by the TL schema table
   // plus the shared unknown cell (TlTrafficBucket), so the live cell counts
@@ -145,7 +146,7 @@ class OverlayManager : public Overlays {
 
   metrics::TlTrafficBucket broadcasts_in_;
   metrics::TlTrafficBucket broadcasts_out_;
-  td::actor::Task<metrics::MetricSet> collect_coro();
+  td::actor::Task<metrics::MetricSet> collect_coro(metrics::CollectionBudget budget = {});
 
   struct BufferedRequest {
     adnl::AdnlNodeIdShort src;
