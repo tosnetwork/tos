@@ -2,14 +2,13 @@
 """Disposable Q and private-artifact controls for fresh-window preparation."""
 
 import datetime as dt
-import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import sqlite3
 import tempfile
 import time
 import unittest
+from pathlib import Path
 
 SOURCE = Path(__file__).with_name("prepare-c09-fresh-window.py")
 spec = importlib.util.spec_from_file_location("fresh_window", SOURCE)
@@ -25,16 +24,23 @@ class FreshWindowTests(unittest.TestCase):
         self.d.chmod(0o700)
         self.q = self.d / "q.db"
         with sqlite3.connect(self.q) as db:
-            db.executescript("CREATE TABLE query_grants(run_id TEXT,boot_id TEXT,revoked INTEGER,expires_ms INTEGER,body BLOB);"
-                             "CREATE TABLE query_attempts(id INTEGER);")
+            db.executescript(
+                "CREATE TABLE query_grants(run_id TEXT,boot_id TEXT,revoked INTEGER,expires_ms INTEGER,body BLOB);"
+                "CREATE TABLE query_attempts(id INTEGER);"
+            )
             boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
             for i in range(3):
-                db.execute("INSERT INTO query_grants VALUES(?,?,?,?,?)", (str(i), boot + "|test", 1, 1, b"{}"))
+                db.execute(
+                    "INSERT INTO query_grants VALUES(?,?,?,?,?)",
+                    (str(i), boot + "|test", 1, 1, b"{}"),
+                )
             db.execute("INSERT INTO query_attempts VALUES(1)")
         self.q.chmod(0o600)
         self.log = self.d / "old.jsonl"
-        self.log.write_text(json.dumps({"status": "failed", "cleanup_confirmed": False,
-                                        "slot_highwater": 10}) + "\n")
+        self.log.write_text(
+            json.dumps({"status": "failed", "cleanup_confirmed": False, "slot_highwater": 10})
+            + "\n"
+        )
         self.log.chmod(0o600)
         self.marker = self.d / "old.inflight"
         self.marker.write_text('{"slot":10}')
@@ -46,24 +52,45 @@ class FreshWindowTests(unittest.TestCase):
         self.frozen_marker.write_bytes(self.marker.read_bytes())
         self.frozen_marker.chmod(0o600)
         self.audit = self.d / "AUDIT.json"
-        audit = {"observed_utc": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).isoformat(),
-                 "sample_log": {"source": str(self.log), "frozen": str(self.frozen_log),
-                                "sha256": fresh.digest(self.log.read_bytes())},
-                 "inflight_marker": {"source": str(self.marker), "frozen": str(self.frozen_marker),
-                                     "sha256": fresh.digest(self.marker.read_bytes())},
-                 "q_ledger": {"device": self.q.stat().st_dev, "inode": self.q.stat().st_ino,
-                              "grant_count": 3, "attempt_count": 1, "new_rows": [{"ordinal": 3}]}}
+        audit = {
+            "observed_utc": (
+                dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
+            ).isoformat(),
+            "sample_log": {
+                "source": str(self.log),
+                "frozen": str(self.frozen_log),
+                "sha256": fresh.digest(self.log.read_bytes()),
+            },
+            "inflight_marker": {
+                "source": str(self.marker),
+                "frozen": str(self.frozen_marker),
+                "sha256": fresh.digest(self.marker.read_bytes()),
+            },
+            "q_ledger": {
+                "device": self.q.stat().st_dev,
+                "inode": self.q.stat().st_ino,
+                "grant_count": 3,
+                "attempt_count": 1,
+                "new_rows": [{"ordinal": 3}],
+            },
+        }
         self.audit.write_text(json.dumps(audit))
         self.audit.chmod(0o600)
         self.resolution = self.d / "resolution.json"
-        value = {"schema_version": 1, "decision": "resolved_new_window",
-                 "audit_sha256": fresh.digest(self.audit.read_bytes()),
-                 "old_log_sha256": audit["sample_log"]["sha256"],
-                 "old_marker_sha256": audit["inflight_marker"]["sha256"],
-                 "q_device": audit["q_ledger"]["device"], "q_inode": audit["q_ledger"]["inode"],
-                 "failed_slot_highwater": 10, "reviewer": "operator",
-                 "reviewed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
-                 "candidate_grants_accounted_for": True, "original_marker_preserved": True}
+        value = {
+            "schema_version": 1,
+            "decision": "resolved_new_window",
+            "audit_sha256": fresh.digest(self.audit.read_bytes()),
+            "old_log_sha256": audit["sample_log"]["sha256"],
+            "old_marker_sha256": audit["inflight_marker"]["sha256"],
+            "q_device": audit["q_ledger"]["device"],
+            "q_inode": audit["q_ledger"]["inode"],
+            "failed_slot_highwater": 10,
+            "reviewer": "operator",
+            "reviewed_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "candidate_grants_accounted_for": True,
+            "original_marker_preserved": True,
+        }
         self.resolution.write_text(json.dumps(value))
         self.resolution.chmod(0o600)
 
@@ -95,8 +122,10 @@ class FreshWindowTests(unittest.TestCase):
         self.resolution.write_text(json.dumps(value))
         self.q.rename(self.d / "q-old.db")
         with sqlite3.connect(self.q) as db:
-            db.executescript("CREATE TABLE query_grants(run_id TEXT,boot_id TEXT,revoked INTEGER,expires_ms INTEGER,body BLOB);"
-                             "CREATE TABLE query_attempts(id INTEGER);")
+            db.executescript(
+                "CREATE TABLE query_grants(run_id TEXT,boot_id TEXT,revoked INTEGER,expires_ms INTEGER,body BLOB);"
+                "CREATE TABLE query_attempts(id INTEGER);"
+            )
         self.q.chmod(0o600)
         with self.assertRaisesRegex(RuntimeError, "Q ledger replacement"):
             self.prepare()
@@ -106,7 +135,10 @@ class FreshWindowTests(unittest.TestCase):
         boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
         now_ms = int(time.clock_gettime(time.CLOCK_BOOTTIME) * 1000)
         with sqlite3.connect(self.q) as db:
-            db.execute("INSERT INTO query_grants VALUES(?,?,?,?,?)", ("live", boot + "|test", 0, now_ms + 200_000, b"{}"))
+            db.execute(
+                "INSERT INTO query_grants VALUES(?,?,?,?,?)",
+                ("live", boot + "|test", 0, now_ms + 200_000, b"{}"),
+            )
         with self.assertRaisesRegex(RuntimeError, "Q grant state unresolved"):
             self.prepare()
         self.assertFalse((self.d / "new").exists())

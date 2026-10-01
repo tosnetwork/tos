@@ -14,6 +14,7 @@ validates against the contract, cites only evidence the tools returned, and
 explains every non-healthy node with evidence that belongs to that node. The
 model never sees a token, never issues a grant, and cannot change a verdict.
 """
+
 import argparse
 import datetime as dt
 import http.client
@@ -23,8 +24,6 @@ import os
 import secrets
 import shutil
 import socket
-import subprocess
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -33,8 +32,14 @@ HERE = Path(__file__).resolve().parent
 MAX_MODEL_OUTPUT_BYTES = 65536
 GRANT_WINDOW_MINUTES = 10
 TOOL_PREFIX = "mcp__nhm__"
-TOOLS = ("tos_get_capabilities", "tos_get_node_snapshot", "tos_get_metric_window",
-         "tos_get_event_window", "tos_get_change_history", "tos_get_block_evidence")
+TOOLS = (
+    "tos_get_capabilities",
+    "tos_get_node_snapshot",
+    "tos_get_metric_window",
+    "tos_get_event_window",
+    "tos_get_change_history",
+    "tos_get_block_evidence",
+)
 
 MCP_INSTRUCTION = (
     "You are the read-only TOS validator health investigator. Your MCP servers (named nhm_a, nhm_b, ...) "
@@ -43,9 +48,9 @@ MCP_INSTRUCTION = (
     "verdict per node from the health-state engine. For every node call tos_get_node_snapshot on the "
     "server that covers it with exactly these arguments: run_id = that server's run_id, node_id, "
     "as_of = the input's as_of value verbatim (it is the grant window's end; any other timestamp is "
-    "out of scope), max_age_seconds = 120, components = [\"consensus\", \"chain\", \"storage\", "
-    "\"process\"]. Use the returned evidence. If a tool result is truncated in your view so that you "
-    "cannot read its evidence ids, call the same tool again for that node with components = [\"chain\"] "
+    'out of scope), max_age_seconds = 120, components = ["consensus", "chain", "storage", '
+    '"process"]. Use the returned evidence. If a tool result is truncated in your view so that you '
+    'cannot read its evidence ids, call the same tool again for that node with components = ["chain"] '
     "and cite the ids from that shorter result; never cite an id you did not read from a tool result. "
     "Return exactly one JSON object matching the diagnosis contract. Use status 'analysis' when verdicts "
     "are healthy/degraded/unhealthy and explain each non-healthy node with an observed finding citing "
@@ -57,7 +62,9 @@ MCP_INSTRUCTION = (
 
 
 def load_judge():
-    spec = importlib.util.spec_from_file_location("judge_validator_health", HERE / "judge-validator-health.py")
+    spec = importlib.util.spec_from_file_location(
+        "judge_validator_health", HERE / "judge-validator-health.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -100,8 +107,13 @@ def issue_grant(socket_path, operator_token, nodes, now):
     end must not be in the future, so it is the judgement time itself."""
     start = rfc3339(now - dt.timedelta(minutes=GRANT_WINDOW_MINUTES))
     end = rfc3339(now)
-    status, raw = control(socket_path, operator_token, "POST", "/v1/control/grants",
-                          {"node_ids": sorted(nodes), "scope_ids": ["node"], "start": start, "end": end})
+    status, raw = control(
+        socket_path,
+        operator_token,
+        "POST",
+        "/v1/control/grants",
+        {"node_ids": sorted(nodes), "scope_ids": ["node"], "start": start, "end": end},
+    )
     if status != 200:
         raise RuntimeError(f"grant refused: http {status} {raw[:200]!r}")
     grant = json.loads(raw)
@@ -132,7 +144,14 @@ def write_credentials(run_dir, grant, service_token, name="nhm"):
     path = run_dir / f"credentials-{name}.json"
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as stream:
-        json.dump({"run_id": grant["run_id"], "run_token": grant["run_token"], "service_token": service_token}, stream)
+        json.dump(
+            {
+                "run_id": grant["run_id"],
+                "run_token": grant["run_token"],
+                "service_token": service_token,
+            },
+            stream,
+        )
     return path
 
 
@@ -177,7 +196,15 @@ def evidence_index(calls):
 
 
 def strip_unsupported(schema):
-    unsupported = {"$schema", "$defs", "maxItems", "minItems", "maxLength", "minLength", "uniqueItems"}
+    unsupported = {
+        "$schema",
+        "$defs",
+        "maxItems",
+        "minItems",
+        "maxLength",
+        "minLength",
+        "uniqueItems",
+    }
     if isinstance(schema, dict):
         return {k: strip_unsupported(v) for k, v in schema.items() if k not in unsupported}
     if isinstance(schema, list):
@@ -189,6 +216,7 @@ def validate_mcp_diagnosis(schema, diagnosis, report, calls):
     """Contract first, then evidence binding against what the tools returned,
     then the same non-upgrade rule the push lane enforces."""
     from jsonschema import Draft202012Validator
+
     if not isinstance(diagnosis, dict):
         return {"result": "rejected", "error": "schema: not an object"}
     error = next(Draft202012Validator(schema).iter_errors(diagnosis), None)
@@ -220,10 +248,17 @@ def validate_mcp_diagnosis(schema, diagnosis, report, calls):
             node = index.get(evidence_id)
             if node:
                 explained.add(node)
-    unexplained = [n for n, r in report["nodes"].items()
-                   if r["verdict"] in ("degraded", "unhealthy") and n not in explained]
+    unexplained = [
+        n
+        for n, r in report["nodes"].items()
+        if r["verdict"] in ("degraded", "unhealthy") and n not in explained
+    ]
     if diagnosis["status"] == "analysis" and unexplained:
-        return {"result": "rejected", "error": "unexplained_non_healthy_nodes", "nodes": unexplained}
+        return {
+            "result": "rejected",
+            "error": "unexplained_non_healthy_nodes",
+            "nodes": unexplained,
+        }
     return {"result": "accepted"}
 
 
@@ -233,7 +268,7 @@ GRANT_NODE_LIMIT = 4
 def node_groups(nodes):
     """Grants cover at most four nodes; group sorted nodes accordingly."""
     nodes = sorted(nodes)
-    return [nodes[i:i + GRANT_NODE_LIMIT] for i in range(0, len(nodes), GRANT_NODE_LIMIT)]
+    return [nodes[i : i + GRANT_NODE_LIMIT] for i in range(0, len(nodes), GRANT_NODE_LIMIT)]
 
 
 def server_name(index):
@@ -250,15 +285,39 @@ def run_claude(args, prompt, schema, servers):
     judge = load_judge()
     config = json.dumps({"mcpServers": servers})
     allowed = " ".join(f"mcp__{name}" for name in servers)
-    command = [args.claude_bin, "-p", "--strict-mcp-config", "--mcp-config", config, "--restricted",
-               "--allowedTools", allowed, "--permission-mode", "dontAsk", "--output-format", "json",
-               "--json-schema", json.dumps(strip_unsupported(schema)), "--max-turns", str(args.max_turns),
-               "--model", args.model, "--system-prompt", MCP_INSTRUCTION, json.dumps(prompt)]
-    result = judge.run_bounded(command, b"", args.model_timeout, stdout_cap=MAX_MODEL_OUTPUT_BYTES + 1)
+    command = [
+        args.claude_bin,
+        "-p",
+        "--strict-mcp-config",
+        "--mcp-config",
+        config,
+        "--restricted",
+        "--allowedTools",
+        allowed,
+        "--permission-mode",
+        "dontAsk",
+        "--output-format",
+        "json",
+        "--json-schema",
+        json.dumps(strip_unsupported(schema)),
+        "--max-turns",
+        str(args.max_turns),
+        "--model",
+        args.model,
+        "--system-prompt",
+        MCP_INSTRUCTION,
+        json.dumps(prompt),
+    ]
+    result = judge.run_bounded(
+        command, b"", args.model_timeout, stdout_cap=MAX_MODEL_OUTPUT_BYTES + 1
+    )
     if result is None:
         return {"result": "unavailable", "error": "model process exceeded its output or time bound"}
     if result.returncode != 0:
-        return {"result": "unavailable", "error": result.stderr.decode(errors="replace")[-400:] or f"exit {result.returncode}"}
+        return {
+            "result": "unavailable",
+            "error": result.stderr.decode(errors="replace")[-400:] or f"exit {result.returncode}",
+        }
     try:
         envelope = json.loads(result.stdout)
     except ValueError:
@@ -271,8 +330,11 @@ def run_claude(args, prompt, schema, servers):
             diagnosis = json.loads(envelope.get("result") or "")
         except ValueError:
             return {"result": "unavailable", "error": "model_output_not_json"}
-    meta = {"model": next(iter((envelope.get("modelUsage") or {}).keys()), args.model),
-            "num_turns": envelope.get("num_turns"), "cost_usd": envelope.get("total_cost_usd")}
+    meta = {
+        "model": next(iter((envelope.get("modelUsage") or {}).keys()), args.model),
+        "num_turns": envelope.get("num_turns"),
+        "cost_usd": envelope.get("total_cost_usd"),
+    }
     return {"result": "answered", "diagnosis": diagnosis, **meta}
 
 
@@ -310,31 +372,53 @@ def run_codex(args, prompt, schema, servers):
         wire = Path(scratch) / "schema.json"
         wire.write_text(json.dumps(strip_unsupported(schema)))
         last = Path(scratch) / "last-message.json"
-        command = [args.codex_bin, "exec", "--json", "--skip-git-repo-check", "--ephemeral",
-                   "--sandbox", "read-only", "-C", args.codex_workdir, "--output-schema", str(wire),
-                   "-o", str(last), json.dumps({"instruction": MCP_INSTRUCTION, "verdict": prompt})]
+        command = [
+            args.codex_bin,
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+            "--ephemeral",
+            "--sandbox",
+            "read-only",
+            "-C",
+            args.codex_workdir,
+            "--output-schema",
+            str(wire),
+            "-o",
+            str(last),
+            json.dumps({"instruction": MCP_INSTRUCTION, "verdict": prompt}),
+        ]
         if args.codex_model:
             command[2:2] = ["-m", args.codex_model]
         previous = os.environ.get("CODEX_HOME")
         os.environ["CODEX_HOME"] = str(home)
         try:
-            result = judge.run_bounded(command, b"", args.model_timeout + 10, stdout_cap=4 * 1024 * 1024)
+            result = judge.run_bounded(
+                command, b"", args.model_timeout + 10, stdout_cap=4 * 1024 * 1024
+            )
         finally:
             if previous is None:
                 os.environ.pop("CODEX_HOME", None)
             else:
                 os.environ["CODEX_HOME"] = previous
         if result is None:
-            return {"result": "unavailable", "error": "model process exceeded its output or time bound"}
+            return {
+                "result": "unavailable",
+                "error": "model process exceeded its output or time bound",
+            }
         if result.returncode != 0:
-            return {"result": "unavailable", "error": result.stderr.decode(errors="replace")[-400:] or f"exit {result.returncode}"}
+            return {
+                "result": "unavailable",
+                "error": result.stderr.decode(errors="replace")[-400:]
+                or f"exit {result.returncode}",
+            }
         try:
             text = last.read_text().strip()
         except OSError:
             return {"result": "unavailable", "error": "model_output_missing"}
         if text.startswith("```"):
             text = text.strip("`")
-            text = text[text.find("{"):text.rfind("}") + 1]
+            text = text[text.find("{") : text.rfind("}") + 1]
         try:
             diagnosis = json.loads(text)
         except ValueError:
@@ -347,7 +431,12 @@ def run_codex(args, prompt, schema, servers):
         fd = os.open(events_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as stream:
             stream.write(events_text)
-    return {"result": "answered", "diagnosis": diagnosis, "model": args.codex_model or "codex-default", "events": events}
+    return {
+        "result": "answered",
+        "diagnosis": diagnosis,
+        "model": args.codex_model or "codex-default",
+        "events": events,
+    }
 
 
 PROVIDERS = {"claude": run_claude, "codex": run_codex}
@@ -370,17 +459,32 @@ def judge_through_mcp(args, now=None):
         name = server_name(index)
         credentials = write_credentials(run_dir, grant, service, name)
         evidence_log = run_dir / f"evidence-{name}.jsonl"
-        servers[name] = mcp_server_config(args.adapter_bin, args.mcp_socket, credentials, evidence_log)
-        grants.append({"server": name, "run_id": grant["run_id"], "nodes": group, "credentials": credentials})
+        servers[name] = mcp_server_config(
+            args.adapter_bin, args.mcp_socket, credentials, evidence_log
+        )
+        grants.append(
+            {"server": name, "run_id": grant["run_id"], "nodes": group, "credentials": credentials}
+        )
         logs.append(evidence_log)
     # The grant window ends at `now` to the second; that exact value is the
     # only as_of every tool accepts, so the model is given it verbatim.
-    prompt = {"checked_at": report["checked_at"], "as_of": rfc3339(now), "network_id": report["network_id"],
-              "evaluation_sequence": report["evaluation_sequence"],
-              "grants": {g["server"]: {"run_id": g["run_id"], "nodes": g["nodes"]} for g in grants},
-              "nodes": {n: {"role": r["role"], "verdict": r["verdict"], "reasons": r["reasons"], "rules": r["rules"]}
-                        for n, r in report["nodes"].items()},
-              "summary": report["summary"]}
+    prompt = {
+        "checked_at": report["checked_at"],
+        "as_of": rfc3339(now),
+        "network_id": report["network_id"],
+        "evaluation_sequence": report["evaluation_sequence"],
+        "grants": {g["server"]: {"run_id": g["run_id"], "nodes": g["nodes"]} for g in grants},
+        "nodes": {
+            n: {
+                "role": r["role"],
+                "verdict": r["verdict"],
+                "reasons": r["reasons"],
+                "rules": r["rules"],
+            }
+            for n, r in report["nodes"].items()
+        },
+        "summary": report["summary"],
+    }
     started = time.monotonic()
     try:
         outcome = PROVIDERS[args.provider](args, prompt, schema, servers)
@@ -395,22 +499,34 @@ def judge_through_mcp(args, now=None):
     if outcome["result"] == "answered":
         verdict = validate_mcp_diagnosis(schema, outcome["diagnosis"], report, calls)
         outcome = {**outcome, **verdict}
-    record = {"schema_version": 1, "checked_at": now.isoformat(), "lane": "mcp", "provider": args.provider,
-              "grants": [{"server": g["server"], "run_id": g["run_id"], "nodes": g["nodes"]} for g in grants],
-              "tool_calls": len(calls),
-              "tools_used": sorted({c.get("tool") for c in calls if isinstance(c.get("tool"), str)}),
-              "evidence_items": sum(len(c.get("evidence") or []) for c in calls),
-              "elapsed_seconds": round(time.monotonic() - started, 3), "summary": report["summary"],
-              "model": outcome}
+    record = {
+        "schema_version": 1,
+        "checked_at": now.isoformat(),
+        "lane": "mcp",
+        "provider": args.provider,
+        "grants": [
+            {"server": g["server"], "run_id": g["run_id"], "nodes": g["nodes"]} for g in grants
+        ],
+        "tool_calls": len(calls),
+        "tools_used": sorted({c.get("tool") for c in calls if isinstance(c.get("tool"), str)}),
+        "evidence_items": sum(len(c.get("evidence") or []) for c in calls),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "summary": report["summary"],
+        "model": outcome,
+    }
     if args.journal:
-        judge.append_journal(Path(args.journal), json.dumps(record, ensure_ascii=False), args.journal_max_bytes)
+        judge.append_journal(
+            Path(args.journal), json.dumps(record, ensure_ascii=False), args.journal_max_bytes
+        )
     if not args.keep_run_dir:
         shutil.rmtree(run_dir, ignore_errors=True)
     return record
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--network-id", required=True)
     parser.add_argument("--manager-state-url", required=True)
     parser.add_argument("--manager-read-token-file", required=True)
@@ -422,8 +538,16 @@ def build_parser():
     parser.add_argument("--service-token-file", required=True)
     parser.add_argument("--adapter-bin", required=True, help="tos-nhm-aura-stdio binary")
     parser.add_argument("--diagnosis-schema", required=True)
-    parser.add_argument("--run-dir", required=True, help="private directory for one-use credentials and evidence logs")
-    parser.add_argument("--keep-run-dir", action="store_true", help="keep the run directory (evidence log) after the run")
+    parser.add_argument(
+        "--run-dir",
+        required=True,
+        help="private directory for one-use credentials and evidence logs",
+    )
+    parser.add_argument(
+        "--keep-run-dir",
+        action="store_true",
+        help="keep the run directory (evidence log) after the run",
+    )
     parser.add_argument("--provider", choices=sorted(PROVIDERS), required=True)
     parser.add_argument("--model-timeout", type=int, default=240)
     parser.add_argument("--max-turns", type=int, default=24)
@@ -431,8 +555,12 @@ def build_parser():
     parser.add_argument("--model", default="sonnet", help="Claude model alias or name")
     parser.add_argument("--codex-bin", default="codex", help="Codex CLI binary")
     parser.add_argument("--codex-model", help="Codex model override")
-    parser.add_argument("--codex-home", help="private Codex home for the MCP lane (separate from the model lane's)")
-    parser.add_argument("--codex-auth-source", help="existing private auth.json to copy into --codex-home once")
+    parser.add_argument(
+        "--codex-home", help="private Codex home for the MCP lane (separate from the model lane's)"
+    )
+    parser.add_argument(
+        "--codex-auth-source", help="existing private auth.json to copy into --codex-home once"
+    )
     parser.add_argument("--codex-workdir")
     parser.add_argument("--journal", help="append one JSON line per run")
     parser.add_argument("--journal-max-bytes", type=int, default=64 * 1024 * 1024)

@@ -19,6 +19,7 @@ Gate-evidence file schema (JSON)::
 A ``pass`` receipt is honoured only when its evidence path exists (unless
 ``--no-check-evidence-paths``) and it is younger than ``--receipt-max-age-days``.
 """
+
 import argparse
 import datetime as dt
 import http.client
@@ -109,21 +110,28 @@ def load_state(args):
         elif args.manager_state_url:
             if not args.manager_read_token_file:
                 raise SystemExit("--manager-state-url requires --manager-read-token-file")
-            state = fetch_state(args.manager_state_url, read_secret(args.manager_read_token_file),
-                                args.timeout)
+            state = fetch_state(
+                args.manager_state_url, read_secret(args.manager_read_token_file), args.timeout
+            )
             origin = args.manager_state_url
         else:
-            return None, Gate("manager_state", NOT_RUN, "no --manager-state-url or --manager-state-file")
+            return None, Gate(
+                "manager_state", NOT_RUN, "no --manager-state-url or --manager-state-file"
+            )
     except SystemExit:
         raise
     except Exception as error:  # network, permission, JSON: the gate itself fails
         return None, Gate("manager_state", FAIL, f"state unreadable: {error}")
-    if not isinstance(state, dict) or state.get("schema_version") != 1 \
-            or not isinstance(state.get("incidents"), list) \
-            or not isinstance(state.get("evaluation_sequence"), str):
+    if (
+        not isinstance(state, dict)
+        or state.get("schema_version") != 1
+        or not isinstance(state.get("incidents"), list)
+        or not isinstance(state.get("evaluation_sequence"), str)
+    ):
         return None, Gate("manager_state", FAIL, f"{origin}: not a schema_version 1 manager state")
-    return state, Gate("manager_state", PASS,
-                       f"evaluation_sequence {state['evaluation_sequence']} from {origin}")
+    return state, Gate(
+        "manager_state", PASS, f"evaluation_sequence {state['evaluation_sequence']} from {origin}"
+    )
 
 
 def incident_index(state):
@@ -175,7 +183,9 @@ def gate_quarantine(state, evidence_db):
         checks.append("live state clean")
     if evidence_db:
         try:
-            db = sqlite3.connect(f"file:{Path(evidence_db).resolve()}?mode=ro", uri=True, timeout=0.5)
+            db = sqlite3.connect(
+                f"file:{Path(evidence_db).resolve()}?mode=ro", uri=True, timeout=0.5
+            )
             try:
                 db.execute("PRAGMA query_only=ON")
                 counts = {}
@@ -190,8 +200,11 @@ def gate_quarantine(state, evidence_db):
             return Gate("no_quarantined_sources", FAIL, f"evidence db unreadable: {error}")
         bad = {k: v for k, v in counts.items() if v}
         if bad:
-            return Gate("no_quarantined_sources", FAIL,
-                        "durable quarantine rows: " + ", ".join(f"{k}={v}" for k, v in bad.items()))
+            return Gate(
+                "no_quarantined_sources",
+                FAIL,
+                "durable quarantine rows: " + ", ".join(f"{k}={v}" for k, v in bad.items()),
+            )
         known = [k for k, v in counts.items() if v == 0]
         if known:
             checks.append("evidence db " + "+".join(known) + " empty")
@@ -205,7 +218,11 @@ def gate_retention(state):
     if not isinstance(retention, dict):
         return Gate("evidence_retention", NOT_RUN, "state carries no retention status")
     if retention.get("configured") is not True:
-        return Gate("evidence_retention", FAIL, "evidence retention is not configured; the store is unbounded")
+        return Gate(
+            "evidence_retention",
+            FAIL,
+            "evidence retention is not configured; the store is unbounded",
+        )
     period = as_int(retention.get("period_ms"))
     age = as_int(retention.get("last_pass_age_ms"))
     if period is None or period <= 0:
@@ -213,12 +230,17 @@ def gate_retention(state):
     if age is None:
         return Gate("evidence_retention", FAIL, "no retention pass has completed")
     if age > 2 * period:
-        return Gate("evidence_retention", FAIL, f"last pass {age} ms ago exceeds 2x period {period} ms")
+        return Gate(
+            "evidence_retention", FAIL, f"last pass {age} ms ago exceeds 2x period {period} ms"
+        )
     if retention.get("last_pass_error"):
         return Gate("evidence_retention", FAIL, f"last pass failed: {retention['last_pass_error']}")
     window = retention.get("evidence_retention_ms")
-    return Gate("evidence_retention", PASS,
-                f"window {window} ms, last pass {age} ms ago, deleted {retention.get('observations_deleted_total')} rows total")
+    return Gate(
+        "evidence_retention",
+        PASS,
+        f"window {window} ms, last pass {age} ms ago, deleted {retention.get('observations_deleted_total')} rows total",
+    )
 
 
 def gate_notification(state, receipts, now):
@@ -229,16 +251,25 @@ def gate_notification(state, receipts, now):
         return Gate("notification_receiver", FAIL, "no notification receiver configured")
     age = as_int(notification.get("last_delivery_age_ms"))
     if age is not None and age <= DAY_MS:
-        return Gate("notification_receiver", PASS,
-                    f"receiver {notification.get('receiver_alias')}; live receipt {age} ms ago")
+        return Gate(
+            "notification_receiver",
+            PASS,
+            f"receiver {notification.get('receiver_alias')}; live receipt {age} ms ago",
+        )
     receipt = receipts.get("notification_delivery") if isinstance(receipts, dict) else None
     if isinstance(receipt, dict) and receipt.get("status") == PASS:
         at = parse_time(receipt.get("at"))
         if at is not None and (now - at).total_seconds() * 1000 <= DAY_MS:
-            return Gate("notification_receiver", PASS,
-                        f"receiver {notification.get('receiver_alias')}; delivery receipt {receipt.get('evidence_path')} at {receipt.get('at')}")
-    return Gate("notification_receiver", FAIL,
-                "receiver configured but no delivery receipt within 24 h (live or in the evidence file)")
+            return Gate(
+                "notification_receiver",
+                PASS,
+                f"receiver {notification.get('receiver_alias')}; delivery receipt {receipt.get('evidence_path')} at {receipt.get('at')}",
+            )
+    return Gate(
+        "notification_receiver",
+        FAIL,
+        "receiver configured but no delivery receipt within 24 h (live or in the evidence file)",
+    )
 
 
 def gate_ai_lane(state):
@@ -254,7 +285,11 @@ def gate_ai_lane(state):
         return Gate("ai_lane", NOT_RUN, "ai_unavailable is not bound in the inventory")
     open_lanes = [k for k, v in lanes if (v.get("state") or {}).get("state") in ACTIVE_STATES]
     if open_lanes:
-        return Gate("ai_lane", FAIL, "ai_unavailable active on " + ", ".join(f"{n}/{s}" for n, s, _ in open_lanes))
+        return Gate(
+            "ai_lane",
+            FAIL,
+            "ai_unavailable active on " + ", ".join(f"{n}/{s}" for n, s, _ in open_lanes),
+        )
     if not lanes:
         return Gate("ai_lane", FAIL, "ai_unavailable bound but never evaluated")
     return Gate("ai_lane", PASS, f"{len(lanes)} ai_unavailable lane(s) not open")
@@ -279,7 +314,9 @@ def gate_receipt(gate_id, title, receipts, base_dir, now, check_paths, max_age_d
     if age_days < 0:
         return Gate(gate_id, FAIL, f"{title}: receipt is dated in the future")
     if age_days > max_age_days:
-        return Gate(gate_id, NOT_RUN, f"{title}: receipt is {age_days:.0f} days old (> {max_age_days})")
+        return Gate(
+            gate_id, NOT_RUN, f"{title}: receipt is {age_days:.0f} days old (> {max_age_days})"
+        )
     path = receipt.get("evidence_path")
     if not isinstance(path, str) or not path:
         return Gate(gate_id, FAIL, f"{title}: pass receipt without an evidence path")
@@ -287,15 +324,20 @@ def gate_receipt(gate_id, title, receipts, base_dir, now, check_paths, max_age_d
         resolved = Path(path) if os.path.isabs(path) else base_dir / path
         if not resolved.exists():
             return Gate(gate_id, FAIL, f"{title}: evidence path missing: {path}")
-    return Gate(gate_id, PASS, f"{title}: {path} at {receipt.get('at')}" + (f" - {note}" if note else ""))
+    return Gate(
+        gate_id, PASS, f"{title}: {path} at {receipt.get('at')}" + (f" - {note}" if note else "")
+    )
 
 
 def load_receipts(path):
     if not path:
         return {}, None
     value = json.loads(Path(path).read_text())
-    if not isinstance(value, dict) or value.get("schema_version") != 1 \
-            or not isinstance(value.get("gates"), dict):
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != 1
+        or not isinstance(value.get("gates"), dict)
+    ):
         raise SystemExit(f"{path}: expected {{schema_version: 1, gates: {{...}}}}")
     return value["gates"], Path(path).resolve().parent
 
@@ -308,7 +350,12 @@ def run(args):
     state, state_gate = load_state(args)
     gates = [state_gate]
     if state is None:
-        for gate_id in ("rule_inputs_usable", "evidence_retention", "notification_receiver", "ai_lane"):
+        for gate_id in (
+            "rule_inputs_usable",
+            "evidence_retention",
+            "notification_receiver",
+            "ai_lane",
+        ):
             gates.append(Gate(gate_id, NOT_RUN, "manager state unavailable"))
         gates.insert(2, gate_quarantine(None, args.evidence_db))
     else:
@@ -317,13 +364,28 @@ def run(args):
         gates.append(gate_retention(state))
         gates.append(gate_notification(state, receipts, now))
         gates.append(gate_ai_lane(state))
-    gates.append(gate_query_broker(args.query_control_socket, args.query_service_token_file,
-                                   args.query_max_lag_rows, args.timeout))
+    gates.append(
+        gate_query_broker(
+            args.query_control_socket,
+            args.query_service_token_file,
+            args.query_max_lag_rows,
+            args.timeout,
+        )
+    )
     gates.append(gate_query_ledger_activity(args.query_ledger_db, args.query_max_idle_seconds, now))
     gates.append(gate_mcp_lane(args.mcp_journal, args.mcp_max_age_hours, now))
     for gate_id, title in RECEIPT_GATES:
-        gates.append(gate_receipt(gate_id, title, receipts, base_dir or Path.cwd(), now,
-                                  not args.no_check_evidence_paths, args.receipt_max_age_days))
+        gates.append(
+            gate_receipt(
+                gate_id,
+                title,
+                receipts,
+                base_dir or Path.cwd(),
+                now,
+                not args.no_check_evidence_paths,
+                args.receipt_max_age_days,
+            )
+        )
     return gates
 
 
@@ -345,7 +407,11 @@ def gate_query_ledger_activity(path, max_idle_seconds, now):
         return Gate("query_ledger_activity", FAIL, f"query ledger {path} is unreadable")
     idle = max(0, int(now.timestamp() - newest))
     if idle > max_idle_seconds:
-        return Gate("query_ledger_activity", FAIL, f"query ledger last written {idle} s ago (allowance {max_idle_seconds} s): broker down")
+        return Gate(
+            "query_ledger_activity",
+            FAIL,
+            f"query ledger last written {idle} s ago (allowance {max_idle_seconds} s): broker down",
+        )
     return Gate("query_ledger_activity", PASS, f"query ledger written {idle} s ago")
 
 
@@ -366,7 +432,9 @@ class _UnixHTTPConnection(http.client.HTTPConnection):
 def fetch_projection_health(socket_path, token, timeout):
     connection = _UnixHTTPConnection(socket_path, timeout)
     try:
-        connection.request("GET", "/v1/control/projection-health", headers={"Authorization": f"Bearer {token}"})
+        connection.request(
+            "GET", "/v1/control/projection-health", headers={"Authorization": f"Bearer {token}"}
+        )
         response = connection.getresponse()
         raw = response.read(65536)
     finally:
@@ -393,7 +461,11 @@ def gate_query_broker(socket_path, token_file, max_lag_rows, timeout):
     try:
         status, body = fetch_projection_health(socket_path, token, timeout)
     except (OSError, ValueError, http.client.HTTPException) as error:
-        return Gate("query_broker", FAIL, f"query broker unreachable at {socket_path}: {type(error).__name__}")
+        return Gate(
+            "query_broker",
+            FAIL,
+            f"query broker unreachable at {socket_path}: {type(error).__name__}",
+        )
     if status == 401:
         return Gate("query_broker", FAIL, "query broker refused the service token")
     if not isinstance(body, dict):
@@ -404,7 +476,9 @@ def gate_query_broker(socket_path, token_file, max_lag_rows, timeout):
         lag_rows = int(lag) if lag is not None else None
     except (TypeError, ValueError):
         lag_rows = None
-    detail = f"projection {projection}, lag {lag if lag is not None else 'unknown'} rows, http {status}"
+    detail = (
+        f"projection {projection}, lag {lag if lag is not None else 'unknown'} rows, http {status}"
+    )
     if projection == "caught_up":
         return Gate("query_broker", PASS, detail)
     if projection == "lagging" and lag_rows is not None and 0 <= lag_rows <= max_lag_rows:
@@ -438,7 +512,9 @@ def gate_mcp_lane(journal, max_age_hours, now):
     if checked is None:
         return Gate("mcp_lane", FAIL, "mcp journal newest record has no valid time")
     age_hours = (now - checked).total_seconds() / 3600
-    detail = f"newest {provider} answer {result} {age_hours:.1f} h ago (allowance {max_age_hours} h)"
+    detail = (
+        f"newest {provider} answer {result} {age_hours:.1f} h ago (allowance {max_age_hours} h)"
+    )
     if result != "accepted":
         return Gate("mcp_lane", FAIL, detail + f": {record['model'].get('error')}")
     if age_hours < 0 or age_hours > max_age_hours:
@@ -453,26 +529,51 @@ def render(gates):
         lines.append(f"{gate.id.ljust(width)}  {gate.status.ljust(7)}  {gate.detail}")
     counts = {s: sum(1 for g in gates if g.status == s) for s in (PASS, FAIL, NOT_RUN)}
     lines.append("")
-    lines.append(f"pass {counts[PASS]}  fail {counts[FAIL]}  not_run {counts[NOT_RUN]}  "
-                 f"-> {'FAIL' if counts[FAIL] else 'no failing gate'}")
+    lines.append(
+        f"pass {counts[PASS]}  fail {counts[FAIL]}  not_run {counts[NOT_RUN]}  "
+        f"-> {'FAIL' if counts[FAIL] else 'no failing gate'}"
+    )
     return "\n".join(lines)
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--manager-state-url")
     parser.add_argument("--manager-read-token-file")
-    parser.add_argument("--manager-state-file", help="saved state JSON instead of the live endpoint")
+    parser.add_argument(
+        "--manager-state-file", help="saved state JSON instead of the live endpoint"
+    )
     parser.add_argument("--evidence-db", help="manager evidence SQLite file, opened read-only")
-    parser.add_argument("--query-control-socket", help="query broker control socket; its projection health is the query_broker gate")
-    parser.add_argument("--query-service-token-file", help="token file for the broker's control socket")
-    parser.add_argument("--query-max-lag-rows", type=int, default=1024,
-                        help="rows behind M the broker may be while still passing (default 1024, four import pages)")
-    parser.add_argument("--query-ledger-db", help="query broker ledger SQLite file; its write activity is a liveness signal only")
-    parser.add_argument("--mcp-journal", help="MCP-lane judgement journal; its newest record must be an accepted answer")
+    parser.add_argument(
+        "--query-control-socket",
+        help="query broker control socket; its projection health is the query_broker gate",
+    )
+    parser.add_argument(
+        "--query-service-token-file", help="token file for the broker's control socket"
+    )
+    parser.add_argument(
+        "--query-max-lag-rows",
+        type=int,
+        default=1024,
+        help="rows behind M the broker may be while still passing (default 1024, four import pages)",
+    )
+    parser.add_argument(
+        "--query-ledger-db",
+        help="query broker ledger SQLite file; its write activity is a liveness signal only",
+    )
+    parser.add_argument(
+        "--mcp-journal",
+        help="MCP-lane judgement journal; its newest record must be an accepted answer",
+    )
     parser.add_argument("--mcp-max-age-hours", type=float, default=2.0)
-    parser.add_argument("--query-max-idle-seconds", type=int, default=300,
-                        help="the query broker imports every 15 s; longer silence fails the gate")
+    parser.add_argument(
+        "--query-max-idle-seconds",
+        type=int,
+        default=300,
+        help="the query broker imports every 15 s; longer silence fails the gate",
+    )
     parser.add_argument("--evidence-file", help="gate-evidence JSON of receipts")
     parser.add_argument("--receipt-max-age-days", type=float, default=90.0)
     parser.add_argument("--no-check-evidence-paths", action="store_true")
@@ -492,8 +593,16 @@ def main(argv=None):
             return 2
         raise
     if args.json:
-        print(json.dumps({"schema_version": 1, "gates": [g.as_dict() for g in gates],
-                          "failing": sum(1 for g in gates if g.status == FAIL)}, indent=1))
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "gates": [g.as_dict() for g in gates],
+                    "failing": sum(1 for g in gates if g.status == FAIL),
+                },
+                indent=1,
+            )
+        )
     else:
         print(render(gates))
     return 1 if any(g.status == FAIL for g in gates) else 0

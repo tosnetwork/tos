@@ -9,9 +9,8 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import subprocess
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "crates/health-services/src/manager_query_source.rs"
@@ -38,13 +37,27 @@ def sha(data: bytes) -> str:
 
 def run(label: str, phase: str, source_sha: str, log_dir: Path, target_dir: Path, timeout: int):
     cmd = [
-        "cargo", "test", "-p", "tos-health-services", "--test", "manager_query_source",
-        "--locked", "-j2", TEST, "--", "--exact", "--nocapture",
+        "cargo",
+        "test",
+        "-p",
+        "tos-health-services",
+        "--test",
+        "manager_query_source",
+        "--locked",
+        "-j2",
+        TEST,
+        "--",
+        "--exact",
+        "--nocapture",
     ]
     env = dict(os.environ, CARGO_TARGET_DIR=str(target_dir), CARGO_INCREMENTAL="0")
     try:
         result = subprocess.run(
-            cmd, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cmd,
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             timeout=timeout,
         )
         output, code = result.stdout, result.returncode
@@ -52,8 +65,10 @@ def run(label: str, phase: str, source_sha: str, log_dir: Path, target_dir: Path
         output = (error.stdout or b"") + b"\nTIMEOUT\n"
         code = 124
     raw = (
-        f"$ {' '.join(cmd)}\nsource_sha256={source_sha}\ntimeout_seconds={timeout}\n"
-    ).encode() + output + f"\nEXIT={code}\n".encode()
+        (f"$ {' '.join(cmd)}\nsource_sha256={source_sha}\ntimeout_seconds={timeout}\n").encode()
+        + output
+        + f"\nEXIT={code}\n".encode()
+    )
     path = log_dir / f"{label}.{phase}.log"
     path.write_bytes(raw)
     return code, output.decode(errors="replace"), {"path": str(path), "sha256": sha(raw)}
@@ -73,8 +88,13 @@ def main():
     original = SOURCE.read_bytes()
     before = sha(original)
     base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    receipt = {"base_head": base, "source_path": str(SOURCE.relative_to(ROOT)),
-               "restored_sha256": before, "test": TEST, "cases": []}
+    receipt = {
+        "base_head": base,
+        "source_path": str(SOURCE.relative_to(ROOT)),
+        "restored_sha256": before,
+        "test": TEST,
+        "cases": [],
+    }
     try:
         for label, old, new, intended_error in CASES:
             old_bytes, new_bytes = old.encode(), new.encode()
@@ -91,8 +111,11 @@ def main():
                 mutant_code, mutant_text, mutant_log = run(
                     label, "mutant", sha(mutant), args.log_dir, args.target_dir, args.timeout
                 )
-                if (mutant_code != 101 or intended_error not in mutant_text
-                        or "0 passed; 1 failed" not in mutant_text):
+                if (
+                    mutant_code != 101
+                    or intended_error not in mutant_text
+                    or "0 passed; 1 failed" not in mutant_text
+                ):
                     raise RuntimeError(f"{label}: no intended compiled assertion failure")
             finally:
                 SOURCE.write_bytes(original)
@@ -101,14 +124,22 @@ def main():
             )
             if restored_code != 0 or "1 passed; 0 failed" not in restored_text:
                 raise RuntimeError(f"{label}: restored control failed")
-            receipt["cases"].append({
-                "label": label, "replacement_old": old, "replacement_new": new,
-                "patch_sha256": sha(old_bytes + b"\0" + new_bytes),
-                "mutant_source_sha256": sha(mutant), "baseline_exit": baseline_code,
-                "mutant_exit": mutant_code, "restored_exit": restored_code,
-                "intended_error": intended_error, "baseline_log": baseline_log,
-                "mutant_log": mutant_log, "restored_log": restored_log,
-            })
+            receipt["cases"].append(
+                {
+                    "label": label,
+                    "replacement_old": old,
+                    "replacement_new": new,
+                    "patch_sha256": sha(old_bytes + b"\0" + new_bytes),
+                    "mutant_source_sha256": sha(mutant),
+                    "baseline_exit": baseline_code,
+                    "mutant_exit": mutant_code,
+                    "restored_exit": restored_code,
+                    "intended_error": intended_error,
+                    "baseline_log": baseline_log,
+                    "mutant_log": mutant_log,
+                    "restored_log": restored_log,
+                }
+            )
     finally:
         SOURCE.write_bytes(original)
         if sha(SOURCE.read_bytes()) != before:

@@ -7,22 +7,21 @@ unverified. This process has no validator control credential.
 """
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor
 import datetime as dt
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import stat
 import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from jsonschema import Draft202012Validator
 from native_chain_anchor import chain_anchor
-
 
 NODES = tuple([f"validator{i}" for i in range(1, 5)] + ["observer5", "observer6"])
 HEX = re.compile(r"[0-9a-f]{64}\Z")
@@ -48,7 +47,11 @@ def read_private(path):
     fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o077
+        ):
             raise ValueError("state_permissions")
         raw = os.read(fd, MAX_STATE + 1)
         if len(raw) > MAX_STATE:
@@ -104,13 +107,16 @@ def node_sample(node, manifest, validator):
     readiness = get_json(8010 + index, "/readyz")
     if next(validator.iter_errors(native), None) is not None:
         raise ValueError("native_schema")
-    if (native.get("source_id") != "native_core" or native.get("node_id") != node
-            or native.get("source_version") not in ("native-core-v2", "native-core-v3")
-            or native.get("availability") != "available"
-            or native.get("clock_quality") != "valid"
-            or native.get("payload", {}).get("network_id") != manifest["network_id"]
-            or native.get("payload", {}).get("generation") != native.get("generation")
-            or native.get("source_epoch") != native.get("process_epoch")):
+    if (
+        native.get("source_id") != "native_core"
+        or native.get("node_id") != node
+        or native.get("source_version") not in ("native-core-v2", "native-core-v3")
+        or native.get("availability") != "available"
+        or native.get("clock_quality") != "valid"
+        or native.get("payload", {}).get("network_id") != manifest["network_id"]
+        or native.get("payload", {}).get("generation") != native.get("generation")
+        or native.get("source_epoch") != native.get("process_epoch")
+    ):
         raise ValueError("native_identity")
     payload = native["payload"]
     if hashlib.sha256(canonical(payload)).hexdigest() != native.get("content_hash"):
@@ -122,17 +128,22 @@ def node_sample(node, manifest, validator):
     if type(pid) is not int or pid <= 0:
         raise ValueError("process_identity")
     command = Path(f"/proc/{pid}/cmdline").read_bytes()[:8192].split(b"\0")
-    if (b"--health-node-id" not in command
-            or command[command.index(b"--health-node-id") + 1:][:1] != [node.encode()]
-            or f"127.0.0.1:{9010 + index}".encode() not in command
-            or f"127.0.0.1:{8010 + index}".encode() not in command):
+    if (
+        b"--health-node-id" not in command
+        or command[command.index(b"--health-node-id") + 1 :][:1] != [node.encode()]
+        or f"127.0.0.1:{9010 + index}".encode() not in command
+        or f"127.0.0.1:{8010 + index}".encode() not in command
+    ):
         raise ValueError("process_identity")
-    if (type(readiness) is not dict or type(readiness.get("ready")) is not bool
-            or type(readiness.get("sync_lag_seconds")) is not int
-            or type(readiness.get("node_time")) is not int
-            or type(readiness.get("last_block_utime")) is not int
-            or type(readiness.get("last_block")) is not dict
-            or type(readiness["last_block"].get("seqno")) is not int):
+    if (
+        type(readiness) is not dict
+        or type(readiness.get("ready")) is not bool
+        or type(readiness.get("sync_lag_seconds")) is not int
+        or type(readiness.get("node_time")) is not int
+        or type(readiness.get("last_block_utime")) is not int
+        or type(readiness.get("last_block")) is not dict
+        or type(readiness["last_block"].get("seqno")) is not int
+    ):
         raise ValueError("readiness_contract")
     now = int(time.time())
     check_readiness_clock(readiness, now)
@@ -142,7 +153,12 @@ def node_sample(node, manifest, validator):
     actions = {}
     for action in consensus.get("actions", []):
         name = action.get("action")
-        if name in actions or name not in ("proposal", "notarize_vote", "finalize_vote", "skip_vote"):
+        if name in actions or name not in (
+            "proposal",
+            "notarize_vote",
+            "finalize_vote",
+            "skip_vote",
+        ):
             raise ValueError("action_identity")
         live = action["live"]
         actions[name] = {
@@ -154,9 +170,11 @@ def node_sample(node, manifest, validator):
     if len(actions) != 4:
         raise ValueError("action_coverage")
     version = native["source_version"]
-    anchor, anchor_status = (chain_anchor(payload.get("chain"), manifest["network_id"],
-                                          native["observed_at"], now)
-                             if version == "native-core-v3" else (None, None))
+    anchor, anchor_status = (
+        chain_anchor(payload.get("chain"), manifest["network_id"], native["observed_at"], now)
+        if version == "native-core-v3"
+        else (None, None)
+    )
     return {
         "pid": pid,
         "native_epoch": native["process_epoch"],
@@ -181,7 +199,9 @@ def evaluate(current, previous, elapsed_ms):
         return "degraded", ["sync_not_ready"]
     if previous is None or elapsed_ms is None or elapsed_ms < 30_000:
         return "unknown", ["needs_independent_sample"]
-    if current["pid"] != previous.get("pid") or current["native_epoch"] != previous.get("native_epoch"):
+    if current["pid"] != previous.get("pid") or current["native_epoch"] != previous.get(
+        "native_epoch"
+    ):
         return "unknown", ["epoch_changed"]
     if current["native_generation"] <= previous.get("native_generation", -1):
         return "unknown", ["native_not_advanced"]
@@ -200,7 +220,10 @@ def evaluate(current, previous, elapsed_ms):
         if now["failed"] > old["failed"]:
             return "degraded", ["local_action_failure"]
     if not current["native_complete"] or current["native_missing"]:
-        if current.get("native_version") == "native-core-v3" and current["chain_anchor_status"] != "observed":
+        if (
+            current.get("native_version") == "native-core-v3"
+            and current["chain_anchor_status"] != "observed"
+        ):
             return "unknown", ["chain_anchor_" + current["chain_anchor_status"]]
         return "unknown", ["unverified_validator_dimensions"]
     return "unknown", ["validator_duty_and_finality_unverified"]
@@ -208,18 +231,26 @@ def evaluate(current, previous, elapsed_ms):
 
 def facts(current, previous):
     old = previous if isinstance(previous, dict) else {}
-    result = {"sync_lag_seconds": current["sync_lag_seconds"],
-              "block_seqno": current["block_seqno"],
-              "native_generation": current["native_generation"],
-              "native_hash": current["native_hash"],
-              "native_complete": current["native_complete"]}
+    result = {
+        "sync_lag_seconds": current["sync_lag_seconds"],
+        "block_seqno": current["block_seqno"],
+        "native_generation": current["native_generation"],
+        "native_hash": current["native_hash"],
+        "native_complete": current["native_complete"],
+    }
     if old.get("native_epoch") == current["native_epoch"]:
         for label, new, prior in (
             ("block_delta", current["block_seqno"], old.get("block_seqno")),
-            ("local_requests_delta", sum(v["requested"] for v in current["actions"].values()),
-             sum(v["requested"] for v in old.get("actions", {}).values())),
-            ("storage_ack_delta", sum(v["committed"] for v in current["actions"].values()),
-             sum(v["committed"] for v in old.get("actions", {}).values())),
+            (
+                "local_requests_delta",
+                sum(v["requested"] for v in current["actions"].values()),
+                sum(v["requested"] for v in old.get("actions", {}).values()),
+            ),
+            (
+                "storage_ack_delta",
+                sum(v["committed"] for v in current["actions"].values()),
+                sum(v["committed"] for v in old.get("actions", {}).values()),
+            ),
         ):
             if type(prior) is int and new >= prior:
                 result[label] = new - prior
@@ -231,14 +262,18 @@ def facts(current, previous):
 
 
 def run(manifest, schema, previous, fetch=node_sample):
-    if not HEX.fullmatch(manifest.get("network_id", "")) or set(manifest.get("nodes", {})) != set(NODES):
+    if not HEX.fullmatch(manifest.get("network_id", "")) or set(manifest.get("nodes", {})) != set(
+        NODES
+    ):
         raise ValueError("manifest_identity")
     boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     namespace = os.stat("/proc/self/ns/time").st_ino
     tick = time.clock_gettime_ns(time.CLOCK_BOOTTIME)
     domain = f"{boot}:{namespace}"
     prior_tick = previous.get("boottime_ns") if previous.get("domain") == domain else None
-    elapsed = (tick - prior_tick) // 1_000_000 if type(prior_tick) is int and tick >= prior_tick else None
+    elapsed = (
+        (tick - prior_tick) // 1_000_000 if type(prior_tick) is int and tick >= prior_tick else None
+    )
     validator = Draft202012Validator(schema)
     with ThreadPoolExecutor(max_workers=6) as pool:
         futures = {node: pool.submit(fetch, node, manifest, validator) for node in NODES}
@@ -253,7 +288,10 @@ def run(manifest, schema, previous, fetch=node_sample):
                 sample.pop("chain_anchor", None)
                 samples[node] = sample
             except (OSError, ValueError, KeyError, TypeError, TimeoutError) as error:
-                status, reasons = "unknown", [type(error).__name__ if not isinstance(error, ValueError) else str(error)]
+                status, reasons = (
+                    "unknown",
+                    [type(error).__name__ if not isinstance(error, ValueError) else str(error)],
+                )
                 checked = {}
             verdicts[node] = {"status": status, "reasons": reasons, "facts": checked}
     return {
@@ -283,9 +321,22 @@ def main():
         previous = {}
     result = run(manifest, schema, previous)
     write_private(args.state_file, result)
-    print(json.dumps({key: value for key, value in result.items() if key not in ("samples", "domain", "boottime_ns")}, sort_keys=True))
-    return int(any(value["status"] == "degraded" or not value["facts"]
-                   for value in result["verdicts"].values()))
+    print(
+        json.dumps(
+            {
+                key: value
+                for key, value in result.items()
+                if key not in ("samples", "domain", "boottime_ns")
+            },
+            sort_keys=True,
+        )
+    )
+    return int(
+        any(
+            value["status"] == "degraded" or not value["facts"]
+            for value in result["verdicts"].values()
+        )
+    )
 
 
 if __name__ == "__main__":

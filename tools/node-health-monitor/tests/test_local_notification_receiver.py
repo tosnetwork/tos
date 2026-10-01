@@ -1,5 +1,6 @@
 """The receiver's accept path: one idle TCP connection must not block the
 service entrance, and the handshake itself must be bounded in time."""
+
 import json
 import os
 import select
@@ -34,14 +35,47 @@ def receiver(tmp_path):
     cert, key, token = tmp_path / "cert.pem", tmp_path / "key.pem", tmp_path / "token"
     token.write_text(TOKEN)
     token.chmod(0o600)
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key),
-                    "-out", str(cert), "-days", "1", "-subj", "/CN=localhost"],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    subprocess.run(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=localhost",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True,
+    )
     port = _free_port()
-    server = subprocess.Popen([sys.executable, str(SCRIPT), "--listen", f"127.0.0.1:{port}",
-                               "--cert-file", str(cert), "--key-file", str(key),
-                               "--token-file", str(token), "--journal", str(tmp_path / "journal")],
-                              stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
+    server = subprocess.Popen(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--listen",
+            f"127.0.0.1:{port}",
+            "--cert-file",
+            str(cert),
+            "--key-file",
+            str(key),
+            "--token-file",
+            str(token),
+            "--journal",
+            str(tmp_path / "journal"),
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
     try:
         ready, _, _ = select.select([server.stderr], [], [], 5)
         assert ready, "receiver never announced readiness"
@@ -57,9 +91,14 @@ def receiver(tmp_path):
 
 
 def _post(port, token=TOKEN, timeout=1.0):
-    data = json.dumps({"incident": {}, "idempotency_key": "owned-test", "payload_hash": "a" * 64}).encode()
-    request = urllib.request.Request(f"https://127.0.0.1:{port}/v1/notifications", data=data,
-                                     headers={"Authorization": f"Bearer {token}", "idempotency-key": "owned-test"})
+    data = json.dumps(
+        {"incident": {}, "idempotency_key": "owned-test", "payload_hash": "a" * 64}
+    ).encode()
+    request = urllib.request.Request(
+        f"https://127.0.0.1:{port}/v1/notifications",
+        data=data,
+        headers={"Authorization": f"Bearer {token}", "idempotency-key": "owned-test"},
+    )
     context = ssl._create_unverified_context()
     try:
         with urllib.request.urlopen(request, context=context, timeout=timeout) as response:

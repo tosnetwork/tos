@@ -9,6 +9,7 @@ journal and acknowledged with the exact receipt M requires:
 delivered. This proves delivery to an independent process, not to a human;
 route the journal onward (chat, pager) for that.
 """
+
 import argparse
 import http.server
 import json
@@ -29,7 +30,9 @@ HANDSHAKE_TIMEOUT_S = 5
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--listen", default="127.0.0.1:19700")
     parser.add_argument("--cert-file", required=True)
     parser.add_argument("--key-file", required=True)
@@ -42,6 +45,7 @@ def main():
     host, port = args.listen.rsplit(":", 1)
 
     import threading
+
     inflight = threading.BoundedSemaphore(MAX_INFLIGHT)
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -114,12 +118,23 @@ def main():
             # The hash is over M's stored outbox bytes, which this side cannot
             # reproduce byte for byte from parsed JSON; the receipt echoes it and
             # M verifies the echo against its own committed hash.
-            if not isinstance(claimed, str) or len(claimed) != 64 or any(c not in "0123456789abcdef" for c in claimed):
+            if (
+                not isinstance(claimed, str)
+                or len(claimed) != 64
+                or any(c not in "0123456789abcdef" for c in claimed)
+            ):
                 return self._reply(400, {"accepted": False, "reason": "payload_hash_shape"})
-            line = json.dumps({"received_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                               "idempotency_key": key, "payload_hash": claimed,
-                               "network_id": body.get("network_id"), "receiver_alias": body.get("receiver_alias"),
-                               "incident": incident}, ensure_ascii=False)
+            line = json.dumps(
+                {
+                    "received_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "idempotency_key": key,
+                    "payload_hash": claimed,
+                    "network_id": body.get("network_id"),
+                    "receiver_alias": body.get("receiver_alias"),
+                    "incident": incident,
+                },
+                ensure_ascii=False,
+            )
             # One kept generation: the journal never grows past the cap.
             try:
                 size = journal.stat().st_size
@@ -127,12 +142,18 @@ def main():
                 size = 0
             if size + len(line) + 1 > JOURNAL_MAX_BYTES:
                 os.replace(journal, journal.with_name(journal.name + ".1"))
-            fd = os.open(journal, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+            fd = os.open(
+                journal,
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_CLOEXEC | os.O_NOFOLLOW,
+                0o600,
+            )
             with os.fdopen(fd, "a") as stream:
                 stream.write(line + "\n")
                 stream.flush()
                 os.fsync(stream.fileno())
-            return self._reply(200, {"accepted": True, "idempotency_key": key, "payload_hash": claimed})
+            return self._reply(
+                200, {"accepted": True, "idempotency_key": key, "payload_hash": claimed}
+            )
 
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -141,7 +162,9 @@ def main():
     server.daemon_threads = True
     # Deferred handshake: accept() returns at once and the handler thread
     # completes TLS under HANDSHAKE_TIMEOUT_S.
-    server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+    server.socket = context.wrap_socket(
+        server.socket, server_side=True, do_handshake_on_connect=False
+    )
     print(f"receiver listening on {args.listen}", file=sys.stderr, flush=True)
     server.serve_forever()
 

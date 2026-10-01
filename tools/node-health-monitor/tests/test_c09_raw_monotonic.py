@@ -13,8 +13,8 @@ from pathlib import Path
 
 PERF = Path(__file__).resolve().parents[1] / "perf"
 sys.path.insert(0, str(PERF))
-import c09_profiles as profiles
-import raw_monotonic as raw
+import c09_profiles as profiles  # noqa: E402 -- importable only once perf/ is on the path
+import raw_monotonic as raw  # noqa: E402
 
 
 def plan():
@@ -24,21 +24,41 @@ def plan():
             names = list("ABCDEF")
             if round_index % 2:
                 names.reverse()
-            order.extend({"workload": workload, "round": round_index, "profile": name} for name in names)
-    return {"profiles": profiles.expected_profiles(False), "workloads": list(profiles.WORKLOADS),
-            "warmup_seconds": 60, "window_seconds": 1800, "rounds": 3, "order": order,
-            "population": {"nodes": ["fixture"], "scopes": ["masterchain"]},
-            "hashes": {k: "a" * 64 for k in profiles.REQUIRED_HASHES},
-            "roles": {"fixture": "validator"}, "effective_quotas": {"fixture": {"queries": 0}},
-            "method": {"sample_policy": "all_attempts", "noise_rule": "predeclared",
-                       "instrument_cost": "paired", "comparison": "alternating_rounds",
-                       "outcome_policy": "retain_all"}, "cache_only_path": "/cached"}
+            order.extend(
+                {"workload": workload, "round": round_index, "profile": name} for name in names
+            )
+    return {
+        "profiles": profiles.expected_profiles(False),
+        "workloads": list(profiles.WORKLOADS),
+        "warmup_seconds": 60,
+        "window_seconds": 1800,
+        "rounds": 3,
+        "order": order,
+        "population": {"nodes": ["fixture"], "scopes": ["masterchain"]},
+        "hashes": {k: "a" * 64 for k in profiles.REQUIRED_HASHES},
+        "roles": {"fixture": "validator"},
+        "effective_quotas": {"fixture": {"queries": 0}},
+        "method": {
+            "sample_policy": "all_attempts",
+            "noise_rule": "predeclared",
+            "instrument_cost": "paired",
+            "comparison": "alternating_rounds",
+            "outcome_policy": "retain_all",
+        },
+        "cache_only_path": "/cached",
+    }
 
 
 def capture(path, requested=2, max_records=raw.MAX_RECORDS):
-    return raw.Capture(path, plan_sha256=profiles.freeze_plan(plan())["plan_sha256"],
-                       profile="A", workload="normal", round_index=0,
-                       requested=requested, max_records=max_records)
+    return raw.Capture(
+        path,
+        plan_sha256=profiles.freeze_plan(plan())["plan_sha256"],
+        profile="A",
+        workload="normal",
+        round_index=0,
+        requested=requested,
+        max_records=max_records,
+    )
 
 
 class Fixture(http.server.BaseHTTPRequestHandler):
@@ -62,10 +82,18 @@ class RawTest(unittest.TestCase):
     def test_plan_freezes_all_toggles_and_schedule(self):
         good = plan()
         self.assertEqual(len(profiles.freeze_plan(good)["plan_sha256"]), 64)
-        for altered in (good | {"profiles": {**good["profiles"], "E": {**good["profiles"]["E"], "diagnostics": None}}},
-                        good | {"order": good["order"][:-1]},
-                        good | {"window_seconds": 1799},
-                        good | {"cache_only_path": "/cached?q=1"}):
+        for altered in (
+            good
+            | {
+                "profiles": {
+                    **good["profiles"],
+                    "E": {**good["profiles"]["E"], "diagnostics": None},
+                }
+            },
+            good | {"order": good["order"][:-1]},
+            good | {"window_seconds": 1799},
+            good | {"cache_only_path": "/cached?q=1"},
+        ):
             with self.subTest(altered=altered.keys()), self.assertRaises(ValueError):
                 profiles.freeze_plan(altered)
         evidence = profiles.empty_run_evidence("C")
@@ -75,13 +103,17 @@ class RawTest(unittest.TestCase):
 
     def test_clock_identity_and_canonical_decimal(self):
         p = raw.Point("epoch", "domain", raw.CLOCK_NAME, "100")
-        self.assertEqual(raw.duration_ns(p, raw.Point("epoch", "domain", raw.CLOCK_NAME, "125")), "25")
-        for other in (raw.Point("other", "domain", raw.CLOCK_NAME, "125"),
-                      raw.Point("epoch", "other", raw.CLOCK_NAME, "125"),
-                      raw.Point("epoch", "domain", "CLOCK_MONOTONIC", "125"),
-                      raw.Point("epoch", "domain", raw.CLOCK_NAME, "99"),
-                      raw.Point("epoch", "domain", raw.CLOCK_NAME, "0100"),
-                      raw.Point("epoch", "domain", raw.CLOCK_NAME, str(100 + raw.MAX_DURATION_NS + 1))):
+        self.assertEqual(
+            raw.duration_ns(p, raw.Point("epoch", "domain", raw.CLOCK_NAME, "125")), "25"
+        )
+        for other in (
+            raw.Point("other", "domain", raw.CLOCK_NAME, "125"),
+            raw.Point("epoch", "other", raw.CLOCK_NAME, "125"),
+            raw.Point("epoch", "domain", "CLOCK_MONOTONIC", "125"),
+            raw.Point("epoch", "domain", raw.CLOCK_NAME, "99"),
+            raw.Point("epoch", "domain", raw.CLOCK_NAME, "0100"),
+            raw.Point("epoch", "domain", raw.CLOCK_NAME, str(100 + raw.MAX_DURATION_NS + 1)),
+        ):
             with self.subTest(other=other), self.assertRaises(ValueError):
                 raw.duration_ns(p, other)
 
@@ -98,20 +130,44 @@ class RawTest(unittest.TestCase):
                 for mode in ("ok", "redirect"):
                     server.mode = mode
                     output = root / f"{mode}.jsonl"
-                    result = subprocess.run([sys.executable, str(PERF / "raw_monotonic.py"),
-                                             "--plan", str(plan_path), "--profile", "A",
-                                             "--workload", "normal", "--round", "0",
-                                             "--url", f"http://127.0.0.1:{server.server_port}/cached",
-                                             "--output", str(output), "--count", "2"],
-                                            capture_output=True, text=True, timeout=10)
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(PERF / "raw_monotonic.py"),
+                            "--plan",
+                            str(plan_path),
+                            "--profile",
+                            "A",
+                            "--workload",
+                            "normal",
+                            "--round",
+                            "0",
+                            "--url",
+                            f"http://127.0.0.1:{server.server_port}/cached",
+                            "--output",
+                            str(output),
+                            "--count",
+                            "2",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
                     self.assertEqual(result.returncode, 0, result.stderr)
                     manifest = raw.verify_capture(output)
-                    self.assertEqual((manifest["requested"], manifest["retained"], manifest["dropped"]), (2, 2, 0))
+                    self.assertEqual(
+                        (manifest["requested"], manifest["retained"], manifest["dropped"]),
+                        (2, 2, 0),
+                    )
                     rows = [json.loads(line) for line in output.read_text().splitlines()]
                     self.assertEqual([row["seq"] for row in rows], [1, 2])
-                    self.assertEqual({row["outcome"] for row in rows}, {"ok" if mode == "ok" else "http_error"})
+                    self.assertEqual(
+                        {row["outcome"] for row in rows}, {"ok" if mode == "ok" else "http_error"}
+                    )
                     self.assertEqual({row["population"] for row in rows}, {raw.POPULATION})
-                    self.assertEqual({row["clock_domain_id"] for row in rows}, {manifest["clock_domain_id"]})
+                    self.assertEqual(
+                        {row["clock_domain_id"] for row in rows}, {manifest["clock_domain_id"]}
+                    )
                     self.assertEqual(output.stat().st_mode & 0o777, 0o600)
         finally:
             server.shutdown()
@@ -119,9 +175,13 @@ class RawTest(unittest.TestCase):
             worker.join()
 
     def test_loopback_gate_refusal_and_capacity_are_population_rows(self):
-        for url in ("http://example.com:80/cached", "http://localhost:1/cached",
-                    "http://127.0.0.1:1/other", "http://127.0.0.1:1/cached?q=1",
-                    "https://127.0.0.1:1/cached"):
+        for url in (
+            "http://example.com:80/cached",
+            "http://localhost:1/cached",
+            "http://127.0.0.1:1/other",
+            "http://127.0.0.1:1/cached?q=1",
+            "https://127.0.0.1:1/cached",
+        ):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 raw._loopback_target(url, "/cached")
         with tempfile.TemporaryDirectory() as directory:
@@ -130,7 +190,9 @@ class RawTest(unittest.TestCase):
             self.assertTrue(c.finish(c.start(), "error"))
             self.assertFalse(c.finish(c.start(), "timeout"))
             manifest = c.close()
-            self.assertEqual((manifest["attempted"], manifest["retained"], manifest["dropped"]), (2, 1, 1))
+            self.assertEqual(
+                (manifest["attempted"], manifest["retained"], manifest["dropped"]), (2, 1, 1)
+            )
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 raw.verify_capture(path)
             self.assertFalse(raw.verify_capture(path, require_complete=False)["complete"])
@@ -144,6 +206,7 @@ class RawTest(unittest.TestCase):
             unused_port = server.server_port
             server.server_close()
             self.assertEqual(raw._probe("127.0.0.1", unused_port, "/cached", 0.2), "error")
+
             class Slow(http.server.BaseHTTPRequestHandler):
                 def do_GET(self):
                     time.sleep(0.2)
@@ -155,7 +218,9 @@ class RawTest(unittest.TestCase):
             worker = threading.Thread(target=slow.serve_forever, daemon=True)
             worker.start()
             try:
-                self.assertEqual(raw._probe("127.0.0.1", slow.server_port, "/cached", 0.05), "timeout")
+                self.assertEqual(
+                    raw._probe("127.0.0.1", slow.server_port, "/cached", 0.05), "timeout"
+                )
             finally:
                 slow.shutdown()
                 slow.server_close()
@@ -180,13 +245,22 @@ class RawTest(unittest.TestCase):
             manifest_path = Path(str(path) + ".manifest.json")
             original = path.read_bytes()
             manifest = json.loads(manifest_path.read_text())
-            for field, value in (("seq", 3), ("duration_ns", "00"), ("population", "wrong"),
-                                 ("clock_domain_id", "another-domain"), ("finish_ns", "0")):
+            for field, value in (
+                ("seq", 3),
+                ("duration_ns", "00"),
+                ("population", "wrong"),
+                ("clock_domain_id", "another-domain"),
+                ("finish_ns", "0"),
+            ):
                 rows = [json.loads(line) for line in original.splitlines()]
                 rows[0][field] = value
                 altered = b"".join(raw.canonical(row) for row in rows)
                 path.write_bytes(altered)
-                changed = dict(manifest, retained_bytes=len(altered), raw_sha256=hashlib.sha256(altered).hexdigest())
+                changed = dict(
+                    manifest,
+                    retained_bytes=len(altered),
+                    raw_sha256=hashlib.sha256(altered).hexdigest(),
+                )
                 manifest_path.write_bytes(raw.canonical(changed))
                 with self.subTest(field=field), self.assertRaises(ValueError):
                     raw.verify_capture(path)
@@ -201,35 +275,53 @@ class RawTest(unittest.TestCase):
             c = capture(path, requested=3)
             c.finish(c.start(), "ok")
             point = c.start()
-            foreign = raw.Point("other-epoch", point.clock_domain_id, point.clock_name, point.monotonic_ns)
+            foreign = raw.Point(
+                "other-epoch", point.clock_domain_id, point.clock_name, point.monotonic_ns
+            )
             with self.assertRaises(ValueError):
                 c.finish(foreign, "error")
             c.finish(c.start(), "timeout")
             manifest = c.close()
-            self.assertEqual((manifest["attempted"], manifest["retained"], manifest["invalid"]), (3, 2, 1))
-            self.assertEqual([json.loads(line)["seq"] for line in path.read_text().splitlines()], [1, 3])
+            self.assertEqual(
+                (manifest["attempted"], manifest["retained"], manifest["invalid"]), (3, 2, 1)
+            )
+            self.assertEqual(
+                [json.loads(line)["seq"] for line in path.read_text().splitlines()], [1, 3]
+            )
             self.assertFalse(raw.verify_capture(path, require_complete=False)["complete"])
             with self.assertRaisesRegex(ValueError, "incomplete"):
                 raw.verify_capture(path)
 
     def test_isolated_guard_mutants_turn_red(self):
         source = (PERF / "raw_monotonic.py").read_text()
-        old = "start.clock_domain_id != finish.clock_domain_id or not start.clock_domain_id or"
-        self.assertIn(old, source)
-        mutant = source.replace(old, "False or", 1)
+        old = (
+            "        or start.clock_domain_id != finish.clock_domain_id\n"
+            "        or not start.clock_domain_id\n"
+        )
+        self.assertEqual(source.count(old), 1)
+        mutant = source.replace(old, "        or False\n", 1)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "raw_monotonic.py").write_text(mutant)
             (root / "c09_profiles.py").write_text((PERF / "c09_profiles.py").read_text())
-            program = ("import raw_monotonic as r\n"
-                       "a=r.Point('e','d1',r.CLOCK_NAME,'1')\n"
-                       "b=r.Point('e','d2',r.CLOCK_NAME,'2')\n"
-                       "assert r.duration_ns(a,b)=='1'\n")
-            compiled = subprocess.run([sys.executable, "-m", "py_compile", str(root / "raw_monotonic.py")], capture_output=True)
+            program = (
+                "import raw_monotonic as r\n"
+                "a=r.Point('e','d1',r.CLOCK_NAME,'1')\n"
+                "b=r.Point('e','d2',r.CLOCK_NAME,'2')\n"
+                "assert r.duration_ns(a,b)=='1'\n"
+            )
+            compiled = subprocess.run(
+                [sys.executable, "-m", "py_compile", str(root / "raw_monotonic.py")],
+                capture_output=True,
+            )
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
-            result = subprocess.run([sys.executable, "-c", program], cwd=root, capture_output=True, text=True)
+            result = subprocess.run(
+                [sys.executable, "-c", program], cwd=root, capture_output=True, text=True
+            )
             self.assertEqual(result.returncode, 0, result.stderr)
-            original = subprocess.run([sys.executable, "-c", program], cwd=PERF, capture_output=True)
+            original = subprocess.run(
+                [sys.executable, "-c", program], cwd=PERF, capture_output=True
+            )
             self.assertNotEqual(original.returncode, 0)
 
 

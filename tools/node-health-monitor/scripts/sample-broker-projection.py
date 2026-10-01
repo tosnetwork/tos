@@ -70,7 +70,11 @@ def sample(sock_path, token_path):
         conn.request(
             "GET",
             "/v1/control/projection-health",
-            headers={"Authorization": "Bearer " + token, "Accept": "application/json", "Connection": "close"},
+            headers={
+                "Authorization": "Bearer " + token,
+                "Accept": "application/json",
+                "Connection": "close",
+            },
         )
         reply = conn.getresponse()
         raw = reply.read(4097)
@@ -78,26 +82,42 @@ def sample(sock_path, token_path):
         if len(raw) > 4096 or reply.status not in (200, 503) or content_type != "application/json":
             raise ValueError("projection response rejected")
         value = json.loads(raw)
-        if type(value) is not dict or type(value.get("schema_version")) is not int or value["schema_version"] != 1:
+        if (
+            type(value) is not dict
+            or type(value.get("schema_version")) is not int
+            or value["schema_version"] != 1
+        ):
             raise ValueError("projection schema rejected")
         required = {
-            "projection_status", "manager_conflicted", "caught_up_at_last_import",
-            "query_watermark", "cursor_global_m_seq", "source_global_m_seq",
-            "lag_global_m_seq", "source_identity_match",
+            "projection_status",
+            "manager_conflicted",
+            "caught_up_at_last_import",
+            "query_watermark",
+            "cursor_global_m_seq",
+            "source_global_m_seq",
+            "lag_global_m_seq",
+            "source_identity_match",
         }
         if not required.issubset(value):
             raise ValueError("projection fields missing")
         status = value.get("projection_status")
         if status not in {
-            "caught_up", "lagging", "conflict", "source_unavailable",
-            "uninitialized", "identity_or_watermark_mismatch", "transition",
+            "caught_up",
+            "lagging",
+            "conflict",
+            "source_unavailable",
+            "uninitialized",
+            "identity_or_watermark_mismatch",
+            "transition",
         }:
             raise ValueError("projection status rejected")
         conflicted = value.get("manager_conflicted")
         caught_up = value.get("caught_up_at_last_import")
         identity = value.get("source_identity_match")
-        if type(conflicted) is not bool or type(caught_up) is not bool or not (
-            type(identity) is bool or identity is None
+        if (
+            type(conflicted) is not bool
+            or type(caught_up) is not bool
+            or not (type(identity) is bool or identity is None)
         ):
             raise ValueError("projection flags rejected")
         cursor = u64_or_null(value.get("cursor_global_m_seq"))
@@ -110,15 +130,23 @@ def sample(sock_path, token_path):
             if int(source) < int(cursor) or int(source) - int(cursor) != int(lag):
                 raise ValueError("projection lag inconsistent")
         if status == "caught_up" and not (
-            reply.status == 200 and not conflicted and caught_up and identity is True
-            and cursor is not None and source == cursor and lag == "0"
+            reply.status == 200
+            and not conflicted
+            and caught_up
+            and identity is True
+            and cursor is not None
+            and source == cursor
+            and lag == "0"
         ):
             raise ValueError("false caught-up projection")
         if status == "conflict" and not (reply.status == 503 and conflicted):
             raise ValueError("false conflict projection")
         if status == "lagging" and not (
-            reply.status == 200 and not conflicted and identity is True
-            and lag is not None and (not caught_up or lag != "0")
+            reply.status == 200
+            and not conflicted
+            and identity is True
+            and lag is not None
+            and (not caught_up or lag != "0")
         ):
             raise ValueError("false lagging projection")
         if status == "source_unavailable" and not (reply.status == 503 and source is None):

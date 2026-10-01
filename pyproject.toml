@@ -60,6 +60,28 @@ extend-exclude = [
     "test/pq-native/test_e09_negative_finality.py",
     "test/pq-native/test_e10_composed_evidence.py",
     "test/tostester/src/tostester/network.py",
+    # The node health monitor's receipts, source manifests and deployment hash inputs pin
+    # these scripts by their exact bytes, for the same reason as above.
+    "scripts/local-pq-privacy.py",
+    "scripts/local-pq-transfers.py",
+    "tools/node-health-monitor/scripts/check-witness-current.py",
+    "tools/node-health-monitor/scripts/freeze-manifests.py",
+    "tools/node-health-monitor/scripts/plan-c09-retention-dry-run.py",
+    "tools/node-health-monitor/scripts/prepare-c09-fresh-window.py",
+    "tools/node-health-monitor/scripts/sample-query-functional.py",
+    "tools/node-health-monitor/scripts/test-plan-c09-retention-dry-run.py",
+    "tools/node-health-monitor/scripts/verify-c09-dev-30m.py",
+    "tools/node-health-monitor/scripts/write-c09-functional-stop-receipt.py",
+    "tools/node-health-monitor/tests/c00-closure-mutations.py",
+    "tools/node-health-monitor/tests/c01-publisher-mutations.py",
+    "tools/node-health-monitor/tests/c02-edge-mutations.py",
+    "tools/node-health-monitor/tests/c03-runtime-chain.py",
+    "tools/node-health-monitor/tests/c04-consumer-closure.py",
+    "tools/node-health-monitor/tests/c04-consumer-mutations.py",
+    "tools/node-health-monitor/tests/c04-metric-union.py",
+    "tools/node-health-monitor/tests/c04-native-mutations.py",
+    "tools/node-health-monitor/tests/c06-rust-mutations.py",
+    "tools/node-health-monitor/tests/check-c04-producer-pair.py",
 ]
 
 [tool.ruff.lint]

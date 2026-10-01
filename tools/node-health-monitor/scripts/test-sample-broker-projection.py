@@ -3,7 +3,6 @@
 
 import json
 import os
-from pathlib import Path
 import runpy
 import socketserver
 import subprocess
@@ -11,8 +10,8 @@ import sys
 import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest import mock
-
 
 SCRIPT = Path(__file__).with_name("sample-broker-projection.py")
 TOKEN = "a" * 64
@@ -26,8 +25,14 @@ class Handler(socketserver.BaseRequestHandler):
         self.server.request_bytes = request
         payload = self.server.payload
         self.request.sendall(
-            ("HTTP/1.1 " + str(self.server.code) + " OK\r\nContent-Type: application/json\r\n"
-             + "Content-Length: " + str(len(payload)) + "\r\nConnection: close\r\n\r\n").encode()
+            (
+                "HTTP/1.1 "
+                + str(self.server.code)
+                + " OK\r\nContent-Type: application/json\r\n"
+                + "Content-Length: "
+                + str(len(payload))
+                + "\r\nConnection: close\r\n\r\n"
+            ).encode()
             + payload
         )
 
@@ -53,7 +58,14 @@ class ProjectionProbeTest(unittest.TestCase):
         worker.start()
         try:
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), "--socket", str(self.sock), "--token-file", str(self.token)],
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--socket",
+                    str(self.sock),
+                    "--token-file",
+                    str(self.token),
+                ],
                 capture_output=True,
                 text=True,
                 timeout=5,
@@ -61,7 +73,9 @@ class ProjectionProbeTest(unittest.TestCase):
             )
             worker.join(timeout=1)
             self.assertIn(b"GET /v1/control/projection-health HTTP/1.1", server.request_bytes)
-            self.assertIn(("Authorization: Bearer " + expected_token).encode(), server.request_bytes)
+            self.assertIn(
+                ("Authorization: Bearer " + expected_token).encode(), server.request_bytes
+            )
             self.assertNotIn(expected_token, result.stdout + result.stderr)
             self.assertTrue(result.stdout, result.stderr)
             return result, json.loads(result.stdout)
@@ -90,9 +104,11 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertTrue(output["projection_caught_up"])
         self.assertTrue(output["sample_boottime_ms"].isdecimal())
         self.sock.unlink()
-        result, output = self.run_probe(self.document(
-            projection_status="lagging", source_global_m_seq="26", lag_global_m_seq="1"
-        ))
+        result, output = self.run_probe(
+            self.document(
+                projection_status="lagging", source_global_m_seq="26", lag_global_m_seq="1"
+            )
+        )
         self.assertEqual(result.returncode, 0)
         self.assertEqual(output["lag_global_m_seq"], "1")
         self.assertTrue(output["probe_ok"])
@@ -100,7 +116,9 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertTrue(output["sample_boottime_ms"].isdecimal())
 
     def test_false_caught_up_and_oversize_are_refused_without_secret_output(self):
-        result, output = self.run_probe(self.document(source_global_m_seq="26", lag_global_m_seq="1"))
+        result, output = self.run_probe(
+            self.document(source_global_m_seq="26", lag_global_m_seq="1")
+        )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(output["error_kind"], "ValueError")
         self.sock.unlink()
@@ -119,7 +137,9 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertEqual(output["error_kind"], "ValueError")
 
     def test_conflict_and_private_file_permissions(self):
-        result, output = self.run_probe(self.document(projection_status="conflict", manager_conflicted=True), 503)
+        result, output = self.run_probe(
+            self.document(projection_status="conflict", manager_conflicted=True), 503
+        )
         self.assertEqual(result.returncode, 0)
         self.assertTrue(output["manager_conflicted"])
         self.assertFalse(output["projection_caught_up"])
@@ -130,7 +150,14 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertFalse(output["projection_caught_up"])
         self.token.chmod(0o644)
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--socket", str(self.sock), "--token-file", str(self.token)],
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--socket",
+                str(self.sock),
+                "--token-file",
+                str(self.token),
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -141,7 +168,9 @@ class ProjectionProbeTest(unittest.TestCase):
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
 
     def test_transition_503_is_explicit_unavailable(self):
-        transition = self.document(projection_status="transition", source_global_m_seq="26", lag_global_m_seq="1")
+        transition = self.document(
+            projection_status="transition", source_global_m_seq="26", lag_global_m_seq="1"
+        )
         result, output = self.run_probe(transition, 503)
         self.assertEqual(result.returncode, 0)
         self.assertTrue(output["probe_ok"])
@@ -183,8 +212,18 @@ class ProjectionProbeTest(unittest.TestCase):
         self.sock.unlink()
         self.token.write_text("a" * 4097)
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--socket", str(self.sock), "--token-file", str(self.token)],
-            capture_output=True, text=True, timeout=5, check=False,
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--socket",
+                str(self.sock),
+                "--token-file",
+                str(self.token),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         self.assertEqual(result.returncode, 1)
         self.assertEqual(json.loads(result.stdout)["error_kind"], "ValueError")
