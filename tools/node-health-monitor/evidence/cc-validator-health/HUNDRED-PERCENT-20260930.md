@@ -370,3 +370,17 @@ Branch head `6d0df8ba2`, pushed; memo updated.
 - Live: 7 nodes, key block seqno 71743 at age ≈ 60–80 s, applied age 0 s,
   every rule good except `state_gc_lag` (warning, true: GC seqno 0 until the
   first persistent state after 06:38:56 UTC). Audit note §4 and §6 written.
+
+## 17. Independent re-review closed (07:00–08:14 UTC)
+
+- Codex's re-review (`SAFETY-PERF-REVIEW-20261001.md`) could not close SEC-01/02/03/04/06/07/08/09.
+  SEC-01/02/03/04/06/09 fixed with the reviewer's own controls turned into
+  red-then-green tests (audit note §7); SEC-07/08 stay residuals, listed
+  separately as the reviewer asked.
+- Engine `…-80d22e8ac358e541` (disk query off the actor, single waiter traversal)
+  rolled onto all seven nodes; restarts now take about six seconds because
+  the first persistent state exists.
+- Deploying exposed a second silent Q outage: a parent bound that only
+  refused, swallowed import errors and a doctor gate reading a file
+  timestamp. All three fixed; the gate now reads Q's projection health.
+- Final: Q re-projected from M's boundary and caught up (lag 61 rows at 08:14 UTC after a 140,000-row catch-up in eight minutes, 543 retained parents, 115 MiB resident, 0 import errors since 08:06:28); doctor `pass 16 fail 0 not_run 3 (physical_separation, soak_72h, cert_rotation) at 08:14 UTC`. Head `88e3783e9`.

@@ -202,3 +202,59 @@ incident closed as recovered.
 | Collector pre-allocates before the budget check (SEC-08) | per-connection body window, bounded connections, GET routes already refuse bodies | the remaining window is the connection count times the window size; small on this host, to be bounded by a shared counter |
 | L3 per-vote scans | ≤ 1024 rows, no allocation, microseconds | accepted |
 | Validator memory before the first persistent state | 16 GiB ceiling on validators, 8 GiB on observers | the node's own behaviour; `state_gc_lag` reports it and should clear after 06:38:56 UTC |
+
+## 7. Independent re-review (memo `SAFETY-PERF-REVIEW-20261001.md`, frozen at `4163236b7`) and its closure
+
+The reviewer rebuilt controls against the real stores and found that several
+of the §4 fixes stopped short. Every gap below now has a test that was run
+red against the previous code before the fix.
+
+| Item | Reviewer's finding | What changed | Evidence |
+| --- | --- | --- | --- |
+| SEC-01 | gate and rate limit hold; the comment still said "lock-free" | comment states the mutex and the off-path return | engine `…-80d22e8ac358e541` |
+| SEC-02 | `statvfs` still synchronous on the manager actor; a second waiter traversal per second | disk query on a short-lived thread, one in flight, writing lock-free gauges; waiter sample folded into the existing one-second sweep | engine `…-80d22e8ac358e541`, nine health test binaries green, 18/18 action modes, rolled onto all seven nodes |
+| SEC-03 | footprint used `len`, not capacity; 3000 decoded scalars → 4096 slots; 85 rows charged 8.34 MB for 11.14 MB of slots | records shrunk on insert and charged by real capacity (array slots, string capacity, map nodes, identity strings); no tree clone; `MAX_RECORD_RESIDENT_BYTES` derived from the node bound for validation probes; Q's resident bound stated as 32 MiB of real footprint | `resident_charge_covers_the_real_allocation_of_decoded_payloads`, red with length-based charging |
+| SEC-04 | a global max deleted sequence proves nothing about this anchor; generation seals cannot see holes; `evict_expired_origins` ignored active grants | retention writes a tombstone (seq, hash) per deleted row, newest 262,144 kept; anchor and retained parent accept only an exact tombstone; eviction deferred while a grant of this boot is active | `unrelated_legitimate_deletions_do_not_excuse_a_removed_anchor` and `a_kept_parent_below_the_sealed_generation_that_vanishes_is_not_an_expiry`, both red against the seal check; `expired_parents_are_deferred_while_a_grant_of_this_boot_is_active` |
+| SEC-05 | passes | unchanged | reviewer's own run |
+| SEC-06 | foreign-boot grants kept their bodies and the resident slot forever | compacted on the tick regardless of expiry; seals carry a wall-clock stamp used only for pruning after 30 days | reviewer's bootA/bootB probe as a test, red at `compacted 0` |
+| SEC-07 | main quota is not a main+WAL+logs bound | **not changed**; residual | — |
+| SEC-08 | collector still allocates before the budget check; transport still buffers a body stage | **not changed**; two residuals, listed separately | — |
+| SEC-09 | blocking stdin write before the deadline; TLS handshake in the accept path | deadline before spawn, stdin pumped from the selector loop, process-group kill; handshake in the connection thread under a 5 s bound, admission before it | reviewer's two Python probes as tests: red (watchdog kill / handshake timeout), green |
+
+### What deploying the closure exposed
+
+Deploying the fixed broker refused its persisted cursor with `M projection
+anchor missing`, correctly: the anchor row had been deleted before tombstones
+existed, so no proof could exist. Reading the ledger to confirm showed
+something worse: Q's cursor stood at 36,270 while M was at 184,694, with zero
+retained parents, and not one line in the journal. Q had imported twelve
+pages after its 05:58 restart and then retried the same page every fifteen
+seconds for an hour and forty minutes. Cause: the retained-parent bound
+(4096 parents, 8 MiB of bodies) fills before the resident byte bound, is
+classed recoverable, and nothing ever released it; import errors were
+discarded (`let _ =`); and the doctor's `query_broker` gate read the ledger's
+mtime, which the compaction tick refreshes whether or not imports progress.
+Three fixes: the parent bound now drives eviction of the oldest derived rows
+under the same grant pin as the byte bound (test red at `M parent retention
+full`); every distinct import failure is printed when it starts, once a
+minute while it lasts, and when it clears; and the broker imports up to
+sixteen pages or three seconds per tick while behind. The doctor's
+`query_broker` gate reads Q's own projection health over its control socket
+(`caught_up`, `lagging` within 1024 rows, else fail), and the mtime check is
+demoted to `query_ledger_activity`, documented as liveness only.
+
+Q's ledger was then reset (archived, re-projected from M's current boundary),
+which is the operator action the fail-closed anchor rule requires.
+
+Live after the closure: Q re-projected from M's boundary and caught up (lag 61 rows at 08:14 UTC after a 140,000-row catch-up in eight minutes, 543 retained parents, 115 MiB resident, 0 import errors since 08:06:28); doctor `pass 16 fail 0 not_run 3 (physical_separation, soak_72h, cert_rotation) at 08:14 UTC`; branch head `88e3783e9`.
+
+### Residuals after the re-review
+
+| Residual | Bound today | Why it waits |
+| --- | --- | --- |
+| SEC-07: no unified main+WAL+logs budget for M or Q; a long reader can hold WAL frames past the checkpoint | page quota on each main file, `wal_autocheckpoint`, M's pre-write WAL length gate, passive checkpoint per retention pass | needs a declared per-process total and a reader-age bound; config and design, not a local fix |
+| SEC-08 collector: `collect_with_budget` defaults to collect-then-measure | bounded collectors, static tables, no per-request allocation growth beyond one sample | requires a pre-sized output path through every collector |
+| SEC-08 transport: the HTTP inbound connection still enters its payload stage before the handler's 413 is seen | per-connection body window, bounded connection count | lives in the shared HTTP layer, not the exporter |
+| Retention seals kept for life; tombstones bounded by count, not by Q's actual horizon | seals a few hundred bytes each; tombstones ≤ 262,144 rows | pruning a seal reopens the replay window it closed |
+| Process-group kill covers descendants only while they stay in the child's session | the bridge's app-server stays in it | a helper calling `setsid` escapes; not reproduced |
+| Validator memory before the first persistent state | 16 GiB / 8 GiB ceilings; `state_gc_lag` reports it | node behaviour; first persistent state has now landed, restarts take seconds instead of a genesis replay |
