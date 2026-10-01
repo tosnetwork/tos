@@ -1,0 +1,5 @@
+COMMAND: python3 -m py_compile scripts/check-contracts.py scripts/freeze-manifests.py scripts/c01-publisher-mutations.py tests/native-snapshot-http.py
+[Errno 2] No such file or directory: 'scripts/c01-publisher-mutations.py'PY_COMPILE_EXIT=0
+COMMAND: .contract-venv/bin/python scripts/check-contracts.py
+PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+CHECK_CONTRACTS_EXIT=0

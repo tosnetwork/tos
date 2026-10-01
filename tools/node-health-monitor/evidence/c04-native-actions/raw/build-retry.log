@@ -1,0 +1,56 @@
+[1/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[2/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[3/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[4/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[5/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[6/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[7/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[8/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[9/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[10/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[11/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[12/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[13/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[14/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[15/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/payload.cpp.o
+[16/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[17/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/session-compat.cpp.o
+[18/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/chain-state.cpp.o
+[19/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/stats.cpp.o
+[20/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[21/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[22/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/block.cpp.o
+[23/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[24/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[25/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/utils.cpp.o
+[26/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/config.cpp.o
+[27/46] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[28/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/check-proof.cpp.o
+[29/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/accept-block.cpp.o
+[30/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/external-message.cpp.o
+[31/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ihr-message.cpp.o
+[32/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/message-queue.cpp.o
+[33/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-checker.cpp.o
+[34/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/proof.cpp.o
+[35/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/fabric.cpp.o
+[36/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/ext-message-pool.cpp.o
+[37/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/collator.cpp.o
+[38/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/shard.cpp.o
+[39/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
+[40/46] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:64:35: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
+   64 |       bus->session_id = fill(0x42 + rotation);
+      |                         ~~~~ ~~~~~^~~~~~~~~~
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:71:53: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
+   71 |         auto adnl = adnl::AdnlNodeIdShort{fill(0x90 + i)};
+      |                                           ~~~~ ~~~~~^~~
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:72:90: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
+   72 |         bus->validator_set.push_back(PeerValidator{.validator_id = ValidatorId{fill(0x70 + i)},
+      |                                                                                ~~~~ ~~~~~^~~
+3 warnings generated.
+[41/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/liteserver.cpp.o
+[42/46] Linking CXX static library validator/impl/libtos_validator.a
+[43/46] Linking CXX static library validator/libvalidator.a
+[44/46] Linking CXX executable test/validator/consensus/test-health-actions
+[45/46] Building CXX object test/validator/consensus/CMakeFiles/test-consensus.dir/test-consensus.cpp.o
+[46/46] Linking CXX executable test/validator/consensus/test-consensus

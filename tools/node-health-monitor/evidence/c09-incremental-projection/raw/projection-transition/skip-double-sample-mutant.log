@@ -1,0 +1,21 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.58s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-1b4c0582a7c524ed)
+
+running 1 test
+
+thread 'observability::projection_state_tests::concurrent_import_or_conflict_cannot_publish_caught_up' (2439367) panicked at crates/health-services/src/observability.rs:393:9:
+assertion `left == right` failed
+  left: "caught_up"
+ right: "transition"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test observability::projection_state_tests::concurrent_import_or_conflict_cannot_publish_caught_up ... FAILED
+
+failures:
+
+failures:
+    observability::projection_state_tests::concurrent_import_or_conflict_cannot_publish_caught_up
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-services --lib`

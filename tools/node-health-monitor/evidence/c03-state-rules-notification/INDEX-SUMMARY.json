@@ -1,0 +1,16 @@
+{
+  "source": {
+    "count": 21,
+    "sha256": "092335bf474ba2907b1884484ab38090907abf60e3caab0a4cbcf0c2bb2b004a"
+  },
+  "raw": {
+    "count": 67,
+    "sha256": "3f35ef4612cde3aef21a4e7719e57d824f03346f595c8c236a911f291b57b3da"
+  },
+  "binary": {
+    "count": 8,
+    "sha256": "8626712274a22d663f9ee8f3bc4451b1c0539670c74fdb8c2c00b94705cff982"
+  },
+  "runtime_start_receipt_sha256": "13b6610b55ce0693e811d062858897b6dd166bd676bdbbfabaca49dadc29bcd6",
+  "report_sha256": "e43567bb006e993a961377ef3527aa57b03c61ea4cc5723f27acd0542d403b0e"
+}

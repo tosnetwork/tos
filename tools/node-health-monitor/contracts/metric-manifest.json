@@ -1,0 +1,427 @@
+{
+  "schema_version": 1,
+  "profile": "c01_source_publisher_contract",
+  "scopes": [
+    "node",
+    "masterchain"
+  ],
+  "max_series": 128,
+  "computed_max_series": 107,
+  "r4_global_core_max_series": 2048,
+  "max_openmetrics_bytes": 2097152,
+  "declared_tuple_value_bytes": 874,
+  "tuple_storage_note": "Value-field accounting only; not total registry, strings, actor, heap or publisher body memory.",
+  "registry_capacity_slots": 64,
+  "approved_registry_metric_names": [],
+  "registry_memory_bytes_max": 16384,
+  "generic_counter_wire_precision": "OpenMetrics double only; exact u64 is unavailable for generic registry values and requires a future typed approved adapter",
+  "families": [
+    {
+      "name": "tos_pq_operation_duration_seconds",
+      "semantic_type": "histogram",
+      "label_names": [
+        "operation",
+        "suite",
+        "result"
+      ],
+      "allowed_tuples": [
+        [
+          "sign",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "sign",
+          "mldsa44",
+          "failure"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "failure"
+        ]
+      ],
+      "finite_buckets": [
+        0.001,
+        0.002,
+        0.005,
+        0.01,
+        0.02,
+        0.05,
+        0.1,
+        0.2,
+        0.5,
+        1,
+        2,
+        5
+      ],
+      "bytes_per_tuple": 128
+    },
+    {
+      "name": "tos_pq_operations_total",
+      "semantic_type": "counter",
+      "label_names": [
+        "operation",
+        "suite",
+        "result"
+      ],
+      "allowed_tuples": [
+        [
+          "sign",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "sign",
+          "mldsa44",
+          "failure"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "success"
+        ],
+        [
+          "verify",
+          "mldsa44",
+          "failure"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_pq_accounting_complete",
+      "semantic_type": "gauge",
+      "label_names": [
+        "operation"
+      ],
+      "allowed_tuples": [
+        [
+          "sign"
+        ],
+        [
+          "verify"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 1
+    },
+    {
+      "name": "tos_health_source_collection_completed_timestamp_seconds",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "exporter"
+        ],
+        [
+          "exporter_internal"
+        ],
+        [
+          "quic"
+        ],
+        [
+          "overlay"
+        ],
+        [
+          "json_rpc"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_source_last_success_timestamp_seconds",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "exporter"
+        ],
+        [
+          "exporter_internal"
+        ],
+        [
+          "quic"
+        ],
+        [
+          "overlay"
+        ],
+        [
+          "json_rpc"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_source_usable",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "exporter"
+        ],
+        [
+          "exporter_internal"
+        ],
+        [
+          "quic"
+        ],
+        [
+          "overlay"
+        ],
+        [
+          "json_rpc"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_source_failures_total",
+      "semantic_type": "counter",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "exporter"
+        ],
+        [
+          "exporter_internal"
+        ],
+        [
+          "quic"
+        ],
+        [
+          "overlay"
+        ],
+        [
+          "json_rpc"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_source_observed_timestamp_available",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "exporter"
+        ],
+        [
+          "exporter_internal"
+        ],
+        [
+          "quic"
+        ],
+        [
+          "overlay"
+        ],
+        [
+          "json_rpc"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_health_source_collection_completed_timestamp_seconds",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "http_server"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_health_source_last_success_timestamp_seconds",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "http_server"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_health_source_usable",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "http_server"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_health_source_failures_total",
+      "semantic_type": "counter",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "http_server"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_health_source_observed_timestamp_available",
+      "semantic_type": "gauge",
+      "label_names": [
+        "source"
+      ],
+      "allowed_tuples": [
+        [
+          "http_server"
+        ]
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_collectors",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_collections_total",
+      "semantic_type": "counter",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_last_collection_duration_seconds",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_last_collection_timestamp_seconds",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_snapshot_generation",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_snapshot_completed_timestamp_seconds",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_snapshot_collection_inflight",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_snapshot_collection_skipped_total",
+      "semantic_type": "counter",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_exporter_snapshot_collection_failures_total",
+      "semantic_type": "counter",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_core_registry_instrumentation_complete",
+      "semantic_type": "gauge",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    },
+    {
+      "name": "tos_health_core_registry_dropped_updates_total",
+      "semantic_type": "counter",
+      "label_names": [],
+      "allowed_tuples": [
+        []
+      ],
+      "finite_buckets": [],
+      "bytes_per_tuple": 8
+    }
+  ],
+  "scope_note": "C01 fixed publisher/source subset. The 128 cap is not the R4 global core cap. No C04 business metric is approved or registered; fixture-only source labels are excluded. Production performance acceptance is not_run."
+}

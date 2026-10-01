@@ -1,0 +1,19 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-followup/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.21s
+     Running tests/manager_query_source.rs ($HOME/nhm-c09-anchor-build/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+
+thread 'diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process' (2615547) panicked at crates/health-services/tests/manager_query_source.rs:233:10:
+called `Result::unwrap_err()` on an `Ok` value: ProjectionPage { cursor: ManagerCursor { network: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", device: 64512, inode: 3801278, watermark: 2, anchor: Some((2, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")) }, boundary_witness: Some((2, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")), records: [], quarantined_retained: {}, caught_up: true }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process ... FAILED
+
+failures:
+
+failures:
+    diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`

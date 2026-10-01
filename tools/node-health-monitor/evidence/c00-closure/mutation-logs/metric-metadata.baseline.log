@@ -1,0 +1,13 @@
+command: cargo test --locked -p tos-health-services --test http runtime_output_reflects_unknown_quality_and_rejects_conflicts -- --exact
+timeout_seconds: 120
+exit_code: 0
+
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.91s
+     Running tests/http.rs (target/debug/deps/http-559405db5d53b52c)
+
+running 1 test
+test runtime_output_reflects_unknown_quality_and_rejects_conflicts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s

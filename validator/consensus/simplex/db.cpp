@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include "metrics/consensus-work.h"
+
 #include "bus.h"
 #include "finalized-slot-dedup.h"
 
@@ -101,6 +103,9 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     auto hash = sha256_bits256(serialize_tl_object(vote, true));
 
     if (!saved_vote_hashes_.insert(referenced_slot, hash)) {
+      if (tos::health::enabled.load(std::memory_order_relaxed) &&
+          tos::health::consensus_enabled.load(std::memory_order_relaxed))
+        tos::health::work_stats.result(tos::health::Work::IntentStorage, tos::health::WorkResult::Duplicate);
       co_return td::Status::Error(cancelled, "Vote was already casted");
     }
 
@@ -108,7 +113,11 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     auto key = create_serialize_tl_object<tl::db_key_vote>(hash);
     auto value = create_serialize_tl_object<tl::db_ourVoteIntent>(std::move(vote), seqno);
 
+    tos::health::WorkObservation storage(tos::health::Work::IntentStorage);
     auto written = co_await owning_bus()->db->set(std::move(key), std::move(value)).wrap();
+    storage.finish(written.is_ok()                                  ? tos::health::WorkResult::Success
+                   : written.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                    : tos::health::WorkResult::Failure);
     if (written.is_error()) {
       co_return written.move_as_error();
     }
@@ -127,7 +136,11 @@ class DbImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo<B
     auto value =
         create_serialize_tl_object<tl::db_ourSignedVote>(std::move(vote), event->seqno, std::move(event->signature));
 
+    tos::health::WorkObservation storage(tos::health::Work::SignedStorage);
     auto written = co_await owning_bus()->db->set(std::move(key), std::move(value)).wrap();
+    storage.finish(written.is_ok()                                  ? tos::health::WorkResult::Success
+                   : written.error().code() == ErrorCode::cancelled ? tos::health::WorkResult::Cancelled
+                                                                    : tos::health::WorkResult::Failure);
     if (written.is_error()) {
       co_return written.move_as_error();
     }

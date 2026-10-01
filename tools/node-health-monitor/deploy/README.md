@@ -1,0 +1,578 @@
+# Deployment status
+
+These assets are development/review inputs, not an accepted production package.
+The existing edge unit requires an operator approval marker. No process in this
+package installs, stops or restarts a validator. Effective cgroup, filesystem,
+network and failure-domain isolation must be measured on the approved hosts.
+
+## Independent rule authority
+
+`health-state CONFIG_JSON` runs on M. Its control and evidence SQLite databases
+must be different files (including symlink/hardlink aliases), in already-created
+operator-owned directories. Dedicated bounded writer threads own the respective
+connections. Both databases bind a network ID and reject reuse by another network. The five-second control timer precedes queued work; an entire rule
+round, incident changes, outbox and evaluation sequence commit together. A full
+or unavailable evidence database cannot borrow the control writer. Cached state
+and metrics become unavailable if evaluation fails or is over 15 seconds old.
+Ingest and state/metrics have independent admission limits; process heartbeat
+does not wait for either database. This is not proof against host-wide exhaustion.
+
+`config/health-state.development.json` enables only management reachability and
+expected-source availability. Its all-zero network ID and quotas are placeholders,
+not discovered production facts. The 22-rule catalog is implemented in Rust, but
+most native/host/witness facts still lack real adapters. Do not populate them with
+inferred consensus success. Bind a new immutable inventory revision when changing
+configuration. Removed active targets remain visible as unknown after restart.
+
+`health-probe CONFIG_JSON` polls the fixed edge heartbeat on a 15-second schedule
+and forwards a typed `edge_probe/reachable` fact to M using separate credentials.
+This measures the management endpoint only. A malformed/auth-failed response is
+unknown. Missed timer ticks are skipped; this process never polls native metrics.
+The internal `FactFrame` is a closed fact DTO, not the complete R4 SourceEnvelope.
+
+`health-collector` is a separate archival path. It polls the C02 typed
+`/v1/edge/snapshot` and posts that same validated body to
+`/v1/manager/snapshot-evidence`; M validates the node/network/epochs again,
+then returns references only after each immutable evidence row commits. A
+partially committed request returns no accepted receipt; replay deduplicates
+the committed rows without changing their original receipt time. This path
+does **not** feed the live rule engine or turn unsupported/unknown source
+status into a healthy fact. The current C02 snapshot contract admits only
+available, timestamped partial sources; unavailable sources are absent and
+remain unknown in the rule inventory. Evidence v1 cannot archive a missing
+observation timestamp, so such a source is refused rather than invented.
+
+A configured notification receiver must return JSON with `accepted: true`, the
+same `idempotency_key`, and the same SHA-256 `payload_hash`. Notification keys are network-scoped hashes; the payload includes the node/scope/rule identity. A plain HTTP 2xx is
+insufficient to delete an outbox entry. The production sender requires fixed HTTPS,
+private CA and client identity; redirects and proxy settings are disabled. A valid
+receiver receipt proves that receiver accepted the payload, not human delivery.
+
+## Fixed mTLS ingress
+
+`health-ingress CONFIG_JSON` is a separately bounded HTTP/1.1 TLS reverse proxy.
+It verifies private-CA client certificates, expiry and an explicit leaf SHA-256
+allowlist, then authorizes a fixed method/path by role. Certificate rotation needs
+an updated reviewed allowlist; never disable verification to rotate. The server
+private key must be an owner-only regular file. Authorization is forwarded only
+to the configured numeric loopback upstream, never a caller-selected address.
+
+Roles are `edge_reader`, `edge_watchdog`, `manager_ingest`, `manager_reader`, and
+`pipeline_sender`. They expose only their listed cache/ingest/heartbeat paths;
+control/grant/query routes are not exposed. Query strings, Origin, wrong Host,
+unapproved methods, oversized bodies and responses fail closed. The ingress has
+bounded TLS/header/request deadlines and per-peer/global rate budgets. A rate token
+is reserved for heartbeat traffic; the global TLS connection pool is still shared.
+Use an independently restricted observer listener/network path before claiming
+complete heartbeat admission isolation under handshake floods. Example files do
+not provision firewall rules or establish sole native scrape ownership.
+
+## Independent observer and rule transport
+
+`health-watchdog` now has two clocks: a 45-second process-heartbeat deadline and a
+100-second rule-pipeline deadline. `pipeline_listen` is a numeric loopback endpoint;
+put its `/v1/watchdog/pipeline` behind a `pipeline_sender` ingress on O. Configure
+`pipeline_token_file` and `monitor_id`. It accepts firing Watchdog notifications
+for its own monitor only, with canonical decimal evaluation sequence. Repeated
+sequences and retired epochs cannot renew either deadline. Epoch retirement is
+bounded; exhaustion fails closed rather than forgetting replay protection.
+
+`prometheus/rules.yml` reads persisted incident state. PromQL source disappearance
+and Alertmanager resolved webhooks do not close incidents. The Watchdog rule
+carries the completed evaluation sequence and monitor epoch through Alertmanager.
+`prometheus/alertmanager.example.yml` repeats that heartbeat every 30 seconds and
+uses a distinct mTLS identity/token. Change the monitor identity consistently.
+The pinned Prometheus binary must run with `--rules.alert.resend-delay=15s`;
+`prometheus/runtime-flags.json` freezes this required argv and the matching
+Alertmanager route intervals for deployment review and the isolated runtime test.
+its one-minute default delayed fresh Watchdog annotations to about 90 seconds
+in the isolated chain despite Alertmanager's 30-second repeat. The 15-second
+resend aligns with the already fixed 15-second group interval; it does not
+change O's independent 45/100-second deadlines.
+The independent observer must reside outside V and M's failure domains.
+
+The pinned Prometheus 3.9.1 `promtool check rules` and `promtool test rules`,
+plus Alertmanager 0.34.1 `amtool check-config`, passed in the isolated C03
+worktree; hashes and raw logs are indexed under C03 evidence. These static
+tool checks do not establish the running three-process notification chain.
+The C03 runtime test uses only isolated monitoring binaries, loopback endpoints
+and disposable test identities; it does not start a business node. The rule
+manifest distinguishes implemented reachability/telemetry predicates,
+synthetic-only PQ input, and pending C04/C05/C08 adapters.
+The observer's external notifier is still an HTTP acknowledgement boundary, not a
+verified human-delivery receipt. The real notification chain, runtime version pins,
+rotation, source adapters and 72-hour acceptance remain required.
+
+
+## Initial native PQ source
+
+For an isolated development setup, pass an approved alias with validator-engine
+`--health-node-id NODE`, use a loopback exporter address, and opt in to PQ hooks
+with `--health-core-metrics`. The exporter derives its network identity from the
+configured zero-state root bytes, encoded as lowercase hex. Configure that same
+identity in edge, the native poller and the immutable manager inventory.
+
+The typed endpoint reads the completed native generation without collecting.
+An owner metrics request waits at most two seconds; an overdue child still holds
+the real collection lease and its late result is discarded. No metrics or typed
+request can bypass the fixed minimum refresh interval.
+
+The development native poll/state examples add only PQ signing failure facts.
+Duties, storage, host and witness facts are still absent, and performance/host
+acceptance remains not_run. Do not treat a reachable endpoint or zero observed PQ
+failures as proof of healthy consensus.
+
+## Native facts, judgement and the six-tool sample
+
+`health-native-poll CONFIG_JSON` reads the typed `/v1/edge/snapshot` every 15
+seconds with the edge-reader identity and posts a `native_core` FactFrame to
+`/v1/manager/facts` with the separate manager-ingest identity
+(`manager_identity_file`). The facts are derived deterministically from the
+native record (`health-core::native_facts`): chain progress age (v3 anchors,
+else the finalized masterchain slot), local execution failures, oldest pending
+action, PQ signing failures, storage ack failures/usability and session stop
+pending. A fact the sample cannot support stays absent and the frame is marked
+incomplete; legitimate refusals are never failures. The derived facts are posted
+under their own source id `native_facts` (source epoch suffixed with the
+catalog version) with exactly the eight catalog facts; the same tick also posts
+one-fact frames for `native_chain` (applied/served gap, only when the node
+serves lite state), `diagnostic` (publisher drops), `native_gauges` (QUIC
+backlog from two fixed OpenMetrics lines) and `process_facts` (anonymous
+memory growth over 15 minutes). A catalog change must bump `CATALOG_VERSION` and the
+inventory revision; it never rewrites an archived generation.
+
+The manager ingress that aggregates many lanes sets `rate_per_second` /
+`burst` in its ingress config (defaults 1 / 4 are the node-entry contract).
+
+`scripts/judge-validator-health.py` reads M's rule state and the latest
+archived native snapshot per node and prints one verdict record (healthy,
+degraded, unhealthy, unknown) with the archive parent hashes as evidence IDs.
+Run it from a timer with `--journal`; exit status 3 means at least one node is
+unhealthy. `scripts/sample-validator-health-tools.py` issues one short grant on
+the private control socket and reads a node through the six MCP tools.
+
+Derived source epochs carry the deriving run's identity
+(`…:facts-v2:<start-ms>-<pid>`, `…:witness-v1:<run>`): a restarted poller or
+comparer re-derives with fresh in-memory state and would otherwise collide
+with its own earlier frames under the same generation and quarantine the
+source. A restart is therefore a new epoch; the archived snapshot epochs are
+untouched.
+
+## External witness, receiver, AI availability and the storage gauge
+
+`health-witness-compare CONFIG_JSON` (unit `local-judge/nhm-local-witness-compare.service`)
+reads M's archived `native-core-v3` chain anchors read-only every 15 seconds
+and compares each node against the observers: the same masterchain seqno with
+a different root hash is a fork; lagging every fresh observer head by more than
+`lag_blocks` is isolation; being ahead of the observers is not a fault. The
+result is posted as the `observer_disagreement` fact under source `witness`,
+bound to the node's current native epoch. Without a fresh anchor from the node
+and from at least one observer no fact is posted, so the rule stays unknown
+rather than good. It never contacts a node, an edge or a model.
+
+`scripts/local-notification-receiver.py` (unit `nhm-local-receiver.service`)
+is an independent HTTPS receiver for M's outbox: bearer token, payload hash
+echoed as the receipt M verifies, every delivery appended to a private journal.
+M's `receiver` config points at it; the doctor's `notification_receiver` gate
+reads M's last accepted receipt.
+
+The `ai_optional` availability fact for the `monitor` node is posted by the
+**minute** judgement run (`--ai-fact-url`, `--ai-fact-token-file`,
+`--ai-fact-state`, `--ai-fact-journal`, `--ai-fact-max-age 900`): `1` while
+the last line of the model journal is an accepted explanation younger than
+the maximum age, `0` otherwise; epoch and generation persist in the state
+file and there is exactly one writer. Source ttls are bounded at 180 s by
+the catalog, so a fact posted only by the ten-minute model turn would expire
+between turns (it did, and read as unknown for seven minutes in ten). A silent
+model lane therefore opens `ai_unavailable` on the `monitor` target instead
+of vanishing; the deterministic verdict never depends on it.
+
+The engine records `rocksdb.is-write-stopped` after every synchronous commit
+into a process-wide storage health (`td::storage_health`), the exporter
+publishes `tos_health_storage_write_stopped` (0/1), `_total` and
+`commits_observed_total`, and the poller turns the gauge into the
+`rocksdb_write_stopped` fact of the `native_gauges` frame. On an engine without
+the gauge the frame is incomplete, the rule is unknown and
+`telemetry_unavailable` says so; nothing is assumed good.
+
+## Key blocks: the `native_key_block` source
+
+Persistent states and state garbage collection follow key blocks, and a key
+block exists only when the configuration changes (in practice: when elections
+rotate the validator set). The validator manager therefore publishes the last
+known key block (`chain.key_block = {seqno, unix_seconds}`, null before one
+is resolved) with the v3 chain anchor; the poller derives `key_block_age_ms`
+(observation clock minus the key block's own clock) into its own one-fact
+source `native_key_block`, and the rule `key_block_stale` (Above threshold)
+says how long the chain has gone without a checkpoint. A publisher without
+the field is accepted and yields no fact, never zero. The development
+inventory binds the rule at one hour (revision `development-native-facts-7`);
+a production threshold follows the election period plus margin.
+
+Any change to the v3 anchor is a change to the **edge's** contract too: the
+edge parses the native record with the same strict types and answers 503
+until it is rebuilt and recreated. On 2026-09-30 the rebuilt network came up
+with every edge refusing for four minutes for exactly this reason. An edge is
+also bound to the **network id** it was started with: after a rebuild, every
+edge must be recreated with the new zero-state root (read it from the
+network's own file, never from a constant in a script), or it refuses every
+native sample. The refusal reason is now logged by the edge once a minute.
+
+## Scope is coverage, not integrity
+
+A validator that also validates a shard runs a session outside the approved
+masterchain scope; its typed consensus progress is not an approved input
+(C04 ruling). The publisher reports that as **coverage**: the envelope's
+`missing_fields` names `shard_consensus_progress` while such a session is
+active, the `typed_consensus_progress` capability says `scope_unapproved`,
+and `instrumentation_complete` is left to what it means (counters intact,
+lifecycle observed). Older rows that reported the scope as an incomplete
+reason are still accepted; a row naming the field without a shard session is
+refused.
+
+## Bounds on the host-side helpers
+
+- The judgement reads its model child through capped pipes (16 KiB of stdout
+  accepted, 16 KiB of stderr kept) and kills a child that overflows or
+  overruns its deadline; nothing beyond the caps is buffered. Its journal
+  rotates to one kept generation before 64 MiB (`--journal-max-bytes`), and a
+  journaled run prints one summary line to journald.
+- The notification receiver rotates its journal the same way, admits at most
+  eight concurrent connections (the ninth is closed before any TLS work),
+  completes each TLS handshake in the connection's own thread under a
+  5-second bound so an idle TCP peer never holds the accept loop, and gives
+  each connection a 10-second read deadline.
+- The model turn's deadline starts before the child is spawned and covers the
+  stdin write (pumped in chunks from the same loop as the output reads); a
+  child that overruns is killed with its whole process group.
+- The edge serves at most three non-heartbeat requests per burst. A poller
+  whose request is shed re-phases its 15-second timer by four seconds (at
+  most once a minute), so a phase lock with the collector and the probe
+  resolves itself; the shed is logged.
+- The validator's health GET routes refuse any request body (413) before
+  doing work.
+
+## Node state: duties, real queues and the storage position
+
+The v3 payload carries a `node_state` section the validator manager refreshes
+once per second (null until the first refresh, dropped when unrefreshed for
+30 s), and the three coverage fields `local_duties`, `queue_state` and
+`storage_state` disappear when it is present; the snapshot's coverage then
+reads `complete`. Each part is its own one-frame source in the poller:
+
+- `native_duties` (`duty_member`, `duty_windows_missed`): membership is
+  whether the manager runs any validator group; the duty denominator is the
+  collator schedule's own leader-window assignment
+  (`is_expected_collator`), and a missed window is one that neither started
+  nor ended for a protocol reason (superseded by a newer window while the
+  parent resolved, or suppressed because finality was behind). Rule
+  `duty_missed` (Increase) is bound for validators only; observers are never
+  assigned and report zero.
+- `native_queues` (`queue_depth`, `queue_oldest_ms`): the manager's three real
+  waiter queues (`wait_block_data_`, `wait_state_` incl. preliminary waits,
+  `shard_client_waiters_`), counted in the same one-second sweep that checks
+  their timers; each waiter now records its creation time. Rule `queue_stall`
+  (Above) fires on the oldest unfinished wait. The PQ signer still has no
+  queue and none is invented.
+- `native_storage` (`disk_used_permille`, `state_gc_lag_blocks`): `statvfs`
+  of the database root once per second, and the applied seqno minus the
+  garbage-collection seqno (the persistent-state seqno is published beside
+  it). Rules `storage_space_low` (Above 900 ‰) and `state_gc_lag` (Above a
+  block count; GC trails by `state_ttl` plus at most one key-block interval on
+  a healthy network).
+
+All of it is a handful of relaxed atomics in the engine; nothing scans the
+database or reads private material. The edge, collector, query broker and
+poller all parse the section with strict types, so every one of them must be
+rebuilt and redeployed with the engine.
+
+## The rotating development network
+
+`setup-testnet.sh --clean --rotate` creates the network with a bootstrap
+validator set valid for 600 s, stage-A elections every 600 s
+(`tos-pq-elections.service`, rosters 1,2,3,7 and 1,2,3,4 alternating) and a
+fifth validator node 7. Every election is a configuration change and hence a
+key block about every ten minutes; the first persistent state follows the
+first key block after a 2^17 s boundary, after which restarts stop replaying
+from genesis and garbage collection runs. Monitoring covers node 7 like the
+others (edge, ingress, probe, collector, poller, `judge-nodes.json` for the
+judgement's node list); the election service restarts nothing itself, but a
+node restart during its RPC turn makes it exit and it has `Restart=no`, so
+check it after any node restart.
+
+## Rolling an engine on a network without persistent state
+
+Before the rotating rebuild the development network had produced no key
+block since genesis (validator set fixed for 30 days, nothing changed the
+config), so no persistent state existed and **every node restart replayed
+the chain from genesis** (about 6 blocks/s here against about 2.5 blocks/s
+produced), and validator memory grew about 1.4 GiB/h with nothing collected.
+The rules below still hold on any network without a recent persistent state:
+
+1. One node at a time. Restart a validator only while the chain is live and
+   all four validators are at the head; move on only after the restarted node
+   is back at the head. Two validators replaying at once halts the chain
+   (three of four are needed), as happened on 2026-09-30 13:50 UTC when a
+   rollout treated "ready" as "at the head".
+2. Stop the node's edge first, restart, wait for a `native-core-v3` snapshot,
+   then recreate the edge bound to the new PID.
+3. While a node replays, the monitor reports it honestly: applied/served gap
+   and initialization facts move, `observer_disagreement` sees it lagging the
+   observers, and the verdict is degraded or unhealthy. That is the correct
+   reading, not noise.
+4. Do not compare performance profiles by restarting a node on this network;
+   toggle the edge instead (see `perf/CC-ONE-HOUR-GATE.md`).
+
+## Bounded evidence retention
+
+An evidence database that can only grow eventually reaches its quota, refuses
+ingest and leaves the monitor blind. `health-state` therefore accepts two
+optional keys, both decimal-string milliseconds between one hour and ninety
+days; absent keys keep the store unbounded exactly as before:
+
+```json
+"evidence_retention_ms": "604800000",
+"witness_retention_ms": "2592000000"
+```
+
+The single evidence writer runs one bounded pass every five minutes (at most
+16 pages of 512 scanned rows or one second per pass) and one extra pass after
+a write is refused for space, then retries that write once. A pass deletes
+ordinary observations whose `record.received_at_ms` is older than the window
+and historical witness rows whose receipt `first_received_at` is older than
+the witness window. It never deletes a row younger than two hours (the fixed
+floor keeps the query service's retained parents and fixed-watermark grants
+valid), never the newest eight rows of a (node, scope, source) or witness
+endpoint, never anything in `quarantined`, `witness_quarantined`,
+`witness_current_activation`, `database_identity` or any control-database
+table. Incidents and the outbox live in the control database and are not
+touched. Sequence numbers are never reused and no VACUUM runs; a passive WAL
+checkpoint follows each pass.
+
+Deleting a row also removes the unique-identity witness that refused a replay
+of that record, so each pass commits a per-source seal (the highest deleted
+generation) in the same transaction. A later insert at or below that seal is
+refused with `EVIDENCE_EXPIRED` (a diagnostic batch is acknowledged as a
+duplicate) rather than minting a fresh sequence number for old evidence.
+Records without a canonical generation are never deleted. Seals are small and
+are kept for the life of the database.
+
+Each deleted observation also leaves a tombstone (its sequence and content
+hash) in the same transaction; only the newest 262,144 tombstones are kept.
+A seal says an identity was pruned up to a generation; a tombstone says this
+exact row was. A reader that still names a deleted row needs the second.
+
+The query service revalidates every retained parent on each projection. A
+missing parent with a matching tombstone is an expiry: Q evicts the dependent
+rows and continues. A missing parent without one (no tombstone, another hash,
+or a tombstone already pruned) blocks all manager queries as a manager
+conflict, even when a generation seal would have covered it: a late-arriving
+row below the sealed generation that retention kept and something else
+removed is exactly the case a seal cannot tell apart. The same rule applies to
+Q's import cursor: an anchor row with a matching tombstone re-anchors at the
+current boundary; a present anchor with another hash, or a missing anchor
+without its tombstone, is refused as a rewrite, and a broker away longer than
+the tombstone window is refused and needs an operator reset. Set the evidence
+window at or above the longest period a query row may stay resident in Q; the
+two-hour floor is a minimum, not that guarantee.
+
+Eviction of expired parents waits while any grant of the current boot is
+active: a grant fixes a watermark, and its rows are not taken out from under
+it. Deferred parents are retried on the next projection pass. Grants from an
+earlier boot can never be read again and are compacted to empty seals on the
+service's own tick; those seals are pruned by wall clock after thirty days
+(the only use of a wall clock in the ledger, never for grant validity).
+
+Build `tos-observability` with `--features mcp` whenever its unit passes an
+MCP socket path; a binary without the feature exits at start, and a restart
+loop that nobody watches is an outage. The doctor's `query_broker` gate
+(below) exists for exactly that case.
+
+The broker imports M one page (256 rows) per 15-second tick while it is
+caught up, and up to sixteen pages or three seconds per tick while it is
+behind, so an outage of hours is closed in minutes rather than hours of
+refused grants. Every distinct import failure is printed to the journal when
+it starts, once a minute while it lasts, and when it clears. When the
+retained-parent bound (4096 parents, 8 MiB of parent bodies) would be
+exceeded, the oldest derived rows are evicted to release their parents, under
+the same grant pin as the resident byte bound; a parent bound that only
+refused could never free itself.
+
+The state endpoint reports `retention` (configured windows, pass counts, rows
+deleted, last pass age and error, oldest retained receipt), `inventory` (the
+bound revision and rule bindings), `quarantined_sources` and `notification`
+(receiver configured, last accepted delivery receipt in this process). The
+metrics endpoint adds `tos_health_evidence_retention_*` counters and ages.
+
+## Disk budget
+
+Every file the monitor writes has a declared bound and a named enforcer.
+The table is the budget; the sum at the bottom is the declared peak when
+every file is at its bound at the same time. Nothing here is a reservation:
+the shared disk's free bytes belong to the validator first, and the hard
+boundary that survives a bug in this software is a filesystem or project
+quota around the monitor's directories, which this software does not
+provide and which must leave room below it for a checkpoint, a rotation and
+a rollback.
+
+| File set | Bound | Enforced by |
+| --- | --- | --- |
+| M evidence database, main file | `evidence_quota_bytes` (development: 2 GiB) | SQLite `max_page_count`; retention frees space, a refused insert gets one recovery pass |
+| M evidence WAL | `evidence_quota_bytes` | `wal_budget` pre-write gate (refuses `WAL quota exceeded`, counted as `retention.disk.wal_refusals`), `wal_autocheckpoint` 64 pages, a passive checkpoint after every retention pass; above the physical mark a zero-busy-timeout TRUNCATE attempt either reclaims the WAL or refuses the write |
+| M/Q/control shm | WAL index, accounted separately from main/WAL | SQLite; reserve WAL-index space in the filesystem budget |
+| M control database (incidents, outbox, verdicts), main and WAL | `control_quota_bytes` (development: 64 MiB) | same page quota, pre-write gate and size limit |
+| Q ledger, main file | `LEDGER_QUOTA_BYTES` 256 MiB | SQLite `max_page_count` |
+| Q ledger WAL | `LEDGER_WAL_HIGH_WATER_BYTES` 64 MiB | physical-file water mark; nonwaiting reset or `disk_backpressure` (checkpointed prefixes count too) |
+| Judge journals (`verdicts.jsonl`, model journal), receiver journal | 64 MiB current plus one kept generation each (`--journal-max-bytes`, `JOURNAL_MAX_BYTES`) | the writing script rotates before the cap |
+| Runtime archives (`runtime-archive-*`) from network rebuilds and ledger resets | unbounded | operator; delete after the evidence they hold is recorded |
+| Private Codex home for the model turn | its own lifecycle | Codex; the monitor never deletes an active session |
+
+Nominal database/journal budget for one development host with these values: M 2 GiB main +
+2 GiB WAL, control 64 + 64 MiB, Q 256 + 64 MiB, three journals at 128 MiB
+each, about 4.8 GiB before shm, admitted transaction overshoot, safety writes,
+archives, backups and Codex storage. This is not a hard combined peak. Keep
+explicit reserve for those overlaps below a filesystem/project quota; current
+free space is not that reserve. A production profile sets the quotas lower.
+
+**The WAL water-mark gate.** Every growing Q write is gated on the physical
+WAL length, including prefixes a checkpoint has backed up but a reader still
+prevents from being reset. Above the mark the writer tries TRUNCATE with busy
+waiting temporarily disabled, restoring its original busy timeout afterwards.
+An open reader causes an immediate reset refusal; if the file remains above
+the mark, `disk_backpressure` refuses the growing write. After readers leave,
+the same gate reclaims the file and writing resumes without deleting evidence
+or reopening the service. M evidence/control use the same nonwaiting reclaim
+at their physical WAL gate, including when retention has no expired rows.
+
+The refused operation changes no committed records or cursor; Q import pauses,
+new grants are unavailable and existing grants stay intact. Revocation and an
+already admitted page's cursor commit remain available. A pre-write mark can
+be crossed by the admitted transaction and those safety writes, so it is a
+software pressure gate, not a hard combined filesystem quota. The reset does
+not wait for readers; the actual checkpoint/filesystem I/O is not preemptible.
+Do not describe `journal_size_limit` or an elapsed-time check as a hard deadline.
+`projection-health` reports `disk_backpressure`, `ledger_main_bytes`,
+`ledger_wal_bytes`, the refusal count and how often a checkpoint found
+pinned frames; M's state reports `retention.disk` with main, WAL, quota and
+WAL refusals. The doctor's `query_broker` gate sees a refused broker as
+`lagging` and then as a growing lag.
+
+Readers keep their scope short on purpose: one M read transaction covers
+exactly one projection page and ends when the page is read.
+
+## The MCP lane: Claude or Codex judging through the six tools
+
+The push lane (the minute judge and the ten-minute model explanation) hands
+the model a frozen package. The MCP lane lets the model read for itself,
+under the same authority model: `scripts/mcp-judge.py` computes the
+deterministic verdict, issues one grant per group of at most four nodes on
+the broker's control socket (operator token), writes a one-use 0600
+credential file per grant in a fresh 0700 run directory, and starts the model
+session with no tool but the stdio adapter (`tos-nhm-aura-stdio`, one instance
+per grant, named `nhm_a`, `nhm_b`, ...). The adapter relays JSON-RPC to the
+broker's private Unix MCP endpoint, consumes its credential on start,
+answers client probes the endpoint does not serve (`server/discover`,
+resource and prompt listings) with method-not-found instead of dying,
+negotiates a protocol version the endpoint serves, and appends one line per
+tool call to an evidence log (tool, request id, status, error code, the
+argument names used, and the id/node/parent/hash of every evidence item
+returned; never a token or payload).
+
+Providers: `--provider claude` runs Claude Code in print mode with
+`--strict-mcp-config`, `--restricted` (no built-in tools), only the adapter
+servers allowed, and the diagnosis contract as `--json-schema`;
+`--provider codex` runs `codex exec` in a private Codex home
+(`--codex-home`, sign-in copied once from the owner's existing private copy)
+whose configuration names exactly the adapter servers, read-only sandbox,
+ephemeral thread, `--output-schema` the contract. The AURA bridge is not
+used for this lane: it refuses any app-server with MCP servers, by design,
+because the push lane must stay tool-free.
+
+The answer is accepted only when it validates against the diagnosis
+contract, every cited id was returned by a tool (evidence id, parent id or
+content hash), every degraded or unhealthy node is explained by an observed
+finding whose evidence belongs to that node, and an `insufficient_evidence`
+answer is not hiding a failed session (known verdicts with nothing
+retrieved is `no_evidence_retrieved`). Grants are revoked when the session
+ends; the run directory is removed unless `--keep-run-dir`. One JSON line
+per run goes to `--journal` (rotating at 64 MiB). The unit template
+`deploy/local-judge/nhm-local-mcp-judge@.service` with its timer runs one
+provider instance every thirty minutes; exit 1 (answer refused) is a
+recorded outcome, not a unit failure.
+
+First real runs (2026-10-01, seven nodes, two grants): Claude
+(claude-sonnet-5-5) made 7 snapshot calls, received 21 evidence items and
+was accepted with 7 observed findings, each bound to that node's evidence;
+Codex made 14 calls, received 28 items and was accepted with 7 observed
+findings. Two earlier Codex answers were refused honestly: one cited nothing
+for a node whose tool output its client had truncated
+(`observed_without_evidence`), one had retrieved nothing because the
+orchestrator had handed it a timestamp the tools reject
+(`no_evidence_retrieved`). Both refusals are what the binding is for.
+
+Known boundaries: a grant pins its watermark, so a session that outlives
+the resident window pauses the broker's import until the grant expires
+(200 s); sessions are short, and two lanes should not run concurrently. A
+model client that truncates long tool output must re-query with a smaller
+component set to read ids; the instruction says so. The model still cannot
+change a verdict, issue a grant, or see a token.
+
+## Production doctor
+
+`scripts/doctor.py` prints one table of gates, each `pass`, `fail` or
+`not_run`, and exits 1 when any gate fails (2 on a usage error). It reads only
+the manager state endpoint (`--manager-state-url` with
+`--manager-read-token-file`, or a saved copy via `--manager-state-file`), the
+evidence database read-only (`--evidence-db`) and a receipts file
+(`--evidence-file`, see `config/doctor-evidence.example.json`) for gates that
+are established outside the running process. It never prints `pass` without a
+concrete check; what it cannot establish is `not_run`.
+
+Live gates: `manager_state`, `rule_inputs_usable` (every inventory rule on
+every node evaluated with a non-unknown input), `no_quarantined_sources`
+(live list and the durable quarantine tables), `evidence_retention`
+(configured, last pass within twice its period, no error),
+`notification_receiver` (configured and an accepted delivery within 24 hours,
+live or by receipt), `ai_lane` (`ai_unavailable` bound and not active;
+`not_run` when unbound), `query_broker` (with `--query-control-socket` and
+`--query-service-token-file`: the broker's own projection health over its
+control socket; `caught_up`, or `lagging` within `--query-max-lag-rows`
+(default 1024, four import pages), passes; a conflict, an unavailable source,
+an identity mismatch, a larger lag, a refused token or an unreachable socket
+fails; `not_run` without the flag) `mcp_lane` (with `--mcp-journal`: the newest MCP-lane
+record is an accepted answer younger than `--mcp-max-age-hours`, default 2;
+a refused newest answer or a stale journal fails; `not_run` without the
+flag) and `query_ledger_activity` (with
+`--query-ledger-db`: the ledger or its WAL was written within
+`--query-max-idle-seconds`, default 300). The second is a liveness signal
+only: the compaction tick writes the ledger whether or not imports progress,
+and a broker once retried one unwritable page for two hours behind a fresh
+timestamp. Receipt gates: `physical_separation`,
+`performance_round_a` to `_f`, `soak_72h`, `token_rotation`,
+`cert_rotation`, `rollback_drill`. A `pass` receipt is honoured only with a
+valid RFC 3339 `at` younger than `--receipt-max-age-days` (default 90) and an
+evidence path that exists (`--no-check-evidence-paths` relaxes the latter).
+
+## Health HTTP and collector memory boundaries
+
+The health listener retains at most eight connection slots. Each uses a 16 KiB
+socket input/output window (output adds at most a 1 KiB serialization chunk
+and framing), the existing 16 KiB header limit, and a 5 s response deadline.
+A nonreading client is closed and its slot/buffers released. Body announcements
+are refused before payload parsing; the small socket window can already
+contain some bytes beyond the headers. Other RPC listeners keep their original
+4 MiB windows and body policy.
+
+Each health response is capped at 2 MiB + 4 KiB envelope allowance. Eight
+retained payloads therefore have an explicit aggregate logical ceiling of
+16 MiB + 32 KiB, separate from the publisher/collector budget. Add header/I/O
+buffers, allocator overhead, cached snapshots and temporary body copies:
+`respond` runs serially on the exporter actor, but body/BufferSlice/payload
+copies coexist while it builds one response. Neither the 8 MiB publication
+budget nor the Q 32 MiB evidence budget is a validator/process RSS cap.
+
+Bounded overlay collection limits drain fan-out to 64 tasks, reserves task
+scratch and result container capacity, and rechecks the updated buckets after
+awaiting deltas, before constructing MetricSet. A growth or drain-limit refusal
+is published as shed/partial. Budgets also include existing label string capacity
+and join container headroom. Unbounded legacy collection remains separate.

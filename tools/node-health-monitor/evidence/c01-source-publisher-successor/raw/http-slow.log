@@ -1,0 +1,4 @@
+COMMAND: tools/node-health-monitor/.contract-venv/bin/python tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode slow
+native_snapshot_unit_passed
+slow: passed
+EXIT=0

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile": {"const": "c05_development_cache_only"},
+    "revision": {"$ref": "#/$defs/hash"},
+    "observer_id": {"$ref": "#/$defs/alias"},
+    "observer_epoch": {"$ref": "#/$defs/epoch"},
+    "network_id": {"$ref": "#/$defs/hash"},
+    "genesis": {"$ref": "#/$defs/hash"},
+    "clock_skew_allowance_ms": {"const": 5000},
+    "endpoints": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/$defs/endpoint"}},
+    "targets": {"type": "array", "minItems": 1, "maxItems": 32, "items": {"$ref": "#/$defs/target"}}
+  },
+  "required": ["schema_version", "profile", "revision", "observer_id", "observer_epoch", "network_id", "genesis", "clock_skew_allowance_ms", "endpoints", "targets"],
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$", "minLength": 64, "maxLength": 64},
+    "alias": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$", "maxLength": 64},
+    "epoch": {"type": "string", "pattern": "^[!-~]{1,128}$", "maxLength": 128},
+    "uint64": {"type": "string", "pattern": "^(0|[1-9][0-9]{0,19})$", "format": "uint64", "maxLength": 20},
+    "utc": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$", "format": "date-time", "maxLength": 40},
+    "endpoint": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "endpoint_id": {"$ref": "#/$defs/alias"},
+        "fixed_url": {"type": "string", "pattern": "^https://[^@?#]+$", "maxLength": 512},
+        "failure_domain": {"$ref": "#/$defs/alias"},
+        "kind": {"const": "approved_cache_only_https"},
+        "current_source_epoch": {"$ref": "#/$defs/epoch"}
+      },
+      "required": ["endpoint_id", "fixed_url", "failure_domain", "kind", "current_source_epoch"]
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "target_id": {"$ref": "#/$defs/alias"},
+        "node_id": {"$ref": "#/$defs/alias"},
+        "role": {"enum": ["normal", "probe_only", "non_voting"]},
+        "valid_from": {"$ref": "#/$defs/utc"},
+        "valid_until": {"$ref": "#/$defs/utc"},
+        "scope_id": {"$ref": "#/$defs/alias"},
+        "workchain": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647},
+        "shard": {"$ref": "#/$defs/uint64"},
+        "endpoint_ids": {"type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": {"$ref": "#/$defs/alias"}}
+      },
+      "required": ["target_id", "node_id", "role", "valid_from", "valid_until", "scope_id", "workchain", "shard", "endpoint_ids"]
+    }
+  }
+}

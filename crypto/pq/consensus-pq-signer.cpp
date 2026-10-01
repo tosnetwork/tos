@@ -2,6 +2,8 @@
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 
+#include "../../metrics/core-health.h"
+
 #include "consensus-pq-signer.h"
 #include "mldsa_native.h"
 #include "pq-sign-under.h"
@@ -57,7 +59,9 @@ std::optional<ValidatorPQKeyStore> ValidatorPQKeyStore::generate() noexcept {
 }
 
 std::optional<ConsensusPQSignature> ValidatorPQKeyStore::sign_consensus(std::string_view message) const noexcept {
+  tos::health::OperationTimer timer(tos::health::pq_sign);
   auto signature = detail::sign_under(key_, secret_ ? secret_->sk.data() : nullptr, simplex_sign_context, message);
+  timer.finish(signature.has_value());
   if (signature.has_value()) {
     consensus_signatures_produced_.fetch_add(1, std::memory_order_relaxed);
   }

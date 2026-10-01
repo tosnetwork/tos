@@ -330,11 +330,28 @@ async def main():
                                         pool.address, account.last_transaction_id
                                     )
                                     answer = elector_reply(transactions.transactions, query)
+                                    # Reason 0 means the election is already finished (or none
+                                    # is active): a stake sent at the window's close, or after a
+                                    # restart that re-read a closing election. That is not a
+                                    # fault to die on; the election is recorded as skipped and
+                                    # the loop waits for the next one.
+                                    if answer and answer[0] == 0xEE6F454C and answer[1] == 0:
+                                        return answer
                                     if answer and answer[0] != 0xF374484C:
                                         raise ValueError(f"Elector refused node {i}: {answer}")
                                     return answer
 
                                 answer = await wait(accepted, 60)
+                                if answer and answer[0] == 0xEE6F454C:
+                                    event(
+                                        "election_closed_skipped",
+                                        election=election,
+                                        node=i,
+                                        query=query,
+                                        reply=answer,
+                                    )
+                                    selected = []
+                                    break
                                 event(
                                     "stake_accepted",
                                     election=election,

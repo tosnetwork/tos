@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh local validator development facts every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=nhm-local-validator-health.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,58 @@
+{
+  "source_at_start": {
+    "runtime_script": {
+      "path": "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py",
+      "sha256": "e9055bd496c1a0604961d32441dd2484b9b2d0372441b91323b6b025611640c9"
+    },
+    "health_state": {
+      "path": "$HOME/nhm-c03-build/debug/health-state",
+      "sha256": "dbcb5274a464421b746e4204e60153712da5436bc31fef2d6847743b56534c62"
+    },
+    "health_watchdog": {
+      "path": "$HOME/nhm-c03-build/debug/health-watchdog",
+      "sha256": "816c33a68d05e4f4454beb480d21640e4236ddfa1fe767afd4a93d054b2fd65b"
+    },
+    "prometheus": {
+      "path": "$HOME/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
+      "sha256": "214909c382a99fda088cb1c0ccc297af7e47b7eaed8cf50a4f79736c0ef94f11"
+    },
+    "alertmanager": {
+      "path": "$HOME/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
+      "sha256": "154890307c382a186d4ddf9354cfa0cab08771f818aac1e647d0cf277ecef854"
+    },
+    "rules": {
+      "path": "$HOME/tos-node-health-impl/tools/node-health-monitor/deploy/prometheus/rules.yml",
+      "sha256": "fac2c8ecb0060a736aaa1b3f25629871af4adba767f9b7067642233e5c687717"
+    },
+    "runtime_flags": {
+      "path": "$HOME/tos-node-health-impl/tools/node-health-monitor/deploy/prometheus/runtime-flags.json",
+      "sha256": "f57993236eb24a6eec5e2c5c6b84cb29144e856b1c990dff19a29df218360188"
+    },
+    "manager_config": {
+      "path": "/tmp/nhm-c03-runtime-38c33f7n/manager.json",
+      "sha256": "efa01c09ebbd1f8218413441e6ebb016c185b7a2593df2023632a47c273e71ab"
+    },
+    "observer_config": {
+      "path": "/tmp/nhm-c03-runtime-38c33f7n/observer.json",
+      "sha256": "fc2b4b79fbc0821fe6f34eb46e6a478c668928f661d9a47116453b96220dfe18"
+    },
+    "prometheus_config": {
+      "path": "/tmp/nhm-c03-runtime-38c33f7n/prometheus.yml",
+      "sha256": "0a97660de436bece4b0ffe0fd1abe2f42788afa7742bcd131dedd056cf02828d"
+    },
+    "alertmanager_config": {
+      "path": "/tmp/nhm-c03-runtime-38c33f7n/alertmanager.yml",
+      "sha256": "e0e6ebe4786898a9cbba8e19dcf14c216e2e09711c076940e93a78d8ac403363"
+    }
+  },
+  "prometheus_required_argv": [
+    "--rules.alert.resend-delay=15s"
+  ],
+  "alertmanager_route": {
+    "group_wait": "0s",
+    "group_interval": "15s",
+    "repeat_interval": "30s"
+  },
+  "observer_process_deadline_seconds": 45,
+  "observer_pipeline_deadline_seconds": 100
+}

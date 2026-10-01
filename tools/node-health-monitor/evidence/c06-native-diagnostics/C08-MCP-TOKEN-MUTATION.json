@@ -1,0 +1,30 @@
+{
+  "base_head": "474d9a3ee4843e28b6c16596a218a117a9ddfb88",
+  "test_command": "CARGO_TARGET_DIR=$HOME/nhm-c08-token-mutant-build cargo test -p tos-health-services --features mcp --test mcp_token_visibility --locked -j2 -- --nocapture",
+  "test": "run_token_is_not_a_model_visible_tool_argument",
+  "source": "crates/health-services/src/mcp_bridge.rs",
+  "baseline_source_sha256": "d1b0294fdf5941bf4484aef7761dc1dd3e86360904400e9eb30ea0c04980a2f5",
+  "mutant_source_sha256": "2be65586bd5412b39bf3ab8ec551b57f85fc75b4b452b17fce3c4e2910a3cbd0",
+  "restored_source_sha256": "d1b0294fdf5941bf4484aef7761dc1dd3e86360904400e9eb30ea0c04980a2f5",
+  "mutation_patch": {
+    "path": "$HOME/nhm-c08-token-evidence/mutation.patch",
+    "sha256": "b1e650146d6fde695bf3925178fd35f6842a5f47c2445373363d69df59bd284a",
+    "property": "add model-visible run_token property to the advertised tool input schema"
+  },
+  "baseline": {
+    "exit": 0,
+    "log": "$HOME/nhm-c08-token-evidence/baseline.log",
+    "sha256": "c608c5fb5b9f8e7e8e27edaff4f5354d2e599d09a3bbc9fce5ec5e573d4740eb"
+  },
+  "mutant": {
+    "exit": 101,
+    "intended_assertion": "run token exposed by \"tos_get_capabilities\"",
+    "log": "$HOME/nhm-c08-token-evidence/mutant.log",
+    "sha256": "07800037c126b5331d05a0cff03f2093432dd689a548f3f2258dedd00de46dcb"
+  },
+  "restored": {
+    "exit": 0,
+    "log": "$HOME/nhm-c08-token-evidence/restored.log",
+    "sha256": "bff0c706cf84f1620248b57fcc05dab13d4a2855cfadbcf409353e07da1cc077"
+  }
+}

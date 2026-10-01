@@ -448,11 +448,17 @@ void QuicServer::shutdown_stream(QuicConnectionId cid, QuicStreamID sid) {
 }
 
 void QuicServer::collect_stats(td::Promise<Stats> P) {
+  collect_stats_mode(true, std::move(P));
+}
+
+void QuicServer::collect_stats_mode(bool build_per_connection, td::Promise<Stats> P) {
   Stats stats;
   for (auto &[id, conn] : connections_) {
     Stats::Entry entry{.total_conns = 1, .impl_stats = conn->impl_->get_stats()};
     stats.summary = stats.summary + entry;
-    stats.per_conn[id] = entry;
+    if (build_per_connection) {
+      stats.per_conn[id] = entry;
+    }
   }
   stats.callback_memory = callback_->memory_stats();
   return P.set_value(std::move(stats));

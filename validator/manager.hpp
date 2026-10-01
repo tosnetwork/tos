@@ -108,6 +108,8 @@ class ValidatorManagerImpl : public ValidatorManager {
     td::Timestamp timeout;
     td::uint32 priority;
     td::Promise<ResType> promise;
+    // When the wait was registered; the health gauges report the oldest one.
+    td::Timestamp created = td::Timestamp::now();
 
     Waiter() {
     }
@@ -125,8 +127,10 @@ class ValidatorManagerImpl : public ValidatorManager {
     std::pair<td::Timestamp, td::uint32> get_timeout() const {
       return get_timeout_impl(waiting_);
     }
-    void check_timers() {
-      check_timers_impl(waiting_);
+    // One pass: expire timed-out waiters and, when asked, count the survivors
+    // and find the earliest creation time among them for the health sample.
+    void check_timers(std::uint64_t *depth = nullptr, double *oldest_created = nullptr) {
+      check_timers_impl(waiting_, depth, oldest_created);
     }
 
    protected:
@@ -143,7 +147,8 @@ class ValidatorManagerImpl : public ValidatorManager {
       }
       return {td::Timestamp::at(t.at() + 10.0), prio};
     }
-    static void check_timers_impl(std::vector<Waiter<ResType>> &waiting) {
+    static void check_timers_impl(std::vector<Waiter<ResType>> &waiting, std::uint64_t *depth = nullptr,
+                                  double *oldest_created = nullptr) {
       td::uint32 j = 0;
       auto f = waiting.begin();
       auto t = waiting.end();
@@ -153,6 +158,10 @@ class ValidatorManagerImpl : public ValidatorManager {
           t--;
           std::swap(*f, *t);
         } else {
+          if (depth != nullptr) {
+            ++*depth;
+            *oldest_created = std::min(*oldest_created, f->created.at());
+          }
           f++;
           j++;
         }
@@ -171,9 +180,9 @@ class ValidatorManagerImpl : public ValidatorManager {
       auto t2 = WaitList<ActorT, ResType>::get_timeout_impl(waiting_preliminary_);
       return {std::max(t1.first, t2.first), std::max(t1.second, t2.second)};
     }
-    void check_timers() {
-      WaitList<ActorT, ResType>::check_timers_impl(this->waiting_);
-      WaitList<ActorT, ResType>::check_timers_impl(waiting_preliminary_);
+    void check_timers(std::uint64_t *depth = nullptr, double *oldest_created = nullptr) {
+      WaitList<ActorT, ResType>::check_timers_impl(this->waiting_, depth, oldest_created);
+      WaitList<ActorT, ResType>::check_timers_impl(waiting_preliminary_, depth, oldest_created);
     }
   };
   std::map<BlockIdExt, WaitListPreliminary<WaitBlockState, td::Ref<ShardState>>> wait_state_;
@@ -351,6 +360,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   void got_next_gc_masterchain_state(BlockHandle handle, td::Ref<MasterchainState> state);
   void advance_gc(BlockHandle handle, td::Ref<MasterchainState> state);
   void try_advance_gc_masterchain_block();
+  struct HealthWaiterSample {
+    std::uint64_t depth = 0;
+    std::uint64_t oldest_age_ms = 0;
+  };
+  void publish_health_node_state(const HealthWaiterSample &block_data, const HealthWaiterSample &state,
+                                 const HealthWaiterSample &shard_client);
   void update_gc_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
   void update_shard_client_block_handle(BlockHandle handle, td::Ref<MasterchainState> state,
                                         td::Promise<td::Unit> promise) override;
@@ -788,6 +803,7 @@ class ValidatorManagerImpl : public ValidatorManager {
  private:
   td::Timestamp resend_shard_blocks_at_;
   td::Timestamp check_waiters_at_;
+  td::Timestamp health_statvfs_at_;
   td::Timestamp check_shard_clients_;
   td::Timestamp log_status_at_;
   void alarm() override;

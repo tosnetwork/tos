@@ -5,6 +5,7 @@
 #include "td/utils/Heap.h"
 #include "td/utils/as.h"
 
+#include "health-metrics-policy.h"
 #include "quic-sender.h"
 
 namespace tos::quic {
@@ -407,9 +408,13 @@ std::vector<metrics::MetricFamily> QuicSender::Stats::dump() const {
 }
 
 td::actor::Task<QuicSender::Stats> QuicSender::collect_stats() {
+  co_return co_await collect_stats_mode(true);
+}
+
+td::actor::Task<QuicSender::Stats> QuicSender::collect_stats_mode(bool build_per_path) {
   Stats stats;
   for (auto &[_, server] : servers_by_port_) {
-    auto serv_stats = co_await td::actor::ask(server, &QuicServer::collect_stats);
+    auto serv_stats = co_await td::actor::ask(server, &QuicServer::collect_stats_mode, build_per_path);
     stats.summary = stats.summary + Stats::Entry{.server_stats = serv_stats.summary};
     stats.inbound_streams += serv_stats.callback_memory.inbound_streams;
     stats.inbound_stream_bytes += serv_stats.callback_memory.inbound_stream_bytes;
@@ -422,10 +427,27 @@ td::actor::Task<QuicSender::Stats> QuicSender::collect_stats() {
   co_return stats;
 }
 
+std::optional<metrics::CollectionReservation> QuicSender::reservation() const {
+  // Summary only: `health_metrics_policy::build_per_path` decides whether
+  // per-path families exist at all. Off, the result is exactly the eight
+  // summary scalars of Stats::Entry::dump under the "quic_summary_" prefix.
+  // On, one entry per live path with no cap of its own: unbudgeted, never a
+  // guess.
+  if (health_metrics_policy::build_per_path) {
+    return std::nullopt;
+  }
+  // Longest name is "quic_summary_lost_bytes_total" (29 bytes); no helps.
+  return metrics::scalar_families_reservation(kSummaryFamilies, 32, 0);
+}
+
 // TODO(avevad): remove obsolete Stats and collect metrics directly
 void QuicSender::collect(td::Promise<metrics::MetricSet> P) {
-  td::actor::send_closure(actor_id(this), &QuicSender::collect_stats,
+  td::actor::send_closure(actor_id(this), &QuicSender::collect_stats_mode, health_metrics_policy::build_per_path,
                           td::make_promise([P = std::move(P)](td::Result<Stats> R) mutable {
+                            if (R.is_error()) {
+                              P.set_error(R.move_as_error());
+                              return;
+                            }
                             P.set_value(metrics::MetricSet{.families = R.move_as_ok().dump()}.wrap("quic"));
                           }));
 }

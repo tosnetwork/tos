@@ -1948,6 +1948,21 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
 
 // ─── Prometheus metrics collection ──────────────────────────────────────
 
+std::optional<metrics::CollectionReservation> JsonRpcServer::reservation() const {
+  // Seven fixed scalars (names under 32 bytes, helps under 64) and the two
+  // Labeled method tables, whose own reservations are bounded by
+  // `metrics::Labeled::MAX_LABELS` entries each.
+  const auto requests = method_requests_->reservation();
+  const auto errors = method_errors_->reservation();
+  if (!requests || !errors) {
+    return std::nullopt;
+  }
+  auto total = metrics::scalar_families_reservation(kScalarFamilies, 32, 64);
+  total.resident_bytes += requests->resident_bytes + errors->resident_bytes;
+  total.families += requests->families + errors->families;
+  return total;
+}
+
 void JsonRpcServer::collect(metrics::MetricsPromise P) {
   metrics::MetricSet set{{}};
 

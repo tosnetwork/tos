@@ -163,7 +163,9 @@ bool HttpConnection::continue_payload_write() {
 
   bool wrote = false;
   while (!writing_payload_->written()) {
-    if (buffered_fd_.left_unwritten() > fd_high_watermark()) {
+    // Appending to the writer does not refresh its reader's size. Sync it
+    // before testing the window, including the initial fully buffered reply.
+    if (buffered_fd_.ready_for_flush_write() >= fd_high_watermark()) {
       return wrote;
     }
     bool is_tunnel = writing_payload_->payload_type() == HttpPayload::PayloadType::pt_tunnel;

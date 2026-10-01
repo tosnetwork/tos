@@ -1,0 +1,24 @@
+groups:
+  - name: tos-health-source-availability
+    interval: 5s
+    rules:
+      - alert: TosNativeMetricsUnavailable
+        expr: up{job="tos-native"} == 0
+        for: 45s
+        labels:
+          severity: warning
+        annotations:
+          summary: Native metrics source is unavailable; consensus health is unknown
+      - alert: TosNativeSnapshotStale
+        expr: time() - tos_exporter_snapshot_completed_timestamp_seconds > 30
+        for: 15s
+        labels:
+          severity: warning
+        annotations:
+          summary: Native snapshot has stopped advancing
+      - alert: TosPQAccountingIncomplete
+        expr: tos_health_pq_accounting_complete == 0
+        labels:
+          severity: warning
+        annotations:
+          summary: PQ counters cannot support complete accounting

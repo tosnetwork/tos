@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "analysis",
+        "insufficient_evidence"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "observed",
+              "hypothesis"
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "maxItems": 8,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "claim",
+          "basis",
+          "evidence_ids"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 32
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 256
+      },
+      "maxItems": 16
+    },
+    "recommended_runbooks": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "inspect_duty_accounting",
+          "inspect_persistence_progress",
+          "inspect_consensus_queues",
+          "inspect_storage_pressure",
+          "inspect_quic_backlog",
+          "inspect_observer_coverage",
+          "inspect_telemetry_unavailable",
+          "inspect_ai_unavailable"
+        ]
+      },
+      "maxItems": 6,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "status",
+    "summary",
+    "findings",
+    "missing_evidence",
+    "recommended_runbooks"
+  ],
+  "additionalProperties": false,
+  "$defs": {}
+}

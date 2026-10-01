@@ -1,0 +1,32 @@
+$ cargo test --locked -p tos-health-services --test watchdog pipeline_requires_own_firing_new_evaluation -- --exact
+source_sha256=2b716286819cc383055a2b9e1b6d4279e8d8f36bda6036b09c08cb09462cb823
+timeout_seconds=180
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.81s
+     Running tests/watchdog.rs ($HOME/nhm-c03-build/debug/deps/watchdog-097a9dcaf27ac5e3)
+
+running 1 test
+test pipeline_requires_own_firing_new_evaluation ... FAILED
+
+failures:
+
+---- pipeline_requires_own_firing_new_evaluation stdout ----
+watchdog pipeline advanced epoch=p1 sequence=9007199254740993 received_unix_ms=1790674411834
+watchdog pipeline advanced epoch=p1 sequence=9007199254740993 received_unix_ms=1790674411834
+
+thread 'pipeline_requires_own_firing_new_evaluation' (791264) panicked at crates/health-services/tests/watchdog.rs:15:5:
+assertion `left == right` failed
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    pipeline_requires_own_firing_new_evaluation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-services --test watchdog`
+
+EXIT=101

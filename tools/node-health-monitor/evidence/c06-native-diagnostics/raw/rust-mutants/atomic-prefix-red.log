@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 1 test
+diagnostic row scalar/value owned upper bound 14928
+diagnostic row body capacity 2048 total owned upper bound 17040
+diagnostic row scalar/value owned upper bound 14928
+diagnostic row body capacity 2048 total owned upper bound 17040
+
+thread 'diagnostic_ingest::tests::actual_mid_transaction_failure_rolls_back_and_never_returns_ack' (2303521) panicked at crates/health-services/src/diagnostic_ingest.rs:222:9:
+assertion `left == right` failed
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_ingest::tests::actual_mid_transaction_failure_rolls_back_and_never_returns_ack ... FAILED
+
+failures:
+
+failures:
+    diagnostic_ingest::tests::actual_mid_transaction_failure_rolls_back_and_never_returns_ack
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-services --lib`

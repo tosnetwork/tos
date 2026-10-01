@@ -1,0 +1,28 @@
+command: CARGO_BUILD_JOBS=16 bash tools/node-health-monitor/scripts/run-contract-tests.sh
+exit_code: 1
+stage: post-handler boundary output schema validation
+
+Using Python 3.14.4 environment at: tools/node-health-monitor/.contract-venv
+Checked 17 packages in 1ms
+PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+running 1 test
+test all_six_success_handlers_emit_runtime_dtos ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out
+running 1 test
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out
+
+Traceback (most recent call last):
+  File "tools/node-health-monitor/scripts/check-contracts.py", line 108, in <module>
+    if __name__=='__main__':main()
+  File "tools/node-health-monitor/scripts/check-contracts.py", line 65, in main
+    validator('tools/tos_get_metric_window.output.schema.json').validate(boundary)
+jsonschema.exceptions.ValidationError: missing_evidence[0].reason is too long
+
+Failed validating 'maxLength' in schema['properties']['missing_evidence']['items']['properties']['reason']:
+    {'type': 'string', 'maxLength': 256}
+
+Observed value was a comma-joined list of 32 missing fields and 16 gaps.
+Resolution: emit a truthful bounded count summary that points to the complete
+response coverage arrays. No coverage entry is truncated. The subsequent full
+closure suite and schema validation passed.

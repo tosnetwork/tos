@@ -1,0 +1,33 @@
+[1/87] Checking the git repository for changes...
+[2/33] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
+[3/33] Building CXX object CMakeFiles/test-health-core-registry.dir/test/test-health-core-registry.cpp.o
+[4/33] Building CXX object CMakeFiles/test-health-diagnostic-action.dir/test/test-health-diagnostic-action.cpp.o
+[5/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[6/33] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[7/33] Linking CXX static library metrics/libmetrics.a
+[8/33] Linking CXX executable test-health-native-snapshot
+[9/33] Linking CXX executable test-health-core-registry
+[10/33] Linking CXX executable test-health-diagnostic-action
+[11/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[12/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[13/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[14/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[15/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[16/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[17/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[18/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[19/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[20/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[21/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[22/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[23/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[24/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[25/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[26/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[27/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[28/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[29/33] Linking CXX executable test/validator/consensus/test-health-c04-publisher
+[30/33] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[31/33] Linking CXX static library validator/libvalidator.a
+[32/33] Linking CXX executable test/validator/consensus/test-health-actions
+[33/33] Linking CXX executable validator-engine/validator-engine

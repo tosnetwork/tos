@@ -1,0 +1,14 @@
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
+    Start 285: c04-native-pipeline
+    Start 130: test-health-collector-completion
+1/4 Test #130: test-health-collector-completion ...   Passed    0.06 sec
+    Start 131: test-health-collector-timestamps
+2/4 Test #131: test-health-collector-timestamps ...   Passed    0.21 sec
+    Start 134: test-health-source-policy
+3/4 Test #134: test-health-source-policy ..........   Passed    0.00 sec
+4/4 Test #285: c04-native-pipeline ................   Passed    0.29 sec
+
+100% tests passed, 0 tests failed out of 4
+
+Total Test time (real) =   0.30 sec

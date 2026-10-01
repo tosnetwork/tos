@@ -253,6 +253,7 @@ set(TDUTILS_SOURCE
   td/utils/StealingQueue.h
   td/utils/Storer.h
   td/utils/StorerBase.h
+  td/utils/StorageHealth.h
   td/utils/StringBuilder.h
   td/utils/tests.h
   td/utils/ThreadLocalStorage.h

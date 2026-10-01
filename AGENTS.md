@@ -60,6 +60,13 @@ against source, not against memory.
 
 ## Conventions
 
+- For node-health-monitor work, use the existing `node-health-monitor` branch
+  when the shared tree is available. If concurrent changes require an isolated
+  worktree, make one short-lived branch, merge only reviewed changes into
+  `node-health-monitor`, then remove its local and remote branch and worktree.
+  Reuse an active isolation branch instead of creating successors for each
+  test or receipt. Never merge a withdrawn or unreviewed candidate just to
+  reduce branch count.
 - Financial arithmetic uses `checked_*`, never raw `+ - * /`. A bound that
   holds "because of a limit declared elsewhere" is not a checked operation —
   it is a dependency on a constant nobody will remember to re-check.
@@ -69,6 +76,27 @@ against source, not against memory.
   nothing; all state change happens in `apply`.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
+
+## Keep evidence reviewable without filling Git with run output
+
+Commit the smallest durable set that lets another person check a claim and
+reproduce the relevant control: the test or runner, required frozen fixtures or
+schemas, the exact source/commit and command, and a concise result index with
+exit status and hashes. Preserve a targeted red/green sensitivity result when
+it is needed to show that the test can fail.
+
+Do not commit every build log, repeated successful run, temporary binary,
+database snapshot, or continuous sampling stream. Keep bulky raw output in a
+separate retained artifact location and put its path, SHA-256, size, and
+retention period in the committed index. If raw output is essential and no
+durable external location exists, commit only the bounded excerpt or minimal
+raw file needed to audit the claim, and explain why it cannot be regenerated.
+Never commit credentials, private runtime data, or unredacted live payloads.
+
+Review new evidence files before staging them. A passing summary must not
+replace a required failure receipt, and a hash without access to the retained
+raw artifact is not independent proof. Do not rewrite published Git history
+merely to remove old evidence; handle any such cleanup as a coordinated task.
 
 ## Wait for relevant CI, not every CI job
 

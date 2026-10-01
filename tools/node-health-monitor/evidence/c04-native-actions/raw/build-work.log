@@ -1,0 +1,5 @@
+[1/5] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[2/5] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[3/5] Linking CXX static library validator/libvalidator.a
+[4/5] Linking CXX executable test/validator/consensus/test-health-actions
+[5/5] Linking CXX executable test/validator/consensus/test-consensus

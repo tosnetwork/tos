@@ -1,0 +1,102 @@
+[
+  {
+    "name": "credential",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "Received::Rejected(\"credentials\")",
+    "mutant_source_sha256": "f93b76f60fb25b7306c05672f2cf85a17b0e9a399342aeda4bf99d39bf719b3f",
+    "patch_sha256": "08b8cc6d62949d07790947d7a560602ca9b94aed783d77b9d06abc8fec7615c5",
+    "restored_source_sha256": "49f56636cd726db9ac0195dd5c2f7cf7d9b5c4edfda45c890db5cb3d1e8400b8"
+  },
+  {
+    "name": "rights-close",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "rejected SCM_RIGHTS must not leak installed descriptors",
+    "mutant_source_sha256": "3693b15655aa1e3c2ce7a2218f6f469c4d0649395fe48f008230544e112154e1",
+    "patch_sha256": "d02b635e80b82fb54af24616e91077e54838aa50366bbc23f4a31fbafb9cb4e6",
+    "restored_source_sha256": "49f56636cd726db9ac0195dd5c2f7cf7d9b5c4edfda45c890db5cb3d1e8400b8"
+  },
+  {
+    "name": "nofollow",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "read_token(&link).is_err()",
+    "mutant_source_sha256": "a698d3e2bc17c0255b3d982c9fad0bb129196d1318c060a956a5aa873501438a",
+    "patch_sha256": "fd1d97522dfcb57edc9e7e90a8a7438fe787ff2021f23e1faf0d10f246242e87",
+    "restored_source_sha256": "49f56636cd726db9ac0195dd5c2f7cf7d9b5c4edfda45c890db5cb3d1e8400b8"
+  },
+  {
+    "name": "epoch",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "Received::Rejected(\"epoch_or_header\")",
+    "mutant_source_sha256": "57f4b469099b06890da9ee7ed5466b70f25e764a8e7762fa0cdb85656cf85e15",
+    "patch_sha256": "4f570316359900d88005983f8114e1d67ef76bb4888f081f549071e3ca16fe32",
+    "restored_source_sha256": "49f56636cd726db9ac0195dd5c2f7cf7d9b5c4edfda45c890db5cb3d1e8400b8"
+  },
+  {
+    "name": "conflict",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "called `Result::unwrap_err()` on an `Ok` value",
+    "mutant_source_sha256": "e2628c7ebf39617b8a38e5ea8ab542ada87dceec5f23bf9b0d4a407ae5cfeb75",
+    "patch_sha256": "975baca5f51e3989c5ad258543c05e784fc5d79852cb484b35eef2ef32b9c11b",
+    "restored_source_sha256": "f31bd67a3087a12561ad90aaff20020cfa634d84221a32555dae4083ed6519f0"
+  },
+  {
+    "name": "atomic-prefix",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "left: 1\n right: 0",
+    "mutant_source_sha256": "a0f74cc5e7fabdc4d8a333c806eca8d292c9fdde04cb38dec49a3ef09aa256dd",
+    "patch_sha256": "d363b148daa91475b171bb340deab2a035dd555150471338d36f80c953ac0ca6",
+    "restored_source_sha256": "f31bd67a3087a12561ad90aaff20020cfa634d84221a32555dae4083ed6519f0"
+  },
+  {
+    "name": "predecode-reservation",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "called `Option::unwrap()` on a `None` value",
+    "mutant_source_sha256": "6dd0b323c175f66d245638e696e3afb3dbcbe611d7977a02613ee36ddefda149",
+    "patch_sha256": "245a66e200ea1dd62af6e9b0277b400f80bd5ab689beacb63b8236e110c8b6ff",
+    "restored_source_sha256": "f31bd67a3087a12561ad90aaff20020cfa634d84221a32555dae4083ed6519f0"
+  },
+  {
+    "name": "json-limit",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "right: \"JSON body limit\"",
+    "mutant_source_sha256": "a32bcfe047ec809fca55c3698f8fd67f5eef6afb9af217c9889ae321c0363596",
+    "patch_sha256": "3436fd43adc0e543a625a5b736eba7050c993bab908e47cc9959caa0e7f7589e",
+    "restored_source_sha256": "53318696aec74bdf8a8784f93170cf5308d8a80f08dbaf8f18248b0df9c88e50"
+  },
+  {
+    "name": "decoded-limit",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "right: \"decoded payload limit\"",
+    "mutant_source_sha256": "c14463f08e17f594c5fabbaf05eda58eb8e5a5321062685040e7d9221238f201",
+    "patch_sha256": "f6482f0bee81ba50351ef54dae4ad5654a9503e02f0e6b5e28cf752623daac83",
+    "restored_source_sha256": "53318696aec74bdf8a8784f93170cf5308d8a80f08dbaf8f18248b0df9c88e50"
+  },
+  {
+    "name": "tcp-rate",
+    "compile_exit": 0,
+    "mutant_exit": 101,
+    "restored_exit": 0,
+    "intended_assertion": "actual egress bypassed token rate",
+    "mutant_source_sha256": "1418de53a2dd6af5ee6e1da8c0ac22ab82246ad65b3fe3107dd568650e1f175c",
+    "patch_sha256": "db4d7cdd6b5d54a9ebfb1039a914ce3d6879d2f7ae390b0eacf1241e28d44707",
+    "restored_source_sha256": "c6194fb3cdcc764e91f59b006c5b45b5e48fff6746a9a1c7e4d60366a0909b58"
+  }
+]

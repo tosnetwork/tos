@@ -34,12 +34,15 @@ class HttpInboundConnection : public HttpConnection {
  public:
   HttpInboundConnection(td::SocketFd fd, std::shared_ptr<HttpServer::Callback> http_callback,
                         HttpServer::AllMetrics metrics, double request_header_timeout = 0,
-                        double request_body_timeout = 0)
-      : HttpConnection(std::move(fd), nullptr, false)
+                        double request_body_timeout = 0, bool reject_request_bodies = false, size_t io_buffer_bytes = 0,
+                        double response_timeout = 0)
+      : HttpConnection(std::move(fd), nullptr, false, io_buffer_bytes)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
       , request_header_timeout_(request_header_timeout)
-      , request_body_timeout_(request_body_timeout) {
+      , request_body_timeout_(request_body_timeout)
+      , reject_request_bodies_(reject_request_bodies)
+      , response_timeout_(response_timeout) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -73,8 +76,19 @@ class HttpInboundConnection : public HttpConnection {
   // nothing at all) cannot hold the connection open forever — neither in
   // the header phase nor by declaring a body and then withholding it.
   // Bodies with no definite end (tunnels, read-until-close streams) are
-  // exempt, as is writing the response; the payload size caps bound those.
+  // exempt. A listener can separately bound the response writing phase.
   void alarm() override {
+    if (response_pending_) {
+      if (writing_payload_ || buffered_fd_.left_unwritten() != 0) {
+        if (response_deadline_.is_in_past()) {
+          stop();
+          return;
+        }
+        alarm_timestamp() = response_deadline_;
+        return;
+      }
+      response_pending_ = false;
+    }
     if (request_header_timeout_ <= 0) {
       return;
     }
@@ -110,6 +124,7 @@ class HttpInboundConnection : public HttpConnection {
   }
 
   void send_client_error();
+  void send_payload_refused();
   void send_server_error();
   void send_proxy_error(td::Status error);
 
@@ -165,7 +180,9 @@ class HttpInboundConnection : public HttpConnection {
       return;
     }
     request_header_deadline_ = td::Timestamp::in(request_header_timeout_);
-    alarm_timestamp() = request_header_deadline_;
+    alarm_timestamp() = response_pending_ && response_deadline_.at() < request_header_deadline_.at()
+                            ? response_deadline_
+                            : request_header_deadline_;
   }
 
  public:
@@ -179,10 +196,19 @@ class HttpInboundConnection : public HttpConnection {
     }
     double timeout = request_body_timeout_ > 0 ? request_body_timeout_ : request_header_timeout_;
     request_header_deadline_ = td::Timestamp::in(timeout);
-    alarm_timestamp() = request_header_deadline_;
+    alarm_timestamp() = response_pending_ && response_deadline_.at() < request_header_deadline_.at()
+                            ? response_deadline_
+                            : request_header_deadline_;
   }
 
  private:
+  void arm_response_deadline() {
+    if (response_timeout_ > 0) {
+      response_pending_ = true;
+      response_deadline_ = td::Timestamp::in(response_timeout_);
+      alarm_timestamp() = response_deadline_;
+    }
+  }
 
   bool read_next_request_ = true;
 
@@ -198,6 +224,10 @@ class HttpInboundConnection : public HttpConnection {
   HttpServer::AllMetrics metrics_;
   double request_header_timeout_ = 0;
   double request_body_timeout_ = 0;
+  bool reject_request_bodies_ = false;
+  double response_timeout_ = 0;
+  bool response_pending_ = false;
+  td::Timestamp response_deadline_;
   td::Timestamp request_header_deadline_;
   // Set when the handler answers a CONNECT with a 2xx response; only then
   // is the tunnel payload exempt from the request deadline.

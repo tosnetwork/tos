@@ -1,0 +1,11 @@
+--- diagnostic-ipc.h
++++ diagnostic-ipc.h
+@@ -82,7 +82,7 @@
+     if (cmsg==nullptr || cmsg->cmsg_level!=SOL_SOCKET || cmsg->cmsg_type!=SCM_CREDENTIALS ||
+         cmsg->cmsg_len!=CMSG_LEN(sizeof(ucred)) || CMSG_NXTHDR(&message,cmsg)!=nullptr) { disconnect(); return false; }
+     ucred creds{}; std::memcpy(&creds,CMSG_DATA(cmsg),sizeof(creds));
+-    if (creds.pid!=peer_ || creds.uid!=getuid() || creds.gid!=getgid()) { disconnect(); return false; }
++    if (creds.uid!=getuid() || creds.gid!=getgid()) { disconnect(); return false; }
+     ready_=true; return true;
+   }
+   void disconnect() noexcept { if (fd_>=0) close(fd_); fd_=-1; ready_=false; }

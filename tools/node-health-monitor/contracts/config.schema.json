@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "placement": {
+      "type": "string",
+      "enum": [
+        "development_fixture",
+        "production_off_validator"
+      ]
+    },
+    "native_owner": {
+      "const": "health_edge"
+    },
+    "remote_native_mode": {
+      "const": "cached_only"
+    },
+    "native_interval_seconds": {
+      "const": 15
+    },
+    "native_actual_inflight": {
+      "const": 1
+    },
+    "native_source_budget_ms": {
+      "const": 2000
+    },
+    "native_http_timeout_ms": {
+      "const": 3000
+    },
+    "native_cache_max_age_seconds": {
+      "const": 30
+    },
+    "native_max_bytes": {
+      "const": 2097152
+    },
+    "native_build_per_path": {
+      "const": false
+    },
+    "getstats_enabled": {
+      "const": false
+    },
+    "skip_missed_ticks": {
+      "const": true
+    },
+    "retry_on_timeout": {
+      "const": false
+    },
+    "core_max_bytes": {
+      "const": 4194304
+    },
+    "core_max_series": {
+      "const": 2048
+    },
+    "core_max_scopes": {
+      "const": 8
+    },
+    "diagnostics_enabled": {
+      "const": false
+    },
+    "ai_enabled": {
+      "const": false
+    },
+    "live_fallback": {
+      "const": false
+    },
+    "max_contiguous_monitor_work_us": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "network_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "binary_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "performance_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "failure_domains": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "validator": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            },
+            "monitor": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            },
+            "watchdog": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            }
+          },
+          "required": [
+            "validator",
+            "monitor",
+            "watchdog"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mtls_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "receiver_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "effective_resource_digest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "placement",
+    "native_owner",
+    "remote_native_mode",
+    "native_interval_seconds",
+    "native_actual_inflight",
+    "native_source_budget_ms",
+    "native_http_timeout_ms",
+    "native_cache_max_age_seconds",
+    "native_max_bytes",
+    "native_build_per_path",
+    "getstats_enabled",
+    "skip_missed_ticks",
+    "retry_on_timeout",
+    "core_max_bytes",
+    "core_max_series",
+    "core_max_scopes",
+    "diagnostics_enabled",
+    "ai_enabled",
+    "live_fallback",
+    "max_contiguous_monitor_work_us",
+    "network_id",
+    "binary_digest",
+    "performance_digest",
+    "failure_domains",
+    "mtls_digest",
+    "receiver_digest",
+    "effective_resource_digest"
+  ],
+  "additionalProperties": false,
+  "$defs": {}
+}

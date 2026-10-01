@@ -1,0 +1,4 @@
+$ cmake --build $HOME/tos-node-health-c01-build --target test-health-native-snapshot -j16
+[1/56] Checking the git repository for changes...
+
+EXIT=0

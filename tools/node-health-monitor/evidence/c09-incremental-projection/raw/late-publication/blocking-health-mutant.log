@@ -1,0 +1,67 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.45s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=22
+grant_during_catchup=503
+page=2 rows=0 retained=0 global_m_seq=512 elapsed_ms=7 concurrent_grant_ms=Some(1) late_control_ms=None
+page=3 rows=0 retained=0 global_m_seq=768 elapsed_ms=4 concurrent_grant_ms=Some(1) late_control_ms=None
+page=4 rows=0 retained=0 global_m_seq=1024 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=5 rows=0 retained=0 global_m_seq=1280 elapsed_ms=3 concurrent_grant_ms=Some(1) late_control_ms=None
+page=6 rows=0 retained=0 global_m_seq=1536 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=7 rows=0 retained=0 global_m_seq=1792 elapsed_ms=3 concurrent_grant_ms=Some(1) late_control_ms=None
+page=8 rows=0 retained=0 global_m_seq=2048 elapsed_ms=4 concurrent_grant_ms=Some(0) late_control_ms=None
+page=9 rows=0 retained=0 global_m_seq=2304 elapsed_ms=3 concurrent_grant_ms=Some(1) late_control_ms=None
+page=10 rows=0 retained=0 global_m_seq=2560 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=11 rows=0 retained=0 global_m_seq=2816 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=12 rows=0 retained=0 global_m_seq=3072 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=13 rows=0 retained=0 global_m_seq=3328 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=14 rows=0 retained=0 global_m_seq=3584 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=15 rows=0 retained=0 global_m_seq=3840 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=16 rows=0 retained=0 global_m_seq=4096 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=17 rows=0 retained=0 global_m_seq=4352 elapsed_ms=3 concurrent_grant_ms=Some(0) late_control_ms=None
+page=18 rows=24 retained=24 global_m_seq=4608 elapsed_ms=35 concurrent_grant_ms=Some(0) late_control_ms=None
+page=19 rows=33 retained=57 global_m_seq=4864 elapsed_ms=56 concurrent_grant_ms=Some(1) late_control_ms=None
+page=20 rows=80 retained=137 global_m_seq=5120 elapsed_ms=120 concurrent_grant_ms=Some(2) late_control_ms=None
+page=21 rows=79 retained=216 global_m_seq=5376 elapsed_ms=141 concurrent_grant_ms=Some(2) late_control_ms=None
+page=22 rows=78 retained=294 global_m_seq=5632 elapsed_ms=152 concurrent_grant_ms=Some(2) late_control_ms=None
+page=23 rows=78 retained=372 global_m_seq=5888 elapsed_ms=163 concurrent_grant_ms=Some(2) late_control_ms=None
+page=24 rows=78 retained=450 global_m_seq=6144 elapsed_ms=178 concurrent_grant_ms=Some(2) late_control_ms=None
+page=25 rows=77 retained=527 global_m_seq=6400 elapsed_ms=189 concurrent_grant_ms=Some(2) late_control_ms=None
+page=26 rows=76 retained=603 global_m_seq=6656 elapsed_ms=204 concurrent_grant_ms=Some(2) late_control_ms=None
+page=27 rows=78 retained=681 global_m_seq=6912 elapsed_ms=234 concurrent_grant_ms=Some(2) late_control_ms=None
+page=28 rows=77 retained=758 global_m_seq=7168 elapsed_ms=236 concurrent_grant_ms=Some(2) late_control_ms=None
+page=29 rows=78 retained=836 global_m_seq=7424 elapsed_ms=263 concurrent_grant_ms=Some(2) late_control_ms=None
+page=30 rows=79 retained=915 global_m_seq=7680 elapsed_ms=275 concurrent_grant_ms=Some(1) late_control_ms=None
+page=31 rows=78 retained=993 global_m_seq=7936 elapsed_ms=299 concurrent_grant_ms=Some(2) late_control_ms=None
+page=32 rows=77 retained=1070 global_m_seq=8192 elapsed_ms=301 concurrent_grant_ms=Some(2) late_control_ms=None
+page=33 rows=78 retained=1148 global_m_seq=8448 elapsed_ms=313 concurrent_grant_ms=Some(3) late_control_ms=None
+page=34 rows=78 retained=1226 global_m_seq=8704 elapsed_ms=343 concurrent_grant_ms=Some(2) late_control_ms=None
+page=35 rows=76 retained=1302 global_m_seq=8960 elapsed_ms=343 concurrent_grant_ms=Some(1) late_control_ms=None
+page=36 rows=77 retained=1379 global_m_seq=9216 elapsed_ms=398 concurrent_grant_ms=Some(2) late_control_ms=None
+page=37 rows=79 retained=1458 global_m_seq=9472 elapsed_ms=336 concurrent_grant_ms=Some(1) late_control_ms=None
+page=38 rows=78 retained=1536 global_m_seq=9728 elapsed_ms=390 concurrent_grant_ms=Some(2) late_control_ms=None
+page=39 rows=77 retained=1613 global_m_seq=9984 elapsed_ms=241 concurrent_grant_ms=Some(2) late_control_ms=None
+page=40 rows=75 retained=1688 global_m_seq=10240 elapsed_ms=425 concurrent_grant_ms=Some(2) late_control_ms=None
+page=41 rows=76 retained=1764 global_m_seq=10496 elapsed_ms=246 concurrent_grant_ms=Some(1) late_control_ms=None
+page=42 rows=78 retained=1842 global_m_seq=10752 elapsed_ms=449 concurrent_grant_ms=Some(2) late_control_ms=None
+page=43 rows=77 retained=1919 global_m_seq=11008 elapsed_ms=260 concurrent_grant_ms=Some(2) late_control_ms=None
+page=44 rows=76 retained=1995 global_m_seq=11264 elapsed_ms=425 concurrent_grant_ms=Some(2) late_control_ms=None
+page=45 rows=79 retained=2074 global_m_seq=11520 elapsed_ms=287 concurrent_grant_ms=Some(1) late_control_ms=None
+
+thread 'live_read_only_projection_cost_witness' (1212009) panicked at crates/health-services/tests/manager_query_source.rs:150:21:
+assertion `left == right` failed
+  left: 200
+ right: 503
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test live_read_only_projection_cost_witness ... FAILED
+
+failures:
+
+failures:
+    live_read_only_projection_cost_witness
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 10.01s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`

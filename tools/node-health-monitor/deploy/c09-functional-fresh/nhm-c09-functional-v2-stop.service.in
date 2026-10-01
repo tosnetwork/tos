@@ -1,0 +1,13 @@
+[Unit]
+Description=Stop isolated fresh-window C09 functional sampler
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/nhm-supervision/c09-local/runtime/functional-window-2
+UMask=0077
+NoNewPrivileges=yes
+Environment=PYTHONDONTWRITEBYTECODE=1
+TimeoutStartSec=15s
+ExecStartPre=/usr/bin/sha256sum --check --status %h/nhm-supervision/c09-local/runtime/functional-window-2/SCRIPT.sha256
+ExecStart=/usr/bin/systemctl --user stop nhm-c09-functional-v2.timer nhm-c09-functional-v2.service
+ExecStartPost=/usr/bin/python3 %h/nhm-supervision/c09-local/runtime/functional-window-2/write-c09-functional-stop-receipt.py --runtime-dir %h/nhm-supervision/c09-local/runtime/functional-window-2 --q-ledger %h/nhm-supervision/c09-local/runtime/query/query-ledger.db --baseline-file %h/nhm-supervision/c09-local/runtime/functional-window-2/baseline.private.json --expected-baseline-sha256 @BASELINE_SHA256@ --window-id @WINDOW_ID@ --timer-unit nhm-c09-functional-v2.timer --service-unit nhm-c09-functional-v2.service --first-pass-not-after-utc @FIRST_PASS_DEADLINE_UTC@ --window-end-utc @STOP_UTC@

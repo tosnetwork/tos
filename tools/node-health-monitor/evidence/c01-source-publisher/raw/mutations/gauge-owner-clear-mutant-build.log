@@ -1,0 +1,8 @@
+$ cmake --build $HOME/tos-node-health-c01-build --target test-health-core-registry -j16
+[1/59] Checking the git repository for changes...
+[2/5] Building CXX object CMakeFiles/test-health-core-registry.dir/test/test-health-core-registry.cpp.o
+[3/5] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[4/5] Linking CXX static library metrics/libmetrics.a
+[5/5] Linking CXX executable test-health-core-registry
+
+EXIT=0

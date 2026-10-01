@@ -18,11 +18,14 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <sys/statvfs.h>
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
@@ -44,6 +47,9 @@
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
 #include "lite-client/lite-ext-query-failure.h"
+#include "metrics/chain-anchor-snapshot.h"
+#include "metrics/core-health.h"
+#include "metrics/node-state-snapshot.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
 #include "td/db/RocksDb.h"
@@ -54,6 +60,7 @@
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/thread.h"
 #include "tl-utils/lite-utils.hpp"
 #include "tl/tl_json.h"
 #include "tos/lite-tl.hpp"
@@ -82,6 +89,79 @@
 namespace tos {
 
 namespace validator {
+
+namespace {
+std::optional<health::ChainAnchorSnapshot::Block> health_block_anchor(const BlockIdExt &id) noexcept {
+  health::ChainAnchorSnapshot::Block result;
+  const auto file = id.file_hash.as_slice();
+  const auto root = id.root_hash.as_slice();
+  if (file.size() != 32 || root.size() != 32)
+    return std::nullopt;
+  bool file_nonzero = false, root_nonzero = false;
+  for (std::size_t i = 0; i < 32; ++i) {
+    result.file_hash[i] = static_cast<std::uint8_t>(file[i]);
+    result.root_hash[i] = static_cast<std::uint8_t>(root[i]);
+    file_nonzero |= result.file_hash[i] != 0;
+    root_nonzero |= result.root_hash[i] != 0;
+  }
+  if (!file_nonzero || !root_nonzero)
+    return std::nullopt;
+  result.seqno = id.seqno();
+  return result;
+}
+std::uint64_t health_block_unix_seconds(const BlockHandle &handle) noexcept {
+  if (!handle || !handle->inited_unix_time())
+    return 0;
+  return static_cast<std::uint64_t>(handle->unix_time());
+}
+void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdExt &applied,
+                                  td::Ref<MasterchainState> served, bool applied_advanced,
+                                  std::uint64_t applied_block_unix_seconds, const BlockHandle &key_block) noexcept {
+  if (!network_zero.is_masterchain_ext() || !network_zero.is_valid_full() || !applied.is_masterchain_ext() ||
+      !applied.is_valid_full())
+    return;
+  health::ChainAnchorSnapshot snapshot;
+  const auto network = network_zero.root_hash.as_slice();
+  if (network.size() != 32)
+    return;
+  for (std::size_t i = 0; i < 32; ++i)
+    snapshot.network_hash[i] = static_cast<std::uint8_t>(network[i]);
+  auto applied_block = health_block_anchor(applied);
+  if (!applied_block)
+    return;
+  snapshot.applied = *applied_block;
+  if (served.not_null() && served->get_block_id().is_masterchain_ext() && served->get_block_id().is_valid_full() &&
+      served->get_block_id().seqno() <= applied.seqno()) {
+    if (auto served_block = health_block_anchor(served->get_block_id())) {
+      snapshot.served = *served_block;
+      snapshot.have_served = true;
+    }
+  }
+  snapshot.observed_unix_seconds = static_cast<std::uint64_t>(td::Clocks::system());
+  if (key_block && key_block->id().is_masterchain_ext()) {
+    snapshot.key_block_seqno = key_block->id().seqno();
+    snapshot.key_block_unix_seconds = health_block_unix_seconds(key_block);
+  }
+  if (applied_advanced) {
+    snapshot.applied_advanced_unix_seconds = snapshot.observed_unix_seconds;
+  } else if (auto previous = health::chain_anchor_state.read();
+             previous && previous->network_hash == snapshot.network_hash &&
+             previous->applied.seqno == snapshot.applied.seqno &&
+             previous->applied.root_hash == snapshot.applied.root_hash &&
+             previous->applied.file_hash == snapshot.applied.file_hash) {
+    snapshot.applied_advanced_unix_seconds = previous->applied_advanced_unix_seconds;
+  } else {
+    // First observation of an already-applied block (startup, or a resume
+    // onto a halted chain): the block's own time is the latest moment the
+    // chain is known to have advanced, so the stall clock starts there.
+    snapshot.applied_advanced_unix_seconds =
+        applied_block_unix_seconds != 0 && applied_block_unix_seconds <= snapshot.observed_unix_seconds
+            ? applied_block_unix_seconds
+            : snapshot.observed_unix_seconds;
+  }
+  health::chain_anchor_state.publish(snapshot);
+}
+}  // namespace
 
 void ValidatorManagerImpl::validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id,
                                                         td::BufferSlice proof, td::Promise<td::Unit> promise) {
@@ -2099,6 +2179,9 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
       last_masterchain_block_handle_->set_processed();
 
       new_masterchain_block();
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
+                                   health_block_unix_seconds(last_masterchain_block_handle_),
+                                   last_known_key_block_handle_);
 
       promise.set_value(td::Unit());
 
@@ -2119,6 +2202,9 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
           pending_masterchain_states_.erase(it);
 
           new_masterchain_block();
+          publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
+                                       health_block_unix_seconds(last_masterchain_block_handle_),
+                                       last_known_key_block_handle_);
 
           for (auto &p : l_promise) {
             p.set_value(td::Unit());
@@ -2627,6 +2713,8 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   last_known_key_block_handle_ = last_key_block_handle_;
 
   CHECK(last_masterchain_block_handle_->is_applied());
+  publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                               health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
   if (last_known_key_block_handle_->inited_is_key_block()) {
     callback_->new_key_block(last_key_block_handle_);
   }
@@ -3894,6 +3982,68 @@ BlockHandle ValidatorManagerImpl::get_handle_from_lru(BlockIdExt id) {
   }
 }
 
+// Node-state gauges for the health snapshot: membership (duty counters live in
+// the consensus group), the three real waiter queues of this actor as sampled
+// by the one-second timer sweep that already walks them, and the storage
+// position. Runs only while health instrumentation is on and only from that
+// sweep, never per alarm wake-up. The filesystem query never runs on this
+// actor: a stalled disk must not stall block processing, so statvfs runs on a
+// short-lived thread at most every ten seconds, one in flight at a time, and
+// only writes lock-free gauges this actor publishes.
+// Three missed ten-second disk samples make the storage position unknown.
+constexpr std::uint64_t kStorageSampleTtlMs = 30'000;
+void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &block_data,
+                                                     const HealthWaiterSample &state,
+                                                     const HealthWaiterSample &shard_client) {
+  auto &g = health::node_state;
+  g.block_data_waiters.depth.store(block_data.depth, std::memory_order_relaxed);
+  g.block_data_waiters.oldest_age_ms.store(block_data.oldest_age_ms, std::memory_order_relaxed);
+  g.state_waiters.depth.store(state.depth, std::memory_order_relaxed);
+  g.state_waiters.oldest_age_ms.store(state.oldest_age_ms, std::memory_order_relaxed);
+  g.shard_client_waiters.depth.store(shard_client.depth, std::memory_order_relaxed);
+  g.shard_client_waiters.oldest_age_ms.store(shard_client.oldest_age_ms, std::memory_order_relaxed);
+  g.validator_member.store(!validator_groups_.empty(), std::memory_order_relaxed);
+  g.gc_seqno.store(gc_masterchain_handle_ ? gc_masterchain_handle_->id().id.seqno : 0, std::memory_order_relaxed);
+  g.persistent_state_seqno.store(state_serializer_masterchain_seqno_, std::memory_order_relaxed);
+  // A disk sample that the worker has not refreshed within its TTL is not a
+  // current fact: report storage unknown rather than an old value under a
+  // fresh observation clock.
+  {
+    const auto sampled = g.storage_sampled_steady_ms.load(std::memory_order_acquire);
+    const auto now_steady_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    if (sampled == 0 || now_steady_ms - sampled > kStorageSampleTtlMs) {
+      g.storage_valid.store(false, std::memory_order_relaxed);
+    }
+  }
+  if (health_statvfs_at_.is_in_past()) {
+    health_statvfs_at_ = td::Timestamp::in(10.0);
+    static std::atomic<bool> statvfs_inflight{false};
+    bool idle = false;
+    if (statvfs_inflight.compare_exchange_strong(idle, true, std::memory_order_acq_rel)) {
+      td::thread([root = db_root_] {
+        auto &gauges = health::node_state;
+        struct statvfs st;
+        if (statvfs(root.c_str(), &st) == 0 && st.f_frsize > 0) {
+          gauges.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize, std::memory_order_relaxed);
+          gauges.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize, std::memory_order_relaxed);
+          gauges.storage_sampled_steady_ms.store(
+              static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count()),
+              std::memory_order_release);
+          gauges.storage_valid.store(true, std::memory_order_relaxed);
+        } else {
+          gauges.storage_valid.store(false, std::memory_order_relaxed);
+        }
+        statvfs_inflight.store(false, std::memory_order_release);
+      }).detach();
+    }
+  }
+  g.observed_unix_seconds.store(static_cast<std::uint64_t>(td::Clocks::system()), std::memory_order_release);
+}
+
 void ValidatorManagerImpl::try_advance_gc_masterchain_block() {
   if (gc_masterchain_handle_ && last_masterchain_seqno_ > 0 && !gc_advancing_ &&
       gc_masterchain_handle_->inited_next_left() &&
@@ -3994,6 +4144,10 @@ void ValidatorManagerImpl::update_shard_client_block_handle(BlockHandle handle, 
     if (last_liteserver_state_.is_null() || last_liteserver_state_->get_block_id().seqno() < seqno) {
       last_liteserver_state_ = std::move(state);
     }
+    if (last_masterchain_state_.not_null())
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                   health_block_unix_seconds(last_masterchain_block_handle_),
+                                   last_known_key_block_handle_);
   }
   if (!db_event_publisher_.empty()) {
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockApplied " << shard_client_handle_->id().to_str();
@@ -4037,6 +4191,15 @@ void ValidatorManagerImpl::alarm() {
   try_advance_gc_masterchain_block();
   handles_.sweep_expired(handle_sweep_alarm_budget_);
   alarm_timestamp() = td::Timestamp::in(1.0);
+  // Re-observe the chain anchor every tick so a halted chain keeps a fresh,
+  // truthful anchor (same block, older applied-advance clock) instead of
+  // vanishing from the health snapshot.
+  if (last_masterchain_block_handle_ && last_masterchain_block_handle_->is_applied() &&
+      last_masterchain_state_.not_null()) {
+    publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                 health_block_unix_seconds(last_masterchain_block_handle_),
+                                 last_known_key_block_handle_);
+  }
   if (shard_client_state_.not_null() && gc_masterchain_handle_) {
     td::actor::send_closure(db_, &Db::run_gc, shard_client_state_, gc_masterchain_handle_->unix_time(),
                             opts_->archive_ttl());
@@ -4068,14 +4231,34 @@ void ValidatorManagerImpl::alarm() {
   alarm_timestamp().relax(resend_shard_blocks_at_);
   if (check_waiters_at_.is_in_past()) {
     check_waiters_at_ = td::Timestamp::in(1.0);
+    // The health sample is taken inside the timer sweep's own pass over each
+    // waiter vector: survivors are counted and their earliest creation time
+    // kept while timed-out waiters are expired, so no waiter is visited a
+    // second time, and nothing runs per alarm wake-up.
+    const bool health_on = health::enabled.load(std::memory_order_relaxed);
+    const auto sweep_now = td::Timestamp::now();
+    constexpr double kNoWaiter = std::numeric_limits<double>::infinity();
+    std::uint64_t block_data_depth = 0, state_depth = 0, shard_client_depth = 0;
+    double block_data_oldest = kNoWaiter, state_oldest = kNoWaiter, shard_client_oldest = kNoWaiter;
     for (auto &w : wait_block_data_) {
-      w.second.check_timers();
+      w.second.check_timers(health_on ? &block_data_depth : nullptr, &block_data_oldest);
     }
     for (auto &w : wait_state_) {
-      w.second.check_timers();
+      w.second.check_timers(health_on ? &state_depth : nullptr, &state_oldest);
     }
     for (auto &w : shard_client_waiters_) {
-      w.second.check_timers();
+      w.second.check_timers(health_on ? &shard_client_depth : nullptr, &shard_client_oldest);
+    }
+    if (health_on) {
+      auto sample = [&](std::uint64_t depth, double oldest_created) {
+        HealthWaiterSample into;
+        into.depth = depth;
+        const double age = depth == 0 ? 0 : sweep_now.at() - oldest_created;
+        into.oldest_age_ms = age > 0 ? static_cast<std::uint64_t>(age * 1000.0) : 0;
+        return into;
+      };
+      publish_health_node_state(sample(block_data_depth, block_data_oldest), sample(state_depth, state_oldest),
+                                sample(shard_client_depth, shard_client_oldest));
     }
     for (auto it = block_state_cache_.begin(); it != block_state_cache_.end();) {
       bool del = it->second.ttl_.is_in_past();

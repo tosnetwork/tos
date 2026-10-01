@@ -1,0 +1,188 @@
+-- The C compiler identification is Clang 21.1.8
+-- The CXX compiler identification is Clang 21.1.8
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/clang-21 - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/clang++-21 - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+Add rocksdb
+-- The ASM compiler identification is Clang with GNU-like command-line
+-- Found assembler: /usr/bin/clang-21
+-- CMAKE_BUILD_TYPE is set to Release
+-- Performing Test HAVE_OMIT_LEAF_FRAME_POINTER
+-- Performing Test HAVE_OMIT_LEAF_FRAME_POINTER - Success
+-- Performing Test BUILTIN_ATOMIC
+-- Performing Test BUILTIN_ATOMIC - Success
+-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
+-- Enabling RTTI in all builds
+-- Performing Test HAVE_FALLOCATE
+-- Performing Test HAVE_FALLOCATE - Success
+-- Performing Test HAVE_SYNC_FILE_RANGE_WRITE
+-- Performing Test HAVE_SYNC_FILE_RANGE_WRITE - Success
+-- Performing Test HAVE_PTHREAD_MUTEX_ADAPTIVE_NP
+-- Performing Test HAVE_PTHREAD_MUTEX_ADAPTIVE_NP - Success
+-- Looking for malloc_usable_size
+-- Looking for malloc_usable_size - found
+-- Looking for sched_getcpu
+-- Looking for sched_getcpu - found
+-- Looking for getauxval
+-- Looking for getauxval - found
+-- Looking for F_FULLFSYNC
+-- Looking for F_FULLFSYNC - not found
+-- ROCKSDB_PLUGINS: 
+-- ROCKSDB PLUGINS TO BUILD 
+-- Found Git: /usr/bin/git (found version "2.55.0") 
+-- JNI library is disabled
+Add abseil-cpp
+-- Performing Test ABSL_INTERNAL_AT_LEAST_CXX17
+-- Performing Test ABSL_INTERNAL_AT_LEAST_CXX17 - Success
+-- Performing Test ABSL_INTERNAL_AT_LEAST_CXX20
+-- Performing Test ABSL_INTERNAL_AT_LEAST_CXX20 - Success
+Add crc32c
+-- Performing Test CRC32C_HAVE_NO_DEPRECATED
+-- Performing Test CRC32C_HAVE_NO_DEPRECATED - Success
+-- Performing Test CRC32C_HAVE_NO_SIGN_COMPARE
+-- Performing Test CRC32C_HAVE_NO_SIGN_COMPARE - Success
+-- Performing Test CRC32C_HAVE_NO_UNUSED_PARAMETER
+-- Performing Test CRC32C_HAVE_NO_UNUSED_PARAMETER - Success
+-- Performing Test CRC32C_HAVE_NO_MISSING_FIELD_INITIALIZERS
+-- Performing Test CRC32C_HAVE_NO_MISSING_FIELD_INITIALIZERS - Success
+-- Performing Test HAVE_BUILTIN_PREFETCH
+-- Performing Test HAVE_BUILTIN_PREFETCH - Success
+-- Performing Test HAVE_MM_PREFETCH
+-- Performing Test HAVE_MM_PREFETCH - Success
+-- Performing Test HAVE_SSE42
+-- Performing Test HAVE_SSE42 - Success
+-- Performing Test HAVE_ARM64_CRC32C
+-- Performing Test HAVE_ARM64_CRC32C - Failed
+-- Performing Test HAVE_STRONG_GETAUXVAL
+-- Performing Test HAVE_STRONG_GETAUXVAL - Failed
+-- Performing Test HAVE_WEAK_GETAUXVAL
+-- Performing Test HAVE_WEAK_GETAUXVAL - Success
+Add ngtcp2 with custom OpenSSL from $HOME/nhm-c04-build/third-party/openssl
+-- Found OpenSSL: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found suitable version "3.5.5", minimum required is "1.1.1")  
+-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
+-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
+-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Looking for LIBRESSL_VERSION_NUMBER
+-- Looking for LIBRESSL_VERSION_NUMBER - not found
+-- Looking for arpa/inet.h
+-- Looking for arpa/inet.h - found
+-- Looking for netinet/in.h
+-- Looking for netinet/in.h - found
+-- Looking for netinet/ip.h
+-- Looking for netinet/ip.h - found
+-- Looking for unistd.h
+-- Looking for unistd.h - found
+-- Looking for sys/endian.h
+-- Looking for sys/endian.h - not found
+-- Looking for endian.h
+-- Looking for endian.h - found
+-- Looking for byteswap.h
+-- Looking for byteswap.h - found
+-- Looking for asm/types.h
+-- Looking for asm/types.h - found
+-- Looking for linux/netlink.h
+-- Looking for linux/netlink.h - found
+-- Looking for linux/rtnetlink.h
+-- Looking for linux/rtnetlink.h - found
+-- Looking for sys/types.h
+-- Looking for sys/types.h - found
+-- Looking for stdint.h
+-- Looking for stdint.h - found
+-- Looking for stddef.h
+-- Looking for stddef.h - found
+-- Check size of ssize_t
+-- Check size of ssize_t - done
+-- Looking for be64toh
+-- Looking for be64toh - found
+-- Looking for bswap_64
+-- Looking for bswap_64 - found
+-- Looking for explicit_bzero
+-- Looking for explicit_bzero - found
+-- Looking for memset_s
+-- Looking for memset_s - not found
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
+  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL
+
+
+-- summary of build options:
+
+    Package version: 1.22.0
+    Library version: 24:0:8
+    Install prefix:  /usr
+    Target system:   Linux
+    Compiler:
+      Build type:     Release
+      C compiler:     /usr/bin/clang-21
+      CFLAGS:         -O3  
+      C++ compiler:   /usr/bin/clang++-21
+      CXXFLAGS:       -O3  
+      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations
+      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type
+    Library:
+      Shared:         ON
+      Static:         ON
+    Test:
+      Build Test:     OFF
+    Libs:
+      OpenSSL:        TRUE (LIBS='$HOME/nhm-c04-build/third-party/openssl/lib/libssl.a;$HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a;dl')
+      Libev:          FALSE (LIBS='')
+      Libnghttp3:     FALSE (LIBS='')
+      GnuTLS:         FALSE (LIBS='')
+      BoringSSL:      FALSE (LIBS='')
+      Picotls:        FALSE (LIBS='')
+      wolfSSL:        FALSE (LIBS='')
+      Jemalloc:        (LIBS='')
+      Libbrotlienc:   FALSE (LIBS='')
+      Libbrotlidec:   FALSE (LIBS='')
+
+Add tl-parser
+Add tos
+-- Building libbacktrace from: $HOME/tos-node-health-c04/third-party/libbacktrace
+-- Using ccache
+-- Found PkgConfig: /usr/bin/pkg-config (found version "0.29.2") 
+-- Using zlib $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Performing Test COMPILER_OPT_ARCH_SUPPORTED
+-- Performing Test COMPILER_OPT_ARCH_SUPPORTED - Success
+-- Found ZLIB: $HOME/nhm-c04-build/third-party/zlib/include $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Using libbacktrace for enhanced stack traces
+-- Found LZ4 $HOME/nhm-c04-build/third-party/lz4/lib/liblz4.a $HOME/tos-node-health-c04/third-party/lz4/lib
+-- Checking for module 'benchmark'
+--   No package 'benchmark' found
+-- Google Benchmark not found via pkg-config - gbench-coro target disabled
+-- Performing Test GNU_READLINE_FOUND
+-- Performing Test GNU_READLINE_FOUND - Success
+-- Found Readline: /usr/include  
+-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
+-- Performing Test USABLE_READLINE_FOUND
+-- Performing Test USABLE_READLINE_FOUND - Success
+-- Using Sodium $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.a
+-- Found OpenSSL: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found version "3.5.5") found components: Crypto 
+-- Performing Test COMPILER_HAS_HIDDEN_VISIBILITY
+-- Performing Test COMPILER_HAS_HIDDEN_VISIBILITY - Success
+-- Performing Test COMPILER_HAS_HIDDEN_INLINE_VISIBILITY
+-- Performing Test COMPILER_HAS_HIDDEN_INLINE_VISIBILITY - Success
+-- Performing Test COMPILER_HAS_DEPRECATED_ATTR
+-- Performing Test COMPILER_HAS_DEPRECATED_ATTR - Success
+-- Found GSL: /usr/include (found version "2.7.1") 
+-- Looking for sgemm_
+-- Looking for sgemm_ - not found
+-- Looking for sgemm_
+-- Looking for sgemm_ - found
+-- Found BLAS: /usr/lib/x86_64-linux-gnu/libblas.so  
+-- Found Python3: $HOME/.local/bin/python3 (found version "3.14.4") found components: Interpreter 
+-- Configuring done
+-- Generating done
+-- Build files have been written to: $HOME/nhm-c04-build

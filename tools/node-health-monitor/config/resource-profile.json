@@ -1,0 +1,15 @@
+{
+  "records": 4096,
+  "record_bytes": 512,
+  "payload_bytes": 2097152,
+  "resident_bytes": 4194304,
+  "batch_records": 128,
+  "batch_bytes": 65536,
+  "source_budget_ms": 2000,
+  "http_timeout_ms": 3000,
+  "guard_interval_ms": 5000,
+  "guard_stale_ms": 15000,
+  "run_deadline_ms": 180000,
+  "grant_ttl_ms": 200000,
+  "max_contiguous_monitor_work_us": null
+}

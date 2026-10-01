@@ -1,0 +1,66 @@
+{
+  "scope": "30min local calibration with native monitoring and other host builds/workloads; not matched performance comparison",
+  "terminal": {
+    "elapsed_monotonic_ns": 1800001261528,
+    "requested_seconds": 1800,
+    "samples": 60,
+    "instrument_or_rpc_errors": 0,
+    "agreeing_height_advances": 56,
+    "bytes": 604372,
+    "completed_duration": true,
+    "c09_accepted": false,
+    "production_accepted": false
+  },
+  "raw_sha256": "1318cc804af85fc4f524e21be8b7dbdfa6902d758bdf5be23cf87ebe76beb823",
+  "full_id_agreeing_samples": 57,
+  "nonidentical_samples": [
+    {
+      "sample": 10,
+      "heights": [
+        3679,
+        3679,
+        3679,
+        3679,
+        3678,
+        3679
+      ],
+      "same_height_id_conflict": false
+    },
+    {
+      "sample": 11,
+      "heights": [
+        3754,
+        3754,
+        3754,
+        3754,
+        3753,
+        3753
+      ],
+      "same_height_id_conflict": false
+    },
+    {
+      "sample": 55,
+      "heights": [
+        7054,
+        7054,
+        7053,
+        7054,
+        7053,
+        7053
+      ],
+      "same_height_id_conflict": false
+    }
+  ],
+  "final_six_heights": [
+    7354,
+    7354,
+    7354,
+    7354,
+    7354,
+    7354
+  ],
+  "accepted": false,
+  "sampler_commit": "096ae1146ec75229e6a96dba1ea9dcdbb944d909",
+  "native_source_commit": "e89ca322253e1c7a7acb87d16d63f974e462158e",
+  "read_contract": "six sequentially sampled RPC reported IDs, not independent consensus/finality proof"
+}

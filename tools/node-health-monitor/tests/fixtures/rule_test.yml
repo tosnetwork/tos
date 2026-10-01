@@ -1,0 +1,63 @@
+rule_files:
+  - ../../deploy/prometheus/rules.yml
+evaluation_interval: 5s
+tests:
+  - interval: 5s
+    input_series:
+      - series: 'tos_health_incident_active{node="v1",scope="node",rule="storage_ack_failure",severity="critical"}'
+        values: '1 1 1 1 1 1 1 1 1 1 1 1 0'
+      - series: 'tos_health_rule_input_usable{node="v1",scope="node",rule="storage_ack_failure"}'
+        values: '1 1 0 0 _ _ stale _ 1 1 1 1 1'
+      - series: 'tos_health_evaluation_sequence{monitor_epoch="m1"}'
+        values: '1+1x12'
+      - series: 'up{job="health-state"}'
+        values: '1x12'
+      - series: 'up{job="edge",instance="v1"}'
+        values: '1 1 0 0 _ _ stale _ _ _ _ _ _'
+      - series: 'tos_health_source_errors_total{node="v1"}'
+        values: '7 8 0 1 1 _ stale _ _ _ _ _ _'
+    promql_expr_test:
+      - expr: 'tos_health_incident_active == 1'
+        eval_time: 30s
+        exp_samples:
+          - labels: 'tos_health_incident_active{node="v1",scope="node",rule="storage_ack_failure",severity="critical"}'
+            value: 1
+      - expr: 'tos_health_incident_active == 1'
+        eval_time: 60s
+        exp_samples: []
+      - expr: 'tos_health_incident_active == 1'
+        eval_time: 40s
+        exp_samples:
+          - labels: 'tos_health_incident_active{node="v1",scope="node",rule="storage_ack_failure",severity="critical"}'
+            value: 1
+      - expr: 'increase(tos_health_source_errors_total{node="v1"}[15s])'
+        eval_time: 15s
+        exp_samples:
+          - labels: '{node="v1"}'
+            value: 1.5
+    alert_rule_test:
+      - eval_time: 40s
+        alertname: NodeHealthIncident
+        exp_alerts:
+          - exp_labels:
+              node: v1
+              scope: node
+              rule: storage_ack_failure
+              severity: critical
+              authority: health_state
+            exp_annotations:
+              summary: 'Persistent storage_ack_failure on v1/node'
+              resolution_policy: 'Only a persisted health-state recovery transition is authoritative; missing series or resolved webhooks are not recovery.'
+  - interval: 5s
+    input_series:
+      - series: 'up{job="health-state"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 50s
+        alertname: HealthStateUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: health-state
+              severity: critical
+            exp_annotations:
+              summary: 'Rule authority is unavailable; existing incidents are not cleared.'

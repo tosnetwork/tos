@@ -26,5 +26,7 @@ target_include_directories(overlay PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
   ${OPENSSL_INCLUDE_DIR}
 )
-target_link_libraries(overlay PRIVATE tdutils tdactor adnl tl_api dht fec metrics-core)
+# `metrics`, not only `metrics-core`: the overlay's budgeted traffic collection calls
+# `collect_traffic_with_budget`, which is defined with the collectors.
+target_link_libraries(overlay PRIVATE tdutils tdactor adnl tl_api dht fec metrics)
 

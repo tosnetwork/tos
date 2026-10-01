@@ -1,0 +1,51 @@
+{
+  "baseline_manifest": "../c04-native-actions/metric-manifest.json",
+  "existing_max_series": 249,
+  "added_max_series": 7,
+  "union_max_series": 256,
+  "profile_limit": 256,
+  "added_tuples": [
+    {
+      "name": "tos_diagnostic_dropped_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&diagnostic_stats.dropped"
+    },
+    {
+      "name": "tos_diagnostic_sampled_out_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&diagnostic_stats.sampled_out"
+    },
+    {
+      "name": "tos_diagnostic_queue_records",
+      "kind": "gauge",
+      "labels": [],
+      "source": "&diagnostic_stats.records"
+    },
+    {
+      "name": "tos_diagnostic_queue_bytes",
+      "kind": "gauge",
+      "labels": [],
+      "source": "&diagnostic_stats.bytes"
+    },
+    {
+      "name": "tos_diagnostic_sent_total",
+      "kind": "counter",
+      "labels": [],
+      "source": "&diagnostic_stats.sent"
+    },
+    {
+      "name": "tos_diagnostic_enabled",
+      "kind": "gauge",
+      "labels": [],
+      "source": "&diagnostic_stats.enabled"
+    },
+    {
+      "name": "tos_diagnostic_counter_complete",
+      "kind": "gauge",
+      "labels": [],
+      "source": "&diagnostic_stats.complete"
+    }
+  ]
+}

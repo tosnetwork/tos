@@ -1,0 +1,54 @@
+[
+  {
+    "name": "nested-allowance",
+    "source": "metrics/metrics-collectors.cpp",
+    "baseline_sha256": "7da0c08f59a2903785e3ea07e923c9a4d4b5dce6ccb9ee37f75bd17f453190c4",
+    "mutant_sha256": "6b9bb9f9d5e2907951232ef2130e9464edfcef3ae924323e0090b1f490aefc87",
+    "expected_assertion": "nested second child gets reduced parent allowance",
+    "build_exit": 0,
+    "test_exit": 1,
+    "intended_assertion_seen": true,
+    "restore_build_exit": 0,
+    "restored_sha256": "7da0c08f59a2903785e3ea07e923c9a4d4b5dce6ccb9ee37f75bd17f453190c4",
+    "restored_test_exit": 0
+  },
+  {
+    "name": "refusal-stops-starts",
+    "source": "metrics/metrics-collectors.cpp",
+    "baseline_sha256": "7da0c08f59a2903785e3ea07e923c9a4d4b5dce6ccb9ee37f75bd17f453190c4",
+    "mutant_sha256": "387f27aa1cf6f2a14aab030215a6ff54bd45318adcaebab5c9fca569dd273ce2",
+    "expected_assertion": "oversized or too-many-family child refuses before subsequent starts",
+    "build_exit": 0,
+    "test_exit": 1,
+    "intended_assertion_seen": true,
+    "restore_build_exit": 0,
+    "restored_sha256": "7da0c08f59a2903785e3ea07e923c9a4d4b5dce6ccb9ee37f75bd17f453190c4",
+    "restored_test_exit": 0
+  },
+  {
+    "name": "v2-body-refusal",
+    "source": "metrics/native-core-snapshot.h",
+    "baseline_sha256": "83c170f59ea8e4c3cf96dcb9a725261353f46115867dc3f8e1b3d94b7bcffeed",
+    "mutant_sha256": "529d4aba90aaa5a3b2acd81a56fd0bea339bf48f28954fec6ea6f0c87248948e",
+    "expected_assertion": "v2 oversized refusal",
+    "build_exit": 0,
+    "test_exit": 1,
+    "intended_assertion_seen": true,
+    "restore_build_exit": 0,
+    "restored_sha256": "83c170f59ea8e4c3cf96dcb9a725261353f46115867dc3f8e1b3d94b7bcffeed",
+    "restored_test_exit": 0
+  },
+  {
+    "name": "lease-retirement",
+    "source": "metrics/consensus-health.h",
+    "baseline_sha256": "e1b4b5c97943e841c501a05ebe244ae202e113cc86cfad0bf94351537d6ea007",
+    "mutant_sha256": "c05acb7a386e486d796137884fe35cfa3b461131465d44d7d56925d8f32eb13b",
+    "expected_assertion": "paused duplicate lease prevents retirement and new-key reuse",
+    "build_exit": 0,
+    "test_exit": 1,
+    "intended_assertion_seen": true,
+    "restore_build_exit": 0,
+    "restored_sha256": "e1b4b5c97943e841c501a05ebe244ae202e113cc86cfad0bf94351537d6ea007",
+    "restored_test_exit": 0
+  }
+]

@@ -1,0 +1,4 @@
+$ $HOME/tos-node-health-c01-build/test-health-source-policy
+[1;31m[ 0][t 0][2026-09-29 07:35:44.818538800][test-health-source-policy.cpp:20]	Check `!lease.begin(15)` failed[0m
+
+EXIT=-6

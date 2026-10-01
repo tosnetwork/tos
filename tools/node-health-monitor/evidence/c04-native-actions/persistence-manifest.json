@@ -1,0 +1,41 @@
+{
+  "anchors": [
+    {
+      "path": "validator/consensus/simplex/db.cpp",
+      "lines": [
+        114,
+        137
+      ],
+      "needle": "WorkObservation storage",
+      "sha256": "5ca8d5fec8792e3f93e7b5f16e88aa0f2f9e7807549c88fbdde7049c420a43fb"
+    },
+    {
+      "path": "validator/consensus/bridge.cpp",
+      "lines": [
+        258
+      ],
+      "needle": "writer_.set",
+      "sha256": "bca03c584dec563f4be6a78622b1fd93c4b9b69f5c0ed8603537aa3adffbfd6a"
+    },
+    {
+      "path": "tddb/td/db/RocksDb.cpp",
+      "lines": [
+        553,
+        563
+      ],
+      "needle": "options.sync = true;",
+      "sha256": "6d5cbe48bb0a5c6f16a3902f0d9830cc0cca1c71a135ccd808c7329ddb1738f3"
+    }
+  ],
+  "intent": "await db.set before signing",
+  "signed": "await replacement of exact signature bytes before local application/enqueue",
+  "success": "commit_acknowledged",
+  "failure": "original API status propagated; cancelled remains separate from failure",
+  "rocksdb": "WriteOptions sync=true; WAL retains RocksDB default (no disableWAL override at these writes)",
+  "hardware_durable_finality": false,
+  "coverage": {
+    "production_simplex_db_actor_success": "c04-native-pipeline against isolated TestDbImpl",
+    "pool_journal_api_failure": "c04-health-action-intent-failure/signed-failure/replay-intent-signed-failure",
+    "rocksdb_power_loss": "unproven"
+  }
+}

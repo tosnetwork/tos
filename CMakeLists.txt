@@ -979,6 +979,49 @@ add_executable(test-json-rpc-payload-waiter test/test-json-rpc-payload-waiter.cp
 target_include_directories(test-json-rpc-payload-waiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-json-rpc-payload-waiter PRIVATE toshttp tdactor tdutils)
 
+add_executable(test-health-pq-signer test/test-health-pq-signer.cpp)
+target_include_directories(test-health-pq-signer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-pq-signer PRIVATE tos_pq_consensus_signer tos_pq_consensus tos_mldsa44)
+
+add_executable(test-health-native-snapshot test/test-health-native-snapshot.cpp)
+target_include_directories(test-health-native-snapshot PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-native-snapshot PRIVATE metrics tdactor tdutils)
+
+add_executable(test-health-core-registry test/test-health-core-registry.cpp)
+target_include_directories(test-health-core-registry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-core-registry PRIVATE metrics tdutils)
+
+add_executable(test-health-diagnostic-action test/test-health-diagnostic-action.cpp)
+target_include_directories(test-health-diagnostic-action PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-diagnostic-action PRIVATE metrics tdutils)
+foreach(diagnostic_test producer ipc)
+  add_executable(test-health-diagnostic-${diagnostic_test}
+    tools/node-health-monitor/tests/native/diagnostic-${diagnostic_test}.cpp)
+  target_include_directories(test-health-diagnostic-${diagnostic_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(test-health-diagnostic-${diagnostic_test} PRIVATE -UNDEBUG)
+  target_link_libraries(test-health-diagnostic-${diagnostic_test} PRIVATE tdutils)
+endforeach()
+
+add_executable(test-health-source-policy test/test-health-source-policy.cpp)
+target_include_directories(test-health-source-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-source-policy PRIVATE tdutils)
+
+add_executable(test-health-collector-completion test/test-health-collector-completion.cpp)
+target_include_directories(test-health-collector-completion PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-collector-completion PRIVATE metrics tdactor tdutils)
+
+add_executable(test-health-collector-timestamps test/test-health-collector-timestamps.cpp)
+target_include_directories(test-health-collector-timestamps PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-collector-timestamps PRIVATE metrics tdactor tdutils)
+
+add_executable(test-health-collector-budget tools/node-health-monitor/tests/native/collector-budget.cpp)
+target_include_directories(test-health-collector-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-collector-budget PRIVATE metrics tdactor tdutils)
+
+add_executable(test-health-publisher-bench test/test-health-publisher-bench.cpp)
+target_include_directories(test-health-publisher-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-health-publisher-bench PRIVATE metrics tdutils)
+
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-metrics-label-bound PRIVATE metrics tdactor tdutils)
@@ -1507,6 +1550,13 @@ tos_test(test-rldp2-connection-limits)
 tos_test(test-promise-loss-contract)
 tos_test(test-json-rpc-handler-guard)
 tos_test(test-metrics-label-bound)
+tos_test(test-health-collector-completion)
+tos_test(test-health-collector-timestamps)
+tos_test(test-health-collector-budget)
+tos_test(test-health-native-snapshot)
+tos_test(test-health-core-registry)
+tos_test(test-health-source-policy)
+tos_test(test-health-pq-signer)
 tos_test(test-rldp2-inbound-transfer-bound)
 tos_test(test-consensus-config-admission)
 tos_test(test-weak-ptr-registry)

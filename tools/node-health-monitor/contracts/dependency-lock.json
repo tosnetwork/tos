@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "rust": "1.97.1",
+  "rust_toolchain_sha256": "279d77167cec5426fa80f457cd066dc74a360fbe4e2816f4f3fa01487a918fdc",
+  "cargo_lock_sha256": "9d7e1aaadabf852a87b35d27b06f271ec69e033a3e57521533c14ee9de0a5509",
+  "contract_python": {
+    "version": "3.14.4",
+    "requirements_lock": "requirements-contracts.lock",
+    "requirements_lock_sha256": "aa9380d03582be497569a051dcab4d183c20a4c422fcd515048497d7e4473e5b"
+  },
+  "packages": [
+    {
+      "name": "axum",
+      "version": "0.8.9",
+      "checksum": "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
+    },
+    {
+      "name": "libsqlite3-sys",
+      "version": "0.30.1",
+      "checksum": "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+    },
+    {
+      "name": "libc",
+      "version": "0.2.189",
+      "checksum": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+    },
+    {
+      "name": "reqwest",
+      "version": "0.12.28",
+      "checksum": "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
+    },
+    {
+      "name": "rusqlite",
+      "version": "0.32.1",
+      "checksum": "7753b721174eb8ff87a9a0e799e2d7bc3749323e773db92e0984debb00019d6e"
+    },
+    {
+      "name": "tokio",
+      "version": "1.53.1",
+      "checksum": "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
+    }
+  ],
+  "aura": {
+    "commit": "1000f119d38f4c4656ced0ae883c90f6f7610890",
+    "enabled": false,
+    "integration": "not_run"
+  },
+  "mcp": {
+    "enabled": false,
+    "protocol_version": "2025-06-18",
+    "sdk": "rmcp",
+    "version": "3.5.0",
+    "tag_commit": "0cde3c5cf3e6aff0cc852ce6045f107e95991f48",
+    "crate_sha256": "fae7019994ae0fe4ada40b732f798f3ff26f0f04facb1477f1bf37eb4f18a2d3",
+    "runtime_gate": "C08_isolated_sdk_and_unix_controls_partial",
+    "reason": "Exact rmcp 3.5.0 is feature-gated; isolated SDK and private Unix one-connection controls pass, but AURA/provider, whole-run budgets and production gates remain open"
+  },
+  "prometheus": {
+    "enabled": false,
+    "version": "3.9.1",
+    "tag_commit": "9ec59baffb547e24f1468a53eb82901e58feabd8",
+    "artifact": "prometheus-3.9.1.linux-amd64.tar.gz",
+    "artifact_sha256": "86a6999dd6aacbd994acde93c77cfa314d4be1c8e7b7c58f444355c77b32c584",
+    "runtime_gate": "C03_isolated_runtime_passed_production_disabled",
+    "reason": "Pinned promtool check/test and isolated Prometheus/Alertmanager/O three-process kill chain passed; production remains disabled."
+  },
+  "alertmanager": {
+    "enabled": false,
+    "version": "0.34.1",
+    "tag_commit": "73c6bfe7393929211294c1954f30d8ed78e4d0ad",
+    "artifact": "alertmanager-0.34.1.linux-amd64.tar.gz",
+    "artifact_sha256": "265b9d1e55ef0d5306a436018af6d2b686c2ce051f03d968f7464ecb1372a7e8",
+    "runtime_gate": "C03_isolated_runtime_passed_production_disabled",
+    "reason": "Pinned amtool check-config and isolated Prometheus/Alertmanager/O three-process kill chain passed; production remains disabled."
+  }
+}

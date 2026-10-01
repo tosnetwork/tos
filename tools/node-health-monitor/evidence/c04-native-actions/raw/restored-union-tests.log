@@ -1,0 +1,76 @@
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
+      Start 288: c04-collection-deadline
+      Start 292: c04-collection-v1
+ 1/35 Test #292: c04-collection-v1 ................................................   Passed    1.21 sec
+      Start 213: c04-health-action-post-terminal
+ 2/35 Test #213: c04-health-action-post-terminal ..................................   Passed    0.27 sec
+      Start 131: test-health-collector-timestamps
+ 3/35 Test #131: test-health-collector-timestamps .................................   Passed    0.21 sec
+      Start 212: c04-health-action-finality-suppressed
+ 4/35 Test #212: c04-health-action-finality-suppressed ............................   Passed    0.20 sec
+      Start 206: c04-health-action-duplicate
+ 5/35 Test #206: c04-health-action-duplicate ......................................   Passed    0.15 sec
+      Start 209: c04-health-action-skip
+ 6/35 Test #209: c04-health-action-skip ...........................................   Passed    0.15 sec
+      Start 285: c04-native-pipeline
+ 7/35 Test #288: c04-collection-deadline ..........................................   Passed    2.41 sec
+      Start 200: c04-health-action-success
+ 8/35 Test #285: c04-native-pipeline ..............................................   Passed    0.29 sec
+      Start 205: c04-health-action-apply-false
+ 9/35 Test #200: c04-health-action-success ........................................   Passed    0.15 sec
+      Start 204: c04-health-action-signed-failure
+10/35 Test #205: c04-health-action-apply-false ....................................   Passed    0.15 sec
+      Start 210: c04-health-action-finalize
+11/35 Test #204: c04-health-action-signed-failure .................................   Passed    0.14 sec
+      Start 207: c04-health-action-replay-signed
+12/35 Test #210: c04-health-action-finalize .......................................   Passed    0.15 sec
+      Start 216: c04-health-action-replay-intent-signed-failure
+13/35 Test #207: c04-health-action-replay-signed ..................................   Passed    0.14 sec
+      Start 202: c04-health-action-no-signer
+14/35 Test #216: c04-health-action-replay-intent-signed-failure ...................   Passed    0.14 sec
+      Start 215: c04-health-action-replay-intent-sign-failure
+15/35 Test #202: c04-health-action-no-signer ......................................   Passed    0.14 sec
+      Start 203: c04-health-action-sign-failure
+16/35 Test #215: c04-health-action-replay-intent-sign-failure .....................   Passed    0.14 sec
+      Start 201: c04-health-action-intent-failure
+17/35 Test #203: c04-health-action-sign-failure ...................................   Passed    0.14 sec
+      Start 208: c04-health-action-replay-intent
+18/35 Test #201: c04-health-action-intent-failure .................................   Passed    0.14 sec
+      Start 211: c04-health-action-journal-suppressed
+19/35 Test #208: c04-health-action-replay-intent ..................................   Passed    0.14 sec
+      Start 133: test-health-core-registry
+20/35 Test #211: c04-health-action-journal-suppressed .............................   Passed    0.14 sec
+      Start 214: c04-health-action-lease
+21/35 Test #214: c04-health-action-lease ..........................................   Passed    0.09 sec
+      Start 130: test-health-collector-completion
+22/35 Test #133: test-health-core-registry ........................................   Passed    0.20 sec
+      Start 286: c04-publisher-unit
+23/35 Test #130: test-health-collector-completion .................................   Passed    0.06 sec
+      Start 289: c04-collection-oversize
+24/35 Test #286: c04-publisher-unit ...............................................   Passed    0.02 sec
+      Start 287: c04-collection-nested
+25/35 Test #289: c04-collection-oversize ..........................................   Passed    0.01 sec
+      Start 291: c04-collection-parent-family
+26/35 Test #287: c04-collection-nested ............................................   Passed    0.01 sec
+      Start 199: c04-health-ledger
+27/35 Test #291: c04-collection-parent-family .....................................   Passed    0.00 sec
+      Start 290: c04-collection-family
+28/35 Test #199: c04-health-ledger ................................................   Passed    0.01 sec
+      Start 134: test-health-source-policy
+29/35 Test #290: c04-collection-family ............................................   Passed    0.01 sec
+      Start 241: test-consensus-simplex2-state-resolver-cache-unit
+30/35 Test #134: test-health-source-policy ........................................   Passed    0.00 sec
+      Start 242: test-consensus-simplex2-state-resolver-inflight-admission-unit
+31/35 Test #242: test-consensus-simplex2-state-resolver-inflight-admission-unit ...   Passed    0.02 sec
+      Start 254: test-consensus-simplex2-pq-finality-retry
+32/35 Test #241: test-consensus-simplex2-state-resolver-cache-unit ................   Passed    0.02 sec
+      Start 265: test-consensus-simplex2-pq-restart
+33/35 Test #254: test-consensus-simplex2-pq-finality-retry ........................   Passed    0.34 sec
+      Start 274: test-consensus-simplex2-vote-journal
+34/35 Test #265: test-consensus-simplex2-pq-restart ...............................   Passed    0.68 sec
+35/35 Test #274: test-consensus-simplex2-vote-journal .............................   Passed    7.13 sec
+
+100% tests passed, 0 tests failed out of 35
+
+Total Test time (real) =  11.02 sec

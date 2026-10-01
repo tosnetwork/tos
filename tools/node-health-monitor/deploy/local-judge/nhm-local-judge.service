@@ -1,0 +1,14 @@
+[Unit]
+Description=Deterministic validator health judgement over M evidence (one bounded run)
+After=nhm-local-manager.service
+
+[Service]
+Type=oneshot
+CPUQuota=50%
+MemoryMax=268435456
+TasksMax=16
+NoNewPrivileges=yes
+UMask=0077
+TimeoutStartSec=40s
+ExecStart=/usr/bin/python3 %h/tos/.claude/worktrees/cc-nhm/tools/node-health-monitor/scripts/judge-validator-health.py --network-id de50a3116ac539afb99e1ddfea7d56213a2636bc6c5ee9f730efa509b8e667e0 --manager-state-url http://127.0.0.1:19490/v1/manager/state --manager-read-token-file %h/nhm-supervision/c09-local/runtime/config/manager-read.token --evidence-db %h/nhm-supervision/c09-local/runtime/evidence/evidence.db --nodes-file %h/nhm-supervision/c09-local/runtime/config/judge-nodes.json --journal %h/.local/state/nhm-cc-judge/verdicts.jsonl --ai-fact-url http://127.0.0.1:19490/v1/manager/facts --ai-fact-token-file %h/nhm-supervision/c09-local/runtime/config/manager-ingest.token --ai-fact-state %h/.local/state/nhm-cc-judge/ai-fact-state.json --ai-fact-node monitor --ai-fact-journal %h/.local/state/nhm-cc-judge/model-verdicts.jsonl --ai-fact-max-age 900
+SuccessExitStatus=0 3

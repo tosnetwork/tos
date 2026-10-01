@@ -1,0 +1,17 @@
+Script started on 2026-09-29 12:54:59+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.65s
+     Running tests/witness_archive.rs (target/debug/deps/witness_archive-ce8de4363e10ff3c)
+
+running 6 tests
+test actual_observer_cache_to_manager_retained_archive_dedups_without_rule_fact ... ok
+test current_review_is_separate_from_archive_and_preserves_order_and_conflict ... ok
+test current_activation_reopen_preserves_guard_and_total_index_is_bounded ... ok
+test manager_refuses_oversized_or_uninventoried_witness_plan_before_activation ... ok
+test witness_archive_quota_refusal_has_no_success_ack_or_partial_row ... ok
+test historical_dedup_and_conflict_quarantine_survive_manager_restart ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+
+Script done on 2026-09-29 12:55:05+00:00 [COMMAND_EXIT_CODE="0"]

@@ -1,0 +1,28 @@
+$ cargo test --locked -p tos-health-services --test native_typed scheduler_skips_a_tick_missed_by_a_slow_source -- --exact
+timeout_seconds=120
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.26s
+     Running tests/native_typed.rs (target/debug/deps/native_typed-fd36cf6a67d44c91)
+
+running 1 test
+test scheduler_skips_a_tick_missed_by_a_slow_source ... FAILED
+
+failures:
+
+---- scheduler_skips_a_tick_missed_by_a_slow_source stdout ----
+
+thread 'scheduler_skips_a_tick_missed_by_a_slow_source' (652108) panicked at crates/health-services/tests/native_typed.rs:29:5:
+assertion `left == right` failed
+  left: 0ns
+ right: 15s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    scheduler_skips_a_tick_missed_by_a_slow_source
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-services --test native_typed`
+
+EXIT=101

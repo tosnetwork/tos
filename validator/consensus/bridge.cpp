@@ -28,6 +28,12 @@ namespace tos::validator {
 
 namespace consensus {
 
+td::actor::Task<> simplex::close_and_release_bus(simplex::BusHandle& bus) {
+  auto closed = co_await bus->db->close().wrap();
+  bus = {};
+  co_return closed;
+}
+
 namespace {
 std::mutex bridge_bus_observer_mutex;
 std::function<void(BusHandle)> bridge_bus_observer;
@@ -644,14 +650,19 @@ class BridgeImpl final : public IValidatorGroup {
   td::actor::Task<> destroy_inner() {
     if (bus_) {
       LOG(INFO) << "Destroying validator group";
+      bus_->health_session.begin_stop();
       bus_.publish<StopRequested>();
-      co_await bus_->db->close();
       auto weak_bus = bus_.weak_for_diagnostics();
       auto bus_node = bus_.node_for_diagnostics();
-      bus_ = {};
+      auto closed = co_await simplex::close_and_release_bus(bus_).wrap();
       co_await await_bus_stop_with_diagnostics(std::move(stop_waiter_.value()), std::move(weak_bus),
                                                std::move(bus_node), params_.name);
       LOG(INFO) << "Consensus bus stopped";
+      if (closed.is_error()) {
+        LOG(ERROR) << "Consensus DB close failed during group destroy: " << closed.error();
+        stop();
+        co_return closed.move_as_error();
+      }
       td::RocksDb::destroy(db_path() + "/db/").ignore();
       td::rmrf(db_path()).ignore();
       // Confirm the directory is actually gone before telling the manager to
@@ -693,14 +704,19 @@ class BridgeImpl final : public IValidatorGroup {
   td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
     if (bus_) {
       LOG(INFO) << "Closing validator group for retirement (no delete)";
+      bus_->health_session.begin_stop();
       bus_.publish<StopRequested>();
-      co_await bus_->db->close();
       auto weak_bus = bus_.weak_for_diagnostics();
       auto bus_node = bus_.node_for_diagnostics();
-      bus_ = {};
+      auto closed = co_await simplex::close_and_release_bus(bus_).wrap();
       co_await await_bus_stop_with_diagnostics(std::move(stop_waiter_.value()), std::move(weak_bus),
                                                std::move(bus_node), params_.name);
       LOG(INFO) << "Consensus bus stopped (retirement close)";
+      if (closed.is_error()) {
+        LOG(ERROR) << "Consensus DB close failed during retirement: " << closed.error();
+        stop();
+        co_return closed.move_as_error();
+      }
       auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
                                             params_.session_id, params_.db_suffix);
       td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_closed, params_.session_id, generation,

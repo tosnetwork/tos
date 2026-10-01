@@ -261,6 +261,11 @@ class Bus : public consensus::Bus {
 
 using BusHandle = td::actor::BusHandle<Bus>;
 
+// Always relinquish the bridge's bus handle, including when the database close
+// reports an error. The caller still awaits the bus stop promise before acting
+// on the close result.
+td::actor::Task<> close_and_release_bus(BusHandle& bus);
+
 struct Pool {
   static void register_in(td::actor::Runtime&);
 };

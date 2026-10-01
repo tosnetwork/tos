@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "node_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true
+    },
+    "reference_id": {
+      "type": "string",
+      "pattern": "^(blk|cand)_[A-Za-z0-9_-]{16,128}$"
+    },
+    "ancestor_depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    },
+    "max_events": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "required": [
+    "run_id",
+    "node_ids",
+    "reference_id",
+    "ancestor_depth",
+    "max_events"
+  ],
+  "$defs": {}
+}

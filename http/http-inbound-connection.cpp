@@ -26,6 +26,7 @@ namespace tos {
 namespace http {
 
 void HttpInboundConnection::send_client_error() {
+  arm_response_deadline();
   static const auto s =
       "HTTP/1.0 400 Bad Request\r\n"
       "Connection: Close\r\n"
@@ -36,7 +37,22 @@ void HttpInboundConnection::send_client_error() {
   loop();
 }
 
+// The listener accepts no request bodies: answer at header time and close,
+// so no payload reader is created and no body is parsed or drained.
+void HttpInboundConnection::send_payload_refused() {
+  arm_response_deadline();
+  static const auto s =
+      "HTTP/1.1 413 Payload Too Large\r\n"
+      "Connection: close\r\n"
+      "Content-length: 0\r\n"
+      "\r\n";
+  buffered_fd_.output_buffer().append(td::Slice(s, strlen(s)));
+  close_after_write_ = true;
+  loop();
+}
+
 void HttpInboundConnection::send_server_error() {
+  arm_response_deadline();
   static const auto s =
       "HTTP/1.1 502 Bad Gateway\r\n"
       "Connection: keep-alive\r\n"
@@ -47,6 +63,7 @@ void HttpInboundConnection::send_server_error() {
 }
 
 void HttpInboundConnection::send_proxy_error(td::Status error) {
+  arm_response_deadline();
   if (error.code() == ErrorCode::timeout) {
     static const auto s =
         "HTTP/1.1 504 Gateway Timeout\r\n"
@@ -88,6 +105,13 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   }
 
   metrics_.requests_total->add(1);
+
+  if (reject_request_bodies_ && cur_request_->announces_body()) {
+    cur_request_ = nullptr;
+    read_next_request_ = false;
+    send_payload_refused();
+    return td::Status::OK();
+  }
 
   // Stamp the cached TCP peer IP on the parsed request so the
   // JSON-RPC server can attribute the per-IP rate-limit bucket to the
@@ -133,6 +157,7 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
 
   metrics_.responses_total->label(response->code())->add(1);
 
+  arm_response_deadline();
   write_payload(std::move(payload));
   loop();
 }

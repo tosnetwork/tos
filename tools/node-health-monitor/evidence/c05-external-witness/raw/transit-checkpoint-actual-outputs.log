@@ -1,0 +1,18 @@
+Script started on 2026-09-29 13:46:01+00:00 [<not executed on terminal>]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running tests/witness_archive.rs (target/debug/deps/witness_archive-fafe8d2194926f95)
+
+running 8 tests
+test synthetic_valid_clock_current_route_qualifies_context_without_proof ... ok
+test current_activation_reopen_preserves_guard_and_total_index_is_bounded ... ok
+test manager_refuses_oversized_or_uninventoried_witness_plan_before_activation ... ok
+test actual_observer_cache_to_manager_retained_archive_dedups_without_rule_fact ... ok
+test current_read_uses_measured_incoming_body_and_matched_conflict_only ... ok
+test witness_archive_quota_refusal_has_no_success_ack_or_partial_row ... ok
+test historical_dedup_and_conflict_quarantine_survive_manager_restart ... ok
+test current_review_is_separate_from_archive_and_preserves_order_and_conflict ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+
+Script done on 2026-09-29 13:46:01+00:00 [COMMAND_EXIT_CODE="0"]

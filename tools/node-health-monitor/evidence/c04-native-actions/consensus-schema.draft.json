@@ -1,0 +1,1610 @@
+{
+  "$id": "urn:tos:nhm:draft:c04-consensus",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "actions": {
+      "items": false,
+      "maxItems": 4,
+      "minItems": 4,
+      "prefixItems": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "accounting_complete": {
+              "type": "boolean"
+            },
+            "action": {
+              "const": "proposal"
+            },
+            "live": {
+              "additionalProperties": false,
+              "properties": {
+                "failures": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "finality_behind": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "missing_signer": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "sign_backend": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "superseded": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "finality_behind",
+                    "missing_signer",
+                    "sign_backend",
+                    "superseded"
+                  ],
+                  "type": "object"
+                },
+                "oldest_age_ns": {
+                  "anyOf": [
+                    {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outcomes": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "failed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "suppressed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "unknown": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "enqueued",
+                    "failed",
+                    "suppressed",
+                    "unknown"
+                  ],
+                  "type": "object"
+                },
+                "pending": {
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "type": "string"
+                },
+                "phases": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "candidate_published": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "requested": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "candidate_published",
+                    "requested",
+                    "signed"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "failures",
+                "oldest_age_ns",
+                "outcomes",
+                "pending",
+                "phases"
+              ],
+              "type": "object"
+            },
+            "replay": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "accounting_complete",
+            "action",
+            "live",
+            "replay"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "accounting_complete": {
+              "type": "boolean"
+            },
+            "action": {
+              "const": "notarize_vote"
+            },
+            "live": {
+              "additionalProperties": false,
+              "properties": {
+                "failures": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "duplicate_or_stale": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "finality_behind": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "intent_storage": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "journal_unusable": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "missing_signer": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "sign_backend": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed_storage": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "superseded": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "duplicate_or_stale",
+                    "finality_behind",
+                    "intent_storage",
+                    "journal_unusable",
+                    "missing_signer",
+                    "sign_backend",
+                    "signed_storage",
+                    "superseded"
+                  ],
+                  "type": "object"
+                },
+                "oldest_age_ns": {
+                  "anyOf": [
+                    {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outcomes": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "failed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "suppressed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "unknown": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "enqueued",
+                    "failed",
+                    "suppressed",
+                    "unknown"
+                  ],
+                  "type": "object"
+                },
+                "pending": {
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "type": "string"
+                },
+                "phases": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "broadcast_enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "intent_committed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "local_applied": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "requested": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed_committed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "broadcast_enqueued",
+                    "intent_committed",
+                    "local_applied",
+                    "requested",
+                    "signed",
+                    "signed_committed"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "failures",
+                "oldest_age_ns",
+                "outcomes",
+                "pending",
+                "phases"
+              ],
+              "type": "object"
+            },
+            "replay": {
+              "additionalProperties": false,
+              "properties": {
+                "intent_only": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "oldest_age_ns": {
+                      "anyOf": [
+                        {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pending": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "phases": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_applied": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "requested": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "signed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "signed_committed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "local_applied",
+                        "requested",
+                        "signed",
+                        "signed_committed"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "oldest_age_ns",
+                    "pending",
+                    "phases"
+                  ],
+                  "type": "object"
+                },
+                "signed_record": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "oldest_age_ns": {
+                      "anyOf": [
+                        {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pending": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "phases": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_applied": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "requested": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "restored_signed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "local_applied",
+                        "requested",
+                        "restored_signed"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "oldest_age_ns",
+                    "pending",
+                    "phases"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "intent_only",
+                "signed_record"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "accounting_complete",
+            "action",
+            "live",
+            "replay"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "accounting_complete": {
+              "type": "boolean"
+            },
+            "action": {
+              "const": "finalize_vote"
+            },
+            "live": {
+              "additionalProperties": false,
+              "properties": {
+                "failures": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "duplicate_or_stale": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "finality_behind": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "intent_storage": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "journal_unusable": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "missing_signer": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "sign_backend": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed_storage": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "superseded": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "duplicate_or_stale",
+                    "finality_behind",
+                    "intent_storage",
+                    "journal_unusable",
+                    "missing_signer",
+                    "sign_backend",
+                    "signed_storage",
+                    "superseded"
+                  ],
+                  "type": "object"
+                },
+                "oldest_age_ns": {
+                  "anyOf": [
+                    {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outcomes": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "failed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "suppressed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "unknown": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "enqueued",
+                    "failed",
+                    "suppressed",
+                    "unknown"
+                  ],
+                  "type": "object"
+                },
+                "pending": {
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "type": "string"
+                },
+                "phases": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "broadcast_enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "intent_committed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "local_applied": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "requested": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed_committed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "broadcast_enqueued",
+                    "intent_committed",
+                    "local_applied",
+                    "requested",
+                    "signed",
+                    "signed_committed"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "failures",
+                "oldest_age_ns",
+                "outcomes",
+                "pending",
+                "phases"
+              ],
+              "type": "object"
+            },
+            "replay": {
+              "additionalProperties": false,
+              "properties": {
+                "intent_only": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "oldest_age_ns": {
+                      "anyOf": [
+                        {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pending": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "phases": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_applied": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "requested": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "signed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "signed_committed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "local_applied",
+                        "requested",
+                        "signed",
+                        "signed_committed"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "oldest_age_ns",
+                    "pending",
+                    "phases"
+                  ],
+                  "type": "object"
+                },
+                "signed_record": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "oldest_age_ns": {
+                      "anyOf": [
+                        {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pending": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "phases": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_applied": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "requested": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "restored_signed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "local_applied",
+                        "requested",
+                        "restored_signed"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "oldest_age_ns",
+                    "pending",
+                    "phases"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "intent_only",
+                "signed_record"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "accounting_complete",
+            "action",
+            "live",
+            "replay"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "accounting_complete": {
+              "type": "boolean"
+            },
+            "action": {
+              "const": "skip_vote"
+            },
+            "live": {
+              "additionalProperties": false,
+              "properties": {
+                "failures": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "duplicate_or_stale": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "finality_behind": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "intent_storage": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "journal_unusable": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "missing_signer": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "sign_backend": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed_storage": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "superseded": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "duplicate_or_stale",
+                    "finality_behind",
+                    "intent_storage",
+                    "journal_unusable",
+                    "missing_signer",
+                    "sign_backend",
+                    "signed_storage",
+                    "superseded"
+                  ],
+                  "type": "object"
+                },
+                "oldest_age_ns": {
+                  "anyOf": [
+                    {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outcomes": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelled": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "failed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "suppressed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "unknown": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "cancelled",
+                    "enqueued",
+                    "failed",
+                    "suppressed",
+                    "unknown"
+                  ],
+                  "type": "object"
+                },
+                "pending": {
+                  "maxLength": 20,
+                  "pattern": "^(0|[1-9][0-9]{0,19})$",
+                  "type": "string"
+                },
+                "phases": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "broadcast_enqueued": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "intent_committed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "local_applied": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "requested": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "signed_committed": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "broadcast_enqueued",
+                    "intent_committed",
+                    "local_applied",
+                    "requested",
+                    "signed",
+                    "signed_committed"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "failures",
+                "oldest_age_ns",
+                "outcomes",
+                "pending",
+                "phases"
+              ],
+              "type": "object"
+            },
+            "replay": {
+              "additionalProperties": false,
+              "properties": {
+                "intent_only": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "oldest_age_ns": {
+                      "anyOf": [
+                        {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pending": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "phases": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_applied": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "requested": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "signed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "signed_committed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "local_applied",
+                        "requested",
+                        "signed",
+                        "signed_committed"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "oldest_age_ns",
+                    "pending",
+                    "phases"
+                  ],
+                  "type": "object"
+                },
+                "signed_record": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "oldest_age_ns": {
+                      "anyOf": [
+                        {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "pending": {
+                      "maxLength": 20,
+                      "pattern": "^(0|[1-9][0-9]{0,19})$",
+                      "type": "string"
+                    },
+                    "phases": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "local_applied": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "requested": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        },
+                        "restored_signed": {
+                          "maxLength": 20,
+                          "pattern": "^(0|[1-9][0-9]{0,19})$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "local_applied",
+                        "requested",
+                        "restored_signed"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "oldest_age_ns",
+                    "pending",
+                    "phases"
+                  ],
+                  "type": "object"
+                }
+              },
+              "required": [
+                "intent_only",
+                "signed_record"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "accounting_complete",
+            "action",
+            "live",
+            "replay"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "array"
+    },
+    "capabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "cohort_success_rate": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "closed_cohort_not_implemented"
+            },
+            "supported": {
+              "const": false
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "durable_finality": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "hardware_power_loss_not_proven"
+            },
+            "supported": {
+              "const": false
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "leader_progress": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": null
+            },
+            "supported": {
+              "const": true
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "local_actions": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": null
+            },
+            "supported": {
+              "const": true
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "network_result": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "local_enqueue_is_not_network_observation"
+            },
+            "supported": {
+              "const": false
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "pq_queue": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "synchronous_signer_no_queue"
+            },
+            "supported": {
+              "const": false
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "session_lifecycle": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": null
+            },
+            "supported": {
+              "const": true
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "storage_commit_ack": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": null
+            },
+            "supported": {
+              "const": true
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "typed_consensus_progress": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": null
+            },
+            "supported": {
+              "const": true
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "vote_assigned": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "no_independent_assigned_denominator"
+            },
+            "supported": {
+              "const": false
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        },
+        "vote_deadline": {
+          "additionalProperties": false,
+          "properties": {
+            "contract_valid": {
+              "type": "boolean"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "performance_gate": {
+              "type": "boolean"
+            },
+            "reason": {
+              "const": "no_frozen_protocol_deadline"
+            },
+            "supported": {
+              "const": false
+            }
+          },
+          "required": [
+            "contract_valid",
+            "enabled",
+            "performance_gate",
+            "reason",
+            "supported"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "cohort_success_rate",
+        "durable_finality",
+        "leader_progress",
+        "local_actions",
+        "network_result",
+        "pq_queue",
+        "session_lifecycle",
+        "storage_commit_ack",
+        "typed_consensus_progress",
+        "vote_assigned",
+        "vote_deadline"
+      ],
+      "type": "object"
+    },
+    "contexts": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "current_slot": {
+            "anyOf": [
+              {
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_finalized_slot": {
+            "anyOf": [
+              {
+                "maximum": 4294967295,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lifecycle": {
+            "enum": [
+              "active",
+              "stopping"
+            ]
+          },
+          "network_id": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "scope": {
+            "additionalProperties": false,
+            "properties": {
+              "scope_id": {
+                "enum": [
+                  "masterchain",
+                  null
+                ]
+              },
+              "shard": {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]{0,19})$",
+                "type": "string"
+              },
+              "workchain": {
+                "maximum": 2147483647,
+                "minimum": -2147483648,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "scope_id",
+              "shard",
+              "workchain"
+            ],
+            "type": "object"
+          },
+          "session_id": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "stop_started_monotonic_ns": {
+            "anyOf": [
+              {
+                "maxLength": 20,
+                "pattern": "^(0|[1-9][0-9]{0,19})$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "current_slot",
+          "last_finalized_slot",
+          "lifecycle",
+          "network_id",
+          "scope",
+          "session_id",
+          "stop_started_monotonic_ns"
+        ],
+        "type": "object"
+      },
+      "maxItems": 8,
+      "type": "array"
+    },
+    "instrumentation_complete": {
+      "type": "boolean"
+    },
+    "post_terminal_progress": {
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "type": "string"
+    },
+    "repeated_requests": {
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "type": "string"
+    },
+    "retired_requests": {
+      "maxLength": 20,
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "type": "string"
+    },
+    "sessions": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "type": "string"
+        },
+        "started": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "type": "string"
+        },
+        "stop_started": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "type": "string"
+        },
+        "stopped": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "type": "string"
+        },
+        "stopping": {
+          "maxLength": 20,
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "active",
+        "started",
+        "stop_started",
+        "stopped",
+        "stopping"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "actions",
+    "capabilities",
+    "contexts",
+    "instrumentation_complete",
+    "post_terminal_progress",
+    "repeated_requests",
+    "retired_requests",
+    "sessions"
+  ],
+  "type": "object"
+}

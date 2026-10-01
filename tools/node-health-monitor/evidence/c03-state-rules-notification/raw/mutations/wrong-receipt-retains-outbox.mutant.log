@@ -1,0 +1,27 @@
+$ cargo test --locked -p tos-health-services --test manager conflict_quarantines_live_rule_and_receipt_controls_outbox -- --exact
+source_sha256=e0332e77584ab4d198fd85de0d12b6384dc01e83ac3159c4463703a59e381c83
+timeout_seconds=180
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.77s
+     Running tests/manager.rs ($HOME/nhm-c03-build/debug/deps/manager-d47dab4836d22b29)
+
+running 1 test
+test conflict_quarantines_live_rule_and_receipt_controls_outbox ... FAILED
+
+failures:
+
+---- conflict_quarantines_live_rule_and_receipt_controls_outbox stdout ----
+
+thread 'conflict_quarantines_live_rule_and_receipt_controls_outbox' (813667) panicked at crates/health-services/tests/manager.rs:123:5:
+assertion failed: deliver_once_at(&manager, &client, &receiver, "test", 1).await.is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    conflict_quarantines_live_rule_and_receipt_controls_outbox
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 5.05s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager`
+
+EXIT=101

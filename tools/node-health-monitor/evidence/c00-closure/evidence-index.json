@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "baseline": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+  "branch": "node-health-monitor",
+  "source_sha256": {
+    "crates/health-core/src/query_output.rs": "00e8b7647a3dbe65dfd36d18a86b5063b5fec4a8b5ecc667eb93e5481221a608",
+    "crates/health-services/tests/http.rs": "5c6f56a9f72fe7ce5b3840fa185f0893587a92025cf96593a222fb15ef5007a2",
+    "tests/c00-closure-mutations.py": "abd7ec5e61e0efd1091bc42e14d456d9b93cdb261273b5a6cf14844acafa5d47",
+    "contracts/source-manifest.json": "9f2d94670153992b05cfa2c681475cb12c703c5b76e822d2f064c731f21d305f",
+    "contracts/dependency-lock.json": "5f6ce40082314efbb54ace50d129dd79788d21462a1a8691c5dff6e83587f5aa",
+    "requirements-contracts.lock": "aa9380d03582be497569a051dcab4d183c20a4c422fcd515048497d7e4473e5b"
+  },
+  "raw_log_sha256": {
+    "failed-suite-schema-boundary.log": "561510843de200844902159e734ffa85074e6d94415e01af3497fc516eff7836",
+    "final-fmt-diff.log": "ad1fc9b1a509a9720c99ddeef98fc6af7e06cd08c4e0f041111ddc45be4c5754",
+    "final-clippy.log": "ac22c2e38ae193199459a6d6ddaa987deae73ae9b7f3dbdb49295ee291b2ad03",
+    "final-closure-suite.log": "4149acfe8bf1d20b179690bbffc4397fcf2af0d034c7dedbea3bc8d4ca7f43d6",
+    "mutation-logs/derived-lineage.baseline.log": "fc2e65f554ff183ab9f8fba6d114848fd2950ff7feb4dd936aa3944b55edbb58",
+    "mutation-logs/derived-lineage.mutant.log": "6e89a9f0b0980d25788be7b9804f593d94014e319d9a9635a2ada9db82a6b012",
+    "mutation-logs/metric-metadata.baseline.log": "8e6e5832eeb39100fe95bd5dc0a8bbedce9918a82f16418fd795d97d8dea661c",
+    "mutation-logs/metric-metadata.mutant.log": "b601fc4817c3d5a29f129800c820b847f81eaded6976fd8008d9370d435f0044",
+    "mutation-logs/coverage-gap-union.baseline.log": "db54017a2acf4db11f2ac749b21ff18f10036c268265d50ff29a3915ce9525be",
+    "mutation-logs/coverage-gap-union.mutant.log": "7c583dc04039a1e208c5b39b2b93ee6fb07a9a21360f0f6f4b58ec4b8a91ecdf",
+    "mutation-logs/payload-unknown-field.baseline.log": "779ae735163a09032d9b23655dbc458eb358bccbc8a028448858ad7c55ea18da",
+    "mutation-logs/payload-unknown-field.mutant.log": "48a8f59eeb6280c539008824c6b804ed7d6af105578e1112b3acc47f63de8778",
+    "mutation-logs/payload-content-hash.baseline.log": "f7ee8ee0544e7c6efb215836531f65f75e7f917f8fec1f4179f1911b7dee5bce",
+    "mutation-logs/payload-content-hash.mutant.log": "d7e3794beacf4364bf730a77e945467d862047c10baba429b825d6eaa56ebe61",
+    "mutation-logs/network-genesis-shape.baseline.log": "42b031507208d63840ef5e98363c013817bb47cb89cc11e33041474a0aac47ad",
+    "mutation-logs/network-genesis-shape.mutant.log": "9589f09f088269dd2ab75f313a0823786f79aa91ee68945c7f3a2608c8a9fdfe"
+  },
+  "external_independent_log": {
+    "path": "$HOME/nhm-supervision/c00-independent-closure.log",
+    "sha256": "02a95a3a8994c1d05db58d6a1fe0b1bd538ccd65e045af7929ab5d52e8b194a7",
+    "exit_code": 0
+  }
+}

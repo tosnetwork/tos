@@ -62,6 +62,17 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     // pin the connection. 0 falls back to the header deadline. Only applies
     // while the header deadline machinery is enabled.
     double request_body_timeout = 120.0;
+    // Refuse any request that announces a body (Content-Length or
+    // Transfer-Encoding) with 413 and close the connection as soon as the
+    // headers are parsed, before payload parsing. The socket window may
+    // already contain bytes beyond the headers. For bodiless listeners,
+    // this keeps a client from holding the per-connection body window at
+    // all. Default off: ordinary RPC listeners keep their body handling.
+    bool reject_request_bodies = false;
+    // 0 preserves the normal RPC transport window. Bodiless health listeners
+    // use a small input/output window and an independent response deadline.
+    size_t io_buffer_bytes = 0;
+    double response_timeout = 0;
   };
 
   HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits);

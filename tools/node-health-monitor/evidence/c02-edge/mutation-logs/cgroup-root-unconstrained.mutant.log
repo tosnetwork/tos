@@ -1,0 +1,26 @@
+$ cargo test --locked -p tos-health-services --test cgroup effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample -- --exact
+timeout_seconds=120
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.14s
+     Running tests/cgroup.rs (target/debug/deps/cgroup-9d31621ecd033d1b)
+
+running 1 test
+test effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample ... FAILED
+
+failures:
+
+---- effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample stdout ----
+
+thread 'effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample' (629631) panicked at crates/health-services/tests/cgroup.rs:52:71:
+called `Result::unwrap()` on an `Err` value: "No such file or directory (os error 2)"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-services --test cgroup`
+
+EXIT=101

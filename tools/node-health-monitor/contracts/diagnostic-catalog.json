@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "header_bytes": 64,
+  "max_record_bytes": 512,
+  "endian": "little",
+  "records": [
+    {
+      "source_catalog_id": 7,
+      "record_type": 1,
+      "name": "synthetic_interoperability_fixture",
+      "payload_bytes": 2,
+      "production_enabled": false
+    },
+    {
+      "source_catalog_id": 8,
+      "source_id": "consensus_diagnostic",
+      "record_type": 1,
+      "name": "consensus_action_phase",
+      "payload_bytes": 4,
+      "fields": ["action_u8_lt4", "origin_u8_lt3", "phase_u8_lt22", "reserved_zero_u8"],
+      "anchoring": "unanchored_scalar_observation",
+      "production_enabled": false,
+      "local_development_enabled": true
+    }
+  ],
+  "fixture": "tests/fixtures/diagnostic-v1.hex"
+}

@@ -160,6 +160,8 @@ class RocksDb : public KeyValue {
   std::shared_ptr<MemoryDiagnosticsState> memory_diagnostics_;
 
   std::unique_ptr<rocksdb::Transaction> transaction_;
+  // Steady clock (ms) of the last write-stop probe; see StorageHealth.
+  std::uint64_t write_stop_probe_ms_ = 0;
   std::unique_ptr<rocksdb::WriteBatch> write_batch_;
   class UnreachableDeleter {
    public:

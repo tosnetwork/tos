@@ -54,7 +54,13 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
   };
 
   td::actor::Task<Stats> collect_stats();
+  td::actor::Task<Stats> collect_stats_mode(bool build_per_path);
   void collect(td::Promise<metrics::MetricSet> P) override;
+  // What one collection builds, declared before it is built (bounded health
+  // path). Nullopt when the per-path policy is on: that family count follows
+  // the live path table, which has no cap of its own.
+  std::optional<metrics::CollectionReservation> reservation() const override;
+  static constexpr std::size_t kSummaryFamilies = 8;  // Stats::Entry::dump
 
  protected:
   void on_mtu_updated(td::optional<adnl::AdnlNodeIdShort> local_id,

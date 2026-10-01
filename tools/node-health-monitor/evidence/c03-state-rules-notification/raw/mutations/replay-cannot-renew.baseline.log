@@ -1,0 +1,15 @@
+$ cargo test --locked -p tos-health-services --test watchdog pipeline_requires_own_firing_new_evaluation -- --exact
+source_sha256=cd4e0ca568dba180cdff060e682a2ab960c4803bc14ba8ef523ca8f1c1e750fd
+timeout_seconds=180
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.04s
+     Running tests/watchdog.rs ($HOME/nhm-c03-build/debug/deps/watchdog-097a9dcaf27ac5e3)
+
+running 1 test
+test pipeline_requires_own_firing_new_evaluation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+
+EXIT=0

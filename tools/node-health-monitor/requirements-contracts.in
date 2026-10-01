@@ -1,0 +1,3 @@
+# C00 schema validator. The exact transitive graph and hashes are frozen in
+# requirements-contracts.lock; this environment is local to this workspace.
+jsonschema[format]==4.25.1

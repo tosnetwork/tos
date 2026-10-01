@@ -299,6 +299,11 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
 
   void listen(td::IPAddress addr);
   void collect(metrics::MetricsPromise P) override;
+  // Declared before collection: the fixed scalar table plus the two
+  // per-method tables, each bounded by `metrics::Labeled::MAX_LABELS` and
+  // declaring its own live size.
+  std::optional<metrics::CollectionReservation> reservation() const override;
+  static constexpr std::size_t kScalarFamilies = 7;  // six counters/gauges plus uptime
 
   JsonRpcServer(
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,

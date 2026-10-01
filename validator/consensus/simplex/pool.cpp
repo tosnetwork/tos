@@ -19,6 +19,29 @@ namespace tos::validator::consensus::simplex {
 
 namespace {
 
+tos::health::Action health_action(const Vote &vote) {
+  return std::visit(
+      []<typename T>(const T &) {
+        if constexpr (std::same_as<T, NotarizeVote>)
+          return tos::health::Action::Notarize;
+        if constexpr (std::same_as<T, FinalizeVote>)
+          return tos::health::Action::Finalize;
+        return tos::health::Action::Skip;
+      },
+      vote.vote);
+}
+
+tos::health::ActionLedger::Key health_key(const Vote &vote, tos::health::Origin origin) {
+  tos::health::ActionLedger::Key key{health_action(vote), origin, vote.referenced_slot(), {}};
+  std::visit(
+      [&]<typename T>(const T &value) {
+        if constexpr (!std::same_as<T, SkipVote>)
+          std::memcpy(key.candidate.data(), value.id.hash.data(), 32);
+      },
+      vote.vote);
+  return key;
+}
+
 measurement::TraceId measurement_trace_id(const CandidateId &id) {
   measurement::TraceId result{};
   std::memcpy(result.data(), id.hash.data(), result.size());
@@ -330,6 +353,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   void start_up() override {
     auto &bus = *owning_bus();
+    bus.health_session.start(bus.session_id.data(), bus.shard.workchain, bus.shard.shard);
 
     slots_per_leader_window_ = bus.config.slots_per_leader_window;
     params_ = bus.config.noncritical_params;
@@ -841,15 +865,24 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   // The point where a signature stops being private to this node. Everything before it is
   // reversible by a crash; everything from here on is observable, directly through the
   // broadcast or indirectly through a certificate built on the applied vote.
-  void apply_own_vote(const Vote &vote, td::BufferSlice signature, bool tolerate_conflicts, bool broadcast) {
+  void apply_own_vote(const Vote &vote, td::BufferSlice signature, bool tolerate_conflicts, bool broadcast,
+                      tos::health::ActionObservation &observation) {
     auto &bus = *owning_bus();
     Signed<Vote> signed_vote{bus.local_id->idx, vote, std::move(signature)};
     td::BufferSlice serialized = signed_vote.serialize();
 
-    if (handle_vote(*bus.local_id, std::move(signed_vote), tolerate_conflicts) && broadcast) {
+    const bool applied = handle_vote(*bus.local_id, std::move(signed_vote), tolerate_conflicts);
+    if (!applied) {
+      observation.finish(tos::health::Phase::ApplyFalse);
+    } else {
+      observation.observe(tos::health::Phase::LocalApplied);
+    }
+    if (applied && broadcast) {
       owning_bus().publish(
           std::make_shared<OutgoingProtocolMessage>(OutgoingProtocolMessage::BroadcastToAll{}, std::move(serialized)));
+      observation.observe(tos::health::Phase::BroadcastEnqueued);
     }
+    observation.finish();
   }
 
   // Cast one of this node's own votes. The order below is the correctness property, not an
@@ -861,12 +894,19 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     auto &bus = *owning_bus();
     CHECK(bus.is_validator());
 
+    const auto observation_key = health_key(vote, tos::health::Origin::Live);
+    tos::health::ActionObservation observation(health_action(vote), tos::health::Origin::Live,
+                                               tos::health::consensus_stats, &owning_bus()->health_session.vote_ledger,
+                                               &observation_key);
+
     if (finality_behind_) {
       // Finality fell behind while this vote was being prepared. Consensus stops producing
       // new ones, but one already in flight arrives here regardless.
+      observation.finish(tos::health::Phase::FinalitySuppressed);
       co_return td::Unit{};
     }
     if (!vote_journal_failure_.empty()) {
+      observation.finish(tos::health::Phase::JournalSuppressed);
       LOG(ERROR) << "consensus: refusing to vote, the vote journal is unusable: " << vote_journal_failure_;
       co_return td::Unit{};
     }
@@ -875,37 +915,55 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
     auto seqno = co_await owning_bus().publish<PersistOwnVoteIntent>(vote).wrap();
     if (seqno.is_error()) {
+      observation.finish(seqno.error().code() == ErrorCode::cancelled ? tos::health::Phase::IntentCancelled
+                                                                      : tos::health::Phase::IntentFailure);
       LOG(ERROR) << "consensus: the vote intent for " << vote << " was not committed (" << seqno.error()
                  << "); not signing it";
       co_return td::Unit{};
     }
 
+    observation.observe(tos::health::Phase::IntentCommitted);
+
     auto signature = sign_vote(vote);
     if (!signature.has_value()) {
+      observation.finish(owning_bus()->pq_signer == nullptr ? tos::health::Phase::MissingSigner
+                                                            : tos::health::Phase::SignFailure);
       co_return td::Unit{};
     }
+    observation.observe(tos::health::Phase::Signed);
 
     auto committed =
         co_await owning_bus().publish<PersistOwnSignedVote>(vote, seqno.ok(), signature.value().clone()).wrap();
     if (committed.is_error()) {
+      observation.finish(committed.error().code() == ErrorCode::cancelled ? tos::health::Phase::SignedCommitCancelled
+                                                                          : tos::health::Phase::SignedCommitFailure);
       LOG(ERROR) << "consensus: the signed vote for " << vote << " was not committed (" << committed.error()
                  << "); not applying or broadcasting it";
       co_return td::Unit{};
     }
 
-    apply_own_vote(vote, std::move(signature.value()), /*tolerate_conflicts=*/false, /*broadcast=*/true);
+    observation.observe(tos::health::Phase::SignedCommitted);
+
+    apply_own_vote(vote, std::move(signature.value()), /*tolerate_conflicts=*/false, /*broadcast=*/true, observation);
     co_return td::Unit{};
   }
 
   // Restore one of this node's own votes from the journal at startup. Nothing is
   // rebroadcast: peers either already have the vote or will ask for it.
   td::actor::Task<> replay_our_vote(BootstrapVote stored) {
+    const auto origin =
+        stored.signature.empty() ? tos::health::Origin::ReplayIntent : tos::health::Origin::ReplaySigned;
+    const auto observation_key = health_key(stored.vote, origin);
+    tos::health::ActionObservation observation(health_action(stored.vote), origin, tos::health::consensus_stats,
+                                               &owning_bus()->health_session.vote_ledger, &observation_key);
     if (!stored.signature.empty()) {
+      observation.observe(tos::health::Phase::RestoredSigned);
       // These are the bytes this node already emitted. The signer is deliberately not
       // called: ML-DSA-44 signing is randomized, so a second signature over the same vote
       // would be equally valid and a different object, while a peer may already hold the
       // first one inside a certificate.
-      apply_own_vote(stored.vote, std::move(stored.signature), /*tolerate_conflicts=*/true, /*broadcast=*/false);
+      apply_own_vote(stored.vote, std::move(stored.signature), /*tolerate_conflicts=*/true, /*broadcast=*/false,
+                     observation);
       co_return td::Unit{};
     }
 
@@ -913,22 +971,32 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     // for this vote can exist anywhere. Sign once, commit those bytes, and only then apply.
     auto signature = sign_vote(stored.vote);
     if (!signature.has_value()) {
+      observation.finish(owning_bus()->pq_signer == nullptr ? tos::health::Phase::MissingSigner
+                                                            : tos::health::Phase::SignFailure);
       co_return td::Unit{};
     }
+    observation.observe(tos::health::Phase::Signed);
     auto committed = co_await owning_bus()
                          .publish<PersistOwnSignedVote>(stored.vote, stored.seqno, signature.value().clone())
                          .wrap();
     if (committed.is_error()) {
+      observation.finish(committed.error().code() == ErrorCode::cancelled ? tos::health::Phase::SignedCommitCancelled
+                                                                          : tos::health::Phase::SignedCommitFailure);
       LOG(ERROR) << "consensus: the replayed signed vote for " << stored.vote << " was not committed ("
                  << committed.error() << "); not applying it";
       co_return td::Unit{};
     }
-    apply_own_vote(stored.vote, std::move(signature.value()), /*tolerate_conflicts=*/true, /*broadcast=*/false);
+    observation.observe(tos::health::Phase::SignedCommitted);
+    apply_own_vote(stored.vote, std::move(signature.value()), /*tolerate_conflicts=*/true, /*broadcast=*/false,
+                   observation);
     co_return td::Unit{};
   }
 
   // ===== Bookkeeping =====
   void advance_present() {
+    SCOPE_EXIT {
+      owning_bus()->health_session.current_slot(now_);
+    };
     if (!is_started_) {
       return;
     }
@@ -1139,6 +1207,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     last_finalized_block_ = id;
     last_final_cert_ = cert;
     first_nonfinalized_slot_ = id.slot + 1;
+    owning_bus()->health_session.finalized_slot(id.slot);
     measurement::record_trace_lazy([&] { return measurement_trace_id(id); },
                                    measurement::TraceStage::finalization_certificate_observed);
     owning_bus().publish<FinalizationObserved>(id, cert);
@@ -1154,6 +1223,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     seen_broadcasts_.erase(seen_broadcasts_.begin(), seen_broadcasts_.upper_bound(id.slot));
 
     state_->notify_finalized(id.slot);
+    owning_bus()->health_session.vote_ledger.retire_before(static_cast<std::uint64_t>(id.slot) + 1);
 
     // Drop candidate refs that can no longer be in the active window.
     received_candidates_.erase(received_candidates_.begin(),

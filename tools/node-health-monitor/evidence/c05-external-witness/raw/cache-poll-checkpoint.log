@@ -1,0 +1,25 @@
+Script started on 2026-09-29 11:36:04+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.45s
+     Running tests/witness_cache.rs (target/debug/deps/witness_cache-80217fc798bb02c3)
+
+running 6 tests
+test malformed_or_late_source_never_materializes_on_handler ... ok
+test same_row_newer_reported_age_only_raises_lower_bound ... ok
+test actual_read_handler_is_cache_only_and_duplicate_cannot_renew ... ok
+test same_row_newer_unknown_or_overflow_age_cannot_inherit_freshness ... ok
+test new_generation_of_same_old_row_does_not_renew_age_or_receipt ... ok
+test canonical_duplicate_ignores_raw_whitespace_and_escaped_response_overflow_keeps_old ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/witness_poll.rs (target/debug/deps/witness_poll-a64ed631cd879ce5)
+
+running 2 tests
+test one_actual_https_get_serves_two_planned_targets_per_round ... ok
+test local_timeout_quarantines_late_remote_work_without_retry ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.62s
+
+
+Script done on 2026-09-29 11:36:12+00:00 [COMMAND_EXIT_CODE="0"]

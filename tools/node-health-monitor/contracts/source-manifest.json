@@ -1,0 +1,531 @@
+{
+  "schema_version": 1,
+  "design_revision": "R4",
+  "design_blob": "c28a6b2506c98fc728f868081a8192f7d0cd0d0a",
+  "work_order_blob": "f7cd3371c8023bb61409d5e77fd96a3741f0cddd",
+  "memo_commit": "55b1928c2b7466df64220028e105ded6ae4f2ad3",
+  "c02_order_commit": "b9ed82ac091c48ebfd381b18208bb39175510da0",
+  "base_commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+  "c01_implementation_commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+  "c02_implementation_commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+  "complete_manifest": false,
+  "c00_contract_inventory_complete": true,
+  "c01_source_publisher_inventory_complete": true,
+  "c02_edge_basic_inventory_complete": true,
+  "production_adapter_inventory_complete": false,
+  "completeness_note": "C00-C04 have scoped development acceptances only. C05 has a bounded synthetic cache-witness and separate historical/current M path, but no approved production finalized-block source, deterministic proof verifier or live witness rule fact. All fixtures are isolated synthetic controls, not production host receipts. Readiness/getStats and later adapters remain disabled or unsupported; production deployment and performance are not accepted.",
+  "sources": [
+    {
+      "source_id": "native_exporter",
+      "anchor": {
+        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "path": "metrics/prometheus-exporter.cpp",
+        "symbol": "PrometheusExporter::on_request",
+        "source_sha256": "a4225559870a53215135aee37760beb9699b591d0f6ff720f4bba936050014dc"
+      },
+      "interface": "GET /metrics",
+      "grammar": "OpenMetrics 1.0 exact immutable body including EOF; paired native_core hash/generation",
+      "semantic_type": "mixed",
+      "unit": "per metric",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "one admitted fan-out per >=15 seconds; 2-second owner response; child lease drains; isolated publisher-prepare measurement only",
+      "capacity": {
+        "max_bytes": 2097152
+      },
+      "fixture": "crates/health-core/tests/fixtures/native-core.prom",
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      },
+      "fixture_schema": "openmetrics_text",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic collector",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "production_node": false
+      }
+    },
+    {
+      "source_id": "process",
+      "anchor": {
+        "commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
+        "symbol": "sample_process",
+        "source_sha256": "a97b158acd9841c6237413abe749120a998c710cb366ec6405a128a56fa66335"
+      },
+      "interface": "fixed proc fields",
+      "grammar": "source-envelope.schema.json process payload; fixed configured PID files and process epoch",
+      "semantic_type": "gauge",
+      "unit": "bytes/ticks",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "fixed stat/status/boot-id reads; PID generation rechecked; no process or FD scan",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/process-source.json",
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      },
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated synthetic fixed process fields bound to the synthetic native fixture epoch; not a production host receipt",
+        "test_source": "crates/health-core/tests/native_contract.rs",
+        "production_node": false
+      }
+    },
+    {
+      "source_id": "consensus_status",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator-engine/json-rpc-server-blocks.cpp",
+        "symbol": "getNodeConsensusStatus",
+        "source_sha256": "67f451f0a81dbb2c076a262f9ae9b69edd5af1c114098906b0a23d7f9c97d39d"
+      },
+      "interface": "JSON-RPC getNodeConsensusStatus",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "snapshot",
+      "unit": "typed raw",
+      "scope": "masterchain",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "manager actor snapshot; adapter unsupported",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "quic",
+      "anchor": {
+        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "path": "quic/quic-sender.cpp",
+        "symbol": "health_metrics_policy::build_per_path",
+        "source_sha256": "0857f803ba99ff46967d07845cfecaeff6d099d76f10555333af76a788cf2199"
+      },
+      "interface": "native collector summary",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "raw",
+      "unit": "RTT unverified; bytes may decrease",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "summary collection only; per-path construction compile-time disabled; production performance gate not run",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "vote_intent",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/simplex/pool.cpp",
+        "symbol": "publish<PersistOwnVoteIntent>",
+        "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+      },
+      "interface": "core hook not connected",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "counter",
+      "unit": "operations",
+      "scope": "masterchain",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "anchor only",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "vote_signed_commit",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/simplex/pool.cpp",
+        "symbol": "publish<PersistOwnSignedVote>",
+        "source_sha256": "362fe9be8c5fe185fb967f41256fbbcfed4737557e93c9bcb0825878933f8992"
+      },
+      "interface": "core hook not connected",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "counter",
+      "unit": "operations",
+      "scope": "masterchain",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "anchor only",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "pq_sign",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "crypto/pq/consensus-pq-signer.cpp",
+        "symbol": "ValidatorPQKeyStore::sign_consensus",
+        "source_sha256": "b1114d5f292ab89a0f1ef7cfe7bff12ec577dce2e4ded828f20bded7d8415a58"
+      },
+      "interface": "opt-in native metrics",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "histogram",
+      "unit": "seconds",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "fixed atomic counters and clock",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/native-core.json",
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      },
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic PQ counters",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "production_node": false
+      }
+    },
+    {
+      "source_id": "pq_verify",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/types.cpp",
+        "symbol": "PeerValidator::check_signature",
+        "source_sha256": "6d5970fdcade5d74697d460c92a465ce2918f16e4f98985657c6d661df71a359"
+      },
+      "interface": "opt-in native metrics",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "histogram",
+      "unit": "seconds",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "native_core",
+      "cost": "fixed atomic counters and clock",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/native-core.json",
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      },
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic PQ counters",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "production_node": false
+      }
+    },
+    {
+      "source_id": "rocksdb",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "scripts/validator_rss_rocksdb_monitor.sh",
+        "symbol": "rocksdb",
+        "source_sha256": "7ca8ba0559f11ece232bb887511520a631bc36e7d195670df450a60a562e993c"
+      },
+      "interface": "fixed incremental reader not connected",
+      "grammar": "strict schema required before adapter enablement",
+      "semantic_type": "raw",
+      "unit": "per field",
+      "scope": "node",
+      "absence": "unavailable; never zero",
+      "reset": "process/source epoch",
+      "generation": "increments only at valid source completion",
+      "owner": "health_edge",
+      "cost": "unimplemented",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "readiness",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator-engine/json-rpc-server-utils.cpp",
+        "symbol": "handle_readyz",
+        "source_sha256": "a5a506cab788e11d733361590c054b24f64172ab4aae707475e795a5388eee6e"
+      },
+      "interface": "GET /healthcheck and GET /readyz adapter not connected",
+      "grammar": "strict readiness payload not frozen",
+      "semantic_type": "snapshot",
+      "unit": "typed raw",
+      "scope": "node",
+      "absence": "unsupported; never healthy by default",
+      "reset": "source epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "sequential RPC lane required",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "guard",
+      "anchor": {
+        "commit": "0a3aafda25ad9fa9d93be45156e2df2838646085",
+        "path": "tools/node-health-monitor/crates/health-core/src/guard.rs",
+        "symbol": "pub struct Guard",
+        "source_sha256": "af0d2076e3a8f20711df99a643381e9b28dc2529e9dc437fc5b8c593829b197f"
+      },
+      "interface": "fixed guard signal adapter incomplete",
+      "grammar": "guard state contract exists; full signal SourceEnvelope absent",
+      "semantic_type": "state",
+      "unit": "state",
+      "scope": "node",
+      "absence": "unsupported source; missing signal forces guarded state",
+      "reset": "edge epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "fixed 5 second reads; full adapter not accepted",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "witness",
+      "anchor": {
+        "commit": "8699a3e554dcacdd0fd0194de4c823b1b34c6e20",
+        "path": "tools/node-health-monitor/crates/health-services/src/witness.rs",
+        "symbol": "pub struct WitnessCache",
+        "source_sha256": "fc0566012d7b9c1856bd1dae6f9b2a6c28d2c2042defa717b955d7dddd8ec7aa"
+      },
+      "interface": "development-only fixed cache-only HTTPS witness; O retained GET, M separate historical archive and volatile current read; approved production finalized-block adapter and live rule fact unsupported",
+      "grammar": "closed C05 plan/source/cache/current DTOs with source canonical hash plus raw transport digest, original-row age, typed reported anchors; no deterministic verified-finality proof",
+      "semantic_type": "external observation",
+      "unit": "typed anchor",
+      "scope": "masterchain",
+      "absence": "unavailable or unknown; never infer network result, node fault or verified finality",
+      "reset": "separate observer and source epochs; no duplicate-age renewal",
+      "generation": "positive exact-u64 source generation, ordered for activated current source only",
+      "owner": "observer",
+      "cost": "development profile: at most 32 targets, 16 approved endpoints, three refs/target, four local requests in flight, 15-second no-catch-up rounds, 16-KiB source body and 256-KiB round body; O cache 2-MiB and M volatile current view 1-MiB bounded; no production source or cost gate",
+      "capacity": {
+        "max_bytes": 32768,
+        "source_body_bytes": 16384,
+        "round_body_bytes": 262144,
+        "observer_cache_resident_bytes": 2097152,
+        "manager_current_resident_bytes": 1048576
+      },
+      "fixture": null,
+      "development_fixtures": {
+        "kind": "synthetic fixed HTTPS cache and loopback mTLS identities; not a live chain or production host receipt",
+        "test_source": "crates/health-services/tests/witness_cache.rs and crates/health-services/tests/ingress.rs",
+        "production_node": false
+      },
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "diagnostic_trace",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator/consensus/trace-collector.cpp",
+        "symbol": "TraceCollectorImpl",
+        "source_sha256": "ad1b57c61a6c20a7e8a95a344c03637f0364f1d80950cdbfb67dec29e460b2ac"
+      },
+      "interface": "legacy trace is not connected to diagnostic IPC",
+      "grammar": "only synthetic catalog 7/type 1 is frozen",
+      "semantic_type": "diagnostic",
+      "unit": "records",
+      "scope": "masterchain",
+      "absence": "unsupported; core health remains independent",
+      "reset": "process epoch",
+      "generation": "not implemented",
+      "owner": "native_core",
+      "cost": "producer early gate and bounded IPC not implemented",
+      "capacity": {
+        "max_bytes": 4194304
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "validator_stats",
+      "anchor": {
+        "commit": "86db5fe9e93fe0a04c324dc0aa58dcfe88ce4b9f",
+        "path": "validator-engine/validator-engine.cpp",
+        "symbol": "run_control_query(tos::tos_api::engine_validator_getStats",
+        "source_sha256": "a5bef5b5f82ec81ae0e63d6408c1bbebc73f0384a8c48fffa1800594c7c60f9d"
+      },
+      "interface": "engine.validator.getStats authenticated control protocol",
+      "grammar": "provider allowlist and payload schemas not frozen",
+      "semantic_type": "snapshot",
+      "unit": "typed raw",
+      "scope": "node",
+      "absence": "unsupported and disabled; never zero",
+      "reset": "source epoch",
+      "generation": "not implemented",
+      "owner": "health_edge",
+      "cost": "default disabled pending source cost gate",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": null,
+      "capability": {
+        "supported": false,
+        "enabled": false,
+        "contract_valid": false,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "host_cgroup",
+      "anchor": {
+        "commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "path": "tools/node-health-monitor/crates/health-services/src/edge.rs",
+        "symbol": "sample_cgroup",
+        "source_sha256": "a97b158acd9841c6237413abe749120a998c710cb366ec6405a128a56fa66335"
+      },
+      "interface": "configured cgroup-v2 fixed files through at most 16 descendant levels",
+      "grammar": "source-envelope.schema.json host_cgroup payload; exact decimal u64; effective finite ancestor minimum",
+      "semantic_type": "snapshot",
+      "unit": "bytes/microseconds/events",
+      "scope": "node",
+      "absence": "unsupported or error; never zero and never an invented unlimited quota",
+      "reset": "process/edge epoch",
+      "generation": "increments only with the paired process sampling tick",
+      "owner": "health_edge",
+      "cost": "bounded ancestor memory.max/cpu.max reads plus fixed leaf memory.current/cpu.stat/memory.events; mount root is unconstrained; no scan",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/host-cgroup.json",
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated synthetic fake-root cgroup hierarchy including current-above-limit pressure; not a production host receipt",
+        "test_source": "crates/health-services/tests/cgroup.rs",
+        "implementation_commit": "b736cca8c1b73166d311cf214be2e3432b19046e",
+        "production_node": false
+      },
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      }
+    },
+    {
+      "source_id": "native_core",
+      "anchor": {
+        "commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "path": "metrics/native-core-snapshot.h",
+        "symbol": "NativeCorePublisher",
+        "source_sha256": "8149ec2fdf4a441db08cb85e048dae97fa53629f460608be7b7c57ed38edb7bf"
+      },
+      "interface": "GET /health-snapshot (loopback, configured alias and network only)",
+      "grammar": "source-envelope.schema.json native_core payload; exact decimal u64; exact bytes/hash/generation paired to immutable OpenMetrics body",
+      "semantic_type": "cumulative counter and source metadata",
+      "unit": "operations/bytes/milliseconds",
+      "scope": "node",
+      "absence": "unavailable or explicit null; never zero",
+      "reset": "process/source epoch",
+      "generation": "same valid completion as OpenMetrics",
+      "owner": "health_edge",
+      "cost": "cache-only reads; publisher preparation measured only in isolated fixture; upstream/full-callback and production acceptance not measured",
+      "capacity": {
+        "max_bytes": 262144
+      },
+      "fixture": "crates/health-core/tests/fixtures/native-core.json",
+      "fixture_schema": "source-envelope.schema.json",
+      "fixture_provenance": {
+        "kind": "isolated production exporter actor with synthetic collector",
+        "test_source": "test/test-health-native-snapshot.cpp",
+        "openmetrics_fixture": "crates/health-core/tests/fixtures/native-core.prom",
+        "implementation_commit": "aa61f57e7bd78c1a1de763339ff090d42eb3889d",
+        "production_node": false
+      },
+      "capability": {
+        "supported": true,
+        "enabled": false,
+        "contract_valid": true,
+        "performance_gate": "not_run"
+      }
+    }
+  ]
+}

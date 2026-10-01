@@ -1,0 +1,11 @@
+[Unit]
+Description=Stop isolated fresh-window C09 functional sampler at reviewed end
+
+[Timer]
+OnCalendar=@STOP_CALENDAR@
+AccuracySec=1s
+Persistent=false
+Unit=nhm-c09-functional-v2-stop.service
+
+[Install]
+WantedBy=timers.target

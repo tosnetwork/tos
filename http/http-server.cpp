@@ -26,7 +26,7 @@ namespace http {
 
 HttpServer::HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits)
     : address_(address), callback_(std::move(callback)), limits_(limits) {
-  add_collector(collector_.get());
+  add_collector("http_connections", collector_.get());
 }
 
 void HttpServer::start_up() {
@@ -72,7 +72,8 @@ void HttpServer::accepted(td::SocketFd fd) {
   }
   td::actor::create_actor<HttpInboundConnection>(td::actor::ActorOptions().with_name("inhttpconn").with_poll(),
                                                  std::move(fd), callback_, metrics_, limits_.request_header_timeout,
-                                                 limits_.request_body_timeout)
+                                                 limits_.request_body_timeout, limits_.reject_request_bodies,
+                                                 limits_.io_buffer_bytes, limits_.response_timeout)
       .release();
 }
 

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "$HOME/tos-node-health-c06/tools/node-health-monitor/tests/c06-native-mutations.py", line 37, in <module>
+    assert red.returncode!=0 and needle in red.stdout,(name,'missing intended assertion',red.stdout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('enabled', 'missing intended assertion', "test: $HOME/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:25: int main(): Assertion `tos::health::wire_get(packet.bytes.data()+32,8)==i' failed.\n")

@@ -1,0 +1,86 @@
+name: Node health monitor
+on:
+  push:
+    branches: [node-health-monitor]
+  pull_request:
+    paths:
+      - 'tools/node-health-monitor/**'
+      - 'metrics/**'
+      - 'quic/**'
+      - 'crypto/pq/consensus-pq-signer.cpp'
+      - 'validator/consensus/types.cpp'
+      - 'validator-engine/validator-engine.cpp'
+      - 'test/test-health-*.cpp'
+      - 'validator-engine/validator-engine.hpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/node-health-monitor.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust-contracts:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_PIPELINING: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: scripts/install-rust-toolchain.sh
+      - run: python3 -m pip install jsonschema
+      - name: Check the generated input contracts
+        run: |
+          python3 tools/node-health-monitor/tests/generate_schemas.py
+          python3 tools/node-health-monitor/scripts/generate-contracts.py
+          python3 tools/node-health-monitor/scripts/check-contracts.py
+          git diff --exit-code -- tools/node-health-monitor/contracts
+      - name: Compile and exercise HTTP and state contracts
+        run: |
+          cargo fmt --manifest-path tools/node-health-monitor/Cargo.toml --all -- --check
+          cargo clippy --manifest-path tools/node-health-monitor/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path tools/node-health-monitor/Cargo.toml --locked
+          cargo build --manifest-path tools/node-health-monitor/Cargo.toml --locked
+          python3 tools/node-health-monitor/tests/process-smoke.py
+          python3 tools/node-health-monitor/tests/mutations.py
+          python3 tools/node-health-monitor/tests/r4-mutations.py
+          python3 tools/node-health-monitor/tests/runtime-mutations.py
+          python3 tools/node-health-monitor/tests/native-contract-mutations.py
+          python3 tools/node-health-monitor/tests/native-typed-mutations.py
+      - name: Compile and remove native protections
+        run: python3 tools/node-health-monitor/tests/native-mutations.py
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
+      - run: python3 -m pip install jsonschema
+      - name: Build affected native boundaries
+        run: |
+          cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
+          cmake --build build-health --target test-http-server-limits test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j2
+      - name: Run native behavior tests
+        run: |
+          python3 tools/node-health-monitor/tests/native-snapshot-http.py build-health/test-health-native-snapshot
+          python3 tools/node-health-monitor/tests/native-snapshot-mutations.py build-health
+          python3 tools/node-health-monitor/tests/c01-publisher-mutations.py build-health tools/node-health-monitor/evidence/ci-c01-mutations
+          build-health/test-health-pq-signer
+          build-health/test-health-collector-completion
+          build-health/test-health-collector-timestamps
+          build-health/test-health-collector-budget
+          build-health/test-http-server-limits
+          build-health/test-health-core-registry
+          build-health/test-health-source-policy
+          build-health/test-health-publisher-bench
+          build-health/test-metrics-label-bound
+          build-health/crypto/pq/test-pq-consensus
+          python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+          build-health/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv

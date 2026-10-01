@@ -9,6 +9,7 @@
 #include "auto/tl/tos_api.hpp"
 #include "crypto/pq/mldsa44.h"
 #include "keys/encryptor.h"
+#include "metrics/core-health.h"
 #include "td/utils/overloaded.h"
 
 #include "bus.h"
@@ -33,9 +34,12 @@ bool PeerValidator::check_signature(ValidatorSessionId session, td::Slice data, 
   // context itself, and fails closed on a malformed key, wrong length or bad signature, so a
   // key of the wrong shape is an invalid signature, not a crash.
   const auto msg = signed_data.as_slice();
-  return tos::pq::verify_mldsa44(std::string_view(msg.data(), msg.size()), tos::pq::simplex_sign_context,
-                                 std::string_view(signature.data(), signature.size()),
-                                 consensus_key.public_key) == tos::pq::VerifyResult::valid;
+  tos::health::OperationTimer timer(tos::health::pq_verify);
+  const auto valid = tos::pq::verify_mldsa44(std::string_view(msg.data(), msg.size()), tos::pq::simplex_sign_context,
+                                             std::string_view(signature.data(), signature.size()),
+                                             consensus_key.public_key) == tos::pq::VerifyResult::valid;
+  timer.finish(valid);
+  return valid;
 }
 
 td::StringBuilder& operator<<(td::StringBuilder& stream, const PeerValidator& peer_validator) {

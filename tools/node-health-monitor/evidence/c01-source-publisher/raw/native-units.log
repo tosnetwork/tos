@@ -1,0 +1,7 @@
+$ test-health-source-policy
+$ test-health-core-registry
+$ test-health-collector-completion
+$ test-health-collector-timestamps
+$ test-health-native-snapshot
+native_snapshot_unit_passed
+EXIT=0

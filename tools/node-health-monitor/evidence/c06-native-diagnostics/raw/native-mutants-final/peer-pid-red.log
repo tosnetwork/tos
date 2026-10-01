@@ -1,0 +1,1 @@
+test: $HOME/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-ipc.cpp:45: int main(int, char**): Assertion `diagnostic_stats.sent==0 && diagnostic_stats.dropped>0' failed.

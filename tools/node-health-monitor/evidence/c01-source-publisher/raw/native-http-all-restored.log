@@ -1,0 +1,16 @@
+native_snapshot_unit_passed
+isolated_actual_publisher_prepare_us=948
+fast: passed
+slow: passed
+disabled: passed
+isolated_actual_publisher_prepare_us=489
+gateoff: passed
+isolated_actual_publisher_prepare_us=936
+sources: passed
+isolated_actual_publisher_prepare_us=913
+lease: passed
+disconnect: passed
+concurrent: passed
+error: passed
+boundary: passed
+EXIT=0

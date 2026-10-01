@@ -1,0 +1,1693 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "request_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "network_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "partial",
+        "unavailable",
+        "error"
+      ]
+    },
+    "data": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/event"
+              },
+              "maxItems": 100
+            },
+            "gaps": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/missing"
+              },
+              "maxItems": 32
+            }
+          },
+          "required": [
+            "events",
+            "gaps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      },
+      "maxItems": 128
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/missing"
+      },
+      "maxItems": 32
+    },
+    "coverage": {
+      "$ref": "#/$defs/coverage"
+    },
+    "pagination": {
+      "$ref": "#/$defs/pagination"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/error"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "budget": {
+      "$ref": "#/$defs/budget"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "run_id",
+    "network_id",
+    "generated_at",
+    "status",
+    "data",
+    "evidence",
+    "missing_evidence",
+    "coverage",
+    "pagination",
+    "error",
+    "budget"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "action": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "proposal",
+            "notarize_vote",
+            "finalize_vote",
+            "skip_vote"
+          ]
+        },
+        "accounting_complete": {
+          "type": "boolean"
+        },
+        "incomplete_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 16
+        },
+        "phases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          },
+          "maxItems": 8
+        },
+        "outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          },
+          "maxItems": 8
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          },
+          "maxItems": 16
+        },
+        "pending": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "oldest_age_ns": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "accounting_complete",
+        "incomplete_reasons",
+        "phases",
+        "outcomes",
+        "failures",
+        "pending",
+        "oldest_age_ns"
+      ],
+      "additionalProperties": false
+    },
+    "block": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "block"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "point": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "kind",
+        "network_id",
+        "scope_id",
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash",
+        "point"
+      ],
+      "additionalProperties": false
+    },
+    "block_anchor": {
+      "type": "object",
+      "properties": {
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "file_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash"
+      ],
+      "additionalProperties": false
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "remaining_calls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "remaining_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 131072
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "remaining_calls",
+        "remaining_bytes",
+        "expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "chain_anchors": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "chain_anchors"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "applied": {
+          "$ref": "#/$defs/block_anchor"
+        },
+        "served": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/block_anchor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "applied_advanced_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        },
+        "applied_age_seconds": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "served_gap": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "network_id",
+        "applied",
+        "served",
+        "applied_advanced_at",
+        "observed_at",
+        "applied_age_seconds",
+        "served_gap"
+      ],
+      "additionalProperties": false
+    },
+    "consensus": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "consensus"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "slot": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "candidate_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "kind",
+        "network_id",
+        "scope_id",
+        "session_id",
+        "slot",
+        "candidate_id",
+        "phase"
+      ],
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "scope_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workchain": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "current_slot": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_finalized_slot": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "active",
+            "stopping"
+          ]
+        },
+        "stop_started_monotonic_ns": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "scope_id",
+        "workchain",
+        "shard",
+        "current_slot",
+        "last_finalized_slot",
+        "lifecycle",
+        "stop_started_monotonic_ns"
+      ],
+      "additionalProperties": false
+    },
+    "count": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "count": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "name",
+        "count"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unknown"
+          ]
+        },
+        "missing_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 96
+          },
+          "maxItems": 64
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "maxItems": 32
+        },
+        "sampling_policy": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "status",
+        "missing_fields",
+        "gaps",
+        "sampling_policy"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "diagnostic_fixture"
+        },
+        "record_type": {
+          "const": 1
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{4}$"
+        }
+      },
+      "required": [
+        "kind",
+        "record_type",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic_phase": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "diagnostic_phase"
+        },
+        "record_type": {
+          "const": 1
+        },
+        "payload": {
+          "type": "string",
+          "pattern": "^0[0-3]0[0-2](0[0-9a-f]|1[0-5])00$"
+        },
+        "monotonic_ns": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "kind",
+        "record_type",
+        "payload",
+        "monotonic_ns"
+      ],
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_seconds": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 300
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable",
+        "retry_after_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "evidence_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_record_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "process_epoch": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 64
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "correlation_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 160
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "excerpt": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "quality": {
+          "$ref": "#/$defs/quality"
+        }
+      },
+      "required": [
+        "event_id",
+        "evidence_id",
+        "source_id",
+        "source_record_id",
+        "process_epoch",
+        "observed_at",
+        "scope_id",
+        "kind",
+        "stage",
+        "reason",
+        "correlation_id",
+        "excerpt",
+        "content_hash",
+        "quality"
+      ],
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "observation",
+            "derived",
+            "event",
+            "change"
+          ]
+        },
+        "node_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_version": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "source_record_id": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "process_epoch": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "observed_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "Z$",
+              "maxLength": 40
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$",
+          "maxLength": 40
+        },
+        "clock_quality": {
+          "type": "string",
+          "enum": [
+            "valid",
+            "uncertain",
+            "invalid"
+          ]
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "payload": {
+          "$ref": "#/$defs/payload"
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "quality": {
+          "$ref": "#/$defs/quality"
+        },
+        "redacted": {
+          "const": true
+        },
+        "parent_evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "maxItems": 32
+        },
+        "derivation_version": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 96
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "evidence_id",
+        "kind",
+        "node_id",
+        "source_id",
+        "source_version",
+        "source_record_id",
+        "process_epoch",
+        "observed_at",
+        "received_at",
+        "clock_quality",
+        "scope_id",
+        "payload",
+        "content_hash",
+        "quality",
+        "redacted",
+        "parent_evidence_ids",
+        "derivation_version"
+      ],
+      "additionalProperties": false
+    },
+    "health_verdict": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "scope_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "clear",
+            "open",
+            "suspended_unknown",
+            "recovering",
+            "closed_recovered"
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "episode": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "acknowledged": {
+          "type": "boolean"
+        },
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "rule",
+        "scope_id",
+        "state",
+        "severity",
+        "episode",
+        "acknowledged",
+        "active"
+      ],
+      "additionalProperties": false
+    },
+    "health_verdicts": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "health_verdicts"
+        },
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "evaluation_sequence": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "verdicts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/health_verdict"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "kind",
+        "source_id",
+        "evaluation_sequence",
+        "verdicts"
+      ],
+      "additionalProperties": false
+    },
+    "host_cgroup": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "host_cgroup"
+        },
+        "memory_current_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "memory_max_bytes": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "cpu_usage_usec": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "cpu_quota_usec": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "cpu_period_usec": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "oom_events": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "kind",
+        "memory_current_bytes",
+        "memory_max_bytes",
+        "cpu_usage_usec",
+        "cpu_quota_usec",
+        "cpu_period_usec",
+        "oom_events"
+      ],
+      "additionalProperties": false
+    },
+    "missing": {
+      "type": "object",
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "source_id",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "native": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "openmetrics_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        }
+      },
+      "required": [
+        "kind",
+        "generation",
+        "openmetrics_hash",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "native_consensus": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native_consensus"
+        },
+        "source_version": {
+          "type": "string",
+          "enum": [
+            "native-core-v2",
+            "native-core-v3"
+          ]
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "instrumentation_complete": {
+          "type": "boolean"
+        },
+        "incomplete_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 16
+        },
+        "repeated_requests": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "retired_requests": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "post_terminal_progress": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "sessions": {
+          "$ref": "#/$defs/sessions"
+        },
+        "contexts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/context"
+          },
+          "maxItems": 8
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action"
+          },
+          "maxItems": 4
+        },
+        "pq_sign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pq_verify": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "source_version",
+        "generation",
+        "network_id",
+        "instrumentation_complete",
+        "incomplete_reasons",
+        "repeated_requests",
+        "retired_requests",
+        "post_terminal_progress",
+        "sessions",
+        "contexts",
+        "actions",
+        "pq_sign",
+        "pq_verify"
+      ],
+      "additionalProperties": false
+    },
+    "native_core": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "native_core"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "network_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "openmetrics_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2097152
+        },
+        "pq_sign": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pq_verify": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/pq_snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "generation",
+        "network_id",
+        "openmetrics_hash",
+        "bytes",
+        "pq_sign",
+        "pq_verify"
+      ],
+      "additionalProperties": false
+    },
+    "pagination": {
+      "type": "object",
+      "properties": {
+        "next_cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2048
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "scan_complete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "next_cursor",
+        "truncated",
+        "scan_complete"
+      ],
+      "additionalProperties": false
+    },
+    "payload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/process"
+        },
+        {
+          "$ref": "#/$defs/host_cgroup"
+        },
+        {
+          "$ref": "#/$defs/native"
+        },
+        {
+          "$ref": "#/$defs/native_core"
+        },
+        {
+          "$ref": "#/$defs/unavailable"
+        },
+        {
+          "$ref": "#/$defs/scalar"
+        },
+        {
+          "$ref": "#/$defs/diagnostic"
+        },
+        {
+          "$ref": "#/$defs/diagnostic_phase"
+        },
+        {
+          "$ref": "#/$defs/block"
+        },
+        {
+          "$ref": "#/$defs/consensus"
+        },
+        {
+          "$ref": "#/$defs/storage_ack"
+        },
+        {
+          "$ref": "#/$defs/native_consensus"
+        },
+        {
+          "$ref": "#/$defs/chain_anchors"
+        },
+        {
+          "$ref": "#/$defs/storage_state"
+        },
+        {
+          "$ref": "#/$defs/health_verdicts"
+        }
+      ]
+    },
+    "pq_snapshot": {
+      "type": "object",
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "failed": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "succeeded": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "complete",
+        "failed",
+        "succeeded"
+      ],
+      "additionalProperties": false
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "process"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "rss_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "anon_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "swap_bytes": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_user_ticks": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cpu_system_ticks": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "pid",
+        "rss_bytes",
+        "anon_bytes",
+        "file_bytes",
+        "swap_bytes",
+        "cpu_user_ticks",
+        "cpu_system_ticks"
+      ],
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object",
+      "properties": {
+        "instrumentation_complete": {
+          "type": "boolean"
+        },
+        "producer_dropped": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "relay_dropped": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parse_errors": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shed_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 96
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "instrumentation_complete",
+        "producer_dropped",
+        "relay_dropped",
+        "parse_errors",
+        "shed_reason"
+      ],
+      "additionalProperties": false
+    },
+    "scalar": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "scalar"
+        },
+        "metric_id": {
+          "type": "string",
+          "maxLength": 96
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "kind",
+        "metric_id",
+        "value",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
+    "sessions": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "started": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "stop_started": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "stopped": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$",
+              "format": "uint64"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stopping": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "active",
+        "started",
+        "stop_started",
+        "stopped",
+        "stopping"
+      ],
+      "additionalProperties": false
+    },
+    "storage_ack": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "storage_ack"
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "logical_reference": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "contract_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+        },
+        "source_epoch": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "completion_sequence": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "durability": {
+          "type": "string",
+          "enum": [
+            "commit_acknowledged",
+            "restart_verified_in_test",
+            "unknown"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "operation",
+        "logical_reference",
+        "contract_id",
+        "source_epoch",
+        "completion_sequence",
+        "durability"
+      ],
+      "additionalProperties": false
+    },
+    "storage_capability": {
+      "type": "object",
+      "properties": {
+        "supported": {
+          "type": "boolean"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "contract_valid": {
+          "type": "boolean"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "supported",
+        "enabled",
+        "contract_valid",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "storage_state": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "storage_state"
+        },
+        "storage_commit_ack": {
+          "$ref": "#/$defs/storage_capability"
+        },
+        "durable_finality_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intent_storage_failures": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "signed_storage_failures": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        },
+        "journal_unusable_failures": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,19})$",
+          "format": "uint64"
+        }
+      },
+      "required": [
+        "kind",
+        "storage_commit_ack",
+        "durable_finality_reason",
+        "intent_storage_failures",
+        "signed_storage_failures",
+        "journal_unusable_failures"
+      ],
+      "additionalProperties": false
+    },
+    "unavailable": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "unavailable"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "kind",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

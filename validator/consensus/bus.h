@@ -12,6 +12,7 @@
 #include "consensus/misbehavior.h"
 #include "crypto/pq/consensus-pq-signer.h"
 #include "keyring/keyring.hpp"
+#include "metrics/consensus-health.h"
 #include "overlay/overlays.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"
@@ -213,6 +214,7 @@ class Bus : public td::actor::Bus {
   Bus() = default;
   ~Bus() override {
     db = {};
+    health_session.close();
     stop_promise.set_value(td::Unit());
   }
 
@@ -221,6 +223,8 @@ class Bus : public td::actor::Bus {
   }
 
   ValidatorSessionId session_id;
+
+  mutable tos::health::SessionObservation health_session;
 
   ShardIdFull shard;
   td::actor::ActorId<ManagerFacade> manager;

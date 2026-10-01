@@ -1,0 +1,196 @@
+# Elector deadlock behind `key_block_stale` and `state_gc_lag` (2026-10-01)
+
+## What the monitor saw
+
+From 07:35 UTC every node raised `key_block_stale` and `state_gc_lag`. Both were
+true: the chain kept producing blocks, but no key block followed block 83 700,
+and state garbage collection cannot pass the last key block.
+
+## What the chain was doing
+
+Election `1790840137` closed at `1790840077` with `total_stake = 0`,
+`failed = false`, `finished = false`. The local election driver had died at
+07:24 on an HTTP 500 during a validator rollout, and its unit had
+`Restart=no`, so nobody staked into that window.
+
+From then on the elector could not make progress:
+
+- `conduct_elections` postponed the closed election on every tick, because its
+  effective stake was below `min_total_stake`.
+- `process_pq_stake` refused every stake after `elect_close`, with reason 0,
+  so the stake that postponement waited for could never arrive.
+- The current validator set (param 34) expired at 07:35:37 and param 36 stayed
+  empty. No configuration change meant no key block, and no key block meant GC
+  stopped behind block 83 700.
+
+The configuration contract has no external path that could have intervened.
+Its `recv_external` throws.
+
+## What changed since August
+
+The elector was unchanged from the April rebrand (`40a0aa4c9`) through August.
+All fifteen later changes landed on 2026-09-19 and 2026-09-20 in the
+post-quantum cutover.
+
+In the inherited elector, postponing was safe. A stake was accepted until the
+election was `finished`, even after `elect_close`, and each new stake reset
+`failed`. That is the meaning of the inherited comment "do not retry failed
+elections until new stakes arrive": an under-staked election waited, and late
+stake rescued it.
+
+Two changes on 2026-09-19 removed that rescue and kept the waiting:
+
+- **`6255c3a14` (stake boundary).** The post-quantum stake path started refusing
+  from `elect_close`, so membership is fixed at the election's boundary rather
+  than at whichever tick conducts it. The rule itself is sound. But it removed
+  the only input that could end a postponement, and `conduct_elections` was not
+  changed to match.
+- **`d305b914d` (effective stake).** Readiness started to count only stake
+  under controller profiles the configuration still admits, and an absent
+  policy postpones too. That added two more ways into the same postponement.
+
+After both changes, an election that closed short was permanent.
+
+## Why no test caught it
+
+- **The tests check each rule where it lives.** The boundary commit added
+  `a_stake_after_the_election_closes_is_returned_before_the_tick_conducts_it`,
+  which proves the refusal. No test asked what then happens to an election that
+  closed short.
+- **No test advanced time past `elect_at` for a closed election.** Every
+  election test ticks at `elect_close` and looks at that one tick.
+  `a_retired_profile_cannot_make_an_election_look_ready` even asserts that the
+  election is "postponed, not failed". It covers recovery by re-admitting a
+  profile, which needs no stake, so it protected the postponement without
+  noticing that the stake-based recovery was gone.
+- **Mutation testing cannot see a missing behaviour.** The contract guard
+  suite removes each guard and requires a test to fail. That finds guards
+  nothing holds. It cannot find a state with no way out.
+- **Nothing exercised operator absence.** No CI job boots a chain. On the local
+  network the driver always staked in time, until the first time it did not.
+
+## Test perspectives that were missing
+
+1. **Liveness.** From any reachable elector state, within bounded time, either
+   a set is installed or a fresh election opens.
+2. **Time progression across every boundary.** Each outcome (empty, below the
+   minimum, failed selection, success) is followed across `elect_close`,
+   `elect_at` and the current set's `utime_until`, not checked at one tick.
+3. **Paired assumptions.** When a change closes an input, as the stake boundary
+   did, test the states that relied on that input to recover.
+4. **Money conservation through every exit.** On any path that ends an
+   election, each stake comes back exactly once, to the account that put it up.
+5. **Operator-absence fault injection.** On the development network, stop the
+   election driver for a whole window and require the chain to recover.
+
+## The fix (`982086887`)
+
+A closed election that cannot be conducted is still postponed while the set it
+would replace is in office, so re-admitting a retired profile can still revive
+it. From `elect_at` it is cancelled. Every member's stake is credited to its
+owner, the record is dropped, and the next tick announces a fresh election with
+a full window. A failed selection no longer keeps the credits it paid to
+retired-profile members, so cancellation refunds each stake exactly once.
+
+The election driver unit now has `Restart=on-failure` with a 30 s delay.
+
+## Evidence
+
+Sandbox suite `elector_sandbox`, run against the native build of this branch:
+
+| Elector | Result |
+|---|---|
+| Fixed | 78 passed, 0 failed |
+| Previous (`5def57046`) | 75 passed; the three new tests fail |
+| Fixed, but cancellation keeps the selection's credits | 77 passed; the exactly-once test fails ("money left a standing election") |
+
+`test/pq-native/contract-guard-mutations.py` still kills every mutant.
+
+Live drill on the rebuilt development network (zerostate root `de50a311…`,
+elector code hash `3477aea8…`, equal to the compiled fixed elector):
+
+| Time (UTC) | Event |
+|---|---|
+| 13:00 | Election driver stopped |
+| 13:03–13:07 | Election `1790860068` open, then closed, with `total_stake = 0` |
+| 13:07:53 | Election `1790860068` given up; election `1790860368` open, closing at `1790860308` |
+| 13:08 | Driver restarted; stakes from nodes 1, 2, 3 and 7 accepted |
+| 13:12 | Set elected in `1790860368` observed in office (`since 1790860368`) |
+
+After the rebuild, no node has an active incident, and the doctor reports
+17 pass, 0 fail, 3 not run.
+
+## Tests for the missing perspectives
+
+Each perspective listed above now has a test. The sandbox tests live in
+`tosctl/src/node-control/contracts/tests/elector_sandbox.rs`, in the section
+"The election lifecycle as a whole". They run over five outcomes: empty, below
+the minimum, no controller policy, failed selection, and seated.
+
+| Perspective | Test |
+|---|---|
+| Liveness, time progression | `every_election_seats_a_set_or_gives_way_to_a_fresh_one_within_the_term` observes each outcome before the close, at the close, in the last second of the term, at its end and one second later |
+| Paired assumptions | `a_refused_late_stake_does_not_strand_the_election_or_the_staker`: a real late stake is refused, the short election still ends, the elector holds what it owes, and the refused validator is seated in the fresh election |
+| Money conservation | `every_exit_returns_each_stake_exactly_once_to_its_owner`: an exact refund on every cancelled path, no second refund through the fresh election, and exact per-owner accounting on the seated path |
+| Operator absence (sandbox) | `an_absent_operator_costs_windows_never_the_chain`: three empty windows in a row, then a returning operator is seated |
+| Operator absence (live) | `scripts/local-pq-election-absence-drill.py`; its unit tests in `scripts/test_local_pq_election_absence_drill.py` require exit 1 on a chain that holds the empty election |
+
+Every new test was shown to fail. The mutants were applied to `elector-code.fc`,
+recompiled, and run against the whole suite of 82 tests:
+
+| Elector | Failing tests |
+|---|---|
+| Pre-fix (`5def57046`) | All seven deadlock tests: the three from the fix and the four above |
+| Cancellation refunds nothing | Below-minimum, failed-election, late-stake, conservation |
+| Cancelled at the close instead of the end of the term | Seven, including the existing retired-profile revival test |
+| No-policy path postpones for ever | Empty, liveness, conservation |
+| Below-minimum path postpones for ever | Below-minimum, late-stake, absence, liveness, conservation |
+| Failed path postpones for ever | Failed-election, liveness, conservation |
+| Unused part of a seated stake paid twice | Conservation |
+| Released stake paid twice when there are no bonuses | Conservation |
+
+### The bonus path
+
+The lifecycle tests never accumulate bonuses, so at first the release path with
+bonuses never ran, and paying a released stake twice there went undetected. That
+path now has its own test,
+`a_served_sets_bonuses_reach_its_stakers_in_proportion_and_nowhere_else`, which
+drives a real round end to end:
+
+- Four members stake real money with a factor of three. The chain's factor is
+  raised from the launch value of one, so the frozen stakes differ.
+- The set is elected, installed and rotated into office.
+- A plain transfer from an ordinary account fills the purse. Taking office moves
+  exactly one eighth of the purse to the set's bonuses.
+- Validator fees sent from the zero address go to the bonuses, not the purse.
+- The set leaves office and its stakes are released. Each owner receives exactly
+  its unused part, its frozen stake, and the floor of its proportional share of
+  the bonuses.
+- What the division leaves over returns to the purse.
+
+| Mutant | Fails at |
+|---|---|
+| Released stake paid twice when there are bonuses | Per-owner release |
+| Bonus split equally instead of by stake | Per-owner release |
+| Division remainder not returned to the purse | Purse after release |
+| A quarter of the purse moved on taking office | "Did not move an eighth" |
+| Validator fees not credited as bonuses | "The fees missed the bonuses" |
+
+No mutant survives now. Every new test also passes against the fixed elector:
+83 of 83.
+
+The drill's unit tests fail when the drill reports a held election as a pass.
+The live drill passed on the rebuilt network. Its receipt is
+`ELECTOR-ABSENCE-DRILL-20261001.json`, with SHA-256 prefix `f57b6b06af141661`:
+
+| Unix time | Event |
+|---|---|
+| 1790860993 | Driver stopped between elections |
+| 1790861274 | Election `1790861568` opened, closing at `1790861508` |
+| 1790861524 | Closed with `total_stake = 0` |
+| 1790861574 | Given up; election `1790861868` open, closing at `1790861808`; driver restarted |
+| 1790861875 | Set from `1790861868` in office |
+
+The live drill cannot be shown red on this network without installing the
+broken elector again. Its red evidence is this morning's five-hour hold, plus
+the unit test above.

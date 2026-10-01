@@ -1,0 +1,12 @@
+$ $HOME/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python $HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode sources
+native_snapshot_unit_passed
+Traceback (most recent call last):
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 146, in <module>
+    else:check(mode);print(mode+': passed',flush=True)
+         ~~~~~^^^^^^
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 82, in check
+    assert b'tos_health_source_collection_completed_timestamp_seconds{source="second_fixture"}' in body
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+
+EXIT=1
