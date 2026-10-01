@@ -594,3 +594,37 @@ fn evidence_charges_the_decoded_footprint_and_bounds_nodes() {
     assert!(!s.remove(&id));
     assert_eq!(s.insert(evidence(3)).unwrap(), id);
 }
+
+#[test]
+fn restore_evicts_or_skips_instead_of_refusing_to_start() {
+    use tos_health_core::evidence::StoredEvidence;
+    // Entries recorded under a larger store than the one restoring them.
+    let mut big = EvidenceStore::new(1 << 20);
+    let mut entries = Vec::new();
+    for t in 1..=40 {
+        let mut e = evidence(t);
+        e.payload = json!(vec![0u8; 400]);
+        let id = big.insert(e.clone()).unwrap();
+        entries.push(StoredEvidence { evidence_id: id, watermark: big.watermark(), record: e });
+    }
+    let small = EvidenceStore::restore(60_000, big.watermark(), entries.clone()).unwrap();
+    assert_eq!(small.watermark(), big.watermark());
+    assert!(small.entries().count() < 40 && small.entries().count() > 0);
+    assert!(small.resident_bytes() <= 60_000);
+    // A row over the node bound is skipped, the rest restore, the watermark holds.
+    let mut huge = evidence(41);
+    huge.payload = json!(vec![0u8; 5000]);
+    let mut with_huge = entries.clone();
+    with_huge.push(StoredEvidence {
+        evidence_id: "0".repeat(64),
+        watermark: big.watermark() + 1,
+        record: huge,
+    });
+    let restored = EvidenceStore::restore(1 << 20, big.watermark() + 1, with_huge).unwrap();
+    assert_eq!(restored.watermark(), big.watermark() + 1);
+    assert_eq!(restored.entries().count(), 40);
+    // A wrong identity is still refused.
+    let mut wrong = entries;
+    wrong[0].evidence_id = "f".repeat(64);
+    assert_eq!(EvidenceStore::restore(1 << 20, 40, wrong).err(), Some("invalid restored evidence"));
+}

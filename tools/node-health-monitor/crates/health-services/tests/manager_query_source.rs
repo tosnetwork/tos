@@ -310,11 +310,11 @@ fn diagnostic_boundary_rewrite_refuses_even_with_unchanged_retained_process() {
     .unwrap();
     assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
         .unwrap_err()
-        .contains("anchor changed"));
+        .contains("anchor"));
     sql.execute("DELETE FROM observations WHERE store_seq=?1", [page.cursor.watermark]).unwrap();
     assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
         .unwrap_err()
-        .contains("anchor changed"));
+        .contains("anchor"));
     drop(sql);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
@@ -427,7 +427,7 @@ fn process_parent_and_trailing_diagnostic_have_distinct_durable_identities() {
             .with_manager_evidence(manager_path.clone())
             .err()
             .unwrap();
-    assert!(missing.contains("M projection anchor changed"), "{missing}");
+    assert!(missing.contains("M projection anchor missing"), "{missing}");
     drop(sql);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
@@ -897,7 +897,7 @@ fn cursor_refuses_missing_or_rewritten_retained_parent_and_invalid_middle_row() 
     conn.execute("DELETE FROM observations WHERE store_seq=?1", [first.store_seq.0]).unwrap();
     assert!(read_process_projection_page(&path, &network, Some(&page.cursor), &retained)
         .unwrap_err()
-        .contains("anchor changed"));
+        .contains("anchor"));
     drop(conn);
     drop(manager);
     let mut manager = EvidenceDb::open(&path, 4 * 1024 * 1024).unwrap();
@@ -2144,4 +2144,59 @@ async fn broker_parent_index_overflow_latches_refusal_without_deadlocking_ledger
     drop(state);
     drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn anchor_swept_by_retention_reanchors_but_a_missing_anchor_without_a_seal_is_refused() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-anchor-sweep-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let network = "a".repeat(64);
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&network).unwrap();
+    manager.insert(row("edge-epoch-anchor-1")).unwrap();
+    let page = read_process_projection_page(&manager_path, &network, None, &[]).unwrap();
+    let (anchor_seq, _) = page.cursor.anchor.clone().unwrap();
+    manager.insert(row("edge-epoch-anchor-2")).unwrap();
+    drop(manager);
+    // The anchor row vanishes with no retention seal: a rewrite, refused.
+    let sql = rusqlite::Connection::open(&manager_path).unwrap();
+    sql.execute(
+        "DELETE FROM observations WHERE store_seq=?1",
+        [i64::try_from(anchor_seq).unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[]).err(),
+        Some("M projection anchor missing".to_owned())
+    );
+    // A seal that swept past the anchor's sequence proves bounded retention did it.
+    sql.execute(
+        "INSERT INTO retention_seals(node,scope,process_epoch,source_epoch,source,max_generation,deleted_rows,last_deleted_seq)
+         VALUES('v1','node','e','e','process','1',1,?1)",
+        [i64::try_from(anchor_seq).unwrap()],
+    )
+    .unwrap();
+    drop(sql);
+    let next =
+        read_process_projection_page(&manager_path, &network, Some(&page.cursor), &[]).unwrap();
+    assert_eq!(next.records.len(), 1);
+    assert!(next.cursor.watermark > page.cursor.watermark);
+    // A present anchor with a different hash is still a rewrite.
+    let sql = rusqlite::Connection::open(&manager_path).unwrap();
+    let (seq, _) = next.cursor.anchor.clone().unwrap();
+    sql.execute(
+        "UPDATE observations SET content_hash=?1 WHERE store_seq=?2",
+        rusqlite::params!["e".repeat(64), i64::try_from(seq).unwrap()],
+    )
+    .unwrap();
+    assert_eq!(
+        read_process_projection_page(&manager_path, &network, Some(&next.cursor), &[]).err(),
+        Some("M projection anchor changed".to_owned())
+    );
+    let _ = std::fs::remove_dir_all(&directory);
 }

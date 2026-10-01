@@ -315,10 +315,32 @@ def run(args):
         gates.append(gate_retention(state))
         gates.append(gate_notification(state, receipts, now))
         gates.append(gate_ai_lane(state))
+    gates.append(gate_query_broker(args.query_ledger_db, args.query_max_idle_seconds, now))
     for gate_id, title in RECEIPT_GATES:
         gates.append(gate_receipt(gate_id, title, receipts, base_dir or Path.cwd(), now,
                                   not args.no_check_evidence_paths, args.receipt_max_age_days))
     return gates
+
+
+def gate_query_broker(path, max_idle_seconds, now):
+    """The query broker rewrites its ledger (or its WAL) on every 15-second
+    import tick; a ledger nobody has touched for longer than the allowance
+    means the broker is down or wedged, which no manager rule reports."""
+    if not path:
+        return Gate("query_broker", NOT_RUN, "no --query-ledger-db")
+    newest = None
+    for candidate in (Path(path), Path(str(path) + "-wal"), Path(str(path) + "-shm")):
+        try:
+            mtime = candidate.stat().st_mtime
+        except OSError:
+            continue
+        newest = mtime if newest is None else max(newest, mtime)
+    if newest is None:
+        return Gate("query_broker", FAIL, f"query ledger {path} is unreadable")
+    idle = max(0, int(now.timestamp() - newest))
+    if idle > max_idle_seconds:
+        return Gate("query_broker", FAIL, f"query ledger last written {idle} s ago (allowance {max_idle_seconds} s): broker down or wedged")
+    return Gate("query_broker", PASS, f"query ledger written {idle} s ago")
 
 
 def render(gates):
@@ -339,6 +361,9 @@ def build_parser():
     parser.add_argument("--manager-read-token-file")
     parser.add_argument("--manager-state-file", help="saved state JSON instead of the live endpoint")
     parser.add_argument("--evidence-db", help="manager evidence SQLite file, opened read-only")
+    parser.add_argument("--query-ledger-db", help="query broker ledger SQLite file; its write activity is the liveness signal")
+    parser.add_argument("--query-max-idle-seconds", type=int, default=300,
+                        help="the query broker imports every 15 s; longer silence fails the gate")
     parser.add_argument("--evidence-file", help="gate-evidence JSON of receipts")
     parser.add_argument("--receipt-max-age-days", type=float, default=90.0)
     parser.add_argument("--no-check-evidence-paths", action="store_true")

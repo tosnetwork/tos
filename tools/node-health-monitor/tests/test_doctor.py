@@ -3,6 +3,7 @@
 Every gate is exercised in each of its three states, the evidence database is
 opened read-only, and the process exit status is checked end to end.
 """
+import datetime as dt
 import http.server
 import importlib.util
 import json
@@ -95,13 +96,17 @@ def _args(argv):
 
 def test_all_live_gates_pass_and_receipt_gates_pass_with_valid_receipts(tmp_path):
     evidence = receipts(tmp_path, **{gate_id: {} for gate_id, _ in doctor.RECEIPT_GATES})
+    ledger = tmp_path / "query-ledger.db"
+    ledger.write_bytes(b"x")
+    stamp = doctor.parse_time(NOW).timestamp()
+    os.utime(ledger, (stamp, stamp))
     gates = run_doctor(tmp_path, healthy_state(), "--evidence-file", str(evidence),
-                       "--evidence-db", str(evidence_db(tmp_path)))
+                       "--evidence-db", str(evidence_db(tmp_path)), "--query-ledger-db", str(ledger))
     assert gates["ai_lane"].status == doctor.NOT_RUN, "ai_unavailable is not bound in this inventory"
     assert {g.status for g in gates.values() if g.id != "ai_lane"} == {doctor.PASS}
     assert gates["rule_inputs_usable"].detail.startswith("4 rule bindings")
     assert "evidence db quarantined+witness_quarantined empty" in gates["no_quarantined_sources"].detail
-    assert len(gates) == 1 + 5 + len(doctor.RECEIPT_GATES)
+    assert len(gates) == 1 + 5 + 1 + len(doctor.RECEIPT_GATES)
 
 
 def test_unknown_input_and_missing_evaluation_fail_rule_gate(tmp_path):
@@ -311,3 +316,27 @@ def test_cli_reads_the_live_endpoint_with_the_token_and_exits_nonzero_on_fail(tm
 @pytest.mark.parametrize("value,expected", [("12", 12), (7, 7), ("x", None), (True, None), (None, None)])
 def test_wire_integers(value, expected):
     assert doctor.as_int(value) == expected
+
+
+def test_query_broker_gate_reads_ledger_write_activity(tmp_path):
+    ledger = tmp_path / "query-ledger.db"
+    ledger.write_bytes(b"x")
+    stale = doctor.parse_time(NOW).timestamp() - 3600
+    os.utime(ledger, (stale, stale))
+    gates = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(ledger))
+    assert gates["query_broker"].status == doctor.FAIL  # an hour of silence
+    fresh = doctor.parse_time(NOW).timestamp() - 20
+    os.utime(ledger, (fresh, fresh))
+    gates = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(ledger))
+    assert gates["query_broker"].status == doctor.PASS
+    # The WAL counts as write activity even when the main file is older.
+    os.utime(ledger, (stale, stale))
+    wal = tmp_path / "query-ledger.db-wal"
+    wal.write_bytes(b"w")
+    os.utime(wal, (fresh, fresh))
+    gates = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(ledger))
+    assert gates["query_broker"].status == doctor.PASS
+    gates = run_doctor(tmp_path, healthy_state())
+    assert gates["query_broker"].status == doctor.NOT_RUN
+    missing = run_doctor(tmp_path, healthy_state(), "--query-ledger-db", str(tmp_path / "absent.db"))
+    assert missing["query_broker"].status == doctor.FAIL

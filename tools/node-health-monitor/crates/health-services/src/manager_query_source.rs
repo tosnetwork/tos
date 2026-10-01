@@ -732,8 +732,25 @@ pub fn read_process_projection_page(
             )
             .optional()
             .map_err(failure)?;
-        if actual.as_deref() != Some(expected) {
-            return Err("M projection anchor changed".into());
+        match actual.as_deref() {
+            Some(hash) if hash == expected => {}
+            Some(_) => return Err("M projection anchor changed".into()),
+            None => {
+                // The anchor row is gone. Bounded retention proves itself by its
+                // seals: if retention has deleted at or beyond this sequence,
+                // the broker was simply away longer than the retention window
+                // and re-anchors at the current boundary; without such a seal a
+                // missing anchor is a rewrite and is refused.
+                let swept: Option<i64> = conn
+                    .query_row("SELECT MAX(last_deleted_seq) FROM retention_seals", [], |row| {
+                        row.get(0)
+                    })
+                    .map_err(failure)?;
+                let seq = i64::try_from(*seq).map_err(failure)?;
+                if !swept.is_some_and(|last| last >= seq) {
+                    return Err("M projection anchor missing".into());
+                }
+            }
         }
     }
     // A late quarantine or replacement may target a row older than `after`.

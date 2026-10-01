@@ -100,13 +100,15 @@ impl EvidenceStore {
                 return Err("invalid restored watermark");
             }
             store.sequence = entry.watermark - 1;
-            let count = store.records.len();
-            let id = store.insert(entry.record)?;
-            if id != entry.evidence_id
-                || store.sequence != entry.watermark
-                || store.records.len() != count + 1
-            {
-                return Err("invalid restored evidence");
+            // Rows written under an earlier resident charge may no longer fit
+            // or may exceed the node bound; replay evicts the oldest or skips
+            // the row rather than refusing to start, and the watermark stays
+            // continuous. Identity and sequence are still exact.
+            match store.insert(entry.record) {
+                Ok(id) if id == entry.evidence_id && store.sequence == entry.watermark => {}
+                Ok(_) => return Err("invalid restored evidence"),
+                Err("evidence payload node limit") => store.sequence = entry.watermark,
+                Err(error) => return Err(error),
             }
         }
         store.sequence = sequence;
