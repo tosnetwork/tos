@@ -1,4 +1,4 @@
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
 error: The `worker_threads` option requires the `multi_thread` runtime flavor. Use `#[tokio::test(flavor = "multi_thread")]`
   --> crates/health-services/tests/c06_diagnostics.rs:30:30
    |

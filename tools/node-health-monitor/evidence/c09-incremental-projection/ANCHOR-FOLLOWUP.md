@@ -34,9 +34,9 @@ Production role qualification and other historical fixtures are unchanged.
 
 ## Restored checks
 
-- `CARGO_TARGET_DIR=/home/tomi/nhm-c09-anchor-build cargo test --locked -j2 -p tos-health-services`:
+- `CARGO_TARGET_DIR=$HOME/nhm-c09-anchor-build cargo test --locked -j2 -p tos-health-services`:
   exit 0, 151 passed, 4 intentionally ignored across 30 test suites.
-- `CARGO_TARGET_DIR=/home/tomi/nhm-c09-anchor-build cargo clippy --locked -j2 -p tos-health-services --all-targets -- -D warnings`:
+- `CARGO_TARGET_DIR=$HOME/nhm-c09-anchor-build cargo clippy --locked -j2 -p tos-health-services --all-targets -- -D warnings`:
   exit 0.
 - `cargo fmt --all --check` and `git diff --check`: exit 0.
 
@@ -46,7 +46,7 @@ compressed to preserve its exact output bytes:
 | File | SHA-256 |
 |---|---|
 | `full-health-services-restored.log.gz` | `f907b483484a685e67ffb01a9169b1eba2bab3d4fbfb9cf7bdd7f1db959a0e49` (uncompressed SHA-256 `7853d219953e7b838e0f02bd1b16fe4b372e5c1b0f3cfc7878e5fb2392c8da3f`) |
-| `mixed-boundary-anchor-mutant.log` | `6beb76dda25b350ab7afcf8c48bec07fdf3b3f4bc8d7d5f992929c76621fdef1` |
+| `mixed-boundary-anchor-mutant.log` | `2570287e8fd7a529d6398e35256688a84fa12e3752f3ee8794bcf4133758815e` |
 
 This is a development source/test check, not C09 deployed availability or
 72-hour acceptance.

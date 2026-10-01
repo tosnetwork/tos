@@ -1,4 +1,4 @@
-$ /home/tomi/tos-node-health-c01-build/test-health-collector-timestamps
+$ $HOME/tos-node-health-c01-build/test-health-collector-timestamps
 collector_children_peak=2 gate=disabled
 collector_children_peak=2 gate=enabled
 

@@ -4,7 +4,7 @@ Source baseline: `0c48b1c847da720e29c27e07410b6d56aa40bd92`
 (the transport plan commit); preceding adapter checkpoint is
 `0710a9a4f2e616b2be407f23d51af3842c69db33`. Pinned AURA source is
 `1000f119d38f4c4656ced0ae883c90f6f7610890` in
-`/home/tomi/nhm-aura-source.dujJrk`; NHM and AURA use their own locked Cargo
+`$HOME/nhm-aura-source.dujJrk`; NHM and AURA use their own locked Cargo
 dependency sets and separate target directories. This is not C08 acceptance.
 
 ## Observed path
@@ -65,13 +65,13 @@ active-tool cancellation, grant revocation or safe replacement inference.
 | `crates/health-services/src/bin/tos-nhm-aura-stdio.rs` | `3b05317e5147793eb0d11572cfc94bad25a079a9fe4da4eb205d9fbec7ff6f91` |
 | `crates/health-services/tests/aura_stdio.rs` | `140edc4383d08482a64b0d30d4538fe2caa628f1a48d87d56154cdb9cdcbd083` |
 | `tests/pinned-aura/nhm_stdio.rs` | `cf4958462b7a6ae34da33495b7c2b27148d9c0dab8bf7a59617158ece9299aae` |
-| `/home/tomi/nhm-c08-build/debug/tos-observability` | `babb171de3feb9c075276903224a730a79884794bced3ac3914f2fe33cb8389a` |
-| `/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio` | `039f8c2c147ca3a6b22751242e1f448b65ff78b9aab45d4354e67cae9e65007d` |
-| `/home/tomi/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `481e0948e62d04721e0987fa6f2225ad441ff91ef8c4ba0fe043509225d9559f` |
+| `$HOME/nhm-c08-build/debug/tos-observability` | `babb171de3feb9c075276903224a730a79884794bced3ac3914f2fe33cb8389a` |
+| `$HOME/nhm-c08-build/debug/tos-nhm-aura-stdio` | `039f8c2c147ca3a6b22751242e1f448b65ff78b9aab45d4354e67cae9e65007d` |
+| `$HOME/nhm-aura-build/debug/deps/nhm_pinned_stdio-30dd84a3124e704c` | `481e0948e62d04721e0987fa6f2225ad441ff91ef8c4ba0fe043509225d9559f` |
 
 ## Raw commands, results and lineage
 
-Raw files are under `/home/tomi/nhm-c08-mcp-evidence/` and the hashes below
+Raw files are under `$HOME/nhm-c08-mcp-evidence/` and the hashes below
 name their exact bytes. The pinned AURA test was included into its local
 checkout's `crates/aura/tests/nhm_pinned_stdio.rs` from the NHM indexed test
 source; the pinned AURA commit and lock were not changed. Its build required
@@ -128,7 +128,7 @@ local build workaround, not a changed dependency or production fix.
 | `aura-adapter-fmt.log` | `b538573e6bb8b782340625c693930b0734df7ac81b759e34e2ea632c07db2965` | exit 0, `cargo fmt --all -- --check` |
 | `aura-adapter-targeted-final.log` | `7287bf7d4e0eb6be0f8427923edf48c44b8e2a6284001cee4f37453630c545b3` | exit 0, actual adapter test after clippy-only edit |
 
-Pinned AURA command: `CXXFLAGS='-include cstdint' NHM_OBSERVABILITY_BIN=/home/tomi/nhm-c08-build/debug/tos-observability NHM_AURA_STDIO_BIN=/home/tomi/nhm-c08-build/debug/tos-nhm-aura-stdio CARGO_TARGET_DIR=/home/tomi/nhm-aura-build cargo test --locked -p aura --test nhm_pinned_stdio -- --nocapture` (bounded by 60 seconds externally, `-j2` for the initial build). NHM commands ran in `tools/node-health-monitor` with target `/home/tomi/nhm-c08-build`. `git diff --check` exited 0.
+Pinned AURA command: `CXXFLAGS='-include cstdint' NHM_OBSERVABILITY_BIN=$HOME/nhm-c08-build/debug/tos-observability NHM_AURA_STDIO_BIN=$HOME/nhm-c08-build/debug/tos-nhm-aura-stdio CARGO_TARGET_DIR=$HOME/nhm-aura-build cargo test --locked -p aura --test nhm_pinned_stdio -- --nocapture` (bounded by 60 seconds externally, `-j2` for the initial build). NHM commands ran in `tools/node-health-monitor` with target `$HOME/nhm-c08-build`. `git diff --check` exited 0.
 
 ## Open boundary
 

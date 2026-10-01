@@ -2,7 +2,7 @@
   "scope": "observed local C03 candidate commands; paths relative to tools/node-health-monitor unless absolute",
   "commands": [
     {
-      "command": "CARGO_TARGET_DIR=/home/tomi/nhm-c03-build CARGO_BUILD_JOBS=2 scripts/run-contract-tests.sh",
+      "command": "CARGO_TARGET_DIR=$HOME/nhm-c03-build CARGO_BUILD_JOBS=2 scripts/run-contract-tests.sh",
       "exit": 0,
       "log": "raw/final-contract-workspace-restored.log"
     },
@@ -12,7 +12,7 @@
       "log": "raw/final-fmt.log"
     },
     {
-      "command": "CARGO_TARGET_DIR=/home/tomi/nhm-c03-build CARGO_BUILD_JOBS=2 cargo clippy --workspace --all-targets --locked -- -D warnings",
+      "command": "CARGO_TARGET_DIR=$HOME/nhm-c03-build CARGO_BUILD_JOBS=2 cargo clippy --workspace --all-targets --locked -- -D warnings",
       "exit": 0,
       "log": "raw/final-clippy-restored.log"
     },
@@ -27,7 +27,7 @@
       "log": "raw/mutations-run.log"
     },
     {
-      "command": "python3 tests/c03-runtime-chain.py --prometheus /home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus --alertmanager /home/tomi/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager --health-state /home/tomi/nhm-c03-build/debug/health-state --health-watchdog /home/tomi/nhm-c03-build/debug/health-watchdog --output evidence/c03-state-rules-notification/raw/runtime-final",
+      "command": "python3 tests/c03-runtime-chain.py --prometheus $HOME/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus --alertmanager $HOME/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager --health-state $HOME/nhm-c03-build/debug/health-state --health-watchdog $HOME/nhm-c03-build/debug/health-watchdog --output evidence/c03-state-rules-notification/raw/runtime-final",
       "exit": 0,
       "log": "raw/runtime-chain-final.log",
       "start_receipt": "raw/runtime-final/start-receipt.json",

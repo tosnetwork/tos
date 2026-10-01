@@ -1,8 +1,8 @@
 # C09 supervised functional sampler — review receipt
 
-At this source-review snapshot, `nhm-c09-functional.timer` and `nhm-c09-functional-stop.timer` both showed `LoadState=not-found`, `ActiveState=inactive`. The exact mode-0700 /home/tomi/nhm-supervision/c09-local/runtime/functional/ directory was prepared with frozen script copies, manifest, and private baseline; no sample rows or tokens were copied there. No live grant, QueryService restart, model call, or business-node change was made for this source successor.
+At this source-review snapshot, `nhm-c09-functional.timer` and `nhm-c09-functional-stop.timer` both showed `LoadState=not-found`, `ActiveState=inactive`. The exact mode-0700 $HOME/nhm-supervision/c09-local/runtime/functional/ directory was prepared with frozen script copies, manifest, and private baseline; no sample rows or tokens were copied there. No live grant, QueryService restart, model call, or business-node change was made for this source successor.
 
-After this source review, the supervisor's owner-controlled rollout installed and enabled both timers at approximately 2026-09-30 02:50 UTC. The private rollout receipt is `/home/tomi/nhm-supervision/c09-local/functional-rollout-20260930T025014Z.json`. This later state does not change the historical checks above or establish a 72-hour result; inspect the user manager and private runtime journal for current operational status.
+After this source review, the supervisor's owner-controlled rollout installed and enabled both timers at approximately 2026-09-30 02:50 UTC. The private rollout receipt is `$HOME/nhm-supervision/c09-local/functional-rollout-20260930T025014Z.json`. This later state does not change the historical checks above or establish a 72-hour result; inspect the user manager and private runtime journal for current operational status.
 
 ## Validation
 

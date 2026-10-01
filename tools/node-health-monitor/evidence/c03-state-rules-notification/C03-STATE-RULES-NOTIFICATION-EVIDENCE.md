@@ -38,7 +38,7 @@ node, validator key, consensus path, main merge, C04 or C05 adapter was changed.
 
 ## Exact restored checks
 
-- `CARGO_TARGET_DIR=/home/tomi/nhm-c03-build CARGO_BUILD_JOBS=2
+- `CARGO_TARGET_DIR=$HOME/nhm-c03-build CARGO_BUILD_JOBS=2
   scripts/run-contract-tests.sh`: natural exit 0 in
   `raw/final-contract-workspace-restored.log`. It checks 20 closed schemas,
   six actual handler successes, the genuine 11-gate production doctor refusal
@@ -64,7 +64,7 @@ node, validator key, consensus path, main merge, C04 or C05 adapter was changed.
   durable retry due, and wrong receipt retention. Source bytes were restored
   after each mutant (`raw/mutations-run.log`, `raw/mutations/`).
 - The supervisor independently ran the durable binary's 12 tests at exit 0:
-  `/home/tomi/nhm-supervision/c03-independent-durable.log`, SHA-256
+  `$HOME/nhm-supervision/c03-independent-durable.log`, SHA-256
   `fc043dbba9a23abf1f15a5542393baad97bc87690eca1bcdddffffbf7d6786ae`.
   This is an extra review receipt, not production acceptance.
 

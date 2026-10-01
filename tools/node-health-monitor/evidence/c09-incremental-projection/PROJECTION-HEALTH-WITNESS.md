@@ -20,7 +20,7 @@ Starting HEAD: `14bb30d0c8d599d56ce0963a2e7a6949c56353da`. Restored SHA-256:
 | `scripts/sample-broker-projection.py` | `6e2f27613762756b1b5f06b4ddfbbb2d0462cd3ed5489b5d3707600e42a8a0e5` |
 | `scripts/test-sample-broker-projection.py` | `65de5d08023774e831464604e017e5cf00328b724729debbfb0d33fdca20cbbf` |
 
-Raw logs under `/home/tomi/nhm-c08-mcp-evidence/`:
+Raw logs under `$HOME/nhm-c08-mcp-evidence/`:
 
 | Log | SHA-256 | Natural result |
 | --- | --- | --- |

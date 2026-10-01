@@ -27,7 +27,7 @@ Source SHA-256:
 - Compiled run-binding mutant `query.rs`:
   `9e06344d25300991f7c01f1ead4a7aee284d4055ca16cc8234254da4d1c00206`
 
-Raw files under `/home/tomi/nhm-c08-mcp-evidence/`:
+Raw files under `$HOME/nhm-c08-mcp-evidence/`:
 
 - `c08-cursor-replay-run-binding-mutant.log`: `timeout 120s cargo test
   --locked -p tos-health-services --test http

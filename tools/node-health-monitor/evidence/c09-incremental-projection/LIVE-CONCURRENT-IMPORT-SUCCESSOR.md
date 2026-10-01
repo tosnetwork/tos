@@ -19,22 +19,22 @@ Raw logs under `raw/live-concurrent/` are immutable lineage; SHA-256 and natural
 
 | Log | Exit/result | SHA-256 |
 | --- | --- | --- |
-| `live-readonly-concurrent.log` | 101, first 32 pages did not reach peak | `0719ecc1129a15b84d423ca4f2cd86c52d1052bfe69132f9e3c3374f9e933b90` |
-| `live-readonly-concurrent-deep.log` | 101, obsolete ≥5-second-page test predicate | `ba7014ed5554287c8cf368bea569e580d8cb46440163572a35e7a7c3ce2c6395` |
-| `live-readonly-final-source.log` | 101, live M advanced between catch-up and one-shot grant | `932a2d9bceff94789cb295895f5b10890290ede49f18bf75817d683bafb5e21c` |
-| `live-readonly-concurrent-final.log` | 0, pre-source-phase test | `07c4a88f5335ace287f241cd7664e89df7c7d13c54ce434e4cbbe5866c6edab6` |
-| `live-readonly-successor.log` | 0, pre-health correction | `8162356e9823a420aeda9b87ffda8575432c2bf4bedfdf4ecc01dfdfc7383b47` |
+| `live-readonly-concurrent.log` | 101, first 32 pages did not reach peak | `19d269f77f7321bd42c0120314bb2e8f99967d05cfa98e58aadb249d9169bb59` |
+| `live-readonly-concurrent-deep.log` | 101, obsolete ≥5-second-page test predicate | `c5dbb29ac23706b512e45d3ae563672774fe0e8d12e9b725e77f124bd2450289` |
+| `live-readonly-final-source.log` | 101, live M advanced between catch-up and one-shot grant | `bf0e50d38e561482a2f5f39fa9f370d3f30d2870eea642af7e027370b6ddad9d` |
+| `live-readonly-concurrent-final.log` | 0, pre-source-phase test | `2329b7e7abb6967fca89d8b9dbc784d04b775e24efa051bc5465e248d26f726c` |
+| `live-readonly-successor.log` | 0, pre-health correction | `480b849195480a8be766659e56be84bf05ffd772c18666ff1a1ffd1bea7f7234` |
 | `live-readonly-restored-exact.log` | 0, final source | `07a66b237855ff39e3295aa79369fec41e3c350312b5bd3f18126d0ab51430bd` |
-| `synthetic-baseline.log` | 0, pre-source-phase test | `cef434e83b0394cf3e6b47c544598f8052dee36ed79ea5117e8fa1d7052ca1e3` |
-| `data-held-mutant.log` | 0, retired survivor before precise phase witness | `4831d8f7f5ad2a1cb3d4a517d57bb777b4386209b1bf90139ae7f36bf705578c` |
-| `source-phase-baseline.log` | 0 | `55770ce93f2e7eb7f8fdfac07b1293e3e5d53a2017bf42fb6c1bf65919c64289` |
-| `source-phase-data-held-mutant.log` | 101, intended real-read/Data-lock assertion | `485868f6d471d377b9043a11179cfa0b54b6d47b9bd15b34bb85b114d2b77b57` |
-| `health-version-mutant.log` | 101, intended same-W false caught-up assertion | `2b29f4c2b3695617b606edc9e1cc3ec3c7dd522fb55ef4245ded6987a8571c89` |
-| `health-restored.log` | 0 | `00e499616cde98c15479dc3741cecf4807de7924a4cded3a704b0f54edfbf7a4` |
-| `manager-query-final.log` | 0, 20 passed/2 opt-in ignored | `48f2ad7547ed1275651b47411eea754ee780c42238b391c950a6c4da91317f4d` |
-| `workspace-restored.log` | 0, pre-health correction | `a1dadeb5954d12f1844cd13b486fe664cb63e9f7aff21cf6b864c906a18d2001` |
-| `workspace-final.log` | 0, final source | `e610ac634275f6c394611b1707ad72629c5f0a0bb5b5a2f0d8a18d31fa6c00d3` |
+| `synthetic-baseline.log` | 0, pre-source-phase test | `06387caf52b5bee62c3d4cf8f0f4ac320bbf78eb36d73ef86093c4548c973d89` |
+| `data-held-mutant.log` | 0, retired survivor before precise phase witness | `af82e80e1e6623d0975562554cb1eafd7e974eadeb2d5b98a1a5094efcc9ca5f` |
+| `source-phase-baseline.log` | 0 | `de4a454ab48e81efe9b91751e740967c5166b94eafe0530bec60c600ede90cfb` |
+| `source-phase-data-held-mutant.log` | 101, intended real-read/Data-lock assertion | `6e9be34a49291321febad8cf0b24f3ce043082be7dc255629f95a5cdf190abd2` |
+| `health-version-mutant.log` | 101, intended same-W false caught-up assertion | `df29e7d79c63897745d55a0b187ff853503df3ba506128025e91611045055f12` |
+| `health-restored.log` | 0 | `09bb31d9e9450acb2386897b134c5a838a1c9ba80124217d3964abae131d55c3` |
+| `manager-query-final.log` | 0, 20 passed/2 opt-in ignored | `8aa126a55af83b49e4059764d8e31f111cb89ceeea0dcb85c16aa8e6d2e06f9e` |
+| `workspace-restored.log` | 0, pre-health correction | `d9fef1c8595d6d1b9d11865cb81da336fdce427843cd0766d2771bb3fb4b3eaa` |
+| `workspace-final.log` | 0, final source | `775b3025fcb2b3fdc40078722b15cd5855440c9bfd6d7f5c9e838015d3e38a54` |
 | `fmt-final.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
-| `clippy-final.log` | 0 | `a4c4da5c06b0c71ae2b2a469ac05cd24179ff45515f7b126aa932ea827e35d9c` |
+| `clippy-final.log` | 0 | `fc46ab72bb731c466b16ec65d298d29649d4514b62d90d148e32860f6f505385` |
 
 Commands: `cargo test --locked --workspace`; `cargo clippy --locked -p tos-health-services --tests -- -D warnings`; `cargo fmt --all -- --check`; focused baseline/mutant/restored `cargo test --locked -p tos-health-services --test manager_query_source <test> -- --nocapture`; live opt-in `NHM_C09_READONLY_M_DB=<local M evidence.db> NHM_C09_NETWORK=<public network hash> timeout 400s cargo test --locked -p tos-health-services --test manager_query_source live_read_only_projection_cost_witness -- --ignored --nocapture`. The `timeout 400s` is a test-process bound for traversing live history, not a changed service deadline. `git diff --check` was clean for code and report; raw tool logs retain their original blank lines.

@@ -11,9 +11,9 @@ The instrumented second 46-second run sampled both stable M `data_version` and g
 Exact opt-in command (from `tools/node-health-monitor`; M/Q paths are existing local files, no token is supplied):
 
 ```sh
-CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build \
-NHM_C09_READONLY_M_DB=/home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db \
-NHM_C09_READONLY_Q_DB=/home/tomi/nhm-supervision/c09-local/runtime/query/query-ledger.db \
+CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build \
+NHM_C09_READONLY_M_DB=$HOME/nhm-supervision/c09-local/runtime/evidence/evidence.db \
+NHM_C09_READONLY_Q_DB=$HOME/nhm-supervision/c09-local/runtime/query/query-ledger.db \
 NHM_C09_NETWORK=b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004 \
 cargo test --locked -j2 -p tos-health-services --test manager_query_source \
   live_m_commit_cadence_vs_disposable_q_grants -- --exact --ignored --nocapture

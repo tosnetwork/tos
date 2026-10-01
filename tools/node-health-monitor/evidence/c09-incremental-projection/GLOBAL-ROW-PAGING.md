@@ -33,12 +33,12 @@ fixture setup. Restored source exited 0. Raw logs in `raw/global-page/`:
 
 | Log | Exit | SHA-256 |
 | --- | ---: | --- |
-| `baseline-plan.log` | 0 | `3d55b0facb108a1b915120253bd7757fa130fbd03d3012b178fca473e229f56b` |
-| `mutant-process-filter-plan.log` | 101 | `fe557239c2b4b697b5f8f7678c90d36fc47036859fb1014485adcd77a74e35f7` |
-| `restored-plan.log` | 0 | `5c97af52ec8e8d04d392ad6520e1baab2d98f07b4705591e26e624a2e68bc3bd` |
+| `baseline-plan.log` | 0 | `a63e8ad3c5724ab9c052e96c1e68fa35fce2142bf4c76954eff3588812fc7c05` |
+| `mutant-process-filter-plan.log` | 101 | `c3518b3f694433b689cc98258a5fc4d9f8413c901baad58b32968a15656cff7b` |
+| `restored-plan.log` | 0 | `9ce8c54d31e0345c01b453c74405fc2736e35126e3f8c4525a25df30db9aa822` |
 | `full-relevant-suite.log` | 0, 19 passed/2 opt-in ignored | `52443c99d88b4de68ed3c99ab9a706f47602f37f3a0610f89e86b0e79af9a626` |
 | `fmt.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
-| `clippy.log` | 0 | `15f025380dfa211b838985871c15409cb30a5478a1e6d6da435139a61b916727` |
+| `clippy.log` | 0 | `b0f06fd31605476f3dad29c32a84ecf4231eba098f37dde67f4ff4300f6d0977` |
 
 The earlier no-`EXPLAIN` baseline/mutant/restored raw logs remain in the same
 directory as historical lineage; they are not used as final-source proof.

@@ -14,7 +14,7 @@ The actual control-router test creates an active grant at W=1, adds two M rows, 
 
 Restored source SHA-256 (paths under `tools/node-health-monitor/crates/health-services/`): `src/observability.rs` `a0450772c7bfd07e430251d9d778d3f2e94f4e5238dd5d1bc768955dfe00496f`; `src/query_ledger.rs` `386fb2ef55ec0e6484ef407452f6dab9a3ea11980da21229e5dd3d75aca7f0e2`; `tests/manager_query_source.rs` `67d525e9340a34c280ab440a53645720c9ad56a107ed30a4e2e0fe057a4847d9`.
 
-| Raw log under `/home/tomi/nhm-c08-mcp-evidence/` | SHA-256 | Natural result |
+| Raw log under `$HOME/nhm-c08-mcp-evidence/` | SHA-256 | Natural result |
 | --- | --- | --- |
 | `c09-lag-preserve-baseline.log` | `ee778ac31834cc90c55e7e47226ded37df59c4bd15c63f05fdfc7067c7f057d7` | Real-router fault baseline exit 0 |
 | `c09-lag-insert-revoke-mutant.log` | `848585c5f43818aafd1c4626804538815764786e20f82a5518e1fd3520cd8b71` | Compiled mutation restoring all-insert-error revocation, exit 101 at intended `!manager_conflicted` assertion in insert mode |

@@ -1,7 +1,7 @@
 $ cargo test --locked -p tos-health-core --test native_v2_contract incomplete_capability_and_context_mismatch_refuse -- --exact
 source_sha256=7da9136807b56400e4908f16d0658002c9cbe277eb764fed33d0808bc2f05228
 timeout_seconds=120
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
      Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-4dbc563f937d6516)
 

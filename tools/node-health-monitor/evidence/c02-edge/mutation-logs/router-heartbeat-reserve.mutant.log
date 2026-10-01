@@ -1,6 +1,6 @@
 $ cargo test --locked -p tos-health-services --test http edge_router_reserves_burst_token_for_approved_heartbeat -- --exact
 timeout_seconds=120
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
 warning: unused variable: `heartbeat`
   --> crates/health-services/src/edge.rs:37:24
    |

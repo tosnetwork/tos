@@ -8,7 +8,7 @@ The successor stages one page in one bounded candidate copy, validates each exac
 
 ## Source and raw receipts
 
-Restored source SHA-256: `observability.rs` `1fe93dc386ac7c963426cdd3b8e143f388b0e920196c84c3a39f64a8ad52c25a`; `query_ledger.rs` `571bd571ddaf5305b84af339f044906b9a462c7c1b246ee1db5ef282bf468aa6`; `tests/manager_query_source.rs` `025357ab9f92437922efdcc3d101e599cf0745bf770f522775d709aca2b3bee2`. Raw logs are under `/home/tomi/nhm-c08-mcp-evidence/`, built with locked Cargo `-j2` in `/home/tomi/nhm-c09-projection-build`.
+Restored source SHA-256: `observability.rs` `1fe93dc386ac7c963426cdd3b8e143f388b0e920196c84c3a39f64a8ad52c25a`; `query_ledger.rs` `571bd571ddaf5305b84af339f044906b9a462c7c1b246ee1db5ef282bf468aa6`; `tests/manager_query_source.rs` `025357ab9f92437922efdcc3d101e599cf0745bf770f522775d709aca2b3bee2`. Raw logs are under `$HOME/nhm-c08-mcp-evidence/`, built with locked Cargo `-j2` in `$HOME/nhm-c09-projection-build`.
 
 | Raw log | SHA-256 | Result |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ This is a bounded local cost observation, not an A–F or 72-hour profile. M was
 
 The exact successor test source SHA-256 is `5c171b04b4b874c8a39ff2758242d879665c419a79076bd7e176a517d1a14142`; production sources above were unchanged. After 4097 historical process rows have been imported, the migration test now inserts **one** more M process row, requires the next import to return one row at global M sequence 4098, and checks the newly issued grant's retained `manager_watermark` is exactly 4098. It also keeps the old pinned grant usable while backlog is incomplete. A separate same-network replacement SQLite file contains the **same** original seq/hash/body; the reader must refuse on database inode rather than incidentally failing a changed hash or anchor.
 
-| Raw log under `/home/tomi/nhm-c08-mcp-evidence/` | SHA-256 | Result |
+| Raw log under `$HOME/nhm-c08-mcp-evidence/` | SHA-256 | Result |
 | --- | --- | --- |
 | `c09-incremental-review-gates-restored.log` | `4eb05b551fbabd9cab43c59ad3fed74926c64e0e7bba5283a33163c9e47c0be7` | fmt, locked test Clippy, and focused projection 14/14 natural exit 0; opt-in cost test ignored |
 | `c09-incremental-batch-4098-delta-success.log` | `0d58b0b39fc732bef85139a2e2a915deb03729830219a255b5864e881fd8e303` | exact >4096-history-plus-one-delta control, exit 0 |

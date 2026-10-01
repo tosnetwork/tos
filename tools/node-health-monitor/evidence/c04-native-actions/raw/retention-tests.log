@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/nhm-c04-build
-Test project /home/tomi/nhm-c04-build
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
       Start 212: c04-health-action-finality-suppressed
       Start 206: c04-health-action-duplicate
  1/15 Test #206: c04-health-action-duplicate .............   Passed    0.15 sec

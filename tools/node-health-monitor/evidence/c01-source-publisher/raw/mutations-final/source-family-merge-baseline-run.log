@@ -1,4 +1,4 @@
-$ /home/tomi/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python /home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py /home/tomi/tos-node-health-c01-build/test-health-native-snapshot --mode sources
+$ $HOME/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python $HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode sources
 native_snapshot_unit_passed
 isolated_actual_publisher_prepare_us=1143
 sources: passed

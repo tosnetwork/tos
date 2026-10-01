@@ -6,7 +6,7 @@ At `2026-09-30` UTC, only `nhm-local-query.service` was updated from the
 to branch HEAD `31fc2f615ec3325d0e6bfe69f37f692068786bc0`, binary SHA-256
 `e37f9c4353bb80f5ae8acd3a941d7eeb21b5f116a448448adb79588fb94cf8ee`.
 The private, complete backup and rollback receipt is
-`/home/tomi/nhm-supervision/c09-local/query-anchor-update-20260930T003210Z/QUERY-ANCHOR-DEPLOYMENT.md`.
+`$HOME/nhm-supervision/c09-local/query-anchor-update-20260930T003210Z/QUERY-ANCHOR-DEPLOYMENT.md`.
 
 Before replacing the binary, a consistent backup of the live Q ledger passed
 SQLite `integrity_check=ok`. A disposable Q copy advanced from global M

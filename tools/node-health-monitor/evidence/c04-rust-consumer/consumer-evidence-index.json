@@ -2,7 +2,7 @@
   "scope": "C04 strict Rust consumer candidate, not integrated or production acceptance",
   "baseline_head": "2060cc1a1c7a36fe7214789a254cc36017c9f3a0",
   "native_candidate_head": "e89ca322253e1c7a7acb87d16d63f974e462158e",
-  "native_candidate_evidence_index_sha256": "8a4e04876c2bdc793f2bb5903723b0742655bc0c92fd789fc054c031e56868c5",
+  "native_candidate_evidence_index_sha256": "3b45d4a363291d702e5081536a6a2b621d13799dbdbc0b0d41b88a1995a839e1",
   "native_source_manifest_sha256": "78cd35761b1596d10f21f609638bb741714c635dc8598dc60a7b0f162226d04d",
   "native_action_manifest_sha256": "d949746904d82730cbaf44e626e19d9f8ffb9fc3e8eaa8e8e890ca467f5575a5",
   "native_persistence_manifest_sha256": "490feadd57c3999e0808b4c329947455a28cf213d50a092f869927619286fc5a",
@@ -11,18 +11,18 @@
   "native_binary_sha256": "2f809fe2948141dfb561e44c31a4867b09b93952a324fadf7d2ca8873e07b441",
   "native_pair_count": 48,
   "consumer_closure_receipt": "raw/closure-final-native-restored/receipt.json",
-  "consumer_closure_receipt_sha256": "193f97d4e91512ff6c5ccfd18b6cecd70221e9069141352cec4f7bd12ae395d4",
+  "consumer_closure_receipt_sha256": "7a927febcafb57ce3eeeee0f6d190c746d3d088bd4417e292b21556203b7c96e",
   "consumer_closure_log_sha256": {
     "fmt": "d7fec3e3e3a5129bfb7c0cde1a135248cec99caf025925543b6b77ce289af37f",
     "clippy": "e7c9f7439db50c498835b2502b87e7d8d23746a0157fbac514ec3f3d28706a08",
     "contracts": "b21c6a693bcb4f34a5719170047c06f53359282e32d8495067f57f97fc933a60",
-    "producer_pairs": "e63d0ade7ee5f7d8f9defd01cff0d245ff7a2bad99571bc637649b5c3d323131"
+    "producer_pairs": "571e742d2934e64018ba9d88501279a2f308d71bbffbbe714fd6d2a44778dd19"
   },
   "actual_edge_route_sha256": "d1b5e592d5a40170775b43813c68630dcd3432e50188e730411afec0ce44b82a",
-  "retained_failed_closure_receipt_sha256": "38a9177b9639d3628d61b673d7fce69deaef54707819ddc2bfb236067a53f13c",
-  "retained_failed_pair_log_sha256": "b82e1b6c7eec917d6d6f842aae00997edbf32ab9d9ec9b50875cd7b61c23b39c",
-  "restored_quality_mutation_baseline_sha256": "3cac7c4e24507ed4363a185718c57eecc8a65feaf4fcb0e21fd2b912f193d563",
-  "restored_quality_mutation_assertion_red_sha256": "27ebc11347e9ae8d692a8c6bca15317f5706541bbe5515389353d2fb5f9c3bac",
+  "retained_failed_closure_receipt_sha256": "da373c070e84fb1f291c58fa9bd4d0cc95dce08be5c8053164e0d8a6549eff42",
+  "retained_failed_pair_log_sha256": "79f9f6ac99eb1f363376fe44dfacdb5af2706c274cd24f6e52c2b66e5c3b25ce",
+  "restored_quality_mutation_baseline_sha256": "a03d7b3094c45d63ab06b44439f3b4492cd147242ccd3ecdfc7263c054d030d4",
+  "restored_quality_mutation_assertion_red_sha256": "fb9a2fe7379d9682971a3269ebde03549acd6946bb089df2216f5e929ff240d8",
   "consensus_schema_sha256": "d6302be8fd52c0e650561b48a05fb1622fdbc2307b0d01c0c34994dbebccc86c",
   "synthetic_fixture_sha256": "60ca85d5e8e61e94daf57aadfe9a0aa0937763c8ada4e802e50c8219bfcf1b68"
 }

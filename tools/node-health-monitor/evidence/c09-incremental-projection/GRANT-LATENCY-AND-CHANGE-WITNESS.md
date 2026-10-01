@@ -24,16 +24,16 @@ All paths below are relative to `raw/grant-latency/`. `cargo test --locked --wor
 | Raw log | Exit | SHA-256 |
 | --- | ---: | --- |
 | `grant-baseline.log` | 0 | `0aeba58c0b0225b9b2ce4887254dd7f22d7e6d6584fa34bca9df00a6a2022aa1` |
-| `grant-lock-mutant.log` | 101, intended elapsed assertion | `1746680709c4fdfdf2bd157c04ce472ac19ec7bc06bf962bbf53add4d20d386e` |
-| `grant-restored.log` | 0 | `0b7edcf9e62d6e7331c7c8349aa191401bca63faddbb3c0fb366b0d72a0fb975` |
-| `change-baseline.log` | 0 | `56984563af6a9a53ca4c135a4debed319fe3d764b7226e68f6a4ee34c440dbd2` |
-| `change-version-mutant.log` | 101, intended same-W quarantine assertion | `9d1204895862278f18fa95767f342d71a90340cfa714b42f19698dbbb8160ba4` |
+| `grant-lock-mutant.log` | 101, intended elapsed assertion | `c1b3e6322338b7c0083e31cb3b925f8b488864f321c309f5ec5475130109a3b9` |
+| `grant-restored.log` | 0 | `2c2151437031c2754234999f8ce97d7883797fb77e3193fb9a9cce8e913538c5` |
+| `change-baseline.log` | 0 | `79d4966ee390c760425ae88c6d8fc3f14c4f60a59b89b5910db601b129adb24a` |
+| `change-version-mutant.log` | 101, intended same-W quarantine assertion | `5c06b49c06a38e55138f68e88b772e182c17523632c8dd82c3af31280ff55738` |
 | `change-restored.log` | 0 | `da3e59dddcd9229a4b705a9a3822a0eb3517f12c2173967b76105896fa17b6cf` |
 | `workspace-restored.log` | 101, historical fixed-date witness fixture | `96c7d54c6a7def1a635a39c0c5e5228a4c83dfc506ff60de28976ed6e1962981` |
-| `witness-role-window-restored.log` | 0 | `552b29675d5b1d5852aa30df1ea4e7766140ac888a1b2cd6309ce15b0b602b90` |
-| `witness-cache-role-window-restored.log` | 0 | `444310717c0bb25088939d15c1d02bd5e64e615cae6af7ac74d7e3cd0769c497` |
+| `witness-role-window-restored.log` | 0 | `4fe516e57052f95bc7fc00cd962a21dbfdb253f9d140ce02c2095f7bab8554cd` |
+| `witness-cache-role-window-restored.log` | 0 | `d8670d2e33ccdf844a0b7064ca56b45d503b56b352e1e3a1b3ca8eb0b52a4c5b` |
 | `workspace-final.log` | 0 | `1592c71bb66f72d3b30054e9527e35933362a3032c62c42b7d2e46e50ff99677` |
-| `clippy.log` | 0 | `adaccb721bf85e148bdb9fc8bccfd4dde32e26201c67424d190eb26a90608f25` |
+| `clippy.log` | 0 | `cbf912620b84b5d5e207e85f7e5eaef059a74e7d0e22a3d8ed77ad79464be958` |
 | `fmt-final.log` | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
 
 An earlier pre-final `fmt.log` was also 0; `fmt-final.log` is the final-source receipt. `git diff --check` was clean. The measured times are local and not a production performance gate. The current service has not been switched to this candidate; no claim of 72-hour pass, model diagnosis or production readiness follows from these tests.

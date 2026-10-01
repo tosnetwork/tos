@@ -1,9 +1,9 @@
 $ cargo test --locked -p tos-health-services --test durable legacy_pending_outbox_migrates_without_ack_and_retry_metadata_is_durable -- --exact
 source_sha256=7793c5b40b7bdb4c43c66eb6e121acd02e5a97a143436cd3847d3500600acc6d
 timeout_seconds=180
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 3.80s
-     Running tests/durable.rs (/home/tomi/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
+     Running tests/durable.rs ($HOME/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
 
 running 1 test
 test legacy_pending_outbox_migrates_without_ack_and_retry_metadata_is_durable ... ok

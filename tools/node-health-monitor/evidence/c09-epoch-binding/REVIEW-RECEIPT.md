@@ -23,7 +23,7 @@ edd33b0d8a3378544891ecc8290c0c6ebcc82c3608afa38ed3d1d1f5e749374e  tools/node-hea
 ```
 
 Frozen local raw evidence and binary (all under
-`/home/tomi/nhm-c07c08-build/edge-epoch-proof/` except binary):
+`$HOME/nhm-c07c08-build/edge-epoch-proof/` except binary):
 
 ```
 7a07e84a40245a151d30761ee9f61f1052671b74708a875fcf866db9180064be  workspace-final.log
@@ -32,7 +32,7 @@ Frozen local raw evidence and binary (all under
 f556764f926af58f6d64e7f5900cb90d8ca00f5574464dbf6ad227c3a83c9f4a  clippy-restored.log
 84f4a9a1e1c69a553645fb70209b3225c1d2b60b2d1a8ee04e403317dade43a3  producer-pair.log
 2200bd092bb2441ad32e6f58d8ba3e6ba40bcc1165889e8372fb84bc8bc0b7fa  edge-snapshot.json
-50d71ace513a24562001a57bc3f91faed081553476cd2e6884409bc7c7d53c51  /home/tomi/nhm-c07c08-build/debug/health-edge
+50d71ace513a24562001a57bc3f91faed081553476cd2e6884409bc7c7d53c51  $HOME/nhm-c07c08-build/debug/health-edge
 ```
 
 Commands/results: `cargo test --locked -j2 --workspace` natural exit 0,

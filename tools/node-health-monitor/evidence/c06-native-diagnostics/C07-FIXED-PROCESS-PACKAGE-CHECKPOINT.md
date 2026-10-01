@@ -20,7 +20,7 @@ Evidence:
 
 - Full default workspace at the package-source SHA below, before the final
   extra late-derived assertion: natural exit 0, 215 tests,
-  `/home/tomi/nhm-c08-mcp-evidence/c07-fixed-package-workspace.log`, SHA-256
+  `$HOME/nhm-c08-mcp-evidence/c07-fixed-package-workspace.log`, SHA-256
   `b4ed95fa9cf478efade3942609af6ebcc1335652a3527ccda8e3f7e093d2b301`.
 - Final affected `cargo test -p tos-health-services --test manager_query_source
   --locked -j2`: 7/7 exit 0, `c07-fixed-package-restored-final.log`, SHA-256

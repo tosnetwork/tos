@@ -1,4 +1,4 @@
-$ /home/tomi/tos-node-health-c01-build/test-health-core-registry
+$ $HOME/tos-node-health-c01-build/test-health-core-registry
 [1;31m[ 0][t 0][2026-09-29 07:35:43.644128987][test-health-core-registry.cpp:32]	Check `cleared.find("tos_health_test_active 0.000000\n") != std::string::npos` failed[0m
 
 EXIT=-6

@@ -24,7 +24,7 @@ using Starbridge's indexed producer-v2 directory. The explicit Rust ignored
 test executed and passed. All 48 original pairs passed source schema,
 canonical hash and complete-body validation; the generated edge snapshot
 passed its schema. Natural script exit was 0. Independent output is retained
-in `/home/tomi/nhm-supervision/c04-final-cross-language`.
+in `$HOME/nhm-supervision/c04-final-cross-language`.
 
 The earlier preliminary three-pair run is distinct from these final candidate
 pairs. A Rust test failure observed during the temporary masterchain mutant

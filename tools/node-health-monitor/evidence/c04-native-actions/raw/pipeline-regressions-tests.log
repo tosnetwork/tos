@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/nhm-c04-build
-Test project /home/tomi/nhm-c04-build
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
     Start 285: c04-native-pipeline
     Start 130: test-health-collector-completion
 1/4 Test #130: test-health-collector-completion ...   Passed    0.06 sec

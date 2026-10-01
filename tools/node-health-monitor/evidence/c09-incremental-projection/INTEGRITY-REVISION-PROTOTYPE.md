@@ -1,6 +1,6 @@
 # C09 fixed-W append/integrity-revision prototype — isolated review candidate
 
-**Not integrated or deployed. C09 remains RED.** This prototype is on `nhm/c09-grant-ledger-lock`, built in the isolated `/home/tomi/nhm-c09-grant-lock-build` target. The shared `node-health-monitor` tree and running M/Q/business services were not changed. The deployed M database is still the older schema; this source must not be pointed at it as a production rollout without backup, explicit M-only migration, rollback and disposable-copy controls.
+**Not integrated or deployed. C09 remains RED.** This prototype is on `nhm/c09-grant-ledger-lock`, built in the isolated `$HOME/nhm-c09-grant-lock-build` target. The shared `node-health-monitor` tree and running M/Q/business services were not changed. The deployed M database is still the older schema; this source must not be pointed at it as a production rollout without backup, explicit M-only migration, rollback and disposable-copy controls.
 
 R4 design §10 and §14.3 require an immutable grant W and every tool to read only `store_seq<=W`; they do not require W to equal M's newest global sequence at grant creation. The C06–C09 order requires the W to represent an approved immutable package. This candidate distinguishes an import stopped on a partial page (new grants refuse) from a completed import followed solely by ordinary immutable observation appends (new grants freeze the last validated W; later rows remain outside the run).
 
@@ -31,7 +31,7 @@ Compiled diagnostic mutations, both restored after the intended exit 101:
 Restored `cargo test --locked -p tos-health-services` exited 0, as did `cargo fmt --all -- --check`, `cargo clippy --locked -p tos-health-services --all-targets -- -D warnings`, and `git diff --check`. The opt-in 31-second test command was:
 
 ```sh
-CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build cargo test --locked \
+CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build cargo test --locked \
   -p tos-health-services --test manager_query_source \
   ordinary_m_appends_preserve_fixed_w_grants_between_fifteen_second_imports \
   -- --exact --ignored --nocapture

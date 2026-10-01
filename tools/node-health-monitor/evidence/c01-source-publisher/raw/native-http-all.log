@@ -9,10 +9,10 @@ isolated_actual_publisher_prepare_us=951
 sources: passed
 isolated_actual_publisher_prepare_us=903
 Traceback (most recent call last):
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 146, in <module>
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 146, in <module>
     else:check(mode);print(mode+': passed',flush=True)
          ~~~~~^^^^^^
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 121, in check
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 121, in check
     status,h,cached=request('/metrics');assert status==200 and cached==body
                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError

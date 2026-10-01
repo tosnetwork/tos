@@ -1,9 +1,9 @@
 Using Python 3.14.4 environment at: .contract-venv
 Checked 17 packages in 2ms
 PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.78s
-     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+     Running tests/http.rs ($HOME/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
 
 running 1 test
 test all_six_success_handlers_emit_runtime_dtos ... ok
@@ -11,7 +11,7 @@ test all_six_success_handlers_emit_runtime_dtos ... ok
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
 
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
-     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+     Running tests/http.rs ($HOME/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
 
 running 1 test
 test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
@@ -19,16 +19,16 @@ test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.02s
 
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
-     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+     Running tests/http.rs ($HOME/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
 
 running 1 test
 test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
 
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
-     Running tests/native_typed.rs (/home/tomi/nhm-c03-build/debug/deps/native_typed-33644b4ccbad0ea2)
+     Running tests/native_typed.rs ($HOME/nhm-c03-build/debug/deps/native_typed-33644b4ccbad0ea2)
 
 running 1 test
 test typed_sampler_and_edge_read_only_cache ... ok
@@ -37,15 +37,15 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; fini
 
 PASS: 20 closed schemas; six tool input/error fixtures; six actual handler successes; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
 PASS: production doctor refused 11 unverified gates (exit nonzero)
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.24s
-     Running unittests src/lib.rs (/home/tomi/nhm-c03-build/debug/deps/tos_health_core-e3e7906239b52817)
+     Running unittests src/lib.rs ($HOME/nhm-c03-build/debug/deps/tos_health_core-e3e7906239b52817)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/contracts.rs (/home/tomi/nhm-c03-build/debug/deps/contracts-0d72820d45401d98)
+     Running tests/contracts.rs ($HOME/nhm-c03-build/debug/deps/contracts-0d72820d45401d98)
 
 running 30 tests
 test absence_never_becomes_zero ... ok
@@ -81,7 +81,7 @@ test evidence_is_immutable_deduplicated_and_bounded ... ok
 
 test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
-     Running tests/native_contract.rs (/home/tomi/nhm-c03-build/debug/deps/native_contract-2a1ebb43d7e70356)
+     Running tests/native_contract.rs ($HOME/nhm-c03-build/debug/deps/native_contract-2a1ebb43d7e70356)
 
 running 5 tests
 test age_and_quality_cannot_be_fabricated ... ok
@@ -92,7 +92,7 @@ test exact_pairing_rejects_changed_generation_and_content ... ok
 
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/r4.rs (/home/tomi/nhm-c03-build/debug/deps/r4-57c4a90f1ed94904)
+     Running tests/r4.rs ($HOME/nhm-c03-build/debug/deps/r4-57c4a90f1ed94904)
 
 running 16 tests
 test bad_after_unknown_preserves_episode ... ok
@@ -114,7 +114,7 @@ test diagnostic_limits_are_independent ... ok
 
 test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-     Running tests/rules.rs (/home/tomi/nhm-c03-build/debug/deps/rules-d04b6beb8e2458c2)
+     Running tests/rules.rs ($HOME/nhm-c03-build/debug/deps/rules-d04b6beb8e2458c2)
 
 running 8 tests
 test retired_heartbeat_and_repeats_cannot_extend_deadlines ... ok
@@ -128,68 +128,68 @@ test scalar_rules_use_only_their_frozen_facts ... ok
 
 test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/lib.rs (/home/tomi/nhm-c03-build/debug/deps/tos_health_services-8f66600d3a426eb2)
+     Running unittests src/lib.rs ($HOME/nhm-c03-build/debug/deps/tos_health_services-8f66600d3a426eb2)
 
 running 1 test
 test native_cache::tests::actual_run_waits_full_interval_after_source_misses_tick ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.52s
 
-     Running unittests src/bin/health-collector.rs (/home/tomi/nhm-c03-build/debug/deps/health_collector-811cf019b71eefd0)
+     Running unittests src/bin/health-collector.rs ($HOME/nhm-c03-build/debug/deps/health_collector-811cf019b71eefd0)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-contract-check.rs (/home/tomi/nhm-c03-build/debug/deps/health_contract_check-7e987620698921eb)
+     Running unittests src/bin/health-contract-check.rs ($HOME/nhm-c03-build/debug/deps/health_contract_check-7e987620698921eb)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-edge.rs (/home/tomi/nhm-c03-build/debug/deps/health_edge-53f2cc4c01ef82e1)
+     Running unittests src/bin/health-edge.rs ($HOME/nhm-c03-build/debug/deps/health_edge-53f2cc4c01ef82e1)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-ingress.rs (/home/tomi/nhm-c03-build/debug/deps/health_ingress-74fd3bb2778ab7b7)
+     Running unittests src/bin/health-ingress.rs ($HOME/nhm-c03-build/debug/deps/health_ingress-74fd3bb2778ab7b7)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-native-poll.rs (/home/tomi/nhm-c03-build/debug/deps/health_native_poll-82f82a49373db057)
+     Running unittests src/bin/health-native-poll.rs ($HOME/nhm-c03-build/debug/deps/health_native_poll-82f82a49373db057)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-probe.rs (/home/tomi/nhm-c03-build/debug/deps/health_probe-16ab546197797864)
+     Running unittests src/bin/health-probe.rs ($HOME/nhm-c03-build/debug/deps/health_probe-16ab546197797864)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-state.rs (/home/tomi/nhm-c03-build/debug/deps/health_state-b82e889244504734)
+     Running unittests src/bin/health-state.rs ($HOME/nhm-c03-build/debug/deps/health_state-b82e889244504734)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/health-watchdog.rs (/home/tomi/nhm-c03-build/debug/deps/health_watchdog-3c6b528ec30c831e)
+     Running unittests src/bin/health-watchdog.rs ($HOME/nhm-c03-build/debug/deps/health_watchdog-3c6b528ec30c831e)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running unittests src/bin/tos-observability.rs (/home/tomi/nhm-c03-build/debug/deps/tos_observability-a28cdd66fb8f3dc9)
+     Running unittests src/bin/tos-observability.rs ($HOME/nhm-c03-build/debug/deps/tos_observability-a28cdd66fb8f3dc9)
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
-     Running tests/cgroup.rs (/home/tomi/nhm-c03-build/debug/deps/cgroup-eef2a2c7b6265c60)
+     Running tests/cgroup.rs ($HOME/nhm-c03-build/debug/deps/cgroup-eef2a2c7b6265c60)
 
 running 4 tests
 test descendant_quota_symlink_and_zero_are_refused ... ok
@@ -199,7 +199,7 @@ test discovery_keeps_unsupported_and_invalid_profiles_distinct ... ok
 
 test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
 
-     Running tests/durable.rs (/home/tomi/nhm-c03-build/debug/deps/durable-a35df4fedf309d7c)
+     Running tests/durable.rs ($HOME/nhm-c03-build/debug/deps/durable-a35df4fedf309d7c)
 
 running 12 tests
 test whole_round_rolls_back_when_any_outbox_change_fails ... ok
@@ -217,14 +217,14 @@ test immutable_inventory_revision_is_enforced ... ok
 
 test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
 
-     Running tests/edge_lifecycle.rs (/home/tomi/nhm-c03-build/debug/deps/edge_lifecycle-bf8fffa4b731dd51)
+     Running tests/edge_lifecycle.rs ($HOME/nhm-c03-build/debug/deps/edge_lifecycle-bf8fffa4b731dd51)
 
 running 1 test
 test edge_exit_does_not_signal_or_restart_configured_source_process ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
 
-     Running tests/http.rs (/home/tomi/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
+     Running tests/http.rs ($HOME/nhm-c03-build/debug/deps/http-15f8b4e229fe1bc0)
 
 running 15 tests
 test inventory_and_secret_domains_are_enforced ... ok
@@ -245,7 +245,7 @@ test runtime_output_reflects_unknown_quality_and_rejects_conflicts ... ok
 
 test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
 
-     Running tests/ingress.rs (/home/tomi/nhm-c03-build/debug/deps/ingress-1a61bf3f608f4ada)
+     Running tests/ingress.rs ($HOME/nhm-c03-build/debug/deps/ingress-1a61bf3f608f4ada)
 
 running 5 tests
 test scheduled_probe_uses_mtls_and_never_claims_consensus_health ... ok
@@ -256,7 +256,7 @@ test seven_slow_regular_requests_leave_classified_heartbeat_capacity ... ok
 
 test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.27s
 
-     Running tests/manager.rs (/home/tomi/nhm-c03-build/debug/deps/manager-11aff9f4a4253ecb)
+     Running tests/manager.rs ($HOME/nhm-c03-build/debug/deps/manager-11aff9f4a4253ecb)
 
 running 9 tests
 test queued_observation_cannot_be_rejuvenated ... ok
@@ -271,7 +271,7 @@ test conflict_quarantines_live_rule_and_receipt_controls_outbox ... ok
 
 test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.07s
 
-     Running tests/native_cache.rs (/home/tomi/nhm-c03-build/debug/deps/native_cache-70ced6940d15a20e)
+     Running tests/native_cache.rs ($HOME/nhm-c03-build/debug/deps/native_cache-70ced6940d15a20e)
 
 running 6 tests
 test duplicate_native_sample_keeps_original_age ... ok
@@ -283,7 +283,7 @@ test thousand_cache_reads_never_call_native ... ok
 
 test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
 
-     Running tests/native_typed.rs (/home/tomi/nhm-c03-build/debug/deps/native_typed-33644b4ccbad0ea2)
+     Running tests/native_typed.rs ($HOME/nhm-c03-build/debug/deps/native_typed-33644b4ccbad0ea2)
 
 running 7 tests
 test scheduler_skips_a_tick_missed_by_a_slow_source ... ok
@@ -296,7 +296,7 @@ test typed_sampler_and_edge_read_only_cache ... ok
 
 test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
 
-     Running tests/watchdog.rs (/home/tomi/nhm-c03-build/debug/deps/watchdog-3a6e5f32ec12bdb4)
+     Running tests/watchdog.rs ($HOME/nhm-c03-build/debug/deps/watchdog-3a6e5f32ec12bdb4)
 
 running 2 tests
 test pipeline_requires_own_firing_new_evaluation ... ok

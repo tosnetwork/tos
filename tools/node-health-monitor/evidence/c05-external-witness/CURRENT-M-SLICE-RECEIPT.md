@@ -30,22 +30,22 @@ separate current refusal.
 
 | Command / scope | Raw log SHA-256 | Natural exit |
 | --- | --- | --- |
-| `CARGO_BUILD_JOBS=2 cargo test --locked -p tos-health-core --test witness_contract` (6/6; first Plan field) | `raw/current-plan-contract.log` `1bf1eee45636c3ab0c3d3d2220ba05135aec33b57dd35e247c73f96c912e9e49` | 0 |
+| `CARGO_BUILD_JOBS=2 cargo test --locked -p tos-health-core --test witness_contract` (6/6; first Plan field) | `raw/current-plan-contract.log` `f50f6d677a49e0706cfd65f5e69f820656a720a247eed3b7666b6f12f11dd50c` | 0 |
 | `.contract-venv/bin/python scripts/check-contracts.py` (23 closed schemas) | `raw/current-plan-schema-locked.log` `222c5f4bbb98fd219fa2a42ad9d1532619abc9225bb56299e66dc5c5c2de0e00` | 0 |
-| `CARGO_BUILD_JOBS=2 cargo test --locked -p tos-health-services --test witness_archive` (6/6 after writer conflict fix) | `raw/current-writer-conflict.log` `4ce0601c4afd08a96026dd076281d9bb1e4d5cf1a5523a2db5e59c746afc4d34` | 0 |
-| `CARGO_BUILD_JOBS=2 cargo clippy --workspace --all-targets --locked -- -D warnings` | `raw/current-slice-clippy-restored.log` `8b09d0eec363c3122413deaa9d0d6f9b44f1f46a58c1324bcc954947b379fd94` | 0 |
+| `CARGO_BUILD_JOBS=2 cargo test --locked -p tos-health-services --test witness_archive` (6/6 after writer conflict fix) | `raw/current-writer-conflict.log` `843b61cccab1c98b442ffb9f90f0d04413b41533eb9aaa79f7e2bd0d0219b18b` | 0 |
+| `CARGO_BUILD_JOBS=2 cargo clippy --workspace --all-targets --locked -- -D warnings` | `raw/current-slice-clippy-restored.log` `75e778faea6cdc618029824e5389a7e067d1b5a28bce15cec54257115c13f3a2` | 0 |
 
 Retained failed attempts: system `python3 scripts/check-contracts.py` had no
 `jsonschema` (`raw/current-plan-schema.log`, exit 1, SHA-256
-`f38646e5c50e1c8d30210a4a4bdbc453a2c0262ba55eb79bb217ac231b9546f0`);
+`8c49e6275601c5afc4b1c6872fc03efbef7402f6dc4c3e8efcb7d27e15d58971`);
 first Clippy run found a new tuple type-complexity lint, then was fixed
 (`raw/current-slice-clippy.log`, exit 101, SHA-256
-`369c6cadf047854c55466fc762aa081f680962b52f5e688ed6f749e976ec2d42`).
+`f32ca6c07cdd51c5e97264bbd0dae8a3379e277d128a173c0dd1d6be31ea2bb9`).
 `current-activation-first`, `current-review-first/second/third` and
 `current-route-first` are passing intermediate-source lineage, not a frozen
 final-suite claim. Independent supervisor direct-helper controls passed 2/2;
 the supervisor's separate receipt is
-`/home/tomi/nhm-supervision/c05-current-state/receipt.json`.
+`$HOME/nhm-supervision/c05-current-state/receipt.json`.
 
 ## Source hashes at this slice
 
@@ -85,10 +85,10 @@ passed 6/6, exit 0: `raw/current-reactivation-suite.log` SHA-256
 `359dced96d505477995d156adec20b9dacf955967ccb3c294a47bfa3786998cb`.
 The single actual-route negative also passed, exit 0:
 `raw/current-reactivation-conflict.log` SHA-256
-`f79f88f3d10a79996281a25af6d5c51a10220f8a9484d4ec8b3a84ebf0bd153d`.
+`c1f9ab1514746c43e41661434e32e7de54b173d2cc09691f70f6162b24ec25ed`.
 Restored workspace Clippy exited 0:
 `raw/current-reactivation-clippy.log` SHA-256
-`40a520b60bbd24e8330a9472b629184fbee6faae6587d0f57c79f621363168cc`.
+`234a4c0cd39b3d9fb8fe8a0a634b1cad551e831716895b48f1607d1b70831ee6`.
 Successor source SHA-256: `crates/health-services/src/durable.rs`
 `f24cd4edc4e431ff3eb06f0f1e0587f53caa262a723a14399ea4c204e964da21`;
 `crates/health-services/tests/witness_archive.rs`

@@ -1,5 +1,5 @@
 Script started on 2026-09-29 13:39:47+00:00 [<not executed on terminal>]
-    Checking tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Checking tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
 error: this function has too many arguments (8/7)
    --> crates/health-services/src/collector.rs:218:1
     |

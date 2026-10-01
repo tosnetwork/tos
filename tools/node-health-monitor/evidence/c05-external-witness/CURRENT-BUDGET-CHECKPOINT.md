@@ -40,10 +40,10 @@ Direct M-router negatives separately cover the same metadata boundaries.
 
 | Command, cwd `tools/node-health-monitor` | Raw log SHA-256 | Natural exit |
 |---|---|---|
-| `CARGO_BUILD_JOBS=2 cargo test -p tos-health-services --lib --test ingress --test witness_archive --locked` | `raw/current-budget-restored-tests.log` `9bc4c1503057689474155d6262a69e03ff2fceadd1135cfbd33e17a716e32809` | 0; lib 9, ingress 7, archive 9 |
-| `cargo fmt --all --check && CARGO_BUILD_JOBS=2 cargo clippy -p tos-health-services --all-targets --locked -- -D warnings` | `raw/current-budget-restored-fmt-clippy.log` `6e4244edfeaa158fab42185a0abe9717ee5b9d3536bcc4c6936f4368c577d5d3` | 0 |
+| `CARGO_BUILD_JOBS=2 cargo test -p tos-health-services --lib --test ingress --test witness_archive --locked` | `raw/current-budget-restored-tests.log` `21b070dfe8b11958423097a0c60fa6dc6906e1d6b644f40a937bcb4253e35479` | 0; lib 9, ingress 7, archive 9 |
+| `cargo fmt --all --check && CARGO_BUILD_JOBS=2 cargo clippy -p tos-health-services --all-targets --locked -- -D warnings` | `raw/current-budget-restored-fmt-clippy.log` `f41aea617d1941ac85a7cd9826bbca7ff7e12c8f7bbe36c6da9f5b3bc2fdc898` | 0 |
 | `.contract-venv/bin/python scripts/check-contracts.py` | `raw/current-budget-restored-contracts.log` `042ef2920d96db1626e2fb104c7bc9ac0bd15ffde43e8a2400bc04d1e5e466bc` | 0; 24 closed schemas |
-| `CARGO_BUILD_JOBS=2 scripts/run-contract-tests.sh` | `raw/current-budget-full-entry.log` `3b14870df78b71153329c84fef878de4b05fcb2106c64390a285cc00777f81dc` | 0; production doctor refused 11 unverified gates; one C04 native-pair test ignored without indexed external pair |
+| `CARGO_BUILD_JOBS=2 scripts/run-contract-tests.sh` | `raw/current-budget-full-entry.log` `e7a6de98d63100a1388bf2ac693c754f5e7c1434840d36abe1edf95cf085a0ea` | 0; production doctor refused 11 unverified gates; one C04 native-pair test ignored without indexed external pair |
 
 Earlier successful intermediate logs `raw/current-budget-tests.log`,
 `raw/current-budget-fmt-clippy.log` and `raw/current-budget-contracts.log`
@@ -60,7 +60,7 @@ the restored logs above; neither is counted as an intended mutation kill.
 
 ## Post-checkpoint changed-property sensitivity
 
-The isolated detached worktree `/home/tomi/tos-node-health-c05-mutation`
+The isolated detached worktree `$HOME/tos-node-health-c05-mutation`
 started at exact `8699a3e554dcacdd0fd0194de4c823b1b34c6e20`; the main
 implementation tree was not mutated. `current-age-mutant.patch` SHA-256
 `324a63723c6123c55cc0dbb9fd93a6e30b0f358ac72a6d61313471f55334098f`
@@ -74,11 +74,11 @@ The same locked targeted command ran in both worktrees:
 Baseline `raw/current-age-baseline.log` SHA-256
 `a95aaba35f16b1d5fd9107b70fd3b0067341a75ed277ccd90e13c8a933d9c039`
 exited 0; compiled mutant `raw/current-age-mutant.log` SHA-256
-`51da408514e4069587fcc1daa2c7ae15394113bb7f0b1015a7ba87735032e0d8`
+`cb44af1c0db4e77f7308ea4ae35ab08baaaa64c34948c563d5e732efefe7d4e9`
 exited 101 at the intended assertion (`qualified` versus `unknown`),
 not at compilation; restored isolated-source run
 `raw/current-age-restored.log` SHA-256
-`26b0873f3bfcede5c3232b092f247eddd3ff73ed701088a279272f043254382e`
+`cb3d3f9fed2a3d6064404540cfa1ace92df0e620fee214e33252d1a433691965`
 exited 0. The detached mutation worktree is clean afterward.
 
 Remaining C05 review work: final source/contract inventory and exact evidence

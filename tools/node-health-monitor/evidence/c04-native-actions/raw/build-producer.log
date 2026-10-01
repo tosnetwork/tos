@@ -6,7 +6,7 @@
 [6/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
 [7/16] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
 [8/16] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
-/home/tomi/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:254:132: warning: implicit conversion from '__int_type' (aka 'unsigned long') to 'double' may lose precision [-Wimplicit-int-float-conversion]
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:254:132: warning: implicit conversion from '__int_type' (aka 'unsigned long') to 'double' may lose precision [-Wimplicit-int-float-conversion]
   254 |             metrics.families.push_back(std::move(metrics::MetricFamily::make_scalar("tos_pq_operations_total", "counter", counter->load()))
       |                                                  ~~~~~~~                                                                  ~~~~~~~~~^~~~~~
 1 warning generated.

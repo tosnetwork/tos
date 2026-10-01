@@ -83,9 +83,9 @@
   "commands": {
     "rust_workspace": "CARGO_BUILD_JOBS=2 cargo test --manifest-path tools/node-health-monitor/Cargo.toml --workspace -- --nocapture",
     "final_integration": "CARGO_BUILD_JOBS=2 cargo test --manifest-path tools/node-health-monitor/Cargo.toml -p tos-health-services --test c06_diagnostics -- --nocapture",
-    "contracts": "/home/tomi/nhm-c06-python/bin/python tools/node-health-monitor/scripts/check-contracts.py",
-    "native_http": "/home/tomi/nhm-c06-python/bin/python tools/node-health-monitor/tests/native-snapshot-http.py /home/tomi/nhm-c06-build/test-health-native-snapshot",
-    "native_mutants": "python3 tools/node-health-monitor/tests/c06-native-mutations.py --evidence /home/tomi/nhm-c06-evidence/raw/native-mutants-final",
-    "rust_mutants": "python3 tools/node-health-monitor/tests/c06-rust-mutations.py /home/tomi/nhm-c06-evidence/raw/rust-mutants-final2"
+    "contracts": "$HOME/nhm-c06-python/bin/python tools/node-health-monitor/scripts/check-contracts.py",
+    "native_http": "$HOME/nhm-c06-python/bin/python tools/node-health-monitor/tests/native-snapshot-http.py $HOME/nhm-c06-build/test-health-native-snapshot",
+    "native_mutants": "python3 tools/node-health-monitor/tests/c06-native-mutations.py --evidence $HOME/nhm-c06-evidence/raw/native-mutants-final",
+    "rust_mutants": "python3 tools/node-health-monitor/tests/c06-rust-mutations.py $HOME/nhm-c06-evidence/raw/rust-mutants-final2"
   }
 }

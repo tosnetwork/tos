@@ -9,7 +9,7 @@ Two distinct controls pass on restored code:
 1. An actual process parent is projected and a fixed-W grant issued. M then quarantines that original parent without adding an observation row. Before the next importer pass, an actual `node-snapshot` request on the **old** grant still returns HTTP 200, process `rss_bytes=4096`, and the original M evidence ID. A **new** grant returns 503 because its version witness changed. After the importer detects quarantine, the old query returns 503.
 2. A test-only hook commits the matching M quarantine **after** a new grant's version and Q cursor checks but **before** durable Q grant creation. The actual grant returns 200 and leaves one unrevoked durable grant even though M's version has changed; the subsequent importer detects quarantine and marks the manager conflicted.
 
-Commands from `tools/node-health-monitor`, with `CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build`:
+Commands from `tools/node-health-monitor`, with `CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build`:
 
 ```sh
 cargo test --locked -p tos-health-services --test manager_query_source grant_refuses_quarantine_without_new_m_row_until_background_validation -- --exact --nocapture

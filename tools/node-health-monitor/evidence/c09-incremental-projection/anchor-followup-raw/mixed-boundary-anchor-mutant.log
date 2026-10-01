@@ -1,6 +1,6 @@
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-followup/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-followup/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.21s
-     Running tests/manager_query_source.rs (/home/tomi/nhm-c09-anchor-build/debug/deps/manager_query_source-723ab372f789f937)
+     Running tests/manager_query_source.rs ($HOME/nhm-c09-anchor-build/debug/deps/manager_query_source-723ab372f789f937)
 
 running 1 test
 

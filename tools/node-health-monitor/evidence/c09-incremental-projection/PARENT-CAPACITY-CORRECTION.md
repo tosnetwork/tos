@@ -54,7 +54,7 @@ and fresh isolated-target test binary SHA-256
 The locked `manager_query_source` target on the shared successor exited 0:
 22 passed, 1 opt-in local-M witness ignored, including the pre-existing
 mixed-boundary rewrite test. The shared test binary was freshly compiled under
-`/home/tomi/nhm-c09-shared-global-boundary-build`; a prior reused-target run
+`$HOME/nhm-c09-shared-global-boundary-build`; a prior reused-target run
 that executed tests absent from its source was discarded as invalid evidence.
 
 The shared production validator already required `anchor.seq == watermark`

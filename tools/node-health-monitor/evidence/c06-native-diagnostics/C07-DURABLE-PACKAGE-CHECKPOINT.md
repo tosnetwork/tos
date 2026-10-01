@@ -26,7 +26,7 @@ M projection test `288864c6a6e0c0db93ce8808f2ed8f1a873aa92dc0c6181c4cd8ac86136df
 
 - Default `cargo test --workspace --locked -j2`: natural exit 0, 216 passed,
   one C04 indexed-pair test ignored without its optional directory. Raw
-  `/home/tomi/nhm-c08-mcp-evidence/c07-package-durable-workspace.log`, SHA-256
+  `$HOME/nhm-c08-mcp-evidence/c07-package-durable-workspace.log`, SHA-256
   `0a0c27faa56531aee99ffd25bba9fc83c10620ef500fa358b3c1fde3caeb3a60`.
   This run preceded a narrow canonical-u64 comparison correction in the
   package binding; the final targeted run below binds that successor source.

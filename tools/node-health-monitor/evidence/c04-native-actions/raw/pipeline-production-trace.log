@@ -1,7 +1,7 @@
-Internal ctest changing into directory: /home/tomi/nhm-c04-build
-UpdateCTestConfiguration  from :/home/tomi/nhm-c04-build/DartConfiguration.tcl
-UpdateCTestConfiguration  from :/home/tomi/nhm-c04-build/DartConfiguration.tcl
-Test project /home/tomi/nhm-c04-build
+Internal ctest changing into directory: $HOME/nhm-c04-build
+UpdateCTestConfiguration  from :$HOME/nhm-c04-build/DartConfiguration.tcl
+UpdateCTestConfiguration  from :$HOME/nhm-c04-build/DartConfiguration.tcl
+Test project $HOME/nhm-c04-build
 Constructing a list of tests
 Done constructing a list of tests
 Updating test list for fixtures
@@ -11,7 +11,7 @@ Checking test dependency graph end
 test 285
     Start 285: c04-native-pipeline
 
-285: Test command: /home/tomi/nhm-c04-build/test/validator/consensus/test-consensus "--duration" "8" "--n-nodes" "4" "--target-rate-ms" "50" "--net-ping" "0.002:0.01" "--min-finalized-blocks" "3" "--pq-finality-e2e-test" "--c04-health-test"
+285: Test command: $HOME/nhm-c04-build/test/validator/consensus/test-consensus "--duration" "8" "--n-nodes" "4" "--target-rate-ms" "50" "--net-ping" "0.002:0.01" "--min-finalized-blocks" "3" "--pq-finality-e2e-test" "--c04-health-test"
 285: Test timeout computed to be: 45
 285: [1;33m[ 2][t 0][2026-09-29 10:47:43.303136991][candidate-codec.cpp:41][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000729 compression=none original_size=46 compressed_size=46[0m
 285: [1;33m[ 2][t 0][2026-09-29 10:47:43.303409113][candidate-codec.cpp:69][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=808443C6B9992F1BE0A21619968AFCB1E9A5CEBAFFFE594C5C9F6285A7A95180 called_from=consensus time_sec=0.000019 compression=none compressed_size=46[0m

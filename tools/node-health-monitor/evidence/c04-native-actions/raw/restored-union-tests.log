@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/nhm-c04-build
-Test project /home/tomi/nhm-c04-build
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
       Start 288: c04-collection-deadline
       Start 292: c04-collection-v1
  1/35 Test #292: c04-collection-v1 ................................................   Passed    1.21 sec

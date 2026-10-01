@@ -76,9 +76,9 @@ the correctly fail-fast `raw/final-manifest-validation.log`.
 
 ## Independent witnesses
 
-- `/home/tomi/nhm-supervision/c01-independent-lease.log`:
+- `$HOME/nhm-supervision/c01-independent-lease.log`:
   `e62624350e89ea2f002ee19bde73f340d185512498c6a408c00c00e308bcbaa4`
-- `/home/tomi/nhm-supervision/c01-incremental-native-check.json`:
+- `$HOME/nhm-supervision/c01-incremental-native-check.json`:
   `d525f73efc6cbed1affeab154dd741d4de0d6c80828b14e49e73a5f743673f57`
 
 These external supervisor files are referenced, not copied or represented as

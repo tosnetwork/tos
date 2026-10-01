@@ -1,4 +1,4 @@
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
      Running unittests src/bin/tos-observability.rs (target/debug/deps/tos_observability-c72dc679981d3990)
 

@@ -1,5 +1,5 @@
 Script started on 2026-09-29 11:36:04+00:00 [<not executed on terminal>]
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.45s
      Running tests/witness_cache.rs (target/debug/deps/witness_cache-80217fc798bb02c3)
 

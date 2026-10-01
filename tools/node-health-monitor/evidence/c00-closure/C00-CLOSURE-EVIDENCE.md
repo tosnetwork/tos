@@ -5,7 +5,7 @@ and does not certify production deployment, fixtures or later-stage gates.
 
 ## Identity and resource bound
 
-- Worktree: `/home/tomi/tos-node-health-impl`
+- Worktree: `$HOME/tos-node-health-impl`
 - Branch and base: `node-health-monitor` at
   `0a3aafda25ad9fa9d93be45156e2df2838646085`
 - Memo: `main@6c0536c042405e857bdced8e327b6f018c816526`

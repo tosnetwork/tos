@@ -1,6 +1,6 @@
 # Independent C09 QueryService anchor review
 
-Read-only review of `/home/tomi/tos-node-health-c09-anchor-integration` at
+Read-only review of `$HOME/tos-node-health-c09-anchor-integration` at
 `23f70487e4b84c6ff92ca60d883ce3d9b5ecff1f` plus its uncommitted WIP.
 The inspected `observability.rs` SHA-256 was
 `8cb02508aaf6d63fe5a6da9946d53c6a4ff6abc8888d68119965c92b8b2d0199`;
@@ -84,7 +84,7 @@ query time 0.415 ms. The observation is a narrow source-change cadence
 witness, not a grant/SDK benchmark or a test of the new candidate binary.
 
 Exact read command was a `python3` script opening
-`file:/home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db?mode=ro`,
+`file:$HOME/nhm-supervision/c09-local/runtime/evidence/evidence.db?mode=ro`,
 executing `PRAGMA query_only=ON`, then the three SQL reads above in one loop
 of 31 iterations with `time.sleep(1)` between iterations, writing canonical
 JSONL under this branch. No tokens, payload bodies or node RPC were read.

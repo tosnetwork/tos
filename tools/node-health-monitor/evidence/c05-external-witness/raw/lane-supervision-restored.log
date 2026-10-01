@@ -1,5 +1,5 @@
 Script started on 2026-09-29 12:36:40+00:00 [<not executed on terminal>]
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.88s
      Running unittests src/bin/health-watchdog.rs (target/debug/deps/health_watchdog-ad784523c5f0d393)
 

@@ -2,7 +2,7 @@ Script started on 2026-09-29 12:18:36+00:00 [<not executed on terminal>]
 Using Python 3.14.4 environment at: .contract-venv
 Checked 17 packages in 2ms
 PASS: 23 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 6.02s
      Running tests/http.rs (target/debug/deps/http-7c4505374c50d567)
 
@@ -27,7 +27,7 @@ test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
 
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.46s
      Running tests/native_typed.rs (target/debug/deps/native_typed-acac3394dd104135)
 
@@ -46,8 +46,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; fini
 
 PASS: 23 closed schemas; six tool input/error fixtures; six actual handler successes; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
 PASS: production doctor refused 11 unverified gates (exit nonzero)
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 13.08s
      Running unittests src/lib.rs (target/debug/deps/tos_health_core-e3846bc9b8175440)
 

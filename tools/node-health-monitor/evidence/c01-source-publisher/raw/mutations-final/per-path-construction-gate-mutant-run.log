@@ -1,4 +1,4 @@
-$ /home/tomi/tos-node-health-c01-build/test-health-source-policy
+$ $HOME/tos-node-health-c01-build/test-health-source-policy
 [1;31m[ 0][t 0][2026-09-29 07:35:44.280469248][test-health-source-policy.cpp:6]	Check `!tos::quic::health_metrics_policy::build_per_path` failed[0m
 
 EXIT=-6

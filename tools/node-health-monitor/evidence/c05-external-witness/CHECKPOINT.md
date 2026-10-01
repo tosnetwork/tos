@@ -19,7 +19,7 @@ archive namespace/quota/dedup/quarantine. Historical archive creates no rule fac
 
 Restored `CARGO_BUILD_JOBS=2 scripts/run-contract-tests.sh` naturally exited 0:
 `raw/closure-first.log` SHA-256
-`4fe51d63c8472000e0f9ab1fdd8c3a37d6bd2bfc130f86e66d835c856fe55901`.
+`f5e2a67a9a4444000b5b39c200ed52e2b6369e0bddcde3e97a5db4c3d2b6f367`.
 It includes 23 closed schemas, six actual success handlers, 11 production
 doctor refusals and the full Rust workspace suite. One native producer-pair test
 is marked ignored because the external C++ pair input was not supplied; this is
@@ -30,10 +30,10 @@ Targeted child-task permit mutation changed `let _slot = slot;` to
 `raw/child-lifetime-baseline.log` SHA-256
 `d7ac4d21e34ebad73133737f1fb4ddec9d9603268d59a902fbb6e641aec94965`
 exited 0; compiled mutant `raw/child-lifetime-mutant.log` SHA-256
-`18c1199dffdd0dd0dc9c27777f3d9594b420e2d57c45965246958fe015a442aa`
+`2de3968453f5497ff546fe0abcceba8a20bbc97a7a24057ca0ac34f5d41966cc`
 exited 101 at active-request in-flight `0 != 4`; restored
 `raw/child-lifetime-restored.log` SHA-256
-`b30e6cfc33e08483d377094a2e0c6cac512dfc9b2ab1986a11d8944d1ef88df4`
+`c0ad1572e1a1ecf80c2a14a40c93570ab83129528d0d12890106e9afa1eebe42`
 exited 0. This red establishes active-child permit retention, not a separate
 deterministic post-cancel destruction barrier. The mutated full-source SHA was
 not frozen before restoration, so this mutation is provisional evidence only.

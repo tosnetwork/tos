@@ -8,7 +8,7 @@ The tests cover 4097 historical process rows across pages and restart, sparse no
 
 ## Source identity and raw results
 
-Source SHA-256: `manager_query_source.rs` `b924353656bdc9d02591a1b80e7454d1b5df84c5038b14b432c285a0cf799385`; `query_ledger.rs` `38154602b2f948c3e1ac2c6b821b4c4219148b6ceccb751f8b780b6d9ce157c3`; `observability.rs` `a524b1e2047b2e29cb2fd37e0f0ce87571a4717d158db426809f8160a42602d8`; `tests/manager_query_source.rs` `d6e4c95727bca711d24796544c717ff40a6c56b969c716c0f02b9b440d1a4a28`. Logs are under `/home/tomi/nhm-c08-mcp-evidence/` and were generated with `script -q -e`; the test build root was `/home/tomi/nhm-c09-projection-build` with `cargo --locked -j2`.
+Source SHA-256: `manager_query_source.rs` `b924353656bdc9d02591a1b80e7454d1b5df84c5038b14b432c285a0cf799385`; `query_ledger.rs` `38154602b2f948c3e1ac2c6b821b4c4219148b6ceccb751f8b780b6d9ce157c3`; `observability.rs` `a524b1e2047b2e29cb2fd37e0f0ce87571a4717d158db426809f8160a42602d8`; `tests/manager_query_source.rs` `d6e4c95727bca711d24796544c717ff40a6c56b969c716c0f02b9b440d1a4a28`. Logs are under `$HOME/nhm-c08-mcp-evidence/` and were generated with `script -q -e`; the test build root was `$HOME/nhm-c09-projection-build` with `cargo --locked -j2`.
 
 | Raw log | SHA-256 | Natural result |
 | --- | --- | --- |

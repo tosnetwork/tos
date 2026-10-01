@@ -1,6 +1,6 @@
 {
   "baseline": "a884b0ca735736fd5a81306c26bdc65a5bd967df",
-  "build_directory": "/home/tomi/nhm-c04-build",
+  "build_directory": "$HOME/nhm-c04-build",
   "build_targets": [
     "test-health-actions",
     "test-health-ledger",
@@ -16,47 +16,47 @@
   "max_ctest_parallelism": 2,
   "binaries": [
     {
-      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-health-actions",
+      "path": "$HOME/nhm-c04-build/test/validator/consensus/test-health-actions",
       "sha256": "2f809fe2948141dfb561e44c31a4867b09b93952a324fadf7d2ca8873e07b441",
       "bytes": 20870056
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-health-ledger",
+      "path": "$HOME/nhm-c04-build/test/validator/consensus/test-health-ledger",
       "sha256": "145b977e640ff3f184b835cf8948ee35a6813d7124addbe8d5a5e9b93e90ae77",
       "bytes": 45344
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-health-c04-publisher",
+      "path": "$HOME/nhm-c04-build/test/validator/consensus/test-health-c04-publisher",
       "sha256": "6d9cea9d6ed307bac3fe947ba331a6c793905fca7950f30d8ae95ef7bfd978da",
       "bytes": 6387520
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus",
+      "path": "$HOME/nhm-c04-build/test/validator/consensus/test-consensus",
       "sha256": "dc8d53de5bc0b0544129042b554514c567a5b62914b2f4bb8071a225436e0fbf",
       "bytes": 24548392
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test-health-native-snapshot",
+      "path": "$HOME/nhm-c04-build/test-health-native-snapshot",
       "sha256": "4fa88c7927d7b40e1dfde83af80fd4a9b3fb52b901f32a38b93ba4d013d07e2d",
       "bytes": 6956208
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test-health-core-registry",
+      "path": "$HOME/nhm-c04-build/test-health-core-registry",
       "sha256": "3db3f2e863f81f0f135e2d06fa05db020f6b6ef2238bce4eeb6e46b3d254d330",
       "bytes": 198720
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test-health-source-policy",
+      "path": "$HOME/nhm-c04-build/test-health-source-policy",
       "sha256": "1fba450159054104301faee10545e82f816ba4abcc03158dd7f00bc89fec44e2",
       "bytes": 5864
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test-health-collector-completion",
+      "path": "$HOME/nhm-c04-build/test-health-collector-completion",
       "sha256": "3a1af03107e400413220410b48c3f507ead162f8c54c45fb0ae9c746d438cfc3",
       "bytes": 318832
     },
     {
-      "path": "/home/tomi/nhm-c04-build/test-health-collector-timestamps",
+      "path": "$HOME/nhm-c04-build/test-health-collector-timestamps",
       "sha256": "883915f2d85ad98c5e5e8573013a33873770faa89bccaae96e4a7661bf140d05",
       "bytes": 342448
     }
@@ -75,8 +75,8 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/SUPERVISOR-INCREMENTAL-REVIEW.md",
-      "sha256": "148d56b178a4b27af8f1c538ca8f67c3b9b1ed5cea3cc7f4e3770d2d63180c2d",
-      "bytes": 2054
+      "sha256": "39f55452f1af1f2162529987dbe17fb527d73cd4c34ac0e4066f771f1fb974d0",
+      "bytes": 2049
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/action-manifest.json",
@@ -125,18 +125,18 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/actions.log",
-      "sha256": "eb6a5d87d47e39a4a39ab137a806a88c4c0c962fd8fd2746e17f708f29b83937",
-      "bytes": 1720
+      "sha256": "4d905493ad387a20808d46fda5dbfbd48a958b82bc0499bf3e5c96aba22d2a00",
+      "bytes": 1710
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-actions.log",
-      "sha256": "5acb4bf61d15ae068b62b8ae5ad2154ee641712ce548339ff2d9a7ac4bca8b84",
-      "bytes": 5499
+      "sha256": "778370740e6de8e2f0cd5967ec62571ecb33eb4461a32be4d74add481a56908d",
+      "bytes": 5404
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-bounded.log",
-      "sha256": "17999c35f464a28efed7ba88ad1a87a4e63688b55c41becf85baad9f84ced073",
-      "bytes": 12640
+      "sha256": "e1d3b812e134d9130efed08f670727f14c465a9bfea455c37ac0a8b0ead5be50",
+      "bytes": 12560
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-cli-observation-gate.log",
@@ -145,18 +145,18 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-collection-budget.log",
-      "sha256": "b7572aad788127a3d83f140ea8b3450584976b1313cedc02952f5ad837283c0d",
-      "bytes": 12446
+      "sha256": "dea0c678bfe0a3616289668cded91a3e3a470972ee51117a5cf451f3036a1a4d",
+      "bytes": 12366
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-final-gates.log",
-      "sha256": "9fb0010cfcfbf0bcf4738f99b6314232a066edca017f8ac34e161f731504de70",
-      "bytes": 4746
+      "sha256": "f8802f3841129e17b26954c16b21be47feda7ff36f95dc73d577b1b2d43a044c",
+      "bytes": 4666
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-ledger.log",
-      "sha256": "29cf74c7d3c3cd79bd2b7513adb3e9a9f7ed63c5698421e9485e62d6259ee00b",
-      "bytes": 6558
+      "sha256": "be9006114ee3a38fe39bfccb358e41cfe43ef3bfd08787bf7c9fa120fdc8de50",
+      "bytes": 6478
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-pairs.log",
@@ -170,8 +170,8 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-producer.log",
-      "sha256": "839ee1f748aaa5ca80666c3112afcba1f2b687db8f10c32ea7633cea2a671631",
-      "bytes": 1902
+      "sha256": "8c3f98a7509c260ad1f9175a67ca70eadf2241bb4c8dbc4aca44fe31d92c32b9",
+      "bytes": 1897
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-restored-union.log",
@@ -180,13 +180,13 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-retention.log",
-      "sha256": "0152b4ac9ab352f1140b574df64c47c046b5183fb20fc98730c9508a09d27e22",
-      "bytes": 5594
+      "sha256": "618b7ceba9a675201e5cfaaa4e2cac4a72f4d3c2cfea1e5464a6a086fcb59891",
+      "bytes": 5514
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-retry.log",
-      "sha256": "705a108284df7f31d5d1e1f83e769c7ba9f2cd1f12bce4b6b54a5d2064f151ac",
-      "bytes": 5253
+      "sha256": "852d81f44ecbc2d590ef375296b18274573f184f78b75412ca5665f2bbd757a8",
+      "bytes": 5238
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-v2-retry.log",
@@ -195,8 +195,8 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-v2.log",
-      "sha256": "e5e8ef1a8f87d6743019d1dd117b4cd4757feb4ce00742ad21ae62fc5fe8d61c",
-      "bytes": 27018
+      "sha256": "13f3c9939a23d4bf93c6f3a68779bbdf72f0d3709eebf4957b4cda6874b3839c",
+      "bytes": 25598
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-work.log",
@@ -205,18 +205,18 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build.log",
-      "sha256": "f0aa3a7068d8489df3264e2a3e7d1abb05f5efbb4a70711599ab9c5e4bbaf28d",
-      "bytes": 196246
+      "sha256": "35bec2118851e340dab56e732499d0dd9da93203ea3b933ef9aa207253dd1d06",
+      "bytes": 194381
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/configure-final.log",
-      "sha256": "0fcd3d2bb4e6e6c4756c176c4ee820930d65db48b97e78905db6c696bc59a590",
-      "bytes": 4212
+      "sha256": "6159b6347349459678106bb65c36862cddfb82a3cdb194ca62015e64f7fbc09b",
+      "bytes": 4132
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/configure.log",
-      "sha256": "4692d08a6a0d13f23696ac0a45f94dc17d3e66948b023e752c7015c83bd58d12",
-      "bytes": 8822
+      "sha256": "553054053941e32e4f04523bd5f4779f5fab4aabc675ebe2ea26b61cc7bfc3c8",
+      "bytes": 8752
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/consensus-schema-pairs.log",
@@ -225,13 +225,13 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/current-native-tests.log",
-      "sha256": "3c78fa39692bfd4f75c409350a82fa73381b6d26b97259550ae571a2001de27b",
-      "bytes": 2457
+      "sha256": "32b3fa9ab499fba320f85751fa0d8bbbd7c1b334fec68abf1f5b3fa1d93e0fde",
+      "bytes": 2447
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/final-gates-tests.log",
-      "sha256": "82dc82d7d69bc3106d4cdbc2b333a51b69841fd1a4418d4fd725bbf27be42c34",
-      "bytes": 14891
+      "sha256": "cf149a90522f66eb2484948224667aa678e7e8830e67294a2205a16b7373af7e",
+      "bytes": 14756
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/metric-union.log",
@@ -330,13 +330,13 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/pipeline-production-trace.log",
-      "sha256": "98837c8eeafdfeb7af2a9c9bd0bdb8eb2848a4da8c172ed592d625b5335ffe0d",
-      "bytes": 26065
+      "sha256": "ca530d82191f4421758d69c1e14ae7cd6aaacef69e9cfc6a59e8a57633e4763f",
+      "bytes": 26040
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/pipeline-regressions-tests.log",
-      "sha256": "5efc7b8cdd3fc1c84900d69213483810aeeca9f6e00a826b4dbf4ca7f901ec56",
-      "bytes": 648
+      "sha256": "588d3302e8b64a2d32125c2f4999911f3e616cd94658aab56559c3fa8f16410d",
+      "bytes": 638
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2/apply-false-1.json",
@@ -850,18 +850,18 @@
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/python-tools.log",
-      "sha256": "9cc5ce7f1229fef9b760a6b9b1e5e35d8353be8586901fac6a4575636f02514c",
-      "bytes": 275
+      "sha256": "e48eb7bec717da1a73da3ce7296b2bc26fe04aacd5caa2b501995c67c5c19764",
+      "bytes": 270
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/restored-union-tests.log",
-      "sha256": "3a6a49ab4fca8232d34a46e69232d92c2cc9ecf73ff8285faabe26a785586a2d",
-      "bytes": 5542
+      "sha256": "928f8e68406d9afd1af19936b571e43799f80acccd3cfb9dfd96c8c9d9a77c04",
+      "bytes": 5532
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/retention-tests.log",
-      "sha256": "9c6024906463e09b20075e9d3f3752a501c4d415fa68866eefaeefff3adb90e4",
-      "bytes": 2088
+      "sha256": "4dba2c0903a2ad266b27492c844fa4f29aef709684c3891810cbc46390c88707",
+      "bytes": 2078
     },
     {
       "path": "tools/node-health-monitor/evidence/c04-native-actions/source-manifest.json",

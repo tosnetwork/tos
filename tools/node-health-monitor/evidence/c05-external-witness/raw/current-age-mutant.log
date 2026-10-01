@@ -122,8 +122,8 @@ Script started on 2026-09-29 14:15:36+00:00 [<not executed on terminal>]
    Compiling reqwest v0.12.28
    Compiling rusqlite v0.32.1
    Compiling axum v0.8.9
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-c05-mutation/tools/node-health-monitor/crates/health-core)
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c05-mutation/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-c05-mutation/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c05-mutation/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 33.89s
      Running tests/witness_archive.rs (target/debug/deps/witness_archive-fafe8d2194926f95)
 

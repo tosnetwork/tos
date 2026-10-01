@@ -1,7 +1,7 @@
 # C09 raw monotonic duration capture: review contract
 
 Source base: `origin/node-health-monitor@8f2797a90e53a69c06effc71150b1641a4b4d4c1`.
-Authority: [R4 design §16.1](/home/tomi/memo/node-health-monitor/TOS-NODE-HEALTH-MONITOR-DESIGN-20260929.md) and [C06–C09 execution order](/home/tomi/memo/node-health-monitor/C06-C09-EXECUTION-ORDER-20260929.md). This is measurement preparation, not C09 acceptance.
+Authority: [R4 design §16.1]($HOME/memo/node-health-monitor/TOS-NODE-HEALTH-MONITOR-DESIGN-20260929.md) and [C06–C09 execution order]($HOME/memo/node-health-monitor/C06-C09-EXECUTION-ORDER-20260929.md). This is measurement preparation, not C09 acceptance.
 
 ## Source boundary and measured population
 

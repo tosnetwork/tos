@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/nhm-c04-build
-Test project /home/tomi/nhm-c04-build
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
       Start 199: c04-health-action-success
       Start 200: c04-health-action-intent-failure
  1/12 Test #200: c04-health-action-intent-failure ........   Passed    0.14 sec

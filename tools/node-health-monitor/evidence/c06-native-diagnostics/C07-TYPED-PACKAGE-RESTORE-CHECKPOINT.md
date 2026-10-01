@@ -28,16 +28,16 @@ Final commands and raw logs (natural exit 0):
 
 - `cargo test --locked --workspace --all-targets`: 216 passed, one optional
   C04 indexed-pair test ignored without that directory. Raw
-  `/home/tomi/nhm-c08-mcp-evidence/c07-package-typed-final-workspace.log`,
+  `$HOME/nhm-c08-mcp-evidence/c07-package-typed-final-workspace.log`,
   SHA-256 `ef618d904e876496367e2bf3e276621e59e68258807b518f287603c86eb0447c`.
 - `cargo test --locked -p tos-health-services --test query_ledger --test
   manager_query_source`: 14 passed. Raw
-  `/home/tomi/nhm-c08-mcp-evidence/c07-package-typed-final-targeted.log`,
+  `$HOME/nhm-c08-mcp-evidence/c07-package-typed-final-targeted.log`,
   SHA-256 `8622b47910bb374e671b61e41b1973f72575a28d9e5a421383dfb6e4f5e2e1a5`.
 - `cargo fmt --all -- --check` and
   `cargo clippy --locked --workspace --all-targets --features mcp -- -D warnings`:
   exit 0. Clippy raw
-  `/home/tomi/nhm-c08-mcp-evidence/c07-package-typed-final-clippy.log`,
+  `$HOME/nhm-c08-mcp-evidence/c07-package-typed-final-clippy.log`,
   SHA-256 `dd621e9ff7c9eac161c730aa8a79332dd68698435a7a84d044d9ad39dfa1f5d2`.
 
 This is a scoped checkpoint, not C07/C08 or production acceptance. Actual

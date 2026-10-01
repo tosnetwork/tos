@@ -2,7 +2,7 @@ $ cargo test --locked -p tos-health-core --test native_v2_contract incomplete_ca
 source_sha256=a544d61bb61a9e1f01cc924b7efc3b0e6a4c845a4bca651cac32bc6a98f44571
 timeout_seconds=120
     Blocking waiting for file lock on build directory
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 5.64s
      Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-4dbc563f937d6516)
 

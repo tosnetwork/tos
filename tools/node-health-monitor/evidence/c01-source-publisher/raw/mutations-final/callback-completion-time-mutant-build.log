@@ -1,4 +1,4 @@
-$ cmake --build /home/tomi/tos-node-health-c01-build --target test-health-collector-timestamps -j16
+$ cmake --build $HOME/tos-node-health-c01-build --target test-health-collector-timestamps -j16
 [1/58] Checking the git repository for changes...
 [2/4] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o
 [3/4] Linking CXX static library metrics/libmetrics.a

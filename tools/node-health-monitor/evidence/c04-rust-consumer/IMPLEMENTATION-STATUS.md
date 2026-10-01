@@ -26,7 +26,7 @@ performance gates remain subject to their own evidence, not these DTO tests.
 
 The final-candidate consumer closure receipt is
 `raw/closure-final-native-restored/receipt.json` (SHA-256
-`193f97d4e91512ff6c5ccfd18b6cecd70221e9069141352cec4f7bd12ae395d4`).
+`7a927febcafb57ce3eeeee0f6d190c746d3d088bd4417e292b21556203b7c96e`).
 It binds 21 current consumer source/schema/test files, all 96 native pair
 files plus the native pair index, and the isolated native test binary. Four
 raw restored checks each exited 0: fmt, Clippy, full locked contract suite and
@@ -48,7 +48,7 @@ a test harness path error, not a producer contract failure.
 Preliminary actual-C++ cross-language check: supervisor generated three
 `success-{1,2,3}.json/.prom` pairs with the current isolated
 `test-health-actions` producer at
-`/home/tomi/nhm-supervision/c04-native-pair-gvTGZV`. This is production-code
+`$HOME/nhm-supervision/c04-native-pair-gvTGZV`. This is production-code
 publisher output under synthetic actors, **not business-node data or a final
 source-bound fixture**. The explicit ignored Rust test
 `native_v2_producer_pair::actual_cpp_publisher_pairs_and_negatives` passed on

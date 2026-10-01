@@ -4,7 +4,7 @@
       "kind": "start_receipt",
       "monotonic": 283881.792494105,
       "utc": 1790674764.2187574,
-      "sha256": "e24f5cfbbb299c1c03130444570f814bdfc86942af6d7be534ed35b3ad9d7ad5"
+      "sha256": "13b6610b55ce0693e811d062858897b6dd166bd676bdbbfabaca49dadc29bcd6"
     },
     {
       "kind": "start",
@@ -13,7 +13,7 @@
       "process": "health-state",
       "pid": 867960,
       "argv": [
-        "/home/tomi/nhm-c03-build/debug/health-state",
+        "$HOME/nhm-c03-build/debug/health-state",
         "/tmp/nhm-c03-runtime-38c33f7n/manager.json"
       ]
     },
@@ -24,7 +24,7 @@
       "process": "health-watchdog",
       "pid": 867965,
       "argv": [
-        "/home/tomi/nhm-c03-build/debug/health-watchdog",
+        "$HOME/nhm-c03-build/debug/health-watchdog",
         "/tmp/nhm-c03-runtime-38c33f7n/observer.json"
       ]
     },
@@ -35,7 +35,7 @@
       "process": "alertmanager",
       "pid": 867966,
       "argv": [
-        "/home/tomi/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
+        "$HOME/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
         "--config.file=/tmp/nhm-c03-runtime-38c33f7n/alertmanager.yml",
         "--storage.path=/tmp/nhm-c03-runtime-38c33f7n/am-data",
         "--web.listen-address=127.0.0.1:34631",
@@ -49,7 +49,7 @@
       "process": "prometheus",
       "pid": 867967,
       "argv": [
-        "/home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
+        "$HOME/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
         "--config.file=/tmp/nhm-c03-runtime-38c33f7n/prometheus.yml",
         "--storage.tsdb.path=/tmp/nhm-c03-runtime-38c33f7n/prom-data",
         "--web.listen-address=127.0.0.1:43739",
@@ -165,7 +165,7 @@
       "process": "prometheus",
       "pid": 869310,
       "argv": [
-        "/home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
+        "$HOME/nhm-c03-tools/prometheus-3.9.1.linux-amd64/prometheus",
         "--config.file=/tmp/nhm-c03-runtime-38c33f7n/prometheus.yml",
         "--storage.tsdb.path=/tmp/nhm-c03-runtime-38c33f7n/prom-data",
         "--web.listen-address=127.0.0.1:43739",
@@ -208,7 +208,7 @@
       "process": "alertmanager",
       "pid": 869807,
       "argv": [
-        "/home/tomi/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
+        "$HOME/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/alertmanager",
         "--config.file=/tmp/nhm-c03-runtime-38c33f7n/alertmanager.yml",
         "--storage.path=/tmp/nhm-c03-runtime-38c33f7n/am-data",
         "--web.listen-address=127.0.0.1:34631",

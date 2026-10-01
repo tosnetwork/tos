@@ -4,7 +4,7 @@ The review cited an in-progress `8f2797` draft. At the current `a208adb04ab87d9e
 
 The new actual M SQLite control inserts two process rows, fixes the second as the cursor anchor, alters only the first row's body while leaving its hash and the second anchor unchanged, and requires `retained M parent changed`. Removing the exact body comparison compiled and failed at the intended `unwrap_err()` because the altered older row was then accepted. Restored focused suite, fmt and Clippy passed. Source/test SHA-256: `crates/health-services/tests/manager_query_source.rs` `76dc8a6358d178fb235c13fd9a91b31b278f0927f23c29f8ae999adf1c94b31c`.
 
-| Raw log under `/home/tomi/nhm-c08-mcp-evidence/` | SHA-256 | Result |
+| Raw log under `$HOME/nhm-c08-mcp-evidence/` | SHA-256 | Result |
 | --- | --- | --- |
 | `c09-non-anchor-parent-baseline.log` | `4ccfb371d385c54caaf483f2b11fcf4b050ae69999204964584007f115525020` | New focused control exit 0 |
 | `c09-non-anchor-parent-mutant.log` | `e190733460db019d0971e79689ed21be9bfd4805c633d3a8808907912f7eb949` | Compiled exact-body-check bypass exits 101 at intended older-parent acceptance assertion |

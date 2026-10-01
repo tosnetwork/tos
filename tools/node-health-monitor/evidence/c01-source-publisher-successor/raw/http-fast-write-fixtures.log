@@ -1,4 +1,4 @@
-COMMAND: tools/node-health-monitor/.contract-venv/bin/python tools/node-health-monitor/tests/native-snapshot-http.py /home/tomi/tos-node-health-c01-build/test-health-native-snapshot --mode fast --write-fixtures
+COMMAND: tools/node-health-monitor/.contract-venv/bin/python tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode fast --write-fixtures
 native_snapshot_unit_passed
 isolated_actual_publisher_prepare_us=930
 fast: passed

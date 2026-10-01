@@ -1,5 +1,5 @@
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-core)
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-c06/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 20.57s
      Running unittests src/lib.rs (tools/node-health-monitor/target/debug/deps/tos_health_core-e3846bc9b8175440)
 

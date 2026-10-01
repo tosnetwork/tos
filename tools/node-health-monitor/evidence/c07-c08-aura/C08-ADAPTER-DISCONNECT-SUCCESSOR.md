@@ -11,10 +11,10 @@ Raw receipts (external to the repository, SHA-256):
 
 | Path | Outcome | SHA-256 |
 | --- | --- | --- |
-| `/home/tomi/nhm-c08-mcp-evidence/c08-stdio-connection-death-successor.log` | `cargo test --locked -j2 -p tos-health-services --features mcp --test aura_stdio`: 4/4 pass, exit 0 | `1003dd93805be75ed26246ac2263254421d51b96df67037c81f603edb84ad9e8` |
-| `/home/tomi/nhm-c08-mcp-evidence/c08-stdio-connection-death-second-frame.log` | successor with attempted second frame/request count: 4/4 pass, exit 0 | `b21760f505b019ab2bf0fb7941699795b919d5807a0e8acd7666b40f5bb0624a` |
-| `/home/tomi/nhm-c08-mcp-evidence/c08-pinned-aura-after-disconnect-fix.log` | pinned AURA 0.12 real stdio six-tool fixture calls and cancellation: 1/1 pass, exit 0; metric/block are honest error outputs | `88d48a3c5067569acdccaf81de866ebb6665c0a9cdbbd85caf18f70f3e6c2311` |
-| `/home/tomi/nhm-c08-mcp-evidence/c08-stdio-connection-death-fmt-clippy.log` | `cargo fmt --all --check` and locked strict Clippy on adapter/test, exit 0 | `d31eecf3a97b79ecb4de9e1b45791c09d4b03bdf24bd9400cdca49550b5c1b27` |
+| `$HOME/nhm-c08-mcp-evidence/c08-stdio-connection-death-successor.log` | `cargo test --locked -j2 -p tos-health-services --features mcp --test aura_stdio`: 4/4 pass, exit 0 | `1003dd93805be75ed26246ac2263254421d51b96df67037c81f603edb84ad9e8` |
+| `$HOME/nhm-c08-mcp-evidence/c08-stdio-connection-death-second-frame.log` | successor with attempted second frame/request count: 4/4 pass, exit 0 | `b21760f505b019ab2bf0fb7941699795b919d5807a0e8acd7666b40f5bb0624a` |
+| `$HOME/nhm-c08-mcp-evidence/c08-pinned-aura-after-disconnect-fix.log` | pinned AURA 0.12 real stdio six-tool fixture calls and cancellation: 1/1 pass, exit 0; metric/block are honest error outputs | `88d48a3c5067569acdccaf81de866ebb6665c0a9cdbbd85caf18f70f3e6c2311` |
+| `$HOME/nhm-c08-mcp-evidence/c08-stdio-connection-death-fmt-clippy.log` | `cargo fmt --all --check` and locked strict Clippy on adapter/test, exit 0 | `d31eecf3a97b79ecb4de9e1b45791c09d4b03bdf24bd9400cdca49550b5c1b27` |
 
 Source SHA-256: adapter `75abab57074fab8ed1f8369ae9f1b9652bf7aac8730eef785b810ca9d6eb1ecd`; final test `2466f85f22e2e1de2164af540d7a44ea3a144eaf5e9987090194046e98ead23b` (earlier test SHA `ba2e601225a91bdfede01a3259c4874d7bc848f4347e44b6c604a7a769f72e85` retained with its earlier log).
 

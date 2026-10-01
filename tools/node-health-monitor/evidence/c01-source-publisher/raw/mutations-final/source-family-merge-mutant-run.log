@@ -1,10 +1,10 @@
-$ /home/tomi/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python /home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py /home/tomi/tos-node-health-c01-build/test-health-native-snapshot --mode sources
+$ $HOME/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python $HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode sources
 native_snapshot_unit_passed
 Traceback (most recent call last):
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 156, in <module>
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 156, in <module>
     else:check(mode);print(mode+': passed',flush=True)
          ~~~~~^^^^^^
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 84, in check
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 84, in check
     assert b'tos_health_source_collection_completed_timestamp_seconds{source="second_fixture"}' in body
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 AssertionError

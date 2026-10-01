@@ -1,5 +1,5 @@
-Internal ctest changing into directory: /home/tomi/nhm-c04-build
-Test project /home/tomi/nhm-c04-build
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
       Start 213: c04-health-action-post-terminal
       Start 212: c04-health-action-finality-suppressed
  1/28 Test #212: c04-health-action-finality-suppressed ............   Passed    0.20 sec
@@ -34,22 +34,22 @@ Test project /home/tomi/nhm-c04-build
       Start 199: c04-health-ledger
 16/28 Test #199: c04-health-ledger ................................   Passed    0.01 sec
       Start  46: test-c04-real-state-proof
-Could not find executable /home/tomi/nhm-c04-build/test-c04-real-state-proof
+Could not find executable $HOME/nhm-c04-build/test-c04-real-state-proof
 Looked in the following places:
-/home/tomi/nhm-c04-build/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Release/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Release/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Debug/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Debug/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/MinSizeRel/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/MinSizeRel/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/RelWithDebInfo/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/RelWithDebInfo/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Deployment/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Deployment/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Development/test-c04-real-state-proof
-/home/tomi/nhm-c04-build/Development/test-c04-real-state-proof
+$HOME/nhm-c04-build/test-c04-real-state-proof
+$HOME/nhm-c04-build/test-c04-real-state-proof
+$HOME/nhm-c04-build/Release/test-c04-real-state-proof
+$HOME/nhm-c04-build/Release/test-c04-real-state-proof
+$HOME/nhm-c04-build/Debug/test-c04-real-state-proof
+$HOME/nhm-c04-build/Debug/test-c04-real-state-proof
+$HOME/nhm-c04-build/MinSizeRel/test-c04-real-state-proof
+$HOME/nhm-c04-build/MinSizeRel/test-c04-real-state-proof
+$HOME/nhm-c04-build/RelWithDebInfo/test-c04-real-state-proof
+$HOME/nhm-c04-build/RelWithDebInfo/test-c04-real-state-proof
+$HOME/nhm-c04-build/Deployment/test-c04-real-state-proof
+$HOME/nhm-c04-build/Deployment/test-c04-real-state-proof
+$HOME/nhm-c04-build/Development/test-c04-real-state-proof
+$HOME/nhm-c04-build/Development/test-c04-real-state-proof
 home/tomi/nhm-c04-build/test-c04-real-state-proof
 home/tomi/nhm-c04-build/test-c04-real-state-proof
 home/tomi/nhm-c04-build/Release/test-c04-real-state-proof
@@ -64,7 +64,7 @@ home/tomi/nhm-c04-build/Deployment/test-c04-real-state-proof
 home/tomi/nhm-c04-build/Deployment/test-c04-real-state-proof
 home/tomi/nhm-c04-build/Development/test-c04-real-state-proof
 home/tomi/nhm-c04-build/Development/test-c04-real-state-proof
-Unable to find executable: /home/tomi/nhm-c04-build/test-c04-real-state-proof
+Unable to find executable: $HOME/nhm-c04-build/test-c04-real-state-proof
 17/28 Test  #46: test-c04-real-state-proof ........................***Not Run   0.00 sec
       Start 215: c04-health-action-replay-intent-sign-failure
 18/28 Test #214: c04-health-action-lease ..........................   Passed    0.09 sec
@@ -92,23 +92,23 @@ Unable to find executable: /home/tomi/nhm-c04-build/test-c04-real-state-proof
 [1;33m[ 2][t 0][2026-09-29 10:46:28.114663688][candidate-codec.cpp:127][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark serialize_candidate block_id=5A69DD6E083571F2CD24AE8E40B2D2CCB70ECF33A21089CDB1E8FA3D9C4A0A32 called_from=compression-ratio-test time_sec=0.002318 compression=compressed original_size=526339 compressed_size=36979[0m
 [1;33m[ 2][t 0][2026-09-29 10:46:28.117356382][candidate-codec.cpp:153][&VALIDATOR_SESSION_BENCHMARK]	Broadcast_benchmark deserialize_candidate block_id=5A69DD6E083571F2CD24AE8E40B2D2CCB70ECF33A21089CDB1E8FA3D9C4A0A32 called_from=consensus time_sec=0.002415 compression=compressed compressed_size=36979[0m
 [0m[ 4][t 0][2026-09-29 10:46:28.119283922][candidate-codec.cpp:172]	Decompressing block candidate :36979 -> 526339[0m
-[1;31m[ 0][t 0][2026-09-29 10:46:28.119820051][Status.h:274]	Unexpected Status [Error : 0 : Option c04-health-test was unrecognized] in file /home/tomi/tos-node-health-c04/test/validator/consensus/test-consensus.cpp at line 3928[0m
+[1;31m[ 0][t 0][2026-09-29 10:46:28.119820051][Status.h:274]	Unexpected Status [Error : 0 : Option c04-health-test was unrecognized] in file $HOME/tos-node-health-c04/test/validator/consensus/test-consensus.cpp at line 3928[0m
 [pid 989316] [time 1790678788] Signal: 6
 ------- Stack Backtrace -------
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x598777)[0x617e14edf777]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x595d0d)[0x617e14edcd0d]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x598777)[0x617e14edf777]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x595d0d)[0x617e14edcd0d]
 /lib/x86_64-linux-gnu/libc.so.6(+0x42520)[0x7e2b61642520]
 /lib/x86_64-linux-gnu/libc.so.6(pthread_kill+0x12c)[0x7e2b616969bc]
 /lib/x86_64-linux-gnu/libc.so.6(raise+0x16)[0x7e2b61642476]
 /lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x7e2b616287f3]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x59fc07)[0x617e14ee6c07]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x5a0177)[0x617e14ee7177]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x59f387)[0x617e14ee6387]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x50aca7)[0x617e14e51ca7]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x505042)[0x617e14e4c042]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x59fc07)[0x617e14ee6c07]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x5a0177)[0x617e14ee7177]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x59f387)[0x617e14ee6387]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x50aca7)[0x617e14e51ca7]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x505042)[0x617e14e4c042]
 /lib/x86_64-linux-gnu/libc.so.6(+0x29d90)[0x7e2b61629d90]
 /lib/x86_64-linux-gnu/libc.so.6(__libc_start_main+0x80)[0x7e2b61629e40]
-/home/tomi/nhm-c04-build/test/validator/consensus/test-consensus(+0x4fe0a5)[0x617e14e450a5]
+$HOME/nhm-c04-build/test/validator/consensus/test-consensus(+0x4fe0a5)[0x617e14e450a5]
 -------------------------------
 --- Enhanced Backtrace (libbacktrace) ---
     #0  ?? (test-consensus+0x595d0c) [0x617e14edcd0c]

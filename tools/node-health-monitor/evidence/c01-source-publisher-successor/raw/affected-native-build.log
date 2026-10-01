@@ -1,59 +1,59 @@
-COMMAND: cmake --build /home/tomi/tos-node-health-c01-build --target test-health-native-snapshot -j16
+COMMAND: cmake --build $HOME/tos-node-health-c01-build --target test-health-native-snapshot -j16
 [1/58] Checking the git repository for changes...
 [2/58] Building CXX object CMakeFiles/git.dir/git.cc.o
 [3/58] Linking CXX static library libgit.a
 [4/58] Linking CXX executable crypto/func
 [5/58] Compile FunC stdlib TVM v6 fee primitive coverage
 [6/58] Linking CXX executable crypto/fift
-[7/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet-code.fif
-[8/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/session-wallet-code.fif
-[9/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-code.fif
-[10/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet-code.fif
-[11/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet3-code.fif
-[12/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-code.fif
-[13/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v4-code.fif
-[14/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet2-code.fif
-[15/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
-[16/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v5-code.fif
-[17/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/multisig-code.fif
-[18/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet-code.cpp
-[19/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet-code.cpp
-[20/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-code.cpp
-[21/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet3-code.cpp
-[22/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-code.cpp
-[23/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v4-code.cpp
-[24/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
-[25/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
-[26/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet3-code.fif
-[27/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/dns-manual-code.fif
-[28/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/task-escrow-code.fif
-[29/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/pow-testgiver-code.fif
-[30/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/session-wallet-code.cpp
-[31/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/multisig-code.cpp
-[32/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v5-code.cpp
-[33/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
-[34/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/payment-channel-code.fif
-[35/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
-[36/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/config-code.fif
-[37/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/dns-auto-code.fif
-[38/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/dns-manual-code.cpp
-[39/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/task-escrow-code.cpp
-[40/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/pow-testgiver-code.cpp
-[41/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/agent-account-code.fif
-[42/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
-[43/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/payment-channel-code.cpp
-[44/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/dns-auto-code.cpp
-[45/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/config-code.cpp
-[46/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/elector-code.fif
-[47/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/agent-account-code.cpp
-[48/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/elector-code.cpp
+[7/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[8/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/session-wallet-code.fif
+[9/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-code.fif
+[10/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet-code.fif
+[11/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet3-code.fif
+[12/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-code.fif
+[13/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v4-code.fif
+[14/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[15/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[16/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v5-code.fif
+[17/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/multisig-code.fif
+[18/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[19/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet-code.cpp
+[20/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[21/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet3-code.cpp
+[22/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[23/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[24/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[25/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[26/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[27/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/dns-manual-code.fif
+[28/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/task-escrow-code.fif
+[29/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[30/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/session-wallet-code.cpp
+[31/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/multisig-code.cpp
+[32/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[33/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[34/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/payment-channel-code.fif
+[35/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[36/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/config-code.fif
+[37/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/dns-auto-code.fif
+[38/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/dns-manual-code.cpp
+[39/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/task-escrow-code.cpp
+[40/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[41/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/agent-account-code.fif
+[42/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[43/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/payment-channel-code.cpp
+[44/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/dns-auto-code.cpp
+[45/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/config-code.cpp
+[46/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/elector-code.fif
+[47/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/agent-account-code.cpp
+[48/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/elector-code.cpp
 [49/58] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
 [50/58] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
 NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
 NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
-[51/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/prediction-market-code.fif
+[51/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/prediction-market-code.fif
 [52/58] Verify and embed the frozen TOS Native Service Registry BOC
-[53/58] Generate /home/tomi/tos-node-health-c01-build/crypto/smartcont/auto/prediction-market-code.cpp
+[53/58] Generate $HOME/tos-node-health-c01-build/crypto/smartcont/auto/prediction-market-code.cpp
 [54/58] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
 [55/58] Linking CXX static library crypto/libsmc-envelope.a
 [56/58] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o

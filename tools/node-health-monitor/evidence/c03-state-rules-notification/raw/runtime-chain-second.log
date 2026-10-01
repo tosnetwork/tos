@@ -21,12 +21,12 @@
 {"kind": "stop", "monotonic": 282445.23909168, "utc": 1790673327.6653554, "process": "alertmanager", "returncode": 0}
 {"kind": "stop", "monotonic": 282445.254650806, "utc": 1790673327.6809146, "process": "prometheus", "returncode": 0}
 Traceback (most recent call last):
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 267, in <module>
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 267, in <module>
     (args.output/'timeline-partial.json').write_text(json.dumps({'events':events},indent=2)+'\n')
                     ^^^^^^
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 226, in main
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 226, in main
     '--storage.tsdb.path='+str(t/'prom-data'),'--web.listen-address=127.0.0.1:'+str(prom_port),
     '--rules.alert.resend-delay=15s'])
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 109, in until
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 109, in until
     raise AssertionError(message)
 AssertionError: pipeline did not advance after Prometheus restart

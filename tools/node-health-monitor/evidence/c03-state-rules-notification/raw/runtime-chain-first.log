@@ -22,13 +22,13 @@
 {"kind": "stop", "monotonic": 281982.031762122, "utc": 1790672864.4580262, "process": "health-watchdog", "returncode": -15}
 {"kind": "stop", "monotonic": 281982.047403037, "utc": 1790672864.4736671, "process": "prometheus", "returncode": 0}
 Traceback (most recent call last):
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 231, in <module>
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 231, in <module>
     until(lambda: advances()[-1] if advances() and advances()[-1][0]>before_am_restart else None,
                 ^^^^^^
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 210, in main
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 210, in main
     replays=[row for row in events if row['kind']=='old_sequence_replay']
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 106, in until
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 106, in until
     time.sleep(1)
     ~~~~~~~~~~^^^
 AssertionError: Alertmanager stop did not trip O pipeline

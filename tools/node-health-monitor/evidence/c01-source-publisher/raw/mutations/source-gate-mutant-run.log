@@ -1,4 +1,4 @@
-$ /home/tomi/tos-node-health-c01-build/test-health-collector-timestamps
+$ $HOME/tos-node-health-c01-build/test-health-collector-timestamps
 [1;31m[ 0][t 1][2026-09-29 07:22:55.033612740][test-health-collector-timestamps.cpp:72][!driver]	Check `body.find("health_source_") == std::string::npos` failed[0m
 
 EXIT=-6

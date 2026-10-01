@@ -1,6 +1,6 @@
 $ cargo test --locked -p tos-health-services --test cgroup effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample -- --exact
 timeout_seconds=120
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.14s
      Running tests/cgroup.rs (target/debug/deps/cgroup-9d31621ecd033d1b)
 

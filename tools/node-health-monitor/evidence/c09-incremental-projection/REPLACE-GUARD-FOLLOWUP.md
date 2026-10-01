@@ -18,9 +18,9 @@ The focused test verified `recursive_triggers=0`, rejected both a same-sequence 
 Actual commands on the restored source, all natural exit 0:
 
 ```sh
-CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build cargo test --locked -j2 -p tos-health-services
-CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build cargo test --locked -j2 -p tos-health-services --test manager_query_source
-CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build cargo clippy --locked -j2 -p tos-health-services --all-targets -- -D warnings
+CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build cargo test --locked -j2 -p tos-health-services
+CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build cargo test --locked -j2 -p tos-health-services --test manager_query_source
+CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build cargo clippy --locked -j2 -p tos-health-services --all-targets -- -D warnings
 cargo fmt --all -- --check
 git diff --check
 ```

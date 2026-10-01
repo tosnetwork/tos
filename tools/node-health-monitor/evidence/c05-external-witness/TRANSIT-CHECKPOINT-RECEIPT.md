@@ -20,8 +20,8 @@ ACK body, supplies conservative current age.
 
 | Exact command (from `tools/node-health-monitor`) | Raw log SHA-256 | Exit/result |
 |---|---|---|
-| `CARGO_BUILD_JOBS=2 cargo test -p tos-health-services --test ingress --test witness_archive --lib --locked` | `raw/transit-checkpoint-tests.log` `a19a6d11e9c2512246446ee71d9f750b1bc1ee9cb7556f9fa162d0d3246a50a8` | natural 0; lib 4, ingress 7, archive 8 |
-| `cargo fmt --all --check && CARGO_BUILD_JOBS=2 cargo clippy -p tos-health-services --all-targets --locked -- -D warnings` | `raw/transit-checkpoint-fmt-clippy.log` `30ebad090907d90f4c5cc68254ee0f77e6250319960b018e24c7914857b3f052` | natural 0 |
+| `CARGO_BUILD_JOBS=2 cargo test -p tos-health-services --test ingress --test witness_archive --lib --locked` | `raw/transit-checkpoint-tests.log` `441942ff5c90346b18a9a57b4e102475794fb2b2b3cf2ec6048d659da571fb56` | natural 0; lib 4, ingress 7, archive 8 |
+| `cargo fmt --all --check && CARGO_BUILD_JOBS=2 cargo clippy -p tos-health-services --all-targets --locked -- -D warnings` | `raw/transit-checkpoint-fmt-clippy.log` `9ab80d676e4c024134caade82b3dfd19af48c748e145ffeac20da004b3932a9c` | natural 0 |
 | `.contract-venv/bin/python scripts/check-contracts.py` plus two `check-witness-current.py` actual bodies | `raw/transit-checkpoint-contracts.log` `6516a69832d362e932d6686a188145a8f380a24b61fc0e9976f413c819770f64` | natural 0; 24 closed schemas |
 | `NHM_CURRENT_ACTUAL_JSON=... NHM_CURRENT_QUALIFIED_JSON=... CARGO_BUILD_JOBS=2 cargo test -p tos-health-services --test witness_archive --locked -- --nocapture` | `raw/transit-checkpoint-actual-outputs.log` `8f69f7741c1b2eedfb430cb6c291dc48ab0f4edefe63d623c7294e7674d8a67a` | natural 0; 8 tests, emitted actual route outputs |
 | `.contract-venv/bin/python scripts/check-witness-current.py` for both final actual outputs | `raw/transit-checkpoint-actual-schema.log` `660118d1ec2a6f7787a440f1651a95cb267cdb5f9e21c4546e1664a04b1985ae` | natural 0; structural, semantic and nullable negatives |

@@ -1,1 +1,1 @@
-test: /home/tomi/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:23: int main(): Assertion `built == 4096 && stats.records == 4096 && stats.bytes == 262144 && stats.sampled_out == 4096' failed.
+test: $HOME/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:23: int main(): Assertion `built == 4096 && stats.records == 4096 && stats.bytes == 262144 && stats.sampled_out == 4096' failed.

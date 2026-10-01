@@ -1,5 +1,5 @@
 Script started on 2026-09-29 12:45:01+00:00 [<not executed on terminal>]
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 2.80s
      Running tests/witness_contract.rs (target/debug/deps/witness_contract-f0acf7aaec1efb26)
 

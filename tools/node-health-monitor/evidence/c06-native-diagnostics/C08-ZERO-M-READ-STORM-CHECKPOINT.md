@@ -35,7 +35,7 @@ Production and successor test source SHA-256:
 - Compiled mutant `observability.rs`:
   `bc90a7b3c13a14f50cc979c68495f93158c29f62e1aa1146ce41c73f1a82ace1`
 
-Raw logs under `/home/tomi/nhm-c08-mcp-evidence/`:
+Raw logs under `$HOME/nhm-c08-mcp-evidence/`:
 
 - `c08-zero-m-read-baseline.log`: targeted real-router test natural exit 0,
   SHA-256 `4312e62b2f2ae37ec01055fa1a632f60a54b17f9a71aadc68eec685705f6b1a1`.

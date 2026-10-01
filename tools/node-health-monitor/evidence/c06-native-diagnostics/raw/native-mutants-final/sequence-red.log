@@ -1,1 +1,1 @@
-test: /home/tomi/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:54: int main(): Assertion `!q->phase(1,0,3) && contention.reasons[2]==1' failed.
+test: $HOME/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:54: int main(): Assertion `!q->phase(1,0,3) && contention.reasons[2]==1' failed.

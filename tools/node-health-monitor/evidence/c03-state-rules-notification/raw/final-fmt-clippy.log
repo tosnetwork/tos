@@ -71,7 +71,7 @@
     Checking hyper v1.11.1
     Checking rustls-webpki v0.103.15
     Checking zerocopy v0.8.59
-    Checking tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Checking tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
     Checking base64 v0.23.1
     Checking subtle v2.6.1
     Checking ipnet v2.12.2
@@ -104,7 +104,7 @@
     Checking rusqlite v0.32.1
     Checking axum v0.8.9
     Checking reqwest v0.12.28
-    Checking tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Checking tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
 error: large size difference between variants
   --> crates/health-services/src/manager.rs:69:1
    |

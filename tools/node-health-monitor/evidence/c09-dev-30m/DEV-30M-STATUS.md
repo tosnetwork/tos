@@ -11,8 +11,8 @@ Its immutable private inputs are:
 
 | Input | Private frozen path | SHA-256 |
 | --- | --- | --- |
-| Functional v2 | `/home/tomi/nhm-supervision/c09-local/reviews/dev-30m/functional.frozen.jsonl` | `11fd8736ab6b9504edb0a7b8e3d81dbff1826308bdd0e5ba0e420dbe97590245` |
-| Q-aware | `/home/tomi/nhm-supervision/c09-local/reviews/dev-30m/q-aware.frozen.jsonl` | `2b8f85072eebf32dd4b1565a72697dbc6fc637ffbbc66787dc606d53220fa40a` |
+| Functional v2 | `$HOME/nhm-supervision/c09-local/reviews/dev-30m/functional.frozen.jsonl` | `11fd8736ab6b9504edb0a7b8e3d81dbff1826308bdd0e5ba0e420dbe97590245` |
+| Q-aware | `$HOME/nhm-supervision/c09-local/reviews/dev-30m/q-aware.frozen.jsonl` | `2b8f85072eebf32dd4b1565a72697dbc6fc637ffbbc66787dc606d53220fa40a` |
 
 The functional samples ran from 03:32:01 to 04:32:16 UTC: 13 passing rows,
 one boot/window identity, 60 minutes 14.991 seconds of BOOTTIME coverage,

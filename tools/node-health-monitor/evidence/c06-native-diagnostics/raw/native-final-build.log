@@ -7,56 +7,56 @@
 [7/73] Linking CXX static library libgit.a
 [8/73] Linking CXX executable crypto/fift
 [9/73] Linking CXX executable crypto/func
-[10/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.fif
-[11/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.fif
-[12/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.cpp
-[13/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[10/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.fif
+[11/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[12/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[13/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.fif
 [14/73] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
 NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
 NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
 [15/73] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
 [16/73] Compile FunC stdlib TVM v6 fee primitive coverage
-[17/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.fif
-[18/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/config-code.fif
-[19/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/config-code.cpp
-[20/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-code.fif
-[21/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-code.cpp
-[22/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet3-code.fif
-[23/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet3-code.cpp
-[24/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.cpp
-[25/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.fif
-[26/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.cpp
-[27/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.fif
-[28/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.cpp
-[29/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.cpp
-[30/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.fif
-[31/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.cpp
-[32/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
-[33/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
-[34/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/elector-code.fif
-[35/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/elector-code.cpp
-[36/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/multisig-code.fif
-[37/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/multisig-code.cpp
-[38/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
-[39/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.fif
-[40/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
-[41/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.fif
-[42/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.cpp
+[17/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.fif
+[18/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/config-code.fif
+[19/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/config-code.cpp
+[20/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-code.fif
+[21/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-code.cpp
+[22/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet3-code.fif
+[23/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet3-code.cpp
+[24/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[25/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.fif
+[26/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.cpp
+[27/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.fif
+[28/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[29/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[30/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.fif
+[31/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[32/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[33/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[34/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/elector-code.fif
+[35/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/elector-code.cpp
+[36/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/multisig-code.fif
+[37/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/multisig-code.cpp
+[38/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[39/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[40/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[41/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.fif
+[42/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.cpp
 [43/73] Verify and embed the frozen TOS Native Service Registry BOC
-[44/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/agent-account-code.fif
-[45/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/agent-account-code.cpp
-[46/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.fif
-[47/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.cpp
-[48/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.fif
-[49/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.cpp
-[50/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.fif
-[51/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.cpp
-[52/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.fif
-[53/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.cpp
-[54/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
-[55/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.fif
-[56/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.cpp
-[57/73] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[44/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/agent-account-code.fif
+[45/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/agent-account-code.cpp
+[46/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.fif
+[47/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.cpp
+[48/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[49/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[50/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.fif
+[51/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.cpp
+[52/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.fif
+[53/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.cpp
+[54/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[55/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.fif
+[56/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.cpp
+[57/73] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
 [58/73] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
 [59/73] Building CXX object CMakeFiles/test-health-core-registry.dir/test/test-health-core-registry.cpp.o
 [60/73] Building CXX object CMakeFiles/test-health-diagnostic-action.dir/test/test-health-diagnostic-action.cpp.o

@@ -1,4 +1,4 @@
-$ bash scripts/run-c04-cross-language.sh /home/tomi/tos-node-health-c04/tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2 evidence/c04-rust-consumer/raw/closure-final-native-restored/actual-route /home/tomi/nhm-c04-build/test/validator/consensus/test-health-actions
+$ bash scripts/run-c04-cross-language.sh $HOME/tos-node-health-c04/tools/node-health-monitor/evidence/c04-native-actions/raw/producer-v2 evidence/c04-rust-consumer/raw/closure-final-native-restored/actual-route $HOME/nhm-c04-build/test/validator/consensus/test-health-actions
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
      Running tests/native_v2_producer_pair.rs (target/debug/deps/native_v2_producer_pair-311fba3765bfb24b)
 

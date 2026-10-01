@@ -1,6 +1,6 @@
 Script started on 2026-09-29 12:58:27+00:00 [<not executed on terminal>]
-    Checking tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
-    Checking tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Checking tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Checking tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
 error: very complex type used. Consider factoring parts into `type` definitions
    --> crates/health-services/src/durable.rs:281:20
     |

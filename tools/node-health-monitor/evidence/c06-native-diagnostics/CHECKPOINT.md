@@ -11,7 +11,7 @@ encrypted TCP egress, fixed diagnostic-only mTLS role, dedicated M credential,
 owned diagnostic permits and the existing evidence writer's batch transaction.
 Required nullable query counters distinguish unknown from measured zero.
 
-Preliminary evidence is in `/home/tomi/nhm-c06-evidence/raw/`. Standalone native
+Preliminary evidence is in `$HOME/nhm-c06-evidence/raw/`. Standalone native
 producer/IPC controls and six compiled isolated mutants passed intended assertion
 kills and restored runs. The first enabled mutation failed a later assertion;
 that rejected receipt is preserved separately. A real native subprocess through

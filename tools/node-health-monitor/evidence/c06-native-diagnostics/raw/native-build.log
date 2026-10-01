@@ -7,8 +7,8 @@
 [7/1121] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_civil_time.dir/internal/cctz/src/civil_time_detail.cc.o
 [8/1121] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_kernel_timeout_internal.dir/internal/kernel_timeout.cc.o
 [9/1121] Build blst
-+ cc -O2 -fno-builtin -fPIC -Wall -Wextra -Werror -D__ADX__ -c /home/tomi/tos-node-health-c06/third-party/blst/src/server.c
-+ cc -O2 -fno-builtin -fPIC -Wall -Wextra -Werror -D__ADX__ -c /home/tomi/tos-node-health-c06/third-party/blst/build/assembly.S
++ cc -O2 -fno-builtin -fPIC -Wall -Wextra -Werror -D__ADX__ -c $HOME/tos-node-health-c06/third-party/blst/src/server.c
++ cc -O2 -fno-builtin -fPIC -Wall -Wextra -Werror -D__ADX__ -c $HOME/tos-node-health-c06/third-party/blst/build/assembly.S
 + ar rc libblst.a assembly.o server.o
 + ranlib libblst.a
 [10/1121] Build lz4
@@ -50,12 +50,12 @@ CMake Warning:
     CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG
 
 
--- Build files have been written to: /home/tomi/nhm-c06-build/third-party/lz4/cmake
-[1/5] Building C object CMakeFiles/lz4_static.dir/home/tomi/nhm-c06-build/third-party/lz4/src/lib/lz4hc.c.o
-[2/5] Building C object CMakeFiles/lz4_static.dir/home/tomi/nhm-c06-build/third-party/lz4/src/lib/lz4.c.o
-[3/5] Building C object CMakeFiles/lz4_static.dir/home/tomi/nhm-c06-build/third-party/lz4/src/lib/lz4frame.c.o
-[4/5] Building C object CMakeFiles/lz4_static.dir/home/tomi/nhm-c06-build/third-party/lz4/src/lib/xxhash.c.o
-[5/5] Linking C static library /home/tomi/nhm-c06-build/third-party/lz4/lib/liblz4.a
+-- Build files have been written to: $HOME/nhm-c06-build/third-party/lz4/cmake
+[1/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c06-build/third-party/lz4/src/lib/lz4hc.c.o
+[2/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c06-build/third-party/lz4/src/lib/lz4.c.o
+[3/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c06-build/third-party/lz4/src/lib/lz4frame.c.o
+[4/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c06-build/third-party/lz4/src/lib/xxhash.c.o
+[5/5] Linking C static library $HOME/nhm-c06-build/third-party/lz4/lib/liblz4.a
 [11/1121] Checking the git repository for changes...
 [12/1121] Building CXX object CMakeFiles/git.dir/git.cc.o
 [13/1121] Linking CXX static library libgit.a
@@ -224,51 +224,51 @@ config.status: executing libtool commands
 config.status: executing default commands
 [19/1121] Performing build step for 'libbacktrace_external'
 make  all-am
-make[1]: Entering directory '/home/tomi/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=atomic.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o atomic.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/atomic.c
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=dwarf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o dwarf.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/dwarf.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=atomic.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/atomic.c  -fPIC -DPIC -o atomic.o
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=dwarf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/dwarf.c  -fPIC -DPIC -o dwarf.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=fileline.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o fileline.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/fileline.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=fileline.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/fileline.c  -fPIC -DPIC -o fileline.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=posix.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o posix.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/posix.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=posix.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/posix.c  -fPIC -DPIC -o posix.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=print.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o print.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/print.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=print.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/print.c  -fPIC -DPIC -o print.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=sort.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o sort.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/sort.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=sort.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/sort.c  -fPIC -DPIC -o sort.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=state.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o state.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/state.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=state.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/state.c  -fPIC -DPIC -o state.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=backtrace.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o backtrace.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/backtrace.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=backtrace.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/backtrace.c  -fPIC -DPIC -o backtrace.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=simple.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o simple.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/simple.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=simple.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/simple.c  -fPIC -DPIC -o simple.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=elf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o elf.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/elf.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=elf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/elf.c  -fPIC -DPIC -o elf.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=mmapio.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o mmapio.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/mmapio.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=mmapio.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/mmapio.c  -fPIC -DPIC -o mmapio.o
-/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=mmap.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o mmap.lo /home/tomi/tos-node-health-c06/third-party/libbacktrace/mmap.c
-libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I/home/tomi/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=mmap.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c /home/tomi/tos-node-health-c06/third-party/libbacktrace/mmap.c  -fPIC -DPIC -o mmap.o
-/bin/bash ./libtool  --tag=CC   --mode=link /usr/bin/clang-21 -funwind-tables -frandom-seed=libbacktrace.la -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2   -o libbacktrace.la -rpath /home/tomi/nhm-c06-build/libbacktrace/lib atomic.lo dwarf.lo fileline.lo posix.lo print.lo sort.lo state.lo backtrace.lo simple.lo elf.lo mmapio.lo mmap.lo 
+make[1]: Entering directory '$HOME/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=atomic.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o atomic.lo $HOME/tos-node-health-c06/third-party/libbacktrace/atomic.c
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=dwarf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o dwarf.lo $HOME/tos-node-health-c06/third-party/libbacktrace/dwarf.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=atomic.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/atomic.c  -fPIC -DPIC -o atomic.o
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=dwarf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/dwarf.c  -fPIC -DPIC -o dwarf.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=fileline.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o fileline.lo $HOME/tos-node-health-c06/third-party/libbacktrace/fileline.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=fileline.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/fileline.c  -fPIC -DPIC -o fileline.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=posix.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o posix.lo $HOME/tos-node-health-c06/third-party/libbacktrace/posix.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=posix.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/posix.c  -fPIC -DPIC -o posix.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=print.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o print.lo $HOME/tos-node-health-c06/third-party/libbacktrace/print.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=print.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/print.c  -fPIC -DPIC -o print.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=sort.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o sort.lo $HOME/tos-node-health-c06/third-party/libbacktrace/sort.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=sort.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/sort.c  -fPIC -DPIC -o sort.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=state.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o state.lo $HOME/tos-node-health-c06/third-party/libbacktrace/state.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=state.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/state.c  -fPIC -DPIC -o state.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=backtrace.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o backtrace.lo $HOME/tos-node-health-c06/third-party/libbacktrace/backtrace.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=backtrace.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/backtrace.c  -fPIC -DPIC -o backtrace.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=simple.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o simple.lo $HOME/tos-node-health-c06/third-party/libbacktrace/simple.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=simple.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/simple.c  -fPIC -DPIC -o simple.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=elf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o elf.lo $HOME/tos-node-health-c06/third-party/libbacktrace/elf.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=elf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/elf.c  -fPIC -DPIC -o elf.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=mmapio.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o mmapio.lo $HOME/tos-node-health-c06/third-party/libbacktrace/mmapio.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=mmapio.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/mmapio.c  -fPIC -DPIC -o mmapio.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace    -funwind-tables -frandom-seed=mmap.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o mmap.lo $HOME/tos-node-health-c06/third-party/libbacktrace/mmap.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c06/third-party/libbacktrace -funwind-tables -frandom-seed=mmap.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c06/third-party/libbacktrace/mmap.c  -fPIC -DPIC -o mmap.o
+/bin/bash ./libtool  --tag=CC   --mode=link /usr/bin/clang-21 -funwind-tables -frandom-seed=libbacktrace.la -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2   -o libbacktrace.la -rpath $HOME/nhm-c06-build/libbacktrace/lib atomic.lo dwarf.lo fileline.lo posix.lo print.lo sort.lo state.lo backtrace.lo simple.lo elf.lo mmapio.lo mmap.lo 
 libtool: link: rm -fr  .libs/libbacktrace.a .libs/libbacktrace.la .libs/libbacktrace.lai
 libtool: link: /usr/bin/llvm-ar-21 --plugin /usr/lib/gcc/x86_64-linux-gnu/15/liblto_plugin.so cru .libs/libbacktrace.a  atomic.o dwarf.o fileline.o posix.o print.o sort.o state.o backtrace.o simple.o elf.o mmapio.o mmap.o
 libtool: link: /usr/bin/llvm-ranlib-21 .libs/libbacktrace.a
 libtool: link: ( cd ".libs" && rm -f "libbacktrace.la" && ln -s "../libbacktrace.la" "libbacktrace.la" )
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
+make[1]: Leaving directory '$HOME/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
 [20/1121] Performing install step for 'libbacktrace_external'
-make[1]: Entering directory '/home/tomi/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/libbacktrace/include'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/libbacktrace/lib'
- /usr/bin/install -c -m 644 /home/tomi/tos-node-health-c06/third-party/libbacktrace/backtrace.h backtrace-supported.h '/home/tomi/nhm-c06-build/libbacktrace/include'
- /bin/bash ./libtool   --mode=install /usr/bin/install -c   libbacktrace.la '/home/tomi/nhm-c06-build/libbacktrace/lib'
-libtool: install: /usr/bin/install -c .libs/libbacktrace.lai /home/tomi/nhm-c06-build/libbacktrace/lib/libbacktrace.la
-libtool: install: /usr/bin/install -c .libs/libbacktrace.a /home/tomi/nhm-c06-build/libbacktrace/lib/libbacktrace.a
-libtool: install: chmod 644 /home/tomi/nhm-c06-build/libbacktrace/lib/libbacktrace.a
-libtool: install: /usr/bin/llvm-ranlib-21 /home/tomi/nhm-c06-build/libbacktrace/lib/libbacktrace.a
-libtool: finish: PATH="/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/bin:/home/tomi/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg0JQ9YaR:/home/tomi/.codex/tmp/arg0/codex-arg0QZLP6G:/home/tomi/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg0XjWZLk:/home/tomi/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg0Gi4tjE:/home/tomi/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/bin:/home/tomi/.local/bin:/home/tomi/.local/share/pnpm:/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/.nvm/versions/node/v24.13.0/bin:/home/tomi/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/tomi/.foundry/bin:/sbin" ldconfig -n /home/tomi/nhm-c06-build/libbacktrace/lib
+make[1]: Entering directory '$HOME/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/libbacktrace/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/libbacktrace/lib'
+ /usr/bin/install -c -m 644 $HOME/tos-node-health-c06/third-party/libbacktrace/backtrace.h backtrace-supported.h '$HOME/nhm-c06-build/libbacktrace/include'
+ /bin/bash ./libtool   --mode=install /usr/bin/install -c   libbacktrace.la '$HOME/nhm-c06-build/libbacktrace/lib'
+libtool: install: /usr/bin/install -c .libs/libbacktrace.lai $HOME/nhm-c06-build/libbacktrace/lib/libbacktrace.la
+libtool: install: /usr/bin/install -c .libs/libbacktrace.a $HOME/nhm-c06-build/libbacktrace/lib/libbacktrace.a
+libtool: install: chmod 644 $HOME/nhm-c06-build/libbacktrace/lib/libbacktrace.a
+libtool: install: /usr/bin/llvm-ranlib-21 $HOME/nhm-c06-build/libbacktrace/lib/libbacktrace.a
+libtool: finish: PATH="/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0JQ9YaR:$HOME/.codex/tmp/arg0/codex-arg0QZLP6G:$HOME/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0XjWZLk:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0Gi4tjE:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.local/bin:$HOME/.local/share/pnpm:/usr/local/go/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:$HOME/.foundry/bin:/sbin" ldconfig -n $HOME/nhm-c06-build/libbacktrace/lib
 ----------------------------------------------------------------------
 Libraries have been installed in:
-   /home/tomi/nhm-c06-build/libbacktrace/lib
+   $HOME/nhm-c06-build/libbacktrace/lib
 
 If you ever happen to want to link against installed libraries
 in a given directory, LIBDIR, you must either use libtool, and
@@ -284,7 +284,7 @@ flag during linking and do at least one of the following:
 See any operating system documentation about shared libraries for
 more information, such as the ld(1) and ld.so(8) manual pages.
 ----------------------------------------------------------------------
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
+make[1]: Leaving directory '$HOME/nhm-c06-build/libbacktrace/src/libbacktrace_external-build'
 [21/1121] Completed 'libbacktrace_external'
 [22/1121] Building CXX object tddb/CMakeFiles/tddb.dir/td/db/MemoryKeyValue.cpp.o
 [23/1121] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/ChainBuffer.cpp.o
@@ -548,30 +548,30 @@ config.status: creating test/Makefile
 config.status: executing depfiles commands
 config.status: executing libtool commands
 Making clean in builds
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
 rm -rf .libs _libs
 rm -f *.lo
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
 Making clean in contrib
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
 rm -rf .libs _libs
 rm -f *.lo
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
 Making clean in dist-build
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
 rm -rf .libs _libs
 rm -f *.lo
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
 Making clean in src
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 Making clean in libsodium
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
 Making clean in include
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
 rm -rf .libs _libs
 rm -f *.lo
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
 rm -f  
 rm -f  libsodium.la
 rm -f ./so_locations
@@ -844,17 +844,17 @@ rm -f randombytes/sysrandom/*.lo
 rm -f sodium/*.o
 rm -f sodium/*.lo
 rm -f *.lo
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 rm -rf .libs _libs
 rm -f *.lo
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 Making clean in test
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
 Making clean in default
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
 rm -f  aead_aegis128l aead_aegis256 aead_aes256gcm aead_aes256gcm2 aead_chacha20poly1305 aead_chacha20poly13052 aead_xchacha20poly1305 auth auth2 auth3 auth5 auth6 auth7 box box2 box7 box8 box_easy box_easy2 box_seal box_seed chacha20 codecs core_keccak1600 core1 core2 core3 core4 core5 core6 ed25519_convert generichash generichash2 generichash3 hash hash3 ipcrypt kdf keygen kx metamorphic misuse onetimeauth onetimeauth2 onetimeauth7 pwhash_argon2i pwhash_argon2id randombytes scalarmult scalarmult2 scalarmult5 scalarmult6 scalarmult7 scalarmult8 secretbox secretbox2 secretbox7 secretbox8 secretbox_easy secretbox_easy2 secretstream_xchacha20poly1305 shorthash sign sodium_core sodium_utils sodium_version stream stream2 stream3 stream4 verify1 xof_shake128 xof_shake256 xof_turboshake128 xof_turboshake256 sodium_utils2 sodium_utils3 core_ed25519 core_ristretto255 kdf_hkdf pwhash_scrypt pwhash_scrypt_ll scalarmult_ed25519 scalarmult_ristretto255 siphashx24 xchacha20
 test -z "" || rm -f  aead_aegis128l aead_aegis256 aead_aes256gcm aead_aes256gcm2 aead_chacha20poly1305 aead_chacha20poly13052 aead_xchacha20poly1305 auth auth2 auth3 auth5 auth6 auth7 box box2 box7 box8 box_easy box_easy2 box_seal box_seed chacha20 codecs core_keccak1600 core1 core2 core3 core4 core5 core6 ed25519_convert generichash generichash2 generichash3 hash hash3 ipcrypt kdf keygen kx metamorphic misuse onetimeauth onetimeauth2 onetimeauth7 pwhash_argon2i pwhash_argon2id randombytes scalarmult scalarmult2 scalarmult5 scalarmult6 scalarmult7 scalarmult8 secretbox secretbox2 secretbox7 secretbox8 secretbox_easy secretbox_easy2 secretstream_xchacha20poly1305 shorthash sign sodium_core sodium_utils sodium_version stream stream2 stream3 stream4 verify1 xof_shake128 xof_shake256 xof_turboshake128 xof_turboshake256 sodium_utils2 sodium_utils3 core_ed25519 core_ristretto255 kdf_hkdf pwhash_scrypt pwhash_scrypt_ll scalarmult_ed25519 scalarmult_ristretto255 siphashx24 xchacha20
 rm -rf .libs _libs
@@ -863,37 +863,37 @@ rm -f  aead_aegis128l.log aead_aegis256.log aead_aes256gcm.log aead_aes256gcm2.l
 rm -f  aead_aegis128l.trs aead_aegis256.trs aead_aes256gcm.trs aead_aes256gcm2.trs aead_chacha20poly1305.trs aead_chacha20poly13052.trs aead_xchacha20poly1305.trs auth.trs auth2.trs auth3.trs auth5.trs auth6.trs auth7.trs box.trs box2.trs box7.trs box8.trs box_easy.trs box_easy2.trs box_seal.trs box_seed.trs chacha20.trs codecs.trs core_keccak1600.trs core1.trs core2.trs core3.trs core4.trs core5.trs core6.trs ed25519_convert.trs generichash.trs generichash2.trs generichash3.trs hash.trs hash3.trs ipcrypt.trs kdf.trs keygen.trs kx.trs metamorphic.trs misuse.trs onetimeauth.trs onetimeauth2.trs onetimeauth7.trs pwhash_argon2i.trs pwhash_argon2id.trs randombytes.trs scalarmult.trs scalarmult2.trs scalarmult5.trs scalarmult6.trs scalarmult7.trs scalarmult8.trs secretbox.trs secretbox2.trs secretbox7.trs secretbox8.trs secretbox_easy.trs secretbox_easy2.trs secretstream_xchacha20poly1305.trs shorthash.trs sign.trs sodium_core.trs sodium_utils.trs sodium_version.trs stream.trs stream2.trs stream3.trs stream4.trs verify1.trs xof_shake128.trs xof_shake256.trs xof_turboshake128.trs xof_turboshake256.trs sodium_utils2.trs sodium_utils3.trs core_ed25519.trs core_ristretto255.trs kdf_hkdf.trs pwhash_scrypt.trs pwhash_scrypt_ll.trs scalarmult_ed25519.trs scalarmult_ristretto255.trs siphashx24.trs xchacha20.trs
 rm -f  test-suite.log
 rm -f *.lo
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
 rm -rf .libs _libs
 rm -f *.lo
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src'
 rm -rf .libs _libs
 rm -f *.lo
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src'
 Making all in builds
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
 make[1]: Nothing to be done for 'all'.
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
 Making all in contrib
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
 make[1]: Nothing to be done for 'all'.
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
 Making all in dist-build
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
 make[1]: Nothing to be done for 'all'.
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
 Making all in src
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 Making all in libsodium
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
 Making all in include
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
 make[3]: Nothing to be done for 'all'.
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
   CC       crypto_shorthash/siphash24/libsodium_la-shorthash_siphashx24.lo
   CC       crypto_shorthash/siphash24/ref/libsodium_la-shorthash_siphashx24_ref.lo
   CC       crypto_sign/ed25519/ref10/libsodium_la-obsolete.lo
@@ -1044,77 +1044,77 @@ libtool: warning: '-version-info/-version-number' is ignored for convenience lib
   CCLD     librdrand.la
 libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
   CCLD     libsodium.la
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 make[2]: Nothing to be done for 'all-am'.
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 Making all in test
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
 Making all in default
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
 make[2]: Nothing to be done for 'all'.
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
 make[2]: Nothing to be done for 'all-am'.
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src'
 make[1]: Nothing to be done for 'all-am'.
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src'
 Making install in builds
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
 make[2]: Nothing to be done for 'install-exec-am'.
 make[2]: Nothing to be done for 'install-data-am'.
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/builds'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/builds'
 Making install in contrib
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
 make[2]: Nothing to be done for 'install-exec-am'.
 make[2]: Nothing to be done for 'install-data-am'.
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/contrib'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/contrib'
 Making install in dist-build
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
 make[2]: Nothing to be done for 'install-exec-am'.
 make[2]: Nothing to be done for 'install-data-am'.
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/dist-build'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/dist-build'
 Making install in src
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 Making install in libsodium
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
 Making install in include
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
-make[4]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[4]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
 make[4]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/include'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/include/sodium'
- /usr/bin/install -c -m 644  sodium/core.h sodium/crypto_aead_aes256gcm.h sodium/crypto_aead_aegis128l.h sodium/crypto_aead_aegis256.h sodium/crypto_aead_chacha20poly1305.h sodium/crypto_aead_xchacha20poly1305.h sodium/crypto_auth.h sodium/crypto_auth_hmacsha256.h sodium/crypto_auth_hmacsha512.h sodium/crypto_auth_hmacsha512256.h sodium/crypto_box.h sodium/crypto_box_curve25519xchacha20poly1305.h sodium/crypto_box_curve25519xsalsa20poly1305.h sodium/crypto_core_ed25519.h sodium/crypto_core_ristretto255.h sodium/crypto_core_hchacha20.h sodium/crypto_core_hsalsa20.h sodium/crypto_core_keccak1600.h sodium/crypto_core_salsa20.h sodium/crypto_core_salsa2012.h sodium/crypto_core_salsa208.h sodium/crypto_generichash.h sodium/crypto_generichash_blake2b.h sodium/crypto_hash.h sodium/crypto_hash_sha256.h sodium/crypto_hash_sha512.h sodium/crypto_ipcrypt.h sodium/crypto_kdf.h sodium/crypto_kdf_hkdf_sha256.h sodium/crypto_kdf_hkdf_sha512.h sodium/crypto_kdf_blake2b.h sodium/crypto_kx.h sodium/crypto_onetimeauth.h sodium/crypto_onetimeauth_poly1305.h sodium/crypto_pwhash.h sodium/crypto_pwhash_argon2i.h sodium/crypto_pwhash_argon2id.h sodium/crypto_pwhash_scryptsalsa208sha256.h sodium/crypto_scalarmult.h sodium/crypto_scalarmult_curve25519.h '/home/tomi/nhm-c06-build/third-party/sodium/include/sodium'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/include/sodium'
- /usr/bin/install -c -m 644  sodium/crypto_scalarmult_ed25519.h sodium/crypto_scalarmult_ristretto255.h sodium/crypto_secretbox.h sodium/crypto_secretbox_xchacha20poly1305.h sodium/crypto_secretbox_xsalsa20poly1305.h sodium/crypto_secretstream_xchacha20poly1305.h sodium/crypto_shorthash.h sodium/crypto_shorthash_siphash24.h sodium/crypto_sign.h sodium/crypto_sign_ed25519.h sodium/crypto_sign_edwards25519sha512batch.h sodium/crypto_stream.h sodium/crypto_stream_chacha20.h sodium/crypto_stream_salsa20.h sodium/crypto_stream_salsa2012.h sodium/crypto_stream_salsa208.h sodium/crypto_stream_xchacha20.h sodium/crypto_stream_xsalsa20.h sodium/crypto_verify_16.h sodium/crypto_verify_32.h sodium/crypto_verify_64.h sodium/crypto_xof_shake128.h sodium/crypto_xof_shake256.h sodium/crypto_xof_turboshake128.h sodium/crypto_xof_turboshake256.h sodium/export.h sodium/randombytes.h sodium/randombytes_internal_random.h sodium/randombytes_sysrandom.h sodium/runtime.h sodium/utils.h '/home/tomi/nhm-c06-build/third-party/sodium/include/sodium'
- /usr/bin/install -c -m 644  sodium.h '/home/tomi/nhm-c06-build/third-party/sodium/include/.'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/include'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/include/sodium'
- /usr/bin/install -c -m 644  sodium/version.h '/home/tomi/nhm-c06-build/third-party/sodium/include/sodium'
-make[4]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[4]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/lib'
- /bin/bash ../../libtool   --mode=install /usr/bin/install -c   libsodium.la '/home/tomi/nhm-c06-build/third-party/sodium/lib'
-libtool: install: /usr/bin/install -c .libs/libsodium.lai /home/tomi/nhm-c06-build/third-party/sodium/lib/libsodium.la
-libtool: install: /usr/bin/install -c .libs/libsodium.a /home/tomi/nhm-c06-build/third-party/sodium/lib/libsodium.a
-libtool: install: chmod 644 /home/tomi/nhm-c06-build/third-party/sodium/lib/libsodium.a
-libtool: install: /usr/bin/llvm-ranlib-21 /home/tomi/nhm-c06-build/third-party/sodium/lib/libsodium.a
-libtool: finish: PATH="/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/bin:/home/tomi/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg0JQ9YaR:/home/tomi/.codex/tmp/arg0/codex-arg0QZLP6G:/home/tomi/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg0XjWZLk:/home/tomi/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/home/tomi/.codex/tmp/arg0/codex-arg0Gi4tjE:/home/tomi/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/bin:/home/tomi/.local/bin:/home/tomi/.local/share/pnpm:/usr/local/go/bin:/home/tomi/.local/bin:/home/tomi/.nvm/versions/node/v24.13.0/bin:/home/tomi/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/home/tomi/.foundry/bin:/sbin" ldconfig -n /home/tomi/nhm-c06-build/third-party/sodium/lib
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium/core.h sodium/crypto_aead_aes256gcm.h sodium/crypto_aead_aegis128l.h sodium/crypto_aead_aegis256.h sodium/crypto_aead_chacha20poly1305.h sodium/crypto_aead_xchacha20poly1305.h sodium/crypto_auth.h sodium/crypto_auth_hmacsha256.h sodium/crypto_auth_hmacsha512.h sodium/crypto_auth_hmacsha512256.h sodium/crypto_box.h sodium/crypto_box_curve25519xchacha20poly1305.h sodium/crypto_box_curve25519xsalsa20poly1305.h sodium/crypto_core_ed25519.h sodium/crypto_core_ristretto255.h sodium/crypto_core_hchacha20.h sodium/crypto_core_hsalsa20.h sodium/crypto_core_keccak1600.h sodium/crypto_core_salsa20.h sodium/crypto_core_salsa2012.h sodium/crypto_core_salsa208.h sodium/crypto_generichash.h sodium/crypto_generichash_blake2b.h sodium/crypto_hash.h sodium/crypto_hash_sha256.h sodium/crypto_hash_sha512.h sodium/crypto_ipcrypt.h sodium/crypto_kdf.h sodium/crypto_kdf_hkdf_sha256.h sodium/crypto_kdf_hkdf_sha512.h sodium/crypto_kdf_blake2b.h sodium/crypto_kx.h sodium/crypto_onetimeauth.h sodium/crypto_onetimeauth_poly1305.h sodium/crypto_pwhash.h sodium/crypto_pwhash_argon2i.h sodium/crypto_pwhash_argon2id.h sodium/crypto_pwhash_scryptsalsa208sha256.h sodium/crypto_scalarmult.h sodium/crypto_scalarmult_curve25519.h '$HOME/nhm-c06-build/third-party/sodium/include/sodium'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium/crypto_scalarmult_ed25519.h sodium/crypto_scalarmult_ristretto255.h sodium/crypto_secretbox.h sodium/crypto_secretbox_xchacha20poly1305.h sodium/crypto_secretbox_xsalsa20poly1305.h sodium/crypto_secretstream_xchacha20poly1305.h sodium/crypto_shorthash.h sodium/crypto_shorthash_siphash24.h sodium/crypto_sign.h sodium/crypto_sign_ed25519.h sodium/crypto_sign_edwards25519sha512batch.h sodium/crypto_stream.h sodium/crypto_stream_chacha20.h sodium/crypto_stream_salsa20.h sodium/crypto_stream_salsa2012.h sodium/crypto_stream_salsa208.h sodium/crypto_stream_xchacha20.h sodium/crypto_stream_xsalsa20.h sodium/crypto_verify_16.h sodium/crypto_verify_32.h sodium/crypto_verify_64.h sodium/crypto_xof_shake128.h sodium/crypto_xof_shake256.h sodium/crypto_xof_turboshake128.h sodium/crypto_xof_turboshake256.h sodium/export.h sodium/randombytes.h sodium/randombytes_internal_random.h sodium/randombytes_sysrandom.h sodium/runtime.h sodium/utils.h '$HOME/nhm-c06-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium.h '$HOME/nhm-c06-build/third-party/sodium/include/.'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium/version.h '$HOME/nhm-c06-build/third-party/sodium/include/sodium'
+make[4]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[4]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/lib'
+ /bin/bash ../../libtool   --mode=install /usr/bin/install -c   libsodium.la '$HOME/nhm-c06-build/third-party/sodium/lib'
+libtool: install: /usr/bin/install -c .libs/libsodium.lai $HOME/nhm-c06-build/third-party/sodium/lib/libsodium.la
+libtool: install: /usr/bin/install -c .libs/libsodium.a $HOME/nhm-c06-build/third-party/sodium/lib/libsodium.a
+libtool: install: chmod 644 $HOME/nhm-c06-build/third-party/sodium/lib/libsodium.a
+libtool: install: /usr/bin/llvm-ranlib-21 $HOME/nhm-c06-build/third-party/sodium/lib/libsodium.a
+libtool: finish: PATH="/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0JQ9YaR:$HOME/.codex/tmp/arg0/codex-arg0QZLP6G:$HOME/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0XjWZLk:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0Gi4tjE:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.local/bin:$HOME/.local/share/pnpm:/usr/local/go/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:$HOME/.foundry/bin:/sbin" ldconfig -n $HOME/nhm-c06-build/third-party/sodium/lib
 ----------------------------------------------------------------------
 Libraries have been installed in:
-   /home/tomi/nhm-c06-build/third-party/sodium/lib
+   $HOME/nhm-c06-build/third-party/sodium/lib
 
 If you ever happen to want to link against installed libraries
 in a given directory, LIBDIR, you must either use libtool, and
@@ -1131,39 +1131,39 @@ See any operating system documentation about shared libraries for
 more information, such as the ld(1) and ld.so(8) manual pages.
 ----------------------------------------------------------------------
 make[4]: Nothing to be done for 'install-data-am'.
-make[4]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src/libsodium'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[4]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 make[3]: Nothing to be done for 'install-exec-am'.
 make[3]: Nothing to be done for 'install-data-am'.
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/src'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/src'
 Making install in test
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
 Making install in default
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
 make[3]: Nothing to be done for 'install-exec-am'.
 make[3]: Nothing to be done for 'install-data-am'.
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test/default'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[3]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[3]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
 make[3]: Nothing to be done for 'install-exec-am'.
 make[3]: Nothing to be done for 'install-data-am'.
-make[3]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src/test'
-make[1]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
-make[2]: Entering directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
+make[3]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src'
+make[2]: Entering directory '$HOME/nhm-c06-build/third-party/sodium/src'
 make[2]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/tomi/nhm-c06-build/third-party/sodium/lib/pkgconfig'
- /usr/bin/install -c -m 644 libsodium.pc '/home/tomi/nhm-c06-build/third-party/sodium/lib/pkgconfig'
-make[2]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
-make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
+ /usr/bin/mkdir -p '$HOME/nhm-c06-build/third-party/sodium/lib/pkgconfig'
+ /usr/bin/install -c -m 644 libsodium.pc '$HOME/nhm-c06-build/third-party/sodium/lib/pkgconfig'
+make[2]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src'
+make[1]: Leaving directory '$HOME/nhm-c06-build/third-party/sodium/src'
 [32/1121] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/charged_cache.cc.o
 [33/1121] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/clock_cache.cc.o
 [34/1121] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/compressed_secondary_cache.cc.o
@@ -1809,9 +1809,9 @@ make[1]: Leaving directory '/home/tomi/nhm-c06-build/third-party/sodium/src'
 [674/1121] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_jni_h.cpp.o
 [675/1121] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_jni_cpp.cpp.o
 [676/1121] Linking CXX executable tl/generate/generate_common
-[677/1121] Generating /home/tomi/tos-node-health-c06/tl/generate/scheme/tos_api.tlo
-[678/1121] Generating /home/tomi/tos-node-health-c06/tl/generate/scheme/lite_api.tlo
-[679/1121] Generating /home/tomi/tos-node-health-c06/tl/generate/scheme/toslib_api.tlo
+[677/1121] Generating $HOME/tos-node-health-c06/tl/generate/scheme/tos_api.tlo
+[678/1121] Generating $HOME/tos-node-health-c06/tl/generate/scheme/lite_api.tlo
+[679/1121] Generating $HOME/tos-node-health-c06/tl/generate/scheme/toslib_api.tlo
 [680/1121] Generate common tl source files
 Write tl to file auto/tl/tos_api.cpp
 Write tl to file auto/tl/tos_api.h
@@ -1984,57 +1984,57 @@ Write tl to file auto/tl/toslib_api.hpp
 [840/1121] Linking C static library crypto/pq/libtos_pq_consensus_signer_backend.a
 [841/1121] Building CXX object crypto/CMakeFiles/func.dir/func/func.cpp.o
 [842/1121] Linking CXX executable crypto/func
-[843/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.fif
-[844/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.fif
-[845/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[843/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.fif
+[844/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[845/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet-code.cpp
 [846/1121] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
-[847/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.fif
+[847/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.fif
 [848/1121] Building CXX object crypto/pq/CMakeFiles/tos_pq_consensus_signer.dir/consensus-pq-signer.cpp.o
-[849/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.fif
-[850/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/agent-account-code.fif
+[849/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.fif
+[850/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/agent-account-code.fif
 [851/1121] Compile FunC stdlib TVM v6 fee primitive coverage
-[852/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.cpp
-[853/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-code.fif
-[854/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-code.cpp
-[855/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet3-code.fif
-[856/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet3-code.cpp
-[857/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/config-code.fif
-[858/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.fif
-[859/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.cpp
-[860/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/config-code.cpp
-[861/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.fif
-[862/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.fif
-[863/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.cpp
-[864/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.cpp
-[865/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
-[866/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
-[867/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/multisig-code.fif
-[868/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/elector-code.fif
-[869/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/multisig-code.cpp
-[870/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.fif
-[871/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
-[872/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/elector-code.cpp
-[873/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.fif
-[874/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.cpp
-[875/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
-[876/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.fif
-[877/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.cpp
+[852/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[853/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-code.fif
+[854/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-code.cpp
+[855/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet3-code.fif
+[856/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet3-code.cpp
+[857/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/config-code.fif
+[858/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.fif
+[859/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[860/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/config-code.cpp
+[861/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.fif
+[862/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.fif
+[863/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[864/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[865/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[866/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[867/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/multisig-code.fif
+[868/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/elector-code.fif
+[869/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/multisig-code.cpp
+[870/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[871/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[872/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/elector-code.cpp
+[873/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[874/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/session-wallet-code.cpp
+[875/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[876/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.fif
+[877/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/task-escrow-code.cpp
 [878/1121] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
 NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
 NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
 [879/1121] Verify and embed the frozen TOS Native Service Registry BOC
-[880/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/agent-account-code.cpp
-[881/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.fif
-[882/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.cpp
-[883/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.fif
-[884/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.cpp
-[885/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.cpp
-[886/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.fif
-[887/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.fif
-[888/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.cpp
-[889/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.cpp
-[890/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
-[891/1121] Generate /home/tomi/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[880/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/agent-account-code.cpp
+[881/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[882/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[883/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.fif
+[884/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/prediction-market-code.cpp
+[885/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-manual-code.cpp
+[886/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.fif
+[887/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.fif
+[888/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/dns-auto-code.cpp
+[889/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/payment-channel-code.cpp
+[890/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[891/1121] Generate $HOME/nhm-c06-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
 [892/1121] Building CXX object crypto/pq/CMakeFiles/tos_pq_consensus_signer.dir/consensus-key-file.cpp.o
 [893/1121] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClient.cpp.o
 [894/1121] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o

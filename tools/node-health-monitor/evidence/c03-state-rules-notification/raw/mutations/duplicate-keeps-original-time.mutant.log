@@ -1,9 +1,9 @@
 $ cargo test --locked -p tos-health-services --test durable immutable_sequence_survives_restart_and_late_arrival -- --exact
 source_sha256=1b912a96c1871cf35a4bc3341aa82b6eae239ada36c9e9ef64c22c81fde6b5e9
 timeout_seconds=180
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 7.17s
-     Running tests/durable.rs (/home/tomi/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
+     Running tests/durable.rs ($HOME/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
 
 running 1 test
 test immutable_sequence_survives_restart_and_late_arrival ... FAILED

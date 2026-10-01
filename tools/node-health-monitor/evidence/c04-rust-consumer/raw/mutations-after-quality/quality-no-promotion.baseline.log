@@ -1,7 +1,7 @@
 $ cargo test --locked -p tos-health-core --test native_v2_contract overall_quality_may_degrade_but_cannot_promote_incomplete_components -- --exact
 source_sha256=a080f982f1cdb8d47091790acc9d91ac63d3056d44da2cb921472cc775a6d1aa
 timeout_seconds=120
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 4.46s
      Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-4dbc563f937d6516)
 

@@ -6,7 +6,7 @@ This follow-up to `PROJECTION-HEALTH-WITNESS.md` closes a review gap in the **no
 
 The existing integration tests still exercise page-atomic durable parent insertion before cursor advancement, replay after a crash, a >4096 historical catch-up with one new delta, refusal of new grants while a page remains, a grant frozen at the caught-up M snapshot W, retained-parent body/hash/tuple/quarantine revalidation on import and restart, and M replacement refusal. The new direct SQLite control changes persisted cursor columns after creation and requires bad network, bad hash, and anchor beyond W to fail on **load**; it also attempts a cursor-only new anchor without a retained Q parent and requires refusal. This is a scoped code/test closure, not a production/72-hour or AURA availability acceptance.
 
-Restored SHA-256: `src/query_ledger.rs` `be79ab4d62581b0b9d4e74dc0c4f745854c01f4ecf13cc66e38e8aae28fe0f5d`; `tests/manager_query_source.rs` `256788fcc7e26d5d2946aafa265f7ab236b0d52375fd48bc2b29fe2a52bd641e` (both under `crates/health-services/`). Raw logs under `/home/tomi/nhm-c08-mcp-evidence/`:
+Restored SHA-256: `src/query_ledger.rs` `be79ab4d62581b0b9d4e74dc0c4f745854c01f4ecf13cc66e38e8aae28fe0f5d`; `tests/manager_query_source.rs` `256788fcc7e26d5d2946aafa265f7ab236b0d52375fd48bc2b29fe2a52bd641e` (both under `crates/health-services/`). Raw logs under `$HOME/nhm-c08-mcp-evidence/`:
 
 | Log | SHA-256 | Natural result |
 | --- | --- | --- |

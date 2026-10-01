@@ -1,1 +1,1 @@
-test: /home/tomi/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:24: int main(): Assertion `!p->emit(builder) && built == 4096 && stats.dropped == 1' failed.
+test: $HOME/tos-node-health-c06/tools/node-health-monitor/tests/native/diagnostic-producer.cpp:24: int main(): Assertion `!p->emit(builder) && built == 4096 && stats.dropped == 1' failed.

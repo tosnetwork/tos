@@ -11,13 +11,13 @@ Restored source SHA-256: `observability.rs` `c105cb2924c13da5ec1eeff79b68b9a43a5
 | Raw log in `raw/projection-transition/` | SHA-256 | Result |
 | --- | --- | --- |
 | `baseline.log` | `8bfdcbc0c9f405c8095c0ae4a80807655b979f19df55562e3ed98379cb4dfbcd` | focused Rust 1/1 exit 0 |
-| `skip-double-sample-mutant.log` | `beecf144257dea61ab70b88445f063198c691fd1e49082a786dfe81b80531ec8` | compiled intended assertion exit 101 |
-| `restored.log` | `907234e3fbb7c5acbbfcfdc4c8c348a9f8780beebd68667be841b961990560ca` | restored Rust 1/1 exit 0 |
-| `manager-query-source.log` | `59cf1f57570ff8f92dc8b5f169e8673984f077ee34de235c573b208091b9b159` | 20 passed; 2 opt-in ignored |
-| `services-package.log` | `1ed1b4913770517260bee5914c03c30a6cab285c19028b85ba92b81e8b8fd50e` | locked `tos-health-services` package: 153 passed, 5 opt-in ignored, natural exit 0 |
+| `skip-double-sample-mutant.log` | `a95be9be5675e25b2551bb112707ce06a50ccdfbb1fdb3c3a019c85bcbe1fa41` | compiled intended assertion exit 101 |
+| `restored.log` | `3d5aadafa3362b410395b9240a9e8266b21e113e632a8758c0bbae3a99e1dab9` | restored Rust 1/1 exit 0 |
+| `manager-query-source.log` | `5cd18b5af19beae4d5c99736fb1d347b8179c689cfbbf466c35d22772705250a` | 20 passed; 2 opt-in ignored |
+| `services-package.log` | `9938cd95438fa5260985a2f637cebe4f74fc344047cb17813ba0a5df33621a74` | locked `tos-health-services` package: 153 passed, 5 opt-in ignored, natural exit 0 |
 | `python-probe-final.log` | `eedf0edb1656eb0a0f2ac31848a7b29b2f34a632e689bab263b2d49d203c097a` | four Unix mock receiver controls passed, including transition 503/200 negative |
 | `live-readonly-double-sample.log` | `8818776cc9a6faa3b1b869a61afafd7c51584cdd172572861aa27cc30ac4bb68` | opt-in read-only M/disposable Q: 108 pages, max page 655 ms, peak 2,479 parents, source-read grant max 6 ms, late Data-lock combined control max 2 ms, caught-up grant/revoke 200, natural exit 0 |
-| `clippy.log` | `62164c2e8989b5a7af6f5e40bf4f5c2cc45c9e7e276d45a8d0e34b9bebce4cc7` | `cargo clippy --locked -p tos-health-services --all-targets -- -D warnings`, exit 0 |
+| `clippy.log` | `948ccf0cb7487f511850ee0d6259de08e27582485ac9c810eff6cb0c7969e386` | `cargo clippy --locked -p tos-health-services --all-targets -- -D warnings`, exit 0 |
 
 `cargo fmt --check` and `git diff --check` also exited 0. Intermediate Python logs are retained as source-change lineage but are not substituted for the final parser test. The classifier mutation and live router normal/conflict controls do not constitute a deterministic real-handler race injection or a full Unix socket/import overlap test. C09 acceptance, continuous broker latency, retention/backup/restore, sampler continuity, and 72-hour soak remain open.
 

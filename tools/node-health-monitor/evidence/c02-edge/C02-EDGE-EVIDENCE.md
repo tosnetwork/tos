@@ -65,7 +65,7 @@ snapshot refusal assertion and its raw test receipts.
   Its binary SHA-256 is
   `774720bb86cbb42f9ca932b569f2c533c9c7e688af5198d9eabd5c04e5061df0`;
   the external raw log is
-  `/home/tomi/nhm-supervision/c02-independent-ingress.log`, SHA-256
+  `$HOME/nhm-supervision/c02-independent-ingress.log`, SHA-256
   `236a1b5015e026efac3cd95133f696ca73e99a89db47065feb9cf67fac5f11b7`.
   The supervisor also independently ran the restored contract checker at exit
   0. These are independent review receipts, not production acceptance.

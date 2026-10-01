@@ -1,5 +1,5 @@
 [0/1] Re-running CMake...
--- Use openssl: /home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a
+-- Use openssl: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a
 Add rocksdb
 -- CMAKE_BUILD_TYPE is set to Release
 -- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
@@ -9,8 +9,8 @@ Add rocksdb
 -- JNI library is disabled
 Add abseil-cpp
 Add crc32c
-Add ngtcp2 with custom OpenSSL from /home/tomi/nhm-c04-build/third-party/openssl
--- Found OpenSSL: /home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found suitable version "3.5.5", minimum required is "1.1.1")  
+Add ngtcp2 with custom OpenSSL from $HOME/nhm-c04-build/third-party/openssl
+-- Found OpenSSL: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found suitable version "3.5.5", minimum required is "1.1.1")  
 -- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
 -- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
 -- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
@@ -43,7 +43,7 @@ CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
     Test:
       Build Test:     OFF
     Libs:
-      OpenSSL:        TRUE (LIBS='/home/tomi/nhm-c04-build/third-party/openssl/lib/libssl.a;/home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a;dl')
+      OpenSSL:        TRUE (LIBS='$HOME/nhm-c04-build/third-party/openssl/lib/libssl.a;$HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a;dl')
       Libev:          FALSE (LIBS='')
       Libnghttp3:     FALSE (LIBS='')
       GnuTLS:         FALSE (LIBS='')
@@ -56,23 +56,23 @@ CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
 
 Add tl-parser
 Add tos
--- Use Secp256k1: /home/tomi/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a
--- Building libbacktrace from: /home/tomi/tos-node-health-c04/third-party/libbacktrace
--- Using preconfigured zlib: /home/tomi/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Use Secp256k1: $HOME/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a
+-- Building libbacktrace from: $HOME/tos-node-health-c04/third-party/libbacktrace
+-- Using preconfigured zlib: $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
 -- Using ccache
--- Using zlib /home/tomi/nhm-c04-build/third-party/zlib/lib/libz.a
--- Found ZLIB: /home/tomi/nhm-c04-build/third-party/zlib/include /home/tomi/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Using zlib $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Found ZLIB: $HOME/nhm-c04-build/third-party/zlib/include $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
 -- Using libbacktrace for enhanced stack traces
--- Found LZ4 /home/tomi/nhm-c04-build/third-party/lz4/lib/liblz4.a /home/tomi/tos-node-health-c04/third-party/lz4/lib
+-- Found LZ4 $HOME/nhm-c04-build/third-party/lz4/lib/liblz4.a $HOME/tos-node-health-c04/third-party/lz4/lib
 -- Checking for module 'benchmark'
 --   No package 'benchmark' found
 -- Google Benchmark not found via pkg-config - gbench-coro target disabled
 -- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
--- Using Sodium /home/tomi/nhm-c04-build/third-party/sodium/lib/libsodium.a
--- Found OpenSSL: /home/tomi/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found version "3.5.5") found components: Crypto 
+-- Using Sodium $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.a
+-- Found OpenSSL: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found version "3.5.5") found components: Crypto 
 -- Configuring done
 -- Generating done
--- Build files have been written to: /home/tomi/nhm-c04-build
+-- Build files have been written to: $HOME/nhm-c04-build
 [1/25] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
 [2/25] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
 [3/25] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o

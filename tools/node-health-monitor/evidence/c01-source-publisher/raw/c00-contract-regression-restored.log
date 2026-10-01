@@ -1,8 +1,8 @@
 Using Python 3.14.4 environment at: tools/node-health-monitor/.contract-venv
 Checked 17 packages in 1ms
 PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 2.71s
      Running tests/http.rs (tools/node-health-monitor/target/debug/deps/http-15f8b4e229fe1bc0)
 
@@ -21,8 +21,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; fin
 
 PASS: 20 closed schemas; six tool input/error fixtures; six actual handler successes; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
 PASS: production doctor refused 11 unverified gates (exit nonzero)
-   Compiling tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
      Running unittests src/lib.rs (tools/node-health-monitor/target/debug/deps/tos_health_core-e3e7906239b52817)
 

@@ -1,6 +1,6 @@
 $ cargo test --locked -p tos-health-services --test native_typed scheduler_skips_a_tick_missed_by_a_slow_source -- --exact
 timeout_seconds=120
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 1.49s
      Running tests/native_typed.rs (target/debug/deps/native_typed-fd36cf6a67d44c91)
 

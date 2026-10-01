@@ -11,7 +11,7 @@ Changed-property sensitivity: a temporary compiled mutant removed **both** the `
 Run from `tools/node-health-monitor`:
 
 ```sh
-CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build cargo test --locked -j2 \
+CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build cargo test --locked -j2 \
   -p tos-health-services --test manager_query_source \
   ordinary_m_appends_deny_grants_between_fifteen_second_imports \
   -- --exact --ignored --nocapture

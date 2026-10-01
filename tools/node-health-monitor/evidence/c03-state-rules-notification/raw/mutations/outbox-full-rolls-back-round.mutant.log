@@ -1,9 +1,9 @@
 $ cargo test --locked -p tos-health-services --test durable outbox_capacity_failure_cannot_advance_recovery_or_sequence -- --exact
 source_sha256=ae2cc2af0ab765d625e5c1bfcbe377f6d2a1235c94a18ba1c2a6cd1a709bb8fe
 timeout_seconds=180
-   Compiling tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 7.37s
-     Running tests/durable.rs (/home/tomi/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
+     Running tests/durable.rs ($HOME/nhm-c03-build/debug/deps/durable-515941bfd7a5a2bd)
 
 running 1 test
 test outbox_capacity_failure_cannot_advance_recovery_or_sequence ... FAILED

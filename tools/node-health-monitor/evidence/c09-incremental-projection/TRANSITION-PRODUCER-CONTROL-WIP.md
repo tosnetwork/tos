@@ -2,9 +2,9 @@
 
 Base `ef37b387ee308186d957f9f6455cd3eb2415ec0e`. This is a test-only interleaving hook in `observability.rs` (`#[cfg(test)]`), not a production-path change. It is **not integrated or deployed**. The running Q binary, runtime sampler pin, M/Q files and services were not changed.
 
-Restored source SHA-256 `3ed2bb2d8961307161e9903d611d24754e64f8fa995d403c544c54fe0ca3b350`; restored unit-test executable SHA-256 `61decee2e321b5f5b792c929829ab99b5b2403aa57ca7499bef09da24a00acb6` in the isolated `/home/tomi/nhm-c09-anchor-build`. The hook changes `manager_caught_up` between the real private route's first and second Data/Q samples. It does **not** claim to execute a complete concurrent importer.
+Restored source SHA-256 `3ed2bb2d8961307161e9903d611d24754e64f8fa995d403c544c54fe0ca3b350`; restored unit-test executable SHA-256 `61decee2e321b5f5b792c929829ab99b5b2403aa57ca7499bef09da24a00acb6` in the isolated `$HOME/nhm-c09-anchor-build`. The hook changes `manager_caught_up` between the real private route's first and second Data/Q samples. It does **not** claim to execute a complete concurrent importer.
 
-Command: `CARGO_TARGET_DIR=/home/tomi/nhm-c09-anchor-build cargo test --locked -j2 -p tos-health-services --lib private_route_transition_is_a_503_not_a_caught_up_sample -- --nocapture`.
+Command: `CARGO_TARGET_DIR=$HOME/nhm-c09-anchor-build cargo test --locked -j2 -p tos-health-services --lib private_route_transition_is_a_503_not_a_caught_up_sample -- --nocapture`.
 
 - Baseline and restored runs: natural exit 0, one matching test passed. Actual route status 503 and exact JSON body:
 

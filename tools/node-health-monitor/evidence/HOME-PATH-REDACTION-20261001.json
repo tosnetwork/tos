@@ -1,0 +1,3207 @@
+{
+ "what": "the operator's absolute home directory replaced by $HOME; every pin of a rewritten file re-pinned to its new hash and size",
+ "with": "$HOME",
+ "rounds": 10,
+ "files": [
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/C00-CLOSURE-EVIDENCE.md",
+   "original_sha256": "7729ed36414ed9452995704ae50d5b994253f352dec2cd7575c8371f7f157fef",
+   "original_bytes": 5181,
+   "sha256": "04e834c9097fd8ab86b6ed110f434deef1b2ee74990d81e98067723ec34a19eb",
+   "bytes": 5176
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/evidence-index.json",
+   "original_sha256": "996029392df259888e8675e15329afb851ad74006c5eac2d3f96e5f278f54262",
+   "original_bytes": 2862,
+   "sha256": "7c4e8a9ef98cd57cdd41566a8dd9c8117255e777079b3f04c99704a0a8389200",
+   "bytes": 2857
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/final-clippy.log",
+   "original_sha256": "06c3ea646007cd9a6590376350af4da7dcbba6c9a9eec91c104e103a10c8eac5",
+   "original_bytes": 449,
+   "sha256": "ac22c2e38ae193199459a6d6ddaa987deae73ae9b7f3dbdb49295ee291b2ad03",
+   "bytes": 439
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/coverage-gap-union.baseline.log",
+   "original_sha256": "323c7b59e85b32bc5180f7fe779bd06f35f8299412f65e7efb7614d03d8fc2ec",
+   "original_bytes": 738,
+   "sha256": "db54017a2acf4db11f2ac749b21ff18f10036c268265d50ff29a3915ce9525be",
+   "bytes": 728
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/coverage-gap-union.mutant.log",
+   "original_sha256": "01f7ed69890f6d96cf044265ff5a00a0f03efbf3e79af72f801aad4f956b1204",
+   "original_bytes": 1297,
+   "sha256": "7c583dc04039a1e208c5b39b2b93ee6fb07a9a21360f0f6f4b58ec4b8a91ecdf",
+   "bytes": 1287
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/derived-lineage.baseline.log",
+   "original_sha256": "250f970c6dc4a2979040793f853aa8e9495422a56fe3249006ec651a0f51d9a1",
+   "original_bytes": 738,
+   "sha256": "fc2e65f554ff183ab9f8fba6d114848fd2950ff7feb4dd936aa3944b55edbb58",
+   "bytes": 728
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/derived-lineage.mutant.log",
+   "original_sha256": "2f7f5174ae587be47bb03a423dd5fc641edf55fd7a53b65f21af25db38820f4a",
+   "original_bytes": 1261,
+   "sha256": "6e89a9f0b0980d25788be7b9804f593d94014e319d9a9635a2ada9db82a6b012",
+   "bytes": 1251
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/metric-metadata.baseline.log",
+   "original_sha256": "564b596c72fc802e90d76ad215a1895feccc33173f613a1a8ff1cbab338a5e58",
+   "original_bytes": 738,
+   "sha256": "8e6e5832eeb39100fe95bd5dc0a8bbedce9918a82f16418fd795d97d8dea661c",
+   "bytes": 728
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/metric-metadata.mutant.log",
+   "original_sha256": "4d84ac536c86f69d5161d314eedfdb5b8d75b12a113626e65cdad6d42403b97d",
+   "original_bytes": 1261,
+   "sha256": "b601fc4817c3d5a29f129800c820b847f81eaded6976fd8008d9370d435f0044",
+   "bytes": 1251
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/network-genesis-shape.baseline.log",
+   "original_sha256": "cefb7491959c1f10e53a3a94fa7c565f12ad3a291c0521cfb93f9e83e37a4345",
+   "original_bytes": 698,
+   "sha256": "42b031507208d63840ef5e98363c013817bb47cb89cc11e33041474a0aac47ad",
+   "bytes": 688
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/network-genesis-shape.mutant.log",
+   "original_sha256": "82cb47eb4350d4c09d78b5353deed6b4e70902e038ec5e4b4d9037fa274d0730",
+   "original_bytes": 1037,
+   "sha256": "9589f09f088269dd2ab75f313a0823786f79aa91ee68945c7f3a2608c8a9fdfe",
+   "bytes": 1032
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/payload-content-hash.baseline.log",
+   "original_sha256": "d369cc529d893e0da7a48a79a54483b97ee84f4d18c6eea13648721643e4f60c",
+   "original_bytes": 700,
+   "sha256": "f7ee8ee0544e7c6efb215836531f65f75e7f917f8fec1f4179f1911b7dee5bce",
+   "bytes": 690
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/payload-content-hash.mutant.log",
+   "original_sha256": "d8f4a5b701219f027ca8b21fe6bc9ed155bf86a5ba47a1c731c8560f67a6b244",
+   "original_bytes": 1758,
+   "sha256": "d7e3794beacf4364bf730a77e945467d862047c10baba429b825d6eaa56ebe61",
+   "bytes": 1748
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/payload-unknown-field.baseline.log",
+   "original_sha256": "5f2e2cec7f6960bf81a490a03101d8c7087f3788e734b598ec975089f8ba350e",
+   "original_bytes": 738,
+   "sha256": "779ae735163a09032d9b23655dbc458eb358bccbc8a028448858ad7c55ea18da",
+   "bytes": 728
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c00-closure/mutation-logs/payload-unknown-field.mutant.log",
+   "original_sha256": "6804870ea37a1f86d8ef04bb7d141e0c404b2285d8952704b39de2a366558dc8",
+   "original_bytes": 1261,
+   "sha256": "48a8f59eeb6280c539008824c6b804ed7d6af105578e1112b3acc47f63de8778",
+   "bytes": 1251
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/BINARY-SHA256SUMS",
+   "original_sha256": "c55d04017b014fb4a4e27780bb6efd72010a61910b75f06a28ba9e55e12ffee6",
+   "original_bytes": 131,
+   "sha256": "1234bb0c73896d28f15a93f307871e44d8717b5edf0520e6d4293c5e632ffea7",
+   "bytes": 126
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/RAW-SHA256SUMS",
+   "original_sha256": "cc573e3b00f996aca5200eb42ceff5cf857c99ce3523890c1a0ce65c232b9a95",
+   "original_bytes": 2498,
+   "sha256": "22f35630e6cba4408e9cdf7b59e795b40e499cca713a29024a55b0733558f577",
+   "bytes": 2498
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/affected-native-build.log",
+   "original_sha256": "e7a49432bb8c1370c1fad10b08204ed5c873f1f3246f7f8b26e7b224e4037652",
+   "original_bytes": 5539,
+   "sha256": "5fce21bae627e9b8223038a42122a2936da11c31c5509e2af81dd771c63b9a02",
+   "bytes": 5314
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/c00-schema-restored.log",
+   "original_sha256": "a23c31675b919beddfcb343ab9264c2306031d94974169bbc605b85de9ef4e27",
+   "original_bytes": 12197,
+   "sha256": "2163eeaf7e908abdacfe49aa314c1508906fc2beed0f09718446e5ba494eee34",
+   "bytes": 12187
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/fmt-clippy.log",
+   "original_sha256": "57b29c54e4be15ec154c5d5ce007a256384c130bb5f976408c8aacf97a7d4355",
+   "original_bytes": 517,
+   "sha256": "e3841010b8a4365e1d5557b061c1d0da44699368359ab51323f4ab4eb28f53ce",
+   "bytes": 507
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/hash-mutation-runner.log",
+   "original_sha256": "d438ce57930e503213a54b3088b284880c1bc423bff34f9230bef622c0fcb43e",
+   "original_bytes": 285,
+   "sha256": "8559a0dc580d196476054be46d836756fc46959429601ea36e7a0a06a86907ec",
+   "bytes": 280
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/hash-mutation/frozen-body-baseline-build.log",
+   "original_sha256": "6a49fb93914a2ca32517b56ce5566debc135a5111006fdbf58ab52f1eae6fa31",
+   "original_bytes": 153,
+   "sha256": "21c8e64df4880ce7907aed1e927f207f37fc1a8167928c75c65232131a566d7b",
+   "bytes": 148
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/hash-mutation/frozen-body-baseline-run.log",
+   "original_sha256": "35e9e165a033c3adf8436646f68487bf5f811a983bf1daeec2b0ca9ec3230c84",
+   "original_bytes": 341,
+   "sha256": "bdf8554f11e9e5b45832345d76fea41657e7e9143fdd28b0cb14ba1f6e9b3b5d",
+   "bytes": 326
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/hash-mutation/frozen-body-mutant-build.log",
+   "original_sha256": "15fb616aa96c71992653d5d2219d4e3f1b2833456e7706315e240fe8311cb751",
+   "original_bytes": 347,
+   "sha256": "c7173019d3ff1a4dc46145448be1973622e32a01b0c17a43cdfa1c6462e894a0",
+   "bytes": 342
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/hash-mutation/frozen-body-mutant-run.log",
+   "original_sha256": "2a4e509a1fce2a1c57855f50d4d4e149f209d649d84da8ca9a6b0d5fa225ca9d",
+   "original_bytes": 1003,
+   "sha256": "8b7c05767af946ff3b4c512e266b79b24391f15051a3999b370b266f04cafeff",
+   "bytes": 973
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/hash-mutation/restored-final-build.log",
+   "original_sha256": "15fb616aa96c71992653d5d2219d4e3f1b2833456e7706315e240fe8311cb751",
+   "original_bytes": 347,
+   "sha256": "c7173019d3ff1a4dc46145448be1973622e32a01b0c17a43cdfa1c6462e894a0",
+   "bytes": 342
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/http-fast-restored.log",
+   "original_sha256": "8c28128486c4ec7bc8ebc33c92defb37a0a7e72f9e58d4bd6de51a7823d3dda8",
+   "original_bytes": 231,
+   "sha256": "1261d4e2d41fd231f620d2f1d7a7a69ebd33cf701c47c313803a18805b2762b6",
+   "bytes": 226
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/http-fast-write-fixtures-failed.log",
+   "original_sha256": "12da584b26133a7fe0c94fb7646b724910b5ecdf50d07756cfd0f379880bf7bc",
+   "original_bytes": 425,
+   "sha256": "194597eb7583d051d84b2cffc7aae96270829a64b77a54a1936ce5f43a24cfbc",
+   "bytes": 415
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/http-fast-write-fixtures.log",
+   "original_sha256": "b905f6f144056adac20e59926bd34ef9077cf9d7f2faee509b108966dac88fea",
+   "original_bytes": 300,
+   "sha256": "5e7b1c3b9d8b73782241f25a1dc9aababb7a59a7ee31b3611ec9d6088a1d426b",
+   "bytes": 295
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/http-lease-snapshot-names.log",
+   "original_sha256": "9a204e9103f8441dbdd56077a5d220b7f376a9076398df3b1ac08e3be019a3a7",
+   "original_bytes": 285,
+   "sha256": "f7a3aeb0e8cbbbd1c7da7b9209525e25999f1ee357560cf59295f0b1d134fc4b",
+   "bytes": 280
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher-successor/raw/http-slow.log",
+   "original_sha256": "1d352dd147885cb5f62892f5429756d4456f68923002e05cf226d72f431c6043",
+   "original_bytes": 242,
+   "sha256": "7c6ea88bb8a8d12e8dd08c07c9c88483df82d542b12bdfbef0d0a6f41c40834d",
+   "bytes": 237
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/BINARY-SHA256SUMS",
+   "original_sha256": "0d3723deccc5a75928b5aec6e18c952015c6aa704e9dbedd8f9471066bddfd13",
+   "original_bytes": 929,
+   "sha256": "dfb251cac2e975ab455b5fb7aff9eff59228a7d96e4ffe7cf954fd449dcba847",
+   "bytes": 894
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/C01-SOURCE-PUBLISHER-EVIDENCE.md",
+   "original_sha256": "c30e3e883fa1a4a179af3f9f63a40e8f76370e9109c5198db48560c0086f3d84",
+   "original_bytes": 4673,
+   "sha256": "b24d619e38bd16cdbda4780eb222b04150f8f3b73ecc82adb5c4f2c2c631b0ad",
+   "bytes": 4663
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/RAW-SHA256SUMS",
+   "original_sha256": "46e94441f17b19c9e2693fe14f98123791f16c2b0787791dfc4c279b89c845e8",
+   "original_bytes": 15845,
+   "sha256": "4382567febcd8ebec07ae0607e5329dd92647be82037b1d9b4e07f72b473432a",
+   "bytes": 15845
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/c00-contract-regression-restored.log",
+   "original_sha256": "24c993bdf56f0775a9dbfc1e5417778e3bb7b5f06a5fa22ba33e7dbaa1f44c27",
+   "original_bytes": 12350,
+   "sha256": "e8900b95934aafca0085f05af3dd8e647321d9ed212f30682e8ed4e90c6684aa",
+   "bytes": 12330
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/c00-contract-regression.log",
+   "original_sha256": "12badda1bb2b7b69c786667717530e9fc15ddbb24bc1631fccc92180c82270ba",
+   "original_bytes": 4506,
+   "sha256": "4302e539651cfd8bacfe9cafdb27df8d966d765b1eb600e875a777c5d98b9ea4",
+   "bytes": 4496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/final-native-build-restored.log",
+   "original_sha256": "b36f0b3f7c0318401e03d2795581621118cd3eeae4c0a0f4e1a571b86fb441cc",
+   "original_bytes": 5936,
+   "sha256": "e8bdeadf0274c1999cf932300eeeb05409ad1aa1d5d2e4736ff36befd8b77c3e",
+   "bytes": 5716
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/body-limit-baseline-build.log",
+   "original_sha256": "c66bcc5e308a33f4861a1868d39dfb00d5cd9dec5950905045991c184c1984fa",
+   "original_bytes": 123,
+   "sha256": "aad4df2bee1d6689e8bc5128c86b43df8dc623b934f42c27ddf4c9541589b030",
+   "bytes": 118
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/body-limit-baseline-run.log",
+   "original_sha256": "fe32211127f417174b3b01ca395df105aedee47d4a1bcdaed4a1d4693aa04db1",
+   "original_bytes": 73,
+   "sha256": "f5620e602e0a640e2fe53ba96596651048bc015f9c316df15bd09355d381f5ed",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/body-limit-mutant-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/body-limit-mutant-run.log",
+   "original_sha256": "edc3ebe67dc3036de4eb982b21ccc10d06741563441a5c92c4bbd530bc6dcdf6",
+   "original_bytes": 226,
+   "sha256": "074589b7558c65c9edcf1099f4427c95e95ea3018800fd245c750e562a76433a",
+   "bytes": 221
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/bounded-counter-update-baseline-build.log",
+   "original_sha256": "459b05587244cc21cb373e9cb996fb61b9b2606327fd868ad042d97be1b3c937",
+   "original_bytes": 342,
+   "sha256": "9b4d753cfd0d09f0cc46aa833869bf20e744364232900892ac63569c9e97d578",
+   "bytes": 337
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/bounded-counter-update-baseline-run.log",
+   "original_sha256": "76988abda94212c0124732819dbd741254666af7f7b25b7ff44063259948c18f",
+   "original_bytes": 73,
+   "sha256": "8edf4baf7e81157dcd35131d96ee61be19b4674cd1362c5933e1614c53256496",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/bounded-counter-update-mutant-build.log",
+   "original_sha256": "a494106122a7281439989b89d958f7584f8adf93b85c0ed5f8a31ecfd62b6d04",
+   "original_bytes": 447,
+   "sha256": "1f6e58a6ca9cfa89d3fbd74e28b3ebbfd6a09fcacef6ee8e7a8bbe1f40f89d42",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/bounded-counter-update-mutant-run.log",
+   "original_sha256": "377c81f808079ec5e2e74778b487096f15871afab202e4a2fafed06da92786c3",
+   "original_bytes": 210,
+   "sha256": "24e4131feb8bc0bdc83bee82c1f5d8b7b100483a4df122f79ed91588edd0ce9e",
+   "bytes": 205
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/callback-completion-time-baseline-build.log",
+   "original_sha256": "799cca62cacfaa552e5172dadd7cf16df07ef1429b229770361e30c93fdda259",
+   "original_bytes": 356,
+   "sha256": "ca1f4bdce3a0822483cfd77fd3ab1ac9d5dea2bc993f9b79d7a5dbb5f6b00a57",
+   "bytes": 351
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/callback-completion-time-baseline-run.log",
+   "original_sha256": "43f567daae6e18e12cc236d100312ad00f200d7a1fbd82281eccb7ee46944c82",
+   "original_bytes": 159,
+   "sha256": "f31f1be755b2b9fb257b1d7fea8661ed730b821cd5a2f2125d576bc58209c33a",
+   "bytes": 154
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/callback-completion-time-mutant-build.log",
+   "original_sha256": "799cca62cacfaa552e5172dadd7cf16df07ef1429b229770361e30c93fdda259",
+   "original_bytes": 356,
+   "sha256": "ca1f4bdce3a0822483cfd77fd3ab1ac9d5dea2bc993f9b79d7a5dbb5f6b00a57",
+   "bytes": 351
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/callback-completion-time-mutant-run.log",
+   "original_sha256": "6995eacc594dd42b4ec305f30215a8d0a57eb36153adda895747c3cd324272b0",
+   "original_bytes": 282,
+   "sha256": "fa695d4e4f4597956345ba0e03d819edfaabe39b096b432c8b6e9dfaaee362a2",
+   "bytes": 277
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/frozen-body-baseline-build.log",
+   "original_sha256": "6a49fb93914a2ca32517b56ce5566debc135a5111006fdbf58ab52f1eae6fa31",
+   "original_bytes": 153,
+   "sha256": "21c8e64df4880ce7907aed1e927f207f37fc1a8167928c75c65232131a566d7b",
+   "bytes": 148
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/frozen-body-baseline-run.log",
+   "original_sha256": "6e4471fbaba90361c85fe9ba69df15b22ed4ee8997a7dfb4ef6caab96bb20551",
+   "original_bytes": 341,
+   "sha256": "dc136ab0fe8c0c93a0fd3e6f5d717d268415fc71ca956e469d8adc430f02e50e",
+   "bytes": 326
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/frozen-body-mutant-build.log",
+   "original_sha256": "15fb616aa96c71992653d5d2219d4e3f1b2833456e7706315e240fe8311cb751",
+   "original_bytes": 347,
+   "sha256": "c7173019d3ff1a4dc46145448be1973622e32a01b0c17a43cdfa1c6462e894a0",
+   "bytes": 342
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/frozen-body-mutant-run.log",
+   "original_sha256": "d7a20a4b8aebb1223a3f92a4cbec77edf4540ba1d4e309ebf8a3d92833ceb255",
+   "original_bytes": 1003,
+   "sha256": "20f1df304211f98488d73c81333a3ad15bab936e41a997dbdec64a725a5f90c5",
+   "bytes": 973
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/gauge-owner-clear-baseline-build.log",
+   "original_sha256": "a494106122a7281439989b89d958f7584f8adf93b85c0ed5f8a31ecfd62b6d04",
+   "original_bytes": 447,
+   "sha256": "1f6e58a6ca9cfa89d3fbd74e28b3ebbfd6a09fcacef6ee8e7a8bbe1f40f89d42",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/gauge-owner-clear-baseline-run.log",
+   "original_sha256": "76988abda94212c0124732819dbd741254666af7f7b25b7ff44063259948c18f",
+   "original_bytes": 73,
+   "sha256": "8edf4baf7e81157dcd35131d96ee61be19b4674cd1362c5933e1614c53256496",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/gauge-owner-clear-mutant-build.log",
+   "original_sha256": "a494106122a7281439989b89d958f7584f8adf93b85c0ed5f8a31ecfd62b6d04",
+   "original_bytes": 447,
+   "sha256": "1f6e58a6ca9cfa89d3fbd74e28b3ebbfd6a09fcacef6ee8e7a8bbe1f40f89d42",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/gauge-owner-clear-mutant-run.log",
+   "original_sha256": "4dd0b0d449485363c093dca6c2e048751efadce7234ed81d91bed6500d90389c",
+   "original_bytes": 246,
+   "sha256": "825d75024fcf3e5cceee5c7230c8ec9b406569aa3e753b3b96f8828f52e96785",
+   "bytes": 241
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/lease-inflight-baseline-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/lease-inflight-baseline-run.log",
+   "original_sha256": "fe32211127f417174b3b01ca395df105aedee47d4a1bcdaed4a1d4693aa04db1",
+   "original_bytes": 73,
+   "sha256": "f5620e602e0a640e2fe53ba96596651048bc015f9c316df15bd09355d381f5ed",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/lease-inflight-mutant-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/lease-inflight-mutant-run.log",
+   "original_sha256": "12517a3de249902d96f0ccaf889aac552726c8e8f6338c4b52dcfd289484509a",
+   "original_bytes": 192,
+   "sha256": "04db6955e885409adfcaa5f7787e6abad23c288df41159afef3efb8fc2673408",
+   "bytes": 187
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/per-path-construction-gate-baseline-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/per-path-construction-gate-baseline-run.log",
+   "original_sha256": "fe32211127f417174b3b01ca395df105aedee47d4a1bcdaed4a1d4693aa04db1",
+   "original_bytes": 73,
+   "sha256": "f5620e602e0a640e2fe53ba96596651048bc015f9c316df15bd09355d381f5ed",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/per-path-construction-gate-mutant-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/per-path-construction-gate-mutant-run.log",
+   "original_sha256": "7133ed5a22f60fc4ac468d9526104d934968a1bc58d00bdf1ea56c1cd3af98fa",
+   "original_bytes": 224,
+   "sha256": "7faa78e1b79852ca4b107044a80e1c377c0abc6ee1e0faa01a8ed586e5db5f7a",
+   "bytes": 219
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/restored-final-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-family-merge-baseline-build.log",
+   "original_sha256": "ab2f934924ac926c07eabd13fac1cd324c5e2925db1c86ae1dc6531146947fb1",
+   "original_bytes": 454,
+   "sha256": "3d3087ae36e2d9d3571210364ccbff068b89db55fac60b88f445680529627633",
+   "bytes": 449
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-family-merge-baseline-run.log",
+   "original_sha256": "aa9eb9e67ef7795876bac5839596d886be5b878e04d7e9aab53a000d1420e36c",
+   "original_bytes": 348,
+   "sha256": "c085dfddb2fb80454623d89e2bed18342e3f3561190cdfb8030e77bf473b76b0",
+   "bytes": 333
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-family-merge-mutant-build.log",
+   "original_sha256": "ae7cc1cf927bbf9f2d651c40f0382d7f312a9acb82d02ced77874ae428b26d5d",
+   "original_bytes": 346,
+   "sha256": "c0d4580078bc6eeb796e5e1eb49da4a68cd33db6c25cd25923fe47250221454a",
+   "bytes": 341
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-family-merge-mutant-run.log",
+   "original_sha256": "c4e6b1000ee66843a0b3190c3e0cfea086708b7b3376c02a32f10ac1582da39a",
+   "original_bytes": 860,
+   "sha256": "058a29183659f85a0c6eb87f353e1e6bb1f10b0209d0aedf006da68f0c13cc9a",
+   "bytes": 835
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-gate-baseline-build.log",
+   "original_sha256": "04a7b613caf92d774ee9049d5e3ec6bb92c57fe36a668b77195aa064f7843fb1",
+   "original_bytes": 357,
+   "sha256": "4ef16ce655955dde725ab4bc802c59cf0c1949845a591e5c2ef31f79643fbe62",
+   "bytes": 352
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-gate-baseline-run.log",
+   "original_sha256": "43f567daae6e18e12cc236d100312ad00f200d7a1fbd82281eccb7ee46944c82",
+   "original_bytes": 159,
+   "sha256": "f31f1be755b2b9fb257b1d7fea8661ed730b821cd5a2f2125d576bc58209c33a",
+   "bytes": 154
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-gate-mutant-build.log",
+   "original_sha256": "24a0fb99ffbf448c463802bc6bd169ca829c48613c0010860b6f0d218d2b66aa",
+   "original_bytes": 754,
+   "sha256": "e544f3f87d14a6276041dc37008e709006ee2e7606908c24dcfb66af2cad6404",
+   "bytes": 744
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations-final/source-gate-mutant-run.log",
+   "original_sha256": "552dc1d1b345907780e0a48bd65eee65ddd6bed90618abc0438f718a04403718",
+   "original_bytes": 247,
+   "sha256": "842451760a4f50500ccf07c7dd71994b0fb88d1e2d0b4e73679d2a053e3b3316",
+   "bytes": 242
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/body-limit-baseline-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/body-limit-baseline-run.log",
+   "original_sha256": "fe32211127f417174b3b01ca395df105aedee47d4a1bcdaed4a1d4693aa04db1",
+   "original_bytes": 73,
+   "sha256": "f5620e602e0a640e2fe53ba96596651048bc015f9c316df15bd09355d381f5ed",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/body-limit-mutant-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/body-limit-mutant-run.log",
+   "original_sha256": "6381916e2da0eef7b552cb2da187808157f7ae3e24a7d068c0c2b470125df769",
+   "original_bytes": 226,
+   "sha256": "118c7693659cfdad3cb663ac9b98d1e6bf5f71fb8fcabe5bd343cad41c5a753a",
+   "bytes": 221
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/bounded-counter-update-baseline-build.log",
+   "original_sha256": "459b05587244cc21cb373e9cb996fb61b9b2606327fd868ad042d97be1b3c937",
+   "original_bytes": 342,
+   "sha256": "9b4d753cfd0d09f0cc46aa833869bf20e744364232900892ac63569c9e97d578",
+   "bytes": 337
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/bounded-counter-update-baseline-run.log",
+   "original_sha256": "76988abda94212c0124732819dbd741254666af7f7b25b7ff44063259948c18f",
+   "original_bytes": 73,
+   "sha256": "8edf4baf7e81157dcd35131d96ee61be19b4674cd1362c5933e1614c53256496",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/bounded-counter-update-mutant-build.log",
+   "original_sha256": "a494106122a7281439989b89d958f7584f8adf93b85c0ed5f8a31ecfd62b6d04",
+   "original_bytes": 447,
+   "sha256": "1f6e58a6ca9cfa89d3fbd74e28b3ebbfd6a09fcacef6ee8e7a8bbe1f40f89d42",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/bounded-counter-update-mutant-run.log",
+   "original_sha256": "9e8a0751ae31c22ebb68b20183d49295707c457e96f821ccdf55571f8a2f082d",
+   "original_bytes": 210,
+   "sha256": "fa9249342311dbb5f765810183fce7cc6dd858774713dd624de81b943b60b4a3",
+   "bytes": 205
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/callback-completion-time-baseline-build.log",
+   "original_sha256": "799cca62cacfaa552e5172dadd7cf16df07ef1429b229770361e30c93fdda259",
+   "original_bytes": 356,
+   "sha256": "ca1f4bdce3a0822483cfd77fd3ab1ac9d5dea2bc993f9b79d7a5dbb5f6b00a57",
+   "bytes": 351
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/callback-completion-time-baseline-run.log",
+   "original_sha256": "99ea5724c9ce4d54bcb671517937b50a0519535e65dec43eb69df87fb608fcc1",
+   "original_bytes": 80,
+   "sha256": "423d6ef1e3aed1406953dcbc4fa3ac1ee1fad537c61530f46c673c964cd38b7f",
+   "bytes": 75
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/callback-completion-time-mutant-build.log",
+   "original_sha256": "799cca62cacfaa552e5172dadd7cf16df07ef1429b229770361e30c93fdda259",
+   "original_bytes": 356,
+   "sha256": "ca1f4bdce3a0822483cfd77fd3ab1ac9d5dea2bc993f9b79d7a5dbb5f6b00a57",
+   "bytes": 351
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/callback-completion-time-mutant-run.log",
+   "original_sha256": "478c8982465896045f0d3d0bc17c179f23cfad5521028c7a4fb55481a872cc51",
+   "original_bytes": 242,
+   "sha256": "fb684258d81cf0ee63200e33fd58a14263e7134756efb4c40b99742cf95711b5",
+   "bytes": 237
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/frozen-body-baseline-build.log",
+   "original_sha256": "ae7cc1cf927bbf9f2d651c40f0382d7f312a9acb82d02ced77874ae428b26d5d",
+   "original_bytes": 346,
+   "sha256": "c0d4580078bc6eeb796e5e1eb49da4a68cd33db6c25cd25923fe47250221454a",
+   "bytes": 341
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/frozen-body-baseline-run.log",
+   "original_sha256": "72e7b84a40f465a5be00979867fa36be3df48a3298c73f703987d815e0fa5d04",
+   "original_bytes": 341,
+   "sha256": "0247c1ff1520415e1becc643dfcb723d130497a1260655e5e5a5d56eae162b83",
+   "bytes": 326
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/frozen-body-mutant-build.log",
+   "original_sha256": "15fb616aa96c71992653d5d2219d4e3f1b2833456e7706315e240fe8311cb751",
+   "original_bytes": 347,
+   "sha256": "c7173019d3ff1a4dc46145448be1973622e32a01b0c17a43cdfa1c6462e894a0",
+   "bytes": 342
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/frozen-body-mutant-run.log",
+   "original_sha256": "41244ef0fddf16d36441b84502d25e9d1675713aa519b1586f427b380628297b",
+   "original_bytes": 1003,
+   "sha256": "eb8f7d8e516cfd0e33cd3af04bc6773d34974f1e79d0844e12d9b2846537619a",
+   "bytes": 973
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/gauge-owner-clear-baseline-build.log",
+   "original_sha256": "a494106122a7281439989b89d958f7584f8adf93b85c0ed5f8a31ecfd62b6d04",
+   "original_bytes": 447,
+   "sha256": "1f6e58a6ca9cfa89d3fbd74e28b3ebbfd6a09fcacef6ee8e7a8bbe1f40f89d42",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/gauge-owner-clear-baseline-run.log",
+   "original_sha256": "76988abda94212c0124732819dbd741254666af7f7b25b7ff44063259948c18f",
+   "original_bytes": 73,
+   "sha256": "8edf4baf7e81157dcd35131d96ee61be19b4674cd1362c5933e1614c53256496",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/gauge-owner-clear-mutant-build.log",
+   "original_sha256": "a494106122a7281439989b89d958f7584f8adf93b85c0ed5f8a31ecfd62b6d04",
+   "original_bytes": 447,
+   "sha256": "1f6e58a6ca9cfa89d3fbd74e28b3ebbfd6a09fcacef6ee8e7a8bbe1f40f89d42",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/gauge-owner-clear-mutant-run.log",
+   "original_sha256": "259bc6da55ccfbf5e259b5df07a9be0774b19cd340fd0dedadb99daef59c0922",
+   "original_bytes": 246,
+   "sha256": "44cf2f36bd218298bc505d05d8ab3a152edfd6d0401a5a478fd4579e78551ea1",
+   "bytes": 241
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-after-timeout-baseline-build.log",
+   "original_sha256": "15fb616aa96c71992653d5d2219d4e3f1b2833456e7706315e240fe8311cb751",
+   "original_bytes": 347,
+   "sha256": "c7173019d3ff1a4dc46145448be1973622e32a01b0c17a43cdfa1c6462e894a0",
+   "bytes": 342
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-after-timeout-baseline-run.log",
+   "original_sha256": "9a655aa509df0fbf9629af614fb01bb86a46e21304da9ddbe81bd4b499fbc17b",
+   "original_bytes": 343,
+   "sha256": "97660fab6f0104bdc02a87bc3b6193f505629d6f75d9bd1299929c030aa251b7",
+   "bytes": 328
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-after-timeout-mutant-build.log",
+   "original_sha256": "15fb616aa96c71992653d5d2219d4e3f1b2833456e7706315e240fe8311cb751",
+   "original_bytes": 347,
+   "sha256": "c7173019d3ff1a4dc46145448be1973622e32a01b0c17a43cdfa1c6462e894a0",
+   "bytes": 342
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-after-timeout-mutant-run.log",
+   "original_sha256": "c13cdc153b4ee9bc45dac40b768088efba0d278cb23c07e34f157f33e597bd43",
+   "original_bytes": 343,
+   "sha256": "e0b7deda285f5f97f0cc523aadb1db3eef8e2c23fe6a01bfe5f2b410d2508a61",
+   "bytes": 328
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-inflight-baseline-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-inflight-baseline-run.log",
+   "original_sha256": "fe32211127f417174b3b01ca395df105aedee47d4a1bcdaed4a1d4693aa04db1",
+   "original_bytes": 73,
+   "sha256": "f5620e602e0a640e2fe53ba96596651048bc015f9c316df15bd09355d381f5ed",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-inflight-mutant-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/lease-inflight-mutant-run.log",
+   "original_sha256": "37a3f9d4fd0789842dba46fe1167ac7626ba70991c1bbb7fd48e76c21faa0666",
+   "original_bytes": 192,
+   "sha256": "b892b4ba75f3d4f485c286a368c8d49ed5257b464d641225c267861cb0980312",
+   "bytes": 187
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/per-path-construction-gate-baseline-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/per-path-construction-gate-baseline-run.log",
+   "original_sha256": "fe32211127f417174b3b01ca395df105aedee47d4a1bcdaed4a1d4693aa04db1",
+   "original_bytes": 73,
+   "sha256": "f5620e602e0a640e2fe53ba96596651048bc015f9c316df15bd09355d381f5ed",
+   "bytes": 68
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/per-path-construction-gate-mutant-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/per-path-construction-gate-mutant-run.log",
+   "original_sha256": "4cddda3223ed5362d4b76fb188363944ce080a00a06a30a517800286da6371db",
+   "original_bytes": 224,
+   "sha256": "3891232906c81716b843561dfe68a1fe1799c5490cded79370cecdb5ade7889e",
+   "bytes": 219
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/restored-final-build.log",
+   "original_sha256": "c67bff9700a1020ae118bd7b659019ddf7cf4a6db7dd79ed8226c9612c5620e9",
+   "original_bytes": 260,
+   "sha256": "977489b2de0a136c9cefe7a452d0c70b9d782374ce0e581905693066f57b2cf7",
+   "bytes": 255
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-family-merge-baseline-build.log",
+   "original_sha256": "a769160457b4e51d071542771b4bbbb97982654f944f2d05515307249784fb78",
+   "original_bytes": 454,
+   "sha256": "2df984f153430ccd179c8ac673177f335a0f97b6152cacbfef5f1a61d74ff708",
+   "bytes": 449
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-family-merge-baseline-run.log",
+   "original_sha256": "c6c5c026df040b80a6486708d7bff014acc75445cac33cf62b36ccee47160990",
+   "original_bytes": 347,
+   "sha256": "d884823687f6b8c65440a77ff3395138d5831031a85280ebfce80a324fa333b7",
+   "bytes": 332
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-family-merge-mutant-build.log",
+   "original_sha256": "ae7cc1cf927bbf9f2d651c40f0382d7f312a9acb82d02ced77874ae428b26d5d",
+   "original_bytes": 346,
+   "sha256": "c0d4580078bc6eeb796e5e1eb49da4a68cd33db6c25cd25923fe47250221454a",
+   "bytes": 341
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-family-merge-mutant-run.log",
+   "original_sha256": "a348050536ce6fb402d6003494de2edeed30a481a71d20f7c8bab000b25f6984",
+   "original_bytes": 860,
+   "sha256": "f70ffe5c5a1d5c9db51cda2050189cf7a3ff73b9e48e6601e483724e6f18c23d",
+   "bytes": 835
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-gate-baseline-build.log",
+   "original_sha256": "04a7b613caf92d774ee9049d5e3ec6bb92c57fe36a668b77195aa064f7843fb1",
+   "original_bytes": 357,
+   "sha256": "4ef16ce655955dde725ab4bc802c59cf0c1949845a591e5c2ef31f79643fbe62",
+   "bytes": 352
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-gate-baseline-run.log",
+   "original_sha256": "99ea5724c9ce4d54bcb671517937b50a0519535e65dec43eb69df87fb608fcc1",
+   "original_bytes": 80,
+   "sha256": "423d6ef1e3aed1406953dcbc4fa3ac1ee1fad537c61530f46c673c964cd38b7f",
+   "bytes": 75
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-gate-mutant-build.log",
+   "original_sha256": "24a0fb99ffbf448c463802bc6bd169ca829c48613c0010860b6f0d218d2b66aa",
+   "original_bytes": 754,
+   "sha256": "e544f3f87d14a6276041dc37008e709006ee2e7606908c24dcfb66af2cad6404",
+   "bytes": 744
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/mutations/source-gate-mutant-run.log",
+   "original_sha256": "e7d0c680d2955ea901df6bb939e8e26b8ca6387286c1f6bab090af0e4b813dd7",
+   "original_bytes": 247,
+   "sha256": "e9ce3a3a8fcfaf4447fcac922178749ac32e4f437ad6a1e4e84767d4db62ff41",
+   "bytes": 242
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c01-source-publisher/raw/native-http-all.log",
+   "original_sha256": "95969bcd98551136efc6ae33d3438565b534c83be041c6443aa09540ec6487f6",
+   "original_bytes": 789,
+   "sha256": "bc7ad4d88aa9badf6e2929fc37ee1d1ed97f6a8dae30953b8df49b5bbb826a67",
+   "bytes": 779
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/C02-EDGE-EVIDENCE.md",
+   "original_sha256": "7eab0da49a140606889ee279fd3226fd87e812fcfa45044ed706bb5238cc2e1d",
+   "original_bytes": 6121,
+   "sha256": "b484c39ab9f5aa95d5e7a1178767d6532d5c6b43c5dd2faba09819de3e961a35",
+   "bytes": 6116
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/RAW-SHA256SUMS",
+   "original_sha256": "0963cfdcdce6cd70953d70357b4e06bbcca3235780524cffafbeb6e08eb8a5d3",
+   "original_bytes": 2320,
+   "sha256": "533c0144c09e0170d20170d643c4e8bfbd5cfe7f310540a0dfd8efd248d5c4da",
+   "bytes": 2320
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/evidence-index.json",
+   "original_sha256": "25467e50c84ff2a20751d72f0344b69e1d560d165d4aee3f54f8c15c4efa0935",
+   "original_bytes": 1282,
+   "sha256": "1761fd5ea1ed8b01fd4d97e3318cee33b463701a50f31e2fbed0f874366f8aa9",
+   "bytes": 1277
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/cgroup-pressure-truth.baseline.log",
+   "original_sha256": "0ff85471066e3d64e82008f1bf9e73f815922a4f38887774633e34d1abb598dc",
+   "original_bytes": 621,
+   "sha256": "2593a057d3b9c584762f596fffade6478353c2e78edbca42ade73d804065e023",
+   "bytes": 616
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/cgroup-pressure-truth.mutant.log",
+   "original_sha256": "44692d598515c88fc56d6f59ae311753ff1ca292e3d4a927703e6c3e010b375d",
+   "original_bytes": 1169,
+   "sha256": "3320390e860461051f558f085feec6461551dcc7b50d21227f3a98e9cc6b5c4a",
+   "bytes": 1164
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/cgroup-root-unconstrained.baseline.log",
+   "original_sha256": "c8b710919ce4ab1fcb2b58bf93987b214f8cde6a4eec7d104a0edcd9457409bf",
+   "original_bytes": 736,
+   "sha256": "ca852fa8cc3c57506ca140b3b0a5fcb03da2230642cecec4063514a1837008be",
+   "bytes": 726
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/cgroup-root-unconstrained.mutant.log",
+   "original_sha256": "4861d40f9b1fe49f8d43f203068143fa1fe760746d31b086f87138fa8a7747c6",
+   "original_bytes": 1185,
+   "sha256": "2ae3b23baa4b803f20d87f7f10ba633ea4491eda775649553dc29dda300388b5",
+   "bytes": 1180
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/classified-connection-lifetime.baseline.log",
+   "original_sha256": "db9ec74b787d1762cb403416f3f4c3fefe3c55a97a3976404d6bf4e79abb7a26",
+   "original_bytes": 622,
+   "sha256": "40c4b395f6d5d95353ab77065a579a9fe635eb4b181c9a3431d2286f7cb409a3",
+   "bytes": 617
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/classified-connection-lifetime.mutant.log",
+   "original_sha256": "a226bad638e27a858746a3855da6558b6797f20d7b687441a6b237c3760df59f",
+   "original_bytes": 1690,
+   "sha256": "538ff831f87db20ef49504bec697d821b5b6b52291f488ea3061e672444df20d",
+   "bytes": 1685
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/missed-tick-skip.baseline.log",
+   "original_sha256": "69176a290cf4ec19a40aa4fa6a0e2f1c652da965179533e951c32fb01b651369",
+   "original_bytes": 603,
+   "sha256": "35e7727dbfb1d94b670a71bbc72f347292a1fd034c4dd143c276a0a30d8ebe97",
+   "bytes": 598
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/missed-tick-skip.mutant.log",
+   "original_sha256": "7bf1edac36fdf3aaa5c703f19bb690a1701dd784b8fe2ea268abe74d30d1e932",
+   "original_bytes": 1095,
+   "sha256": "a2cd5c08d96041454e7963e6458c3c90604f6ca70aa2995ae1cc5e4f024b22f0",
+   "bytes": 1090
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/mixed-process-epoch.baseline.log",
+   "original_sha256": "947c88f8c18a58e31e359e8538ac66df39080258172cbf82e7d219ef0c1a3f4a",
+   "original_bytes": 622,
+   "sha256": "c6b23c5af2ee7806ea4a90f7d52d594423fe769a0dba4bdff3a4746a4ae2f2d2",
+   "bytes": 617
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/mixed-process-epoch.mutant.log",
+   "original_sha256": "664df433a09c16bc0aaf78c808be3cc2b873d0dbdac1f215e10163e8f4194fd5",
+   "original_bytes": 1141,
+   "sha256": "0b9c1a054889b00d8b79bc00795578f7932d81722958d6ed1568a5fab180c907",
+   "bytes": 1136
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/router-heartbeat-reserve.baseline.log",
+   "original_sha256": "2410bd2f44490240b7047936ccdbb4699a3bbf84ec895255c42621a36fe68a5c",
+   "original_bytes": 713,
+   "sha256": "ef0d848c9d9c98c6febc5383fa267fd25148aa0a8dbf640cd1a10238c355e0b3",
+   "bytes": 703
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/mutation-logs/router-heartbeat-reserve.mutant.log",
+   "original_sha256": "52816c8882e05450faaaba5f42a0c180a9bbfda5434f8de611d2fb4e86e96d25",
+   "original_bytes": 1571,
+   "sha256": "7f0371abd3c8592e95817f0528d4b9897b825da5a54fc55323f913f4f53055fd",
+   "bytes": 1566
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/raw/final-fmt-clippy.log",
+   "original_sha256": "d27cf0e9fe7b272b2f2add873c410cb292efa90ae60ab0d5b42fbdd24a6b797a",
+   "original_bytes": 289,
+   "sha256": "0fccf57ee16332fca26ed139a20fe55cf2f542b621fa7775582db937777569d8",
+   "bytes": 284
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c02-edge/raw/pre-route-final-contract-workspace.log",
+   "original_sha256": "4d13c89d1022b996cfc64e5194732f89257bf3a4ca978aab12b463d4bd20a768",
+   "original_bytes": 13689,
+   "sha256": "48787b93e7141eb98a8c4f6eb08047968ed9a0c0d9dad1f68cb4769e0a1f52d8",
+   "bytes": 13664
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/BINARY-SHA256SUMS",
+   "original_sha256": "6a1899e3fdc8910aa66ff1d17d244028b6d24dbe021806025078d471e3735915",
+   "original_bytes": 1006,
+   "sha256": "8626712274a22d663f9ee8f3bc4451b1c0539670c74fdb8c2c00b94705cff982",
+   "bytes": 966
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/C03-STATE-RULES-NOTIFICATION-EVIDENCE.md",
+   "original_sha256": "693aaf455b3519e3e64195cb1850f216fac64e6dde81de33574cc0f94ccc8f5c",
+   "original_bytes": 7771,
+   "sha256": "e43567bb006e993a961377ef3527aa57b03c61ea4cc5723f27acd0542d403b0e",
+   "bytes": 7761
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/INDEX-SUMMARY.json",
+   "original_sha256": "c81a9554bb8ecd5822aec12c30d25b3726fec1612bf9188873f071ac1587673d",
+   "original_bytes": 539,
+   "sha256": "b2d912e95d1864792291d76f870f1c66d7080790251103bca8c9580ef5b166d5",
+   "bytes": 539
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/RAW-SHA256SUMS",
+   "original_sha256": "c4da6bfc532c7a3384a2568efa9b1ce163fde2199c188a83fac7bc1fe0c0e45e",
+   "original_bytes": 9443,
+   "sha256": "3f35ef4612cde3aef21a4e7719e57d824f03346f595c8c236a911f291b57b3da",
+   "bytes": 9443
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/COMMAND-EXITS.json",
+   "original_sha256": "6b25db2e5a84b8be9f901b331b8a3308c15f70f13f02f45119fd7516e9b19116",
+   "original_bytes": 1691,
+   "sha256": "1a4d7629e39b53ebfc2137a9534e0b4ec1b6aef47418838bef2945cc0e94af6e",
+   "bytes": 1661
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/final-clippy-restored.log",
+   "original_sha256": "1ab53e36ae9555f3fbec01669a27d2ff25dd6703c031d78a2e9510288e56e444",
+   "original_bytes": 195,
+   "sha256": "0b7c4952ae7b2c3f3898d436b26afef6195b8c5d44cec94fb91ac587696fe32d",
+   "bytes": 190
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/final-contract-workspace-restored.log",
+   "original_sha256": "26efe41bf03fd6d618202108b83b8591b10aeec904dd51eb3fe0c1b4f67fcb58",
+   "original_bytes": 14874,
+   "sha256": "6c21f8bfbec6694457567ea1f03352c55d4a109270b1af714d989856e5506e75",
+   "bytes": 14719
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/final-contract-workspace.log",
+   "original_sha256": "0421c7dd195a138059e6b494c5f8fd0e6336254c001cc9a55761e827ccc97311",
+   "original_bytes": 15104,
+   "sha256": "0cf5f8a97871df8729c1dde2a8d6765533fd24eb9a3a63411749f501698bf78d",
+   "bytes": 14939
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/final-fmt-clippy.log",
+   "original_sha256": "833b3bd384c8d9d64144f9b2f5cc7a700e7c7f50843c8704bd3a646e960fb1b0",
+   "original_bytes": 5085,
+   "sha256": "accd8810b1eab781df78913c5a6e281b24f6786a624e763629a338cb9341342c",
+   "bytes": 5075
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/final-tool-checks.log",
+   "original_sha256": "a889530ca33737fd48d5cf6d6a34e8f13da8d4dd43e68bf71339dca5fb9ad13d",
+   "original_bytes": 552,
+   "sha256": "5d714e72903ca9bd1ce4f81c1b8ffdf125a5874b5f1174e10d7482079846e033",
+   "bytes": 537
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/duplicate-keeps-original-time.baseline.log",
+   "original_sha256": "9ad29d2f4f00eab4a45e1181dffb44a28c7211baa5728278b804a36235bddd91",
+   "original_bytes": 698,
+   "sha256": "45c0acf557d1e7ec50eb4dc8724571a7ff33d5f9d32eddd90b821f8172c989b3",
+   "bytes": 688
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/duplicate-keeps-original-time.mutant.log",
+   "original_sha256": "f7342e3cc399fcfbedfd1972bca79461d08e96680171f8c6eadfb05fc8cf4d87",
+   "original_bytes": 1205,
+   "sha256": "1d37c71b8a2f0bd87019c310b63796f0588830fff33a1feaca52258123fff2ca",
+   "bytes": 1195
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/outbox-full-rolls-back-round.baseline.log",
+   "original_sha256": "560b4cd913a290cd1b160d484297b7407a7a78894bffa1f6c22ed083c56742fa",
+   "original_bytes": 827,
+   "sha256": "c5c112b75f3a6c05f3039c69e820d67923511deb14e7701b2c0cb8ff26f8fee7",
+   "bytes": 812
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/outbox-full-rolls-back-round.mutant.log",
+   "original_sha256": "7e5c858522e30f06f7917bfdecd184b6524aed8fa2fc8c549f738bd6e15f86ea",
+   "original_bytes": 1478,
+   "sha256": "3f53a55cb720affdd077d8cb637f6d64db32d1bfda63f14e539014c469cff3d0",
+   "bytes": 1468
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/replay-cannot-renew.baseline.log",
+   "original_sha256": "d046bea63cbab550c717084366e16ce7d0639ed4cad046337714f0028af3b19d",
+   "original_bytes": 798,
+   "sha256": "ceb9aa3f9ee6856c2439cccbfc3b71f1825bdaa91deca02c7dcd9cf8041b95f1",
+   "bytes": 783
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/replay-cannot-renew.mutant.log",
+   "original_sha256": "977c2aa8235dc1f25010481b363e17fec553960851b0e025c355b1f1b2f27e8c",
+   "original_bytes": 1454,
+   "sha256": "458d4d866b18387b26a68197cfb8e41084d6a23ab5561dc0c001863ba253a996",
+   "bytes": 1439
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/retry-due-is-persisted.baseline.log",
+   "original_sha256": "7679f699aeb98c311fb277a3080638712d765036c4dc3634176d8939312fb777",
+   "original_bytes": 738,
+   "sha256": "696069f61e14b7633834f8283a80dd43bf55449987ec1920aa518d0b9560c182",
+   "bytes": 728
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/retry-due-is-persisted.mutant.log",
+   "original_sha256": "8ffa33758c5e4e742c984b5789aa71517cd4a4e73dee42af8d2234d49fc72a18",
+   "original_bytes": 1295,
+   "sha256": "6154fda55ef42bdd3699aea199497490bbe7a7dd5143035b0b2d0e19860ca627",
+   "bytes": 1285
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/wrong-receipt-retains-outbox.baseline.log",
+   "original_sha256": "b40a43ba2141e10f94763ef776c5ad7745d8627322e22e061fc518f98bef6e39",
+   "original_bytes": 710,
+   "sha256": "ff3d2735abae40c5c586a5583b03570d7028629562e3a3d44534f7f6568b1554",
+   "bytes": 700
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/mutations/wrong-receipt-retains-outbox.mutant.log",
+   "original_sha256": "32492e9ff9386c09f27a995f2d0c4bfcd2b5c5f2beedfc681ea3e11a985a3652",
+   "original_bytes": 1261,
+   "sha256": "a76d518a5fbb4b66422422daa88aa554f7c5b2adb1f1b3ae209d5e9f2af5685b",
+   "bytes": 1251
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-chain-fifth.log",
+   "original_sha256": "9e29d2121fb7ba963b2b17001ca5d4b857befdc83388b98d8eb0a1eea5b39ced",
+   "original_bytes": 5649,
+   "sha256": "4886e36748351a8248b6fccbc43e43db448a4037e8233052cef3020d6ec255fc",
+   "bytes": 5619
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-chain-final.log",
+   "original_sha256": "51168c4b06b1b1d8d9b685e5713288e594f0e5d87fdde633bc9f82430a91782b",
+   "original_bytes": 5648,
+   "sha256": "532d8db2f466f67aa5d52e1af368925f9076d88cd8c2a9a86125aab5a1794cee",
+   "bytes": 5618
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-chain-first.log",
+   "original_sha256": "1ead3d0ef35d2be3b319c1e94f96c39e50a55cf2361fe2e920d7fdd040cbc8aa",
+   "original_bytes": 3336,
+   "sha256": "1882ae901e636fb85bd912312131d0ccbe7ddf84ce411552560e36279872f0c0",
+   "bytes": 3321
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-chain-fourth.log",
+   "original_sha256": "2276a77236578df43acfb503410ff71457ad7669ea727e709be63f322fde0f2e",
+   "original_bytes": 3035,
+   "sha256": "bf566d72275d5a54c811f6c43cc918ade922c584583b9c1aa941af6cd77e6b07",
+   "bytes": 3020
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-chain-second.log",
+   "original_sha256": "e4a7f95269717dea012e23f8b62851208cc377bf2133952507fea60357262297",
+   "original_bytes": 3241,
+   "sha256": "807b2a3819ccb1d8fccbdbae896cf292b138165d11ae6640903415182bc37ecf",
+   "bytes": 3226
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-chain-third.log",
+   "original_sha256": "0f97d0900ab389bbc3bf6d12adaa0fd53accd5efb18b0d8962b905ce10557e8e",
+   "original_bytes": 2517,
+   "sha256": "647b5b1980d2e8b01290c3f9879632479f9affa9345559f9733f2fac423524a5",
+   "bytes": 2487
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-fifth/frozen-prometheus.yml",
+   "original_sha256": "5760772c38f304535aeb90628975e9fec63633d5722fa3d7e5b37733fa0f487c",
+   "original_bytes": 439,
+   "sha256": "bc79a6e4babee647cf0b41142dc71feb9a00271633a10819c09626537aada56a",
+   "bytes": 434
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-fifth/start-receipt.json",
+   "original_sha256": "d5f166a4f09c436283fd7ca755b72f4eae557f7783c25032a05c30d94eb78ffc",
+   "original_bytes": 2409,
+   "sha256": "3e89edbd14ce13f41a652d8db5339ed8bf0daaeed55c1e38f8d39ff9227d973c",
+   "bytes": 2374
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-fifth/timeline-partial.json",
+   "original_sha256": "549d9d5a95676713e70ffce3fd7d1582a67be1548e045f279d067563aecd88f5",
+   "original_bytes": 7283,
+   "sha256": "098fb700e05844c7bc53b5ec161dae77b44ffac17311461ca30aa767d4f47c0e",
+   "bytes": 7253
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-fifth/timeline.json",
+   "original_sha256": "0351d5694eed0be7ff8141ba68907feff9473a08c233991ee66234b9d5e2cecd",
+   "original_bytes": 9777,
+   "sha256": "0c779d48c62d81097828f1529308cace07835821a2a7c856f68d637f8ab4dc48",
+   "bytes": 9747
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-final/frozen-prometheus.yml",
+   "original_sha256": "f8878d688c3d3f75d8478e784c83f7595a89c418af51da4b2b119a48ac189f12",
+   "original_bytes": 439,
+   "sha256": "0a97660de436bece4b0ffe0fd1abe2f42788afa7742bcd131dedd056cf02828d",
+   "bytes": 434
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-final/start-receipt.json",
+   "original_sha256": "e24f5cfbbb299c1c03130444570f814bdfc86942af6d7be534ed35b3ad9d7ad5",
+   "original_bytes": 2409,
+   "sha256": "13b6610b55ce0693e811d062858897b6dd166bd676bdbbfabaca49dadc29bcd6",
+   "bytes": 2374
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-final/timeline-partial.json",
+   "original_sha256": "d434ef873b28763817f7154345417fd796bdab10c1e58f74aff0541f03273ea8",
+   "original_bytes": 7282,
+   "sha256": "0a5533e9ecfe129d320a23f78fea2d75548f0c970817535afe6565d4b8f74f61",
+   "bytes": 7252
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c03-state-rules-notification/raw/runtime-final/timeline.json",
+   "original_sha256": "38a7193c7279a3bfcdf8801f88a58117cd9836eab161d5f96e02793876d76861",
+   "original_bytes": 9778,
+   "sha256": "01dd789ad654de7c4c17feb3371874d06bc9f92bdd3cb3e1b65e26a8198526cb",
+   "bytes": 9748
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-integration/evidence-index.json",
+   "original_sha256": "ee49f1b03c8c11f15613225251663d1ab58867c5b6e69393c4a2c1781e3dc36a",
+   "original_bytes": 930,
+   "sha256": "02b52b365df783d90afc990d20ebf199c48f531857d47403da88bba0752944e3",
+   "bytes": 930
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-integration/producer-pairs.log",
+   "original_sha256": "5e8d609cbca439f7fff64268017b909a0e3fe78256261819b728537859d1e1a9",
+   "original_bytes": 12425,
+   "sha256": "ca78130b55dd7582d04b458ed88440514b6f3e370404f9bdc83f9aacf0c7f33d",
+   "bytes": 12410
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-integration/receipt.json",
+   "original_sha256": "ac0bcba3892351f8e2b49d0ec4d08379175891dd1b2943678e75beaf03763a51",
+   "original_bytes": 23502,
+   "sha256": "a530f3ad56d7f7a0cf2b805958501ff68c4b4ede8a3897d1ffc30209e53da38e",
+   "bytes": 22982
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/SUPERVISOR-INCREMENTAL-REVIEW.md",
+   "original_sha256": "148d56b178a4b27af8f1c538ca8f67c3b9b1ed5cea3cc7f4e3770d2d63180c2d",
+   "original_bytes": 2054,
+   "sha256": "39f55452f1af1f2162529987dbe17fb527d73cd4c34ac0e4066f771f1fb974d0",
+   "bytes": 2049
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/evidence-index.json",
+   "original_sha256": "8a4e04876c2bdc793f2bb5903723b0742655bc0c92fd789fc054c031e56868c5",
+   "original_bytes": 38400,
+   "sha256": "3b45d4a363291d702e5081536a6a2b621d13799dbdbc0b0d41b88a1995a839e1",
+   "bytes": 38350
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/actions.log",
+   "original_sha256": "eb6a5d87d47e39a4a39ab137a806a88c4c0c962fd8fd2746e17f708f29b83937",
+   "original_bytes": 1720,
+   "sha256": "4d905493ad387a20808d46fda5dbfbd48a958b82bc0499bf3e5c96aba22d2a00",
+   "bytes": 1710
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-actions.log",
+   "original_sha256": "5acb4bf61d15ae068b62b8ae5ad2154ee641712ce548339ff2d9a7ac4bca8b84",
+   "original_bytes": 5499,
+   "sha256": "778370740e6de8e2f0cd5967ec62571ecb33eb4461a32be4d74add481a56908d",
+   "bytes": 5404
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-bounded.log",
+   "original_sha256": "17999c35f464a28efed7ba88ad1a87a4e63688b55c41becf85baad9f84ced073",
+   "original_bytes": 12640,
+   "sha256": "e1d3b812e134d9130efed08f670727f14c465a9bfea455c37ac0a8b0ead5be50",
+   "bytes": 12560
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-collection-budget.log",
+   "original_sha256": "b7572aad788127a3d83f140ea8b3450584976b1313cedc02952f5ad837283c0d",
+   "original_bytes": 12446,
+   "sha256": "dea0c678bfe0a3616289668cded91a3e3a470972ee51117a5cf451f3036a1a4d",
+   "bytes": 12366
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-final-gates.log",
+   "original_sha256": "9fb0010cfcfbf0bcf4738f99b6314232a066edca017f8ac34e161f731504de70",
+   "original_bytes": 4746,
+   "sha256": "f8802f3841129e17b26954c16b21be47feda7ff36f95dc73d577b1b2d43a044c",
+   "bytes": 4666
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-ledger.log",
+   "original_sha256": "29cf74c7d3c3cd79bd2b7513adb3e9a9f7ed63c5698421e9485e62d6259ee00b",
+   "original_bytes": 6558,
+   "sha256": "be9006114ee3a38fe39bfccb358e41cfe43ef3bfd08787bf7c9fa120fdc8de50",
+   "bytes": 6478
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-producer.log",
+   "original_sha256": "839ee1f748aaa5ca80666c3112afcba1f2b687db8f10c32ea7633cea2a671631",
+   "original_bytes": 1902,
+   "sha256": "8c3f98a7509c260ad1f9175a67ca70eadf2241bb4c8dbc4aca44fe31d92c32b9",
+   "bytes": 1897
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-retention.log",
+   "original_sha256": "0152b4ac9ab352f1140b574df64c47c046b5183fb20fc98730c9508a09d27e22",
+   "original_bytes": 5594,
+   "sha256": "618b7ceba9a675201e5cfaaa4e2cac4a72f4d3c2cfea1e5464a6a086fcb59891",
+   "bytes": 5514
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-retry.log",
+   "original_sha256": "705a108284df7f31d5d1e1f83e769c7ba9f2cd1f12bce4b6b54a5d2064f151ac",
+   "original_bytes": 5253,
+   "sha256": "852d81f44ecbc2d590ef375296b18274573f184f78b75412ca5665f2bbd757a8",
+   "bytes": 5238
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build-v2.log",
+   "original_sha256": "e5e8ef1a8f87d6743019d1dd117b4cd4757feb4ce00742ad21ae62fc5fe8d61c",
+   "original_bytes": 27018,
+   "sha256": "13f3c9939a23d4bf93c6f3a68779bbdf72f0d3709eebf4957b4cda6874b3839c",
+   "bytes": 25598
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/build.log",
+   "original_sha256": "f0aa3a7068d8489df3264e2a3e7d1abb05f5efbb4a70711599ab9c5e4bbaf28d",
+   "original_bytes": 196246,
+   "sha256": "35bec2118851e340dab56e732499d0dd9da93203ea3b933ef9aa207253dd1d06",
+   "bytes": 194381
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/configure-final.log",
+   "original_sha256": "0fcd3d2bb4e6e6c4756c176c4ee820930d65db48b97e78905db6c696bc59a590",
+   "original_bytes": 4212,
+   "sha256": "6159b6347349459678106bb65c36862cddfb82a3cdb194ca62015e64f7fbc09b",
+   "bytes": 4132
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/configure.log",
+   "original_sha256": "4692d08a6a0d13f23696ac0a45f94dc17d3e66948b023e752c7015c83bd58d12",
+   "original_bytes": 8822,
+   "sha256": "553054053941e32e4f04523bd5f4779f5fab4aabc675ebe2ea26b61cc7bfc3c8",
+   "bytes": 8752
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/current-native-tests.log",
+   "original_sha256": "3c78fa39692bfd4f75c409350a82fa73381b6d26b97259550ae571a2001de27b",
+   "original_bytes": 2457,
+   "sha256": "32b3fa9ab499fba320f85751fa0d8bbbd7c1b334fec68abf1f5b3fa1d93e0fde",
+   "bytes": 2447
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/final-gates-tests.log",
+   "original_sha256": "82dc82d7d69bc3106d4cdbc2b333a51b69841fd1a4418d4fd725bbf27be42c34",
+   "original_bytes": 14891,
+   "sha256": "cf149a90522f66eb2484948224667aa678e7e8830e67294a2205a16b7373af7e",
+   "bytes": 14756
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/pipeline-production-trace.log",
+   "original_sha256": "98837c8eeafdfeb7af2a9c9bd0bdb8eb2848a4da8c172ed592d625b5335ffe0d",
+   "original_bytes": 26065,
+   "sha256": "ca530d82191f4421758d69c1e14ae7cd6aaacef69e9cfc6a59e8a57633e4763f",
+   "bytes": 26040
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/pipeline-regressions-tests.log",
+   "original_sha256": "5efc7b8cdd3fc1c84900d69213483810aeeca9f6e00a826b4dbf4ca7f901ec56",
+   "original_bytes": 648,
+   "sha256": "588d3302e8b64a2d32125c2f4999911f3e616cd94658aab56559c3fa8f16410d",
+   "bytes": 638
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/python-tools.log",
+   "original_sha256": "9cc5ce7f1229fef9b760a6b9b1e5e35d8353be8586901fac6a4575636f02514c",
+   "original_bytes": 275,
+   "sha256": "e48eb7bec717da1a73da3ce7296b2bc26fe04aacd5caa2b501995c67c5c19764",
+   "bytes": 270
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/restored-union-tests.log",
+   "original_sha256": "3a6a49ab4fca8232d34a46e69232d92c2cc9ecf73ff8285faabe26a785586a2d",
+   "original_bytes": 5542,
+   "sha256": "928f8e68406d9afd1af19936b571e43799f80acccd3cfb9dfd96c8c9d9a77c04",
+   "bytes": 5532
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-native-actions/raw/retention-tests.log",
+   "original_sha256": "9c6024906463e09b20075e9d3f3752a501c4d415fa68866eefaeefff3adb90e4",
+   "original_bytes": 2088,
+   "sha256": "4dba2c0903a2ad266b27492c844fa4f29aef709684c3891810cbc46390c88707",
+   "bytes": 2078
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/IMPLEMENTATION-STATUS.md",
+   "original_sha256": "58e44187367b19a6633388287c2cfb51ff0aaa31b34f722a80298f7320306b94",
+   "original_bytes": 9459,
+   "sha256": "c541ec58daaa9185f7f05b3c0fe4bf6366d9c9fbc445800fc0e6518c9a01526e",
+   "bytes": 9454
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/consumer-evidence-index.json",
+   "original_sha256": "acd0d7a802ac8d6f83712afc108485fb906a40a2e12c5e0f5de0e29fa6e91304",
+   "original_bytes": 2260,
+   "sha256": "865599f692c2fd13b52649501a8fd94bc88aca7fbaa008d5cec13844601c7578",
+   "bytes": 2260
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/closure-final-native-restored/producer-pairs.log",
+   "original_sha256": "e63d0ade7ee5f7d8f9defd01cff0d245ff7a2bad99571bc637649b5c3d323131",
+   "original_bytes": 12433,
+   "sha256": "571e742d2934e64018ba9d88501279a2f308d71bbffbbe714fd6d2a44778dd19",
+   "bytes": 12423
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/closure-final-native-restored/receipt.json",
+   "original_sha256": "193f97d4e91512ff6c5ccfd18b6cecd70221e9069141352cec4f7bd12ae395d4",
+   "original_bytes": 25013,
+   "sha256": "7a927febcafb57ce3eeeee0f6d190c746d3d088bd4417e292b21556203b7c96e",
+   "bytes": 24518
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/closure-final-native/clippy.log",
+   "original_sha256": "ea7f4f2a9639be666c422e2828096f68de6569b1c0cd05efc477047e7c934396",
+   "original_bytes": 268,
+   "sha256": "3f2ad98100ed2188b41152e0f27c03d101507ca8bee1907b931ecae377a83143",
+   "bytes": 263
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/closure-final-native/contracts.log",
+   "original_sha256": "597f73fe11b4caa01b84336f393a68bde267cd11ccfd335b7df19756d6dec5e7",
+   "original_bytes": 16140,
+   "sha256": "decbeecfbe985d837d63101ecbe41a7d86186ce5098505e147d68e636e6c9411",
+   "bytes": 16120
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/closure-final-native/producer-pairs.log",
+   "original_sha256": "b82e1b6c7eec917d6d6f842aae00997edbf32ab9d9ec9b50875cd7b61c23b39c",
+   "original_bytes": 1186,
+   "sha256": "79f9f6ac99eb1f363376fe44dfacdb5af2706c274cd24f6e52c2b66e5c3b25ce",
+   "bytes": 1176
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/closure-final-native/receipt.json",
+   "original_sha256": "38a9177b9639d3628d61b673d7fce69deaef54707819ddc2bfb236067a53f13c",
+   "original_bytes": 24970,
+   "sha256": "da373c070e84fb1f291c58fa9bd4d0cc95dce08be5c8053164e0d8a6549eff42",
+   "bytes": 24475
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations-after-quality/quality-no-promotion.baseline.log",
+   "original_sha256": "3cac7c4e24507ed4363a185718c57eecc8a65feaf4fcb0e21fd2b912f193d563",
+   "original_bytes": 732,
+   "sha256": "a03d7b3094c45d63ab06b44439f3b4492cd147242ccd3ecdfc7263c054d030d4",
+   "bytes": 727
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations-after-quality/quality-no-promotion.mutant.log",
+   "original_sha256": "27ebc11347e9ae8d692a8c6bca15317f5706541bbe5515389353d2fb5f9c3bac",
+   "original_bytes": 1275,
+   "sha256": "fb9a2fe7379d9682971a3269ebde03549acd6946bb089df2216f5e929ff240d8",
+   "bytes": 1270
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/duplicate-map-refusal.baseline.log",
+   "original_sha256": "839979b62931ef9daf4996d92b9f5cf160b5ea48a4b3522f1c54311e9459ec75",
+   "original_bytes": 716,
+   "sha256": "f83ed7d9aa61f9029423f499b3aaa6dff7adfc3f9d01ca878928489aa9755d35",
+   "bytes": 711
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/duplicate-map-refusal.mutant.log",
+   "original_sha256": "e7485697b22e2fdc0a11864971c65bea72817a329c7c3e68fffd45456eaa51b2",
+   "original_bytes": 1257,
+   "sha256": "693bc1d09ff621395121cbd6c1bf0fa2513542fdb2be882d8fc9e6491a926cc8",
+   "bytes": 1252
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/masterchain-all-shard.baseline.log",
+   "original_sha256": "ac84c8737b648e4cb7902dc6e569fb2d8643c379615230159ffa22c0e9298fd8",
+   "original_bytes": 694,
+   "sha256": "5fee9ee8dd6916a4b667e57d97f8f62616e6ae35609664c5940df47b12c3a58d",
+   "bytes": 689
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/masterchain-all-shard.mutant.log",
+   "original_sha256": "f24f86f9704005a9089acdb0dcbe973e38ef211132a17af1635e087106698b2e",
+   "original_bytes": 1240,
+   "sha256": "f2cc5431ca0e6bf137c30c005873286b76716109eb2ffe33f022c7ea48fd6860",
+   "bytes": 1235
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/post-terminal-incomplete.baseline.log",
+   "original_sha256": "a6384f13cb1cae1150855908759d31d6dfed2dc60827a24c66541c78bdffe910",
+   "original_bytes": 718,
+   "sha256": "72b11a856b4490bd3f12becb7550e1598c9f1397025761942faf2ed20335ccaf",
+   "bytes": 713
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/post-terminal-incomplete.mutant.log",
+   "original_sha256": "489252dddd279d32b73251891a0a44a0990db0b42c569c61a276b20f27a84359",
+   "original_bytes": 1247,
+   "sha256": "8547d143352967937ec419b68ae57ed7a289759be46c99af4f1c4f63bb1ebb90",
+   "bytes": 1242
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/quality-no-promotion.baseline.log",
+   "original_sha256": "02408812000298dd5e1d0f4e5dda69e21785a44a0e7cfdbde79dae6e1339bf85",
+   "original_bytes": 732,
+   "sha256": "2bebedd099a679ff10dbac278823875912e00b353dc23690550a2d81cb20b12d",
+   "bytes": 727
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c04-rust-consumer/raw/mutations/quality-no-promotion.mutant.log",
+   "original_sha256": "eae28f38cdbcef8f032e17bb2fc3ca88694ffa3d96ffdf953bd2e8fbef256fe4",
+   "original_bytes": 1282,
+   "sha256": "8c4ef9509bb41d48aef7e2a4a5a358f48b640d454a631da25fd0f7456891a292",
+   "bytes": 1277
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/C05-HASHES.sha256",
+   "original_sha256": "fc1ff1df61a1d131aa776ffeda1294695b3b41815ddf597f393babb8188c0fe5",
+   "original_bytes": 5294,
+   "sha256": "ec65acf0d40626807c3fe0f887f6948e8dcccb402fbeea1837c23a782fa89e6a",
+   "bytes": 5294
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/C05-REVIEW-CANDIDATE.md",
+   "original_sha256": "191ad7fabce87436ebe2b13d157e6f784df13a988f1fbe6dabc9cec81810871d",
+   "original_bytes": 4653,
+   "sha256": "3f5858b12eed1028e62a8facd200b5e0cec0315df56cd47ff3a32fdb484313ca",
+   "bytes": 4653
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/CHECKPOINT.md",
+   "original_sha256": "7a0585d7a1f33c693c20725894eab6237be7f3558e3bc584ba8caf7fa495f4c1",
+   "original_bytes": 3956,
+   "sha256": "ae77f910fe582e8eb1c6e4aef8f356bd28ab47bb7aca58321be64bc57928d4a4",
+   "bytes": 3956
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/CURRENT-BUDGET-CHECKPOINT.md",
+   "original_sha256": "2087fe92dc96ba1a27d6634597fe340ac16d6ae97a95b2e6d16a97207936e2bd",
+   "original_bytes": 6149,
+   "sha256": "a0f838390d15d52f670d5e325fb7f43738ec57f4964bc38d89cd32002380a39a",
+   "bytes": 6144
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/CURRENT-M-SLICE-RECEIPT.md",
+   "original_sha256": "4a3ac6ca3412a096ad1acb8268fc19f3864f937b1cd890d51fc9e77e3db6f906",
+   "original_bytes": 6555,
+   "sha256": "4d8531559d8d5bf73b8cb99034bd62112ea6cc64f2e04d979502c4edeb427f70",
+   "bytes": 6550
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/RUNTIME-SUPERVISION-RECEIPT.md",
+   "original_sha256": "eb9a35c9083744be0b2d2f9ffbb767db0a66860fa6564573b0c50f1bc91f681d",
+   "original_bytes": 6714,
+   "sha256": "23955cdfb809e856c34ad7238a779f324815cdb9e4c72c059078af54bbada1bd",
+   "bytes": 6704
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/TRANSIT-CHECKPOINT-RECEIPT.md",
+   "original_sha256": "561c1b356d659e8a0d3536e7f076e13c5b08b6b7a7f93073944976ff6ceb0b31",
+   "original_bytes": 5331,
+   "sha256": "79aa13496cedb6c09a6c865f9291cd92562f66f0b8cb310aebc67e9e4bc88cec",
+   "bytes": 5331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/actual-o-absence-restored.log",
+   "original_sha256": "d567236b591ef39fefd9308823818da3545f15dd118d9e5f874a0a11edc941ba",
+   "original_bytes": 640,
+   "sha256": "f97cbb5949893e1ee56a23f187357ce15ca8b8990493e2082525eb282995c141",
+   "bytes": 635
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/actual-o-runtime-restored.log",
+   "original_sha256": "2579ea99d7f9b308f5a3105ac00c6c4d9b82beaf15ed17050532b11ddfcc5e7b",
+   "original_bytes": 640,
+   "sha256": "f3fe1bfce0862619da5233099b44a0153d0d7304d69e3b1bfb322c54f7c567ab",
+   "bytes": 635
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/cache-poll-checkpoint.log",
+   "original_sha256": "0f5a0d973cb8c3023c640103591ae6909c4fbc0ffea902d057d0d95104d800ba",
+   "original_bytes": 1342,
+   "sha256": "7aaa691436b5ea463d6bdeb1e6801587316f29f1968affd34c65afb5fefe41a6",
+   "bytes": 1337
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/child-lifetime-mutant.log",
+   "original_sha256": "18c1199dffdd0dd0dc9c27777f3d9594b420e2d57c45965246958fe015a442aa",
+   "original_bytes": 1177,
+   "sha256": "2de3968453f5497ff546fe0abcceba8a20bbc97a7a24057ca0ac34f5d41966cc",
+   "bytes": 1172
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/child-lifetime-restored.log",
+   "original_sha256": "b30e6cfc33e08483d377094a2e0c6cac512dfc9b2ab1986a11d8944d1ef88df4",
+   "original_bytes": 618,
+   "sha256": "c0ad1572e1a1ecf80c2a14a40c93570ab83129528d0d12890106e9afa1eebe42",
+   "bytes": 613
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/clippy-after-runtime.log",
+   "original_sha256": "290a922cc6aa2dd700357946bf34f5f3caaa3842db30fd8248ffb472c241bb0b",
+   "original_bytes": 336,
+   "sha256": "277c7437122b930174dd6d905ad424fb966e81a859054c3fb7ff32269030d3fa",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/clippy-current.log",
+   "original_sha256": "33837110c6509828a34704e2bfcdba71c59653a333ecd4aefcd68adda157e8e1",
+   "original_bytes": 336,
+   "sha256": "c1f15f1446f955656fca4019a7b8826dc94778130fd72e30692b039185904002",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/closure-after-runtime.log",
+   "original_sha256": "3fd62eb2b635a5f09b7e1b11b22f8b13bc06325bfbc3f750d564c5a971c1d7f0",
+   "original_bytes": 19856,
+   "sha256": "00c27a68e240990c2a0306af0c76b7bbb348fb44557d006aa2ea2219b5703203",
+   "bytes": 19841
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/closure-first.log",
+   "original_sha256": "4fe51d63c8472000e0f9ab1fdd8c3a37d6bd2bfc130f86e66d835c856fe55901",
+   "original_bytes": 19648,
+   "sha256": "f5e2a67a9a4444000b5b39c200ed52e2b6369e0bddcde3e97a5db4c3d2b6f367",
+   "bytes": 19628
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-activation-first.log",
+   "original_sha256": "27e15435dd995552338a2b1a904d0c8f9df2e2a3f42fa1b6cfce73eb33c4a5f2",
+   "original_bytes": 744,
+   "sha256": "26974e5f7f5cd91d6173b588eeac0f9711b9c260a13df6049697f97989b66cd8",
+   "bytes": 734
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-actual-handler.log",
+   "original_sha256": "e011cf87e28c24cc0214c0d2ee4934526fc9e8ee68e1243623fd29b7e9f74d53",
+   "original_bytes": 1168,
+   "sha256": "fff017904e5ecdfb9d4a1deef8bc96410c779c701bf954ea1564e8c37bdb5438",
+   "bytes": 1163
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-age-mutant.log",
+   "original_sha256": "51da408514e4069587fcc1daa2c7ae15394113bb7f0b1015a7ba87735032e0d8",
+   "original_bytes": 5301,
+   "sha256": "cb44af1c0db4e77f7308ea4ae35ab08baaaa64c34948c563d5e732efefe7d4e9",
+   "bytes": 5291
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-age-restored.log",
+   "original_sha256": "26b0873f3bfcede5c3232b092f247eddd3ff73ed701088a279272f043254382e",
+   "original_bytes": 635,
+   "sha256": "cb3d3f9fed2a3d6064404540cfa1ace92df0e620fee214e33252d1a433691965",
+   "bytes": 630
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-fmt-clippy.log",
+   "original_sha256": "75d18dae33f1d15b83ccfaf49d452c2320af7515268b7a91ce435be687b9f07d",
+   "original_bytes": 336,
+   "sha256": "f72864497f042100f8aae5049d2a7617e96ab0569aac6eaf9598d617f45f58b7",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-full-entry.log",
+   "original_sha256": "3b14870df78b71153329c84fef878de4b05fcb2106c64390a285cc00777f81dc",
+   "original_bytes": 21282,
+   "sha256": "e7a6de98d63100a1388bf2ac693c754f5e7c1434840d36abe1edf95cf085a0ea",
+   "bytes": 21262
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-restored-fmt-clippy.log",
+   "original_sha256": "6e4244edfeaa158fab42185a0abe9717ee5b9d3536bcc4c6936f4368c577d5d3",
+   "original_bytes": 336,
+   "sha256": "f41aea617d1941ac85a7cd9826bbca7ff7e12c8f7bbe36c6da9f5b3bc2fdc898",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-restored-tests.log",
+   "original_sha256": "9bc4c1503057689474155d6262a69e03ff2fceadd1135cfbd33e17a716e32809",
+   "original_bytes": 3087,
+   "sha256": "21b070dfe8b11958423097a0c60fa6dc6906e1d6b644f40a937bcb4253e35479",
+   "bytes": 3082
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-budget-tests.log",
+   "original_sha256": "0b26527a3b615190ae8dc042bab293ea35bc6233714f6d9fa3b0cffc6bb78af7",
+   "original_bytes": 2988,
+   "sha256": "d87134c7b529262e191b2b063bd48e8c1ee0c2ce237448c28c9e0aaea672cc82",
+   "bytes": 2983
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-plan-contract.log",
+   "original_sha256": "1bf1eee45636c3ab0c3d3d2220ba05135aec33b57dd35e247c73f96c912e9e49",
+   "original_bytes": 981,
+   "sha256": "f50f6d677a49e0706cfd65f5e69f820656a720a247eed3b7666b6f12f11dd50c",
+   "bytes": 976
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-plan-schema.log",
+   "original_sha256": "f38646e5c50e1c8d30210a4a4bdbc453a2c0262ba55eb79bb217ac231b9546f0",
+   "original_bytes": 405,
+   "sha256": "8c49e6275601c5afc4b1c6872fc03efbef7402f6dc4c3e8efcb7d27e15d58971",
+   "bytes": 400
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-qualified-handler.log",
+   "original_sha256": "419b686b8b02e61a48e8299f6a2c41e4e17c3a3209084f84340721c8c14f8cc8",
+   "original_bytes": 627,
+   "sha256": "737649f692cdf2ff520b8d60bc0225b3e454765f84e143e4906350d1f830b4f0",
+   "bytes": 622
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-reactivation-clippy.log",
+   "original_sha256": "40a520b60bbd24e8330a9472b629184fbee6faae6587d0f57c79f621363168cc",
+   "original_bytes": 336,
+   "sha256": "234a4c0cd39b3d9fb8fe8a0a634b1cad551e831716895b48f1607d1b70831ee6",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-reactivation-conflict.log",
+   "original_sha256": "f79f88f3d10a79996281a25af6d5c51a10220f8a9484d4ec8b3a84ebf0bd153d",
+   "original_bytes": 634,
+   "sha256": "c1f9ab1514746c43e41661434e32e7de54b173d2cc09691f70f6162b24ec25ed",
+   "bytes": 629
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-review-first.log",
+   "original_sha256": "bd182f079c87f11b597beb80608f699bce52ce248f59d70d85c9bf96d132c1da",
+   "original_bytes": 1045,
+   "sha256": "6f3a1cafe7f8ac523863be95fc5937c47ffa5efe658c51e959a7378b283d11c4",
+   "bytes": 1040
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-review-second.log",
+   "original_sha256": "3dfb519df1486b6d55153a2955162a0c04f53b285adabec11cf884bcb6c175b7",
+   "original_bytes": 1045,
+   "sha256": "e1b101a1f3119880c7846e87fbf3622b2d8c693ca394a6b58917c6a61508775c",
+   "bytes": 1040
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-review-third.log",
+   "original_sha256": "badc8798ed69545f7e55ff8bc03514000b5ba9806f481c8eaf5bc639911f5ae1",
+   "original_bytes": 1045,
+   "sha256": "c16c9b1ff8937dbc2d434ea2adce7590692211caa63e70aea761985a478590ed",
+   "bytes": 1040
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-route-first.log",
+   "original_sha256": "f7548be20d26b710195979e172524a6b186fd6abf39fd569b245958d34a79912",
+   "original_bytes": 1045,
+   "sha256": "83b13028fc255468fb33bd337c9e42c8d45c386c2beac2c44f6caa9e9903df96",
+   "bytes": 1040
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-slice-clippy-restored.log",
+   "original_sha256": "8b09d0eec363c3122413deaa9d0d6f9b44f1f46a58c1324bcc954947b379fd94",
+   "original_bytes": 452,
+   "sha256": "75e778faea6cdc618029824e5389a7e067d1b5a28bce15cec54257115c13f3a2",
+   "bytes": 442
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-slice-clippy.log",
+   "original_sha256": "369c6cadf047854c55466fc762aa081f680962b52f5e688ed6f749e976ec2d42",
+   "original_bytes": 1249,
+   "sha256": "f32ca6c07cdd51c5e97264bbd0dae8a3379e277d128a173c0dd1d6be31ea2bb9",
+   "bytes": 1239
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/current-writer-conflict.log",
+   "original_sha256": "4ce0601c4afd08a96026dd076281d9bb1e4d5cf1a5523a2db5e59c746afc4d34",
+   "original_bytes": 1045,
+   "sha256": "843b61cccab1c98b442ffb9f90f0d04413b41533eb9aaa79f7e2bd0d0219b18b",
+   "bytes": 1040
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/lane-supervision-after-mutant.log",
+   "original_sha256": "c9c367136c2c5344ee3a857daa2bd01dcb38d37552764235ecd5d1da2b1599af",
+   "original_bytes": 842,
+   "sha256": "9d0aa47d0b82c4aaa857babc44bb8ccc0860f08ea6a6080dd252a87cecb03f0f",
+   "bytes": 837
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/lane-supervision-mutant.log",
+   "original_sha256": "734a915d331e070e1cb7656ef26e9518161b3cafb0aea39345eed40b11a7cdeb",
+   "original_bytes": 1106,
+   "sha256": "79b1fa60c63c23d850c1cf1381685577b639c23f1ead54cde5f1ecc45e0ddd39",
+   "bytes": 1101
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/lane-supervision-restored.log",
+   "original_sha256": "4b79c809d4a50031c5ea7be381cdc9436b17f8e4199c566b1c91e4f6bedefdfa",
+   "original_bytes": 842,
+   "sha256": "837efd8b007fe0acd7e0fee0c88aa3c959aad69d01954d0c632d8fb8c74b72ec",
+   "bytes": 837
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/transit-checkpoint-fmt-clippy.log",
+   "original_sha256": "30ebad090907d90f4c5cc68254ee0f77e6250319960b018e24c7914857b3f052",
+   "original_bytes": 336,
+   "sha256": "9ab80d676e4c024134caade82b3dfd19af48c748e145ffeac20da004b3932a9c",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/transit-checkpoint-tests.log",
+   "original_sha256": "a19a6d11e9c2512246446ee71d9f750b1bc1ee9cb7556f9fa162d0d3246a50a8",
+   "original_bytes": 2525,
+   "sha256": "441942ff5c90346b18a9a57b4e102475794fb2b2b3cf2ec6048d659da571fb56",
+   "bytes": 2520
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/transit-clippy-first.log",
+   "original_sha256": "3b7aff7a56e7972d769c8f6e10ced21cf0de69f52af2db53eb7daaa17fbe083b",
+   "original_bytes": 3095,
+   "sha256": "5da7b9bdf181a1e9d6bdb7da4f9d087169a8ae602867217ddb3975d701f48d16",
+   "bytes": 3090
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c05-external-witness/raw/transit-clippy-restored.log",
+   "original_sha256": "578c67f79de923659ff3baadf3723f95cf50960558fdde24d3ca53f3f134f3f1",
+   "original_bytes": 336,
+   "sha256": "551c3bc631f05dec6764c4c8c5008f3a456ab18a2b8513ea93daa66ad13a45c5",
+   "bytes": 331
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C07-DIAGNOSIS-PARSER-CHECKPOINT.md",
+   "original_sha256": "10c70bc7384c466eb0b5707deb3041b76f3ccdc07182abb941a6b6f5d6adf41a",
+   "original_bytes": 1909,
+   "sha256": "216d5f6e6e4e3f1f6ce0326f0f23bcea6bc4fc783cb44dff85e77845903d6e58",
+   "bytes": 1894
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C07-DURABLE-PACKAGE-CHECKPOINT.md",
+   "original_sha256": "63922f9d5bfe69615be06bc1f80afaaf20f9dd93fc817fbdd052431e791a828e",
+   "original_bytes": 3265,
+   "sha256": "b2193349796d32fdfb0c019a1dfdd4a2ca15b344d103d543b6826ebf5ab21019",
+   "bytes": 3260
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C07-FIXED-PROCESS-PACKAGE-CHECKPOINT.md",
+   "original_sha256": "78e6f1d3f2eeb00558a3ad359cc1a171e6b8e1ebff57a3edfaf34a1bcc93f2f6",
+   "original_bytes": 3372,
+   "sha256": "3384d6a6d5105ec4d55d45f6dfad39095d5ba40c484e710d402d7612025399eb",
+   "bytes": 3367
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C07-TYPED-PACKAGE-RESTORE-CHECKPOINT.md",
+   "original_sha256": "7a1a914f7fd0f8461c9abb8c6b394ed15ae3ea6ba5de21d22b9f90f84667d7f8",
+   "original_bytes": 2626,
+   "sha256": "18de12757665550e6502c8c569953b32156363a5bbdb83fec0d390bfcb1c32ff",
+   "bytes": 2611
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-CHANGE-CURSOR-HTTP-CHECKPOINT.md",
+   "original_sha256": "15b9d5c70a9959e4feb4f3855327f2a74c0d67ba97a49a90094878ff2aef251f",
+   "original_bytes": 2678,
+   "sha256": "c99866bb0c6b9937789f4ecfc1a43cb5b433e96163f1ddd1c0cad10e95f451dd",
+   "bytes": 2673
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-CHILD-BOUND-AND-AURA-TRANSPORT-CHECKPOINT.md",
+   "original_sha256": "b60473f96d00aab362c9d2785a4ce2ded76f21087cc30d4227030b7dc932e923",
+   "original_bytes": 3329,
+   "sha256": "e3935ca11c2e0fbfd964abb6cff25e00db6e8db80149bf46c55c721114843c9d",
+   "bytes": 3324
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-CURSOR-REPLAY-HTTP-CHECKPOINT.md",
+   "original_sha256": "89989cab7d4fc9f596815790c4cff78154e553d8e4fd2bd8b031257a836c526d",
+   "original_bytes": 2462,
+   "sha256": "73af17ab969648e291cf3d58a6d7f099b16f28e79b1d5b8a85deed7d015d4197",
+   "bytes": 2457
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-CURSOR-RESTART-HTTP-CHECKPOINT.md",
+   "original_sha256": "950eca893868c305f52c2b4b4f9f2daa99f2ada152471a18448e978ebf570604",
+   "original_bytes": 2143,
+   "sha256": "83d832b4a8a2849aaf7c030a7d724815f4160dd5fe7e49eb730764d4bb349559",
+   "bytes": 2138
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-MCP-BUDGET-CHECKPOINT.md",
+   "original_sha256": "0115b8bdec015f218d3b422a66dc27ffb6812bc9be3521dfa80cb4e954c5ad36",
+   "original_bytes": 3384,
+   "sha256": "d17c6f988e73f9e8a79e54350e883993fa3f92cef9d37cee8b45997f8806222e",
+   "bytes": 3364
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-MCP-CHECKPOINT.md",
+   "original_sha256": "3553a458bd1b67c7672c163ad3f53bdef905e90372d8201ecf9182b37cafe1cf",
+   "original_bytes": 3054,
+   "sha256": "88360e24e95722647223707bf1bb031fbadd1a3ffb6a803a51a7c5e95f255e34",
+   "bytes": 3039
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-MCP-TOKEN-MUTATION.json",
+   "original_sha256": "39fcd5537047242fda8c4778a7ea38b9e06351cfc6ae8c019d2a34424b931c37",
+   "original_bytes": 1516,
+   "sha256": "b9e569e21ed781b26ff1d41e4dde34820b2b55ef7c493e9db62e039ba8b72b71",
+   "bytes": 1491
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-PINNED-AURA-ADAPTER-CHECKPOINT.md",
+   "original_sha256": "c6975a1006f543f571043450396283bd3d4c423a3e841f1bc6dcac532f5ebe0d",
+   "original_bytes": 17384,
+   "sha256": "099c872d0659b659890687ec0a0a572383eb2288eb20d4b5fec3ecdd08fffd0a",
+   "bytes": 17339
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/C08-ZERO-M-READ-STORM-CHECKPOINT.md",
+   "original_sha256": "a627141623f1d3e83c97cd17fb96fffc51ee3f681680a1051c40ff7d1c4b3b2c",
+   "original_bytes": 3911,
+   "sha256": "36fbb14b76801ad3c0a69831f39b19645cbdf8fd1c1ebab6aec52aa9b33564f6",
+   "bytes": 3906
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/CHECKPOINT.md",
+   "original_sha256": "562742f75177b11cac3a65e3816874b111a9ef2943408711831906de4a721b5e",
+   "original_bytes": 1909,
+   "sha256": "a7466ac92d32bd050f861d99be42cba0ef8e174aa9a8f32a3bcaa8d98e1dfb6f",
+   "bytes": 1904
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/INTEGRATION-MUTATION-RECEIPT.json",
+   "original_sha256": "eee706b331cff294e3098442e27afc1b9855a25829e79be8704554a02637f111",
+   "original_bytes": 2616,
+   "sha256": "2899b07b403fca7cbd0d68618e55e0faaacc95327d2092560b3270270066f803",
+   "bytes": 2586
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/INTEGRATION-STATUS.md",
+   "original_sha256": "30ecd66f032143065755d555ddf8527cb2e6b49d96cd88135c71934945c3c842",
+   "original_bytes": 3155,
+   "sha256": "d5358b966188cf94a774c44931e9e06d56c1ebd2d8dbdd7a231c72927d40c74b",
+   "bytes": 3150
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-chain-first-compile-failed.log",
+   "original_sha256": "ed7651266ba225d176d6f9308eb3165b06e1a6f86da322e0bdfbbe147fec5621",
+   "original_bytes": 483,
+   "sha256": "13955c9401bffe9a4f8f08d539fb81d253c874e7e26955de047bf23e7cd7b862",
+   "bytes": 478
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-chain-lifetime-drain-red.log",
+   "original_sha256": "fbc053181f95de05be44dc57b0a8af021b2f97aaff27c05aabc29e49e3786158",
+   "original_bytes": 1064,
+   "sha256": "862d0c1d3a86b953273cf2fdab0cff7e81ba004ff6409f66129db942095b640a",
+   "bytes": 1059
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-chain-lifetime-wrong-branch-red.log",
+   "original_sha256": "735b3ba16d995303b3e45b5b8cbe1e2e454a2b94121a0f7a600d6f194db87720",
+   "original_bytes": 1128,
+   "sha256": "7f1102d447229d82ef7e3928b77c455bdd3621c60a8d4bfcb1f3a354458e90e8",
+   "bytes": 1123
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-chain-lifetime.log",
+   "original_sha256": "f5d2bbdcf3bd5fc766bd2f108894477b729de8def08b2eaa76b1c6bbe6855e8b",
+   "original_bytes": 468,
+   "sha256": "bad6ecbbfc685275a187e255288c0ee243d68f1009b1b35ade5f42f3a2d119ee",
+   "bytes": 463
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-chain-restored.log",
+   "original_sha256": "d3d7c312d5ffd0989e061b2c8440b1379fd884591a471f9a39975e7c29bdf701",
+   "original_bytes": 536,
+   "sha256": "07f88e359a8d7b8001fc82bf6a2bd1806d8ca6a356ba743a4e4ef3068c99408c",
+   "bytes": 531
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-chain.log",
+   "original_sha256": "ff0f4b1dfcb0fdabb330840a4f87b49548822541a19fc91fd729837bec997d32",
+   "original_bytes": 465,
+   "sha256": "3973e5a933e07845b2087ca38b9318d379a304e746c3326d6c33b2f95c29337c",
+   "bytes": 460
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-final-integration-drain-30s-red.log",
+   "original_sha256": "0669caa03616b96a777c80fada2de0d1f20dbefa097798e42c2821ac46383b1b",
+   "original_bytes": 2076,
+   "sha256": "701e6cb67108358e448e735aeb2a3f0113aa064fce31d511026e3278fbba370a",
+   "bytes": 2071
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-final-integration.log",
+   "original_sha256": "08b8afbd696f093c99fcc5460b1f52fa23489c7d506b5cacdb2c3135c3c4a785",
+   "original_bytes": 1624,
+   "sha256": "048c11fc07a46a38d9d1876c7a3b04334ce1495b1e493632213b4b379c9830ea",
+   "bytes": 1619
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-process-death-poll-rate-red.log",
+   "original_sha256": "a76bd3b067e2ace77dcd0c2355a4f367016103a28704193f0dfae4df5d064941",
+   "original_bytes": 1137,
+   "sha256": "28754080ea75b85311e0fb323a153a89df286fa2c713669a9103a0b7397c9eb2",
+   "bytes": 1132
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/c06-process-death.log",
+   "original_sha256": "293055a82ce4dca6bdfc2d510919958bbd0361443674b56d3f41c340fd9992de",
+   "original_bytes": 482,
+   "sha256": "bf891602c9fa227a05d543405f194150379e5ea1de826f90be01000cf000a539",
+   "bytes": 477
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/cmake-configure.log",
+   "original_sha256": "5d2ea609364e02b6f0315bea4b487da78a590e0a4e45fdbd9e1ae098a013d96f",
+   "original_bytes": 4212,
+   "sha256": "211eae5e0f2ea4ed53121a5ea9c8354785855466982a92ed4199e7a854d8778a",
+   "bytes": 4132
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/gate-summary.json",
+   "original_sha256": "1ab70aa6b05e990c0d2f9693a1c5da84c3c1400c7b9b15c60a746ad4b0296a48",
+   "original_bytes": 2557,
+   "sha256": "02580a38c6e345dd9e60ce8e32edb681f285934842deb5ae01d0b7c65824f97e",
+   "bytes": 2532
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/index.json",
+   "original_sha256": "db1a6c1f6440e8db243a6d3ba5fe917bd4d0aa23c95e81998c88d6fc5c4f6984",
+   "original_bytes": 45493,
+   "sha256": "61d684b1e42f6a3fcbf360047d2b5be583d991d6ae05988718a1f64aa4e60fd8",
+   "bytes": 45493
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-build.log",
+   "original_sha256": "2ca420bb5cbd7e00f189f0f1f7054ede49ed762d64f77f9290e1ecfd69ff4925",
+   "original_bytes": 196012,
+   "sha256": "2da9e1e53ae5c3c3db6e538d8d647f0b62b214d0bfc3a7ddb96cec9541e49511",
+   "bytes": 194692
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-cmake-cache.sha256",
+   "original_sha256": "bff4a9c903739db62c32af097425e66a7ce3084a20962f40a9590e03874361cb",
+   "original_bytes": 106,
+   "sha256": "347a40525f15a8813e541c377a4a6c92bd8c94c3a5217ec89adcf74c1bdf83e9",
+   "bytes": 101
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-corrected-build.log",
+   "original_sha256": "2860576e1c605f4e955895cc84c6f8ad9f20432b8cbe839515a2626773146ab7",
+   "original_bytes": 7883,
+   "sha256": "5bf9422778d6cdc1558dcfad1ac90bc02ec24c501827fe5d36fe8a0bf2aecf8c",
+   "bytes": 7663
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-final-build.log",
+   "original_sha256": "fbe72b7f2becae4f7b1bbfe854020a49396621af6c211a2c57f196f824ef7183",
+   "original_bytes": 6310,
+   "sha256": "382c3191821aab2c39a8c261e5c98cb1505f8b470d6fa77671179578bc26d73f",
+   "bytes": 6090
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-gates-first-segv/index.json",
+   "original_sha256": "c37a5530f05613e950f6005a25ec91d27575fe70efa7e767ca04cdcf60846b37",
+   "original_bytes": 1665,
+   "sha256": "af9b54517d46e576b7a9fba65d5176397eb3678823d1d0e865f64c6398493873",
+   "bytes": 1630
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-final/capacity-red.log",
+   "original_sha256": "2e4c59f4b5633872155813ff797ca5c29e3a5f43a82b98571b1ccf5e1807498e",
+   "original_bytes": 193,
+   "sha256": "39cd8da994334f437d9f2f49db7c571ff3c5fbe1a8a05fbcb2122eafb20fecc9",
+   "bytes": 188
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-final/enabled-red.log",
+   "original_sha256": "7fc9012fa9caa4d688c907a46f9a2982a40c640b536a28c57a233baf4fced06b",
+   "original_bytes": 203,
+   "sha256": "9f67e3620de14dcb74323eafb596088555809d3a70624e7f519cb7e380b27d5c",
+   "bytes": 198
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-final/peer-pid-red.log",
+   "original_sha256": "f6802464a99f77478cfcb8c81c895d9eb2117bc7f42a2a64bb511ca984c214c3",
+   "original_bytes": 197,
+   "sha256": "830c7531892facbf87408324b1b0077b337fb3e5718d0100459bfacc077d8a44",
+   "bytes": 192
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-final/sample-red.log",
+   "original_sha256": "bc9683eff03d02891ac428a58f1e9c977451211f4e4d656642bf08a89fc0e70d",
+   "original_bytes": 229,
+   "sha256": "0b1ec45e3d50bece04cbcf075eb321f5b1e59ca8204ad36e6b92e6f816882236",
+   "bytes": 224
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-final/sequence-red.log",
+   "original_sha256": "01edbd7ffdcf8ee9a41a0ca0771e5c131c19edf7d55147707375511ce866585f",
+   "original_bytes": 181,
+   "sha256": "7ea6b0aaea8138dae03a8233bcd8ffe01b10d5ef5bfd7136c1f014af6807bfb6",
+   "bytes": 176
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-final/socket-accounting-red.log",
+   "original_sha256": "501ed2f8e5268d1f183e1aa1361006218ebee1db8626ef8e557c7cecaceae07a",
+   "original_bytes": 229,
+   "sha256": "6acf37ed717553ce74bc68c8d0117781ec99097b97ef089b4556ba9f9e45607b",
+   "bytes": 224
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-first-failed.log",
+   "original_sha256": "33f7ce7b447edb06a95afb03b92dcff8aace416b5d0baeecb44dfc0f144270d1",
+   "original_bytes": 558,
+   "sha256": "b56c369b412adf2a98ad60d0b8051787f03b61ef1d975c33a04584b8ee203171",
+   "bytes": 548
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-restored/capacity-red.log",
+   "original_sha256": "2e4c59f4b5633872155813ff797ca5c29e3a5f43a82b98571b1ccf5e1807498e",
+   "original_bytes": 193,
+   "sha256": "39cd8da994334f437d9f2f49db7c571ff3c5fbe1a8a05fbcb2122eafb20fecc9",
+   "bytes": 188
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-restored/enabled-red.log",
+   "original_sha256": "7fc9012fa9caa4d688c907a46f9a2982a40c640b536a28c57a233baf4fced06b",
+   "original_bytes": 203,
+   "sha256": "9f67e3620de14dcb74323eafb596088555809d3a70624e7f519cb7e380b27d5c",
+   "bytes": 198
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-restored/peer-pid-red.log",
+   "original_sha256": "f6802464a99f77478cfcb8c81c895d9eb2117bc7f42a2a64bb511ca984c214c3",
+   "original_bytes": 197,
+   "sha256": "830c7531892facbf87408324b1b0077b337fb3e5718d0100459bfacc077d8a44",
+   "bytes": 192
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-restored/sample-red.log",
+   "original_sha256": "bc9683eff03d02891ac428a58f1e9c977451211f4e4d656642bf08a89fc0e70d",
+   "original_bytes": 229,
+   "sha256": "0b1ec45e3d50bece04cbcf075eb321f5b1e59ca8204ad36e6b92e6f816882236",
+   "bytes": 224
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-restored/sequence-red.log",
+   "original_sha256": "01edbd7ffdcf8ee9a41a0ca0771e5c131c19edf7d55147707375511ce866585f",
+   "original_bytes": 181,
+   "sha256": "7ea6b0aaea8138dae03a8233bcd8ffe01b10d5ef5bfd7136c1f014af6807bfb6",
+   "bytes": 176
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants-restored/socket-accounting-red.log",
+   "original_sha256": "501ed2f8e5268d1f183e1aa1361006218ebee1db8626ef8e557c7cecaceae07a",
+   "original_bytes": 229,
+   "sha256": "6acf37ed717553ce74bc68c8d0117781ec99097b97ef089b4556ba9f9e45607b",
+   "bytes": 224
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/native-mutants/enabled-red.log",
+   "original_sha256": "cd54e44f02fd724f3daf1feb4b20c241399cb0430b8db6d79c3e5f4cf83c6edd",
+   "original_bytes": 187,
+   "sha256": "4567d103e14e287db7f8d7d47d59d298574a8fdd69be940c9b2b4d74cca42528",
+   "bytes": 182
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/owned-row-first.log",
+   "original_sha256": "2cefa04f032a1d03ed8fcd0edf14f4a49e11ba1387a98c18246e80e16b89828e",
+   "original_bytes": 1279,
+   "sha256": "1b7f3c8f36c0b649f4ddd8caffcc2a18145b5232a3be1c0f05e6e3c72b81fa5d",
+   "bytes": 1269
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/python-contracts-install.log",
+   "original_sha256": "c066de391e7ff695b805e97fd9735a73168a37b8380d52bcea2c413f37b4c2da",
+   "original_bytes": 3501,
+   "sha256": "0a0d3acf15a661c8d2c94829d04971d3d5e0ffe07843ab94fd1d164d0e9e1d7a",
+   "bytes": 3496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-diagnostic-final-unit.log",
+   "original_sha256": "2356ae93c207d2720babb3cb163604379980ec1c178a9aa1171093756dc6dc30",
+   "original_bytes": 1305,
+   "sha256": "8d0b1085187f729ad735d488897eeecf5613c9538b5b688eb53eb7c31ee730ff",
+   "bytes": 1300
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-diagnostic-unit-query-quota-red.log",
+   "original_sha256": "fa1ab11f93fd9e4d854032b15bbf17ed3bfee42e2ba53de1e273c5c7b44b75d0",
+   "original_bytes": 2355,
+   "sha256": "d958a217c7068df4a705504bfcbe38891e70547195c4ac940451136a5309e189",
+   "bytes": 2350
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-diagnostic-unit-restored.log",
+   "original_sha256": "bb02ca06a07fec08a51e7ca503cb8d6e690d0fbe085eabe00810cad75e8bf1d8",
+   "original_bytes": 1279,
+   "sha256": "6a8477a9ca5be5a6232ffa6f40c48b4e1973354a741ffa351200f857b4d90b83",
+   "bytes": 1274
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-diagnostic-unit.log",
+   "original_sha256": "154b1a9f8b0e61e4a0b8d6222f046280c3da6521fa004b71438dd7c338a4a2b9",
+   "original_bytes": 2909,
+   "sha256": "95c0c37eca8fdec4f8cfc16b35da5113daa6c774747f08d410f2e51073a96503",
+   "bytes": 2904
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/atomic-prefix-compile.log",
+   "original_sha256": "2ab2bcb9fe55c1b50301c0d15beeee86804cf3792ac346dec2d09a5e669ce8d7",
+   "original_bytes": 286,
+   "sha256": "6d0940da31394170030a9738500abc0b143ad59b93915c0a5aabeda614e100b6",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/atomic-prefix-restored.log",
+   "original_sha256": "8c4e79caf0ae85188f8e138a4c6ce03c0a1409d2127ff75070fe315a1f6244dc",
+   "original_bytes": 501,
+   "sha256": "d134ca47c29b43b04e1b9c661965ed1259dbfcc064486fb67d009b54dc4cbf67",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/conflict-compile.log",
+   "original_sha256": "cdb8b9a5c992aaaaf25ed47bfffd522fd09cdf14d8d247aad7962576da5c036a",
+   "original_bytes": 286,
+   "sha256": "d90c09165e0da1b3cdb9f1e8d879c10c696e8a001c05c2c35ac6f463b577a484",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/conflict-restored.log",
+   "original_sha256": "cdf028763ac12857bcd051b07a5bd5c22b913b208d6a8f1687f4440046e83b83",
+   "original_bytes": 499,
+   "sha256": "5d18db5dc3a43106b0a2aff7fb74c336ea0fc3e791200e6a40a3e5d5aedd6b94",
+   "bytes": 494
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/credential-compile.log",
+   "original_sha256": "8180700db3911898227ea191c6cc3bcf81873d270654ad662f887d1b8b59fecb",
+   "original_bytes": 286,
+   "sha256": "36ddb998c1eca22ddeaeaabdaa6d8629d3aeaea04cac0b65b9ab02505c6c6923",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/credential-restored.log",
+   "original_sha256": "eb9b0384d04a374d3fc3b552b63071c685da63ea30e628f86f86e0050ceb9995",
+   "original_bytes": 490,
+   "sha256": "666dcf63ac7ee148c08c58acba62b5f9a271c95325adf49859d10e701be010cf",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/decoded-limit-compile.log",
+   "original_sha256": "04e46a90cc4aa0a191fb3c74447a212639aa374bb5e644e329d75e861cdbe0ad",
+   "original_bytes": 400,
+   "sha256": "90f867b22d162dde4829d7beca89f7190eb9970c21c7c96d6b3fe9dd3bb1d2ec",
+   "bytes": 390
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/decoded-limit-restored.log",
+   "original_sha256": "7063121631c68814c54d4c9b4e17f0958344cad2e88fc6960396794c869dacf4",
+   "original_bytes": 598,
+   "sha256": "754754fb55e8544b879a46c4072f890de6d7b01176ed976aaa9a6aeb2e7e49d0",
+   "bytes": 588
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/epoch-compile.log",
+   "original_sha256": "7659be9c4dda04ab16ba7ec3518884249903c3f26ff892068c77ceb2a0dab43c",
+   "original_bytes": 286,
+   "sha256": "f8a3c655eefe5745dc602e68c97fab8e7cabeb85f2427a8ca049875c3b8d5676",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/epoch-restored.log",
+   "original_sha256": "19966e61b64d5a7412023abcc85063ac9f99d58ac7e570bb56ddea1e9e8b8633",
+   "original_bytes": 490,
+   "sha256": "3140db712e7d80a4c16198314e1498e5d1e142224fa0106cded441dee658f92d",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/json-limit-compile.log",
+   "original_sha256": "a95ac9cd57387e36ab29f37fefb1d8d0a9edcc47567776afef0170cb8dbd1897",
+   "original_bytes": 400,
+   "sha256": "002954d0903791e9121cfadd71e222a1a11c42eab17b9035dbea6f02d2639ccc",
+   "bytes": 390
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/json-limit-restored.log",
+   "original_sha256": "2192e307cc55c1eb575e74ae32d53dcc8bd1e10b68538c42eb79ff631909a836",
+   "original_bytes": 598,
+   "sha256": "1f5b0c5902dc1e2dda948feb494efb8204040f6f6590000b0ace8e52943ffe42",
+   "bytes": 588
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/nofollow-compile.log",
+   "original_sha256": "bfeec674d9a2c412872fd24eeb3f8c22f103c5cf0c4e511f146924d174a1a9dd",
+   "original_bytes": 286,
+   "sha256": "9f109f7f81394aed8d830fe0dab2002b2f4ebecded8f10b7ffffa72e1b4a818f",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/nofollow-restored.log",
+   "original_sha256": "7d36f669848c85740e118636ceafcfcdd190d8af8ad0aca32418f055ea02740d",
+   "original_bytes": 490,
+   "sha256": "577b0dcad0669d08c89a934c460aa74a65860541ec9dab14b8f3f3a1ad8633e0",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/predecode-reservation-compile.log",
+   "original_sha256": "4fc41eec5fc287b63497dacbbce212d63981d37865864a72ae27c29b22b27d08",
+   "original_bytes": 286,
+   "sha256": "7d0f50ab56ec9f35ea9a5b86185ffc9704e9089b72a025b658f403a488f8e355",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/predecode-reservation-restored.log",
+   "original_sha256": "634d458fa13f99dab129049daa9a84fcd1741a73c083c482d702440f20f85ed4",
+   "original_bytes": 501,
+   "sha256": "5f2f5ea078ab0999c378ceece0bd4ae96380174825c7f04a5357d79f09f675e8",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/rights-close-compile.log",
+   "original_sha256": "79006fb1c1a09687b058a99141606e28099d237a7a29f5f45cbcc4ffea057e16",
+   "original_bytes": 286,
+   "sha256": "119c8bbf9d5e085f2732fcbe0b204c38c7640423ff8574fb00f2aa1556aa0735",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/rights-close-restored.log",
+   "original_sha256": "e8cc0e772af186268da7c85a52d3ceebb47e6aeb06d008dfd90e42bee59006db",
+   "original_bytes": 490,
+   "sha256": "f503d3f992c9a3c1c26bc016bd656b52eea6fb22c30ce57f5676c2261fcfc4c4",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/tcp-rate-compile.log",
+   "original_sha256": "c45feaf2be0c0158c2afa1a0323a615ce416a9821323398379861ecf13223651",
+   "original_bytes": 966,
+   "sha256": "c515de868d567bc36207aa8c33670beb9fc650234b68bd4202cb3465466f458c",
+   "bytes": 961
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final/tcp-rate-restored.log",
+   "original_sha256": "b2e9c507144758b48abd2e9346d8ef2a036157c490c5ec5af13cddda7904f138",
+   "original_bytes": 498,
+   "sha256": "c218ea360b0912e26a3951b167c4eb93d0492bd4d3ea0a83c44d875dc18c4421",
+   "bytes": 493
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/atomic-prefix-compile.log",
+   "original_sha256": "33304153a613f2ee6326f64d63b6b002c1b5775015c2d397d7981a5129ce890c",
+   "original_bytes": 286,
+   "sha256": "8a232f48116f336948cd955371cd748356808bf23936e84eda2d155b2b93736b",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/atomic-prefix-restored.log",
+   "original_sha256": "d6fc7c93711b7fe4e0e13bdaa7b17efad3d71e763855cca5168608fab5e7616d",
+   "original_bytes": 501,
+   "sha256": "64b51332934f25b1bce6201096a50abdaf0e2ba42c203a193465864e3f858289",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/conflict-compile.log",
+   "original_sha256": "0c697aa9fc37646a73ae4ee300be4fef614a56b32beee99c96ef29807453aadb",
+   "original_bytes": 286,
+   "sha256": "acf301c2cad45b846491a699eda0713a7cf9fb84c64eafe327c24528c6ee25c6",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/conflict-restored.log",
+   "original_sha256": "e3e9043d8dfc1c50c796ce53466983e572ec38efa179919086399308cf9670ff",
+   "original_bytes": 499,
+   "sha256": "695b866ee3a11b9f3e722639f8a874efbf6165ed005501076a59195c05e216fa",
+   "bytes": 494
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/credential-compile.log",
+   "original_sha256": "4a5992d89358f699b1d56c3c0d3e12d290feaa0147c04abb22a776ee03b3696d",
+   "original_bytes": 286,
+   "sha256": "51db30c5271a3d40207dae2367f7c5275f6f1e55e781c8363cac10c370b114c6",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/credential-restored.log",
+   "original_sha256": "91b959ecf81c8ada651e357b3bf517c136ff695cbe0fd70b4d77f63bfde79385",
+   "original_bytes": 490,
+   "sha256": "54ddbd59b01658dc1a42327fd4782b679303f83d8cc042dd3050e36c34b4305e",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/decoded-limit-compile.log",
+   "original_sha256": "b09447e5322405ec3f9d3679f7d4df080e18fc48d091ce9f49d8e65af1e3fe1f",
+   "original_bytes": 400,
+   "sha256": "cf7f661ca60dd66d64eb11ebc14ca3b4221a465ff2f3880ef96a16264e4890aa",
+   "bytes": 390
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/decoded-limit-restored.log",
+   "original_sha256": "6417237e815375d9a45337d32103c106b8a626b03ac128ef08acd1d0c3bb9afa",
+   "original_bytes": 598,
+   "sha256": "c6a363ed866f4cc55760d40e71bfa1770ea45cfbb265a3598948fac62a836777",
+   "bytes": 588
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/epoch-compile.log",
+   "original_sha256": "cc57da6f6cac01fbbee1c4ac85fadb88787f82b8b458dbad6bf408d93931b12d",
+   "original_bytes": 286,
+   "sha256": "db0269d3b18cf3e3b11263e1a7c4d4e91b6c7fde0cb4d1075be68ff1acc0dad2",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/epoch-restored.log",
+   "original_sha256": "c7de495b01016a8327b33cda923a1087ed83b8e4b8cb8c5e3c39337bcf76805e",
+   "original_bytes": 490,
+   "sha256": "68fbead6957580175dfbbab1cf00ef45f7993c4cc1545d807789a0df54d1ee09",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/json-limit-compile.log",
+   "original_sha256": "bcc519653274e274d81d12873c190a094f955c725c36a6348d189122fc3d846b",
+   "original_bytes": 400,
+   "sha256": "5597b80cc81fb16ae0a1175dd55d1f0a6fb42aee1775dd5f638722ec37c00f0e",
+   "bytes": 390
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/json-limit-restored.log",
+   "original_sha256": "00d4573f67682f268922e421e0bf6ae1ca1ca0033b374da25694f18d36284323",
+   "original_bytes": 598,
+   "sha256": "b57ba5ec0190ae33474460d2aff7866a3e21f3dacee11658b328b7af0168e7f4",
+   "bytes": 588
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/nofollow-compile.log",
+   "original_sha256": "cf4c88562f3eb85a2605d439857b94fc1075f90cb36103b6b76155ea9a432aa2",
+   "original_bytes": 286,
+   "sha256": "0827ece4e01d0f102679b4f6f49023d31f55d470cbefb3ecb9b1739ae43f0e4e",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/nofollow-restored.log",
+   "original_sha256": "cb978ffdbe8e09c3a08ef0c8c8b7a11987b83a7f2fa2465f31a2f19a7de0444e",
+   "original_bytes": 490,
+   "sha256": "a0b826c2faa5904cdae17312efce920f1fc699fa3c95176ddca1d18985a7c596",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/predecode-reservation-compile.log",
+   "original_sha256": "b5c35bf1f0fd1805726b55888b29ad40dbfcefabdda3691df7e543ee15feda93",
+   "original_bytes": 286,
+   "sha256": "dbe18dea951991ea0ea38085e8d5a2f70edf58631b013da45aebc052fb1e6067",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/predecode-reservation-restored.log",
+   "original_sha256": "634d458fa13f99dab129049daa9a84fcd1741a73c083c482d702440f20f85ed4",
+   "original_bytes": 501,
+   "sha256": "5f2f5ea078ab0999c378ceece0bd4ae96380174825c7f04a5357d79f09f675e8",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/rights-close-compile.log",
+   "original_sha256": "2b224c701bd33b2b17b720d449bdd0359f9ce85909f52dd022019324833d9c1e",
+   "original_bytes": 286,
+   "sha256": "8fcd4979e3a296f76526a7173bc7ac7f8a746667b32dda522205779422f2ea45",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/rights-close-restored.log",
+   "original_sha256": "5531870e503e6ffad5d3d1f172ca6882a991196e6cd2ce227ce9c35cb8a892f2",
+   "original_bytes": 490,
+   "sha256": "533801290ed93ed8f4963c3e930746869d2c720d0c603827f084615fd23e524a",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/tcp-rate-compile.log",
+   "original_sha256": "8453612c79c16aca97114b56d77f7aee9268f00a0013e1cb0ffb4d3de1bdacbc",
+   "original_bytes": 966,
+   "sha256": "617b2d2a28438347ab8784fb93559bbb94af5e84d862ef1d619b7ae3aef8e8c1",
+   "bytes": 961
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants-final2/tcp-rate-restored.log",
+   "original_sha256": "a8749a0b7e46b31a653255c94cb6c9f8153141b7d78a61c8eeb19b248b8f2966",
+   "original_bytes": 498,
+   "sha256": "c32d281c4c518213c1fbdc49cdf2a5aeaae2691cf1edd065396e3eb7cc66d0dc",
+   "bytes": 493
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/atomic-prefix-compile.log",
+   "original_sha256": "b40b899cdffc99391038eece4da1b4f54d1499df3004034888c4edba06b17cf7",
+   "original_bytes": 286,
+   "sha256": "9ec735531a49d911913b5a35c8a033c54467e3e461e6890d250d53267f754fdc",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/atomic-prefix-restored.log",
+   "original_sha256": "6b0952a3c1051512137fe6855e8b8b2e97fcd18fc6aea2eca8460c8789a450b6",
+   "original_bytes": 501,
+   "sha256": "c88557f67b98b2d6199d24571830ad34f9a7254aa8f0be9136ad8aa070a33914",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/conflict-compile.log",
+   "original_sha256": "6ea78ea4a53e0ca0854a4a81af12580229c8f3dca05df26dad957663c4e8cea8",
+   "original_bytes": 286,
+   "sha256": "e6fc4fa631c7356273f81a20f76216f4d49323216ccc439304a8239e7fa51532",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/conflict-restored.log",
+   "original_sha256": "451d0e3cb70b11d6499bbc35f1d725baa15764599d70cc094672798c3a860bc9",
+   "original_bytes": 499,
+   "sha256": "34784b2abe4ce2daed603f6b17daed7fcb0da06a06bdc8dd6bb313976ecebc89",
+   "bytes": 494
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/credential-compile.log",
+   "original_sha256": "47562590abea77553bef7fac33c161b12b12a7d552922cf10101e5f8c8796487",
+   "original_bytes": 286,
+   "sha256": "2ffd8c8c238c914fa95366f636aef51d44d8033ffcb6b53141630b2d9dbb4b3d",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/credential-restored.log",
+   "original_sha256": "cacd021354c080fd140468d8efbb5faf41a63446c90b1a1c7ed94b44575cd8db",
+   "original_bytes": 490,
+   "sha256": "f3dc1e6f82bce25bdb2d4afb4ada850559ccab97ecbe6d5b04f3e3c8efd212f7",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/decoded-limit-compile.log",
+   "original_sha256": "cfe81f01466a8848dbedaddd4838670f3d62886117524a42ebfb906106664bd6",
+   "original_bytes": 400,
+   "sha256": "aeaba25ffcd0618fba29ab8694dde99425da50540fcc1bd983cf714fc098882b",
+   "bytes": 390
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/decoded-limit-restored.log",
+   "original_sha256": "ff7c7ed76e54940b47aad8e2d1faf826c50cba45a57258e39e33d17db3d67967",
+   "original_bytes": 598,
+   "sha256": "5de0cca718a75d5b0640ba79e9035efa27ca6fb2b4713ea7de023742387ceb14",
+   "bytes": 588
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/epoch-compile.log",
+   "original_sha256": "2b224c701bd33b2b17b720d449bdd0359f9ce85909f52dd022019324833d9c1e",
+   "original_bytes": 286,
+   "sha256": "8fcd4979e3a296f76526a7173bc7ac7f8a746667b32dda522205779422f2ea45",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/epoch-restored.log",
+   "original_sha256": "8cb1eb6a83614d94b4ac1f83aa5cfd9908e165772f43240cb9355fb9c9f9aa7f",
+   "original_bytes": 490,
+   "sha256": "fe63b4d6e21ee822161fb5db3680bb7ec06b2c9589046e657aec20385ae7f11e",
+   "bytes": 485
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/json-limit-compile.log",
+   "original_sha256": "9133eb34e876ed460b587a6d7a234f5315bc7082e188bc331a4820cdb62d44a9",
+   "original_bytes": 400,
+   "sha256": "c72ed524b39fac27e950cbd7c2f36c6b0aefbc4b6e97a766087f46b7700f584c",
+   "bytes": 390
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/json-limit-restored.log",
+   "original_sha256": "8a018daffcfbc61b23fb26949dec3829126303bb59de152d47983d18ac123608",
+   "original_bytes": 598,
+   "sha256": "5c024d5d442c2605c270b86bfbe3657c85fc693e9b296c1edd974639d83ecd5e",
+   "bytes": 588
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/predecode-reservation-compile.log",
+   "original_sha256": "958303d57d234dfeee6034b53cf8ce3898d6a5a772404a7b7f2a7ff1b4d827ee",
+   "original_bytes": 286,
+   "sha256": "fcf95b058f1709c64eb5ab84b950db212348f172c23abba74e19da2a8078bfc7",
+   "bytes": 281
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/predecode-reservation-restored.log",
+   "original_sha256": "2253ce01d14ac14d8277996826007e6f3bc69c1d6350cfa95b2928e05d067961",
+   "original_bytes": 501,
+   "sha256": "ddbae0a93de89eda8067769920843245eaf27c2035b8b848f5ae2798de2a5286",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/tcp-rate-compile.log",
+   "original_sha256": "d373b89e918277a9b083a91f9b2d46235ad415985df105278debc06d7cc18ca4",
+   "original_bytes": 966,
+   "sha256": "aa79bb25106a2f458f8a752f7cb93dcd2b1c1868f89ff2b478ac388d41205525",
+   "bytes": 961
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-mutants/tcp-rate-restored.log",
+   "original_sha256": "8a4ce716c51f0ef527decb5a7e88760752a9c47e4b9dd5d356e55042912ae6bf",
+   "original_bytes": 498,
+   "sha256": "dbfd08ac9da77e0ec7cb745299c916841dba48a86d99f0b0f097e953ad76e2fb",
+   "bytes": 493
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-new-modules.log",
+   "original_sha256": "fe4cb94863d5b44179a06f0b863e3f1941ba5cba00c6bc0deb92d36e00fcba5b",
+   "original_bytes": 5701,
+   "sha256": "cfc2ec233489f5af3e976290cef1b8388888c1f116dcc6001f3540155dd48b5f",
+   "bytes": 5691
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c06-native-diagnostics/raw/rust-workspace-final.log",
+   "original_sha256": "d03860b39b9b35682526e506e8f2cf26fe5a6783d234a448213e972896afdaac",
+   "original_bytes": 49561,
+   "sha256": "fb916ce020ce8338be11e28cf5c0bd5b4f33d1c45a894e4560ab020096bc9e22",
+   "bytes": 49551
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/C08-ADAPTER-DISCONNECT-SUCCESSOR.md",
+   "original_sha256": "ea2c07288eed384abaa21b6272a0b17e5a462ed4ccd317e3eaa4a7934c392b4a",
+   "original_bytes": 3418,
+   "sha256": "2ea58246ff85c8617e38be1caca579676a35a49f8a64f25d307dc712b03c2172",
+   "bytes": 3398
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/C09-LOCAL-PROCESS-BRIDGE.md",
+   "original_sha256": "05ccb65e13b82c7c2169b9048611ad300c2646ef9f453985bb4b4d631e5cfbce",
+   "original_bytes": 28783,
+   "sha256": "cc67c84d64ffb1c3214a9a5e62e453ccfddff931707ce7b623ca6fe1e47aa68f",
+   "bytes": 28568
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/local-edge-collectors/observer5.json",
+   "original_sha256": "fcff99b80453a09452c7feb40ea38b68613a87b08e5b36eab8e08a47d6a74afd",
+   "original_bytes": 669,
+   "sha256": "a3e2b5cecc35a4a8dab5b5628d02c58ec217ab59f703885d03df924997083d63",
+   "bytes": 644
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/local-edge-collectors/observer6.json",
+   "original_sha256": "48ad1bff0296cc85a4a716899d6e962821c15e909bf6bd6fb7095f390fda3e4e",
+   "original_bytes": 669,
+   "sha256": "c80dc6cbd8681009fbe7bb6a0969a7d18d7d5cd04e718f82b6c2d2b2863264c9",
+   "bytes": 644
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/local-edge-collectors/validator1.json",
+   "original_sha256": "ec3371d699af39b5dc72ac6d23ef4913032852782df4cfaab1dac0d05c713215",
+   "original_bytes": 670,
+   "sha256": "541cd03dc3b782b02ba369e3ed1a56ae435e9d9f611870658606e9b22c7ff22d",
+   "bytes": 645
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/local-edge-collectors/validator2.json",
+   "original_sha256": "a72911342751bac42e631e68185758dcd2851d2332a3c014b100b5092386876a",
+   "original_bytes": 670,
+   "sha256": "66f5afd988a2869776033d30b3cb5a4c964e27e4b64a24c2f71e85ea9f7c19f3",
+   "bytes": 645
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/local-edge-collectors/validator3.json",
+   "original_sha256": "db1ce5316b1a67efbb2b64ffda77fa1841e50d62fb962fbd23312426e3c5a3db",
+   "original_bytes": 670,
+   "sha256": "b4d70c562b4f304180486706ef96379f0b5ea69090b36353bb13fd9800a2318c",
+   "bytes": 645
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c07-c08-aura/local-edge-collectors/validator4.json",
+   "original_sha256": "dfaa098967b3ea1f7dbffae5f7afef65ad45f65ccb05b1b76f0f414e683a2a07",
+   "original_bytes": 670,
+   "sha256": "74366eb0162f5c51058680924cca3dbd96c94b68b23423190b687f1f3db74841",
+   "bytes": 645
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-dev-30m/DEV-30M-STATUS.md",
+   "original_sha256": "45799b196074b0d9cc4be0b547226b5417cb6ad45ab7374203f60e96bd01a338",
+   "original_bytes": 2114,
+   "sha256": "f71e38b8d4938b638ae8213a536641f1fd66613787fa2309f3b363d7715946d2",
+   "bytes": 2104
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-epoch-binding/FROZEN-BINARY-CORRECTION.md",
+   "original_sha256": "690947ad770880c0b85343967ca64074e07a050cc727c4acfae0dcbaf7280f45",
+   "original_bytes": 1378,
+   "sha256": "981e2ba9b32ad77792e841ec2e66fa36817eefd345da5bdca48ec01507a998b6",
+   "bytes": 1358
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-epoch-binding/README.md",
+   "original_sha256": "ce443e060f11763728042a20be27809db315cae6a4ab5b35b948d334ad386e63",
+   "original_bytes": 1923,
+   "sha256": "23fc9580dd15ff1fd0a0b23f56ec9146e0328081e714eaf600a814d8e9097b5a",
+   "bytes": 1918
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-epoch-binding/REVIEW-RECEIPT.md",
+   "original_sha256": "3c011b95b3fdf2af261d07b7ca055532e5cef6b25903c52701559828ee400a78",
+   "original_bytes": 3907,
+   "sha256": "68052d0a42de27c1df0b77b3a20b2993afe7bf524f889a414a0c40924900fe84",
+   "bytes": 3897
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-functional-supervised/REVIEW-RECEIPT.md",
+   "original_sha256": "5722d45ae66aec93fad7350e1a9db48d86f4f664ce9eec756e8e822ac3042e69",
+   "original_bytes": 5921,
+   "sha256": "78dbfc9ffb67d7c8108ebb76c5f6ca5642714cf4794e94ae61c19c29b20bb08d",
+   "bytes": 5911
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/ANCHOR-FOLLOWUP.md",
+   "original_sha256": "307e29cca6d3c4199e6b69fb8a851e40efff5260b3a62bbdad8f56b4d2dca84e",
+   "original_bytes": 2791,
+   "sha256": "5350224b5a818029f274d1f1b691dc2b87e08d42920d5964a01c5a62bcb300aa",
+   "bytes": 2781
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/BATCH-SUCCESSOR.md",
+   "original_sha256": "88a90b5320a7e9bb358cb1af90177b305118e3ac6763011c5d8e035e1c6d9c1a",
+   "original_bytes": 6528,
+   "sha256": "625fd68dd72265a1ef44dde9b642e3451c14d7471d4e40d7e8000a9198142eb0",
+   "bytes": 6513
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/CURSOR-VALIDATION-SUCCESSOR.md",
+   "original_sha256": "b589736df55f3f4e5e954d28c3fa219ba4cfea3412b439eefd6f73f2c680da48",
+   "original_bytes": 4571,
+   "sha256": "2f010f864a740d752f5820118e1419fec27f925707f5fe9e28642cedc2a2b4da",
+   "bytes": 4566
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/DISPOSABLE-M-ORDINARY-CADENCE.md",
+   "original_sha256": "959835d800ff7f621363df9f4fdaa8a6b7c83afa3c22917242660b9ded2485c6",
+   "original_bytes": 2731,
+   "sha256": "df9e6ddf36373e4b765285abdc3fc38bb5dcfd670d3ed175e5e70c0bc3103c10",
+   "bytes": 2726
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/GLOBAL-BOUNDARY-ANCHOR.md",
+   "original_sha256": "a3faf12b744bb89f5a4b5d57901e9b5e468ad074299bb433d8461d7c22c792c5",
+   "original_bytes": 7214,
+   "sha256": "ed19e3ca096ed63944b1f245a1df28f96f6083d90d093a294aa14ea24f9977a1",
+   "bytes": 7204
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/GLOBAL-ROW-PAGING.md",
+   "original_sha256": "4bb35fc485401b366396a6e4cfe43b31a0538dc581d9b3fc9abf25a0b96c5f2e",
+   "original_bytes": 2920,
+   "sha256": "15912b49268ea8944b4e51668524e5587e2c4f882ff25928c51dcbcc4cf40b84",
+   "bytes": 2920
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/GLOBAL-ROW-SHARED-TIP-PORT.md",
+   "original_sha256": "38d3641a67965e2a40338426d49308d612bebb38248c9a0b8f0014f58ed83948",
+   "original_bytes": 2324,
+   "sha256": "7ea0880119efdd35503e888ea10614ef92cbc28c291bb3cd697658e555880f72",
+   "bytes": 2319
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/GRANT-LATENCY-AND-CHANGE-WITNESS.md",
+   "original_sha256": "26136ca24a76fc09bcfdc841115cc3956738773535bb5f90e217c730459673d3",
+   "original_bytes": 5334,
+   "sha256": "55887bd8da4755fa969ac24e0d518305f1d97903636d20abe5348f086dfd9876",
+   "bytes": 5334
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/GRANT-LEDGER-LOCK-CANDIDATE.md",
+   "original_sha256": "f0356c574ada73f71e1d5bad7064807b8a2578c48d85c86ab8280b472c1d0d84",
+   "original_bytes": 3410,
+   "sha256": "17fed2196d74f765e7cdd4b7bcdbc3b7331bf622d0f656211c6d026b26e5b1d9",
+   "bytes": 3400
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/INSERT-BATCH-COST-PROFILE.md",
+   "original_sha256": "f74f338a2c0c925a242310a24580ddce987597d3f7d435ba451d486236c613a4",
+   "original_bytes": 3308,
+   "sha256": "a8ad9c5b0b631c3b7ef4a1e110d8b2daa94d07c410a2914e1fa8b6decaf7e97b",
+   "bytes": 3308
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/INTEGRITY-REVISION-PROTOTYPE.md",
+   "original_sha256": "4fcb3233c1196177578db360ac532d109e2ade9152ed5e56564efe1d6215151b",
+   "original_bytes": 6013,
+   "sha256": "49cecd019087dfd7d4d1172f0deb9481d0ef7b4255edbf93334beafc35b08c76",
+   "bytes": 6003
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/LAG-VERSUS-CONFLICT-SUCCESSOR.md",
+   "original_sha256": "12f82e72d758603f047ec1d64beb0a00f5b2c0dcc49d89462fc5fb20cd25ead4",
+   "original_bytes": 3954,
+   "sha256": "750e73d642d39e079a6444a51e65dbed222e3df5f779c54b3fea2c6dbc71337c",
+   "bytes": 3949
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/LATE-PUBLICATION-COST-RECEIPT.md",
+   "original_sha256": "4f61ede5a52aadb143f8a0d6317759c344b0cb29d6e2100a830a551e6a3acaa1",
+   "original_bytes": 7971,
+   "sha256": "0ae8254a7f56f8e02f4fd313950440c25ca4cca28abfb046654f4661137d2319",
+   "bytes": 7961
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/LATE-QUARANTINE-WINDOW.md",
+   "original_sha256": "295174029ba7e2fa1f3cd211eb57c04bef53e9b9c14de40fe4b78685d29eda06",
+   "original_bytes": 3735,
+   "sha256": "86f8992181c05a922c5790065eba0c33da161936e766101108a7e9cebd3f0624",
+   "bytes": 3730
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/LIVE-CONCURRENT-IMPORT-SUCCESSOR.md",
+   "original_sha256": "d8d3a7929a339ce9a736e6d080fe58312c7b4a94be0a9a2a6c21e92769952539",
+   "original_bytes": 6440,
+   "sha256": "8a68f9b765dd7abb7252b120582eb354434683453020247e7240fa0eeabe0ea5",
+   "bytes": 6440
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/LIVE-M-GRANT-CADENCE.md",
+   "original_sha256": "b29e46742c8c80a30d710e37baccbc2a14e10ac697f325cf99a96f43d38e4e56",
+   "original_bytes": 4053,
+   "sha256": "72970c42d9ebdb64feeaa1a13a46fa98e3548382c30e5842c974874a662bbb4d",
+   "bytes": 4038
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/M-CAPACITY-RETENTION-GATE.md",
+   "original_sha256": "d396eb38b43c471a11e541630fbb5f3971fe10fc222e8f1087c923a1e9d21a65",
+   "original_bytes": 4592,
+   "sha256": "064c776591757757a03f804b21ce166c70cecb3bb39637d027646c223203267e",
+   "bytes": 4587
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/NON-ANCHOR-PARENT-REVIEW.md",
+   "original_sha256": "ac653b8340879b771bc3aff6edc1a23713fc6397f8a57a178a46486f2eeab308",
+   "original_bytes": 2863,
+   "sha256": "9f213a51a13a247065a7ba31f84bdb2335f11710f0936b2b7e8b7e287b7d0efb",
+   "bytes": 2858
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/PARENT-CAPACITY-CORRECTION.md",
+   "original_sha256": "cbcc62e5abee40b326beb1f6090268fc90970e60eea5545238b497ee5527d68c",
+   "original_bytes": 5101,
+   "sha256": "75f1ea32b73b0b50f4d7efcd0d12fda4ee51556f679aa4ed8222022e40188016",
+   "bytes": 5096
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/PERF-OPTIN-32PAGE-RED.raw.log",
+   "original_sha256": "1b40b7bf473bb79cb5279dd2dfde9031be5609d98b43e23dcbc62a907781dc2a",
+   "original_bytes": 2789,
+   "sha256": "62c545bfe5b684a109f08f18d2fa22f95065242d72cfeaec54d298de883c3f81",
+   "bytes": 2779
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/PERF-OPTIN-GRANT-MUTANT.raw.log",
+   "original_sha256": "a110f3647854ab85d16a0523b78af1454d53c686014efd14bc670c6c49ead0de",
+   "original_bytes": 1363,
+   "sha256": "5d9bb83adcc2e218a1ba281d4276b09cf910d990b923440a7ce5ae133b5fa086",
+   "bytes": 1353
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/PERF-OPTIN-RESTORED.raw.log",
+   "original_sha256": "95d1b3bc46bbb7b5ba43381635b746cb81a1e4e63c1344fb90ca6113e62e9c75",
+   "original_bytes": 2864,
+   "sha256": "4284520942c8ea7624b76552b69dbe523a47dc1800ebc78aca8c464b183a5691",
+   "bytes": 2854
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/POST-CURSOR-Q-BARRIER.md",
+   "original_sha256": "b53085b262f47114be0947d403c3d8d85022d4e04098677d22114dcb3bb11245",
+   "original_bytes": 2627,
+   "sha256": "5eca2351bc4322af3d6a4614a895bd83d77a4d8d3990ad6666b353e81ca1565b",
+   "bytes": 2622
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/PROJECTION-HEALTH-WITNESS.md",
+   "original_sha256": "a6be3e624840562252a455ee990f8d2a06438140625f32c1f89d40a938ab52cd",
+   "original_bytes": 4459,
+   "sha256": "8dd932d66d3a71c538b0e1ad2c4a83e5e3542f64afbea6b5142928d07d032280",
+   "bytes": 4454
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/PROJECTION-TRANSITION-SUCCESSOR.md",
+   "original_sha256": "97c0032dab910746ee24cef068258ed46950bf39f68fad13db163d447396f4a0",
+   "original_bytes": 6701,
+   "sha256": "0509b8783782dc7b055e0c9f87616d34b6558fe6d0d265a79655760dccd859af",
+   "bytes": 6701
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/QUERY-ANCHOR-LOCAL-ROLLOUT.md",
+   "original_sha256": "71574c2a20568796e84cec40f35875905ff7eee83711d770e86a4f6a9c2f1a92",
+   "original_bytes": 2925,
+   "sha256": "260fe5a96a4278f3a1d45af31c5ed92c1c4b5bcf4ef6402feaf076e45a73e4c7",
+   "bytes": 2920
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/REPLACE-GUARD-FOLLOWUP.md",
+   "original_sha256": "06015aac72a1a6912a53d058edca21ad9c45dd7a66c06d1d4bc6549f8110a328",
+   "original_bytes": 3470,
+   "sha256": "15cc5ddda088eb07ab0b48f158016e5192b8269b858b45bdfea507055fef6631",
+   "bytes": 3455
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/RETENTION-SOURCE-INVENTORY-AND-TEST-PLAN.md",
+   "original_sha256": "03eb9628dd9bac68fa12c882637f9a4250dbf7137f380cea4adb0abbebd03723",
+   "original_bytes": 7425,
+   "sha256": "925a36f9e72bf53be1645399c58ce1762efe739164e8b8926998f4cbcb4ffc56",
+   "bytes": 7420
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/REVIEW-RECEIPT.md",
+   "original_sha256": "47628d93277c882abf402212d676f8f96275582d0428f248e2d15331f0808251",
+   "original_bytes": 4102,
+   "sha256": "ce1bb496a3cce07b97fd5045b29caefdeb8549350084659e597a789ecf6b551e",
+   "bytes": 4092
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/STARTUP-CATCHUP-COST.md",
+   "original_sha256": "b93616031ff8f0af90f91aa0281dc4a36122afde36ce2aeaecca219f7c3032f0",
+   "original_bytes": 6988,
+   "sha256": "6a649adb276a2317cf8cf1595de8d817dfd2bf18ad3d4151ccb6478a92a4d3f2",
+   "bytes": 6983
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/TRANSITION-PRODUCER-CONTROL-WIP.md",
+   "original_sha256": "7dc7e70b2aedd593e996621e42e83e6a81f3fde899a54548e95cafa4e6f77d01",
+   "original_bytes": 2977,
+   "sha256": "7509797a0276e78f2dc1a64f47cbfc6045cd003def1595a0dea43a1a0d7ef01a",
+   "bytes": 2967
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/anchor-followup-raw/mixed-boundary-anchor-mutant.log",
+   "original_sha256": "6beb76dda25b350ab7afcf8c48bec07fdf3b3f4bc8d7d5f992929c76621fdef1",
+   "original_bytes": 1427,
+   "sha256": "2570287e8fd7a529d6398e35256688a84fa12e3752f3ee8794bcf4133758815e",
+   "bytes": 1417
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/global-page/baseline-plan.log",
+   "original_sha256": "3d55b0facb108a1b915120253bd7757fa130fbd03d3012b178fca473e229f56b",
+   "original_bytes": 522,
+   "sha256": "a63e8ad3c5724ab9c052e96c1e68fa35fce2142bf4c76954eff3588812fc7c05",
+   "bytes": 517
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/global-page/clippy.log",
+   "original_sha256": "15f025380dfa211b838985871c15409cb30a5478a1e6d6da435139a61b916727",
+   "original_bytes": 213,
+   "sha256": "b0f06fd31605476f3dad29c32a84ecf4231eba098f37dde67f4ff4300f6d0977",
+   "bytes": 208
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/global-page/mutant-process-filter-plan.log",
+   "original_sha256": "fe557239c2b4b697b5f8f7678c90d36fc47036859fb1014485adcd77a74e35f7",
+   "original_bytes": 1134,
+   "sha256": "c3518b3f694433b689cc98258a5fc4d9f8413c901baad58b32968a15656cff7b",
+   "bytes": 1129
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/global-page/mutant-process-filter.log",
+   "original_sha256": "eb9660ca4526c7840831e81565a1427260f78ee1407df2530d00d483850b988b",
+   "original_bytes": 1134,
+   "sha256": "cd40c58aedb8e4283c42458bc4acb049bd6a357f05a64b6eae62368ca8314c93",
+   "bytes": 1129
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/global-page/restored-plan.log",
+   "original_sha256": "5c97af52ec8e8d04d392ad6520e1baab2d98f07b4705591e26e624a2e68bc3bd",
+   "original_bytes": 522,
+   "sha256": "9ce8c54d31e0345c01b453c74405fc2736e35126e3f8c4525a25df30db9aa822",
+   "bytes": 517
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/global-page/restored.log",
+   "original_sha256": "3a18f281166af2304c7abd45326ebd59782a0a147576272eb0629797b91614c8",
+   "original_bytes": 522,
+   "sha256": "941ae135999fe5e48e277a3aacba9912db6b213cbffc95bfc9615f6efde84581",
+   "bytes": 517
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/change-baseline.log",
+   "original_sha256": "56984563af6a9a53ca4c135a4debed319fe3d764b7226e68f6a4ee34c440dbd2",
+   "original_bytes": 511,
+   "sha256": "79d4966ee390c760425ae88c6d8fc3f14c4f60a59b89b5910db601b129adb24a",
+   "bytes": 506
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/change-version-mutant.log",
+   "original_sha256": "9d1204895862278f18fa95767f342d71a90340cfa714b42f19698dbbb8160ba4",
+   "original_bytes": 1068,
+   "sha256": "5c06b49c06a38e55138f68e88b772e182c17523632c8dd82c3af31280ff55738",
+   "bytes": 1063
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/clippy.log",
+   "original_sha256": "adaccb721bf85e148bdb9fc8bccfd4dde32e26201c67424d190eb26a90608f25",
+   "original_bytes": 213,
+   "sha256": "cbf912620b84b5d5e207e85f7e5eaef059a74e7d0e22a3d8ed77ad79464be958",
+   "bytes": 208
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/grant-lock-mutant.log",
+   "original_sha256": "1746680709c4fdfdf2bd157c04ce472ac19ec7bc06bf962bbf53add4d20d386e",
+   "original_bytes": 980,
+   "sha256": "c1b3e6322338b7c0083e31cb3b925f8b488864f321c309f5ec5475130109a3b9",
+   "bytes": 975
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/grant-restored.log",
+   "original_sha256": "0b7edcf9e62d6e7331c7c8349aa191401bca63faddbb3c0fb366b0d72a0fb975",
+   "original_bytes": 577,
+   "sha256": "2c2151437031c2754234999f8ce97d7883797fb77e3193fb9a9cce8e913538c5",
+   "bytes": 572
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/witness-cache-role-window-restored.log",
+   "original_sha256": "444310717c0bb25088939d15c1d02bd5e64e615cae6af7ac74d7e3cd0769c497",
+   "original_bytes": 501,
+   "sha256": "d8670d2e33ccdf844a0b7064ca56b45d503b56b352e1e3a1b3ca8eb0b52a4c5b",
+   "bytes": 496
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/grant-latency/witness-role-window-restored.log",
+   "original_sha256": "552b29675d5b1d5852aa30df1ea4e7766140ac888a1b2cd6309ce15b0b602b90",
+   "original_bytes": 497,
+   "sha256": "4fe516e57052f95bc7fc00cd962a21dbfdb253f9d140ce02c2095f7bab8554cd",
+   "bytes": 492
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/late-publication/blocking-health-mutant.log",
+   "original_sha256": "472d5c5d0d35c417cf6c762da722582cca417afadbeba9043ae4834290261448",
+   "original_bytes": 5761,
+   "sha256": "cc6579ba1c7e45ae4d3cc92a0d733f84e787fb454f7427b5091602e271b71e3f",
+   "bytes": 5756
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/late-publication/live-readonly-exact.log",
+   "original_sha256": "ce1864b0dd9e351118e4d4a3e3a1cd63f1335ef77dc41cf73852760b5ad018dd",
+   "original_bytes": 12069,
+   "sha256": "a92457b36039ac7679367c3a77ccf2824a34d3d588cd008667be61ccc4c4cb2d",
+   "bytes": 12064
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/late-publication/live-readonly-restored.log",
+   "original_sha256": "e8cc830a799d5349dcaaa22aba8ff1e446e136604777d3a0149bb2ef3a385162",
+   "original_bytes": 12186,
+   "sha256": "a07c074d580cb938bef1290f2fae2cebdb8d87f3e1fd7ab52b5e00858291d9e2",
+   "bytes": 12181
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/clippy-final.log",
+   "original_sha256": "a4c4da5c06b0c71ae2b2a469ac05cd24179ff45515f7b126aa932ea827e35d9c",
+   "original_bytes": 213,
+   "sha256": "fc46ab72bb731c466b16ec65d298d29649d4514b62d90d148e32860f6f505385",
+   "bytes": 208
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/data-held-mutant.log",
+   "original_sha256": "4831d8f7f5ad2a1cb3d4a517d57bb777b4386209b1bf90139ae7f36bf705578c",
+   "original_bytes": 660,
+   "sha256": "af82e80e1e6623d0975562554cb1eafd7e974eadeb2d5b98a1a5094efcc9ca5f",
+   "bytes": 655
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/health-restored.log",
+   "original_sha256": "00e499616cde98c15479dc3741cecf4807de7924a4cded3a704b0f54edfbf7a4",
+   "original_bytes": 511,
+   "sha256": "09bb31d9e9450acb2386897b134c5a838a1c9ba80124217d3964abae131d55c3",
+   "bytes": 506
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/health-version-mutant.log",
+   "original_sha256": "2b29f4c2b3695617b606edc9e1cc3ec3c7dd522fb55ef4245ded6987a8571c89",
+   "original_bytes": 1023,
+   "sha256": "df29e7d79c63897745d55a0b187ff853503df3ba506128025e91611045055f12",
+   "bytes": 1018
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/live-readonly-concurrent-deep.log",
+   "original_sha256": "ba7014ed5554287c8cf368bea569e580d8cb46440163572a35e7a7c3ce2c6395",
+   "original_bytes": 8113,
+   "sha256": "c5dbb29ac23706b512e45d3ae563672774fe0e8d12e9b725e77f124bd2450289",
+   "bytes": 8108
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/live-readonly-concurrent-final.log",
+   "original_sha256": "07c4a88f5335ace287f241cd7664e89df7c7d13c54ce434e4cbbe5866c6edab6",
+   "original_bytes": 8998,
+   "sha256": "2329b7e7abb6967fca89d8b9dbc784d04b775e24efa051bc5465e248d26f726c",
+   "bytes": 8993
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/live-readonly-concurrent.log",
+   "original_sha256": "0719ecc1129a15b84d423ca4f2cd86c52d1052bfe69132f9e3c3374f9e933b90",
+   "original_bytes": 3284,
+   "sha256": "19d269f77f7321bd42c0120314bb2e8f99967d05cfa98e58aadb249d9169bb59",
+   "bytes": 3279
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/live-readonly-final-source.log",
+   "original_sha256": "932a2d9bceff94789cb295895f5b10890290ede49f18bf75817d683bafb5e21c",
+   "original_bytes": 9504,
+   "sha256": "bf0e50d38e561482a2f5f39fa9f370d3f30d2870eea642af7e027370b6ddad9d",
+   "bytes": 9499
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/live-readonly-successor.log",
+   "original_sha256": "8162356e9823a420aeda9b87ffda8575432c2bf4bedfdf4ecc01dfdfc7383b47",
+   "original_bytes": 9198,
+   "sha256": "480b849195480a8be766659e56be84bf05ffd772c18666ff1a1ffd1bea7f7234",
+   "bytes": 9193
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/manager-query-final.log",
+   "original_sha256": "48f2ad7547ed1275651b47411eea754ee780c42238b391c950a6c4da91317f4d",
+   "original_bytes": 2301,
+   "sha256": "8aa126a55af83b49e4059764d8e31f111cb89ceeea0dcb85c16aa8e6d2e06f9e",
+   "bytes": 2296
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/source-phase-baseline.log",
+   "original_sha256": "55770ce93f2e7eb7f8fdfac07b1293e3e5d53a2017bf42fb6c1bf65919c64289",
+   "original_bytes": 662,
+   "sha256": "de4a454ab48e81efe9b91751e740967c5166b94eafe0530bec60c600ede90cfb",
+   "bytes": 657
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/source-phase-data-held-mutant.log",
+   "original_sha256": "485868f6d471d377b9043a11179cfa0b54b6d47b9bd15b34bb85b114d2b77b57",
+   "original_bytes": 1032,
+   "sha256": "6e9be34a49291321febad8cf0b24f3ce043082be7dc255629f95a5cdf190abd2",
+   "bytes": 1027
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/synthetic-baseline.log",
+   "original_sha256": "cef434e83b0394cf3e6b47c544598f8052dee36ed79ea5117e8fa1d7052ca1e3",
+   "original_bytes": 660,
+   "sha256": "06387caf52b5bee62c3d4cf8f0f4ac320bbf78eb36d73ef86093c4548c973d89",
+   "bytes": 655
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/workspace-final.log",
+   "original_sha256": "e610ac634275f6c394611b1707ad72629c5f0a0bb5b5a2f0d8a18d31fa6c00d3",
+   "original_bytes": 24189,
+   "sha256": "775b3025fcb2b3fdc40078722b15cd5855440c9bfd6d7f5c9e838015d3e38a54",
+   "bytes": 24184
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/live-concurrent/workspace-restored.log",
+   "original_sha256": "a1dadeb5954d12f1844cd13b486fe664cb63e9f7aff21cf6b864c906a18d2001",
+   "original_bytes": 24189,
+   "sha256": "d9fef1c8595d6d1b9d11865cb81da336fdce427843cd0766d2771bb3fb4b3eaa",
+   "bytes": 24184
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/profile/live-phase-profile.log",
+   "original_sha256": "5256119e9c8c741cf958941e5f3195d6fa577b4cdf65c173b0db7e212040d224",
+   "original_bytes": 19149,
+   "sha256": "730e6dade4d18cac64bd12e53677a29e91fc4b8d381b15e52aa00156645260d6",
+   "bytes": 19144
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/projection-transition/clippy.log",
+   "original_sha256": "62164c2e8989b5a7af6f5e40bf4f5c2cc45c9e7e276d45a8d0e34b9bebce4cc7",
+   "original_bytes": 213,
+   "sha256": "948ccf0cb7487f511850ee0d6259de08e27582485ac9c810eff6cb0c7969e386",
+   "bytes": 208
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/projection-transition/manager-query-source.log",
+   "original_sha256": "59cf1f57570ff8f92dc8b5f169e8673984f077ee34de235c573b208091b9b159",
+   "original_bytes": 2550,
+   "sha256": "5cd18b5af19beae4d5c99736fb1d347b8179c689cfbbf466c35d22772705250a",
+   "bytes": 2545
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/projection-transition/restored.log",
+   "original_sha256": "907234e3fbb7c5acbbfcfdc4c8c348a9f8780beebd68667be841b961990560ca",
+   "original_bytes": 524,
+   "sha256": "3d5aadafa3362b410395b9240a9e8266b21e113e632a8758c0bbae3a99e1dab9",
+   "bytes": 519
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/projection-transition/services-package.log",
+   "original_sha256": "1ed1b4913770517260bee5914c03c30a6cab285c19028b85ba92b81e8b8fd50e",
+   "original_bytes": 18144,
+   "sha256": "9938cd95438fa5260985a2f637cebe4f74fc344047cb17813ba0a5df33621a74",
+   "bytes": 18139
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/projection-transition/skip-double-sample-mutant.log",
+   "original_sha256": "beecf144257dea61ab70b88445f063198c691fd1e49082a786dfe81b80531ec8",
+   "original_bytes": 1046,
+   "sha256": "a95be9be5675e25b2551bb112707ce06a50ccdfbb1fdb3c3a019c85bcbe1fa41",
+   "bytes": 1041
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-incremental-projection/raw/source-bound-closure/control-socket-five-second.log",
+   "original_sha256": "29681983afb1ba2cd7b17577b0650a2f0fe695022da8cf677920f0060ce25fe0",
+   "original_bytes": 434,
+   "sha256": "b49348083621e36e060bdeee8ad590ad5cc9e54a59d8ab973992983e5383df7e",
+   "bytes": 429
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-native-raw/ANCHOR-INTEGRATION-INDEPENDENT-REVIEW.md",
+   "original_sha256": "407d9dbeec05950a00cb49f1b754140aba27f4df3076575b3158d8cd7f942e52",
+   "original_bytes": 5873,
+   "sha256": "e58515e8cbd2587777741a5773c58634a9585e20b7542be73f66204788b37fdb",
+   "bytes": 5863
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-retention/Q-TERMINAL-COMPACTION.md",
+   "original_sha256": "31294eb41526d15edce376ad9dce784e31624f1941008df29b58ccfb57e84350",
+   "original_bytes": 5236,
+   "sha256": "c34016e695a14f6a7d498be3484c6f819ff4d3aa285df8a5500c5ca2f89e975a",
+   "bytes": 5236
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-retention/RETENTION-GAP-PLAN.md",
+   "original_sha256": "4a48885deea2961b076147b50348d19ad4a8102e770a68fc85decde0e69d44cd",
+   "original_bytes": 13734,
+   "sha256": "17c113b90b310813155ad5c33c70f34125c16b107aefc8df165ca634ff7683ff",
+   "bytes": 13709
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-retention/raw/q-terminal/terminal-cutoff-dual-mutant.log",
+   "original_sha256": "e789578ba92d1e2adc72700f0a8f50faacaaa384bf681ba51a95d3ffcf59560f",
+   "original_bytes": 919,
+   "sha256": "5c7187af491598ccee66df48fdad46643589384b64b49b678e18462f7ee9050f",
+   "bytes": 914
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-retention/raw/q-terminal/terminal-cutoff-dual-restored.log",
+   "original_sha256": "3e7d5f9093b1556c8c52f99511ed4f83cd7d13f92b5897859aecc9c01ca8f9b1",
+   "original_bytes": 482,
+   "sha256": "6c168fe79ff8cf41c4c5d040f53998eb32dc2f10e6a25ea4ba5618fc5b61d8ce",
+   "bytes": 477
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-retention/raw/q-terminal/terminal-cutoff-mutant.log",
+   "original_sha256": "5ac44a61adf49b094a17d286af9f6300b00ac16c3bb637a23faf5085d39522ab",
+   "original_bytes": 948,
+   "sha256": "202e2d7eb2fbe9571b290c747eaa1e2b49c6422a891615403ea417416b0f4da3",
+   "bytes": 943
+  },
+  {
+   "path": "tools/node-health-monitor/evidence/c09-retention/raw/q-terminal/terminal-cutoff-restored.log",
+   "original_sha256": "65d09ea02b70e6172359d47616e17ec4ae9d4e5433346da9f5d657a73d006a6e",
+   "original_bytes": 482,
+   "sha256": "27532c60cbe6a83a05619c99cc7571431771dadda35c78d24f18613c6c2ce63b",
+   "bytes": 477
+  },
+  {
+   "path": "tools/node-health-monitor/perf/C09-MEASUREMENT-CONTRACT.md",
+   "original_sha256": "89aa6b141a6dcee7f1227f88fd0087a6139be277824e68fdad3b0f5c137742ff",
+   "original_bytes": 5079,
+   "sha256": "1a07c41e8096b4b00310a68674be43d9568e4274873ceff455cf7335ba77a19c",
+   "bytes": 5069
+  }
+ ],
+ "note": "One log was not valid UTF-8 and was redacted at the byte level; the replacement is the same ASCII text."
+}

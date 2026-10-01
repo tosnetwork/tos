@@ -19,7 +19,7 @@ Final test source `crates/health-services/tests/http.rs` SHA-256:
 Production query and ledger sources are unchanged from the previous
 checkpoint.
 
-Raw files under `/home/tomi/nhm-c08-mcp-evidence/`:
+Raw files under `$HOME/nhm-c08-mcp-evidence/`:
 
 - `c08-cursor-restart-final-http.log`: `cargo test --locked -p
   tos-health-services --test http`, natural exit 0, 19 passed; SHA-256

@@ -8,7 +8,7 @@ between runs; results below are point-in-time development measurements, not a
 production throughput or 72-hour availability gate.
 
 At 2026-09-30 UTC, available memory was 112 GiB. With the already-built
-`CARGO_TARGET_DIR=/home/tomi/nhm-c09-anchor-build`, the exact
+`CARGO_TARGET_DIR=$HOME/nhm-c09-anchor-build`, the exact
 `pre_cursor_ledger_with_active_grant_catches_up_over_4096_history` test
 finished naturally: 1 passed, exit 0, test duration 8.20 seconds, command
 wall time 8.66 seconds (`/usr/bin/time -p`). It creates 4097 historical process
@@ -87,9 +87,9 @@ The source-bound raw receipts under this evidence directory are:
 
 | Raw file | SHA-256 | Result |
 | --- | --- | --- |
-| `PERF-OPTIN-32PAGE-RED.raw.log` | `1b40b7bf473bb79cb5279dd2dfde9031be5609d98b43e23dcbc62a907781dc2a` | compiled; old test-only ceiling exit 101 |
-| `PERF-OPTIN-GRANT-MUTANT.raw.log` | `a110f3647854ab85d16a0523b78af1454d53c686014efd14bc670c6c49ead0de` | compiled; grant gate bypass exit 101 at 200-versus-503 assertion |
-| `PERF-OPTIN-RESTORED.raw.log` | `95d1b3bc46bbb7b5ba43381635b746cb81a1e4e63c1344fb90ca6113e62e9c75` | restored exit 0, 38 pages to M seq 36242, `caught_up_ms=19117`, then grant/revoke 200 |
+| `PERF-OPTIN-32PAGE-RED.raw.log` | `62c545bfe5b684a109f08f18d2fa22f95065242d72cfeaec54d298de883c3f81` | compiled; old test-only ceiling exit 101 |
+| `PERF-OPTIN-GRANT-MUTANT.raw.log` | `5d9bb83adcc2e218a1ba281d4276b09cf910d990b923440a7ce5ae133b5fa086` | compiled; grant gate bypass exit 101 at 200-versus-503 assertion |
+| `PERF-OPTIN-RESTORED.raw.log` | `4284520942c8ea7624b76552b69dbe523a47dc1800ebc78aca8c464b183a5691` | restored exit 0, 38 pages to M seq 36242, `caught_up_ms=19117`, then grant/revoke 200 |
 
 The live M file advanced between receipts; these are not byte-identical input
 snapshots or a continuous-Q-service test. The final empty-page read saw M seq

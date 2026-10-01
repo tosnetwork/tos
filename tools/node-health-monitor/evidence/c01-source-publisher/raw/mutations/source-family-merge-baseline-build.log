@@ -1,4 +1,4 @@
-$ cmake --build /home/tomi/tos-node-health-c01-build --target test-health-native-snapshot -j16
+$ cmake --build $HOME/tos-node-health-c01-build --target test-health-native-snapshot -j16
 [1/59] Checking the git repository for changes...
 [2/5] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
 [3/5] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o

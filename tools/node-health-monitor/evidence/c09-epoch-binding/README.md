@@ -26,6 +26,6 @@ negative controls. The actual routed snapshot is validated against the closed
 edge schema. Production six-node rerun belongs to the C09 supervisor; this
 candidate alone does not replace that real-source evidence.
 
-Build and checks used `CARGO_TARGET_DIR=/home/tomi/nhm-c07c08-build`,
+Build and checks used `CARGO_TARGET_DIR=$HOME/nhm-c07c08-build`,
 `--locked`, and `-j2`. Frozen raw logs and binary hashes are indexed in the
 successor review receipt after final completion.

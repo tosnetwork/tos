@@ -37,7 +37,7 @@ Source SHA-256 after restoration: `mcp_bridge.rs`
 Reconstructed one-line mutant source SHA-256:
 `ca046c69e5157873e9e7d52bf009bfd7889392d34bee0ac99abdf8c5fcd4af60`.
 
-Raw logs under `/home/tomi/nhm-c08-mcp-evidence/`:
+Raw logs under `$HOME/nhm-c08-mcp-evidence/`:
 
 - `c08-child-bound-baseline.log`: exit 0, two targeted tests pass; SHA-256
   `196994e0b812eac921d2c46c759d956cc1192a17341484b81ee0a3fe83ddb5d4`.

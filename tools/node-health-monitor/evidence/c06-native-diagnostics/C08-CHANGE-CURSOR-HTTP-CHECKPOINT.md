@@ -28,7 +28,7 @@ Final source SHA-256:
 - Compiled comparator mutant `query.rs`:
   `c944598d7fc56d4e5d2196d94991c07c35d8d918b7063c29b11eee1b5425115c`
 
-Raw logs under `/home/tomi/nhm-c08-mcp-evidence/`:
+Raw logs under `$HOME/nhm-c08-mcp-evidence/`:
 
 - `c08-change-cursor-mutant-order.log`: compiled test exit 101 at the
   `record-2` versus `record-1` assertion, SHA-256

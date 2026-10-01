@@ -1,4 +1,4 @@
-$ /home/tomi/tos-node-health-c01-build/test-health-collector-timestamps
+$ $HOME/tos-node-health-c01-build/test-health-collector-timestamps
 [1;31m[ 0][t 1][2026-09-29 07:23:01.990050366][test-health-collector-timestamps.cpp:68][!driver]	Check `sample(body, "fast") < sample(body, "slow")` failed[0m
 
 EXIT=-6

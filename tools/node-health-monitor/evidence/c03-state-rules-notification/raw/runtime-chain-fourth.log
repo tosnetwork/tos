@@ -21,11 +21,11 @@
 {"kind": "stop", "monotonic": 282765.556388278, "utc": 1790673647.9826522, "process": "health-watchdog", "returncode": -15}
 {"kind": "stop", "monotonic": 282765.572109046, "utc": 1790673647.9983728, "process": "alertmanager", "returncode": 0}
 Traceback (most recent call last):
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 269, in <module>
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 269, in <module>
     if __name__=='__main__':main()
                             ~~~~^^
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 219, in main
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 219, in main
     first=until(prom_notice,125,'Prometheus stop did not trip O pipeline')
-  File "/home/tomi/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 109, in until
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/c03-runtime-chain.py", line 109, in until
     raise AssertionError(message)
 AssertionError: Prometheus stop did not trip O pipeline

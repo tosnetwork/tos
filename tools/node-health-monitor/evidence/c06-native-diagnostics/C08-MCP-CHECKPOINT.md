@@ -24,12 +24,12 @@ and supervisor's `mcp_token_visibility.rs`
 `248a13666c778687025ca5a4b5429e42eb0e48eb0a5c91d5cba357f0086a0869`.
 
 Raw local results: feature-gated binary/SDK/token tests 5 passed, exit 0,
-`/home/tomi/nhm-c08-mcp-evidence/feature-tests.log` SHA-256
+`$HOME/nhm-c08-mcp-evidence/feature-tests.log` SHA-256
 `5d3264e25bee8079af2a33c1725aedd9c20438ad6cac194d5ea23da73b4854fe`;
 strict all-target feature clippy exit 0,
-`/home/tomi/nhm-c08-mcp-evidence/strict-clippy.log` SHA-256
+`$HOME/nhm-c08-mcp-evidence/strict-clippy.log` SHA-256
 `8a2933ae25e59188be988ea6218274cb341f13d8bc4b533f57b12ececd4be8b3`;
-24-schema checker exit 0, `/home/tomi/nhm-c08-mcp-evidence/contracts.log`
+24-schema checker exit 0, `$HOME/nhm-c08-mcp-evidence/contracts.log`
 SHA-256 `04e7b638014f9b729ca7e243958c21bd2d2a3691ad9029217881e9dff3e53de0`.
 Default-feature `cargo test --workspace --locked -j2` also exited 0 in the
 terminal (including the three real C06 chain tests), but its full stdout was

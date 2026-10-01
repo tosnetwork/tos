@@ -38,13 +38,13 @@
 [38/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/shard.cpp.o
 [39/46] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/out-msg-queue-proof.cpp.o
 [40/46] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
-/home/tomi/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:64:35: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:64:35: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
    64 |       bus->session_id = fill(0x42 + rotation);
       |                         ~~~~ ~~~~~^~~~~~~~~~
-/home/tomi/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:71:53: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:71:53: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
    71 |         auto adnl = adnl::AdnlNodeIdShort{fill(0x90 + i)};
       |                                           ~~~~ ~~~~~^~~
-/home/tomi/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:72:90: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
+$HOME/tos-node-health-c04/test/validator/consensus/test-health-actions.cpp:72:90: warning: implicit conversion loses integer precision: 'unsigned int' to 'unsigned char' [-Wimplicit-int-conversion]
    72 |         bus->validator_set.push_back(PeerValidator{.validator_id = ValidatorId{fill(0x70 + i)},
       |                                                                                ~~~~ ~~~~~^~~
 3 warnings generated.

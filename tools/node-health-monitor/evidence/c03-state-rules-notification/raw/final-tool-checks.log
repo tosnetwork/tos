@@ -1,11 +1,11 @@
-+ /home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/promtool check rules deploy/prometheus/rules.yml
++ $HOME/nhm-c03-tools/prometheus-3.9.1.linux-amd64/promtool check rules deploy/prometheus/rules.yml
 Checking deploy/prometheus/rules.yml
   SUCCESS: 3 rules found
 
-+ /home/tomi/nhm-c03-tools/prometheus-3.9.1.linux-amd64/promtool test rules tests/fixtures/rule_test.yml
++ $HOME/nhm-c03-tools/prometheus-3.9.1.linux-amd64/promtool test rules tests/fixtures/rule_test.yml
   SUCCESS
 
-+ /home/tomi/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/amtool check-config deploy/prometheus/alertmanager.example.yml
++ $HOME/nhm-c03-tools/alertmanager-0.34.1.linux-amd64/amtool check-config deploy/prometheus/alertmanager.example.yml
 Checking 'deploy/prometheus/alertmanager.example.yml'  SUCCESS
 Found:
  - global config

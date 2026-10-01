@@ -1,7 +1,7 @@
 # C09 global M boundary anchor (isolated successor)
 
 Base: `f0220bd7382dd00edacc386ac9ade2392bf4318d`; worktree
-`/home/tomi/tos-node-health-c09-anchor`. No running service was changed.
+`$HOME/tos-node-health-c09-anchor`. No running service was changed.
 
 The persisted Q cursor now requires an anchor for every nonzero global M
 watermark. A caught-up page anchors the exact M row at that watermark, including
@@ -10,7 +10,7 @@ hash under its M read transaction; Q commits that boundary only with the page's
 witness. Previous anchors are checked by indexed M `store_seq` lookup. A page
 that is not caught up still anchors its last projected process parent.
 
-Controls (run 2026-09-30 UTC, `CARGO_TARGET_DIR=/home/tomi/nhm-c09-anchor-build`):
+Controls (run 2026-09-30 UTC, `CARGO_TARGET_DIR=$HOME/nhm-c09-anchor-build`):
 
 - `cargo test --locked -j2 -p tos-health-services --test manager_query_source`:
   17 passed, 1 ignored before the added case; restored complete run later had

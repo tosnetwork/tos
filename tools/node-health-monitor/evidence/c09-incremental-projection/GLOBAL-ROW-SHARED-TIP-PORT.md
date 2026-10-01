@@ -29,7 +29,7 @@ Exact restored source SHA-256:
 - `crates/health-services/tests/manager_query_source.rs`: `8551244d8af0e363764fe6925fb552e2557391501a2e3d1bc15496eeb93cb79d`
 - compiled mutant production source: `1e4f3e44d662c3cfd7d1467eb94453d438a7e4a41e8482fa031584f1a4aeaf4a`
 
-`CARGO_TARGET_DIR=/home/tomi/nhm-c09-global-page-build cargo test --locked -j 2 -p tos-health-services`
+`CARGO_TARGET_DIR=$HOME/nhm-c09-global-page-build cargo test --locked -j 2 -p tos-health-services`
 exited 0 on this exact port. Its `manager_query_source` executable reported
 22 passed, 1 opt-in ignored. `cargo fmt --all -- --check` exited 0. Strict
 `cargo clippy --locked -j 2 -p tos-health-services --all-targets -- -D warnings`

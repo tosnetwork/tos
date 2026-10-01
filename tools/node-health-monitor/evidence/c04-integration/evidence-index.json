@@ -23,13 +23,13 @@
     },
     {
       "path": "producer-pairs.log",
-      "sha256": "5e8d609cbca439f7fff64268017b909a0e3fe78256261819b728537859d1e1a9",
-      "bytes": 12425
+      "sha256": "ca78130b55dd7582d04b458ed88440514b6f3e370404f9bdc83f9aacf0c7f33d",
+      "bytes": 12410
     },
     {
       "path": "receipt.json",
-      "sha256": "ac0bcba3892351f8e2b49d0ec4d08379175891dd1b2943678e75beaf03763a51",
-      "bytes": 23502
+      "sha256": "a530f3ad56d7f7a0cf2b805958501ff68c4b4ede8a3897d1ffc30209e53da38e",
+      "bytes": 22982
     }
   ]
 }

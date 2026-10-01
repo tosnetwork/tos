@@ -2,7 +2,7 @@
 
 This is a sharper control than the pre-entry held-Q test in `GRANT-LEDGER-LOCK-CANDIDATE.md`. An actual `control_router` grant reaches the point **after** its `manager_cursor()` check. A unit-test-only hook then starts a competing thread that attempts `QueryLedger::try_lock`; if it succeeds, that thread holds Q for two seconds. The hook is behind `#[cfg(test)]` and is not present in a production library/binary build. The test reads a disposable empty M database and writes only a disposable Q ledger in a 0700 temporary directory.
 
-Restored `observability.rs` SHA-256: `ddceec8fbaabfa61044e79ada0f0e94b1c22ffad9e6f54e382978450a9897cca`. Run from `tools/node-health-monitor` with `CARGO_TARGET_DIR=/home/tomi/nhm-c09-grant-lock-build`:
+Restored `observability.rs` SHA-256: `ddceec8fbaabfa61044e79ada0f0e94b1c22ffad9e6f54e382978450a9897cca`. Run from `tools/node-health-monitor` with `CARGO_TARGET_DIR=$HOME/nhm-c09-grant-lock-build`:
 
 ```sh
 cargo test --locked -j2 -p tos-health-services --lib grant_cursor_interleaving_tests -- --nocapture

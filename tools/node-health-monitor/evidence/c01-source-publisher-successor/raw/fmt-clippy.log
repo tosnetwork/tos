@@ -1,7 +1,7 @@
 COMMAND: cargo fmt --manifest-path Cargo.toml --all -- --check
 FMT_EXIT=0
 COMMAND: CARGO_BUILD_JOBS=16 cargo clippy --manifest-path Cargo.toml --workspace --all-targets --locked -- -D warnings
-    Checking tos-health-core v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
-    Checking tos-health-services v0.1.0 (/home/tomi/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Checking tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Checking tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.59s
 CLIPPY_EXIT=0

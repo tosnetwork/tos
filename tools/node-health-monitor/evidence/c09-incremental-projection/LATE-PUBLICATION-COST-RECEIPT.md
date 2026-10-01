@@ -2,12 +2,12 @@
 
 Scope: isolated branch `nhm/c09-anchor-integration`, base `f7ad53ee06213d1ee13bc5d8f205fcc9af9f8cbd`. Only `manager_query_source.rs` test instrumentation changed. The test opens the running M SQLite database read-only and writes a disposable Q ledger; it does not change M, deploy, or exercise AURA. Five-second control deadline and page size are unchanged.
 
-Source SHA-256: test `349d7f18b0a5c51b42d2f4e2a87badc285fddf0d7edd8b798327b106dcd6b2b2`; restored `observability.rs` `3945b6dc34da71589b4826dac1901e77afe0b19e908a2e417c5c6f17dae61687`; restored test binary `8c5a1dee0f93caffb3826184a4b1aec3cb19c23b459dc9ffca2810da115dd82b`. M source: `/home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db`, network `b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004`.
+Source SHA-256: test `349d7f18b0a5c51b42d2f4e2a87badc285fddf0d7edd8b798327b106dcd6b2b2`; restored `observability.rs` `3945b6dc34da71589b4826dac1901e77afe0b19e908a2e417c5c6f17dae61687`; restored test binary `8c5a1dee0f93caffb3826184a4b1aec3cb19c23b459dc9ffca2810da115dd82b`. M source: `$HOME/nhm-supervision/c09-local/runtime/evidence/evidence.db`, network `b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004`.
 
 Command (both baseline and restored):
 
 ```sh
-NHM_C09_READONLY_M_DB=/home/tomi/nhm-supervision/c09-local/runtime/evidence/evidence.db NHM_C09_NETWORK=b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004 timeout 400s cargo test --locked -p tos-health-services --test manager_query_source live_read_only_projection_cost_witness -- --ignored --nocapture
+NHM_C09_READONLY_M_DB=$HOME/nhm-supervision/c09-local/runtime/evidence/evidence.db NHM_C09_NETWORK=b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004 timeout 400s cargo test --locked -p tos-health-services --test manager_query_source live_read_only_projection_cost_witness -- --ignored --nocapture
 ```
 
 The test observed real importer source-read completion followed by a held Data lock at >=2,000 retained parents. It sent grant and projection-health together at that point; both returned 503. The reported late-control time is the **combined completion bound** for the two concurrent requests, not separate per-request timing. Baseline natural exit 0: 101 pages, 2,479 peak retained parents, 668 ms maximum page, 3 ms maximum grant during M read, 2 ms maximum combined late-control completion, 39.61 s total. Restored natural exit 0: 102 pages, 2,479 peak retained parents, 659 ms maximum page, 4 ms maximum grant during M read, 2 ms maximum combined late-control completion, 42.82 s total. M grew between runs; page totals are not a controlled A/B throughput comparison.
@@ -20,9 +20,9 @@ Raw SHA-256:
 
 | Raw log | SHA-256 |
 | --- | --- |
-| `raw/late-publication/live-readonly-exact.log` | `ce1864b0dd9e351118e4d4a3e3a1cd63f1335ef77dc41cf73852760b5ad018dd` |
-| `raw/late-publication/blocking-health-mutant.log` | `472d5c5d0d35c417cf6c762da722582cca417afadbeba9043ae4834290261448` |
-| `raw/late-publication/live-readonly-restored.log` | `e8cc830a799d5349dcaaa22aba8ff1e446e136604777d3a0149bb2ef3a385162` |
+| `raw/late-publication/live-readonly-exact.log` | `a92457b36039ac7679367c3a77ccf2824a34d3d588cd008667be61ccc4c4cb2d` |
+| `raw/late-publication/blocking-health-mutant.log` | `cc6579ba1c7e45ae4d3cc92a0d733f84e787fb454f7427b5091602e271b71e3f` |
+| `raw/late-publication/live-readonly-restored.log` | `a07c074d580cb938bef1290f2fae2cebdb8d87f3e1fd7ab52b5e00858291d9e2` |
 | `raw/late-publication/replay-parent-before-cursor.log` | `ffa3ddcd011a32ccc682a36eeaecdab206f156597cba00b40c03b222705ef74b` |
 | `raw/late-publication/active-w-retention.log` | `05acbc2ef6b3f03789b628b389d9510771c2e45c3ff379a34982eeeb5c6c4b4c` |
 | `raw/late-publication/third-row-and-cursor-failure.log` | `9c708fe3ce84aa36e711f9dc4e1d9fe102aff25db0dd0a75d7e037d7fb6c3938` |
@@ -47,7 +47,7 @@ Source SHA-256 for these controls: `manager_query_source.rs` `b31218e1d6b25a670d
 | `raw/source-bound-closure/diagnostic-heavy-global-page.log` | `d62aae2860fc10b2f1d3029804ecc2eeb64461376ac9253741f8d68499b899cb` | 1/1 passed |
 | `raw/source-bound-closure/control-socket-five-second-actual.log` | `69ff3e56566c7ea8037b5df4f801eae42baafbd085112f28eb68d7b5575286bd` | 1/1 passed |
 | `raw/source-bound-closure/manager-query-source-target.log` | `d058db7b7cd875bde3a01185320d81793792d29886adcceb07fe95a2686946c5` | 20 passed, 2 opt-in ignored |
-| `raw/source-bound-closure/control-socket-five-second.log` | `29681983afb1ba2cd7b17577b0650a2f0fe695022da8cf677920f0060ce25fe0` | 0 tests; not counted |
+| `raw/source-bound-closure/control-socket-five-second.log` | `b49348083621e36e060bdeee8ad590ad5cc9e54a59d8ab973992983e5383df7e` | 0 tests; not counted |
 
 These controls establish current source behavior in isolation, not sustained live-broker availability or stage acceptance. Do not promote the faster disposable-ledger page timings to deployed performance evidence.
 
