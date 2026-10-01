@@ -106,6 +106,87 @@ fn terminal_payload_compaction_is_atomic_and_seals_replay() {
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// Seal rows as a long uptime leaves them: run id kept, payload compacted.
+fn insert_seals(file: &PathBuf, domain: &str, prefix: &str, count: u32, expires_ms: i64) {
+    let mut db = rusqlite::Connection::open(file).unwrap();
+    let tx = db.transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO query_grants(run_id,boot_id,expires_ms,revoked,body) VALUES(?1,?2,?3,1,X'')",
+            )
+            .unwrap();
+        for index in 0..count {
+            insert
+                .execute(rusqlite::params![
+                    format!("{prefix}{index:07x}-0000-4000-8000-000000000000"),
+                    domain,
+                    expires_ms
+                ])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+}
+
+#[test]
+fn compacted_seals_do_not_count_against_the_resident_grant_bound() {
+    let (file, directory) = temporary();
+    let domain = format!("{BOOT_A}|test-time-namespace");
+    drop(QueryLedger::open_for_boot(&file, BOOT_A).unwrap());
+    insert_seals(&file, &domain, "a", 4096, 1);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    ledger
+        .create(&grant(&[0x11; 32]), 100)
+        .expect("4096 payload-free seals must not refuse a grant");
+    assert!(ledger.load_active(&grant(&[0x11; 32]).run_id, 100).unwrap().is_some());
+    drop(ledger);
+    // The same number of resident rows still does.
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute("UPDATE query_grants SET body=X'01' WHERE length(body)=0", []).unwrap();
+    drop(db);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    let mut another = grant(&[0x12; 32]);
+    another.run_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc".into();
+    assert_eq!(ledger.create(&another, 100).unwrap_err(), "query grant ledger full");
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn compaction_sweeps_seals_older_than_the_history_window_and_keeps_younger_ones() {
+    use tos_health_services::query_ledger::TERMINAL_SEAL_HISTORY_MS;
+    let (file, directory) = temporary();
+    let domain = format!("{BOOT_A}|test-time-namespace");
+    let foreign = format!("{BOOT_B}|test-time-namespace");
+    drop(QueryLedger::open_for_boot(&file, BOOT_A).unwrap());
+    let cutoff = tos_health_services::query_ledger::boot_millis().unwrap();
+    let window_edge = i64::try_from(cutoff).unwrap() - TERMINAL_SEAL_HISTORY_MS;
+    insert_seals(&file, &domain, "0", 300, window_edge);
+    insert_seals(&file, &domain, "1", 3, window_edge + 1);
+    insert_seals(&file, &foreign, "2", 3, window_edge - 5);
+    let count = |sql: &str| -> i64 {
+        rusqlite::Connection::open(&file).unwrap().query_row(sql, [], |row| row.get(0)).unwrap()
+    };
+    assert_eq!(count("SELECT COUNT(*) FROM query_grants"), 306);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(ledger.compact_terminal(cutoff, 16).unwrap(), 0, "no resident run to compact");
+    assert_eq!(
+        count("SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '0%'"),
+        300 - 256,
+        "one call sweeps a bounded batch of seals past the window"
+    );
+    assert_eq!(ledger.compact_terminal(cutoff, 16).unwrap(), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '0%'"), 0);
+    assert_eq!(count("SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '1%'"), 3);
+    assert_eq!(count("SELECT COUNT(*) FROM query_grants WHERE run_id LIKE '2%'"), 3);
+    let young = ledger.inspect("10000000-0000-4000-8000-000000000000").unwrap().unwrap();
+    assert_eq!(young["terminal_payload_compacted"], true);
+    assert!(ledger.inspect("00000000-0000-4000-8000-000000000000").unwrap().is_none());
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn mcp_binding_call_and_wire_budgets_survive_restart() {
     let (file, directory) = temporary();

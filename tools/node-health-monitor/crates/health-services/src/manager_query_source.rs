@@ -33,6 +33,10 @@ pub struct ProjectionPage {
     pub boundary_witness: Option<(u64, String)>,
     pub records: Vec<(EvidenceRow, Evidence)>,
     pub quarantined_retained: BTreeSet<String>,
+    /// Retained parents absent from M whose generation is covered by M's
+    /// retention seal for their identity: expired by bounded age retention,
+    /// not tampered. The caller evicts their derived rows instead of locking.
+    pub expired_retained: BTreeSet<String>,
     pub caught_up: bool,
 }
 
@@ -735,6 +739,7 @@ pub fn read_process_projection_page(
     // A late quarantine or replacement may target a row older than `after`.
     // Revalidate exact retained parent seq/hash/body in this same M snapshot.
     let mut quarantined_retained = BTreeSet::new();
+    let mut expired_retained = BTreeSet::new();
     let mut parent = conn
         .prepare(
             "SELECT o.content_hash,o.body,o.node,o.scope,o.process_epoch,
@@ -765,7 +770,7 @@ pub fn read_process_projection_page(
             })
             .optional()
             .map_err(failure)?;
-        let (
+        let Some((
             id,
             body,
             node,
@@ -775,7 +780,18 @@ pub fn read_process_projection_page(
             source,
             source_record,
             quarantined,
-        ) = actual.ok_or("retained M parent missing")?;
+        )) = actual
+        else {
+            // M's age retention seals every identity it deletes from, in the
+            // deleting transaction. A seal at or above this parent's
+            // generation proves a bounded expiry; anything else is a missing
+            // row the projection cannot explain.
+            if retention_seal_covers(&conn, origin)? {
+                expired_retained.insert(origin.evidence_id.clone());
+                continue;
+            }
+            return Err("retained M parent missing".into());
+        };
         let original = &origin.evidence.record;
         if id != origin.evidence_id
             || body.as_bytes() != serde_json::to_vec(&origin.evidence).map_err(failure)?
@@ -905,8 +921,42 @@ pub fn read_process_projection_page(
         boundary_witness,
         records,
         quarantined_retained,
+        expired_retained,
         caught_up,
     })
+}
+
+/// True when M's retention seal for the parent's exact identity records a
+/// highest deleted generation at or above the parent's own generation. Read
+/// in the caller's M snapshot. A parent without a canonical generation can
+/// never have been sealed, so it is never reported as expired.
+fn retention_seal_covers(conn: &Connection, origin: &EvidenceRow) -> Result<bool, String> {
+    let record = &origin.evidence.record;
+    let Some(generation) = crate::retention::generation_of(&record.source_record_id) else {
+        return Ok(false);
+    };
+    let sealed: Option<String> = conn
+        .query_row(
+            "SELECT max_generation FROM retention_seals WHERE node=?1 AND scope=?2
+             AND process_epoch=?3 AND source_epoch=?4 AND source=?5",
+            params![
+                record.node_id,
+                record.scope_id,
+                record.process_epoch,
+                origin.evidence.source_epoch,
+                record.source_id
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(failure)?;
+    match sealed {
+        Some(value) => {
+            let sealed = tos_health_core::wire::exact_u64(&value).map_err(str::to_owned)?;
+            Ok(generation <= sealed)
+        }
+        None => Ok(false),
+    }
 }
 
 /// The third value is a bounded set of M original IDs whose source tuple is

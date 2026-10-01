@@ -241,6 +241,25 @@ fn import_manager_into(
             return Err(error);
         }
     };
+    if !page.expired_retained.is_empty() {
+        // Parents M expired under a retention seal are a bounded, legitimate
+        // loss of history, not a changed source: drop their derived rows and
+        // keep serving. Ledger first, so a crash here never leaves a derived
+        // row whose parent is gone from both M and Q.
+        let expired: Vec<String> = page.expired_retained.iter().cloned().collect();
+        let evicted =
+            ledger.lock().map_err(|_| "query ledger unavailable")?.evict_expired_origins(&expired);
+        let evicted = match evicted {
+            Ok(value) => value,
+            Err(error) => {
+                block_manager_queries(state, data)?;
+                return Err(error);
+            }
+        };
+        for evidence_id in &evicted {
+            data.store.remove(evidence_id);
+        }
+    }
     if !page.quarantined_retained.is_empty() {
         block_manager_queries(state, data)?;
         return Err("retained M parent was quarantined".into());

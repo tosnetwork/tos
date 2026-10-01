@@ -158,15 +158,38 @@ async fn refresh_manager(
     ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Startup performs the first bounded import before either listener opens.
     ticks.tick().await;
+    let mut last_compaction_report: Option<std::time::Instant> = None;
     loop {
         ticks.tick().await;
         let state = state.clone();
-        tokio::task::spawn_blocking(move || {
+        let compaction = tokio::task::spawn_blocking(move || {
             let _ = tos_health_services::observability::import_manager(&state);
+            compact_terminal_grants(&state)
         })
         .await
         .map_err(|error| error.to_string())?;
+        if let Err(error) = compaction {
+            let due =
+                last_compaction_report.is_none_or(|at| at.elapsed() >= Duration::from_secs(60));
+            if due {
+                eprintln!("query grant compaction failed: {error}");
+                last_compaction_report = Some(std::time::Instant::now());
+            }
+        }
     }
+}
+
+/// Reclaim payloads of grants that expired more than an hour ago on this
+/// boot, at most sixteen per tick. Compaction is the only path that keeps
+/// the grant ledger's resident count below its bound over a long uptime.
+fn compact_terminal_grants(
+    state: &tos_health_services::observability::ObservabilityState,
+) -> Result<usize, String> {
+    const GRACE_MS: u64 = 3_600_000;
+    let Some(ledger) = &state.query_ledger else { return Ok(0) };
+    let now = tos_health_services::query_ledger::boot_millis()?;
+    let cutoff = now.saturating_sub(GRACE_MS);
+    ledger.lock().map_err(|_| "query ledger unavailable".to_owned())?.compact_terminal(cutoff, 16)
 }
 
 async fn serve_control(
@@ -255,7 +278,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
     let listener = tokio::net::TcpListener::bind(tos_health_services::loopback(&args[2])?).await?;
     let tcp = axum::serve(listener, tos_health_services::observability::router(state.clone()));
-    let refresh = state.manager_evidence_db.as_ref().map(|_| refresh_manager(state.clone()));
+    // The tick always runs: without a manager database the import is a no-op
+    // and grant compaction still keeps the ledger's resident count bounded.
+    let refresh = Some(refresh_manager(state.clone()));
     let unix = serve_control(
         control,
         tos_health_services::observability::control_router(state.clone()),

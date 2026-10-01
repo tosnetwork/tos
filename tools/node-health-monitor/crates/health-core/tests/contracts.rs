@@ -568,7 +568,6 @@ fn profile_arithmetic_cannot_overflow_into_validity() {
     assert!(profile.validate().is_err());
 }
 
-
 #[test]
 fn evidence_charges_the_decoded_footprint_and_bounds_nodes() {
     use tos_health_core::evidence::{value_footprint, value_nodes, MAX_PAYLOAD_NODES};

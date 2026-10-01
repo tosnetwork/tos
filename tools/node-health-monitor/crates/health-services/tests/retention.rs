@@ -18,8 +18,10 @@ use tos_health_core::{
 use tos_health_services::{
     durable::{is_capacity_error, ControlDb, DurableEvidence, Evaluation, EvidenceDb, RuleKey},
     manager_query_source::read_process_projection_page,
+    observability::{import_manager, ObservabilityState},
     retention::{RetentionPolicy, RETAINED_ROWS_PER_SOURCE, RETENTION_MIN_MS},
     witness::{router as witness_router, CacheResponse, WitnessCache},
+    Inventory,
 };
 use tower::ServiceExt;
 
@@ -353,14 +355,296 @@ fn a_parent_the_query_service_retained_within_the_floor_is_never_deleted() {
     assert!(again.records.is_empty());
     assert!(again.quarantined_retained.is_empty());
     // Once the parents age past both the floor and the configured window they
-    // may go, and a projection that still names them reports it explicitly.
+    // may go. The deleting transaction seals the identity at the highest
+    // deleted generation, and a projection that still names those parents is
+    // told they expired instead of failing.
     let later = now + 3 * HOUR;
     let pass = db.retain(&policy(RETENTION_MIN_MS), later).unwrap();
     assert_eq!(pass.observations_deleted, 12 - u64::from(RETAINED_ROWS_PER_SOURCE));
     assert_eq!(
+        db.evidence_seal("v1", "node", "boot:4242:100", "epoch-1", "process").unwrap(),
+        Some(4)
+    );
+    let expired =
+        read_process_projection_page(&path, NETWORK, Some(&first.cursor), &retained).unwrap();
+    assert!(expired.records.is_empty());
+    assert!(expired.quarantined_retained.is_empty());
+    let expected: std::collections::BTreeSet<_> =
+        rows.iter().take(4).map(|row| row.evidence_id.clone()).collect();
+    assert_eq!(expired.expired_retained, expected, "exactly the sealed generations 1..=4");
+    // A parent above the seal that is nevertheless gone is not an expiry the
+    // seal can vouch for; it is still a missing parent.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.execute("DELETE FROM observations WHERE source_record='epoch-1:7'", []).unwrap(),
+        1
+    );
+    drop(conn);
+    assert_eq!(
         read_process_projection_page(&path, NETWORK, Some(&first.cursor), &retained).unwrap_err(),
         "retained M parent missing"
     );
+}
+
+#[test]
+fn a_retained_parent_missing_without_any_seal_is_still_refused() {
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let mut db = EvidenceDb::open(&path, 4_194_304).unwrap();
+    db.bind_network(NETWORK).unwrap();
+    let now = now_ms();
+    for generation in 1..=12 {
+        db.insert(process_row(generation, now - 90 * 60_000)).unwrap();
+    }
+    let first = read_process_projection_page(&path, NETWORK, None, &[]).unwrap();
+    let retained: Vec<_> = first.records.iter().map(|(row, _)| row.clone()).collect();
+    assert_eq!(table_count(&path, "retention_seals"), 0);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.execute("DELETE FROM observations WHERE source_record='epoch-1:3'", []).unwrap(),
+        1
+    );
+    drop(conn);
+    assert_eq!(
+        read_process_projection_page(&path, NETWORK, Some(&first.cursor), &retained).unwrap_err(),
+        "retained M parent missing"
+    );
+}
+
+fn query_state(ledger: &std::path::Path, manager: &std::path::Path) -> ObservabilityState {
+    ObservabilityState::new(
+        Inventory {
+            network_id: NETWORK.into(),
+            nodes: std::collections::BTreeSet::from(["v1".into()]),
+            scopes: std::collections::BTreeSet::from(["node".into()]),
+        },
+        vec![b'o'; 32],
+        vec![b'i'; 32],
+        vec![b'a'; 32],
+    )
+    .unwrap()
+    .with_query_ledger(ledger)
+    .unwrap()
+    .with_manager_evidence(manager.into())
+    .unwrap()
+}
+
+#[test]
+fn a_sealed_expiry_of_retained_parents_evicts_their_projection_without_locking() {
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let ledger_path = t.0.join("query.sqlite");
+    let mut db = EvidenceDb::open(&path, 4_194_304).unwrap();
+    db.bind_network(NETWORK).unwrap();
+    let now = now_ms();
+    let mut rows = Vec::new();
+    for generation in 1..=12 {
+        rows.push(db.insert(process_row(generation, now - 90 * 60_000)).unwrap());
+    }
+    let state = query_state(&ledger_path, &path);
+    let ledger = state.query_ledger.clone().unwrap();
+    assert_eq!(state.data.lock().unwrap().store.entries().count(), 12);
+    assert_eq!(ledger.lock().unwrap().retained_origin_rows().unwrap().len(), 12);
+    // M expires the four oldest parents under a seal.
+    let pass = db.retain(&policy(RETENTION_MIN_MS), now + 3 * HOUR).unwrap();
+    assert_eq!(pass.observations_deleted, 4);
+    let (_, imported) = import_manager(&state).expect("a sealed expiry is not a conflict");
+    assert_eq!(imported, 0);
+    {
+        let data = state.data.lock().unwrap();
+        assert!(!data.manager_conflicted);
+        assert!(data.manager_caught_up);
+        let resident: std::collections::BTreeSet<_> =
+            data.store.entries().map(|entry| entry.record.source_record_id.clone()).collect();
+        let kept: std::collections::BTreeSet<_> =
+            rows.iter().skip(4).map(|row| format!("m-{}", row.evidence_id)).collect();
+        assert_eq!(resident, kept, "exactly the derived rows of the kept parents remain");
+    }
+    let origins = ledger.lock().unwrap().retained_origin_rows().unwrap();
+    assert_eq!(origins.len(), 8);
+    assert!(origins.iter().all(|origin| origin.store_seq.0 > rows[3].store_seq.0));
+    // A second import is a no-op, and a grant can still be issued.
+    assert_eq!(import_manager(&state).unwrap().1, 0);
+    assert!(!state.data.lock().unwrap().manager_conflicted);
+    drop(ledger);
+    drop(state);
+    // The durable ledger reloads without the evicted rows or their parents.
+    let restarted = query_state(&ledger_path, &path);
+    assert_eq!(restarted.data.lock().unwrap().store.entries().count(), 8);
+    assert!(!restarted.data.lock().unwrap().manager_conflicted);
+    // A parent gone above the seal still locks the projection.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.execute("DELETE FROM observations WHERE source_record='epoch-1:9'", []).unwrap(),
+        1
+    );
+    drop(conn);
+    assert_eq!(import_manager(&restarted).unwrap_err(), "retained M parent missing");
+    assert!(restarted.data.lock().unwrap().manager_conflicted);
+}
+
+/// Rows written straight into the table in one transaction: schema-faithful
+/// filler for scans that need thousands of rows, where one FULL commit per
+/// row through the writer would dominate the test.
+fn bulk_rows(
+    path: &std::path::Path,
+    source: &str,
+    generations: std::ops::RangeInclusive<u64>,
+    received_at_ms: i64,
+) {
+    let mut conn = rusqlite::Connection::open(path).unwrap();
+    let tx = conn.transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            )
+            .unwrap();
+        for generation in generations {
+            let row = record(source, generation, received_at_ms);
+            let body = serde_json::to_string(&row).unwrap();
+            insert
+                .execute(rusqlite::params![
+                    row.record.node_id,
+                    row.record.scope_id,
+                    row.record.process_epoch,
+                    row.source_epoch,
+                    row.record.source_id,
+                    row.record.source_record_id,
+                    format!("{:064x}", generation),
+                    body
+                ])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+}
+
+#[test]
+fn an_old_row_behind_a_full_page_of_young_rows_is_deleted_in_one_pass() {
+    use tos_health_services::retention::PAGE_ROWS;
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let mut db = EvidenceDb::open(&path, 4_194_304).unwrap();
+    let now = now_ms();
+    bulk_rows(&path, "edge_probe", 1..=u64::from(PAGE_ROWS), now - 60_000);
+    db.insert(record("native_facts", 1, now - 3 * DAY)).unwrap();
+    for generation in 2..=1 + u64::from(RETAINED_ROWS_PER_SOURCE) {
+        db.insert(record("native_facts", generation, now - 60_000)).unwrap();
+    }
+    let pass = db.retain(&policy(DAY as u64), now).unwrap();
+    assert_eq!(pass.observations_deleted, 1, "{pass:?}");
+    assert!(pass.complete);
+    assert_eq!(pass.pages, 2, "the full young page and the short tail page were both scanned");
+    assert_eq!(
+        generations(&path, "native_facts"),
+        (2..=9).map(|g| g.to_string()).collect::<Vec<_>>()
+    );
+    assert_eq!(table_count(&path, "observations"), i64::from(PAGE_ROWS) + 8);
+    assert_eq!(db.insert(record("native_facts", 1, now)).unwrap_err(), "EVIDENCE_EXPIRED");
+}
+
+#[test]
+fn a_pass_cut_by_the_page_limit_resumes_from_its_cursor() {
+    use tos_health_services::retention::{MAX_PAGES_PER_PASS, PAGE_ROWS};
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let mut db = EvidenceDb::open(&path, 16_777_216).unwrap();
+    let now = now_ms();
+    let filler = u64::from(PAGE_ROWS) * u64::from(MAX_PAGES_PER_PASS);
+    bulk_rows(&path, "edge_probe", 1..=filler, now - 60_000);
+    db.insert(record("native_facts", 1, now - 3 * DAY)).unwrap();
+    for generation in 2..=1 + u64::from(RETAINED_ROWS_PER_SOURCE) {
+        db.insert(record("native_facts", generation, now - 60_000)).unwrap();
+    }
+    let first = db.retain(&policy(DAY as u64), now).unwrap();
+    assert_eq!(first.observations_deleted, 0);
+    assert!(!first.complete, "the page budget ends before the old row: {first:?}");
+    assert!(first.pages <= MAX_PAGES_PER_PASS);
+    // A scan that restarted at the head each time would never get past the
+    // filler; resuming reaches the old row within a bounded number of passes.
+    let mut deleted = first.observations_deleted;
+    let mut passes = 1;
+    let mut last = first;
+    while !last.complete {
+        assert!(passes < 8, "retention never reached the tail: {last:?}");
+        last = db.retain(&policy(DAY as u64), now).unwrap();
+        deleted += last.observations_deleted;
+        passes += 1;
+    }
+    assert_eq!(deleted, 1);
+    assert_eq!(
+        generations(&path, "native_facts"),
+        (2..=9).map(|g| g.to_string()).collect::<Vec<_>>()
+    );
+    // The tail reset the cursor: the next pass scans from the head again.
+    let again = db.retain(&policy(DAY as u64), now).unwrap();
+    assert_eq!(again.observations_deleted, 0);
+    assert!(again.pages >= 1);
+}
+
+#[test]
+fn an_old_witness_row_behind_a_full_page_of_young_rows_is_deleted_in_one_pass() {
+    use tos_health_services::retention::PAGE_ROWS;
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let mut db = EvidenceDb::open(&path, 4_194_304).unwrap();
+    let now = now_ms();
+    let stamp = |at_ms: i64| {
+        chrono::DateTime::<chrono::Utc>::from_timestamp_millis(at_ms)
+            .unwrap()
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
+    let mut conn = rusqlite::Connection::open(&path).unwrap();
+    let tx = conn.transaction().unwrap();
+    {
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO witness_observations(observer_epoch,endpoint,source_epoch,generation,source_hash,metadata_hash,evidence_id,body)
+                 VALUES('observer-1','cache_1','source-1',?1,?2,?2,?2,?3)",
+            )
+            .unwrap();
+        let young = u64::from(PAGE_ROWS);
+        for generation in 1..=young {
+            insert
+                .execute(rusqlite::params![
+                    generation.to_string(),
+                    format!("{:064x}", generation),
+                    json!({"receipt":{"first_received_at":stamp(now - 60_000)}}).to_string()
+                ])
+                .unwrap();
+        }
+        insert
+            .execute(rusqlite::params![
+                (young + 1).to_string(),
+                format!("{:064x}", young + 1),
+                json!({"receipt":{"first_received_at":stamp(now - 3 * DAY)}}).to_string()
+            ])
+            .unwrap();
+        for generation in young + 2..=young + 1 + u64::from(RETAINED_ROWS_PER_SOURCE) {
+            insert
+                .execute(rusqlite::params![
+                    generation.to_string(),
+                    format!("{:064x}", generation),
+                    json!({"receipt":{"first_received_at":stamp(now - 60_000)}}).to_string()
+                ])
+                .unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    drop(conn);
+    let witness_policy =
+        RetentionPolicy { evidence_retention_ms: None, witness_retention_ms: Some(DAY as u64) };
+    let pass = db.retain(&witness_policy, now).unwrap();
+    assert_eq!(pass.witness_deleted, 1, "{pass:?}");
+    assert!(pass.complete);
+    assert_eq!(pass.witness_rows, u64::from(PAGE_ROWS) + 8);
+    let sealed: String = rusqlite::Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT max_generation FROM witness_retention_seals", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(sealed, (u64::from(PAGE_ROWS) + 1).to_string());
 }
 
 #[test]

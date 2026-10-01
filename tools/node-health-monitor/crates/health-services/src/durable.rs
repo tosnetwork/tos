@@ -138,16 +138,26 @@ fn protected_floor(
     memo.insert(key, floor);
     Ok(floor)
 }
+/// Resume point for a paged retention scan. The pass scans from `cursor`
+/// forward and only resets to the head once it has seen the tail, so a
+/// table longer than one pass's page budget is still covered over passes.
+/// Every scanned page counts against the page budget, whether or not it
+/// held a candidate; a page of young or protected rows is not the tail.
 fn retain_observations(
     conn: &mut Connection,
     cutoff: i64,
     started: std::time::Instant,
     budget: Duration,
     pass: &mut RetentionPass,
+    cursor: &mut i64,
 ) -> Result<()> {
-    let mut cursor = 0i64;
     let mut memo = BTreeMap::new();
+    let mut pages = 0u32;
     loop {
+        if pages >= MAX_PAGES_PER_PASS || started.elapsed() > budget {
+            pass.complete = false;
+            return Ok(());
+        }
         let rows: Vec<ScannedObservation> = {
             let mut scan = conn
                 .prepare(
@@ -157,7 +167,7 @@ fn retain_observations(
                 )
                 .map_err(err)?;
             let rows = scan
-                .query_map(params![cursor, PAGE_ROWS], |r| {
+                .query_map(params![*cursor, PAGE_ROWS], |r| {
                     Ok((
                         r.get(0)?,
                         r.get(1)?,
@@ -173,9 +183,13 @@ fn retain_observations(
             rows.collect::<std::result::Result<Vec<_>, _>>().map_err(err)?
         };
         let Some(last) = rows.last() else {
+            // The tail: the next pass starts from the head again.
+            *cursor = 0;
             return Ok(());
         };
-        cursor = last.0;
+        *cursor = last.0;
+        pages = pages.saturating_add(1);
+        pass.pages = pass.pages.saturating_add(1);
         // Rows without an integer receipt time are never age-eligible.
         let mut candidates = Vec::new();
         for row in rows {
@@ -190,7 +204,7 @@ fn retain_observations(
             }
         }
         if candidates.is_empty() {
-            return Ok(());
+            continue;
         }
         let tx = conn.transaction().map_err(err)?;
         let mut seals: BTreeMap<[String; 5], (u64, u64, i64)> = BTreeMap::new();
@@ -253,24 +267,24 @@ fn retain_observations(
         tx.commit().map_err(err)?;
         // Deleted rows changed the group floors; recompute lazily next page.
         memo.clear();
-        pass.pages = pass.pages.saturating_add(1);
-        if pass.pages >= MAX_PAGES_PER_PASS || started.elapsed() > budget {
-            pass.complete = false;
-            return Ok(());
-        }
     }
 }
 type ScannedWitness = (i64, String, String, String, String, Option<String>);
+/// Same resumable paging as `retain_observations`, over the witness archive.
 fn retain_witness(
     conn: &mut Connection,
     cutoff: i64,
     started: std::time::Instant,
     budget: Duration,
     pass: &mut RetentionPass,
+    cursor: &mut i64,
 ) -> Result<()> {
-    let mut cursor = 0i64;
     let mut pages = 0u32;
     loop {
+        if pages >= MAX_PAGES_PER_PASS || started.elapsed() > budget {
+            pass.complete = false;
+            return Ok(());
+        }
         let rows: Vec<ScannedWitness> = {
             let mut scan = conn
                 .prepare(
@@ -280,16 +294,19 @@ fn retain_witness(
                 )
                 .map_err(err)?;
             let rows = scan
-                .query_map(params![cursor, PAGE_ROWS], |r| {
+                .query_map(params![*cursor, PAGE_ROWS], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
                 })
                 .map_err(err)?;
             rows.collect::<std::result::Result<Vec<_>, _>>().map_err(err)?
         };
         let Some(last) = rows.last() else {
+            *cursor = 0;
             return Ok(());
         };
-        cursor = last.0;
+        *cursor = last.0;
+        pages = pages.saturating_add(1);
+        pass.pages = pass.pages.saturating_add(1);
         let mut floors: BTreeMap<String, Option<i64>> = BTreeMap::new();
         let mut candidates = Vec::new();
         for row in rows {
@@ -321,7 +338,7 @@ fn retain_witness(
             }
         }
         if candidates.is_empty() {
-            return Ok(());
+            continue;
         }
         let tx = conn.transaction().map_err(err)?;
         let mut seals: BTreeMap<[String; 3], (u64, u64)> = BTreeMap::new();
@@ -376,12 +393,6 @@ fn retain_witness(
             .map_err(err)?;
         }
         tx.commit().map_err(err)?;
-        pages = pages.saturating_add(1);
-        pass.pages = pass.pages.saturating_add(1);
-        if pages >= MAX_PAGES_PER_PASS || started.elapsed() > budget {
-            pass.complete = false;
-            return Ok(());
-        }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -454,6 +465,11 @@ pub struct EvidenceDb {
     path: std::path::PathBuf,
     quota: u64,
     current_tracks: BTreeMap<String, CurrentTrack>,
+    /// Where the next observation retention pass resumes its scan; zero
+    /// after a pass that reached the table's tail.
+    observation_retention_cursor: i64,
+    /// The same resume point for the witness archive scan.
+    witness_retention_cursor: i64,
 }
 struct CurrentTrack {
     generation: u64,
@@ -535,21 +551,45 @@ impl EvidenceDb {
             CREATE TABLE IF NOT EXISTS witness_retention_seals(observer_epoch TEXT NOT NULL,endpoint TEXT NOT NULL,
             source_epoch TEXT NOT NULL,max_generation TEXT NOT NULL,deleted_rows INTEGER NOT NULL,
             PRIMARY KEY(observer_epoch,endpoint,source_epoch));").map_err(err)?;
-        Ok(Self { conn, path: path.into(), quota, current_tracks: BTreeMap::new() })
+        Ok(Self {
+            conn,
+            path: path.into(),
+            quota,
+            current_tracks: BTreeMap::new(),
+            observation_retention_cursor: 0,
+            witness_retention_cursor: 0,
+        })
     }
     /// One bounded retention pass: delete eligible old rows, seal their
     /// identities in the same transaction, then run a passive checkpoint.
-    /// The caller is the single evidence writer; `now_ms` is UTC.
+    /// The caller is the single evidence writer; `now_ms` is UTC. A pass
+    /// cut by its page or time budget resumes where it stopped next time;
+    /// `complete` is true only when this pass reached the tail of every
+    /// configured table.
     pub fn retain(&mut self, policy: &RetentionPolicy, now_ms: i64) -> Result<RetentionPass> {
         policy.validate()?;
         let started = std::time::Instant::now();
         let budget = Duration::from_millis(PASS_BUDGET_MS);
         let mut pass = RetentionPass { complete: true, ..RetentionPass::default() };
         if let Some(cutoff) = policy.evidence_cutoff_ms(now_ms) {
-            retain_observations(&mut self.conn, cutoff, started, budget, &mut pass)?;
+            retain_observations(
+                &mut self.conn,
+                cutoff,
+                started,
+                budget,
+                &mut pass,
+                &mut self.observation_retention_cursor,
+            )?;
         }
         if let Some(cutoff) = policy.witness_cutoff_ms(now_ms) {
-            retain_witness(&mut self.conn, cutoff, started, budget, &mut pass)?;
+            retain_witness(
+                &mut self.conn,
+                cutoff,
+                started,
+                budget,
+                &mut pass,
+                &mut self.witness_retention_cursor,
+            )?;
         }
         pass.observations_rows = count(&self.conn, "observations")?;
         pass.witness_rows = count(&self.conn, "witness_observations")?;

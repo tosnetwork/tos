@@ -15,6 +15,17 @@ pub struct QueryLedger {
     clock_domain: String,
 }
 
+/// Hard SQLite page quota for the ledger file (256 MiB).
+pub const LEDGER_QUOTA_BYTES: u64 = 256 * 1024 * 1024;
+/// WAL frames between passive checkpoints; keeps the WAL file small.
+pub const WAL_AUTOCHECKPOINT_PAGES: i64 = 64;
+/// Resident grants (non-empty body) the ledger may hold at once.
+const MAX_RESIDENT_GRANTS: i64 = 4096;
+/// Compacted run-id seals younger than this stay as anti-replay history.
+pub const TERMINAL_SEAL_HISTORY_MS: i64 = 30 * 86_400_000;
+/// Expired seals removed per compaction call; bounds one transaction.
+const TERMINAL_SEAL_SWEEP_LIMIT: i64 = 256;
+
 /// Last fully imported M snapshot. The anchor detects replacement or rewrite
 /// of the append-only source across QueryService restarts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +195,22 @@ impl QueryLedger {
         if !mode.eq_ignore_ascii_case("wal") || synchronous != 2 {
             return Err("query ledger WAL/FULL unavailable".into());
         }
+        // The ledger is bounded the same way as the evidence database: a hard
+        // page quota and a small WAL so an unchecked writer cannot fill the disk.
+        let page: u64 =
+            conn.pragma_query_value(None, "page_size", |row| row.get(0)).map_err(failure)?;
+        if page == 0 {
+            return Err("query ledger page size unavailable".into());
+        }
+        let pages = LEDGER_QUOTA_BYTES / page;
+        let effective: u64 = conn
+            .pragma_update_and_check(None, "max_page_count", pages, |row| row.get(0))
+            .map_err(failure)?;
+        if effective > pages {
+            return Err("query ledger exceeds configured quota".into());
+        }
+        conn.pragma_update(None, "wal_autocheckpoint", WAL_AUTOCHECKPOINT_PAGES)
+            .map_err(failure)?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS query_grants (
                 run_id TEXT PRIMARY KEY,
@@ -409,10 +436,15 @@ impl QueryLedger {
             "SELECT COUNT(*) FROM query_grants WHERE boot_id=?1 AND revoked=0 AND expires_ms>?2",
             params![self.clock_domain, now], |row| row.get(0),
         ).map_err(failure)?;
-        let total: i64 = tx
-            .query_row("SELECT COUNT(*) FROM query_grants", [], |row| row.get(0))
+        // Only resident grants count toward the lifetime bound. Compacted
+        // seals keep their run id for replay protection but hold no payload,
+        // so they must not refuse new grants forever.
+        let resident: i64 = tx
+            .query_row("SELECT COUNT(*) FROM query_grants WHERE length(body)>0", [], |row| {
+                row.get(0)
+            })
             .map_err(failure)?;
-        if active >= 32 || total >= 4096 {
+        if active >= 32 || resident >= MAX_RESIDENT_GRANTS {
             return Err("query grant ledger full".into());
         }
         tx.execute(
@@ -918,6 +950,66 @@ impl QueryLedger {
         Ok(origins)
     }
 
+    /// Drop the derived query rows whose M parent was expired by M's sealed
+    /// age retention, together with their parent bindings and the parents
+    /// themselves, in one transaction. Returns the evicted query evidence ids
+    /// so the caller can remove the same rows from the resident store. The
+    /// evidence sequence is never rewound; an evicted watermark is a gap.
+    pub fn evict_expired_origins(&mut self, origins: &[String]) -> Result<Vec<String>, String> {
+        if origins.len() > 4096 {
+            return Err("expired M parent set exceeds retained bound".into());
+        }
+        if origins.is_empty() {
+            return Ok(Vec::new());
+        }
+        if origins.iter().any(|origin| !tos_health_core::wire::hash(origin)) {
+            return Err("expired M parent id malformed".into());
+        }
+        let tx =
+            self.conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(failure)?;
+        let mut evicted = Vec::new();
+        for origin in origins {
+            let dependants: Vec<String> = {
+                let mut query = tx
+                    .prepare(
+                        "SELECT query_evidence_id FROM query_projection_origin
+                         WHERE origin_id=?1 ORDER BY query_evidence_id LIMIT 4097",
+                    )
+                    .map_err(failure)?;
+                let rows = query
+                    .query_map([origin], |row| row.get::<_, String>(0))
+                    .map_err(failure)?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(failure)?;
+                rows
+            };
+            if dependants.len() > 4096 {
+                return Err("expired M parent has too many dependants".into());
+            }
+            for evidence_id in &dependants {
+                tx.execute("DELETE FROM query_evidence WHERE evidence_id=?1", [evidence_id])
+                    .map_err(failure)?;
+            }
+            tx.execute("DELETE FROM query_projection_origin WHERE origin_id=?1", [origin])
+                .map_err(failure)?;
+            let still_bound: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM query_projection_origin WHERE origin_id=?1)",
+                    [origin],
+                    |row| row.get(0),
+                )
+                .map_err(failure)?;
+            if still_bound {
+                return Err("expired M parent still bound after eviction".into());
+            }
+            tx.execute("DELETE FROM query_origins WHERE origin_id=?1", [origin])
+                .map_err(failure)?;
+            evicted.extend(dependants);
+        }
+        tx.commit().map_err(failure)?;
+        Ok(evicted)
+    }
+
     fn insert_bound(
         &mut self,
         store: &mut EvidenceStore,
@@ -1124,11 +1216,13 @@ impl QueryLedger {
         Ok(true)
     }
 
-    /// Reclaim only the payload of expired runs. The grant row and its unique
-    /// run ID remain forever as a replay seal; the 4096-run lifetime cap is
-    /// deliberately unchanged. `cutoff_ms` is an explicit operator policy
-    /// input, never inferred from a wall clock or another boot's monotonic
-    /// origin. Each call touches at most 16 runs in one FULL transaction.
+    /// Reclaim the payload of expired runs. The grant row and its unique run
+    /// ID remain as a replay seal for `TERMINAL_SEAL_HISTORY_MS` past the
+    /// cutoff; older seals of this boot are then dropped so the table stays
+    /// bounded. `cutoff_ms` is an explicit policy input, never inferred from
+    /// a wall clock or another boot's monotonic origin. Each call compacts at
+    /// most 16 runs and sweeps a bounded number of seals in one FULL
+    /// transaction. The returned count is the number of runs compacted.
     pub fn compact_terminal(&mut self, cutoff_ms: u64, limit: usize) -> Result<usize, String> {
         if limit == 0 || limit > 16 {
             return Err("terminal compaction limit must be 1..16".into());
@@ -1180,6 +1274,22 @@ impl QueryLedger {
                 return Err("terminal compaction grant changed".into());
             }
         }
+        // Seals of this boot that expired more than the history window before
+        // the cutoff carry no payload and no dependants; drop a bounded batch.
+        let seal_cutoff = cutoff
+            .checked_sub(TERMINAL_SEAL_HISTORY_MS)
+            .ok_or("terminal seal history cutoff underflow")?;
+        tx.execute(
+            "DELETE FROM query_grants WHERE run_id IN (
+                 SELECT run_id FROM query_grants
+                 WHERE boot_id=?1 AND length(body)=0 AND expires_ms<=?2
+                   AND NOT EXISTS(SELECT 1 FROM query_attempts a WHERE a.run_id=query_grants.run_id)
+                   AND NOT EXISTS(SELECT 1 FROM query_mcp_bindings b WHERE b.run_id=query_grants.run_id)
+                   AND NOT EXISTS(SELECT 1 FROM query_packages p WHERE p.run_id=query_grants.run_id)
+                 ORDER BY expires_ms,run_id LIMIT ?3)",
+            params![self.clock_domain, seal_cutoff, TERMINAL_SEAL_SWEEP_LIMIT],
+        )
+        .map_err(failure)?;
         tx.commit().map_err(failure)?;
         Ok(runs.len())
     }
@@ -1229,6 +1339,38 @@ impl QueryLedger {
             "revoked":revoked != 0 || grant.revoked(),
             "clock_domain_current":clock_domain == self.clock_domain,
         })))
+    }
+}
+
+#[cfg(test)]
+mod storage_bound_tests {
+    use super::{QueryLedger, LEDGER_QUOTA_BYTES, WAL_AUTOCHECKPOINT_PAGES};
+
+    #[test]
+    fn open_applies_page_quota_and_wal_autocheckpoint_on_its_own_connection() {
+        let directory = std::env::temp_dir().join(format!(
+            "nhm-query-ledger-bounds-{}-{}",
+            std::process::id(),
+            crate::hex(&crate::random_token().unwrap())
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let ledger = QueryLedger::open_for_boot(
+            &directory.join("ledger.sqlite"),
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+        .unwrap();
+        let page: u64 =
+            ledger.conn.pragma_query_value(None, "page_size", |row| row.get(0)).unwrap();
+        let max_pages: u64 =
+            ledger.conn.pragma_query_value(None, "max_page_count", |row| row.get(0)).unwrap();
+        let autocheckpoint: i64 =
+            ledger.conn.pragma_query_value(None, "wal_autocheckpoint", |row| row.get(0)).unwrap();
+        assert_eq!(page, 4096, "default page size assumed by the quota arithmetic");
+        assert_eq!(max_pages, LEDGER_QUOTA_BYTES / page);
+        assert_eq!(max_pages, 65_536);
+        assert_eq!(autocheckpoint, WAL_AUTOCHECKPOINT_PAGES);
+        drop(ledger);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
 
