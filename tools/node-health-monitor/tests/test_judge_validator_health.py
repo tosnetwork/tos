@@ -389,3 +389,83 @@ def test_bounded_child_output_is_capped_and_the_child_killed():
     assert flood is None  # overflow: killed, nothing beyond the cap buffered
     slow = judge.run_bounded([_sys.executable, "-c", "import time; time.sleep(30)"], b"", 1)
     assert slow is None  # deadline: killed
+
+
+def _model_args(tmp_path, schema_path):
+    class Args:
+        provider = "codex"
+        diagnosis_schema = str(schema_path)
+        codex_bin = "aura"
+        codex_socket = "sock"
+        codex_home = None
+        codex_workdir = str(tmp_path)
+        codex_thread_file = str(tmp_path / "thread")
+        model_timeout = 5
+    return Args
+
+
+def _degraded_fleet(tmp_path, monkeypatch, count):
+    """`count` nodes, every one degraded by the same warning, each with its own evidence row."""
+    now_ms = int(judge.utc_now().timestamp() * 1000)
+    rows, incidents, nodes = [], [], {}
+    for index in range(count):
+        node = f"validator{index + 1}"
+        native = fresh_native(now_ms - 10_000)
+        native["node_id"] = node
+        body, parent = archive_row(native, now_ms - 10_000, now_ms - 9_000)
+        rows.append((node, native, body, parent))
+        nodes[node] = "validator"
+        incidents += [i for i in all_good(node) if i["key"]["rule"] != "state_gc_lag"]
+        incidents.append(incident(node, "state_gc_lag", "bad", "open", "warning"))
+    report = run_judge(tmp_path, incidents, rows, monkeypatch, nodes=nodes)
+    assert report["summary"]["degraded"] == sorted(nodes)
+    return report, [parent for _, _, _, parent in rows]
+
+
+def _answer_with(monkeypatch, findings):
+    def fake_run(command, **kwargs):
+        class R:
+            returncode = 0
+            stderr = b""
+            stdout = json.dumps({"status": "analysis", "summary": "state gc lag fleet-wide",
+                                 "findings": findings, "missing_evidence": [],
+                                 "recommended_runbooks": ["inspect_persistence_progress"]}).encode()
+        return R()
+    monkeypatch.setattr(judge, "run_bounded", lambda command, stdin, timeout: fake_run(command))
+
+
+def test_one_finding_per_node_fits_the_contract_for_a_full_inventory(tmp_path, monkeypatch):
+    # Seven degraded nodes once exceeded a six-finding cap, so every correct
+    # answer was rejected on schema; the cap now follows the inventory bound.
+    report, parents = _degraded_fleet(tmp_path, monkeypatch, 7)
+    _answer_with(monkeypatch, [{"claim": f"{p[:8]} state gc lag", "basis": "observed", "evidence_ids": [p]}
+                               for p in parents])
+    outcome = judge.model_explanation(_model_args(tmp_path, ROOT / "contracts/diagnosis.schema.json"), report)
+    assert outcome["result"] == "accepted", outcome
+    # Grouping nodes that share a cause into one finding is also accepted.
+    _answer_with(monkeypatch, [{"claim": "state gc lag on every node", "basis": "observed", "evidence_ids": parents}])
+    outcome = judge.model_explanation(_model_args(tmp_path, ROOT / "contracts/diagnosis.schema.json"), report)
+    assert outcome["result"] == "accepted", outcome
+    # The shipped cap holds one finding for each of the 32 inventory targets.
+    schema = json.loads((ROOT / "contracts/diagnosis.schema.json").read_text())
+    assert schema["properties"]["findings"]["maxItems"] == 32
+
+
+def test_contract_too_small_for_the_inventory_is_unavailable_not_rejected(tmp_path, monkeypatch):
+    report, parents = _degraded_fleet(tmp_path, monkeypatch, 3)
+    schema = json.loads((ROOT / "contracts/diagnosis.schema.json").read_text())
+    schema["properties"]["findings"]["maxItems"] = 2
+    small = tmp_path / "small.schema.json"
+    small.write_text(json.dumps(schema))
+    called = []
+    monkeypatch.setattr(judge, "run_bounded", lambda command, stdin, timeout: called.append(command))
+    outcome = judge.model_explanation(_model_args(tmp_path, small), report)
+    assert outcome["result"] == "unavailable"
+    assert outcome["error"] == "diagnosis_contract_capacity"
+    assert outcome["findings_max_items"] == 2 and outcome["nodes"] == 3
+    assert called == [], "the model turn must not run against a contract that cannot hold the answer"
+    # With the cap at the node count the same fleet is explained normally.
+    schema["properties"]["findings"]["maxItems"] = 3
+    small.write_text(json.dumps(schema))
+    _answer_with(monkeypatch, [{"claim": "gc lag", "basis": "observed", "evidence_ids": [p]} for p in parents])
+    assert judge.model_explanation(_model_args(tmp_path, small), report)["result"] == "accepted"

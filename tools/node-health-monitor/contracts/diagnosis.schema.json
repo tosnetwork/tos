@@ -47,7 +47,7 @@
         ],
         "additionalProperties": false
       },
-      "maxItems": 6
+      "maxItems": 32
     },
     "missing_evidence": {
       "type": "array",

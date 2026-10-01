@@ -236,7 +236,8 @@ DIAGNOSIS_INSTRUCTION = (
     "this publisher does not cover: 'shard_consensus_progress' means the node validates a shard whose "
     "typed consensus progress is not an approved input (masterchain facts are unaffected); "
     "'local_duties', 'queue_state' and 'storage_state' mean the node-state section is absent. An "
-    "empty list means everything is covered. Name the reason instead of calling coverage unspecified."
+    "empty list means everything is covered. Name the reason instead of calling coverage unspecified. "
+    "Nodes that share one cause may be explained by one finding citing each of their evidence IDs."
 )
 
 
@@ -416,6 +417,13 @@ def model_explanation(args, report):
     Draft202012Validator.check_schema(schema)
     prompt = {"instruction": DIAGNOSIS_INSTRUCTION, "verdict": report}
     provider_meta = {"provider": args.provider}
+    # Every non-healthy node needs an observed finding, so a contract that
+    # cannot hold one finding per node would reject every correct answer.
+    # Refuse the turn as unavailable instead of blaming the model for it.
+    findings_cap = schema["properties"]["findings"].get("maxItems")
+    if findings_cap is not None and len(report["nodes"]) > findings_cap:
+        return {"result": "unavailable", "error": "diagnosis_contract_capacity",
+                "nodes": len(report["nodes"]), "findings_max_items": findings_cap, **provider_meta}
     if args.provider == "anthropic":
         outcome = run_anthropic(args, prompt, schema)
         if isinstance(outcome, dict) and "text" in outcome:
